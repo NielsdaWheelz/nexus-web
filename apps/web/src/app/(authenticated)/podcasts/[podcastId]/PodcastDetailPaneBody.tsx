@@ -673,7 +673,7 @@ export default function PodcastDetailPaneBody() {
       setBusyMediaIds((prev) => new Set(prev).add(mediaId));
       setError(null);
       try {
-        await apiFetch(`/api/libraries/${libraryId}/media/${mediaId}`, {
+        await apiFetch(`/api/media/${mediaId}?library_id=${encodeURIComponent(libraryId)}`, {
           method: "DELETE",
         });
         setEpisodeLibrariesById((prev) => ({

@@ -101,6 +101,16 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "pe.description_text AS podcast_description_text",
     "mts.transcript_state",
     "mts.transcript_coverage",
+    """EXISTS(
+        SELECT 1
+        FROM default_library_intrinsics dli
+        JOIN libraries dl
+          ON dl.id = dli.default_library_id
+         AND dl.owner_user_id = :viewer_id
+         AND dl.is_default = true
+        WHERE dli.media_id = m.id
+          AND m.kind IN ('pdf', 'epub')
+    ) AS can_delete""",
     """(
         SELECT ps.default_playback_speed
         FROM podcast_episodes pe_sub
@@ -173,6 +183,230 @@ def get_media_for_viewer(
     if not rows:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     return rows[0]
+
+
+def delete_orphaned_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[str] | None:
+    """Delete one unreferenced PDF/EPUB media row and return storage paths to delete.
+
+    Caller owns the transaction and must delete returned storage paths after commit.
+    """
+    media = db.execute(
+        text("SELECT kind FROM media WHERE id = :media_id"),
+        {"media_id": media_id},
+    ).fetchone()
+    if media is None:
+        return None
+
+    if media[0] not in (MediaKind.pdf.value, MediaKind.epub.value):
+        return None
+
+    has_reference = db.execute(
+        text("""
+            SELECT 1
+            FROM library_entries
+            WHERE media_id = :media_id
+            UNION ALL
+            SELECT 1
+            FROM default_library_intrinsics
+            WHERE media_id = :media_id
+            UNION ALL
+            SELECT 1
+            FROM default_library_closure_edges
+            WHERE media_id = :media_id
+            LIMIT 1
+        """),
+        {"media_id": media_id},
+    ).fetchone()
+    if has_reference is not None:
+        return None
+
+    storage_paths: list[str] = []
+    for (storage_path,) in db.execute(
+        text("""
+            SELECT storage_path
+            FROM media_file
+            WHERE media_id = :media_id
+            UNION
+            SELECT storage_path
+            FROM epub_resources
+            WHERE media_id = :media_id
+            ORDER BY storage_path
+        """),
+        {"media_id": media_id},
+    ).fetchall():
+        if storage_path not in storage_paths:
+            storage_paths.append(storage_path)
+
+    db.execute(
+        text("""
+            DELETE FROM message_contexts
+            WHERE media_id = :media_id
+               OR highlight_id IN (
+                    SELECT id FROM highlights WHERE anchor_media_id = :media_id
+               )
+               OR annotation_id IN (
+                    SELECT a.id
+                    FROM annotations a
+                    JOIN highlights h ON h.id = a.highlight_id
+                    WHERE h.anchor_media_id = :media_id
+               )
+        """),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM conversation_media WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("UPDATE message_retrievals SET media_id = NULL WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM conversations WHERE scope_media_id = :media_id"),
+        {"media_id": media_id},
+    )
+
+    db.execute(
+        text("""
+            DELETE FROM annotations
+            WHERE highlight_id IN (
+                SELECT id FROM highlights WHERE anchor_media_id = :media_id
+            )
+        """),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("""
+            DELETE FROM highlight_pdf_quads
+            WHERE highlight_id IN (
+                SELECT id FROM highlights WHERE anchor_media_id = :media_id
+            )
+        """),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("""
+            DELETE FROM highlight_pdf_anchors
+            WHERE media_id = :media_id
+               OR highlight_id IN (
+                    SELECT id FROM highlights WHERE anchor_media_id = :media_id
+               )
+        """),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("""
+            DELETE FROM highlight_fragment_anchors
+            WHERE fragment_id IN (
+                SELECT id FROM fragments WHERE media_id = :media_id
+            )
+        """),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM highlights WHERE anchor_media_id = :media_id"),
+        {"media_id": media_id},
+    )
+
+    db.execute(
+        text("""
+            DELETE FROM content_chunks
+            WHERE media_id = :media_id
+               OR fragment_id IN (
+                    SELECT id FROM fragments WHERE media_id = :media_id
+               )
+               OR transcript_version_id IN (
+                    SELECT id FROM podcast_transcript_versions WHERE media_id = :media_id
+               )
+        """),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("""
+            DELETE FROM fragment_blocks
+            WHERE fragment_id IN (
+                SELECT id FROM fragments WHERE media_id = :media_id
+            )
+        """),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM epub_fragment_sources WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM epub_toc_nodes WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM epub_nav_locations WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM epub_resources WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM pdf_page_text_spans WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM media_transcript_states WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM podcast_transcript_segments WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM podcast_transcript_request_audits WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM podcast_transcription_jobs WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM podcast_transcript_versions WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM podcast_episode_chapters WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM podcast_listening_states WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM playback_queue_items WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM reader_media_state WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM media_authors WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM media_file WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM fragments WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM podcast_episodes WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM media WHERE id = :media_id"),
+        {"media_id": media_id},
+    )
+    return storage_paths
 
 
 def list_media_for_viewer_by_ids(
@@ -350,6 +584,7 @@ def _media_out_from_row(
         pdf_quote_text_ready=pdf_quote_ready,
         transcript_state=row["transcript_state"],
         transcript_coverage=row["transcript_coverage"],
+        can_delete=bool(row.get("can_delete")),
     )
     playback_source = derive_playback_source(
         kind=row["kind"],

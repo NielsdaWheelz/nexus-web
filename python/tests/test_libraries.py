@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import text
 
+from nexus.storage.client import FakeStorageClient
 from tests.factories import create_test_media
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -501,7 +502,7 @@ class TestAddMediaToLibrary:
 
 
 class TestRemoveMediaFromLibrary:
-    """Tests for DELETE /libraries/{id}/media/{media_id} endpoint."""
+    """Tests for DELETE /media/{media_id} endpoint."""
 
     def test_remove_media_success(self, auth_client, direct_db: DirectSessionManager):
         """Admin can remove media from library."""
@@ -525,11 +526,11 @@ class TestRemoveMediaFromLibrary:
 
         # Remove media
         response = auth_client.delete(
-            f"/libraries/{library_id}/media/{media_id}",
+            f"/media/{media_id}?library_id={library_id}",
             headers=auth_headers(user_id),
         )
 
-        assert response.status_code == 204
+        assert response.status_code == 200
 
     def test_remove_media_not_in_library(self, auth_client, direct_db: DirectSessionManager):
         """Remove media not in library returns 404."""
@@ -545,7 +546,7 @@ class TestRemoveMediaFromLibrary:
 
         # Don't add media, just try to remove
         response = auth_client.delete(
-            f"/libraries/{library_id}/media/{media_id}",
+            f"/media/{media_id}?library_id={library_id}",
             headers=auth_headers(user_id),
         )
 
@@ -564,12 +565,222 @@ class TestRemoveMediaFromLibrary:
         auth_client.get("/me", headers=auth_headers(user_id))
 
         response = auth_client.delete(
-            f"/libraries/{uuid4()}/media/{media_id}",
+            f"/media/{media_id}?library_id={uuid4()}",
             headers=auth_headers(user_id),
         )
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
+
+    def test_delete_default_pdf_removes_database_rows_and_storage(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        user_id = create_test_user_id()
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        storage = FakeStorageClient()
+        monkeypatch.setattr("nexus.services.libraries.get_storage_client", lambda: storage)
+
+        with direct_db.session() as session:
+            media_id = _create_pdf_media_for_library(
+                session,
+                processing_status="ready_for_reading",
+                plain_text="Delete me",
+                page_count=1,
+                with_page_spans=True,
+            )
+
+        storage_path = f"media/{media_id}/original.pdf"
+        storage.put_object(storage_path, b"%PDF-1.4 test", "application/pdf")
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_resp = auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+        assert add_resp.status_code == 201
+
+        detail_resp = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert detail_resp.status_code == 200
+        assert detail_resp.json()["data"]["capabilities"]["can_delete"] is True
+
+        delete_resp = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
+
+        assert delete_resp.status_code == 200
+        assert delete_resp.json()["data"] == {
+            "status": "deleted",
+            "removed_from_library_ids": [library_id],
+            "hard_deleted": True,
+            "remaining_library_count": 0,
+        }
+        assert storage.get_object(storage_path) is None
+
+        with direct_db.session() as session:
+            counts = session.execute(
+                text("""
+                    SELECT
+                        (SELECT count(*) FROM media WHERE id = :media_id) AS media_count,
+                        (SELECT count(*) FROM media_file WHERE media_id = :media_id)
+                            AS file_count,
+                        (SELECT count(*) FROM pdf_page_text_spans WHERE media_id = :media_id)
+                            AS page_span_count,
+                        (SELECT count(*) FROM default_library_intrinsics
+                            WHERE media_id = :media_id) AS intrinsic_count,
+                        (SELECT count(*) FROM library_entries WHERE media_id = :media_id)
+                            AS library_entry_count
+                """),
+                {"media_id": media_id},
+            ).one()
+        assert counts == (0, 0, 0, 0, 0)
+
+    def test_delete_default_epub_removes_package_resources_and_storage(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        user_id = create_test_user_id()
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        storage = FakeStorageClient()
+        monkeypatch.setattr("nexus.services.libraries.get_storage_client", lambda: storage)
+
+        media_id = uuid4()
+        original_path = f"media/{media_id}/original.epub"
+        resource_path = f"media/{media_id}/assets/cover.jpg"
+        storage.put_object(original_path, b"epub", "application/epub+zip")
+        storage.put_object(resource_path, b"jpg", "image/jpeg")
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id, kind, title, processing_status, created_by_user_id
+                    ) VALUES (
+                        :media_id, 'epub', 'Delete EPUB', 'ready_for_reading', :user_id
+                    )
+                """),
+                {"media_id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media_file (media_id, storage_path, content_type, size_bytes)
+                    VALUES (:media_id, :storage_path, 'application/epub+zip', 4)
+                """),
+                {"media_id": media_id, "storage_path": original_path},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO epub_resources (
+                        media_id,
+                        package_href,
+                        asset_key,
+                        storage_path,
+                        content_type,
+                        size_bytes,
+                        sha256
+                    ) VALUES (
+                        :media_id,
+                        'cover.jpg',
+                        'cover',
+                        :storage_path,
+                        'image/jpeg',
+                        3,
+                        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                    )
+                """),
+                {"media_id": media_id, "storage_path": resource_path},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("epub_resources", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
+
+        assert response.status_code == 200
+        assert response.json()["data"]["hard_deleted"] is True
+        assert storage.get_object(original_path) is None
+        assert storage.get_object(resource_path) is None
+
+        with direct_db.session() as session:
+            counts = session.execute(
+                text("""
+                    SELECT
+                        (SELECT count(*) FROM media WHERE id = :media_id) AS media_count,
+                        (SELECT count(*) FROM media_file WHERE media_id = :media_id)
+                            AS file_count,
+                        (SELECT count(*) FROM epub_resources WHERE media_id = :media_id)
+                            AS resource_count
+                """),
+                {"media_id": media_id},
+            ).one()
+        assert counts == (0, 0, 0)
+
+    def test_member_cannot_remove_media_from_shared_library(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        owner_id = create_test_user_id()
+        member_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session)
+
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        library_resp = auth_client.post(
+            "/libraries", json={"name": "Shared"}, headers=auth_headers(owner_id)
+        )
+        library_id = library_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(member_id))
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:library_id, :user_id, 'member')
+                    ON CONFLICT DO NOTHING
+                """),
+                {"library_id": library_id, "user_id": member_id},
+            )
+            session.commit()
+
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(owner_id),
+        )
+
+        response = auth_client.delete(
+            f"/media/{media_id}?library_id={library_id}",
+            headers=auth_headers(member_id),
+        )
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "E_FORBIDDEN"
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("""
+                    SELECT 1 FROM library_entries
+                    WHERE library_id = :library_id AND media_id = :media_id
+                """),
+                {"library_id": library_id, "media_id": media_id},
+            ).fetchone()
+        assert row is not None
 
 
 class TestPodcastLibraryEntries:
@@ -1356,7 +1567,7 @@ class TestDefaultLibraryClosure:
 
         # Remove from non-default
         auth_client.delete(
-            f"/libraries/{lib_id}/media/{media_id}",
+            f"/media/{media_id}?library_id={lib_id}",
             headers=auth_headers(user_id),
         )
 
@@ -1417,7 +1628,7 @@ class TestDefaultLibraryClosure:
 
         # Now remove from default
         auth_client.delete(
-            f"/libraries/{default_library_id}/media/{media_id}",
+            f"/media/{media_id}?library_id={default_library_id}",
             headers=auth_headers(user_id),
         )
 
@@ -1477,7 +1688,7 @@ class TestDefaultLibraryClosure:
 
         # Remove intrinsic first
         auth_client.delete(
-            f"/libraries/{default_library_id}/media/{media_id}",
+            f"/media/{media_id}?library_id={default_library_id}",
             headers=auth_headers(user_id),
         )
         # Row survives (closure edge)
@@ -1492,7 +1703,7 @@ class TestDefaultLibraryClosure:
 
         # Now remove closure source
         auth_client.delete(
-            f"/libraries/{lib_id}/media/{media_id}",
+            f"/media/{media_id}?library_id={lib_id}",
             headers=auth_headers(user_id),
         )
 
@@ -1537,7 +1748,7 @@ class TestDefaultLibraryClosure:
 
         # Remove from non-default library
         auth_client.delete(
-            f"/libraries/{other_library_id}/media/{media_id}",
+            f"/media/{media_id}?library_id={other_library_id}",
             headers=auth_headers(user_id),
         )
 
@@ -1624,7 +1835,7 @@ class TestDefaultLibraryClosure:
 
         # Remove from default library
         auth_client.delete(
-            f"/libraries/{default_library_id}/media/{media_id}",
+            f"/media/{media_id}?library_id={default_library_id}",
             headers=auth_headers(user_id),
         )
 
@@ -3948,7 +4159,7 @@ class TestVisibilityClosureScenarios:
 
         # Remove from default - only removes intrinsic (none existed), closure edge stays
         auth_client.delete(
-            f"/libraries/{default_library}/media/{media_id}",
+            f"/media/{media_id}?library_id={default_library}",
             headers=auth_headers(user_a),
         )
 
@@ -3983,7 +4194,7 @@ class TestVisibilityClosureScenarios:
             headers=auth_headers(user_a),
         )
         auth_client.delete(
-            f"/libraries/{default_library}/media/{media_id}",
+            f"/media/{media_id}?library_id={default_library}",
             headers=auth_headers(user_a),
         )
 
@@ -4016,7 +4227,7 @@ class TestVisibilityClosureScenarios:
             headers=auth_headers(user_a),
         )
         auth_client.delete(
-            f"/libraries/{library_a}/media/{media_id}",
+            f"/media/{media_id}?library_id={library_a}",
             headers=auth_headers(user_a),
         )
 

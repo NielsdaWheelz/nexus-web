@@ -319,9 +319,10 @@ export default function LibraryPaneBody() {
             method: "DELETE",
           });
         } else {
-          await apiFetch(`/api/libraries/${libraryId}/media/${entry.media.id}`, {
-            method: "DELETE",
-          });
+          await apiFetch(
+            `/api/media/${entry.media.id}?library_id=${encodeURIComponent(libraryId)}`,
+            { method: "DELETE" }
+          );
         }
 
         if (removingCurrentEntry) {

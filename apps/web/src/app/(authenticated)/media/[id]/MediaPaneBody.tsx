@@ -139,6 +139,7 @@ interface Media {
     can_search: boolean;
     can_play: boolean;
     can_download_file: boolean;
+    can_delete?: boolean;
   };
   playback_source?: TranscriptPlaybackSource | null;
   chapters?: TranscriptChapter[];
@@ -2968,6 +2969,7 @@ export default function MediaPaneBody() {
   const [libraryPickerLoading, setLibraryPickerLoading] = useState(false);
   const [libraryPickerError, setLibraryPickerError] = useState<string | null>(null);
   const [libraryMembershipBusy, setLibraryMembershipBusy] = useState(false);
+  const [documentDeleteBusy, setDocumentDeleteBusy] = useState(false);
   const [videoSeekTargetMs, setVideoSeekTargetMs] = useState<number | null>(null);
   const resumeNoticeMediaIdRef = useRef<string | null>(null);
   const seededPodcastTrackRef = useRef<string | null>(null);
@@ -3057,9 +3059,16 @@ export default function MediaPaneBody() {
       setLibraryMembershipBusy(true);
       setLibraryPickerError(null);
       try {
-        await apiFetch(`/api/libraries/${libraryId}/media/${media.id}`, {
-          method: "DELETE",
-        });
+        const response = await apiFetch<{ data: { hard_deleted: boolean } }>(
+          `/api/media/${media.id}?library_id=${encodeURIComponent(libraryId)}`,
+          {
+            method: "DELETE",
+          }
+        );
+        if (response.data.hard_deleted) {
+          router.push("/libraries");
+          return;
+        }
         setLibraryPickerLibraries((current) =>
           current.map((library) =>
             library.id === libraryId
@@ -3080,8 +3089,30 @@ export default function MediaPaneBody() {
         setLibraryMembershipBusy(false);
       }
     },
-    [libraryMembershipBusy, media?.id]
+    [libraryMembershipBusy, media?.id, router]
   );
+
+  const handleDeleteDocument = useCallback(async () => {
+    if (!media?.id || documentDeleteBusy) {
+      return;
+    }
+    if (!window.confirm(`Delete "${media.title}"? This cannot be undone.`)) {
+      return;
+    }
+
+    setDocumentDeleteBusy(true);
+    try {
+      await apiFetch(`/api/media/${media.id}`, { method: "DELETE" });
+      router.push("/libraries");
+    } catch (err) {
+      toast({
+        variant: "error",
+        message: isApiError(err) ? err.message : "Failed to delete document",
+      });
+    } finally {
+      setDocumentDeleteBusy(false);
+    }
+  }, [documentDeleteBusy, media?.id, media?.title, router, toast]);
 
   const handleContentClick = useCallback(
     (e: React.MouseEvent) => {
@@ -3238,6 +3269,18 @@ export default function MediaPaneBody() {
         void loadLibraryPickerLibraries();
       },
     });
+    if (media.capabilities?.can_delete) {
+      mediaHeaderOptions.push({
+        id: "delete-document",
+        label: "Delete document",
+        tone: "danger",
+        separatorBefore: true,
+        disabled: documentDeleteBusy,
+        onSelect: () => {
+          void handleDeleteDocument();
+        },
+      });
+    }
   }
 
   const mediaToolbar =

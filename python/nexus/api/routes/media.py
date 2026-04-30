@@ -240,6 +240,17 @@ def get_media(
     return success_response(result.model_dump(mode="json"))
 
 
+@router.delete("/media/{media_id}")
+def remove_media(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    library_id: Annotated[UUID | None, Query()] = None,
+) -> dict:
+    result = libraries_service.remove_media_for_viewer(db, viewer.user_id, media_id, library_id)
+    return success_response(result)
+
+
 @router.get("/media/{media_id}/libraries")
 def get_media_libraries(
     media_id: UUID,

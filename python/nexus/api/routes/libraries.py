@@ -362,21 +362,6 @@ def add_podcast_to_library(
     return success_response(result.model_dump(mode="json"))
 
 
-@router.delete("/libraries/{library_id}/media/{media_id}", status_code=204)
-def remove_media_from_library(
-    library_id: UUID,
-    media_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    """Remove media from a library.
-
-    Only admins can remove media. Enforces default library closure rules.
-    """
-    libraries_service.remove_media_from_library(db, viewer.user_id, library_id, media_id)
-    return Response(status_code=204)
-
-
 @router.delete("/libraries/{library_id}/podcasts/{podcast_id}", status_code=204)
 def remove_podcast_from_library(
     library_id: UUID,

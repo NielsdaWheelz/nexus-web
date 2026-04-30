@@ -24,6 +24,7 @@ class CapabilitiesOut(BaseModel):
     can_search: bool
     can_play: bool
     can_download_file: bool
+    can_delete: bool = False
 
 
 class PlaybackSourceOut(BaseModel):

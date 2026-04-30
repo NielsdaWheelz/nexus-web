@@ -6,6 +6,7 @@ Routes may not contain domain logic or raw DB access - they must call these func
 
 import logging
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import text
@@ -37,8 +38,12 @@ from nexus.schemas.library import (
     LibraryRole,
 )
 from nexus.schemas.media import MediaOut
+from nexus.storage import get_storage_client
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from nexus.storage.client import StorageClientBase
 
 
 def create_library(db: Session, viewer_id: UUID, name: str) -> LibraryOut:
@@ -183,7 +188,9 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
         NotFoundError: If library not found or viewer is not a member.
         ForbiddenError: If library is default or viewer is not owner.
     """
+    storage_paths: list[str] = []
     with transaction(db):
+        from nexus.services import media as media_service
         from nexus.services.default_library_closure import remove_media_from_non_default_closure
 
         result = db.execute(
@@ -238,6 +245,16 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
             text("DELETE FROM libraries WHERE id = :library_id"),
             {"library_id": library_id},
         )
+
+        for media_id in media_ids:
+            paths = media_service.delete_orphaned_document_media_if_unreferenced(db, media_id)
+            if paths:
+                storage_paths.extend(paths)
+
+    if storage_paths:
+        storage_client = get_storage_client()
+        for storage_path in storage_paths:
+            storage_client.delete_object(storage_path)
 
 
 def list_libraries(db: Session, viewer_id: UUID, limit: int = 100) -> list[LibraryOut]:
@@ -478,70 +495,64 @@ def list_media_item_libraries(
     ]
 
 
-def remove_media_from_library(
+def remove_media_for_viewer(
     db: Session,
     viewer_id: UUID,
-    library_id: UUID,
     media_id: UUID,
-) -> None:
-    """Remove media from a library.
-
-    S4 closure rules:
-    - Default target: remove intrinsic; gc materialized row iff no intrinsic
-      and no remaining closure edge. Does NOT cascade to non-default libraries.
-    - Non-default target: remove source row, remove source closure edges, gc
-      affected default rows.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        library_id: The ID of the library.
-        media_id: The ID of the media to remove.
-
-    Raises:
-        NotFoundError: If library not found, viewer not a member, or media not in library.
-        ForbiddenError: If viewer is not admin.
-    """
+    library_id: UUID | None = None,
+    storage_client: "StorageClientBase | None" = None,
+) -> dict[str, object]:
+    """Remove media from one viewer-controlled library and hard-delete orphaned documents."""
+    from nexus.services import media as media_service
     from nexus.services.default_library_closure import (
         remove_default_intrinsic_and_gc,
         remove_media_from_non_default_closure,
     )
 
+    removed_from_library_ids: list[str] = []
+    hard_deleted = False
+    remaining_library_count = 0
+    storage_paths: list[str] = []
     with transaction(db):
-        # Step 1: Fetch library with lock
-        result = db.execute(
-            text("""
-                SELECT l.id, l.is_default, l.owner_user_id
-                FROM libraries l
-                WHERE l.id = :library_id
-                FOR UPDATE
-            """),
-            {"library_id": library_id},
-        )
-        library = result.fetchone()
+        media = db.execute(
+            text("SELECT 1 FROM media WHERE id = :media_id"),
+            {"media_id": media_id},
+        ).fetchone()
+        if media is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+        if library_id is None:
+            library = db.execute(
+                text("""
+                    SELECT id, true AS is_default, 'admin' AS role
+                    FROM libraries
+                    WHERE owner_user_id = :viewer_id
+                      AND is_default = true
+                """),
+                {"viewer_id": viewer_id},
+            ).fetchone()
+        else:
+            library = db.execute(
+                text("""
+                    SELECT l.id, l.is_default, m.role
+                    FROM libraries l
+                    JOIN memberships m
+                      ON m.library_id = l.id
+                     AND m.user_id = :viewer_id
+                    WHERE l.id = :library_id
+                """),
+                {"library_id": library_id, "viewer_id": viewer_id},
+            ).fetchone()
 
         if library is None:
             raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
-        is_default = library[1]
-
-        # Step 2: Verify viewer is admin member
-        result = db.execute(
-            text("""
-                SELECT role FROM memberships
-                WHERE library_id = :library_id AND user_id = :viewer_id
-            """),
-            {"library_id": library_id, "viewer_id": viewer_id},
-        )
-        membership = result.fetchone()
-
-        if membership is None:
-            raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
-
-        if membership[0] != "admin":
+        target_library_id = library[0]
+        is_default = bool(library[1])
+        role = library[2]
+        if role != "admin":
             raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
 
-        # Step 3: Verify media exists in this library
         row = db.execute(
             text("""
                 SELECT id
@@ -549,13 +560,27 @@ def remove_media_from_library(
                 WHERE library_id = :library_id
                   AND media_id = :media_id
             """),
-            {"library_id": library_id, "media_id": media_id},
+            {"library_id": target_library_id, "media_id": media_id},
         ).fetchone()
         if row is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found in library")
 
         if is_default:
-            remove_default_intrinsic_and_gc(db, library_id, media_id)
+            intrinsic = db.execute(
+                text("""
+                    SELECT 1
+                    FROM default_library_intrinsics
+                    WHERE default_library_id = :library_id
+                      AND media_id = :media_id
+                """),
+                {"library_id": target_library_id, "media_id": media_id},
+            ).fetchone()
+            if intrinsic is None:
+                raise ForbiddenError(
+                    ApiErrorCode.E_FORBIDDEN,
+                    "Document is controlled by a shared library",
+                )
+            remove_default_intrinsic_and_gc(db, target_library_id, media_id)
         else:
             db.execute(
                 text("""
@@ -563,10 +588,35 @@ def remove_media_from_library(
                     WHERE library_id = :library_id
                       AND media_id = :media_id
                 """),
-                {"library_id": library_id, "media_id": media_id},
+                {"library_id": target_library_id, "media_id": media_id},
             )
-            remove_media_from_non_default_closure(db, library_id, media_id)
-        _normalize_library_entry_positions(db, library_id)
+            remove_media_from_non_default_closure(db, target_library_id, media_id)
+        _normalize_library_entry_positions(db, target_library_id)
+        removed_from_library_ids.append(str(target_library_id))
+
+        remaining_library_count = int(
+            db.execute(
+                text("SELECT COUNT(*) FROM library_entries WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar_one()
+        )
+        if remaining_library_count == 0:
+            paths = media_service.delete_orphaned_document_media_if_unreferenced(db, media_id)
+            if paths is not None:
+                storage_paths = paths
+                hard_deleted = True
+
+    if storage_paths:
+        client = storage_client or get_storage_client()
+        for storage_path in storage_paths:
+            client.delete_object(storage_path)
+
+    return {
+        "status": "deleted" if hard_deleted else "removed",
+        "removed_from_library_ids": removed_from_library_ids,
+        "hard_deleted": hard_deleted,
+        "remaining_library_count": remaining_library_count,
+    }
 
 
 def add_podcast_to_library(

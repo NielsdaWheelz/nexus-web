@@ -54,6 +54,7 @@ def derive_capabilities(
     pdf_quote_text_ready: bool = False,
     transcript_state: str | None = None,
     transcript_coverage: str | None = None,
+    can_delete: bool = False,
 ) -> CapabilitiesOut:
     """Derive capabilities from media state."""
     _validate_processing_status(processing_status)
@@ -114,4 +115,5 @@ def derive_capabilities(
         can_search=can_search,
         can_play=can_play,
         can_download_file=can_download_file,
+        can_delete=can_delete,
     )
