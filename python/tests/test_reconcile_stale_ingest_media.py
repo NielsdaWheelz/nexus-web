@@ -365,10 +365,11 @@ def _insert_ready_podcast_with_semantic_backlog(
     db.execute(
         text(
             """
-            INSERT INTO podcast_transcript_chunks (
+            INSERT INTO content_chunks (
                 transcript_version_id,
                 media_id,
                 chunk_idx,
+                source_kind,
                 chunk_text,
                 t_start_ms,
                 t_end_ms,
@@ -381,6 +382,7 @@ def _insert_ready_podcast_with_semantic_backlog(
                     :version_id,
                     :media_id,
                     0,
+                    'transcript',
                     'legacy stale chunk one',
                     0,
                     1300,
@@ -392,6 +394,7 @@ def _insert_ready_podcast_with_semantic_backlog(
                     :version_id,
                     :media_id,
                     1,
+                    'transcript',
                     'legacy stale chunk two',
                     1500,
                     2900,
@@ -669,8 +672,9 @@ def test_reconciler_repairs_pending_semantic_backlog_for_ready_podcast_transcrip
         text(
             """
             SELECT DISTINCT embedding_model
-            FROM podcast_transcript_chunks
+            FROM content_chunks
             WHERE transcript_version_id = :transcript_version_id
+              AND source_kind = 'transcript'
             ORDER BY embedding_model
             """
         ),
@@ -739,8 +743,9 @@ def test_reconciler_repairs_ready_semantic_rows_when_active_model_changes(
         text(
             """
             SELECT DISTINCT embedding_model
-            FROM podcast_transcript_chunks
+            FROM content_chunks
             WHERE transcript_version_id = :transcript_version_id
+              AND source_kind = 'transcript'
             ORDER BY embedding_model
             """
         ),
@@ -805,8 +810,9 @@ def test_reconciler_retries_failed_semantic_backlog_after_retry_window(
         text(
             """
             SELECT COUNT(*)
-            FROM podcast_transcript_chunks
+            FROM content_chunks
             WHERE transcript_version_id = :transcript_version_id
+              AND source_kind = 'transcript'
             """
         ),
         {"transcript_version_id": version_id},

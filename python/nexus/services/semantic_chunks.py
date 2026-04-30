@@ -1,4 +1,4 @@
-"""Transcript chunking + production semantic embedding helpers."""
+"""Content chunking and semantic embedding helpers."""
 
 from __future__ import annotations
 

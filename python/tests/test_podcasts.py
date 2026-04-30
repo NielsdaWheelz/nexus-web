@@ -2951,10 +2951,11 @@ class TestPodcastTranscriptRequestAdmission:
             session.execute(
                 text(
                     """
-                    INSERT INTO podcast_transcript_chunks (
+                    INSERT INTO content_chunks (
                         transcript_version_id,
                         media_id,
                         chunk_idx,
+                        source_kind,
                         chunk_text,
                         t_start_ms,
                         t_end_ms,
@@ -2966,6 +2967,7 @@ class TestPodcastTranscriptRequestAdmission:
                         :transcript_version_id,
                         :media_id,
                         0,
+                        'transcript',
                         'legacy stale semantic chunk',
                         0,
                         1200,
@@ -5287,7 +5289,14 @@ class TestPodcastApiSurface:
                 {"media_id": media_id},
             ).scalar()
             chunk_count = session.execute(
-                text("SELECT COUNT(*) FROM podcast_transcript_chunks WHERE media_id = :media_id"),
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM content_chunks
+                    WHERE media_id = :media_id
+                      AND source_kind = 'transcript'
+                    """
+                ),
                 {"media_id": media_id},
             ).scalar()
             job_count = session.execute(
@@ -7826,8 +7835,9 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                 text(
                     """
                     SELECT COUNT(*)
-                    FROM podcast_transcript_chunks
+                    FROM content_chunks
                     WHERE transcript_version_id = :transcript_version_id
+                      AND source_kind = 'transcript'
                     """
                 ),
                 {"transcript_version_id": active_version_id},

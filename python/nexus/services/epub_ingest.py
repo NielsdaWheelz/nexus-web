@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import posixpath
 import re
 import time
@@ -19,25 +20,34 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import unquote, urlparse
 from uuid import UUID
 from xml.etree import ElementTree as ET
 
 from lxml.html import HtmlElement, document_fromstring, tostring
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
-from nexus.db.models import EpubNavLocation, EpubTocNode, Fragment, Media
+from nexus.db.models import (
+    EpubFragmentSource,
+    EpubNavLocation,
+    EpubResource,
+    EpubTocNode,
+    Fragment,
+    Media,
+)
 from nexus.errors import ApiErrorCode
-from nexus.logging import get_logger
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
-from nexus.services.sanitize_html import IMAGE_PROXY_URL
+from nexus.services.semantic_chunks import (
+    build_text_embeddings,
+    to_pgvector_literal,
+    transcript_embedding_dimensions,
+)
 
 if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
-
-logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Public result types
@@ -79,7 +89,7 @@ _READABLE_MEDIA_TYPES = frozenset(
     }
 )
 
-_OPF_MEDIA_TYPES = frozenset({"application/oebps-package+xml"})
+_NCX_MEDIA_TYPES = frozenset({"application/x-dtbncx+xml"})
 
 _NS = {
     "opf": "http://www.idpf.org/2007/opf",
@@ -91,11 +101,6 @@ _NS = {
 }
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
-_ASSET_KEY_SAFE = re.compile(r"^[a-zA-Z0-9_./-]+$")
-
-# Tags to strip entirely from EPUB chapter content (before sanitization)
-_STRIP_TAGS = frozenset({"head", "script", "style", "meta", "link", "base"})
-
 _EPUB_ALLOWED_HTML_TAGS = frozenset(
     {
         "p",
@@ -280,19 +285,45 @@ _EPUB_ALLOWED_SVG_ATTRS = {
 }
 _FORBIDDEN_URL_SCHEMES = frozenset({"javascript", "vbscript", "data", "file"})
 _EVENT_HANDLER_RE = re.compile(r"^on", re.IGNORECASE)
+_RESOURCE_ATTRS = frozenset({"src", "href", "xlink:href", "poster"})
+_STATIC_ASSET_MEDIA_PREFIXES = (
+    "image/",
+    "font/",
+    "audio/",
+    "video/",
+)
+
+
+@dataclass
+class _ManifestItem:
+    manifest_id: str
+    href: str
+    media_type: str
+    properties: str | None
+    fallback_id: str | None
+
+
+@dataclass
+class _SpineItem:
+    idref: str
+    itemref_id: str | None
+    linear: bool
 
 
 @dataclass
 class _ChapterSpec:
     spine_idx: int
     manifest_id: str
+    itemref_id: str | None
     href: str
     media_type: str
+    linear: bool
     raw_html: str
 
 
 @dataclass
 class _TocNodeSpec:
+    nav_type: str
     node_id: str
     parent_node_id: str | None
     label: str
@@ -305,9 +336,12 @@ class _TocNodeSpec:
 @dataclass
 class _AssetEntry:
     epub_path: str
+    manifest_id: str | None
     asset_key: str
     content: bytes
     content_type: str
+    fallback_id: str | None
+    properties: str | None
 
 
 @dataclass
@@ -389,6 +423,7 @@ def extract_epub_artifacts(
 
     # ---- parse OPF ---------------------------------------------------------
     t_start = time.monotonic()
+    uploaded_asset_paths: list[str] = []
     try:
         zf = zipfile.ZipFile(io.BytesIO(epub_bytes))
     except (zipfile.BadZipFile, Exception) as exc:
@@ -414,7 +449,7 @@ def extract_epub_artifacts(
             )
 
         manifest = _parse_manifest(opf_tree, opf_dir)
-        spine_idrefs = _parse_spine(opf_tree)
+        spine_items = _parse_spine(opf_tree)
 
         # ---- title resolution ----------------------------------------------
         title = _resolve_title(opf_tree, media_file.storage_path)
@@ -425,25 +460,22 @@ def extract_epub_artifacts(
         opf_meta = _extract_opf_metadata(opf_tree)
 
         # ---- extract readable chapters -------------------------------------
-        chapter_specs = _collect_readable_chapters(zf, manifest, spine_idrefs)
+        chapter_specs = _collect_readable_chapters(zf, manifest, spine_items)
         if not chapter_specs:
             return EpubExtractionError(
                 error_code=ApiErrorCode.E_INGEST_FAILED.value,
-                error_message="Zero readable chapters after extraction",
+                error_message="Zero renderable XHTML spine items after extraction",
             )
 
-        # ---- resource rewriting + asset collection -------------------------
-        asset_entries: list[_AssetEntry] = []
-        asset_key_map: dict[str, str] = {}  # epub_path -> asset_key
+        asset_entries, asset_key_map = _collect_manifest_assets(zf, manifest)
         readable_paths = {
-            href for (href, media_type) in manifest.values() if media_type in _READABLE_MEDIA_TYPES
+            item.href for item in manifest.values() if item.media_type in _READABLE_MEDIA_TYPES
         }
 
         for ch in chapter_specs:
             ch.raw_html = _rewrite_chapter_resources(
                 ch.raw_html,
                 ch.href,
-                opf_dir,
                 zf,
                 media_id,
                 manifest,
@@ -453,17 +485,17 @@ def extract_epub_artifacts(
             )
 
         # ---- sanitize + canonicalize + fragment creation --------------------
-        fragments: list[Fragment] = []
+        fragment_specs: list[tuple[Fragment, _ChapterSpec]] = []
         all_block_specs: list[list] = []
         retained_hrefs: list[str] = []
 
-        for contiguous_idx, ch in enumerate(chapter_specs):
+        for ch in chapter_specs:
             try:
                 html_sanitized = _epub_sanitize(ch.raw_html)
             except Exception as exc:
                 return EpubExtractionError(
                     error_code=ApiErrorCode.E_SANITIZATION_FAILED.value,
-                    error_message=f"Sanitization failed for chapter idx {contiguous_idx}: {exc}",
+                    error_message=f"Sanitization failed for spine item {ch.spine_idx}: {exc}",
                 )
 
             try:
@@ -471,39 +503,35 @@ def extract_epub_artifacts(
             except Exception as exc:
                 return EpubExtractionError(
                     error_code=ApiErrorCode.E_SANITIZATION_FAILED.value,
-                    error_message=f"Canonicalization failed for chapter idx {contiguous_idx}: {exc}",
+                    error_message=f"Canonicalization failed for spine item {ch.spine_idx}: {exc}",
                 )
 
-            if not canonical_text.strip():
+            if not html_sanitized.strip():
                 continue
 
             frag = Fragment(
                 media_id=media_id,
-                idx=contiguous_idx,
+                idx=len(fragment_specs),
                 html_sanitized=html_sanitized,
                 canonical_text=canonical_text,
                 created_at=now,
             )
-            fragments.append(frag)
-            block_specs = parse_fragment_blocks(canonical_text)
-            all_block_specs.append(block_specs)
+            fragment_specs.append((frag, ch))
+            all_block_specs.append(parse_fragment_blocks(canonical_text))
             retained_hrefs.append(ch.href)
 
-        # re-index fragments contiguously after potential empty-skip
-        for new_idx, frag in enumerate(fragments):
-            frag.idx = new_idx
-
-        if not fragments:
+        if not fragment_specs:
             return EpubExtractionError(
                 error_code=ApiErrorCode.E_INGEST_FAILED.value,
-                error_message="Zero readable chapters after canonicalization",
+                error_message="Zero renderable chapters after sanitization",
             )
 
         # build href -> fragment_idx lookup
         href_to_frag_idx = _build_href_to_frag_idx(retained_hrefs)
 
         # ---- TOC materialization -------------------------------------------
-        toc_nodes = _materialize_toc(zf, opf_tree, opf_dir, manifest, href_to_frag_idx, media_id)
+        toc_nodes = _materialize_toc(zf, opf_tree, manifest, href_to_frag_idx)
+        fragments = [frag for frag, _ch in fragment_specs]
         nav_locations = _materialize_nav_locations(toc_nodes, fragments, retained_hrefs)
 
         # ---- check parse-time budget ---------------------------------------
@@ -515,7 +543,21 @@ def extract_epub_artifacts(
                 terminal=True,
             )
 
-        # ---- atomic persistence --------------------------------------------
+        for ae in asset_entries:
+            asset_storage_key = f"media/{media_id}/assets/{ae.asset_key}"
+            try:
+                storage_client.put_object(asset_storage_key, ae.content, ae.content_type)
+                uploaded_asset_paths.append(asset_storage_key)
+            except Exception as exc:
+                for path in uploaded_asset_paths:
+                    storage_client.delete_object(path)
+                db.rollback()
+                return EpubExtractionError(
+                    error_code=ApiErrorCode.E_INGEST_FAILED.value,
+                    error_message=f"Failed to store EPUB asset {ae.epub_path}: {exc}",
+                )
+
+        # ---- atomic DB persistence -----------------------------------------
         for frag in fragments:
             db.add(frag)
         db.flush()
@@ -524,17 +566,51 @@ def extract_epub_artifacts(
             if 0 <= frag.idx < len(all_block_specs):
                 insert_fragment_blocks(db, frag.id, all_block_specs[frag.idx])
 
+        for frag, ch in fragment_specs:
+            db.add(
+                EpubFragmentSource(
+                    media_id=media_id,
+                    fragment_id=frag.id,
+                    package_href=ch.href,
+                    manifest_item_id=ch.manifest_id,
+                    spine_itemref_id=ch.itemref_id,
+                    media_type=ch.media_type,
+                    linear=ch.linear,
+                    reading_order=ch.spine_idx,
+                    created_at=now,
+                )
+            )
+
         for tn in toc_nodes:
             db.add(
                 EpubTocNode(
                     media_id=media_id,
                     node_id=tn.node_id,
+                    nav_type=tn.nav_type,
                     parent_node_id=tn.parent_node_id,
                     label=tn.label,
                     href=tn.href,
                     fragment_idx=tn.fragment_idx,
                     depth=tn.depth,
                     order_key=tn.order_key,
+                    created_at=now,
+                )
+            )
+
+        for ae in asset_entries:
+            storage_path = f"media/{media_id}/assets/{ae.asset_key}"
+            db.add(
+                EpubResource(
+                    media_id=media_id,
+                    manifest_item_id=ae.manifest_id,
+                    package_href=ae.epub_path,
+                    asset_key=ae.asset_key,
+                    storage_path=storage_path,
+                    content_type=ae.content_type,
+                    size_bytes=len(ae.content),
+                    sha256=hashlib.sha256(ae.content).hexdigest(),
+                    fallback_item_id=ae.fallback_id,
+                    properties=ae.properties,
                     created_at=now,
                 )
             )
@@ -559,8 +635,81 @@ def extract_epub_artifacts(
 
         db.flush()
 
+        text_fragments = [frag for frag in fragments if frag.canonical_text.strip()]
+        if text_fragments:
+            embedding_model, embeddings = build_text_embeddings(
+                [frag.canonical_text for frag in text_fragments]
+            )
+            embedding_dims = transcript_embedding_dimensions()
+            for chunk_idx, (frag, embedding) in enumerate(
+                zip(text_fragments, embeddings, strict=True)
+            ):
+                db.execute(
+                    text(
+                        f"""
+                        INSERT INTO content_chunks (
+                            media_id,
+                            fragment_id,
+                            transcript_version_id,
+                            chunk_idx,
+                            source_kind,
+                            chunk_text,
+                            start_offset,
+                            end_offset,
+                            t_start_ms,
+                            t_end_ms,
+                            heading,
+                            locator,
+                            embedding,
+                            embedding_vector,
+                            embedding_model,
+                            created_at
+                        )
+                        VALUES (
+                            :media_id,
+                            :fragment_id,
+                            NULL,
+                            :chunk_idx,
+                            'fragment',
+                            :chunk_text,
+                            0,
+                            :end_offset,
+                            NULL,
+                            NULL,
+                            :heading,
+                            CAST(:locator AS jsonb),
+                            CAST(:embedding AS jsonb),
+                            CAST(:embedding_vector AS vector({embedding_dims})),
+                            :embedding_model,
+                            :created_at
+                        )
+                        """
+                    ),
+                    {
+                        "media_id": media_id,
+                        "fragment_id": frag.id,
+                        "chunk_idx": chunk_idx,
+                        "chunk_text": frag.canonical_text,
+                        "end_offset": len(frag.canonical_text),
+                        "heading": _fallback_fragment_label(frag.canonical_text, frag.idx),
+                        "locator": json.dumps(
+                            {
+                                "kind": "fragment",
+                                "fragment_id": str(frag.id),
+                                "fragment_idx": frag.idx,
+                            }
+                        ),
+                        "embedding": json.dumps(embedding),
+                        "embedding_vector": to_pgvector_literal(embedding),
+                        "embedding_model": embedding_model,
+                        "created_at": now,
+                    },
+                )
+
     except Exception as exc:
         db.rollback()
+        for path in uploaded_asset_paths:
+            storage_client.delete_object(path)
         return EpubExtractionError(
             error_code=ApiErrorCode.E_INGEST_FAILED.value,
             error_message=f"Extraction failed: {exc}",
@@ -568,24 +717,10 @@ def extract_epub_artifacts(
     finally:
         zf.close()
 
-    # ---- persist assets to storage (after db flush, before commit) ---------
-    persisted_assets = 0
-    for ae in asset_entries:
-        try:
-            asset_storage_key = f"media/{media_id}/assets/{ae.asset_key}"
-            storage_client.put_object(asset_storage_key, ae.content, ae.content_type)
-            persisted_assets += 1
-        except Exception:
-            logger.warning(
-                "epub_asset_upload_failed",
-                media_id=str(media_id),
-                asset_key=ae.asset_key,
-            )
-
     return EpubExtractionResult(
         chapter_count=len(fragments),
         toc_node_count=len(toc_nodes),
-        asset_count=persisted_assets,
+        asset_count=len(asset_entries),
         title=title,
         creators=opf_meta.get("creators", []),
         publisher=opf_meta.get("publisher"),
@@ -637,6 +772,7 @@ def check_archive_safety(
         )
 
     total_uncompressed = 0
+    seen_names: set[str] = set()
     for info in infos:
         # path safety: reject absolute, traversal, drive-qualified
         name = info.filename
@@ -661,6 +797,15 @@ def check_archive_safety(
                 error_message=f"Drive-qualified path in archive: {name}",
                 terminal=True,
             )
+
+        if name in seen_names:
+            zf.close()
+            return EpubExtractionError(
+                error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
+                error_message=f"Duplicate path in archive: {name}",
+                terminal=True,
+            )
+        seen_names.add(name)
 
         uncompressed = info.file_size
         compressed = info.compress_size
@@ -720,7 +865,8 @@ def _find_opf_path(zf: zipfile.ZipFile) -> str | None:
     if rootfile is None:
         rootfile = container.find(".//container:rootfile", _NS)
     if rootfile is not None:
-        return rootfile.get("full-path")
+        full_path = rootfile.get("full-path") or ""
+        return _resolve_epub_path("", full_path)
     return None
 
 
@@ -735,26 +881,38 @@ def _parse_xml_entry(zf: zipfile.ZipFile, path: str) -> ET.Element | None:
 def _parse_manifest(
     opf: ET.Element,
     opf_dir: str,
-) -> dict[str, tuple[str, str]]:
-    """Return {manifest_id: (resolved_href, media_type)}."""
-    result: dict[str, tuple[str, str]] = {}
+) -> dict[str, _ManifestItem]:
+    """Return OPF manifest items keyed by manifest id."""
+    result: dict[str, _ManifestItem] = {}
     for item in opf.findall(".//opf:manifest/opf:item", _NS):
         item_id = item.get("id", "")
         href = item.get("href", "")
         mtype = item.get("media-type", "")
         if item_id and href:
-            resolved = posixpath.normpath(posixpath.join(opf_dir, href)) if opf_dir else href
-            result[item_id] = (resolved, mtype)
+            resolved = _resolve_epub_path(opf_dir, href)
+            if resolved is not None:
+                result[item_id] = _ManifestItem(
+                    manifest_id=item_id,
+                    href=resolved,
+                    media_type=mtype,
+                    properties=item.get("properties") or None,
+                    fallback_id=item.get("fallback") or None,
+                )
     return result
 
 
-def _parse_spine(opf: ET.Element) -> list[str]:
-    refs: list[str] = []
+def _parse_spine(opf: ET.Element) -> list[_SpineItem]:
+    refs: list[_SpineItem] = []
     for itemref in opf.findall(".//opf:spine/opf:itemref", _NS):
         idref = itemref.get("idref", "")
-        linear = itemref.get("linear", "yes")
-        if idref and linear != "no":
-            refs.append(idref)
+        if idref:
+            refs.append(
+                _SpineItem(
+                    idref=idref,
+                    itemref_id=itemref.get("id") or None,
+                    linear=itemref.get("linear", "yes").lower() != "no",
+                )
+            )
     return refs
 
 
@@ -835,6 +993,19 @@ def _filename_from_storage_path(path: str) -> str:
     return ""
 
 
+def _resolve_epub_path(base_dir: str, href: str) -> str | None:
+    decoded = unquote((href or "").split("#", 1)[0]).strip()
+    if not decoded:
+        return None
+    parsed = urlparse(decoded)
+    if parsed.scheme or decoded.startswith("/"):
+        return None
+    resolved = posixpath.normpath(posixpath.join(base_dir, decoded)) if base_dir else decoded
+    if resolved in {"", "."} or resolved.startswith("../") or resolved == "..":
+        return None
+    return resolved
+
+
 # ---------------------------------------------------------------------------
 # Chapter extraction
 # ---------------------------------------------------------------------------
@@ -842,53 +1013,43 @@ def _filename_from_storage_path(path: str) -> str:
 
 def _collect_readable_chapters(
     zf: zipfile.ZipFile,
-    manifest: dict[str, tuple[str, str]],
-    spine_idrefs: list[str],
+    manifest: dict[str, _ManifestItem],
+    spine_items: list[_SpineItem],
 ) -> list[_ChapterSpec]:
     chapters: list[_ChapterSpec] = []
-    for spine_idx, idref in enumerate(spine_idrefs):
-        entry = manifest.get(idref)
+    for spine_idx, spine_item in enumerate(spine_items):
+        entry = manifest.get(spine_item.idref)
         if entry is None:
             continue
-        href, mtype = entry
-        if mtype not in _READABLE_MEDIA_TYPES:
+        if entry.media_type not in _READABLE_MEDIA_TYPES:
             continue
         try:
-            raw = zf.read(href).decode("utf-8", errors="replace")
+            raw = _decode_epub_text(zf.read(entry.href))
         except (KeyError, Exception):
             continue
-        raw = _strip_epub_wrappers(raw)
         if not raw.strip():
             continue
         chapters.append(
             _ChapterSpec(
                 spine_idx=spine_idx,
-                manifest_id=idref,
-                href=href,
-                media_type=mtype,
+                manifest_id=spine_item.idref,
+                itemref_id=spine_item.itemref_id,
+                href=entry.href,
+                media_type=entry.media_type,
+                linear=spine_item.linear,
                 raw_html=raw,
             )
         )
     return chapters
 
 
-def _strip_epub_wrappers(html: str) -> str:
-    """Extract <body> content from full XHTML document."""
-    lower = html.lower()
-    body_start = lower.find("<body")
-    if body_start == -1:
-        return html
-    tag_end = lower.find(">", body_start)
-    if tag_end == -1:
-        return html
-
-    body_close = lower.rfind("</body>")
-    if body_close == -1:
-        body_content = html[tag_end + 1 :]
-    else:
-        body_content = html[tag_end + 1 : body_close]
-
-    return body_content
+def _decode_epub_text(raw: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-16"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
 
 
 # ---------------------------------------------------------------------------
@@ -899,96 +1060,219 @@ def _strip_epub_wrappers(html: str) -> str:
 def _rewrite_chapter_resources(
     html: str,
     chapter_href: str,
-    opf_dir: str,
     zf: zipfile.ZipFile,
     media_id: UUID,
-    manifest: dict[str, tuple[str, str]],
+    manifest: dict[str, _ManifestItem],
     asset_entries: list[_AssetEntry],
     asset_key_map: dict[str, str],
     readable_paths: set[str],
 ) -> str:
-    """Rewrite src/href in chapter HTML.
-
-    - Internal resolvable assets -> /media/{media_id}/assets/{key}
-    - External http(s) images -> image proxy
-    - Unresolvable internal -> remove attribute (graceful degradation)
-    """
+    """Rewrite local resource links in parsed chapter HTML."""
     chapter_dir = posixpath.dirname(chapter_href)
+    try:
+        doc = _parse_epub_html_document(html)
+    except Exception:
+        return html
 
-    def _rewrite_attr(match: re.Match) -> str:
-        attr_name = match.group(1)
-        quote_char = match.group(2)
-        raw_url = match.group(3)
-        attr_name_lower = attr_name.lower()
-
-        if not raw_url or raw_url.startswith("#"):
-            return match.group(0)
-
-        parsed = urlparse(raw_url)
-
-        # external http(s) image
-        if parsed.scheme in ("http", "https"):
-            if attr_name_lower in {"src", "xlink:href"}:
-                encoded = quote(raw_url, safe="")
-                return f"{attr_name}={quote_char}{IMAGE_PROXY_URL.format(encoded_url=encoded)}{quote_char}"
-            return match.group(0)
-
-        if parsed.scheme and parsed.scheme not in ("", "http", "https"):
-            return f"{attr_name}={quote_char}{quote_char}"
-
-        # internal reference
-        decoded = unquote(raw_url)
-        frag = parsed.fragment
-        path_only = decoded.split("#")[0] if "#" in decoded else decoded
-        resolved = posixpath.normpath(posixpath.join(chapter_dir, path_only))
-
-        if attr_name_lower == "href" and resolved in readable_paths:
-            rewritten = resolved
-            if frag:
-                rewritten += f"#{frag}"
-            return f"{attr_name}={quote_char}{rewritten}{quote_char}"
-
-        # check if it exists in the archive
-        if resolved in asset_key_map:
-            key = asset_key_map[resolved]
-            rewritten = f"/media/{media_id}/assets/{key}"
-            if frag:
-                rewritten += f"#{frag}"
-            return f"{attr_name}={quote_char}{rewritten}{quote_char}"
-
-        # try to read from zip
-        try:
-            content = zf.read(resolved)
-        except (KeyError, Exception):
-            return f"{attr_name}={quote_char}{quote_char}"
-
-        # derive asset key
-        key = _derive_asset_key(resolved, asset_key_map)
-        asset_key_map[resolved] = key
-
-        # guess content type from manifest or extension
-        ct = _guess_content_type(resolved, manifest)
-        asset_entries.append(
-            _AssetEntry(
-                epub_path=resolved,
-                asset_key=key,
-                content=content,
-                content_type=ct,
+    for element in doc.iter():
+        if not isinstance(element, HtmlElement):
+            continue
+        for attr in list(element.attrib):
+            normalized_attr = _normalized_attr_name(attr)
+            value = element.attrib.get(attr, "")
+            if normalized_attr == "srcset":
+                rewritten = _rewrite_srcset(
+                    value,
+                    chapter_dir,
+                    zf,
+                    media_id,
+                    manifest,
+                    asset_entries,
+                    asset_key_map,
+                )
+                if rewritten:
+                    element.attrib[attr] = rewritten
+                else:
+                    del element.attrib[attr]
+                continue
+            if normalized_attr not in _RESOURCE_ATTRS:
+                continue
+            rewritten = _rewrite_resource_url(
+                value,
+                normalized_attr,
+                chapter_dir,
+                zf,
+                media_id,
+                manifest,
+                asset_entries,
+                asset_key_map,
+                readable_paths,
             )
-        )
+            if rewritten is None:
+                del element.attrib[attr]
+            else:
+                element.attrib[attr] = rewritten
 
-        rewritten = f"/media/{media_id}/assets/{key}"
-        if frag:
-            rewritten += f"#{frag}"
-        return f"{attr_name}={quote_char}{rewritten}{quote_char}"
+    return _document_body_inner_html(doc)
 
-    html = re.sub(
-        r"""((?:xlink:)?href|src)\s*=\s*(["'])(.*?)\2""",
-        _rewrite_attr,
-        html,
-        flags=re.IGNORECASE,
+
+def _rewrite_resource_url(
+    raw_url: str,
+    attr_name: str,
+    base_dir: str,
+    zf: zipfile.ZipFile,
+    media_id: UUID,
+    manifest: dict[str, _ManifestItem],
+    asset_entries: list[_AssetEntry],
+    asset_key_map: dict[str, str],
+    readable_paths: set[str],
+) -> str | None:
+    if not raw_url or raw_url.startswith("#"):
+        return raw_url
+
+    parsed = urlparse(raw_url)
+    if parsed.scheme or raw_url.startswith("//"):
+        return raw_url if attr_name == "href" and parsed.scheme in {"http", "https"} else None
+
+    resolved = _resolve_epub_path(base_dir, parsed.path or "")
+    if resolved is None:
+        return None
+
+    if attr_name == "href" and resolved in readable_paths:
+        return f"{resolved}#{parsed.fragment}" if parsed.fragment else resolved
+
+    key = _ensure_asset_entry(
+        resolved,
+        zf,
+        manifest,
+        asset_entries,
+        asset_key_map,
     )
-    return html
+    if key is None:
+        return None
+    rewritten = f"/api/media/{media_id}/assets/{key}"
+    return f"{rewritten}#{parsed.fragment}" if parsed.fragment else rewritten
+
+
+def _rewrite_srcset(
+    value: str,
+    base_dir: str,
+    zf: zipfile.ZipFile,
+    media_id: UUID,
+    manifest: dict[str, _ManifestItem],
+    asset_entries: list[_AssetEntry],
+    asset_key_map: dict[str, str],
+) -> str:
+    parts: list[str] = []
+    for candidate in value.split(","):
+        tokens = candidate.strip().split()
+        if not tokens:
+            continue
+        rewritten = _rewrite_resource_url(
+            tokens[0],
+            "src",
+            base_dir,
+            zf,
+            media_id,
+            manifest,
+            asset_entries,
+            asset_key_map,
+            set(),
+        )
+        if rewritten:
+            parts.append(" ".join([rewritten, *tokens[1:]]))
+    return ", ".join(parts)
+
+
+def _document_body_inner_html(doc: HtmlElement) -> str:
+    body = doc.body
+    if body is None:
+        body = doc
+    chunks: list[str] = []
+    if body.text:
+        chunks.append(body.text)
+    for child in body:
+        rendered_child = tostring(child, encoding="unicode", method="html")
+        chunks.append(
+            rendered_child.decode("utf-8") if isinstance(rendered_child, bytes) else rendered_child
+        )
+    return "".join(chunks)
+
+
+def _parse_epub_html_document(html: str) -> HtmlElement:
+    html = re.sub(r"^\ufeff?\s*<\?xml[^>]*\?>", "", html, count=1, flags=re.IGNORECASE)
+    return document_fromstring(html)
+
+
+def _collect_manifest_assets(
+    zf: zipfile.ZipFile,
+    manifest: dict[str, _ManifestItem],
+) -> tuple[list[_AssetEntry], dict[str, str]]:
+    asset_entries: list[_AssetEntry] = []
+    asset_key_map: dict[str, str] = {}
+    for item in manifest.values():
+        if _is_static_asset_manifest_item(item):
+            key = _ensure_asset_entry(item.href, zf, manifest, asset_entries, asset_key_map)
+            if key is None:
+                raise ValueError(f"Manifest asset missing from EPUB archive: {item.href}")
+    return asset_entries, asset_key_map
+
+
+def _is_static_asset_manifest_item(item: _ManifestItem) -> bool:
+    if item.media_type == "text/css":
+        return True
+    font_like_media_type = item.media_type in {
+        "application/font-woff",
+        "application/font-woff2",
+        "application/vnd.ms-opentype",
+        "application/x-font-ttf",
+        "application/octet-stream",
+    }
+    font_like_extension = posixpath.splitext(item.href)[1].lower() in {
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".otf",
+    }
+    if font_like_media_type and font_like_extension:
+        return True
+    if item.media_type.startswith(_STATIC_ASSET_MEDIA_PREFIXES):
+        return True
+    props = set((item.properties or "").split())
+    return "cover-image" in props
+
+
+def _ensure_asset_entry(
+    epub_path: str,
+    zf: zipfile.ZipFile,
+    manifest: dict[str, _ManifestItem],
+    asset_entries: list[_AssetEntry],
+    asset_key_map: dict[str, str],
+) -> str | None:
+    if epub_path in asset_key_map:
+        return asset_key_map[epub_path]
+    try:
+        content = zf.read(epub_path)
+    except (KeyError, Exception):
+        return None
+
+    key = _derive_asset_key(epub_path, asset_key_map)
+    asset_key_map[epub_path] = key
+    manifest_item = _manifest_item_for_href(epub_path, manifest)
+    asset_entries.append(
+        _AssetEntry(
+            epub_path=epub_path,
+            manifest_id=manifest_item.manifest_id if manifest_item else None,
+            asset_key=key,
+            content=content,
+            content_type=(
+                manifest_item.media_type if manifest_item else _guess_content_type(epub_path)
+            ),
+            fallback_id=manifest_item.fallback_id if manifest_item else None,
+            properties=manifest_item.properties if manifest_item else None,
+        )
+    )
+    return key
 
 
 def _derive_asset_key(epub_path: str, existing: dict[str, str]) -> str:
@@ -1007,13 +1291,17 @@ def _derive_asset_key(epub_path: str, existing: dict[str, str]) -> str:
     return f"{base}_{h}{ext}"
 
 
-def _guess_content_type(
+def _manifest_item_for_href(
     path: str,
-    manifest: dict[str, tuple[str, str]],
-) -> str:
-    for _id, (href, mtype) in manifest.items():
-        if href == path:
-            return mtype
+    manifest: dict[str, _ManifestItem],
+) -> _ManifestItem | None:
+    for item in manifest.values():
+        if item.href == path:
+            return item
+    return None
+
+
+def _guess_content_type(path: str) -> str:
     ext = posixpath.splitext(path)[1].lower()
     ct_map = {
         ".png": "image/png",
@@ -1027,6 +1315,10 @@ def _guess_content_type(
         ".woff2": "font/woff2",
         ".ttf": "font/ttf",
         ".otf": "font/otf",
+        ".mp3": "audio/mpeg",
+        ".m4a": "audio/mp4",
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
     }
     return ct_map.get(ext, "application/octet-stream")
 
@@ -1042,12 +1334,16 @@ def _epub_sanitize(html: str) -> str:
         return ""
 
     try:
-        doc = document_fromstring(html)
+        doc = _parse_epub_html_document(html)
     except Exception as exc:
         raise ValueError(f"Failed to parse EPUB HTML: {exc}") from exc
 
     body = doc.body
     if body is None:
+        if isinstance(doc, HtmlElement):
+            _sanitize_epub_element(doc)
+            result = tostring(doc, encoding="unicode", method="html")
+            return result.decode("utf-8") if isinstance(result, bytes) else result
         return ""
 
     for child in list(body):
@@ -1202,7 +1498,7 @@ def _is_safe_svg_image_href(value: str) -> bool:
     if scheme in _FORBIDDEN_URL_SCHEMES:
         return False
     if not scheme:
-        return value.startswith("/media/")
+        return value.startswith("/api/media/")
     return scheme in {"http", "https"}
 
 
@@ -1272,23 +1568,20 @@ def _unwrap_element(element: HtmlElement) -> None:
 def _materialize_toc(
     zf: zipfile.ZipFile,
     opf: ET.Element,
-    opf_dir: str,
-    manifest: dict[str, tuple[str, str]],
+    manifest: dict[str, _ManifestItem],
     href_to_frag_idx: dict[str, int],
-    media_id: UUID,
 ) -> list[_TocNodeSpec]:
-    """Try EPUB3 nav first, fall back to NCX."""
-    nodes = _parse_epub3_nav(zf, opf, opf_dir, manifest, href_to_frag_idx)
-    if nodes:
+    """Parse EPUB navigation sources into one persisted node list."""
+    nodes = _parse_epub3_nav(zf, opf, manifest, href_to_frag_idx)
+    if any(node.nav_type == "toc" for node in nodes):
         return nodes
-    return _parse_ncx_toc(zf, opf, opf_dir, manifest, href_to_frag_idx)
+    return nodes + _parse_ncx_toc(zf, opf, manifest, href_to_frag_idx)
 
 
 def _parse_epub3_nav(
     zf: zipfile.ZipFile,
     opf: ET.Element,
-    opf_dir: str,
-    manifest: dict[str, tuple[str, str]],
+    manifest: dict[str, _ManifestItem],
     href_to_frag_idx: dict[str, int],
 ) -> list[_TocNodeSpec]:
     nav_id = None
@@ -1300,37 +1593,46 @@ def _parse_epub3_nav(
     if nav_id is None or nav_id not in manifest:
         return []
 
-    nav_href, _ = manifest[nav_id]
+    nav_href = manifest[nav_id].href
     nav_tree = _parse_xml_entry(zf, nav_href)
     if nav_tree is None:
         return []
 
     nav_dir = posixpath.dirname(nav_href)
-
-    # find <nav epub:type="toc">
-    toc_nav = None
-    for nav_el in nav_tree.iter():
-        tag = nav_el.tag
-        if isinstance(tag, str) and tag.endswith("}nav"):
-            if "toc" in nav_el.get("{http://www.idpf.org/2007/ops}type", ""):
-                toc_nav = nav_el
-                break
-    if toc_nav is None:
-        for nav_el in nav_tree.iter():
-            tag = nav_el.tag
-            if isinstance(tag, str) and (tag == "nav" or tag.endswith("}nav")):
-                toc_nav = nav_el
-                break
-    if toc_nav is None:
-        return []
-
     nodes: list[_TocNodeSpec] = []
-    _walk_nav_ol(toc_nav, nav_dir, href_to_frag_idx, nodes, parent_id=None, depth=0, prefix="")
+    for nav_el in nav_tree.iter():
+        tag = nav_el.tag if isinstance(nav_el.tag, str) else ""
+        if not (tag == "nav" or tag.endswith("}nav")):
+            continue
+        raw_type = nav_el.get("{http://www.idpf.org/2007/ops}type", "") or nav_el.get("type", "")
+        type_tokens = raw_type.split()
+        nav_type = None
+        if "toc" in type_tokens:
+            nav_type = "toc"
+        elif "landmarks" in type_tokens:
+            nav_type = "landmarks"
+        elif "page-list" in type_tokens or "pagebreak" in type_tokens:
+            nav_type = "page_list"
+        elif not nodes:
+            nav_type = "toc"
+        if nav_type is None:
+            continue
+        _walk_nav_ol(
+            nav_el,
+            nav_type,
+            nav_dir,
+            href_to_frag_idx,
+            nodes,
+            parent_id=None,
+            depth=0,
+            prefix="",
+        )
     return nodes
 
 
 def _walk_nav_ol(
     parent_el: ET.Element,
+    nav_type: str,
     nav_dir: str,
     href_to_frag_idx: dict[str, int],
     nodes: list[_TocNodeSpec],
@@ -1381,13 +1683,14 @@ def _walk_nav_ol(
         # generate node_id
         raw_id = _generate_node_id_token(nav_id_attr, href, label)
         raw_id = _ensure_sibling_unique(raw_id, sibling_ids)
-        node_id = f"{parent_id}/{raw_id}" if parent_id else raw_id
+        node_id = f"{parent_id}/{raw_id}" if parent_id else f"{nav_type}/{raw_id}"
         node_id = _enforce_id_length(node_id)
 
         order_key = f"{prefix}{ordinal:04d}" if not prefix else f"{prefix}.{ordinal:04d}"
 
         nodes.append(
             _TocNodeSpec(
+                nav_type=nav_type,
                 node_id=node_id,
                 parent_node_id=parent_id,
                 label=label[:512],
@@ -1401,6 +1704,7 @@ def _walk_nav_ol(
         # recurse into nested ol
         _walk_nav_ol(
             li,
+            nav_type,
             nav_dir,
             href_to_frag_idx,
             nodes,
@@ -1414,8 +1718,7 @@ def _walk_nav_ol(
 def _parse_ncx_toc(
     zf: zipfile.ZipFile,
     opf: ET.Element,
-    opf_dir: str,
-    manifest: dict[str, tuple[str, str]],
+    manifest: dict[str, _ManifestItem],
     href_to_frag_idx: dict[str, int],
 ) -> list[_TocNodeSpec]:
     ncx_id = None
@@ -1423,14 +1726,14 @@ def _parse_ncx_toc(
     if spine is not None:
         ncx_id = spine.get("toc")
     if ncx_id is None:
-        for _id, (_href, mtype) in manifest.items():
-            if mtype == "application/x-dtbncx+xml":
-                ncx_id = _id
+        for item in manifest.values():
+            if item.media_type in _NCX_MEDIA_TYPES:
+                ncx_id = item.manifest_id
                 break
     if ncx_id is None or ncx_id not in manifest:
         return []
 
-    ncx_href, _ = manifest[ncx_id]
+    ncx_href = manifest[ncx_id].href
     ncx_tree = _parse_xml_entry(zf, ncx_href)
     if ncx_tree is None:
         return []
@@ -1444,7 +1747,14 @@ def _parse_ncx_toc(
 
     nodes: list[_TocNodeSpec] = []
     _walk_ncx_navpoints(
-        nav_map, ncx_dir, href_to_frag_idx, nodes, parent_id=None, depth=0, prefix=""
+        nav_map,
+        ncx_dir,
+        href_to_frag_idx,
+        nodes,
+        nav_type="toc",
+        parent_id=None,
+        depth=0,
+        prefix="",
     )
     return nodes
 
@@ -1454,6 +1764,7 @@ def _walk_ncx_navpoints(
     ncx_dir: str,
     href_to_frag_idx: dict[str, int],
     nodes: list[_TocNodeSpec],
+    nav_type: str,
     parent_id: str | None,
     depth: int,
     prefix: str,
@@ -1483,13 +1794,14 @@ def _walk_ncx_navpoints(
 
         raw_id = _generate_node_id_token(nav_id_attr, href, label)
         raw_id = _ensure_sibling_unique(raw_id, sibling_ids)
-        node_id = f"{parent_id}/{raw_id}" if parent_id else raw_id
+        node_id = f"{parent_id}/{raw_id}" if parent_id else f"{nav_type}/{raw_id}"
         node_id = _enforce_id_length(node_id)
 
         order_key = f"{prefix}{ordinal:04d}" if not prefix else f"{prefix}.{ordinal:04d}"
 
         nodes.append(
             _TocNodeSpec(
+                nav_type=nav_type,
                 node_id=node_id,
                 parent_node_id=parent_id,
                 label=label[:512],
@@ -1505,6 +1817,7 @@ def _walk_ncx_navpoints(
             ncx_dir,
             href_to_frag_idx,
             nodes,
+            nav_type=nav_type,
             parent_id=node_id,
             depth=depth + 1,
             prefix=order_key,
@@ -1526,7 +1839,7 @@ def _resolve_nav_target(
 
     path_part = unquote(parsed.path or "")
     anchor = parsed.fragment or None
-    resolved_path = posixpath.normpath(posixpath.join(base_dir, path_part)) if path_part else None
+    resolved_path = _resolve_epub_path(base_dir, path_part) if path_part else None
     canonical_href = resolved_path
     if canonical_href and anchor:
         canonical_href = f"{canonical_href}#{anchor}"
@@ -1551,7 +1864,7 @@ def _materialize_nav_locations(
     ordinal = 0
 
     for tn in toc_nodes:
-        if tn.fragment_idx is None:
+        if tn.nav_type != "toc" or tn.fragment_idx is None:
             continue
         toc_by_fragment.setdefault(tn.fragment_idx, []).append(tn)
 

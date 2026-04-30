@@ -480,9 +480,10 @@ def _render_transcript_chunk_context(
                 tc.t_end_ms,
                 m.title,
                 m.canonical_source_url
-            FROM podcast_transcript_chunks tc
+            FROM content_chunks tc
             JOIN media m ON m.id = tc.media_id
             WHERE tc.id = :chunk_id
+              AND tc.source_kind = 'transcript'
             """
         ),
         {"chunk_id": chunk_id},

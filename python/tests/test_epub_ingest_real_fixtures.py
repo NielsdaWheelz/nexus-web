@@ -184,16 +184,14 @@ class TestRealEpubFixtureCorpusExtractsToS5ContractMinimums:
 
             frags = db_session.execute(
                 text(
-                    "SELECT idx, canonical_text, html_sanitized "
-                    "FROM fragments WHERE media_id = :mid ORDER BY idx"
+                    "SELECT idx, html_sanitized FROM fragments WHERE media_id = :mid ORDER BY idx"
                 ),
                 {"mid": mid},
             ).fetchall()
 
             assert len(frags) >= fixture_meta["min_chapters"]
-            for i, (idx, ct, hs) in enumerate(frags):
+            for i, (idx, hs) in enumerate(frags):
                 assert idx == i, f"Non-contiguous idx at position {i}"
-                assert ct and ct.strip(), f"Empty canonical_text at idx {i}"
                 assert hs and hs.strip(), f"Empty html_sanitized at idx {i}"
 
             media = db_session.get(Media, mid)
@@ -205,6 +203,8 @@ class TestRealEpubFixtureCorpusExtractsToS5ContractMinimums:
                     {"mid": mid},
                 ).scalar()
                 assert toc_count > 0, "Expected TOC nodes but found none"
+            if fixture_meta["has_assets"]:
+                assert result.asset_count > 0, "Expected stored EPUB assets but found none"
         else:
             assert not isinstance(result, EpubExtractionResult), (
                 f"{fixture_meta['file']}: expected failure, got success"

@@ -519,11 +519,11 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
         html = frag[0]
 
         # internal image rewritten to safe fetch path
-        assert f"/media/{mid}/assets/" in html or f"%2Fmedia%2F{mid}%2Fassets%2F" in html
+        assert f"/api/media/{mid}/assets/" in html
         # chapter xhtml links remain logical chapter links, not asset fetches
-        assert f"/media/{mid}/assets/OEBPS/chapter2.xhtml" not in html
-        # external image rewritten to image proxy
-        assert "/media/image?url=" in html
+        assert f"/api/media/{mid}/assets/OEBPS/chapter2.xhtml" not in html
+        # external images are not fetched by the reader pipeline
+        assert "https://example.com/photo.jpg" not in html
         # broken ref degraded (src removed or empty)
         assert "images/missing.png" not in html
         # active content stripped: script tags
@@ -536,16 +536,15 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
         assert "javascript:" not in html.lower()
 
 
-class TestEpubExtractTocMappingRemainsAlignedWhenNonTextSpineItemSkipped:
-    """TOC href->fragment mapping stays stable when a spine item is skipped."""
+class TestEpubExtractTocMappingIncludesImageOnlySpineItems:
+    """TOC href->fragment mapping includes textless renderable spine items."""
 
-    def test_toc_mapping_not_shifted_by_skipped_non_text_spine_item(self, db_session: Session):
+    def test_toc_mapping_preserves_image_only_spine_item(self, db_session: Session):
         storage = FakeStorageClient()
         cover_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20
 
-        # chapter0.xhtml is readable XHTML but canonicalizes to empty text
-        # (image-only). It should be skipped for fragment creation without
-        # shifting subsequent TOC href->fragment mappings.
+        # chapter0.xhtml is readable XHTML but canonicalizes to empty text.
+        # It still becomes a fragment so image-only sections remain reachable.
         epub = _make_epub(
             {
                 "OEBPS/content.opf": _build_opf(
@@ -574,7 +573,7 @@ class TestEpubExtractTocMappingRemainsAlignedWhenNonTextSpineItemSkipped:
         db_session.flush()
 
         assert isinstance(result, EpubExtractionResult)
-        assert result.chapter_count == 2
+        assert result.chapter_count == 3
 
         toc_rows = db_session.execute(
             text(
@@ -586,15 +585,9 @@ class TestEpubExtractTocMappingRemainsAlignedWhenNonTextSpineItemSkipped:
 
         assert len(toc_rows) == 2
         assert toc_rows[0][0] == "Chapter One"
-        assert toc_rows[0][1] == 0, (
-            "Expected chapter1.xhtml to map to fragment idx 0 after skipping "
-            "chapter0.xhtml image-only spine item"
-        )
+        assert toc_rows[0][1] == 1
         assert toc_rows[1][0] == "Chapter Two"
-        assert toc_rows[1][1] == 1, (
-            "Expected chapter2.xhtml to map to fragment idx 1; mapping should "
-            "not drift or become null when an earlier spine item is skipped"
-        )
+        assert toc_rows[1][1] == 2
 
 
 class TestEpubExtractPreservesAnchorTargetsForInFragmentNavigation:

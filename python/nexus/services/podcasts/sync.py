@@ -1035,8 +1035,9 @@ def _sync_subscription_ingest(
             db.execute(
                 text(
                     """
-                    DELETE FROM podcast_transcript_chunks
+                    DELETE FROM content_chunks
                     WHERE transcript_version_id = :transcript_version_id
+                      AND source_kind = 'transcript'
                     """
                 ),
                 {"transcript_version_id": transcript_version_id},

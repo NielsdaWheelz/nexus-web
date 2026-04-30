@@ -470,6 +470,10 @@ class Media(Base):
         back_populates="media",
         cascade="all, delete-orphan",
     )
+    content_chunks: Mapped[list["ContentChunk"]] = relationship(
+        "ContentChunk",
+        back_populates="media",
+    )
     transcript_request_audits: Mapped[list["PodcastTranscriptRequestAudit"]] = relationship(
         "PodcastTranscriptRequestAudit",
         back_populates="media",
@@ -1247,10 +1251,9 @@ class PodcastTranscriptVersion(Base):
         back_populates="transcript_version",
         cascade="all, delete-orphan",
     )
-    chunks: Mapped[list["PodcastTranscriptChunk"]] = relationship(
-        "PodcastTranscriptChunk",
+    content_chunks: Mapped[list["ContentChunk"]] = relationship(
+        "ContentChunk",
         back_populates="transcript_version",
-        cascade="all, delete-orphan",
     )
     fragments: Mapped[list["Fragment"]] = relationship(
         "Fragment",
@@ -1317,32 +1320,42 @@ class PodcastTranscriptSegment(Base):
     media: Mapped["Media"] = relationship("Media")
 
 
-class PodcastTranscriptChunk(Base):
-    """Chunk + embedding artifact persisted per transcript version."""
+class ContentChunk(Base):
+    """Single semantic retrieval chunk table for text-bearing media."""
 
-    __tablename__ = "podcast_transcript_chunks"
+    __tablename__ = "content_chunks"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    transcript_version_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcast_transcript_versions.id", ondelete="CASCADE"),
-        nullable=False,
-    )
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
+        ForeignKey("media.id"),
         nullable=False,
     )
+    fragment_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("fragments.id"),
+        nullable=True,
+    )
+    transcript_version_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcast_transcript_versions.id"),
+        nullable=True,
+    )
     chunk_idx: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
     chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
-    t_start_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    t_end_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    t_start_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    t_end_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    heading: Mapped[str | None] = mapped_column(Text, nullable=True)
+    locator: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     embedding: Mapped[list[float]] = mapped_column(JSONB, nullable=False)
-    embedding_model: Mapped[str] = mapped_column(Text, nullable=False, server_default="hash_v1")
+    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1350,31 +1363,72 @@ class PodcastTranscriptChunk(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "transcript_version_id",
-            "chunk_idx",
-            name="uq_podcast_transcript_chunks_version_idx",
+        CheckConstraint("chunk_idx >= 0", name="ck_content_chunks_chunk_idx_non_negative"),
+        CheckConstraint(
+            "source_kind IN ('fragment', 'transcript')",
+            name="ck_content_chunks_source_kind",
         ),
         CheckConstraint(
-            "chunk_idx >= 0",
-            name="ck_podcast_transcript_chunks_chunk_idx_non_negative",
+            """
+            (
+                source_kind = 'fragment'
+                AND fragment_id IS NOT NULL
+                AND transcript_version_id IS NULL
+                AND start_offset IS NOT NULL
+                AND end_offset IS NOT NULL
+                AND start_offset >= 0
+                AND end_offset > start_offset
+                AND t_start_ms IS NULL
+                AND t_end_ms IS NULL
+            )
+            OR (
+                source_kind = 'transcript'
+                AND fragment_id IS NULL
+                AND transcript_version_id IS NOT NULL
+                AND start_offset IS NULL
+                AND end_offset IS NULL
+                AND t_start_ms IS NOT NULL
+                AND t_end_ms IS NOT NULL
+                AND t_start_ms >= 0
+                AND t_end_ms > t_start_ms
+            )
+            """,
+            name="ck_content_chunks_locator_shape",
         ),
         CheckConstraint(
-            "t_start_ms >= 0 AND t_end_ms > t_start_ms",
-            name="ck_podcast_transcript_chunks_time_offsets_valid",
+            "jsonb_typeof(embedding) = 'array'",
+            name="ck_content_chunks_embedding_array",
+        ),
+        CheckConstraint(
+            "locator IS NULL OR jsonb_typeof(locator) = 'object'",
+            name="ck_content_chunks_locator_object",
         ),
         Index(
-            "ix_podcast_transcript_chunks_media_start",
+            "uq_content_chunks_fragment_media_idx",
             "media_id",
-            "t_start_ms",
             "chunk_idx",
+            unique=True,
+            postgresql_where=text("source_kind = 'fragment'"),
         ),
+        Index(
+            "uq_content_chunks_transcript_version_idx",
+            "transcript_version_id",
+            "chunk_idx",
+            unique=True,
+            postgresql_where=text("source_kind = 'transcript'"),
+        ),
+        Index("ix_content_chunks_media_source", "media_id", "source_kind", "chunk_idx"),
+        Index("ix_content_chunks_transcript_version", "transcript_version_id"),
+        Index("ix_content_chunks_fragment", "fragment_id"),
+        Index("ix_content_chunks_embedding_model", "embedding_model"),
     )
 
-    transcript_version: Mapped["PodcastTranscriptVersion"] = relationship(
-        "PodcastTranscriptVersion", back_populates="chunks"
+    media: Mapped["Media"] = relationship("Media", back_populates="content_chunks")
+    fragment: Mapped["Fragment | None"] = relationship("Fragment")
+    transcript_version: Mapped["PodcastTranscriptVersion | None"] = relationship(
+        "PodcastTranscriptVersion",
+        back_populates="content_chunks",
     )
-    media: Mapped["Media"] = relationship("Media")
 
 
 class MediaTranscriptState(Base):
@@ -3647,11 +3701,7 @@ class DefaultLibraryBackfillJob(Base):
 
 
 class EpubTocNode(Base):
-    """Persisted TOC snapshot for EPUB media.
-
-    Immutable after media reaches ready_for_reading (except full rebuild on retry).
-    Node ordering is deterministic via order_key (dddd(.dddd)* format).
-    """
+    """Persisted EPUB navigation node."""
 
     __tablename__ = "epub_toc_nodes"
 
@@ -3662,6 +3712,7 @@ class EpubTocNode(Base):
         primary_key=True,
     )
     node_id: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
+    nav_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="toc")
     parent_node_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     label: Mapped[str] = mapped_column(Text, nullable=False)
     href: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -3678,6 +3729,10 @@ class EpubTocNode(Base):
         CheckConstraint(
             "char_length(node_id) BETWEEN 1 AND 255",
             name="ck_epub_toc_nodes_node_id_nonempty",
+        ),
+        CheckConstraint(
+            "nav_type IN ('toc', 'landmarks', 'page_list')",
+            name="ck_epub_toc_nodes_nav_type",
         ),
         CheckConstraint(
             "parent_node_id IS NULL OR parent_node_id <> node_id",
@@ -3698,6 +3753,12 @@ class EpubTocNode(Base):
         CheckConstraint(
             r"order_key ~ '^[0-9]{4}([.][0-9]{4})*$'",
             name="ck_epub_toc_nodes_order_key_format",
+        ),
+        UniqueConstraint(
+            "media_id",
+            "nav_type",
+            "order_key",
+            name="uix_epub_toc_nodes_media_nav_order",
         ),
     )
 
@@ -3756,6 +3817,110 @@ class EpubNavLocation(Base):
         ),
         UniqueConstraint("media_id", "ordinal", name="uix_epub_nav_locations_media_ordinal"),
         UniqueConstraint("media_id", "source_node_id", name="uix_epub_nav_locations_media_source"),
+    )
+
+    media: Mapped["Media"] = relationship("Media")
+
+
+class EpubFragmentSource(Base):
+    """EPUB package source metadata for one persisted fragment."""
+
+    __tablename__ = "epub_fragment_sources"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id"),
+        nullable=False,
+    )
+    fragment_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("fragments.id"),
+        nullable=False,
+    )
+    package_href: Mapped[str] = mapped_column(Text, nullable=False)
+    manifest_item_id: Mapped[str] = mapped_column(Text, nullable=False)
+    spine_itemref_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_type: Mapped[str] = mapped_column(Text, nullable=False)
+    linear: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    reading_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("media_id", "fragment_id", name="uq_epub_fragment_sources_fragment"),
+        UniqueConstraint("media_id", "package_href", name="uq_epub_fragment_sources_href"),
+        CheckConstraint(
+            "char_length(package_href) BETWEEN 1 AND 2048",
+            name="ck_epub_fragment_sources_href_length",
+        ),
+        CheckConstraint(
+            "char_length(manifest_item_id) BETWEEN 1 AND 255",
+            name="ck_epub_fragment_sources_manifest_id_length",
+        ),
+        CheckConstraint(
+            "spine_itemref_id IS NULL OR char_length(spine_itemref_id) BETWEEN 1 AND 255",
+            name="ck_epub_fragment_sources_itemref_id_length",
+        ),
+        CheckConstraint("reading_order >= 0", name="ck_epub_fragment_sources_reading_order"),
+        Index("ix_epub_fragment_sources_media_order", "media_id", "reading_order"),
+    )
+
+    media: Mapped["Media"] = relationship("Media")
+    fragment: Mapped["Fragment"] = relationship("Fragment")
+
+
+class EpubResource(Base):
+    """Stored EPUB package resource owned by one media row."""
+
+    __tablename__ = "epub_resources"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id"),
+        nullable=False,
+    )
+    manifest_item_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    package_href: Mapped[str] = mapped_column(Text, nullable=False)
+    asset_key: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    fallback_item_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    properties: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("media_id", "package_href", name="uq_epub_resources_href"),
+        UniqueConstraint("media_id", "asset_key", name="uq_epub_resources_asset_key"),
+        CheckConstraint(
+            "char_length(package_href) BETWEEN 1 AND 2048",
+            name="ck_epub_resources_href_length",
+        ),
+        CheckConstraint(
+            "char_length(asset_key) BETWEEN 1 AND 2048",
+            name="ck_epub_resources_asset_key_length",
+        ),
+        CheckConstraint("size_bytes >= 0", name="ck_epub_resources_size_non_negative"),
+        CheckConstraint("char_length(sha256) = 64", name="ck_epub_resources_sha256_length"),
+        Index("ix_epub_resources_media", "media_id"),
     )
 
     media: Mapped["Media"] = relationship("Media")

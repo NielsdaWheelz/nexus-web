@@ -75,7 +75,6 @@ import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import type { ConversationScope, ConversationSummary } from "@/lib/conversations/types";
 import {
   normalizeEpubNavigationToc,
-  resolveInitialEpubSectionId,
   isReadableStatus,
   type EpubNavigationResponse,
   type EpubNavigationSection,
@@ -1439,38 +1438,14 @@ export default function MediaPaneBody() {
   // ==========================================================================
 
   const handleEpubSectionFetchError = useCallback(
-    async (err: unknown, requestVersion: number) => {
+    (err: unknown) => {
       if (!isApiError(err)) {
         setEpubError("Failed to load EPUB section.");
         return;
       }
 
-      if (err.code === "E_SECTION_NOT_FOUND") {
-        try {
-          const sections = await loadEpubNavigation();
-          if (requestVersion !== epubSectionVersionRef.current) return;
-          const resolvedSectionId = resolveInitialEpubSectionId(sections, activeSectionId);
-          if (resolvedSectionId !== null) {
-            const section = sections.find((item) => item.section_id === resolvedSectionId);
-            if (!section) {
-              setEpubError("No sections available for this EPUB.");
-              return;
-            }
-            router.replace(
-              buildEpubLocationHref(id, resolvedSectionId, {
-                fragmentId: requestedFragmentId,
-                highlightId: requestedHighlightId,
-              })
-            );
-            beginRestoreSession("opening_target");
-            setActiveSectionId(resolvedSectionId);
-            setEpubRestoreRequest(buildHistoryEpubRestoreRequest(section.section_id));
-          } else {
-            setEpubError("No sections available for this EPUB.");
-          }
-        } catch {
-          setEpubError("Failed to recover EPUB navigation.");
-        }
+      if (err.code === "E_CHAPTER_NOT_FOUND") {
+        setEpubError("EPUB section not found.");
         return;
       }
 
@@ -1486,15 +1461,7 @@ export default function MediaPaneBody() {
 
       setEpubError(err.message);
     },
-    [
-      activeSectionId,
-      beginRestoreSession,
-      id,
-      loadEpubNavigation,
-      requestedFragmentId,
-      requestedHighlightId,
-      router,
-    ]
+    []
   );
 
   useEffect(() => {
@@ -1521,7 +1488,7 @@ export default function MediaPaneBody() {
         setEpubError(null);
       } catch (err) {
         if (controller.signal.aborted || version !== epubSectionVersionRef.current) return;
-        await handleEpubSectionFetchError(err, version);
+        handleEpubSectionFetchError(err);
       } finally {
         if (version === epubSectionVersionRef.current) {
           setEpubSectionLoading(false);

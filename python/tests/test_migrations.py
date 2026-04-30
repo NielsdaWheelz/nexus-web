@@ -2208,7 +2208,7 @@ class TestS5Migration0008:
                 )
             )
             index_names = {row[0] for row in idx_result.fetchall()}
-            assert "uix_epub_toc_nodes_media_order" in index_names
+            assert "uix_epub_toc_nodes_media_nav_order" in index_names
             assert "idx_epub_toc_nodes_media_fragment" in index_names
 
     def test_0008_epub_toc_nodes_constraints_enforced(self, s5_engine):
@@ -2373,8 +2373,8 @@ class TestS5Migration0008:
                 session.rollback()
                 assert "ck_epub_toc_nodes_order_key_format" in str(exc_info.value)
 
-    def test_0008_unique_media_order_key_enforced(self, s5_engine):
-        """uix_epub_toc_nodes_media_order rejects duplicate order_key within same media."""
+    def test_0008_unique_media_nav_order_key_enforced(self, s5_engine):
+        """uix_epub_toc_nodes_media_nav_order rejects duplicate order_key per nav type."""
         result = run_alembic_command("upgrade head")
         assert result.returncode == 0, f"upgrade failed: {result.stderr}"
 
@@ -2402,7 +2402,7 @@ class TestS5Migration0008:
                 )
                 session.commit()
             session.rollback()
-            assert "uix_epub_toc_nodes_media_order" in str(exc_info.value)
+            assert "uix_epub_toc_nodes_media_nav_order" in str(exc_info.value)
 
 
 class TestS3SchemaConstraints:
@@ -4143,15 +4143,23 @@ class TestMigration0026SemanticChunkBackfill:
                 {"media_id": media_id},
             ).scalar()
             chunk_count = session.execute(
-                text("SELECT COUNT(*) FROM podcast_transcript_chunks WHERE media_id = :media_id"),
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM content_chunks
+                    WHERE media_id = :media_id
+                      AND source_kind = 'transcript'
+                    """
+                ),
                 {"media_id": media_id},
             ).scalar()
             chunk_models = session.execute(
                 text(
                     """
                     SELECT DISTINCT embedding_model
-                    FROM podcast_transcript_chunks
+                    FROM content_chunks
                     WHERE media_id = :media_id
+                      AND source_kind = 'transcript'
                     ORDER BY embedding_model
                     """
                 ),

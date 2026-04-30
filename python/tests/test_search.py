@@ -1828,14 +1828,20 @@ class TestSemanticTranscriptChunkSearch:
             session.execute(
                 text(
                     f"""
-                    INSERT INTO podcast_transcript_chunks (
+                    INSERT INTO content_chunks (
                         id,
-                        transcript_version_id,
                         media_id,
+                        fragment_id,
+                        transcript_version_id,
                         chunk_idx,
+                        source_kind,
                         chunk_text,
+                        start_offset,
+                        end_offset,
                         t_start_ms,
                         t_end_ms,
+                        heading,
+                        locator,
                         embedding,
                         embedding_vector,
                         embedding_model
@@ -1843,24 +1849,36 @@ class TestSemanticTranscriptChunkSearch:
                     VALUES
                         (
                             :chunk_a_id,
-                            :version_id,
                             :media_id,
+                            NULL,
+                            :version_id,
                             0,
+                            'transcript',
                             'transformer attention residual stream explanation',
+                            NULL,
+                            NULL,
                             1000,
                             5000,
+                            NULL,
+                            jsonb_build_object('kind', 'transcript', 'chunk_idx', 0),
                             CAST(:embedding_a_json AS jsonb),
                             CAST(:embedding_a_vector AS vector({embedding_dims})),
                             :embedding_model
                         ),
                         (
                             :chunk_b_id,
-                            :version_id,
                             :media_id,
+                            NULL,
+                            :version_id,
                             1,
+                            'transcript',
                             'gardening tomatoes and compost aeration tips',
+                            NULL,
+                            NULL,
                             5100,
                             9000,
+                            NULL,
+                            jsonb_build_object('kind', 'transcript', 'chunk_idx', 1),
                             CAST(:embedding_b_json AS jsonb),
                             CAST(:embedding_b_vector AS vector({embedding_dims})),
                             :embedding_model
@@ -1881,9 +1899,10 @@ class TestSemanticTranscriptChunkSearch:
             )
             session.commit()
 
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("content_chunks", "media_id", media_id)
         return user_id, media_id
 
     def test_semantic_search_returns_timestamped_transcript_chunks(
@@ -1989,9 +2008,10 @@ class TestSemanticTranscriptChunkSearch:
             session.execute(
                 text(
                     """
-                    UPDATE podcast_transcript_chunks
+                    UPDATE content_chunks
                     SET created_at = now() - interval '7 days'
                     WHERE media_id = :media_id
+                      AND source_kind = 'transcript'
                       AND chunk_text ILIKE '%transformer attention residual stream explanation%'
                     """
                 ),
@@ -2002,25 +2022,37 @@ class TestSemanticTranscriptChunkSearch:
                 session.execute(
                     text(
                         f"""
-                        INSERT INTO podcast_transcript_chunks (
-                            transcript_version_id,
+                        INSERT INTO content_chunks (
                             media_id,
+                            fragment_id,
+                            transcript_version_id,
                             chunk_idx,
+                            source_kind,
                             chunk_text,
+                            start_offset,
+                            end_offset,
                             t_start_ms,
                             t_end_ms,
+                            heading,
+                            locator,
                             embedding,
                             embedding_vector,
                             embedding_model,
                             created_at
                         )
                         VALUES (
-                            :transcript_version_id,
                             :media_id,
+                            NULL,
+                            :transcript_version_id,
                             :chunk_idx,
+                            'transcript',
                             :chunk_text,
+                            NULL,
+                            NULL,
                             :t_start_ms,
                             :t_end_ms,
+                            NULL,
+                            jsonb_build_object('kind', 'transcript'),
                             CAST(:embedding AS jsonb),
                             CAST(:embedding_vector AS vector({embedding_dims})),
                             :embedding_model,
@@ -2092,32 +2124,50 @@ class TestSemanticTranscriptChunkSearch:
             relevant_embedding = _basis_embedding(0)
 
             session.execute(
-                text("DELETE FROM podcast_transcript_chunks WHERE media_id = :media_id"),
+                text(
+                    """
+                    DELETE FROM content_chunks
+                    WHERE media_id = :media_id
+                      AND source_kind = 'transcript'
+                    """
+                ),
                 {"media_id": media_id},
             )
             for offset in range(0, 30):
                 session.execute(
                     text(
                         f"""
-                        INSERT INTO podcast_transcript_chunks (
-                            transcript_version_id,
+                        INSERT INTO content_chunks (
                             media_id,
+                            fragment_id,
+                            transcript_version_id,
                             chunk_idx,
+                            source_kind,
                             chunk_text,
+                            start_offset,
+                            end_offset,
                             t_start_ms,
                             t_end_ms,
+                            heading,
+                            locator,
                             embedding,
                             embedding_vector,
                             embedding_model,
                             created_at
                         )
                         VALUES (
-                            :transcript_version_id,
                             :media_id,
+                            NULL,
+                            :transcript_version_id,
                             :chunk_idx,
+                            'transcript',
                             :chunk_text,
+                            NULL,
+                            NULL,
                             :t_start_ms,
                             :t_end_ms,
+                            NULL,
+                            jsonb_build_object('kind', 'transcript'),
                             CAST(:embedding AS jsonb),
                             CAST(:embedding_vector AS vector({embedding_dims})),
                             :embedding_model,
@@ -2140,25 +2190,37 @@ class TestSemanticTranscriptChunkSearch:
             session.execute(
                 text(
                     f"""
-                    INSERT INTO podcast_transcript_chunks (
-                        transcript_version_id,
+                    INSERT INTO content_chunks (
                         media_id,
+                        fragment_id,
+                        transcript_version_id,
                         chunk_idx,
+                        source_kind,
                         chunk_text,
+                        start_offset,
+                        end_offset,
                         t_start_ms,
                         t_end_ms,
+                        heading,
+                        locator,
                         embedding,
                         embedding_vector,
                         embedding_model,
                         created_at
                     )
                     VALUES (
-                        :transcript_version_id,
                         :media_id,
+                        NULL,
+                        :transcript_version_id,
                         999,
+                        'transcript',
                         'transformer attention residual stream explanation',
+                        NULL,
+                        NULL,
                         61000,
                         66000,
+                        NULL,
+                        jsonb_build_object('kind', 'transcript', 'chunk_idx', 999),
                         CAST(:embedding AS jsonb),
                         CAST(:embedding_vector AS vector({embedding_dims})),
                         :embedding_model,

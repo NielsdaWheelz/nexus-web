@@ -48,31 +48,25 @@ export interface EpubNavigationTocNode {
   children: EpubNavigationTocNode[];
 }
 
+export interface EpubNavigationLocation {
+  label: string;
+  href: string | null;
+  fragment_idx: number | null;
+  section_id: string | null;
+}
+
 export interface EpubNavigationResponse {
   data: {
     sections: EpubNavigationSection[];
     toc_nodes: EpubNavigationTocNode[];
+    landmarks: EpubNavigationLocation[];
+    page_list: EpubNavigationLocation[];
   };
 }
 
 export interface NormalizedNavigationTocNode extends EpubNavigationTocNode {
   navigable: boolean;
   children: NormalizedNavigationTocNode[];
-}
-
-export function resolveInitialEpubSectionId(
-  sections: EpubNavigationSection[],
-  requestedLocParam: string | null | undefined
-): string | null {
-  if (sections.length === 0) {
-    return null;
-  }
-
-  if (requestedLocParam && sections.some((section) => section.section_id === requestedLocParam)) {
-    return requestedLocParam;
-  }
-
-  return sections[0].section_id;
 }
 
 export function normalizeEpubNavigationToc(

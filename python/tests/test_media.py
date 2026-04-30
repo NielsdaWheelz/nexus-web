@@ -168,11 +168,12 @@ class TestGetMedia:
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
         library_id = me_resp.json()["data"]["default_library_id"]
 
-        auth_client.post(
+        attach_resp = auth_client.post(
             f"/libraries/{library_id}/media",
             json={"media_id": str(media_id)},
             headers=auth_headers(user_id),
         )
+        assert attach_resp.status_code == 201, attach_resp.text
 
         # Get media
         response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
@@ -1357,19 +1358,67 @@ class TestGetEpubAssetSuccessAndMasking:
                 processing_status=ProcessingStatus.ready_for_reading,
             )
             session.add(media)
+            session.flush()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO epub_resources (
+                        media_id,
+                        manifest_item_id,
+                        package_href,
+                        asset_key,
+                        storage_path,
+                        content_type,
+                        size_bytes,
+                        sha256
+                    )
+                    VALUES (
+                        :media_id,
+                        'fig1',
+                        'images/fig1.png',
+                        'images/fig1.png',
+                        :storage_path,
+                        'image/png',
+                        :size_bytes,
+                        :sha256
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "storage_path": f"media/{media_id}/assets/images/fig1.png",
+                    "size_bytes": len(asset_content),
+                    "sha256": "0" * 64,
+                },
+            )
             session.commit()
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("epub_resources", "media_id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
         library_id = me_resp.json()["data"]["default_library_id"]
 
-        auth_client.post(
+        attach_resp = auth_client.post(
             f"/libraries/{library_id}/media",
             json={"media_id": str(media_id)},
             headers=auth_headers(user_id),
         )
+        assert attach_resp.status_code == 201, attach_resp.text
+        with direct_db.session() as session:
+            resource_row = session.execute(
+                text(
+                    """
+                    SELECT storage_path
+                    FROM epub_resources
+                    WHERE media_id = :media_id
+                      AND asset_key = 'images/fig1.png'
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            assert resource_row == (f"media/{media_id}/assets/images/fig1.png",)
 
         # Put asset into fake storage
         from nexus.storage.client import FakeStorageClient
@@ -1389,7 +1438,7 @@ class TestGetEpubAssetSuccessAndMasking:
                 headers=auth_headers(user_id),
             )
 
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
         assert resp.content == asset_content
         assert "image/png" in resp.headers.get("content-type", "")
 

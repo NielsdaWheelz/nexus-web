@@ -70,13 +70,15 @@ def _semantic_index_requires_repair(
             SELECT
                 EXISTS (
                     SELECT 1
-                    FROM podcast_transcript_chunks tc
+                    FROM content_chunks tc
                     WHERE tc.transcript_version_id = :transcript_version_id
+                      AND tc.source_kind = 'transcript'
                 ) AS has_chunks,
                 EXISTS (
                     SELECT 1
-                    FROM podcast_transcript_chunks tc
+                    FROM content_chunks tc
                     WHERE tc.transcript_version_id = :transcript_version_id
+                      AND tc.source_kind = 'transcript'
                       AND (
                           tc.embedding_vector IS NULL
                           OR tc.embedding_model IS NULL
@@ -1392,8 +1394,9 @@ def run_podcast_transcription_now(
             db.execute(
                 text(
                     """
-                    DELETE FROM podcast_transcript_chunks
+                    DELETE FROM content_chunks
                     WHERE transcript_version_id = :transcript_version_id
+                      AND source_kind = 'transcript'
                     """
                 ),
                 {"transcript_version_id": transcript_version_id},
@@ -1513,13 +1516,15 @@ def repair_podcast_transcript_semantic_index_now(
                       AND (
                           NOT EXISTS (
                               SELECT 1
-                              FROM podcast_transcript_chunks tc
+                              FROM content_chunks tc
                               WHERE tc.transcript_version_id = mts.active_transcript_version_id
+                                AND tc.source_kind = 'transcript'
                           )
                           OR EXISTS (
                               SELECT 1
-                              FROM podcast_transcript_chunks tc
+                              FROM content_chunks tc
                               WHERE tc.transcript_version_id = mts.active_transcript_version_id
+                                AND tc.source_kind = 'transcript'
                                 AND (
                                     tc.embedding_vector IS NULL
                                     OR tc.embedding_model IS NULL
@@ -1595,8 +1600,9 @@ def repair_podcast_transcript_semantic_index_now(
         db.execute(
             text(
                 """
-                DELETE FROM podcast_transcript_chunks
+                DELETE FROM content_chunks
                 WHERE transcript_version_id = :transcript_version_id
+                  AND source_kind = 'transcript'
                 """
             ),
             {"transcript_version_id": transcript_version_id},
@@ -1634,8 +1640,9 @@ def repair_podcast_transcript_semantic_index_now(
         db.execute(
             text(
                 """
-                DELETE FROM podcast_transcript_chunks
+                DELETE FROM content_chunks
                 WHERE transcript_version_id = :transcript_version_id
+                  AND source_kind = 'transcript'
                 """
             ),
             {"transcript_version_id": transcript_version_id},
@@ -1971,25 +1978,37 @@ def _insert_transcript_chunks_for_version(
         db.execute(
             text(
                 f"""
-                INSERT INTO podcast_transcript_chunks (
-                    transcript_version_id,
+                INSERT INTO content_chunks (
                     media_id,
+                    fragment_id,
+                    transcript_version_id,
                     chunk_idx,
+                    source_kind,
                     chunk_text,
+                    start_offset,
+                    end_offset,
                     t_start_ms,
                     t_end_ms,
+                    heading,
+                    locator,
                     embedding,
                     embedding_vector,
                     embedding_model,
                     created_at
                 )
                 VALUES (
-                    :transcript_version_id,
                     :media_id,
+                    NULL,
+                    :transcript_version_id,
                     :chunk_idx,
+                    'transcript',
                     :chunk_text,
+                    NULL,
+                    NULL,
                     :t_start_ms,
                     :t_end_ms,
+                    NULL,
+                    CAST(:locator AS jsonb),
                     CAST(:embedding AS jsonb),
                     CAST(:embedding_vector AS vector({embedding_dims})),
                     :embedding_model,
@@ -2004,6 +2023,15 @@ def _insert_transcript_chunks_for_version(
                 "chunk_text": chunk["chunk_text"],
                 "t_start_ms": chunk["t_start_ms"],
                 "t_end_ms": chunk["t_end_ms"],
+                "locator": json.dumps(
+                    {
+                        "kind": "transcript",
+                        "transcript_version_id": str(transcript_version_id),
+                        "chunk_idx": chunk["chunk_idx"],
+                        "t_start_ms": chunk["t_start_ms"],
+                        "t_end_ms": chunk["t_end_ms"],
+                    }
+                ),
                 "embedding": json.dumps(chunk["embedding"]),
                 "embedding_vector": to_pgvector_literal(chunk["embedding"]),
                 "embedding_model": chunk["embedding_model"],

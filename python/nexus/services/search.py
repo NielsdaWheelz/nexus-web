@@ -521,6 +521,8 @@ def _search_type(
     if result_type == "podcast":
         return _search_podcasts(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "fragment":
+        if semantic:
+            return _search_fragment_chunks(db, viewer_id, q, scope_type, scope_id, limit)
         return _search_fragments(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "annotation":
         return _search_annotations(db, viewer_id, q, scope_type, scope_id, limit)
@@ -800,6 +802,169 @@ def _search_fragments(
             section_id=row[3],
             source=_build_search_source(row[1], row[4], row[5], row[7], row[6]),
             score=_build_search_score(row[8]),
+        )
+        for row in rows
+    ]
+
+
+def _search_fragment_chunks(
+    db: Session,
+    viewer_id: UUID,
+    q: str,
+    scope_type: str,
+    scope_id: UUID | None,
+    limit: int,
+) -> list[InternalSearchResult]:
+    """Semantic fragment search over persisted content_chunks."""
+    scope_filter = ""
+    embedding_dims = transcript_embedding_dimensions()
+    ann_limit = max(
+        TRANSCRIPT_CHUNK_MIN_ANN_CANDIDATES,
+        int(limit) * TRANSCRIPT_CHUNK_ANN_CANDIDATE_MULTIPLIER,
+    )
+
+    try:
+        embedding_model, query_embedding = build_text_embedding(q)
+    except Exception as exc:
+        logger.warning(
+            "semantic_query_embedding_failed",
+            error=str(exc),
+            query_hash=hash_query(q),
+            user_id=str(viewer_id),
+        )
+        return []
+
+    if len(query_embedding) != embedding_dims:
+        logger.warning(
+            "semantic_query_embedding_dimension_mismatch",
+            expected_dimensions=embedding_dims,
+            actual_dimensions=len(query_embedding),
+            embedding_model=embedding_model,
+            query_hash=hash_query(q),
+            user_id=str(viewer_id),
+        )
+        return []
+
+    params: dict[str, Any] = {
+        "viewer_id": viewer_id,
+        "query": q,
+        "limit": limit,
+        "ann_limit": ann_limit,
+        "query_embedding": to_pgvector_literal(query_embedding),
+        "embedding_model": embedding_model,
+    }
+
+    if scope_type == "all":
+        pass
+    elif scope_type == "media":
+        scope_filter = "AND cc.media_id = :scope_id"
+        params["scope_id"] = scope_id
+    elif scope_type == "library":
+        scope_filter = """
+            AND cc.media_id IN (
+                SELECT media_id
+                FROM library_entries
+                WHERE library_id = :scope_id
+                  AND media_id IS NOT NULL
+            )
+        """
+        params["scope_id"] = scope_id
+    elif scope_type == "conversation":
+        scope_filter = """
+            AND cc.media_id IN (
+                SELECT media_id
+                FROM conversation_media
+                WHERE conversation_id = :scope_id
+            )
+        """
+        params["scope_id"] = scope_id
+    else:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
+
+    query = f"""
+        WITH
+            visible_media AS ({visible_media_ids_cte_sql()}),
+            media_authors_agg AS ({media_authors_rollup_cte_sql()}),
+            query_embedding AS (
+                SELECT CAST(:query_embedding AS vector({embedding_dims})) AS embedding
+            ),
+            ann_candidates AS (
+                SELECT
+                    f.id,
+                    f.media_id,
+                    f.idx,
+                    nav.location_id AS section_id,
+                    m.kind,
+                    m.title,
+                    m.published_date,
+                    maa.source_authors,
+                    cc.chunk_text,
+                    cc.created_at,
+                    (1 - (cc.embedding_vector <=> qe.embedding)) AS semantic_similarity,
+                    ts_rank_cd(
+                        to_tsvector('english', cc.chunk_text),
+                        websearch_to_tsquery('english', :query)
+                    ) AS lexical_score
+                FROM content_chunks cc
+                JOIN fragments f ON f.id = cc.fragment_id
+                JOIN media m ON m.id = cc.media_id
+                JOIN visible_media vm ON vm.media_id = cc.media_id
+                LEFT JOIN media_authors_agg maa ON maa.media_id = m.id
+                LEFT JOIN LATERAL (
+                    SELECT location_id
+                    FROM epub_nav_locations
+                    WHERE media_id = f.media_id
+                      AND fragment_idx = f.idx
+                    ORDER BY ordinal ASC
+                    LIMIT 1
+                ) nav ON m.kind = 'epub'
+                CROSS JOIN query_embedding qe
+                WHERE cc.source_kind = 'fragment'
+                  AND cc.embedding_vector IS NOT NULL
+                  AND cc.embedding_model = :embedding_model
+                {scope_filter}
+                ORDER BY cc.embedding_vector <=> qe.embedding ASC, cc.id ASC
+                LIMIT :ann_limit
+            )
+        SELECT
+            id,
+            media_id,
+            idx,
+            section_id,
+            kind,
+            title,
+            published_date,
+            source_authors,
+            chunk_text,
+            (
+                (0.75 * GREATEST(semantic_similarity, 0.0))
+                + (0.20 * GREATEST(lexical_score, 0.0))
+                + (
+                    0.05 * GREATEST(
+                        0.0,
+                        1.0 - LEAST(EXTRACT(EPOCH FROM (now() - created_at)) / 604800.0, 1.0)
+                    )
+                )
+            ) AS raw_score
+        FROM ann_candidates
+        WHERE semantic_similarity > 0.0 OR lexical_score > 0.0
+        ORDER BY raw_score DESC, id ASC
+        LIMIT :limit
+    """
+    probes = max(10, min(100, ann_limit))
+    try:
+        db.execute(text(f"SET LOCAL ivfflat.probes = {probes}"))
+    except Exception:
+        db.rollback()
+    rows = db.execute(text(query), params).fetchall()
+    return [
+        _RankedFragmentResult(
+            id=row[0],
+            snippet=_truncate_snippet(str(row[8] or "")),
+            fragment_idx=row[2],
+            section_id=row[3],
+            source=_build_search_source(row[1], row[4], row[5], row[7], row[6]),
+            score=_build_search_score(row[9]),
         )
         for row in rows
     ]
@@ -1103,13 +1268,14 @@ def _search_transcript_chunks(
                         to_tsvector('english', tc.chunk_text),
                         websearch_to_tsquery('english', :query)
                     ) AS lexical_score
-                FROM podcast_transcript_chunks tc
+                FROM content_chunks tc
                 JOIN media m ON m.id = tc.media_id
                 JOIN visible_media vm ON vm.media_id = tc.media_id
                 JOIN media_transcript_states mts ON mts.media_id = tc.media_id
                 LEFT JOIN media_authors_agg maa ON maa.media_id = m.id
                 CROSS JOIN query_embedding qe
                 WHERE mts.semantic_status = 'ready'
+                  AND tc.source_kind = 'transcript'
                   AND mts.active_transcript_version_id = tc.transcript_version_id
                   AND mts.transcript_state IN ('ready', 'partial')
                   AND tc.embedding_vector IS NOT NULL

@@ -179,13 +179,15 @@ def reconcile_stale_ingest_media_job(
                           AND (
                               NOT EXISTS (
                                   SELECT 1
-                                  FROM podcast_transcript_chunks tc
+                                  FROM content_chunks tc
                                   WHERE tc.transcript_version_id = mts.active_transcript_version_id
+                                    AND tc.source_kind = 'transcript'
                               )
                               OR EXISTS (
                                   SELECT 1
-                                  FROM podcast_transcript_chunks tc
+                                  FROM content_chunks tc
                                   WHERE tc.transcript_version_id = mts.active_transcript_version_id
+                                    AND tc.source_kind = 'transcript'
                                     AND (
                                         tc.embedding_vector IS NULL
                                         OR tc.embedding_model IS NULL

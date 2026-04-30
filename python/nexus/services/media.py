@@ -1726,7 +1726,7 @@ def list_fragments_for_viewer(
 # EPUB asset fetch (S5 PR-02)
 # ---------------------------------------------------------------------------
 
-_ASSET_KEY_RE = re.compile(r"^[a-zA-Z0-9_./ -]+$")
+_ASSET_KEY_RE = re.compile(r"^[a-zA-Z0-9_./-]+$")
 
 # Allowlist of content types served for EPUB-internal assets.
 # Intentionally restrictive — only known-safe static asset types.
@@ -1742,6 +1742,10 @@ _EPUB_ASSET_CONTENT_TYPES: dict[str, str] = {
     ".woff2": "font/woff2",
     ".ttf": "font/ttf",
     ".otf": "font/otf",
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
 }
 
 
@@ -1787,15 +1791,29 @@ def get_epub_asset_for_viewer(
     if not asset_key or not _ASSET_KEY_RE.match(asset_key):
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid asset key format")
 
-    sc = storage_client or get_storage_client()
-    storage_path = f"media/{media_id}/assets/{asset_key}"
+    row = db.execute(
+        text(
+            """
+            SELECT storage_path, content_type
+            FROM epub_resources
+            WHERE media_id = :media_id
+              AND asset_key = :asset_key
+            """
+        ),
+        {"media_id": media_id, "asset_key": asset_key},
+    ).fetchone()
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
+    sc = storage_client or get_storage_client()
     try:
-        data = b"".join(sc.stream_object(storage_path))
+        data = b"".join(sc.stream_object(row[0]))
     except Exception as exc:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found") from exc
 
     ext = posixpath.splitext(asset_key)[1].lower()
-    content_type = _EPUB_ASSET_CONTENT_TYPES.get(ext, "application/octet-stream")
+    content_type = row[1] if row[1] in _EPUB_ASSET_CONTENT_TYPES.values() else None
+    if content_type is None:
+        content_type = _EPUB_ASSET_CONTENT_TYPES.get(ext, "application/octet-stream")
 
     return EpubAssetOut(data=data, content_type=content_type)

@@ -356,11 +356,22 @@ class EpubNavigationTocNodeOut(BaseModel):
     children: list["EpubNavigationTocNodeOut"]
 
 
+class EpubNavigationLocationOut(BaseModel):
+    """Non-TOC EPUB navigation target."""
+
+    label: str
+    href: str | None
+    fragment_idx: int | None
+    section_id: str | None
+
+
 class EpubNavigationOut(BaseModel):
     """Unified EPUB navigation payload for reader UI."""
 
     sections: list[EpubNavigationSectionOut]
     toc_nodes: list[EpubNavigationTocNodeOut]
+    landmarks: list[EpubNavigationLocationOut]
+    page_list: list[EpubNavigationLocationOut]
 
 
 class EpubSectionOut(BaseModel):
