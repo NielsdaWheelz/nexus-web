@@ -71,58 +71,6 @@
   flex: 0 0 auto;
 }
 
-.sourceCitations {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-  margin-top: var(--space-3);
-}
-
-.sourceCitation {
-  display: inline-flex;
-  align-items: center;
-  max-width: 100%;
-  min-height: 28px;
-  gap: var(--space-1);
-  padding: 0 var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  line-height: 1.2;
-  text-decoration: none;
-}
-
-.sourceCitation span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sourceCitation:hover,
-.sourceCitation:focus-visible {
-  color: var(--color-text);
-  border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
-}
-
-.webCitation {
-  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
-}
-
-.webCitation > svg:first-child {
-  color: var(--color-accent);
-}
-
-.citationMeta {
-  max-width: 120px;
-  color: var(--color-text-muted);
-}
-
-.sourceCitation svg {
-  flex: 0 0 auto;
-}
-
 .replyBar {
   margin-bottom: var(--space-2);
   padding: var(--space-1) var(--space-3);
@@ -157,6 +105,180 @@
   margin-top: 2px;
   font-style: italic;
   color: var(--color-text-muted);
+}
+
+.claimAnswer a[href^="#claim-evidence-"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 38%, var(--color-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+  color: var(--color-accent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  vertical-align: baseline;
+}
+
+.claimAnswer a[href^="#claim-evidence-"]:hover,
+.claimAnswer a[href^="#claim-evidence-"]:focus-visible {
+  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-accent) 58%, var(--color-border));
+}
+
+.claimEvidencePanel {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.evidenceSummary,
+.claimEvidenceCard {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.evidenceSummaryTitle {
+  margin-bottom: var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.claimHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.claimNumber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.claimStatus {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.claimText {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.evidenceRoleGroup {
+  margin-top: var(--space-3);
+}
+
+.evidenceRoleLabel {
+  margin-bottom: var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.evidenceItem {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-bg-secondary);
+}
+
+.evidenceItem + .evidenceItem {
+  margin-top: var(--space-2);
+}
+
+.webEvidence {
+  border-color: color-mix(in srgb, var(--color-accent) 28%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-surface));
+}
+
+.appEvidence {
+  border-color: color-mix(in srgb, var(--color-success) 24%, var(--color-border-subtle));
+}
+
+.evidenceSource {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.evidenceSource svg {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+}
+
+.webEvidence .evidenceSource svg {
+  color: var(--color-accent);
+}
+
+.evidenceSource a {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-1);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.evidenceSource a:hover,
+.evidenceSource a:focus-visible {
+  color: var(--color-accent);
+}
+
+.evidenceSource span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidenceSnippet {
+  margin: 0;
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.evidenceBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.evidenceBadges span {
+  padding: 1px var(--space-2);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
 }
 
 .messageError {

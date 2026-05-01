@@ -7,7 +7,13 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.db.models import MessageRetrieval, MessageToolCall
+from nexus.db.models import (
+    AssistantMessageClaim,
+    AssistantMessageClaimEvidence,
+    AssistantMessageEvidenceSummary,
+    MessageRetrieval,
+    MessageToolCall,
+)
 from tests.factories import create_test_conversation, create_test_message
 from tests.helpers import create_test_user_id
 
@@ -65,6 +71,9 @@ def test_message_tool_call_and_retrieval_round_trip(db_session: Session):
                 deep_link=f"/media/{source_id}?t=12",
                 score=0.91,
                 selected=True,
+                exact_snippet="A retrieved transcript excerpt.",
+                retrieval_status="included_in_prompt",
+                included_in_prompt=True,
             )
         ],
     )
@@ -82,6 +91,95 @@ def test_message_tool_call_and_retrieval_round_trip(db_session: Session):
     assert persisted.retrievals[0].result_type == "transcript_chunk"
     assert persisted.retrievals[0].context_ref == {"type": "transcript_chunk", "id": source_id}
     assert persisted.retrievals[0].selected is True
+    assert persisted.retrievals[0].exact_snippet == "A retrieved transcript excerpt."
+    assert persisted.retrievals[0].retrieval_status == "included_in_prompt"
+    assert persisted.retrievals[0].included_in_prompt is True
+
+
+def test_assistant_claim_evidence_round_trip(db_session: Session):
+    conversation_id, user_message_id, assistant_message_id = _create_message_pair(db_session)
+    source_id = str(uuid4())
+    retrieval = MessageRetrieval(
+        ordinal=0,
+        result_type="message",
+        source_id=source_id,
+        context_ref={"type": "message", "id": source_id},
+        result_ref={"type": "message", "id": source_id, "title": "Source message"},
+        deep_link=f"/conversations/{conversation_id}",
+        score=1.0,
+        selected=True,
+        exact_snippet="The exact persisted source excerpt.",
+        retrieval_status="included_in_prompt",
+        included_in_prompt=True,
+    )
+    tool_call = MessageToolCall(
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_message_id,
+        tool_name="app_search",
+        tool_call_index=0,
+        scope="all",
+        status="complete",
+        retrievals=[retrieval],
+    )
+    db_session.add(tool_call)
+    db_session.flush()
+
+    claim = AssistantMessageClaim(
+        message_id=assistant_message_id,
+        ordinal=0,
+        claim_text="The assistant made a sourced claim.",
+        answer_start_offset=0,
+        answer_end_offset=37,
+        claim_kind="answer",
+        support_status="supported",
+        verifier_status="verified",
+    )
+    db_session.add(
+        AssistantMessageEvidenceSummary(
+            message_id=assistant_message_id,
+            scope_type="general",
+            scope_ref=None,
+            retrieval_status="included_in_prompt",
+            support_status="supported",
+            verifier_status="verified",
+            claim_count=1,
+            supported_claim_count=1,
+            unsupported_claim_count=0,
+            not_enough_evidence_count=0,
+        )
+    )
+    db_session.add(claim)
+    db_session.flush()
+    db_session.add(
+        AssistantMessageClaimEvidence(
+            claim_id=claim.id,
+            ordinal=0,
+            evidence_role="supports",
+            source_ref={
+                "type": "message_retrieval",
+                "id": str(retrieval.id),
+                "retrieval_id": str(retrieval.id),
+            },
+            retrieval_id=retrieval.id,
+            context_ref={"type": "message", "id": source_id},
+            result_ref={"type": "message", "id": source_id, "title": "Source message"},
+            exact_snippet="The exact persisted source excerpt.",
+            deep_link=f"/conversations/{conversation_id}",
+            score=1.0,
+            retrieval_status="included_in_prompt",
+            selected=True,
+            included_in_prompt=True,
+        )
+    )
+    db_session.commit()
+
+    persisted = db_session.get(AssistantMessageClaim, claim.id)
+    assert persisted is not None
+    assert persisted.support_status == "supported"
+    assert len(persisted.evidence) == 1
+    assert persisted.evidence[0].exact_snippet == "The exact persisted source excerpt."
+    assert persisted.evidence[0].source_ref["retrieval_id"] == str(retrieval.id)
 
 
 def test_message_tool_call_constraints_and_cascade(db_session: Session):

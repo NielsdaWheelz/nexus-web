@@ -531,7 +531,11 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             result_ref,
             deep_link,
             score,
-            selected
+            selected,
+            source_title,
+            exact_snippet,
+            locator,
+            retrieval_status
         )
         VALUES (
             :tool_call_id,
@@ -543,12 +547,17 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             :result_ref,
             :deep_link,
             :score,
-            :selected
+            :selected,
+            :source_title,
+            :exact_snippet,
+            :locator,
+            'web_result'
         )
         """
     ).bindparams(
         bindparam("context_ref", type_=JSONB),
         bindparam("result_ref", type_=JSONB),
+        bindparam("locator", type_=JSONB),
     )
     selected_refs = {citation.result_ref for citation in run.selected_citations}
     for ordinal, citation in enumerate(run.citations):
@@ -563,6 +572,14 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
                 "deep_link": citation.url,
                 "score": 1.0 / max(citation.rank, 1),
                 "selected": citation.result_ref in selected_refs,
+                "source_title": citation.title,
+                "exact_snippet": citation.snippet,
+                "locator": {
+                    "type": "web_url",
+                    "url": citation.url,
+                    "title": citation.title,
+                    "display_url": citation.display_url,
+                },
             },
         )
     db.commit()

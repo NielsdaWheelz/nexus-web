@@ -114,7 +114,8 @@ async def test_execute_web_search_persists_tool_and_web_retrievals(
         retrieval_row = session.execute(
             text(
                 """
-                SELECT result_type, source_id, media_id, deep_link, selected
+                SELECT result_type, source_id, media_id, deep_link, selected,
+                       exact_snippet, locator, retrieval_status
                 FROM message_retrievals
                 WHERE tool_call_id = :tool_call_id
                 """
@@ -126,6 +127,9 @@ async def test_execute_web_search_persists_tool_and_web_retrievals(
         assert retrieval_row[2] is None
         assert retrieval_row[3] == "https://example.com/docs"
         assert retrieval_row[4] is True
+        assert retrieval_row[5] == "Example web-search snippet"
+        assert retrieval_row[6]["type"] == "web_url"
+        assert retrieval_row[7] == "web_result"
 
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)

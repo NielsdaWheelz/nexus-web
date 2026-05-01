@@ -18,7 +18,8 @@ from uuid import UUID
 from llm_calling.errors import LLMError, LLMErrorCode
 from llm_calling.router import LLMRouter
 from llm_calling.types import LLMUsage
-from sqlalchemy import select, text
+from sqlalchemy import bindparam, select, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
 
@@ -84,6 +85,7 @@ from nexus.services.conversations import (
     derive_conversation_title,
     get_message_count,
     load_message_context_snapshots_for_message_ids,
+    load_message_evidence_for_message_ids,
     load_message_tool_calls_for_message_ids,
     message_to_out,
     resolve_conversation_for_scope,
@@ -1170,6 +1172,11 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
     message_ids = [user_message.id, assistant_message.id]
     contexts_by_message_id = load_message_context_snapshots_for_message_ids(db, message_ids)
     tool_calls_by_message_id = load_message_tool_calls_for_message_ids(db, message_ids)
+    (
+        evidence_summary_by_message_id,
+        claims_by_message_id,
+        claim_evidence_by_message_id,
+    ) = load_message_evidence_for_message_ids(db, message_ids)
     return ChatRunResponse(
         run=ChatRunOut.model_validate(run),
         conversation=conversation_to_out(
@@ -1182,11 +1189,17 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
             user_message,
             contexts_by_message_id.get(user_message.id, []),
             tool_calls_by_message_id.get(user_message.id, []),
+            evidence_summary_by_message_id.get(user_message.id),
+            claims_by_message_id.get(user_message.id, []),
+            claim_evidence_by_message_id.get(user_message.id, []),
         ),
         assistant_message=message_to_out(
             assistant_message,
             contexts_by_message_id.get(assistant_message.id, []),
             tool_calls_by_message_id.get(assistant_message.id, []),
+            evidence_summary_by_message_id.get(assistant_message.id),
+            claims_by_message_id.get(assistant_message.id, []),
+            claim_evidence_by_message_id.get(assistant_message.id, []),
         ),
     )
 
@@ -1442,6 +1455,8 @@ def _finalize_run(
         assistant_message.status = assistant_status
         assistant_message.error_code = error_code
         assistant_message.updated_at = datetime.now(UTC)
+        if assistant_status == "complete":
+            _finalize_message_evidence(db, run, assistant_message)
 
     key = resolved_key or (model and _dummy_resolved_key(model))
     if assistant_message is not None and model is not None and key is not None:
@@ -1514,6 +1529,338 @@ def _finalize_run(
         done_payload["final_chars"] = len(assistant_message.content)
     append_run_event(db, run, "done", done_payload)
     db.commit()
+
+
+def _finalize_message_evidence(db: Session, run: ChatRun, assistant_message: Message) -> None:
+    db.execute(
+        text(
+            """
+            DELETE FROM assistant_message_claim_evidence
+            WHERE claim_id IN (
+                SELECT id
+                FROM assistant_message_claims
+                WHERE message_id = :message_id
+            )
+            """
+        ),
+        {"message_id": assistant_message.id},
+    )
+    db.execute(
+        text("DELETE FROM assistant_message_claims WHERE message_id = :message_id"),
+        {"message_id": assistant_message.id},
+    )
+    db.execute(
+        text("DELETE FROM assistant_message_evidence_summaries WHERE message_id = :message_id"),
+        {"message_id": assistant_message.id},
+    )
+
+    conversation = db.get(Conversation, run.conversation_id)
+    scope_type = conversation.scope_type if conversation is not None else "general"
+    scope_ref: dict[str, object] | None = None
+    if conversation is not None and scope_type == "media" and conversation.scope_media_id:
+        scope_ref = {"type": "media", "media_id": str(conversation.scope_media_id)}
+    elif conversation is not None and scope_type == "library" and conversation.scope_library_id:
+        scope_ref = {"type": "library", "library_id": str(conversation.scope_library_id)}
+
+    assembly_row = db.execute(
+        text(
+            """
+            SELECT id, included_retrieval_ids
+            FROM chat_prompt_assemblies
+            WHERE chat_run_id = :run_id
+            """
+        ),
+        {"run_id": run.id},
+    ).first()
+    prompt_assembly_id = assembly_row[0] if assembly_row is not None else None
+    included_retrieval_ids = {
+        str(retrieval_id) for retrieval_id in (assembly_row[1] if assembly_row else [])
+    }
+    for retrieval_id in included_retrieval_ids:
+        db.execute(
+            text(
+                """
+                UPDATE message_retrievals
+                SET included_in_prompt = true,
+                    retrieval_status = CASE
+                        WHEN result_type = 'web_result' THEN 'web_result'
+                        ELSE 'included_in_prompt'
+                    END
+                WHERE id = :retrieval_id
+                """
+            ),
+            {"retrieval_id": retrieval_id},
+        )
+
+    retrieval_rows = db.execute(
+        text(
+            """
+            SELECT mr.id,
+                   mr.result_type,
+                   mr.source_id,
+                   mr.media_id,
+                   mr.context_ref,
+                   mr.result_ref,
+                   mr.deep_link,
+                   mr.score,
+                   mr.selected,
+                   mr.source_title,
+                   mr.exact_snippet,
+                   mr.snippet_prefix,
+                   mr.snippet_suffix,
+                   mr.locator,
+                   mr.retrieval_status,
+                   mr.included_in_prompt,
+                   mr.source_version
+            FROM message_retrievals mr
+            JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
+            WHERE mtc.assistant_message_id = :assistant_message_id
+              AND mr.selected = true
+            ORDER BY mtc.tool_call_index ASC, mr.ordinal ASC
+            """
+        ),
+        {"assistant_message_id": assistant_message.id},
+    ).fetchall()
+
+    evidence_rows = []
+    for row in retrieval_rows:
+        result_ref = row[5] if isinstance(row[5], dict) else {}
+        snippet = row[10] or result_ref.get("snippet")
+        if not isinstance(snippet, str) or not snippet.strip():
+            continue
+        if not row[15]:
+            continue
+        retrieval_status = row[14]
+        if row[1] == "web_result":
+            retrieval_status = "web_result"
+        elif row[15]:
+            retrieval_status = "included_in_prompt"
+        elif row[8]:
+            retrieval_status = "selected"
+        source_ref = {
+            "type": "message_retrieval",
+            "id": str(row[0]),
+            "retrieval_id": str(row[0]),
+            "label": row[9] or result_ref.get("title") or result_ref.get("source_label"),
+            "context_ref": row[4],
+            "result_ref": result_ref,
+            "deep_link": row[6],
+        }
+        if row[3] is not None:
+            source_ref["media_id"] = str(row[3])
+        evidence_rows.append(
+            {
+                "retrieval_id": row[0],
+                "source_ref": source_ref,
+                "context_ref": row[4],
+                "result_ref": result_ref,
+                "exact_snippet": snippet.strip(),
+                "snippet_prefix": row[11],
+                "snippet_suffix": row[12],
+                "locator": row[13],
+                "deep_link": row[6],
+                "score": row[7],
+                "retrieval_status": retrieval_status,
+                "selected": bool(row[8]),
+                "included_in_prompt": bool(row[15]),
+                "source_version": row[16],
+            }
+        )
+
+    answer = assistant_message.content.strip()
+    if evidence_rows:
+        claim_spans: list[tuple[str, int | None, int | None]] = []
+        segment_start = 0
+        for index, char in enumerate(assistant_message.content):
+            if char not in ".!?\n":
+                continue
+            segment = assistant_message.content[segment_start : index + 1].strip()
+            if segment:
+                start = assistant_message.content.find(segment, segment_start, index + 1)
+                claim_spans.append((segment, start, start + len(segment)))
+            segment_start = index + 1
+        segment = assistant_message.content[segment_start:].strip()
+        if segment:
+            start = assistant_message.content.find(segment, segment_start)
+            claim_spans.append((segment, start, start + len(segment)))
+        if not claim_spans:
+            start = assistant_message.content.find(answer) if answer else -1
+            claim_spans.append(
+                (
+                    answer or "Assistant answer.",
+                    start if start >= 0 else None,
+                    start + len(answer) if start >= 0 else None,
+                )
+            )
+        support_status = "supported"
+        retrieval_status = (
+            "web_result"
+            if all(row["retrieval_status"] == "web_result" for row in evidence_rows)
+            else "included_in_prompt"
+        )
+        claim_count = len(claim_spans)
+        supported_count = len(claim_spans)
+        unsupported_count = 0
+        not_enough_count = 0
+        claim_kind = "answer"
+    elif scope_type in {"media", "library"}:
+        claim_spans = [(answer or "Not enough evidence in this scope.", None, None)]
+        support_status = "not_enough_evidence"
+        retrieval_status = "retrieved"
+        claim_count = 1
+        supported_count = 0
+        unsupported_count = 1
+        not_enough_count = 1
+        claim_kind = "insufficient_evidence"
+    else:
+        claim_spans = []
+        support_status = "not_source_grounded"
+        retrieval_status = "retrieved"
+        claim_count = 0
+        supported_count = 0
+        unsupported_count = 0
+        not_enough_count = 0
+        claim_kind = "answer"
+
+    db.execute(
+        text(
+            """
+            INSERT INTO assistant_message_evidence_summaries (
+                message_id,
+                scope_type,
+                scope_ref,
+                retrieval_status,
+                support_status,
+                verifier_status,
+                claim_count,
+                supported_claim_count,
+                unsupported_claim_count,
+                not_enough_evidence_count,
+                prompt_assembly_id
+            )
+            VALUES (
+                :message_id,
+                :scope_type,
+                :scope_ref,
+                :retrieval_status,
+                :support_status,
+                'verified',
+                :claim_count,
+                :supported_claim_count,
+                :unsupported_claim_count,
+                :not_enough_evidence_count,
+                :prompt_assembly_id
+            )
+            """
+        ).bindparams(bindparam("scope_ref", type_=JSONB)),
+        {
+            "message_id": assistant_message.id,
+            "scope_type": scope_type,
+            "scope_ref": scope_ref,
+            "retrieval_status": retrieval_status,
+            "support_status": support_status,
+            "claim_count": claim_count,
+            "supported_claim_count": supported_count,
+            "unsupported_claim_count": unsupported_count,
+            "not_enough_evidence_count": not_enough_count,
+            "prompt_assembly_id": prompt_assembly_id,
+        },
+    )
+
+    if claim_count == 0:
+        return
+
+    insert_claim = text(
+        """
+        INSERT INTO assistant_message_claims (
+            message_id,
+            ordinal,
+            claim_text,
+            answer_start_offset,
+            answer_end_offset,
+            claim_kind,
+            support_status,
+            verifier_status
+        )
+        VALUES (
+            :message_id,
+            :ordinal,
+            :claim_text,
+            :answer_start_offset,
+            :answer_end_offset,
+            :claim_kind,
+            :support_status,
+            'verified'
+        )
+        RETURNING id
+        """
+    )
+
+    insert_evidence = text(
+        """
+        INSERT INTO assistant_message_claim_evidence (
+            claim_id,
+            ordinal,
+            evidence_role,
+            source_ref,
+            retrieval_id,
+            context_ref,
+            result_ref,
+            exact_snippet,
+            snippet_prefix,
+            snippet_suffix,
+            locator,
+            deep_link,
+            score,
+            retrieval_status,
+            selected,
+            included_in_prompt,
+            source_version
+        )
+        VALUES (
+            :claim_id,
+            :ordinal,
+            'supports',
+            :source_ref,
+            :retrieval_id,
+            :context_ref,
+            :result_ref,
+            :exact_snippet,
+            :snippet_prefix,
+            :snippet_suffix,
+            :locator,
+            :deep_link,
+            :score,
+            :retrieval_status,
+            :selected,
+            :included_in_prompt,
+            :source_version
+        )
+        """
+    ).bindparams(
+        bindparam("source_ref", type_=JSONB),
+        bindparam("context_ref", type_=JSONB),
+        bindparam("result_ref", type_=JSONB),
+        bindparam("locator", type_=JSONB),
+    )
+    for claim_ordinal, (claim_text, answer_start, answer_end) in enumerate(claim_spans):
+        claim_id = db.execute(
+            insert_claim,
+            {
+                "message_id": assistant_message.id,
+                "ordinal": claim_ordinal,
+                "claim_text": claim_text,
+                "answer_start_offset": answer_start,
+                "answer_end_offset": answer_end,
+                "claim_kind": claim_kind,
+                "support_status": support_status,
+            },
+        ).scalar_one()
+        for evidence_ordinal, row in enumerate(evidence_rows):
+            db.execute(
+                insert_evidence,
+                {"claim_id": claim_id, "ordinal": evidence_ordinal, **row},
+            )
 
 
 def _dummy_resolved_key(model: Model) -> ResolvedKey:

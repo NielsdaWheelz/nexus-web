@@ -12,7 +12,8 @@ Tests cover:
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.services.conversations import (
@@ -499,6 +500,233 @@ class TestListMessages:
         assert data[1]["contexts"] == []
         assert data[2]["seq"] == 3
         assert data[2]["contexts"] == []
+
+    def test_list_messages_returns_claim_evidence(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=1,
+                role="assistant",
+                content="The answer is supported.",
+            )
+            summary_id = uuid4()
+            claim_id = uuid4()
+            evidence_id = uuid4()
+            retrieval_id = uuid4()
+            tool_call_id = uuid4()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_tool_calls (
+                        id,
+                        conversation_id,
+                        user_message_id,
+                        assistant_message_id,
+                        tool_name,
+                        tool_call_index,
+                        scope,
+                        status
+                    )
+                    VALUES (
+                        :tool_call_id,
+                        :conversation_id,
+                        :assistant_message_id,
+                        :assistant_message_id,
+                        'app_search',
+                        0,
+                        'all',
+                        'complete'
+                    )
+                    """
+                ),
+                {
+                    "tool_call_id": tool_call_id,
+                    "conversation_id": conversation_id,
+                    "assistant_message_id": assistant_message_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_retrievals (
+                        id,
+                        tool_call_id,
+                        ordinal,
+                        result_type,
+                        source_id,
+                        context_ref,
+                        result_ref,
+                        deep_link,
+                        selected,
+                        exact_snippet,
+                        retrieval_status,
+                        included_in_prompt
+                    )
+                    VALUES (
+                        :retrieval_id,
+                        :tool_call_id,
+                        0,
+                        'message',
+                        :source_id,
+                        :context_ref,
+                        :result_ref,
+                        :deep_link,
+                        true,
+                        'Exact source excerpt.',
+                        'included_in_prompt',
+                        true
+                    )
+                    """
+                ).bindparams(
+                    bindparam("context_ref", type_=JSONB),
+                    bindparam("result_ref", type_=JSONB),
+                ),
+                {
+                    "retrieval_id": retrieval_id,
+                    "tool_call_id": tool_call_id,
+                    "source_id": str(assistant_message_id),
+                    "context_ref": {"type": "message", "id": str(assistant_message_id)},
+                    "result_ref": {"type": "message", "title": "Source message"},
+                    "deep_link": f"/conversations/{conversation_id}",
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO assistant_message_evidence_summaries (
+                        id,
+                        message_id,
+                        scope_type,
+                        scope_ref,
+                        retrieval_status,
+                        support_status,
+                        verifier_status,
+                        claim_count,
+                        supported_claim_count,
+                        unsupported_claim_count,
+                        not_enough_evidence_count
+                    )
+                    VALUES (
+                        :summary_id,
+                        :message_id,
+                        'general',
+                        NULL,
+                        'included_in_prompt',
+                        'supported',
+                        'verified',
+                        1,
+                        1,
+                        0,
+                        0
+                    )
+                    """
+                ),
+                {"summary_id": summary_id, "message_id": assistant_message_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO assistant_message_claims (
+                        id,
+                        message_id,
+                        ordinal,
+                        claim_text,
+                        answer_start_offset,
+                        answer_end_offset,
+                        claim_kind,
+                        support_status,
+                        verifier_status
+                    )
+                    VALUES (
+                        :claim_id,
+                        :message_id,
+                        0,
+                        'The answer is supported.',
+                        0,
+                        24,
+                        'answer',
+                        'supported',
+                        'verified'
+                    )
+                    """
+                ),
+                {"claim_id": claim_id, "message_id": assistant_message_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO assistant_message_claim_evidence (
+                        id,
+                        claim_id,
+                        ordinal,
+                        evidence_role,
+                        source_ref,
+                        retrieval_id,
+                        context_ref,
+                        result_ref,
+                        exact_snippet,
+                        deep_link,
+                        retrieval_status,
+                        selected,
+                        included_in_prompt
+                    )
+                    VALUES (
+                        :evidence_id,
+                        :claim_id,
+                        0,
+                        'supports',
+                        :source_ref,
+                        :retrieval_id,
+                        :context_ref,
+                        :result_ref,
+                        'Exact source excerpt.',
+                        :deep_link,
+                        'included_in_prompt',
+                        true,
+                        true
+                    )
+                    """
+                ).bindparams(
+                    bindparam("source_ref", type_=JSONB),
+                    bindparam("context_ref", type_=JSONB),
+                    bindparam("result_ref", type_=JSONB),
+                ),
+                {
+                    "evidence_id": evidence_id,
+                    "claim_id": claim_id,
+                    "source_ref": {
+                        "type": "message_retrieval",
+                        "id": str(retrieval_id),
+                        "retrieval_id": str(retrieval_id),
+                    },
+                    "retrieval_id": retrieval_id,
+                    "context_ref": {"type": "message", "id": str(assistant_message_id)},
+                    "result_ref": {"type": "message", "title": "Source message"},
+                    "deep_link": f"/conversations/{conversation_id}",
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        response = auth_client.get(
+            f"/conversations/{conversation_id}/messages", headers=auth_headers(user_id)
+        )
+
+        assert response.status_code == 200
+        message = response.json()["data"][0]
+        assert message["evidence_summary"]["support_status"] == "supported"
+        assert message["claims"][0]["claim_text"] == "The answer is supported."
+        assert message["claim_evidence"][0]["exact_snippet"] == "Exact source excerpt."
+        assert message["claim_evidence"][0]["retrieval_status"] == "included_in_prompt"
 
     def test_list_messages_pagination(self, auth_client, direct_db: DirectSessionManager):
         """Message pagination works correctly."""

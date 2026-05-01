@@ -28,6 +28,8 @@ from sqlalchemy.orm import Session, joinedload
 from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
 from nexus.db.models import (
     Annotation,
+    AssistantMessageClaim,
+    AssistantMessageEvidenceSummary,
     Conversation,
     Highlight,
     HighlightFragmentAnchor,
@@ -44,7 +46,10 @@ from nexus.schemas.conversation import (
     ConversationOut,
     ConversationScopeOut,
     ConversationScopeRequest,
+    MessageClaimEvidenceOut,
+    MessageClaimOut,
     MessageContextSnapshot,
+    MessageEvidenceSummaryOut,
     MessageOut,
     MessageToolCallOut,
     PageInfo,
@@ -427,6 +432,9 @@ def message_to_out(
     message: Message,
     contexts: list[MessageContextSnapshot] | None = None,
     tool_calls: list[MessageToolCallOut] | None = None,
+    evidence_summary: MessageEvidenceSummaryOut | None = None,
+    claims: list[MessageClaimOut] | None = None,
+    claim_evidence: list[MessageClaimEvidenceOut] | None = None,
 ) -> MessageOut:
     """Convert Message ORM model to MessageOut schema."""
     return MessageOut(
@@ -436,6 +444,9 @@ def message_to_out(
         content=message.content,
         contexts=contexts or [],
         tool_calls=tool_calls or [],
+        evidence_summary=evidence_summary,
+        claims=claims or [],
+        claim_evidence=claim_evidence or [],
         status=message.status,
         error_code=message.error_code,
         created_at=message.created_at,
@@ -660,6 +671,54 @@ def load_message_tool_calls_for_message_ids(
             MessageToolCallOut.model_validate(row, from_attributes=True)
         )
     return tool_calls_by_message_id
+
+
+def load_message_evidence_for_message_ids(
+    db: Session,
+    message_ids: list[UUID],
+) -> tuple[
+    dict[UUID, MessageEvidenceSummaryOut],
+    dict[UUID, list[MessageClaimOut]],
+    dict[UUID, list[MessageClaimEvidenceOut]],
+]:
+    """Load persisted claim/evidence citation rows for messages."""
+
+    if not message_ids:
+        return {}, {}, {}
+
+    summary_rows = db.scalars(
+        select(AssistantMessageEvidenceSummary).where(
+            AssistantMessageEvidenceSummary.message_id.in_(message_ids)
+        )
+    ).all()
+    summaries = {
+        row.message_id: MessageEvidenceSummaryOut.model_validate(row, from_attributes=True)
+        for row in summary_rows
+    }
+
+    claim_rows = (
+        db.scalars(
+            select(AssistantMessageClaim)
+            .options(joinedload(AssistantMessageClaim.evidence))
+            .where(AssistantMessageClaim.message_id.in_(message_ids))
+            .order_by(AssistantMessageClaim.message_id.asc(), AssistantMessageClaim.ordinal.asc())
+        )
+        .unique()
+        .all()
+    )
+    claims: dict[UUID, list[MessageClaimOut]] = {message_id: [] for message_id in message_ids}
+    evidence: dict[UUID, list[MessageClaimEvidenceOut]] = {
+        message_id: [] for message_id in message_ids
+    }
+    for claim in claim_rows:
+        claims.setdefault(claim.message_id, []).append(
+            MessageClaimOut.model_validate(claim, from_attributes=True)
+        )
+        evidence.setdefault(claim.message_id, []).extend(
+            MessageClaimEvidenceOut.model_validate(row, from_attributes=True)
+            for row in claim.evidence
+        )
+    return summaries, claims, evidence
 
 
 # =============================================================================
@@ -1060,6 +1119,11 @@ def list_messages(
     message_ids = [row[0] for row in rows]
     contexts_by_message_id = load_message_context_snapshots_for_message_ids(db, message_ids)
     tool_calls_by_message_id = load_message_tool_calls_for_message_ids(db, message_ids)
+    (
+        evidence_summary_by_message_id,
+        claims_by_message_id,
+        claim_evidence_by_message_id,
+    ) = load_message_evidence_for_message_ids(db, message_ids)
     messages = [
         MessageOut(
             id=row[0],
@@ -1068,6 +1132,9 @@ def list_messages(
             content=row[3],
             contexts=contexts_by_message_id.get(row[0], []),
             tool_calls=tool_calls_by_message_id.get(row[0], []),
+            evidence_summary=evidence_summary_by_message_id.get(row[0]),
+            claims=claims_by_message_id.get(row[0], []),
+            claim_evidence=claim_evidence_by_message_id.get(row[0], []),
             status=row[4],
             error_code=row[5],
             created_at=row[6],

@@ -112,6 +112,126 @@ export interface ConversationSourceRef {
   source_version?: string | null;
 }
 
+export type MessageEvidenceRetrievalStatus =
+  | "attached_context"
+  | "retrieved"
+  | "selected"
+  | "included_in_prompt"
+  | "excluded_by_budget"
+  | "excluded_by_scope"
+  | "web_result";
+
+export type MessageClaimSupportStatus =
+  | "supported"
+  | "partially_supported"
+  | "contradicted"
+  | "not_enough_evidence"
+  | "out_of_scope"
+  | "not_source_grounded";
+
+export type MessageEvidenceRole =
+  | "supports"
+  | "contradicts"
+  | "context"
+  | "scope_boundary";
+
+export type MessageEvidenceLocator =
+  | {
+      type: "epub_fragment_offsets";
+      media_id: string;
+      section_id: string;
+      fragment_id: string;
+      start_offset: number;
+      end_offset: number;
+    }
+  | {
+      type: "pdf_page_geometry";
+      media_id: string;
+      page_number: number;
+      quads: unknown[];
+      exact: string;
+      prefix?: string | null;
+      suffix?: string | null;
+    }
+  | {
+      type: "transcript_time_range";
+      media_id: string;
+      transcript_version_id: string;
+      t_start_ms: number;
+      t_end_ms: number;
+    }
+  | {
+      type: "conversation_message";
+      conversation_id: string;
+      message_id: string;
+      message_seq: number;
+    }
+  | {
+      type: "web_url";
+      url: string;
+      title?: string | null;
+      display_url?: string | null;
+      accessed_at?: string | null;
+    }
+  | {
+      type: "external_source";
+      source_name: string;
+      source_id: string;
+      url?: string | null;
+    };
+
+export interface MessageEvidenceSummary {
+  id: string;
+  message_id: string;
+  scope_type: ConversationScope["type"];
+  scope_ref: Record<string, unknown> | null;
+  retrieval_status: MessageEvidenceRetrievalStatus;
+  support_status: MessageClaimSupportStatus;
+  verifier_status: string;
+  claim_count: number;
+  supported_claim_count: number;
+  unsupported_claim_count: number;
+  not_enough_evidence_count: number;
+  prompt_assembly_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MessageClaim {
+  id: string;
+  message_id: string;
+  ordinal: number;
+  claim_text: string;
+  answer_start_offset?: number | null;
+  answer_end_offset?: number | null;
+  claim_kind: string;
+  support_status: MessageClaimSupportStatus;
+  verifier_status: string;
+  created_at: string;
+}
+
+export interface MessageClaimEvidence {
+  id: string;
+  claim_id: string;
+  ordinal: number;
+  evidence_role: MessageEvidenceRole;
+  source_ref: ConversationSourceRef;
+  retrieval_id?: string | null;
+  context_ref?: Record<string, unknown> | null;
+  result_ref?: Record<string, unknown> | null;
+  exact_snippet?: string | null;
+  snippet_prefix?: string | null;
+  snippet_suffix?: string | null;
+  locator?: MessageEvidenceLocator | null;
+  deep_link?: string | null;
+  score?: number | null;
+  retrieval_status: MessageEvidenceRetrievalStatus;
+  selected: boolean;
+  included_in_prompt: boolean;
+  source_version?: string | null;
+  created_at: string;
+}
+
 export type ConversationMemoryKind =
   | "goal"
   | "constraint"
@@ -202,6 +322,9 @@ export interface ConversationMessage {
   content: string;
   contexts?: MessageContextSnapshot[];
   tool_calls?: MessageToolCall[];
+  evidence_summary?: MessageEvidenceSummary | null;
+  claims?: MessageClaim[];
+  claim_evidence?: MessageClaimEvidence[];
   status: "pending" | "complete" | "error" | "cancelled";
   error_code: string | null;
   created_at: string;

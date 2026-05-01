@@ -81,18 +81,22 @@ def test_execute_app_search_persists_retrieval_metadata(
         assert any(ref["type"] == "media" for ref in tool_row[1])
         assert {"type": "media", "id": str(media_id)} in tool_row[2]
 
-        retrieval_count = session.execute(
+        retrieval_rows = session.execute(
             text(
                 """
-                SELECT COUNT(*)
+                SELECT exact_snippet, retrieval_status, included_in_prompt
                 FROM message_retrievals
                 WHERE tool_call_id = :tool_call_id
                   AND scope = 'all'
+                ORDER BY ordinal ASC
                 """
             ),
             {"tool_call_id": run.tool_call_id},
-        ).scalar_one()
-        assert retrieval_count >= 1
+        ).fetchall()
+        assert retrieval_rows
+        assert any(row[0] for row in retrieval_rows)
+        assert any(row[1] == "selected" for row in retrieval_rows)
+        assert all(row[2] is False for row in retrieval_rows)
 
     direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)

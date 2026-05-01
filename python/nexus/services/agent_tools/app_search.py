@@ -485,7 +485,11 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             result_ref,
             deep_link,
             score,
-            selected
+            selected,
+            source_title,
+            section_label,
+            exact_snippet,
+            retrieval_status
         )
         VALUES (
             :tool_call_id,
@@ -498,7 +502,11 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             :result_ref,
             :deep_link,
             :score,
-            :selected
+            :selected,
+            :source_title,
+            :section_label,
+            :exact_snippet,
+            :retrieval_status
         )
         """
     ).bindparams(
@@ -521,6 +529,12 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
                 "deep_link": citation.deep_link,
                 "score": citation.score,
                 "selected": citation.source_id in selected_ids,
+                "source_title": citation.title,
+                "section_label": citation.source_label,
+                "exact_snippet": citation.snippet,
+                "retrieval_status": (
+                    "selected" if citation.source_id in selected_ids else "retrieved"
+                ),
             },
         )
     db.commit()

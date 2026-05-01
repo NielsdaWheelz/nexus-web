@@ -49,6 +49,25 @@ WEB_SEARCH_MODES = Literal["off", "auto", "required"]
 WEB_SEARCH_RESULT_TYPES = Literal["web", "news", "mixed"]
 CHAT_RUN_STATUSES = Literal["queued", "running", "complete", "error", "cancelled"]
 CHAT_RUN_EVENT_TYPES = Literal["meta", "tool_call", "tool_result", "citation", "delta", "done"]
+EVIDENCE_RETRIEVAL_STATUSES = Literal[
+    "attached_context",
+    "retrieved",
+    "selected",
+    "included_in_prompt",
+    "excluded_by_budget",
+    "excluded_by_scope",
+    "web_result",
+]
+CLAIM_SUPPORT_STATUSES = Literal[
+    "supported",
+    "partially_supported",
+    "contradicted",
+    "not_enough_evidence",
+    "out_of_scope",
+    "not_source_grounded",
+]
+CLAIM_EVIDENCE_ROLES = Literal["supports", "contradicts", "context", "scope_boundary"]
+EVIDENCE_VERIFIER_STATUSES = Literal["verified", "failed"]
 
 
 class ConversationScopeRequest(BaseModel):
@@ -135,6 +154,9 @@ class MessageOut(BaseModel):
     content: str
     contexts: list["MessageContextSnapshot"] = Field(default_factory=list)
     tool_calls: list["MessageToolCallOut"] = Field(default_factory=list)
+    evidence_summary: "MessageEvidenceSummaryOut | None" = None
+    claims: list["MessageClaimOut"] = Field(default_factory=list)
+    claim_evidence: list["MessageClaimEvidenceOut"] = Field(default_factory=list)
     status: str  # "pending" | "complete" | "error"
     error_code: str | None = None
     created_at: datetime
@@ -158,6 +180,79 @@ class MessageRetrievalOut(BaseModel):
     deep_link: str | None = None
     score: float | None = None
     selected: bool
+    source_title: str | None = None
+    section_label: str | None = None
+    exact_snippet: str | None = None
+    snippet_prefix: str | None = None
+    snippet_suffix: str | None = None
+    locator: dict[str, Any] | None = None
+    retrieval_status: EVIDENCE_RETRIEVAL_STATUSES = "retrieved"
+    included_in_prompt: bool = False
+    source_version: str | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MessageEvidenceSummaryOut(BaseModel):
+    """Final evidence status for one assistant message."""
+
+    id: UUID
+    message_id: UUID
+    scope_type: CONVERSATION_SCOPE_TYPES
+    scope_ref: dict[str, Any] | None = None
+    retrieval_status: EVIDENCE_RETRIEVAL_STATUSES
+    support_status: CLAIM_SUPPORT_STATUSES
+    verifier_status: EVIDENCE_VERIFIER_STATUSES
+    claim_count: int
+    supported_claim_count: int
+    unsupported_claim_count: int
+    not_enough_evidence_count: int
+    prompt_assembly_id: UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MessageClaimOut(BaseModel):
+    """One persisted claim from an assistant answer."""
+
+    id: UUID
+    message_id: UUID
+    ordinal: int
+    claim_text: str
+    answer_start_offset: int | None = None
+    answer_end_offset: int | None = None
+    claim_kind: str
+    support_status: CLAIM_SUPPORT_STATUSES
+    verifier_status: EVIDENCE_VERIFIER_STATUSES
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MessageClaimEvidenceOut(BaseModel):
+    """One persisted source snapshot for a claim."""
+
+    id: UUID
+    claim_id: UUID
+    ordinal: int
+    evidence_role: CLAIM_EVIDENCE_ROLES
+    source_ref: dict[str, Any]
+    retrieval_id: UUID | None = None
+    context_ref: dict[str, Any] | None = None
+    result_ref: dict[str, Any] | None = None
+    exact_snippet: str | None = None
+    snippet_prefix: str | None = None
+    snippet_suffix: str | None = None
+    locator: dict[str, Any] | None = None
+    deep_link: str | None = None
+    score: float | None = None
+    retrieval_status: EVIDENCE_RETRIEVAL_STATUSES
+    selected: bool
+    included_in_prompt: bool
+    source_version: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
