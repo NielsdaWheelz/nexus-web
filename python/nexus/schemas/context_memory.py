@@ -174,7 +174,12 @@ class ChatPromptAssemblyOut(BaseModel):
     assistant_message_id: UUID
     model_id: UUID
     prompt_version: str = Field(min_length=1, max_length=128)
+    prompt_plan_version: str = Field(min_length=1, max_length=128)
     assembler_version: str = Field(min_length=1, max_length=128)
+    stable_prefix_hash: str = Field(min_length=1, max_length=128)
+    cacheable_input_tokens_estimate: int = Field(ge=0)
+    prompt_block_manifest: dict[str, Any] = Field(default_factory=dict)
+    provider_request_hash: str = Field(min_length=1, max_length=128)
     snapshot_id: UUID | None = None
     max_context_tokens: int = Field(gt=0)
     reserved_output_tokens: int = Field(ge=0)

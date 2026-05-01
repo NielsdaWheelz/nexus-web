@@ -9,7 +9,7 @@ from typing import Any, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
-from llm_calling.types import LLMRequest, ReasoningEffort, Turn
+from llm_calling.types import LLMRequest, Turn
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -18,7 +18,15 @@ from nexus.auth.permissions import can_read_conversation
 from nexus.db.models import ChatRun, Conversation, Message, MessageContext, MessageRetrieval, Model
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import MessageContextRef
-from nexus.services.chat_prompt import render_prompt
+from nexus.services.chat_prompt import (
+    SYSTEM_PROMPT_VERSION,
+    PromptPlan,
+    build_llm_request_from_plan,
+    build_prompt_plan,
+    render_system_prompt_block,
+    validate_prompt_plan_budget,
+    validate_prompt_size,
+)
 from nexus.services.context_lookup import (
     ContextLookupError,
     ContextLookupResult,
@@ -36,14 +44,17 @@ from nexus.services.conversation_memory import (
 from nexus.services.conversations import conversation_scope_metadata
 from nexus.services.prompt_budget import (
     BudgetItem,
+    BudgetLane,
     BudgetSelection,
+    PromptBlock,
     allocate_budget,
     build_prompt_budget,
-    validate_turn_budget,
+    make_prompt_block,
 )
 from nexus.services.retrieval_planner import RetrievalPlan, build_retrieval_plan
 
 ASSEMBLER_VERSION = "chat-context-memory-v1"
+CACHE_POLICY_5M: Mapping[str, object] = {"type": "ephemeral", "ttl_seconds": 300}
 
 
 @dataclass(frozen=True)
@@ -54,14 +65,16 @@ class HistoryUnit:
     first_seq: int
     last_seq: int
 
-    def budget_text(self) -> str:
-        return "\n".join(f"{turn.role}: {turn.content}" for turn in self.turns)
-
 
 @dataclass(frozen=True)
 class AssemblyLedger:
     prompt_version: str
+    prompt_plan_version: str
     assembler_version: str
+    stable_prefix_hash: str
+    cacheable_input_tokens_estimate: int
+    prompt_block_manifest: Mapping[str, object]
+    provider_request_hash: str
     max_context_tokens: int
     reserved_output_tokens: int
     reserved_reasoning_tokens: int
@@ -79,6 +92,7 @@ class AssemblyLedger:
 @dataclass(frozen=True)
 class ContextAssembly:
     llm_request: LLMRequest
+    prompt_plan: PromptPlan
     history: tuple[Turn, ...]
     context_blocks: tuple[str, ...]
     context_types: frozenset[str]
@@ -96,6 +110,9 @@ def assemble_chat_context(
     *,
     run: ChatRun,
     model: Model,
+    environment: str,
+    key_mode_used: str,
+    provider_account_boundary: str,
     max_output_tokens: int,
 ) -> ContextAssembly:
     """Assemble the provider-neutral chat request for a durable chat run."""
@@ -143,10 +160,35 @@ def assemble_chat_context(
 
     lookup_results: list[ContextLookupResult] = []
     context_types = {ref.type for ref in attached_context_refs}
+    system_block = make_prompt_block(
+        block_id=f"system:{SYSTEM_PROMPT_VERSION}",
+        role="system",
+        lane="system",
+        text=render_system_prompt_block(),
+        source_version=SYSTEM_PROMPT_VERSION,
+        cache_policy=CACHE_POLICY_5M,
+        required_provider_capability="prompt_cache",
+    )
     scope_block = render_conversation_scope_block(scope_metadata)
-    mandatory_blocks: list[tuple[str, str, Mapping[str, object]]] = []
+    mandatory_blocks: list[tuple[str, PromptBlock, Mapping[str, object]]] = []
     if scope_block:
-        mandatory_blocks.append(("scope", scope_block, {"scope_type": scope_metadata.get("type")}))
+        scope_text = scope_block + "\n" + _render_scope_policy_block(scope_metadata)
+        mandatory_blocks.append(
+            (
+                "scope",
+                make_prompt_block(
+                    block_id=f"scope:{scope_metadata.get('type')}",
+                    role="system",
+                    lane="scope",
+                    text=scope_text,
+                    source_refs=[_scope_source_ref(scope_metadata)],
+                    source_version=_scope_source_version(scope_metadata),
+                    cache_policy=CACHE_POLICY_5M,
+                    required_provider_capability="prompt_cache",
+                ),
+                {"scope_type": scope_metadata.get("type")},
+            )
+        )
 
     for ref in attached_context_refs:
         context_ref = {"type": ref.type, "id": str(ref.id)}
@@ -155,14 +197,46 @@ def assemble_chat_context(
         if not result.resolved:
             raise ContextLookupError(result)
         mandatory_blocks.append(
-            (f"attached_context:{ref.type}:{ref.id}", result.evidence_text, context_ref)
+            (
+                f"attached_context:{ref.type}:{ref.id}",
+                make_prompt_block(
+                    block_id=f"attached_context:{ref.type}:{ref.id}",
+                    role="system",
+                    lane="attached_context",
+                    text=result.evidence_text,
+                    source_refs=[context_ref],
+                    source_version=f"{ref.type}:{ref.id}",
+                ),
+                context_ref,
+            )
         )
 
-    retrieval_blocks, retrieval_lookup_results = _load_selected_retrieval_blocks(
+    raw_retrieval_blocks, retrieval_lookup_results = _load_selected_retrieval_blocks(
         db,
         viewer_id=run.owner_user_id,
         assistant_message_id=run.assistant_message_id,
     )
+    retrieval_blocks = [
+        (
+            retrieval_id,
+            make_prompt_block(
+                block_id=f"{_retrieval_lane(metadata)}:{retrieval_id}",
+                role="system",
+                lane=_retrieval_lane(metadata),
+                text=text_block,
+                source_refs=[
+                    {
+                        "type": "message_retrieval",
+                        "id": str(retrieval_id),
+                        "retrieval_id": str(retrieval_id),
+                    }
+                ],
+                source_version=f"message_retrieval:{retrieval_id}",
+            ),
+            metadata,
+        )
+        for retrieval_id, text_block, metadata in raw_retrieval_blocks
+    ]
     lookup_results.extend(retrieval_lookup_results)
     tool_call_events, tool_result_events, citation_events = _load_tool_events(
         db,
@@ -175,17 +249,56 @@ def assemble_chat_context(
         elif tool_name == "web_search":
             context_types.add("web_search")
 
-    snapshot_block = _render_snapshot_block(snapshot) if snapshot is not None else None
-    memory_block = _render_memory_block(memory_items) if memory_items else None
-    pointer_block = _render_pointer_refs_block(memory_source_refs) if memory_source_refs else None
-
-    base_system = render_prompt(
-        user_content="",
-        history=[],
-        context_blocks=[],
-        context_types=context_types,
-        scope_metadata=scope_metadata,
-    )[0].content
+    snapshot_block = (
+        make_prompt_block(
+            block_id=f"snapshot:{snapshot.id}",
+            role="system",
+            lane="state_snapshot",
+            text=_render_snapshot_block(snapshot),
+            source_refs=[{"type": "conversation_state_snapshot", "id": str(snapshot.id)}],
+            source_version=f"{PROMPT_VERSION}:snapshot:{snapshot.id}",
+            cache_policy=CACHE_POLICY_5M,
+            required_provider_capability="prompt_cache",
+        )
+        if snapshot is not None
+        else None
+    )
+    memory_block = (
+        make_prompt_block(
+            block_id="memory:active",
+            role="system",
+            lane="memory",
+            text=_render_memory_block(memory_items),
+            source_refs=[
+                {"type": "conversation_memory_item", "id": str(item.id)} for item in memory_items
+            ],
+            source_version=PROMPT_VERSION,
+            cache_policy=CACHE_POLICY_5M,
+            required_provider_capability="prompt_cache",
+        )
+        if memory_items
+        else None
+    )
+    pointer_block = (
+        make_prompt_block(
+            block_id="pointer_refs",
+            role="system",
+            lane="pointer_refs",
+            text=_render_pointer_refs_block(memory_source_refs),
+            source_refs=[_safe_source_ref(ref) for ref in memory_source_refs],
+            source_version=PROMPT_VERSION,
+        )
+        if memory_source_refs
+        else None
+    )
+    current_user_block = make_prompt_block(
+        block_id=f"current_user:{user_message.id}",
+        role="user",
+        lane="current_user",
+        text=user_message.content,
+        source_refs=[{"type": "message", "id": str(user_message.id)}],
+        source_version=f"message:{user_message.id}",
+    )
     budget = build_prompt_budget(
         max_context_tokens=model.max_context_tokens,
         max_output_tokens=max_output_tokens,
@@ -194,29 +307,29 @@ def assemble_chat_context(
     )
     budget_items: list[BudgetItem] = [
         BudgetItem(
-            key="system",
+            key=system_block.id,
             lane="system",
-            text=base_system,
+            blocks=(system_block,),
             mandatory=True,
         ),
         BudgetItem(
-            key="current_user",
+            key=current_user_block.id,
             lane="current_user",
-            text=user_message.content,
+            blocks=(current_user_block,),
             mandatory=True,
         ),
     ]
-    for key, text_block, metadata in mandatory_blocks:
+    for key, block, metadata in mandatory_blocks:
         lane = "scope" if key == "scope" else "attached_context"
         budget_items.append(
-            BudgetItem(key=key, lane=lane, text=text_block, mandatory=True, metadata=metadata)
+            BudgetItem(key=key, lane=lane, blocks=(block,), mandatory=True, metadata=metadata)
         )
-    for index, (retrieval_id, text_block, metadata) in enumerate(retrieval_blocks):
+    for index, (retrieval_id, block, metadata) in enumerate(retrieval_blocks):
         budget_items.append(
             BudgetItem(
                 key=f"retrieved_evidence:{retrieval_id}",
-                lane="retrieved_evidence",
-                text=text_block,
+                lane=block.lane,
+                blocks=(block,),
                 mandatory=False,
                 priority=100 - index,
                 metadata=metadata,
@@ -227,7 +340,7 @@ def assemble_chat_context(
             BudgetItem(
                 key=f"snapshot:{snapshot.id}",
                 lane="state_snapshot",
-                text=snapshot_block,
+                blocks=(snapshot_block,),
                 mandatory=False,
                 metadata={"snapshot_id": str(snapshot.id)},
             )
@@ -237,18 +350,29 @@ def assemble_chat_context(
             BudgetItem(
                 key="memory:active",
                 lane="memory",
-                text=memory_block,
+                blocks=(memory_block,),
                 mandatory=False,
                 metadata={"memory_item_ids": [str(item.id) for item in memory_items]},
             )
         )
     history_count = len(history_units)
     for index, unit in enumerate(reversed(history_units)):
+        unit_blocks = tuple(
+            make_prompt_block(
+                block_id=f"history:{message_id}",
+                role=turn.role,
+                lane="recent_history",
+                text=turn.content,
+                source_refs=[{"type": "message", "id": str(message_id)}],
+                source_version=f"message:{message_id}",
+            )
+            for turn, message_id in zip(unit.turns, unit.message_ids, strict=True)
+        )
         budget_items.append(
             BudgetItem(
                 key=unit.key,
                 lane="recent_history",
-                text=unit.budget_text(),
+                blocks=unit_blocks,
                 mandatory=False,
                 priority=history_count - index,
                 metadata={
@@ -263,7 +387,7 @@ def assemble_chat_context(
             BudgetItem(
                 key="pointer_refs",
                 lane="pointer_refs",
-                text=pointer_block,
+                blocks=(pointer_block,),
                 mandatory=False,
                 metadata={"source_ref_count": len(memory_source_refs)},
             )
@@ -287,24 +411,50 @@ def assemble_chat_context(
     )
     included_memory_items = memory_items if "memory:active" in included_keys else []
     history = _history_turns_from_units(selected_history_units)
-    turns = render_prompt(
-        user_content=user_message.content,
-        history=history,
-        context_blocks=context_blocks,
-        context_types=context_types,
-        scope_metadata=scope_metadata,
+    stable_blocks = _stable_blocks(
+        system_block=system_block,
+        mandatory_blocks=mandatory_blocks,
+        snapshot_block=snapshot_block,
+        memory_block=memory_block,
+        included_keys=included_keys,
     )
-    estimated_input_tokens = validate_turn_budget(turns, budget)
-
-    llm_request = LLMRequest(
+    dynamic_system_blocks = _dynamic_system_blocks(
+        mandatory_blocks=mandatory_blocks,
+        retrieval_blocks=retrieval_blocks,
+        pointer_block=pointer_block,
+        included_keys=included_keys,
+    )
+    history_blocks = _history_blocks(selected_history_units, selection)
+    prompt_plan = build_prompt_plan(
+        stable_blocks=stable_blocks,
+        dynamic_system_blocks=dynamic_system_blocks,
+        history_blocks=history_blocks,
+        current_user_block=current_user_block,
+        cache_identity=_cache_identity(
+            run=run,
+            model=model,
+            environment=environment,
+            key_mode_used=key_mode_used,
+            provider_account_boundary=provider_account_boundary,
+            scope_metadata=scope_metadata,
+        ),
         model_name=model.model_name,
-        messages=turns,
         max_tokens=max_output_tokens,
-        temperature=0.7,
-        reasoning_effort=cast(ReasoningEffort, run.reasoning),
+        reasoning_effort=run.reasoning,
+    )
+    estimated_input_tokens = validate_prompt_plan_budget(prompt_plan, budget.input_budget_tokens)
+    validate_prompt_size(prompt_plan)
+
+    llm_request = build_llm_request_from_plan(
+        plan=prompt_plan,
+        provider=model.provider,
+        model_name=model.model_name,
+        max_tokens=max_output_tokens,
+        reasoning_effort=run.reasoning,
     )
     ledger = _build_ledger(
         selection,
+        prompt_plan=prompt_plan,
         estimated_input_tokens=estimated_input_tokens,
         model=model,
         snapshot=snapshot,
@@ -315,6 +465,7 @@ def assemble_chat_context(
     )
     return ContextAssembly(
         llm_request=llm_request,
+        prompt_plan=prompt_plan,
         history=tuple(history),
         context_blocks=tuple(context_blocks),
         context_types=frozenset(context_types),
@@ -336,7 +487,12 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
         "assistant_message_id": run.assistant_message_id,
         "model_id": run.model_id,
         "prompt_version": ledger.prompt_version,
+        "prompt_plan_version": ledger.prompt_plan_version,
         "assembler_version": ledger.assembler_version,
+        "stable_prefix_hash": ledger.stable_prefix_hash,
+        "cacheable_input_tokens_estimate": ledger.cacheable_input_tokens_estimate,
+        "prompt_block_manifest": dict(ledger.prompt_block_manifest),
+        "provider_request_hash": ledger.provider_request_hash,
         "snapshot_id": ledger.snapshot_id,
         "max_context_tokens": ledger.max_context_tokens,
         "reserved_output_tokens": ledger.reserved_output_tokens,
@@ -377,7 +533,12 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 assistant_message_id,
                 model_id,
                 prompt_version,
+                prompt_plan_version,
                 assembler_version,
+                stable_prefix_hash,
+                cacheable_input_tokens_estimate,
+                prompt_block_manifest,
+                provider_request_hash,
                 snapshot_id,
                 max_context_tokens,
                 reserved_output_tokens,
@@ -397,7 +558,12 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 :assistant_message_id,
                 :model_id,
                 :prompt_version,
+                :prompt_plan_version,
                 :assembler_version,
+                :stable_prefix_hash,
+                :cacheable_input_tokens_estimate,
+                :prompt_block_manifest,
+                :provider_request_hash,
                 :snapshot_id,
                 :max_context_tokens,
                 :reserved_output_tokens,
@@ -419,6 +585,7 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
             bindparam("included_context_refs", type_=JSONB),
             bindparam("dropped_items", type_=JSONB),
             bindparam("budget_breakdown", type_=JSONB),
+            bindparam("prompt_block_manifest", type_=JSONB),
         )
         result = cast(Any, db.execute(insert_statement, payload))
         assert result.rowcount == 1  # justify-service-invariant-check: ledger insert is one row.
@@ -431,7 +598,12 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
             assistant_message_id = :assistant_message_id,
             model_id = :model_id,
             prompt_version = :prompt_version,
+            prompt_plan_version = :prompt_plan_version,
             assembler_version = :assembler_version,
+            stable_prefix_hash = :stable_prefix_hash,
+            cacheable_input_tokens_estimate = :cacheable_input_tokens_estimate,
+            prompt_block_manifest = :prompt_block_manifest,
+            provider_request_hash = :provider_request_hash,
             snapshot_id = :snapshot_id,
             max_context_tokens = :max_context_tokens,
             reserved_output_tokens = :reserved_output_tokens,
@@ -453,6 +625,7 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
         bindparam("included_context_refs", type_=JSONB),
         bindparam("dropped_items", type_=JSONB),
         bindparam("budget_breakdown", type_=JSONB),
+        bindparam("prompt_block_manifest", type_=JSONB),
     )
     result = cast(Any, db.execute(update_statement, {**payload, "assembly_id": existing[0]}))
     assert result.rowcount == 1  # justify-service-invariant-check: selected ledger row vanished.
@@ -683,29 +856,76 @@ def _tool_retrieval_refs(db: Session, tool_call_id: UUID) -> list[Mapping[str, o
 def _selected_context_blocks(
     selection: BudgetSelection,
     *,
-    mandatory_blocks: Sequence[tuple[str, str, Mapping[str, object]]],
-    retrieval_blocks: Sequence[tuple[UUID, str, Mapping[str, object]]],
-    snapshot_block: str | None,
-    memory_block: str | None,
-    pointer_block: str | None,
+    mandatory_blocks: Sequence[tuple[str, PromptBlock, Mapping[str, object]]],
+    retrieval_blocks: Sequence[tuple[UUID, PromptBlock, Mapping[str, object]]],
+    snapshot_block: PromptBlock | None,
+    memory_block: PromptBlock | None,
+    pointer_block: PromptBlock | None,
 ) -> list[str]:
     included_keys = selection.included_keys()
     blocks: list[str] = []
-    for key, text_block, _metadata in mandatory_blocks:
-        if key in included_keys:
-            blocks.append(text_block)
-    for retrieval_id, text_block, _metadata in retrieval_blocks:
+    for key, block, _metadata in mandatory_blocks:
+        if key in included_keys and block.lane == "attached_context":
+            blocks.append(block.text)
+    for retrieval_id, block, _metadata in retrieval_blocks:
         if f"retrieved_evidence:{retrieval_id}" in included_keys:
-            blocks.append(text_block)
-    if snapshot_block is not None and any(
-        item.key.startswith("snapshot:") for item in selection.included
-    ):
+            blocks.append(block.text)
+    if memory_block is not None and "memory:active" in included_keys:
+        blocks.append(memory_block.text)
+    if pointer_block is not None and "pointer_refs" in included_keys:
+        blocks.append(pointer_block.text)
+    return blocks
+
+
+def _stable_blocks(
+    *,
+    system_block: PromptBlock,
+    mandatory_blocks: Sequence[tuple[str, PromptBlock, Mapping[str, object]]],
+    snapshot_block: PromptBlock | None,
+    memory_block: PromptBlock | None,
+    included_keys: set[str],
+) -> tuple[PromptBlock, ...]:
+    blocks = [system_block]
+    for key, block, _metadata in mandatory_blocks:
+        if key == "scope" and key in included_keys:
+            blocks.append(block)
+    if snapshot_block is not None and any(key.startswith("snapshot:") for key in included_keys):
         blocks.append(snapshot_block)
     if memory_block is not None and "memory:active" in included_keys:
         blocks.append(memory_block)
+    return tuple(blocks)
+
+
+def _dynamic_system_blocks(
+    *,
+    mandatory_blocks: Sequence[tuple[str, PromptBlock, Mapping[str, object]]],
+    retrieval_blocks: Sequence[tuple[UUID, PromptBlock, Mapping[str, object]]],
+    pointer_block: PromptBlock | None,
+    included_keys: set[str],
+) -> tuple[PromptBlock, ...]:
+    blocks: list[PromptBlock] = []
+    for key, block, _metadata in mandatory_blocks:
+        if key != "scope" and key in included_keys:
+            blocks.append(block)
+    for retrieval_id, block, _metadata in retrieval_blocks:
+        if f"retrieved_evidence:{retrieval_id}" in included_keys:
+            blocks.append(block)
     if pointer_block is not None and "pointer_refs" in included_keys:
         blocks.append(pointer_block)
-    return blocks
+    return tuple(blocks)
+
+
+def _history_blocks(
+    selected_history_units: Sequence[HistoryUnit],
+    selection: BudgetSelection,
+) -> tuple[PromptBlock, ...]:
+    selected = {item.key: item for item in selection.included}
+    blocks: list[PromptBlock] = []
+    for unit in selected_history_units:
+        item = selected.get(unit.key)
+        if item is not None:
+            blocks.extend(item.blocks)
+    return tuple(blocks)
 
 
 def _history_turns_from_units(units: Sequence[HistoryUnit]) -> list[Turn]:
@@ -715,9 +935,98 @@ def _history_turns_from_units(units: Sequence[HistoryUnit]) -> list[Turn]:
     return turns
 
 
-def _render_snapshot_block(snapshot: ConversationStateSnapshot | None) -> str | None:
-    if snapshot is None:
-        return None
+def _retrieval_lane(metadata: Mapping[str, object]) -> BudgetLane:
+    context_ref = metadata.get("context_ref")
+    if isinstance(context_ref, Mapping) and context_ref.get("type") == "web_result":
+        return "web_evidence"
+    return "retrieved_evidence"
+
+
+def _render_scope_policy_block(scope_metadata: Mapping[str, object]) -> str:
+    scope_type = scope_metadata.get("type")
+    if scope_type == "media":
+        return (
+            "<scope_policy>Search and source-grounded claims must stay within this saved "
+            "document unless web evidence is present.</scope_policy>"
+        )
+    if scope_type == "library":
+        return (
+            "<scope_policy>Search and source-grounded claims must stay within this saved "
+            "library unless web evidence is present.</scope_policy>"
+        )
+    return "<scope_policy>Use the supplied evidence blocks when relevant.</scope_policy>"
+
+
+def _scope_source_ref(scope_metadata: Mapping[str, object]) -> Mapping[str, object]:
+    scope_type = str(scope_metadata.get("type") or "general")
+    if scope_type == "media":
+        return {
+            "type": "conversation_scope",
+            "scope_type": scope_type,
+            "id": scope_metadata.get("media_id"),
+        }
+    if scope_type == "library":
+        return {
+            "type": "conversation_scope",
+            "scope_type": scope_type,
+            "id": scope_metadata.get("library_id"),
+        }
+    return {"type": "conversation_scope", "scope_type": scope_type}
+
+
+def _scope_source_version(scope_metadata: Mapping[str, object]) -> str:
+    scope_type = str(scope_metadata.get("type") or "general")
+    if scope_type == "media":
+        return f"media:{scope_metadata.get('media_id')}"
+    if scope_type == "library":
+        return f"library:{scope_metadata.get('library_id')}"
+    return "general"
+
+
+def _safe_source_ref(source_ref: Mapping[str, object]) -> Mapping[str, object]:
+    ref_type = source_ref.get("type")
+    ref_id = source_ref.get("id") or source_ref.get("message_id") or source_ref.get("retrieval_id")
+    safe: dict[str, object] = {}
+    if isinstance(ref_type, str):
+        safe["type"] = ref_type
+    if isinstance(ref_id, str):
+        safe["id"] = ref_id
+    context_ref = source_ref.get("context_ref")
+    if isinstance(context_ref, Mapping):
+        nested_type = context_ref.get("type")
+        nested_id = context_ref.get("id")
+        safe["context_ref"] = {
+            "type": nested_type,
+            "id": nested_id,
+        }
+    return safe
+
+
+def _cache_identity(
+    *,
+    run: ChatRun,
+    model: Model,
+    environment: str,
+    key_mode_used: str,
+    provider_account_boundary: str,
+    scope_metadata: Mapping[str, object],
+) -> Mapping[str, object]:
+    return {
+        "environment": environment,
+        "owner_user_id": str(run.owner_user_id),
+        "conversation_id": str(run.conversation_id),
+        "scope": _scope_source_ref(scope_metadata),
+        "provider": model.provider,
+        "model_name": model.model_name,
+        "key_mode_requested": run.key_mode,
+        "key_mode_used": key_mode_used,
+        "provider_account_boundary": provider_account_boundary,
+        "prompt_version": PROMPT_VERSION,
+        "system_prompt_version": SYSTEM_PROMPT_VERSION,
+    }
+
+
+def _render_snapshot_block(snapshot: ConversationStateSnapshot) -> str:
     lines = [
         f'<conversation_state_snapshot covered_through_seq="{snapshot.covered_through_seq}">',
         f"<state>{xml_escape(snapshot.state_text)}</state>",
@@ -726,9 +1035,7 @@ def _render_snapshot_block(snapshot: ConversationStateSnapshot | None) -> str | 
     return "\n".join(lines)
 
 
-def _render_memory_block(memory_items: Sequence[ConversationMemoryItem]) -> str | None:
-    if not memory_items:
-        return None
+def _render_memory_block(memory_items: Sequence[ConversationMemoryItem]) -> str:
     lines = ["<conversation_memory>"]
     for item in memory_items:
         lines.append(
@@ -741,9 +1048,7 @@ def _render_memory_block(memory_items: Sequence[ConversationMemoryItem]) -> str 
     return "\n".join(lines)
 
 
-def _render_pointer_refs_block(source_refs: Sequence[Mapping[str, object]]) -> str | None:
-    if not source_refs:
-        return None
+def _render_pointer_refs_block(source_refs: Sequence[Mapping[str, object]]) -> str:
     lines = ['<source_refs pointers_only="true">']
     for source_ref in source_refs:
         lines.append(
@@ -756,6 +1061,7 @@ def _render_pointer_refs_block(source_refs: Sequence[Mapping[str, object]]) -> s
 def _build_ledger(
     selection: BudgetSelection,
     *,
+    prompt_plan: PromptPlan,
     estimated_input_tokens: int,
     model: Model,
     snapshot: ConversationStateSnapshot | None,
@@ -766,7 +1072,12 @@ def _build_ledger(
 ) -> AssemblyLedger:
     return AssemblyLedger(
         prompt_version=PROMPT_VERSION,
+        prompt_plan_version=prompt_plan.version,
         assembler_version=ASSEMBLER_VERSION,
+        stable_prefix_hash=prompt_plan.stable_prefix_hash,
+        cacheable_input_tokens_estimate=prompt_plan.cacheable_input_tokens_estimate,
+        prompt_block_manifest=prompt_plan.manifest(),
+        provider_request_hash=prompt_plan.provider_request_hash,
         max_context_tokens=model.max_context_tokens,
         reserved_output_tokens=selection.budget.reserved_output_tokens,
         reserved_reasoning_tokens=selection.budget.reserved_reasoning_tokens,

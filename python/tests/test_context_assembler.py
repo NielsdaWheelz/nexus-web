@@ -3,10 +3,12 @@
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, MessageRetrieval, MessageToolCall, Model
 from nexus.services.context_assembler import assemble_chat_context
+from nexus.services.context_rendering import PROMPT_VERSION
 from tests.factories import create_test_conversation, create_test_message, create_test_model
 
 pytestmark = pytest.mark.integration
@@ -93,9 +95,13 @@ def test_assemble_chat_context_selects_recent_history_as_pairs(
         db_session,
         run=run,
         model=model,
+        environment="test",
+        key_mode_used="platform",
+        provider_account_boundary="platform",
         max_output_tokens=128,
     )
 
+    assert assembly.prompt_plan.turns[-1].blocks[0].text == "What did we decide most recently?"
     assert assembly.llm_request.messages[-1].content == "What did we decide most recently?"
     assert 0 < len(assembly.history) < 20
     assert len(assembly.history) % 2 == 0
@@ -175,6 +181,9 @@ def test_assemble_chat_context_returns_tool_and_citation_events_from_persisted_r
         db_session,
         run=run,
         model=model,
+        environment="test",
+        key_mode_used="platform",
+        provider_account_boundary="platform",
         max_output_tokens=128,
     )
 
@@ -184,3 +193,113 @@ def test_assemble_chat_context_returns_tool_and_citation_events_from_persisted_r
     assert assembly.citation_events[0]["url"] == "https://example.com/docs"
     assert any("Docs snippet" in block for block in assembly.context_blocks)
     assert len(assembly.ledger.included_retrieval_ids) == 1
+
+
+def test_assemble_chat_context_manifest_separates_stable_prefix_from_dynamic_blocks(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    model_id = create_test_model(db_session)
+    model = db_session.get(Model, model_id)
+    assert model is not None
+    model.max_context_tokens = 5000
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    old_user_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=1,
+        role="user",
+        content="Earlier question",
+    )
+    old_assistant_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=2,
+        role="assistant",
+        content="Earlier answer",
+    )
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=3,
+        role="user",
+        content="Current private question",
+    )
+    assistant_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=4,
+        role="assistant",
+        content="",
+        status="pending",
+        model_id=model_id,
+    )
+    memory_item_id = uuid4()
+    db_session.execute(
+        text(
+            """
+            INSERT INTO conversation_memory_items (
+                id,
+                conversation_id,
+                kind,
+                body,
+                source_required,
+                confidence,
+                valid_from_seq,
+                prompt_version
+            )
+            VALUES (
+                :id,
+                :conversation_id,
+                'decision',
+                'Prefer concise answers.',
+                false,
+                0.9,
+                2,
+                :prompt_version
+            )
+            """
+        ),
+        {
+            "id": memory_item_id,
+            "conversation_id": conversation_id,
+            "prompt_version": PROMPT_VERSION,
+        },
+    )
+    db_session.commit()
+    run = _create_run(
+        db_session,
+        user_id=bootstrapped_user,
+        model_id=model_id,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_id,
+    )
+
+    assembly = assemble_chat_context(
+        db_session,
+        run=run,
+        model=model,
+        environment="test",
+        key_mode_used="platform",
+        provider_account_boundary="platform",
+        max_output_tokens=128,
+    )
+
+    blocks = assembly.prompt_plan.blocks()
+    stable_prefix = [block.id for block in blocks[:2] if block.cache_policy is not None]
+    manifest = assembly.ledger.prompt_block_manifest
+
+    assert stable_prefix == ["system:system-v3", "memory:active"]
+    assert assembly.ledger.included_memory_item_ids == (memory_item_id,)
+    assert blocks[-1].lane == "current_user"
+    assert blocks[-1].text == "Current private question"
+    assert [block.role for block in blocks if block.lane == "recent_history"] == [
+        "user",
+        "assistant",
+    ]
+    assert str(old_user_id) in str(manifest)
+    assert str(old_assistant_id) in str(manifest)
+    assert "Current private question" not in str(manifest)
+    assert assembly.ledger.stable_prefix_hash == assembly.prompt_plan.stable_prefix_hash
+    assert assembly.llm_request.prompt_cache_key == assembly.prompt_plan.stable_prefix_hash

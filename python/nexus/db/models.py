@@ -2306,9 +2306,13 @@ class MessageLLM(Base):
     )
     provider: Mapped[str] = mapped_column(Text, nullable=False)
     model_name: Mapped[str] = mapped_column(Text, nullable=False)
-    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_write_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_read_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cached_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     key_mode_requested: Mapped[str] = mapped_column(Text, nullable=False)
     key_mode_used: Mapped[str] = mapped_column(Text, nullable=False)
     cost_usd_micros: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -2316,6 +2320,9 @@ class MessageLLM(Base):
     error_class: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_plan_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stable_prefix_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_usage: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -2336,16 +2343,36 @@ class MessageLLM(Base):
             name="ck_message_llm_key_mode_used",
         ),
         CheckConstraint(
-            "prompt_tokens IS NULL OR prompt_tokens >= 0",
-            name="ck_message_llm_prompt_tokens",
-        ),
-        CheckConstraint(
-            "completion_tokens IS NULL OR completion_tokens >= 0",
-            name="ck_message_llm_completion_tokens",
-        ),
-        CheckConstraint(
             "total_tokens IS NULL OR total_tokens >= 0",
             name="ck_message_llm_total_tokens",
+        ),
+        CheckConstraint(
+            "input_tokens IS NULL OR input_tokens >= 0",
+            name="ck_message_llm_input_tokens",
+        ),
+        CheckConstraint(
+            "output_tokens IS NULL OR output_tokens >= 0",
+            name="ck_message_llm_output_tokens",
+        ),
+        CheckConstraint(
+            "reasoning_tokens IS NULL OR reasoning_tokens >= 0",
+            name="ck_message_llm_reasoning_tokens",
+        ),
+        CheckConstraint(
+            "cache_write_input_tokens IS NULL OR cache_write_input_tokens >= 0",
+            name="ck_message_llm_cache_write_tokens",
+        ),
+        CheckConstraint(
+            "cache_read_input_tokens IS NULL OR cache_read_input_tokens >= 0",
+            name="ck_message_llm_cache_read_tokens",
+        ),
+        CheckConstraint(
+            "cached_input_tokens IS NULL OR cached_input_tokens >= 0",
+            name="ck_message_llm_cached_input_tokens",
+        ),
+        CheckConstraint(
+            "provider_usage IS NULL OR jsonb_typeof(provider_usage) = 'object'",
+            name="ck_message_llm_provider_usage_object",
         ),
         CheckConstraint(
             "cost_usd_micros IS NULL OR cost_usd_micros >= 0",
@@ -3073,7 +3100,16 @@ class ChatPromptAssembly(Base):
         nullable=False,
     )
     prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_plan_version: Mapped[str] = mapped_column(Text, nullable=False)
     assembler_version: Mapped[str] = mapped_column(Text, nullable=False)
+    stable_prefix_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    cacheable_input_tokens_estimate: Mapped[int] = mapped_column(Integer, nullable=False)
+    prompt_block_manifest: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    provider_request_hash: Mapped[str] = mapped_column(Text, nullable=False)
     snapshot_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("conversation_state_snapshots.id", ondelete="SET NULL"),
@@ -3126,8 +3162,20 @@ class ChatPromptAssembly(Base):
             name="ck_chat_prompt_assemblies_prompt_version_length",
         ),
         CheckConstraint(
+            "char_length(prompt_plan_version) BETWEEN 1 AND 128",
+            name="ck_chat_prompt_assemblies_prompt_plan_version_length",
+        ),
+        CheckConstraint(
             "char_length(assembler_version) BETWEEN 1 AND 128",
             name="ck_chat_prompt_assemblies_assembler_version_length",
+        ),
+        CheckConstraint(
+            "char_length(stable_prefix_hash) BETWEEN 1 AND 128",
+            name="ck_chat_prompt_assemblies_stable_prefix_hash_length",
+        ),
+        CheckConstraint(
+            "char_length(provider_request_hash) BETWEEN 1 AND 128",
+            name="ck_chat_prompt_assemblies_provider_request_hash_length",
         ),
         CheckConstraint(
             """
@@ -3141,6 +3189,10 @@ class ChatPromptAssembly(Base):
             AND estimated_input_tokens <= input_budget_tokens
             """,
             name="ck_chat_prompt_assemblies_token_budget",
+        ),
+        CheckConstraint(
+            "cacheable_input_tokens_estimate >= 0",
+            name="ck_chat_prompt_assemblies_cacheable_tokens",
         ),
         CheckConstraint(
             "jsonb_typeof(included_message_ids) = 'array'",
@@ -3165,6 +3217,10 @@ class ChatPromptAssembly(Base):
         CheckConstraint(
             "jsonb_typeof(budget_breakdown) = 'object'",
             name="ck_chat_prompt_assemblies_budget_breakdown_object",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(prompt_block_manifest) = 'object'",
+            name="ck_chat_prompt_assemblies_prompt_block_manifest_object",
         ),
         UniqueConstraint("chat_run_id", name="uix_chat_prompt_assemblies_chat_run"),
     )

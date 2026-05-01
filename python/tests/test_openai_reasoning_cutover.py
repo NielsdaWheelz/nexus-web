@@ -34,7 +34,7 @@ class _CapturingRouter:
 class _IncompleteChunk:
     delta_text = ""
     done = True
-    usage = LLMUsage(prompt_tokens=10, completion_tokens=25000, total_tokens=25010)
+    usage = LLMUsage(input_tokens=10, output_tokens=25000, total_tokens=25010)
     provider_request_id = "resp_incomplete"
     status = "incomplete"
     incomplete_details = {"reason": "max_output_tokens"}
@@ -216,7 +216,7 @@ async def test_default_reasoning_uses_reasoning_aware_output_budget(
         LLMChunk(
             delta_text="",
             done=True,
-            usage=LLMUsage(prompt_tokens=10, completion_tokens=1, total_tokens=11),
+            usage=LLMUsage(input_tokens=10, output_tokens=1, total_tokens=11),
             provider_request_id="resp_ok",
         )
     )
@@ -232,6 +232,37 @@ async def test_default_reasoning_uses_reasoning_aware_output_budget(
     assert router.request is not None, "Expected chat run to call the LLM router"
     assert router.request.reasoning_effort == "default"
     assert router.request.max_tokens == 25000
+    with direct_db.session() as session:
+        row = session.execute(
+            text(
+                """
+                SELECT ml.input_tokens,
+                       ml.output_tokens,
+                       ml.cache_write_input_tokens,
+                       ml.cache_read_input_tokens,
+                       ml.provider_usage,
+                       ml.prompt_plan_version,
+                       ml.stable_prefix_hash AS message_stable_prefix_hash,
+                       cpa.prompt_block_manifest,
+                       cpa.stable_prefix_hash AS assembly_stable_prefix_hash
+                FROM message_llm ml
+                JOIN chat_prompt_assemblies cpa
+                  ON cpa.assistant_message_id = ml.message_id
+                WHERE ml.message_id = :message_id
+                """
+            ),
+            {"message_id": UUID(data["assistant_message"]["id"])},
+        ).first()
+
+    assert row is not None, "Expected LLM metadata and prompt assembly rows"
+    assert row.input_tokens == 10
+    assert row.output_tokens == 1
+    assert row.cache_write_input_tokens == 0
+    assert row.cache_read_input_tokens == 0
+    assert row.provider_usage["total_tokens"] == 11
+    assert row.prompt_plan_version == "prompt-plan-v1"
+    assert row.message_stable_prefix_hash == row.assembly_stable_prefix_hash
+    assert "Summarize the current notes." not in str(row.prompt_block_manifest)
 
 
 @pytest.mark.integration

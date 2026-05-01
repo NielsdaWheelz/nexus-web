@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
 
 from nexus.auth.permissions import can_read_media
+from nexus.config import get_settings
 from nexus.db.models import (
     Annotation,
     ChatRun,
@@ -704,6 +705,9 @@ async def _execute_chat_run(
                 db,
                 run=run,
                 model=model,
+                environment=get_settings().nexus_env.value,
+                key_mode_used=resolved_key.mode,
+                provider_account_boundary=resolved_key.user_key_id or resolved_key.mode,
                 max_output_tokens=max_output_tokens,
             )
             persist_prompt_assembly(db, run=run, assembly=assembly)
@@ -779,7 +783,11 @@ async def _execute_chat_run(
             llm_operation="chat_send",
             conversation_id=str(run.conversation_id),
             assistant_message_id=str(run.assistant_message_id),
-            message_chars=sum(len(message.content) for message in llm_request.messages),
+            prompt_chars=assembly.prompt_plan.text_char_count(),
+            stable_prefix_hash=assembly.prompt_plan.stable_prefix_hash,
+            provider_request_hash=assembly.prompt_plan.provider_request_hash,
+            cacheable_input_tokens_estimate=assembly.prompt_plan.cacheable_input_tokens_estimate,
+            scope_type=str(assembly.scope_metadata.get("type") or "general"),
         )
         logger.info("llm.request.started", **llm_log_fields)
         try:
@@ -882,10 +890,13 @@ async def _execute_chat_run(
                     error_class=LLM_INCOMPLETE_ERROR_CODE,
                     incomplete_reason=incomplete_reason,
                     latency_ms=int((time.monotonic() - llm_start) * 1000),
-                    tokens_input=usage.prompt_tokens if usage else None,
-                    tokens_output=usage.completion_tokens if usage else None,
-                    tokens_total=usage.total_tokens if usage else None,
-                    tokens_reasoning=usage.reasoning_tokens if usage else None,
+                    tokens_input=_usage_input_tokens(usage),
+                    tokens_output=_usage_output_tokens(usage),
+                    tokens_total=_usage_total_tokens(usage),
+                    tokens_reasoning=_usage_reasoning_tokens(usage),
+                    cache_write_input_tokens=_usage_cache_write_input_tokens(usage),
+                    cache_read_input_tokens=_usage_cache_read_input_tokens(usage),
+                    cached_input_tokens=_usage_cached_input_tokens(usage),
                     provider_request_id=provider_request_id,
                 ),
             )
@@ -907,16 +918,51 @@ async def _execute_chat_run(
             )
             return {"status": "error", "error_code": LLM_INCOMPLETE_ERROR_CODE}
 
+        if _usage_total_tokens(usage) is None:
+            latency_ms = int((time.monotonic() - start_time) * 1000)
+            error_code = ApiErrorCode.E_LLM_PROVIDER_DOWN.value
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **llm_log_fields,
+                    outcome="error",
+                    error_class=error_code,
+                    missing_provider_usage=True,
+                    latency_ms=int((time.monotonic() - llm_start) * 1000),
+                    provider_request_id=provider_request_id,
+                ),
+            )
+            _finalize_run(
+                db,
+                run_id=run.id,
+                assistant_content=ERROR_CODE_TO_MESSAGE[error_code],
+                assistant_status="error",
+                run_status="error",
+                done_status="error",
+                error_code=error_code,
+                model=model,
+                resolved_key=resolved_key,
+                key_mode=run.key_mode,
+                latency_ms=latency_ms,
+                usage=usage,
+                provider_request_id=provider_request_id,
+                viewer_id=run.owner_user_id,
+            )
+            return {"status": "error", "error_code": error_code}
+
         logger.info(
             "llm.request.finished",
             **safe_kv(
                 **llm_log_fields,
                 outcome="success",
                 latency_ms=int((time.monotonic() - llm_start) * 1000),
-                tokens_input=usage.prompt_tokens if usage else None,
-                tokens_output=usage.completion_tokens if usage else None,
-                tokens_total=usage.total_tokens if usage else None,
-                tokens_reasoning=usage.reasoning_tokens if usage else None,
+                tokens_input=_usage_input_tokens(usage),
+                tokens_output=_usage_output_tokens(usage),
+                tokens_total=_usage_total_tokens(usage),
+                tokens_reasoning=_usage_reasoning_tokens(usage),
+                cache_write_input_tokens=_usage_cache_write_input_tokens(usage),
+                cache_read_input_tokens=_usage_cache_read_input_tokens(usage),
+                cached_input_tokens=_usage_cached_input_tokens(usage),
                 provider_request_id=provider_request_id,
             ),
         )
@@ -945,9 +991,8 @@ async def _execute_chat_run(
         )
         db.commit()
         if resolved_key.mode == "platform":
-            actual_tokens = (
-                usage.total_tokens if usage and usage.total_tokens else len(full_content) // 4 + 100
-            )
+            actual_tokens = _usage_total_tokens(usage)
+            assert actual_tokens is not None
             rate_limiter.commit_token_budget(
                 run.owner_user_id, run.assistant_message_id, actual_tokens
             )
@@ -1277,6 +1322,93 @@ def _finalize_cancelled(
     )
 
 
+def _usage_value(usage: LLMUsage | None, name: str) -> int | None:
+    if usage is None:
+        return None
+    value = getattr(usage, name, None)
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _usage_input_tokens(usage: LLMUsage | None) -> int | None:
+    return _usage_value(usage, "input_tokens")
+
+
+def _usage_output_tokens(usage: LLMUsage | None) -> int | None:
+    return _usage_value(usage, "output_tokens")
+
+
+def _usage_total_tokens(usage: LLMUsage | None) -> int | None:
+    total = _usage_value(usage, "total_tokens")
+    if total is not None:
+        return total
+    input_tokens = _usage_input_tokens(usage)
+    output_tokens = _usage_output_tokens(usage)
+    if input_tokens is None or output_tokens is None:
+        return None
+    return input_tokens + output_tokens + (_usage_reasoning_tokens(usage) or 0)
+
+
+def _usage_reasoning_tokens(usage: LLMUsage | None) -> int | None:
+    return _usage_value(usage, "reasoning_tokens")
+
+
+def _usage_cache_write_input_tokens(usage: LLMUsage | None) -> int | None:
+    if usage is None:
+        return None
+    return _usage_value(usage, "cache_write_input_tokens") or 0
+
+
+def _usage_cache_read_input_tokens(usage: LLMUsage | None) -> int | None:
+    if usage is None:
+        return None
+    return _usage_value(usage, "cache_read_input_tokens") or 0
+
+
+def _usage_cached_input_tokens(usage: LLMUsage | None) -> int | None:
+    if usage is None:
+        return None
+    return _usage_value(usage, "cached_input_tokens") or 0
+
+
+def _usage_provider_json(usage: LLMUsage | None) -> dict[str, object] | None:
+    if usage is None:
+        return None
+    provider_usage = getattr(usage, "provider_usage", None)
+    if isinstance(provider_usage, dict):
+        return provider_usage
+    return {
+        "input_tokens": _usage_input_tokens(usage),
+        "output_tokens": _usage_output_tokens(usage),
+        "total_tokens": _usage_total_tokens(usage),
+        "reasoning_tokens": _usage_reasoning_tokens(usage),
+        "cache_write_input_tokens": _usage_cache_write_input_tokens(usage),
+        "cache_read_input_tokens": _usage_cache_read_input_tokens(usage),
+        "cached_input_tokens": _usage_cached_input_tokens(usage),
+    }
+
+
+def _prompt_assembly_metadata(
+    db: Session,
+    *,
+    run_id: UUID,
+) -> tuple[str | None, str | None]:
+    row = db.execute(
+        text(
+            """
+            SELECT prompt_plan_version, stable_prefix_hash
+            FROM chat_prompt_assemblies
+            WHERE chat_run_id = :run_id
+            """
+        ),
+        {"run_id": run_id},
+    ).first()
+    if row is None:
+        return None, None
+    return row[0], row[1]
+
+
 def _finalize_run(
     db: Session,
     *,
@@ -1314,36 +1446,56 @@ def _finalize_run(
     key = resolved_key or (model and _dummy_resolved_key(model))
     if assistant_message is not None and model is not None and key is not None:
         existing_llm = db.get(MessageLLM, assistant_message.id)
-        prompt_tokens = usage.prompt_tokens if usage else None
-        completion_tokens = usage.completion_tokens if usage else None
-        total_tokens = usage.total_tokens if usage else None
+        input_tokens = _usage_input_tokens(usage)
+        output_tokens = _usage_output_tokens(usage)
+        total_tokens = _usage_total_tokens(usage)
+        reasoning_tokens = _usage_reasoning_tokens(usage)
+        cache_write_input_tokens = _usage_cache_write_input_tokens(usage)
+        cache_read_input_tokens = _usage_cache_read_input_tokens(usage)
+        cached_input_tokens = _usage_cached_input_tokens(usage)
+        provider_usage = _usage_provider_json(usage)
+        prompt_plan_version, stable_prefix_hash = _prompt_assembly_metadata(db, run_id=run.id)
         if existing_llm is None:
             db.add(
                 MessageLLM(
                     message_id=assistant_message.id,
                     provider=model.provider,
                     model_name=model.model_name,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
                     total_tokens=total_tokens,
+                    reasoning_tokens=reasoning_tokens,
+                    cache_write_input_tokens=cache_write_input_tokens,
+                    cache_read_input_tokens=cache_read_input_tokens,
+                    cached_input_tokens=cached_input_tokens,
                     key_mode_requested=key_mode,
                     key_mode_used=key.mode,
                     latency_ms=latency_ms,
                     error_class=error_code if assistant_status == "error" else None,
                     provider_request_id=provider_request_id,
                     prompt_version=PROMPT_VERSION,
+                    prompt_plan_version=prompt_plan_version,
+                    stable_prefix_hash=stable_prefix_hash,
+                    provider_usage=provider_usage,
                 )
             )
         else:
-            existing_llm.prompt_tokens = prompt_tokens
-            existing_llm.completion_tokens = completion_tokens
+            existing_llm.input_tokens = input_tokens
+            existing_llm.output_tokens = output_tokens
             existing_llm.total_tokens = total_tokens
+            existing_llm.reasoning_tokens = reasoning_tokens
+            existing_llm.cache_write_input_tokens = cache_write_input_tokens
+            existing_llm.cache_read_input_tokens = cache_read_input_tokens
+            existing_llm.cached_input_tokens = cached_input_tokens
             existing_llm.key_mode_requested = key_mode
             existing_llm.key_mode_used = key.mode
             existing_llm.latency_ms = latency_ms
             existing_llm.error_class = error_code if assistant_status == "error" else None
             existing_llm.provider_request_id = provider_request_id
             existing_llm.prompt_version = PROMPT_VERSION
+            existing_llm.prompt_plan_version = prompt_plan_version
+            existing_llm.stable_prefix_hash = stable_prefix_hash
+            existing_llm.provider_usage = provider_usage
 
         if key.mode == "byok":
             if assistant_status == "complete":

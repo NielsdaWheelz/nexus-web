@@ -234,6 +234,9 @@ test.describe("conversations", () => {
       await expect(paneBody).toHaveAttribute("data-body-mode", "contained");
       await expect(scrollport).toBeVisible();
       await expect(log).toContainText("Scroll fixture message 50", { timeout: 10_000 });
+      await scrollport.evaluate((node) => {
+        node.scrollTop = node.scrollHeight;
+      });
       await expect
         .poll(async () =>
           scrollport.evaluate(

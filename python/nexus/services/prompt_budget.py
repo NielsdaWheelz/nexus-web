@@ -2,40 +2,43 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from math import ceil
 from typing import Literal
 
-from llm_calling.types import Turn
-
 from nexus.errors import ApiErrorCode
 
 BudgetLane = Literal[
     "system",
     "scope",
-    "current_user",
+    "state_snapshot",
     "attached_context",
     "retrieved_evidence",
-    "state_snapshot",
+    "web_evidence",
     "memory",
-    "recent_history",
     "pointer_refs",
+    "recent_history",
+    "current_user",
 ]
 
 DropReason = Literal["budget_exceeded"]
+PromptRole = Literal["system", "user", "assistant"]
 
 LANE_ORDER: tuple[BudgetLane, ...] = (
     "system",
     "scope",
-    "current_user",
+    "state_snapshot",
     "attached_context",
     "retrieved_evidence",
-    "state_snapshot",
+    "web_evidence",
     "memory",
-    "recent_history",
     "pointer_refs",
+    "recent_history",
+    "current_user",
 )
 
 REASONING_TOKEN_RESERVE = {
@@ -78,20 +81,43 @@ class PromptBudget:
 
 
 @dataclass(frozen=True)
-class BudgetItem:
-    key: str
+class PromptBlock:
+    id: str
+    role: PromptRole
     lane: BudgetLane
     text: str
-    mandatory: bool
-    priority: int = 0
-    metadata: Mapping[str, object] = field(default_factory=dict)
+    estimated_tokens: int
+    source_refs: tuple[Mapping[str, object], ...]
+    source_version: str
+    stable_hash: str
+    cache_policy: Mapping[str, object] | None = None
+    privacy_scope: str = "conversation"
+    required_provider_capability: str | None = None
+
+    def manifest_entry(self, *, ordinal: int, included: bool) -> dict[str, object]:
+        entry: dict[str, object] = {
+            "id": self.id,
+            "role": self.role,
+            "lane": self.lane,
+            "ordinal": ordinal,
+            "included": included,
+            "estimated_tokens": self.estimated_tokens,
+            "stable_hash": self.stable_hash,
+            "source_refs": [dict(ref) for ref in self.source_refs],
+            "source_version": self.source_version,
+            "cache_policy": dict(self.cache_policy) if self.cache_policy is not None else None,
+            "privacy_scope": self.privacy_scope,
+        }
+        if self.required_provider_capability is not None:
+            entry["required_provider_capability"] = self.required_provider_capability
+        return entry
 
 
 @dataclass(frozen=True)
 class IncludedBudgetItem:
     key: str
     lane: BudgetLane
-    text: str
+    blocks: tuple[PromptBlock, ...]
     estimated_tokens: int
     metadata: Mapping[str, object]
 
@@ -100,6 +126,7 @@ class IncludedBudgetItem:
 class DroppedBudgetItem:
     key: str
     lane: BudgetLane
+    blocks: tuple[PromptBlock, ...]
     reason: DropReason
     estimated_tokens: int
     metadata: Mapping[str, object]
@@ -110,6 +137,10 @@ class DroppedBudgetItem:
             "lane": self.lane,
             "reason": self.reason,
             "estimated_tokens": self.estimated_tokens,
+            "blocks": [
+                block.manifest_entry(ordinal=index, included=False)
+                for index, block in enumerate(self.blocks)
+            ],
             "metadata": dict(self.metadata),
         }
 
@@ -126,6 +157,16 @@ class BudgetSelection:
         return {item.key for item in self.included}
 
 
+@dataclass(frozen=True)
+class BudgetItem:
+    key: str
+    lane: BudgetLane
+    blocks: tuple[PromptBlock, ...]
+    mandatory: bool
+    priority: int = 0
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+
 def estimate_tokens(text: str) -> int:
     """Conservatively estimate tokens for provider-neutral prompt assembly."""
 
@@ -137,10 +178,59 @@ def estimate_tokens(text: str) -> int:
     return max(1, char_estimate, word_estimate, non_ascii)
 
 
-def estimate_turn_tokens(turns: Sequence[Turn]) -> int:
-    """Estimate provider input tokens for a list of chat turns."""
+def make_prompt_block(
+    *,
+    block_id: str,
+    role: PromptRole,
+    lane: BudgetLane,
+    text: str,
+    source_refs: Sequence[Mapping[str, object]] = (),
+    source_version: str = "v1",
+    cache_policy: Mapping[str, object] | None = None,
+    privacy_scope: str = "conversation",
+    required_provider_capability: str | None = None,
+) -> PromptBlock:
+    """Create one structured prompt block with its stable hash."""
 
-    return sum(estimate_tokens(turn.content) + 4 for turn in turns)
+    refs = tuple(dict(ref) for ref in source_refs)
+    estimated_tokens = estimate_tokens(text)
+    stable_hash = _stable_hash(
+        {
+            "id": block_id,
+            "role": role,
+            "lane": lane,
+            "text": text,
+            "source_refs": refs,
+            "source_version": source_version,
+            "cache_policy": cache_policy,
+            "privacy_scope": privacy_scope,
+            "required_provider_capability": required_provider_capability,
+        }
+    )
+    return PromptBlock(
+        id=block_id,
+        role=role,
+        lane=lane,
+        text=text,
+        estimated_tokens=estimated_tokens,
+        source_refs=refs,
+        source_version=source_version,
+        stable_hash=stable_hash,
+        cache_policy=cache_policy,
+        privacy_scope=privacy_scope,
+        required_provider_capability=required_provider_capability,
+    )
+
+
+def estimate_block_tokens(blocks: Sequence[PromptBlock]) -> int:
+    """Estimate provider input tokens for structured prompt blocks."""
+
+    return sum(block.estimated_tokens for block in blocks)
+
+
+def _stable_hash(value: Mapping[str, object]) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def estimate_reasoning_reserve(provider: str, reasoning: str) -> int:
@@ -178,7 +268,7 @@ def build_prompt_budget(
 
 
 def allocate_budget(items: Sequence[BudgetItem], budget: PromptBudget) -> BudgetSelection:
-    """Allocate prompt input tokens by lane, preserving caller order inside each lane."""
+    """Allocate prompt input tokens by lane while keeping mandatory blocks first."""
 
     items_by_lane: dict[BudgetLane, list[BudgetItem]] = defaultdict(list)
     for item in items:
@@ -197,45 +287,53 @@ def allocate_budget(items: Sequence[BudgetItem], budget: PromptBudget) -> Budget
         for lane in LANE_ORDER
     }
 
-    for lane in LANE_ORDER:
-        lane_items = sorted(items_by_lane[lane], key=lambda item: item.priority, reverse=True)
-        for item in lane_items:
-            item_tokens = estimate_tokens(item.text)
-            if item_tokens <= remaining:
-                included.append(
-                    IncludedBudgetItem(
-                        key=item.key,
-                        lane=item.lane,
-                        text=item.text,
-                        estimated_tokens=item_tokens,
-                        metadata=item.metadata,
-                    )
-                )
-                remaining -= item_tokens
-                lane_breakdown[lane]["included_tokens"] += item_tokens
-                lane_breakdown[lane]["included_count"] += 1
-                continue
+    ordered_items: list[BudgetItem] = []
+    for mandatory in (True, False):
+        for lane in LANE_ORDER:
+            lane_items = [item for item in items_by_lane[lane] if item.mandatory is mandatory]
+            ordered_items.extend(sorted(lane_items, key=lambda item: item.priority, reverse=True))
 
-            if item.mandatory:
-                raise ContextBudgetError(
-                    "Mandatory prompt context cannot fit the model input budget",
-                    lane=item.lane,
-                    item_key=item.key,
-                    requested_tokens=item_tokens,
-                    remaining_tokens=remaining,
-                )
-
-            dropped.append(
-                DroppedBudgetItem(
+    for item in ordered_items:
+        lane = item.lane
+        if not item.blocks:
+            continue
+        item_tokens = estimate_block_tokens(item.blocks)
+        if item_tokens <= remaining:
+            included.append(
+                IncludedBudgetItem(
                     key=item.key,
                     lane=item.lane,
-                    reason="budget_exceeded",
+                    blocks=item.blocks,
                     estimated_tokens=item_tokens,
                     metadata=item.metadata,
                 )
             )
-            lane_breakdown[lane]["dropped_tokens"] += item_tokens
-            lane_breakdown[lane]["dropped_count"] += 1
+            remaining -= item_tokens
+            lane_breakdown[lane]["included_tokens"] += item_tokens
+            lane_breakdown[lane]["included_count"] += 1
+            continue
+
+        if item.mandatory:
+            raise ContextBudgetError(
+                "Mandatory prompt context cannot fit the model input budget",
+                lane=item.lane,
+                item_key=item.key,
+                requested_tokens=item_tokens,
+                remaining_tokens=remaining,
+            )
+
+        dropped.append(
+            DroppedBudgetItem(
+                key=item.key,
+                lane=item.lane,
+                blocks=item.blocks,
+                reason="budget_exceeded",
+                estimated_tokens=item_tokens,
+                metadata=item.metadata,
+            )
+        )
+        lane_breakdown[lane]["dropped_tokens"] += item_tokens
+        lane_breakdown[lane]["dropped_count"] += 1
 
     estimated_input_tokens = budget.input_budget_tokens - remaining
     return BudgetSelection(
@@ -251,16 +349,3 @@ def allocate_budget(items: Sequence[BudgetItem], budget: PromptBudget) -> Budget
             "reserved_reasoning_tokens": budget.reserved_reasoning_tokens,
         },
     )
-
-
-def validate_turn_budget(turns: Sequence[Turn], budget: PromptBudget) -> int:
-    """Validate final provider turns against the computed input budget."""
-
-    estimated_tokens = estimate_turn_tokens(turns)
-    if estimated_tokens > budget.input_budget_tokens:
-        raise ContextBudgetError(
-            "Assembled prompt exceeds the model input budget",
-            requested_tokens=estimated_tokens,
-            remaining_tokens=budget.input_budget_tokens,
-        )
-    return estimated_tokens

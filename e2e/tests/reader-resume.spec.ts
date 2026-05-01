@@ -261,9 +261,9 @@ test.describe("reader settings + resume", () => {
       await expect
         .poll(async () => {
           const locator = await fetchReaderState(page.request, mediaId);
-          return isWebReaderResumeState(locator) ? locator.locations.text_offset ?? null : null;
+          return isWebReaderResumeState(locator) ? locator.locations.text_offset ?? 0 : 0;
         })
-        .not.toBeNull();
+        .toBeGreaterThan(0);
 
       const savedLocator = await fetchReaderState(page.request, mediaId);
       expect(isWebReaderResumeState(savedLocator)).toBe(true);
@@ -322,6 +322,20 @@ test.describe("reader settings + resume", () => {
         "data-mobile-chrome-hidden",
         "true"
       );
+      await documentViewport.evaluate((element, scrollTop) => {
+        if (!(element instanceof HTMLElement)) {
+          return;
+        }
+        element.scrollTop = scrollTop;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }, chromeHeight + 34);
+      await documentViewport.evaluate((element, scrollTop) => {
+        if (!(element instanceof HTMLElement)) {
+          return;
+        }
+        element.scrollTop = scrollTop;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }, chromeHeight + 22);
       await documentViewport.evaluate((element, scrollTop) => {
         if (!(element instanceof HTMLElement)) {
           return;

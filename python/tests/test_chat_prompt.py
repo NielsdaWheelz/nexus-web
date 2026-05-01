@@ -1,147 +1,136 @@
-"""Tests for Nexus-owned chat prompt rendering."""
+"""Tests for Nexus-owned structured chat prompt plans."""
 
 import pytest
-from llm_calling.types import Turn
 
-from nexus.services.chat_prompt import PromptTooLargeError, render_prompt, validate_prompt_size
+from nexus.services.chat_prompt import (
+    PromptTooLargeError,
+    build_llm_request_from_plan,
+    build_prompt_plan,
+    render_system_prompt_block,
+    validate_prompt_size,
+)
+from nexus.services.prompt_budget import make_prompt_block
 
 pytestmark = pytest.mark.unit
 
 
-class TestPromptRendering:
-    """Tests for prompt rendering."""
+def test_prompt_plan_keeps_stable_prefix_before_dynamic_blocks():
+    system = make_prompt_block(
+        block_id="system",
+        role="system",
+        lane="system",
+        text=render_system_prompt_block(),
+        cache_policy={"type": "ephemeral", "ttl_seconds": 300},
+    )
+    scope = make_prompt_block(
+        block_id="scope",
+        role="system",
+        lane="scope",
+        text='<conversation_scope type="media" />',
+        cache_policy={"type": "ephemeral", "ttl_seconds": 300},
+    )
+    evidence = make_prompt_block(
+        block_id="retrieval",
+        role="system",
+        lane="retrieved_evidence",
+        text="<evidence>dynamic</evidence>",
+    )
+    current = make_prompt_block(
+        block_id="current",
+        role="user",
+        lane="current_user",
+        text="What changed?",
+    )
 
-    def test_prompt_render_no_context(self):
-        """Render prompt without context blocks - identity + instructions only."""
-        turns = render_prompt(
-            user_content="What is 2+2?",
-            history=[],
-            context_blocks=[],
-        )
+    plan = build_prompt_plan(
+        stable_blocks=[system, scope],
+        dynamic_system_blocks=[evidence],
+        history_blocks=[],
+        current_user_block=current,
+        cache_identity={"conversation_id": "c1", "provider": "openai"},
+        model_name="gpt-test",
+        max_tokens=100,
+        reasoning_effort="none",
+    )
 
-        assert len(turns) == 2
-        assert turns[0].role == "system"
-        assert "reading assistant" in turns[0].content
-        assert "Answer using the provided context" in turns[0].content
-        assert "<context>" not in turns[0].content
-        assert turns[1].role == "user"
-        assert turns[1].content == "What is 2+2?"
-
-    def test_prompt_render_with_context(self):
-        """Render prompt with context blocks wraps them in <context> tags."""
-        turns = render_prompt(
-            user_content="What does this mean?",
-            history=[],
-            context_blocks=["<highlight><quote>block 1</quote></highlight>"],
-            context_types={"highlight"},
-        )
-
-        assert len(turns) == 2
-        assert turns[0].role == "system"
-        assert "<context>" in turns[0].content
-        assert "</context>" in turns[0].content
-        assert "block 1" in turns[0].content
-        assert "highlighted a passage" in turns[0].content
-
-    def test_prompt_render_with_history(self):
-        """Render prompt with conversation history."""
-        history = [
-            Turn(role="user", content="Previous question"),
-            Turn(role="assistant", content="Previous answer"),
-        ]
-
-        turns = render_prompt(
-            user_content="Follow-up question",
-            history=history,
-            context_blocks=[],
-        )
-
-        assert len(turns) == 4
-        assert turns[0].role == "system"
-        assert turns[1].role == "user"
-        assert turns[1].content == "Previous question"
-        assert turns[2].role == "assistant"
-        assert turns[2].content == "Previous answer"
-        assert turns[3].role == "user"
-        assert turns[3].content == "Follow-up question"
-
-    def test_prompt_render_skips_old_system_turns(self):
-        """Old system turns in history should be skipped."""
-        history = [
-            Turn(role="system", content="Old system prompt"),
-            Turn(role="user", content="Previous question"),
-        ]
-
-        turns = render_prompt(
-            user_content="New question",
-            history=history,
-            context_blocks=[],
-        )
-
-        assert len(turns) == 3
-        assert turns[0].role == "system"
-        assert "reading assistant" in turns[0].content
-        assert turns[1].role == "user"
-        assert turns[1].content == "Previous question"
-
-    def test_prompt_render_situation_varies_by_context_type(self):
-        """Situation line adapts to attached context types."""
-        turns = render_prompt(
-            user_content="?",
-            history=[],
-            context_blocks=["x"],
-            context_types={"highlight"},
-        )
-        assert "highlighted a passage" in turns[0].content
-
-        turns = render_prompt(
-            user_content="?",
-            history=[],
-            context_blocks=["x"],
-            context_types={"annotation"},
-        )
-        assert "annotated a passage" in turns[0].content
-
-        turns = render_prompt(
-            user_content="?",
-            history=[],
-            context_blocks=["x"],
-            context_types={"media"},
-        )
-        assert "saved document" in turns[0].content
-
-        turns = render_prompt(
-            user_content="?",
-            history=[],
-            context_blocks=["x"],
-            context_types={"highlight", "annotation"},
-        )
-        assert "highlighted and annotated passages" in turns[0].content
+    assert [block.id for block in plan.turns[0].blocks] == ["system", "scope", "retrieval"]
+    assert plan.cacheable_input_tokens_estimate == system.estimated_tokens + scope.estimated_tokens
+    assert plan.stable_prefix_hash
 
 
-class TestPromptValidation:
-    """Tests for prompt size validation."""
+def test_prompt_plan_manifest_contains_no_raw_text():
+    current = make_prompt_block(
+        block_id="current",
+        role="user",
+        lane="current_user",
+        text="private user text",
+    )
+    plan = build_prompt_plan(
+        stable_blocks=[],
+        dynamic_system_blocks=[],
+        history_blocks=[],
+        current_user_block=current,
+        cache_identity={"conversation_id": "c1"},
+        model_name="gpt-test",
+        max_tokens=100,
+        reasoning_effort="none",
+    )
 
-    def test_prompt_size_validation_passes(self):
-        """Validation should pass for small prompts."""
-        turns = [Turn(role="user", content="Short message")]
-        validate_prompt_size(turns)
+    manifest = plan.manifest()
 
-    def test_prompt_size_validation_fails(self):
-        """Validation should fail for oversized prompts."""
-        turns = [Turn(role="user", content="x" * 150_000)]
+    assert "private user text" not in str(manifest)
+    assert manifest["provider_request_hash"] == plan.provider_request_hash
 
-        with pytest.raises(PromptTooLargeError) as exc_info:
-            validate_prompt_size(turns)
 
-        assert exc_info.value.actual_size == 150_000
-        assert exc_info.value.max_size == 100_000
+def test_llm_request_is_derived_from_structured_turns():
+    current = make_prompt_block(
+        block_id="current",
+        role="user",
+        lane="current_user",
+        text="Follow up",
+    )
+    plan = build_prompt_plan(
+        stable_blocks=[],
+        dynamic_system_blocks=[],
+        history_blocks=[],
+        current_user_block=current,
+        cache_identity={"conversation_id": "c1"},
+        model_name="gpt-test",
+        max_tokens=100,
+        reasoning_effort="none",
+    )
 
-    def test_prompt_size_validation_custom_max(self):
-        """Validation should respect custom max_chars."""
-        turns = [Turn(role="user", content="x" * 100)]
+    request = build_llm_request_from_plan(
+        plan=plan,
+        provider="openai",
+        model_name="gpt-test",
+        max_tokens=100,
+        reasoning_effort="none",
+    )
 
-        validate_prompt_size(turns, max_chars=1000)
+    assert request.messages[0].content == "Follow up"
+    assert request.prompt_cache_key == plan.stable_prefix_hash
 
-        with pytest.raises(PromptTooLargeError):
-            validate_prompt_size(turns, max_chars=50)
+
+def test_prompt_size_validation_fails():
+    current = make_prompt_block(
+        block_id="current",
+        role="user",
+        lane="current_user",
+        text="x" * 150_000,
+    )
+    plan = build_prompt_plan(
+        stable_blocks=[],
+        dynamic_system_blocks=[],
+        history_blocks=[],
+        current_user_block=current,
+        cache_identity={"conversation_id": "c1"},
+        model_name="gpt-test",
+        max_tokens=100,
+        reasoning_effort="none",
+    )
+
+    with pytest.raises(PromptTooLargeError) as exc_info:
+        validate_prompt_size(plan)
+
+    assert exc_info.value.actual_size == 150_000
