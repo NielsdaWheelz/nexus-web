@@ -42,6 +42,7 @@ from nexus.services.conversation_memory import (
     load_active_state_snapshot,
 )
 from nexus.services.conversations import conversation_scope_metadata
+from nexus.services.library_intelligence import load_current_library_artifact_context
 from nexus.services.prompt_budget import (
     BudgetItem,
     BudgetLane,
@@ -189,6 +190,36 @@ def assemble_chat_context(
                 {"scope_type": scope_metadata.get("type")},
             )
         )
+    artifact_block: PromptBlock | None = None
+    artifact_metadata: Mapping[str, object] | None = None
+    if scope_metadata.get("type") == "library" and scope_metadata.get("library_id") is not None:
+        artifact_context = load_current_library_artifact_context(
+            db,
+            run.owner_user_id,
+            UUID(str(scope_metadata["library_id"])),
+        )
+        if artifact_context is not None:
+            artifact_metadata = {
+                "type": "library_intelligence_version",
+                "id": str(artifact_context.version_id),
+                "library_id": str(artifact_context.library_id),
+                "source_set_version_id": str(artifact_context.source_set_version_id),
+            }
+            artifact_block = make_prompt_block(
+                block_id=f"library_intelligence:{artifact_context.version_id}",
+                role="system",
+                lane="artifact_context",
+                text=artifact_context.text,
+                source_refs=[artifact_metadata],
+                source_version=(
+                    f"{artifact_context.prompt_version}:"
+                    f"{artifact_context.schema_version}:"
+                    f"{artifact_context.source_set_hash}"
+                ),
+                cache_policy=CACHE_POLICY_5M,
+                privacy_scope="library",
+                required_provider_capability="prompt_cache",
+            )
 
     for ref in attached_context_refs:
         context_ref = {"type": ref.type, "id": str(ref.id)}
@@ -324,6 +355,17 @@ def assemble_chat_context(
         budget_items.append(
             BudgetItem(key=key, lane=lane, blocks=(block,), mandatory=True, metadata=metadata)
         )
+    if artifact_block is not None and artifact_metadata is not None:
+        budget_items.append(
+            BudgetItem(
+                key=artifact_block.id,
+                lane="artifact_context",
+                blocks=(artifact_block,),
+                mandatory=False,
+                priority=90,
+                metadata=artifact_metadata,
+            )
+        )
     for index, (retrieval_id, block, metadata) in enumerate(retrieval_blocks):
         budget_items.append(
             BudgetItem(
@@ -395,9 +437,12 @@ def assemble_chat_context(
 
     selection = allocate_budget(budget_items, budget)
     included_keys = selection.included_keys()
+    if artifact_block is not None and artifact_block.id in included_keys:
+        context_types.add("library_intelligence")
     context_blocks = _selected_context_blocks(
         selection,
         mandatory_blocks=mandatory_blocks,
+        artifact_block=artifact_block,
         retrieval_blocks=retrieval_blocks,
         snapshot_block=snapshot_block,
         memory_block=memory_block,
@@ -414,6 +459,7 @@ def assemble_chat_context(
     stable_blocks = _stable_blocks(
         system_block=system_block,
         mandatory_blocks=mandatory_blocks,
+        artifact_block=artifact_block,
         snapshot_block=snapshot_block,
         memory_block=memory_block,
         included_keys=included_keys,
@@ -461,7 +507,16 @@ def assemble_chat_context(
         memory_items=included_memory_items,
         included_history_units=selected_history_units,
         included_retrieval_ids=included_retrieval_ids,
-        included_context_refs=[metadata for _key, _text, metadata in mandatory_blocks],
+        included_context_refs=[
+            metadata for key, _text, metadata in mandatory_blocks if key in included_keys
+        ]
+        + (
+            [artifact_metadata]
+            if artifact_metadata is not None
+            and artifact_block is not None
+            and artifact_block.id in included_keys
+            else []
+        ),
     )
     return ContextAssembly(
         llm_request=llm_request,
@@ -857,6 +912,7 @@ def _selected_context_blocks(
     selection: BudgetSelection,
     *,
     mandatory_blocks: Sequence[tuple[str, PromptBlock, Mapping[str, object]]],
+    artifact_block: PromptBlock | None,
     retrieval_blocks: Sequence[tuple[UUID, PromptBlock, Mapping[str, object]]],
     snapshot_block: PromptBlock | None,
     memory_block: PromptBlock | None,
@@ -867,6 +923,8 @@ def _selected_context_blocks(
     for key, block, _metadata in mandatory_blocks:
         if key in included_keys and block.lane == "attached_context":
             blocks.append(block.text)
+    if artifact_block is not None and artifact_block.id in included_keys:
+        blocks.append(artifact_block.text)
     for retrieval_id, block, _metadata in retrieval_blocks:
         if f"retrieved_evidence:{retrieval_id}" in included_keys:
             blocks.append(block.text)
@@ -881,6 +939,7 @@ def _stable_blocks(
     *,
     system_block: PromptBlock,
     mandatory_blocks: Sequence[tuple[str, PromptBlock, Mapping[str, object]]],
+    artifact_block: PromptBlock | None,
     snapshot_block: PromptBlock | None,
     memory_block: PromptBlock | None,
     included_keys: set[str],
@@ -889,6 +948,8 @@ def _stable_blocks(
     for key, block, _metadata in mandatory_blocks:
         if key == "scope" and key in included_keys:
             blocks.append(block)
+    if artifact_block is not None and artifact_block.id in included_keys:
+        blocks.append(artifact_block)
     if snapshot_block is not None and any(key.startswith("snapshot:") for key in included_keys):
         blocks.append(snapshot_block)
     if memory_block is not None and "memory:active" in included_keys:

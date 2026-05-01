@@ -15,6 +15,7 @@ from nexus.errors import ApiErrorCode
 BudgetLane = Literal[
     "system",
     "scope",
+    "artifact_context",
     "state_snapshot",
     "attached_context",
     "retrieved_evidence",
@@ -31,6 +32,7 @@ PromptRole = Literal["system", "user", "assistant"]
 LANE_ORDER: tuple[BudgetLane, ...] = (
     "system",
     "scope",
+    "artifact_context",
     "state_snapshot",
     "attached_context",
     "retrieved_evidence",

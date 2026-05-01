@@ -18,6 +18,7 @@ from nexus.api.routes.internal_ingest import router as internal_ingest_router
 from nexus.api.routes.internal_libraries import router as internal_libraries_router
 from nexus.api.routes.keys import router as keys_router
 from nexus.api.routes.libraries import router as libraries_router
+from nexus.api.routes.library_intelligence import router as library_intelligence_router
 from nexus.api.routes.me import router as me_router
 from nexus.api.routes.media import router as media_router
 from nexus.api.routes.models import router as models_router
@@ -43,6 +44,7 @@ def create_api_router(include_test_routes: bool = False) -> APIRouter:
     api_router.include_router(me_router, tags=["user"])
     api_router.include_router(extension_sessions_router, tags=["auth"])
     api_router.include_router(libraries_router, tags=["libraries"])
+    api_router.include_router(library_intelligence_router, tags=["library-intelligence"])
     api_router.include_router(media_router, tags=["media"])
     api_router.include_router(highlights_router, tags=["highlights"])
     api_router.include_router(billing_router, tags=["billing"])

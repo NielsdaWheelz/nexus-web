@@ -237,6 +237,8 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
         for media_id in media_ids:
             remove_media_from_non_default_closure(db, library_id, media_id)
 
+        _delete_library_intelligence_rows(db, library_id)
+
         db.execute(
             text("DELETE FROM library_entries WHERE library_id = :library_id"),
             {"library_id": library_id},
@@ -255,6 +257,92 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
         storage_client = get_storage_client()
         for storage_path in storage_paths:
             storage_client.delete_object(storage_path)
+
+
+def _delete_library_intelligence_rows(db: Session, library_id: UUID) -> None:
+    db.execute(
+        text(
+            """
+            DELETE FROM library_intelligence_evidence e
+            USING library_intelligence_claims c, library_intelligence_versions v
+            WHERE e.claim_id = c.id
+              AND c.version_id = v.id
+              AND v.library_id = :library_id
+            """
+        ),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM library_intelligence_claims c
+            USING library_intelligence_versions v
+            WHERE c.version_id = v.id
+              AND v.library_id = :library_id
+            """
+        ),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM library_intelligence_nodes n
+            USING library_intelligence_versions v
+            WHERE n.version_id = v.id
+              AND v.library_id = :library_id
+            """
+        ),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM library_intelligence_sections s
+            USING library_intelligence_versions v
+            WHERE s.version_id = v.id
+              AND v.library_id = :library_id
+            """
+        ),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text(
+            """
+            UPDATE library_intelligence_artifacts
+            SET active_version_id = NULL,
+                updated_at = now()
+            WHERE library_id = :library_id
+            """
+        ),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text("DELETE FROM library_intelligence_versions WHERE library_id = :library_id"),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text("DELETE FROM library_intelligence_builds WHERE library_id = :library_id"),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM library_source_set_items i
+            USING library_source_set_versions s
+            WHERE i.source_set_version_id = s.id
+              AND s.library_id = :library_id
+            """
+        ),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text("DELETE FROM library_intelligence_artifacts WHERE library_id = :library_id"),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text("DELETE FROM library_source_set_versions WHERE library_id = :library_id"),
+        {"library_id": library_id},
+    )
 
 
 def list_libraries(db: Session, viewer_id: UUID, limit: int = 100) -> list[LibraryOut]:

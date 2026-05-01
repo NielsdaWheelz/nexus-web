@@ -92,6 +92,7 @@ make test-real
 - `docs/sdlc/` -> planning and execution workflow: `docs/sdlc/README.md`
 - `docs/reader-implementation.md` -> current reader behavior contract
 - `docs/scoped-chat-hard-cutover.md` -> document/library scoped chat hard-cutover plan
+- `docs/library-intelligence-hard-cutover.md` -> library-wide synthesis and intelligence hard-cutover plan
 - `docs/chat-live-updates-hard-cutover.md` -> chat live-update hard-cutover plan
 - `docs/chat-composer-redesign.md` -> chat composer hard-cutover plan
 - `docs/chat-scroll-hard-cutover.md` -> chat scroll ownership hard-cutover plan

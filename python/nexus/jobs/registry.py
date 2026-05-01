@@ -111,6 +111,13 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(30, 120, 300),
             lease_seconds=900,
         ),
+        "library_intelligence_build_job": JobDefinition(
+            kind="library_intelligence_build_job",
+            handler=_run_library_intelligence_build,
+            max_attempts=3,
+            retry_delays_seconds=(60, 300, 900),
+            lease_seconds=900,
+        ),
         "podcast_sync_subscription_job": JobDefinition(
             kind="podcast_sync_subscription_job",
             handler=_run_podcast_sync_subscription,
@@ -218,6 +225,12 @@ def _run_chat_run(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
     from nexus.tasks.chat_run import chat_run
 
     return chat_run(run_id=str(payload["run_id"]))
+
+
+def _run_library_intelligence_build(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.library_intelligence import library_intelligence_build_job
+
+    return library_intelligence_build_job(build_id=str(payload["build_id"]))
 
 
 def _run_podcast_sync_subscription(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:

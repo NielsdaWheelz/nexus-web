@@ -3,7 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import { BookOpen, FileText, Globe, Mic, Radio, Video } from "lucide-react";
+import {
+  BarChart3,
+  BookOpen,
+  FileText,
+  Globe,
+  List,
+  Mic,
+  Radio,
+  RefreshCw,
+  Video,
+} from "lucide-react";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import StateMessage from "@/components/ui/StateMessage";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -88,6 +98,92 @@ interface LibraryPodcastListEntry extends LibraryEntryBase {
 
 type LibraryEntry = LibraryMediaListEntry | LibraryPodcastListEntry;
 
+type LibraryView = "contents" | "intelligence";
+type LibraryIntelligenceStatus =
+  | "current"
+  | "stale"
+  | "building"
+  | "failed"
+  | "unavailable";
+
+interface LibraryIntelligenceEvidence {
+  id: string;
+  snippet: string;
+}
+
+interface LibraryIntelligenceClaim {
+  id: string;
+  claim_text: string;
+  support_state: string;
+  evidence: LibraryIntelligenceEvidence[];
+}
+
+interface LibraryIntelligenceSection {
+  id: string;
+  section_kind: string;
+  title: string;
+  body: string;
+  ordinal: number;
+  claims: LibraryIntelligenceClaim[];
+}
+
+interface LibraryIntelligenceCoverage {
+  media_id: string | null;
+  podcast_id: string | null;
+  source_kind: "media" | "podcast";
+  title: string;
+  media_kind: string | null;
+  readiness_state: string;
+  chunk_count: number;
+  included: boolean;
+  exclusion_reason: string | null;
+  source_updated_at: string | null;
+}
+
+interface LibraryIntelligenceBuild {
+  build_id: string;
+  status: string;
+  phase: string;
+  error_code: string | null;
+  error: string | null;
+  started_at: string | null;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+interface LibraryIntelligence {
+  library_id: string;
+  status: LibraryIntelligenceStatus;
+  source_count: number;
+  chunk_count: number;
+  updated_at: string | null;
+  sections: LibraryIntelligenceSection[];
+  coverage: LibraryIntelligenceCoverage[];
+  build: LibraryIntelligenceBuild | null;
+}
+
+function formatLabel(value: string): string {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatDateTime(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");
   if (!id) {
@@ -100,6 +196,11 @@ export default function LibraryPaneBody() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
+  const [activeView, setActiveView] = useState<LibraryView>("contents");
+  const [intelligence, setIntelligence] = useState<LibraryIntelligence | null>(null);
+  const [intelligenceLoading, setIntelligenceLoading] = useState(false);
+  const [intelligenceRefreshing, setIntelligenceRefreshing] = useState(false);
+  const [intelligenceError, setIntelligenceError] = useState<string | null>(null);
   useSetPaneTitle(library?.name ?? "Library");
 
   const [editOpen, setEditOpen] = useState(false);
@@ -147,6 +248,56 @@ export default function LibraryPaneBody() {
 
     void fetchData();
   }, [id, router]);
+
+  const loadIntelligence = useCallback(async () => {
+    setIntelligenceLoading(true);
+    setIntelligenceError(null);
+    try {
+      const response = await apiFetch<{ data: LibraryIntelligence }>(
+        `/api/libraries/${id}/intelligence`
+      );
+      setIntelligence(response.data);
+    } catch (err) {
+      if (isApiError(err)) {
+        setIntelligenceError(err.message);
+      } else if (err instanceof Error) {
+        setIntelligenceError(err.message);
+      } else {
+        setIntelligenceError("Failed to load library intelligence");
+      }
+    } finally {
+      setIntelligenceLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (activeView !== "intelligence" || intelligence || intelligenceLoading) {
+      return;
+    }
+    void loadIntelligence();
+  }, [activeView, intelligence, intelligenceLoading, loadIntelligence]);
+
+  const handleRefreshIntelligence = useCallback(async () => {
+    setIntelligenceRefreshing(true);
+    setIntelligenceError(null);
+    try {
+      await apiFetch<{ data: { build_id: string; status: string } }>(
+        `/api/libraries/${id}/intelligence/refresh`,
+        { method: "POST" }
+      );
+      await loadIntelligence();
+    } catch (err) {
+      if (isApiError(err)) {
+        setIntelligenceError(err.message);
+      } else if (err instanceof Error) {
+        setIntelligenceError(err.message);
+      } else {
+        setIntelligenceError("Failed to refresh library intelligence");
+      }
+    } finally {
+      setIntelligenceRefreshing(false);
+    }
+  }, [id, loadIntelligence]);
 
   const closeLibraryPanel = useCallback(() => {
     libraryPanelRequestIdRef.current += 1;
@@ -556,6 +707,11 @@ export default function LibraryPaneBody() {
           label: "Chat about this library",
           onSelect: () => void handleOpenLibraryChat(),
         },
+        {
+          id: "library-intelligence",
+          label: "Intelligence",
+          onSelect: () => setActiveView("intelligence"),
+        },
         ...(library.is_default
           ? []
           : [
@@ -597,6 +753,22 @@ export default function LibraryPaneBody() {
     owner_user_id: library.owner_user_id,
   };
   const visibleEntries = entries.filter((entry) => !removedEntryIds.has(entry.id));
+  const intelligenceSections = intelligence?.sections ?? [];
+  const updatedAt = formatDateTime(intelligence?.updated_at);
+  const buildUpdatedAt = formatDateTime(
+    intelligence?.build?.updated_at ?? intelligence?.build?.completed_at ?? null
+  );
+  const buildStartedAt = formatDateTime(intelligence?.build?.started_at ?? null);
+  const intelligenceStatus = intelligence?.status ?? "unavailable";
+  const buildStatus = intelligence?.build?.status ?? null;
+  const statusText =
+    intelligenceStatus === "building"
+      ? "Building"
+      : intelligenceStatus === "stale"
+        ? "Stale"
+        : intelligenceStatus === "failed"
+          ? "Failed"
+          : formatLabel(intelligenceStatus);
 
   return (
     <>
@@ -621,7 +793,170 @@ export default function LibraryPaneBody() {
         <div className={styles.content}>
           {error && <StateMessage variant="error">{error}</StateMessage>}
 
-          {visibleEntries.length === 0 ? (
+          <div className={styles.viewSwitch} role="tablist" aria-label="Library view">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === "contents"}
+              className={styles.viewButton}
+              onClick={() => setActiveView("contents")}
+            >
+              <List size={16} aria-hidden="true" />
+              Contents
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === "intelligence"}
+              className={styles.viewButton}
+              onClick={() => setActiveView("intelligence")}
+            >
+              <BarChart3 size={16} aria-hidden="true" />
+              Intelligence
+            </button>
+          </div>
+
+          {activeView === "intelligence" ? (
+            <div className={styles.intelligenceView}>
+              <div className={styles.intelligenceHeader}>
+                <div className={styles.intelligenceTitleGroup}>
+                  <h2 className={styles.intelligenceTitle}>Intelligence</h2>
+                  <span
+                    className={styles.intelligenceStatus}
+                    data-status={intelligenceStatus}
+                  >
+                    {statusText}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className={styles.refreshButton}
+                  onClick={() => void handleRefreshIntelligence()}
+                  disabled={intelligenceLoading || intelligenceRefreshing}
+                >
+                  <RefreshCw size={16} aria-hidden="true" />
+                  {intelligenceRefreshing ? "Refreshing" : "Refresh"}
+                </button>
+              </div>
+
+              {intelligenceError ? (
+                <StateMessage variant="error">{intelligenceError}</StateMessage>
+              ) : null}
+
+              {intelligenceLoading && !intelligence ? (
+                <StateMessage variant="loading">Loading intelligence...</StateMessage>
+              ) : intelligence ? (
+                <>
+                  <div className={styles.intelligenceStats}>
+                    <div className={styles.intelligenceStat}>
+                      <span className={styles.statLabel}>Sources</span>
+                      <strong>{intelligence.source_count.toLocaleString()}</strong>
+                    </div>
+                    <div className={styles.intelligenceStat}>
+                      <span className={styles.statLabel}>Chunks</span>
+                      <strong>{intelligence.chunk_count.toLocaleString()}</strong>
+                    </div>
+                    <div className={styles.intelligenceStat}>
+                      <span className={styles.statLabel}>Updated</span>
+                      <strong>{updatedAt ?? "Never"}</strong>
+                    </div>
+                  </div>
+
+                  {(intelligenceStatus === "stale" ||
+                    intelligenceStatus === "building" ||
+                    intelligenceStatus === "failed" ||
+                    buildStatus) && (
+                    <div
+                      className={styles.buildState}
+                      data-status={intelligenceStatus}
+                      role={intelligenceStatus === "failed" ? "alert" : "status"}
+                    >
+                      <strong>
+                        {intelligenceStatus === "stale"
+                          ? "This intelligence is stale."
+                          : intelligenceStatus === "building"
+                            ? "A build is running."
+                            : intelligenceStatus === "failed"
+                              ? "The latest build failed."
+                              : `Build ${formatLabel(buildStatus ?? "pending")}`}
+                      </strong>
+                      <span>
+                        {intelligence.build?.error ||
+                          [
+                            buildStartedAt ? `Started ${buildStartedAt}` : null,
+                            buildUpdatedAt ? `Updated ${buildUpdatedAt}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") ||
+                          "Refresh to rebuild this library intelligence."}
+                      </span>
+                    </div>
+                  )}
+
+                  <section className={styles.intelligenceSection}>
+                    <h3>Overview</h3>
+                    {intelligenceSections.length === 0 ? (
+                      <p className={styles.mutedText}>No overview sections are available yet.</p>
+                    ) : (
+                      <div className={styles.sectionGrid}>
+                        {intelligenceSections.map((section) => (
+                          <article className={styles.overviewSection} key={section.id}>
+                            <h4>{section.title}</h4>
+                            <p>{section.body}</p>
+                            {section.claims.length > 0 ? (
+                              <ul>
+                                {section.claims.map((claim) => (
+                                  <li key={claim.id}>
+                                    {claim.claim_text}
+                                    <span className={styles.claimState}>
+                                      {formatLabel(claim.support_state)}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : null}
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className={styles.intelligenceSection}>
+                    <h3>Coverage</h3>
+                    {intelligence.coverage.length > 0 ? (
+                      <dl className={styles.coverageList}>
+                        {intelligence.coverage.map((source) => (
+                          <div
+                            className={styles.coverageItem}
+                            key={source.media_id ?? source.podcast_id ?? source.title}
+                          >
+                            <dt>{source.title}</dt>
+                            <dd>
+                              {[
+                                formatLabel(source.source_kind),
+                                source.media_kind ? formatLabel(source.media_kind) : null,
+                                source.included
+                                  ? "Included"
+                                  : formatLabel(source.exclusion_reason ?? "excluded"),
+                                `${source.chunk_count.toLocaleString()} chunks`,
+                                formatLabel(source.readiness_state),
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    ) : (
+                      <p className={styles.mutedText}>No coverage data is available yet.</p>
+                    )}
+                  </section>
+                </>
+              ) : (
+                <StateMessage variant="empty">No intelligence has been built yet.</StateMessage>
+              )}
+            </div>
+          ) : visibleEntries.length === 0 ? (
             <StateMessage variant="empty">No podcasts or media in this library yet.</StateMessage>
           ) : (
             <SortableList
