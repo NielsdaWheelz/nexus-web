@@ -101,6 +101,19 @@ class MediaOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+DeleteDocumentStatus = Literal["deleted", "removed", "hidden"]
+
+
+class DeleteDocumentResponse(BaseModel):
+    """Response for document delete and scoped library removal."""
+
+    status: DeleteDocumentStatus
+    hard_deleted: bool
+    removed_from_library_ids: list[UUID]
+    hidden_for_viewer: bool
+    remaining_reference_count: int
+
+
 class FragmentOut(BaseModel):
     """Response schema for fragment.
 

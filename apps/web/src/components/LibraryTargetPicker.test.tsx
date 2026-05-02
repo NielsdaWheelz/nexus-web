@@ -33,6 +33,7 @@ describe("LibraryTargetPicker", () => {
         label="Choose library"
         libraries={libraries}
         allowNoLibrary
+        noLibraryLabel="My Library only"
         selectedLibraryId="personal"
         onSelectLibrary={handleSelectLibrary}
       />
@@ -42,7 +43,7 @@ describe("LibraryTargetPicker", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Choose library" });
     const listbox = within(dialog).getByRole("listbox", { name: "Choose library" });
-    const noLibraryOption = within(listbox).getByRole("option", { name: "No library" });
+    const noLibraryOption = within(listbox).getByRole("option", { name: "My Library only" });
     const personalOption = within(listbox).getByRole("option", { name: "Personal" });
     const workOption = within(listbox).getByRole("option", { name: "Work" });
 

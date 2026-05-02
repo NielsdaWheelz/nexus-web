@@ -15,7 +15,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -373,6 +373,10 @@ def confirm_ingest(
         loser_path = storage_path
 
         # Delete the media row (cascades to media_file and media library_entries)
+        db.execute(
+            text("DELETE FROM user_media_deletions WHERE media_id = :media_id"),
+            {"media_id": media.id},
+        )
         db.delete(media)
 
         # Ensure winner is in viewer's default library
@@ -414,6 +418,10 @@ def confirm_ingest(
             result = db.execute(select(Media).where(Media.id == media_id))
             media_to_delete = result.scalar()
             if media_to_delete:
+                db.execute(
+                    text("DELETE FROM user_media_deletions WHERE media_id = :media_id"),
+                    {"media_id": media_to_delete.id},
+                )
                 db.delete(media_to_delete)
 
             _ensure_in_default_library(db, viewer_id, winner.id)
@@ -471,9 +479,11 @@ def _ensure_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> No
     Idempotent: no-op if already present. Delegates to shared closure helper.
     """
     from nexus.services.default_library_closure import ensure_default_intrinsic
+    from nexus.services.media_deletion import clear_user_media_deletion
 
     default_library_id = _get_default_library_id(db, user_id)
     ensure_default_intrinsic(db, default_library_id, media_id)
+    clear_user_media_deletion(db, user_id, media_id)
 
 
 def validate_source_integrity(

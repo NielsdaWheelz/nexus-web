@@ -554,11 +554,11 @@ export default function AddContentTray() {
               <div className={styles.libraryField}>
                 <label className={styles.libraryLabel}>Library</label>
                 <LibraryTargetPicker
-                  label="Choose library"
+                  label="My Library only"
                   libraries={libraries}
                   loading={librariesLoading}
                   allowNoLibrary
-                  noLibraryLabel="No library"
+                  noLibraryLabel="My Library only"
                   selectedLibraryId={selectedLibraryId}
                   onOpen={() => {
                     void loadLibraries();
@@ -567,7 +567,8 @@ export default function AddContentTray() {
                   emptyMessage="No non-default libraries available."
                 />
                 <small className={styles.libraryHelp}>
-                  {libraryError ?? "Pick one library to target new uploads, or leave it empty."}
+                  {libraryError ??
+                    "Pick one non-default library to add there too, or use My Library only."}
                 </small>
               </div>
 
@@ -632,7 +633,7 @@ export default function AddContentTray() {
                         <div className={styles.itemText}>
                           <span title={item.label}>{item.label}</span>
                           <small>
-                            {item.libraryName ? `Library: ${item.libraryName} · ` : "No library · "}
+                            {item.libraryName ? `Library: ${item.libraryName} · ` : "My Library · "}
                             {item.status === "queued" ? "Queued" : null}
                             {item.status === "working"
                               ? item.source === "file"

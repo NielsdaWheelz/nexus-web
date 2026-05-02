@@ -35,6 +35,7 @@ from nexus.schemas.reader import ReaderResumeState
 from nexus.services import epub_lifecycle, epub_read, image_proxy
 from nexus.services import libraries as libraries_service
 from nexus.services import media as media_service
+from nexus.services import media_deletion as media_deletion_service
 from nexus.services import reader as reader_service
 from nexus.services import upload as upload_service
 from nexus.services.podcasts import transcripts as podcast_transcript_service
@@ -247,8 +248,13 @@ def remove_media(
     db: Annotated[Session, Depends(get_db)],
     library_id: Annotated[UUID | None, Query()] = None,
 ) -> dict:
-    result = libraries_service.remove_media_for_viewer(db, viewer.user_id, media_id, library_id)
-    return success_response(result)
+    if library_id is None:
+        result = media_deletion_service.delete_document_for_viewer(db, viewer.user_id, media_id)
+    else:
+        result = media_deletion_service.remove_document_from_library(
+            db, viewer.user_id, media_id, library_id
+        )
+    return success_response(result.model_dump(mode="json"))
 
 
 @router.get("/media/{media_id}/libraries")

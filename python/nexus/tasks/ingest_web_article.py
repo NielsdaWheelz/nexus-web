@@ -352,6 +352,7 @@ def _handle_duplicate(
     if not winner_row:
         # No winner found (race condition - someone else deleted it?)
         # Just delete the loser
+        db.execute(text("DELETE FROM user_media_deletions WHERE media_id = :id"), {"id": loser_id})
         db.execute(text("DELETE FROM media WHERE id = :id"), {"id": loser_id})
         db.commit()
         return
@@ -373,10 +374,13 @@ def _handle_duplicate(
 
         # S4: use shared helper for intrinsic provenance (attach winner to default library)
         from nexus.services.default_library_closure import ensure_default_intrinsic
+        from nexus.services.media_deletion import clear_user_media_deletion
 
         ensure_default_intrinsic(db, library_id, winner_id)
+        clear_user_media_deletion(db, actor_user_id, winner_id)
 
     # Delete loser (cascades media library_entries)
+    db.execute(text("DELETE FROM user_media_deletions WHERE media_id = :id"), {"id": loser_id})
     db.execute(text("DELETE FROM media WHERE id = :id"), {"id": loser_id})
     db.commit()
 

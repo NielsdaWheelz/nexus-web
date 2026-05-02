@@ -338,6 +338,7 @@ export default function LibraryPaneBody() {
             id: string;
             name: string;
             color: string | null;
+            is_default?: boolean;
             is_in_library: boolean;
             can_add: boolean;
             can_remove: boolean;
@@ -347,14 +348,16 @@ export default function LibraryPaneBody() {
           return;
         }
         setLibraryPanelLibraries(
-          response.data.map((library) => ({
-            id: library.id,
-            name: library.name,
-            color: library.color,
-            isInLibrary: library.is_in_library,
-            canAdd: library.can_add,
-            canRemove: library.can_remove,
-          }))
+          response.data
+            .filter((library) => !library.is_default)
+            .map((library) => ({
+              id: library.id,
+              name: library.name,
+              color: library.color,
+              isInLibrary: library.is_in_library,
+              canAdd: library.can_add,
+              canRemove: library.can_remove,
+            }))
         );
       } catch (err) {
         if (libraryPanelRequestIdRef.current !== requestId) {

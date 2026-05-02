@@ -3024,20 +3024,23 @@ export default function MediaPaneBody() {
           id: string;
           name: string;
           color: string | null;
+          is_default?: boolean;
           is_in_library: boolean;
           can_add: boolean;
           can_remove: boolean;
         }>;
       }>(`/api/media/${media.id}/libraries`);
       setLibraryPickerLibraries(
-        response.data.map((library) => ({
-          id: library.id,
-          name: library.name,
-          color: library.color,
-          isInLibrary: library.is_in_library,
-          canAdd: library.can_add,
-          canRemove: library.can_remove,
-        }))
+        response.data
+          .filter((library) => !library.is_default)
+          .map((library) => ({
+            id: library.id,
+            name: library.name,
+            color: library.color,
+            isInLibrary: library.is_in_library,
+            canAdd: library.can_add,
+            canRemove: library.can_remove,
+          }))
       );
     } catch (err) {
       setLibraryPickerLibraries([]);
@@ -3125,13 +3128,25 @@ export default function MediaPaneBody() {
     if (!media?.id || documentDeleteBusy) {
       return;
     }
-    if (!window.confirm(`Delete "${media.title}"? This cannot be undone.`)) {
+    if (
+      !window.confirm(
+        `Delete "${media.title}" from My Library and libraries you manage? This cannot be undone.`
+      )
+    ) {
       return;
     }
 
     setDocumentDeleteBusy(true);
     try {
-      await apiFetch(`/api/media/${media.id}`, { method: "DELETE" });
+      await apiFetch<{
+        data: {
+          status: "deleted" | "removed" | "hidden";
+          hard_deleted: boolean;
+          removed_from_library_ids?: string[];
+          hidden_for_viewer?: boolean;
+          remaining_reference_count?: number;
+        };
+      }>(`/api/media/${media.id}`, { method: "DELETE" });
       router.push("/libraries");
     } catch (err) {
       toast({

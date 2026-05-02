@@ -78,7 +78,7 @@ describe("LibraryMembershipPanel", () => {
     });
 
     expect(
-      screen.queryByRole("button", { name: "Personal Remove from library" })
+      screen.queryByRole("button", { name: "Personal Remove from this library" })
     ).not.toBeInTheDocument();
 
     const workButton = screen.getByRole("button", { name: "Work Add to library" });
@@ -91,7 +91,7 @@ describe("LibraryMembershipPanel", () => {
       target: { value: "" },
     });
     fireEvent.click(
-      screen.getByRole("button", { name: "Personal Remove from library" })
+      screen.getByRole("button", { name: "Personal Remove from this library" })
     );
 
     expect(handleRemoveFromLibrary).toHaveBeenCalledWith("personal");
@@ -101,7 +101,7 @@ describe("LibraryMembershipPanel", () => {
   it("disables membership changes while busy", async () => {
     render(<Harness busy />);
 
-    expect(await screen.findByRole("button", { name: "Personal Remove from library" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Personal Remove from this library" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Work Add to library" })).toBeDisabled();
   });
 

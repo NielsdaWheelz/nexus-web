@@ -43,6 +43,7 @@ from nexus.db.models import (
     Library,
     LibraryEntry,
     Membership,
+    UserMediaDeletion,
 )
 
 
@@ -85,7 +86,12 @@ def can_read_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bo
         Membership.user_id == viewer_user_id,
     )
 
-    query = select(non_default | default_intrinsic | default_closure)
+    not_deleted = ~exists().where(
+        UserMediaDeletion.user_id == viewer_user_id,
+        UserMediaDeletion.media_id == media_id,
+    )
+
+    query = select((non_default | default_intrinsic | default_closure) & not_deleted)
     result = session.execute(query)
     return bool(result.scalar())
 
@@ -145,7 +151,16 @@ def can_read_media_bulk(
 
     # Union all three paths and get distinct readable ids
     combined = union_all(non_default_q, intrinsic_q, closure_q).subquery()
-    query = select(combined.c.media_id).distinct()
+    query = (
+        select(combined.c.media_id)
+        .where(
+            ~exists().where(
+                UserMediaDeletion.user_id == viewer_user_id,
+                UserMediaDeletion.media_id == combined.c.media_id,
+            )
+        )
+        .distinct()
+    )
 
     result = session.execute(query)
     readable_ids = {row[0] for row in result.fetchall()}
@@ -156,29 +171,38 @@ def can_read_media_bulk(
 def visible_media_ids_cte_sql() -> str:
     """Return SQL for the canonical visible-media CTE."""
     return """
-        SELECT le.media_id
-        FROM library_entries le
-        JOIN memberships m ON m.library_id = le.library_id
-        JOIN libraries l ON l.id = le.library_id
-        WHERE m.user_id = :viewer_id
-          AND l.is_default = false
-          AND le.media_id IS NOT NULL
+        SELECT visible.media_id
+        FROM (
+            SELECT le.media_id
+            FROM library_entries le
+            JOIN memberships m ON m.library_id = le.library_id
+            JOIN libraries l ON l.id = le.library_id
+            WHERE m.user_id = :viewer_id
+              AND l.is_default = false
+              AND le.media_id IS NOT NULL
 
-        UNION
+            UNION
 
-        SELECT dli.media_id
-        FROM default_library_intrinsics dli
-        JOIN libraries l ON l.id = dli.default_library_id
-        WHERE l.owner_user_id = :viewer_id AND l.is_default = true
+            SELECT dli.media_id
+            FROM default_library_intrinsics dli
+            JOIN libraries l ON l.id = dli.default_library_id
+            WHERE l.owner_user_id = :viewer_id AND l.is_default = true
 
-        UNION
+            UNION
 
-        SELECT dlce.media_id
-        FROM default_library_closure_edges dlce
-        JOIN libraries l ON l.id = dlce.default_library_id
-        JOIN memberships m ON m.library_id = dlce.source_library_id
-                           AND m.user_id = :viewer_id
-        WHERE l.owner_user_id = :viewer_id AND l.is_default = true
+            SELECT dlce.media_id
+            FROM default_library_closure_edges dlce
+            JOIN libraries l ON l.id = dlce.default_library_id
+            JOIN memberships m ON m.library_id = dlce.source_library_id
+                               AND m.user_id = :viewer_id
+            WHERE l.owner_user_id = :viewer_id AND l.is_default = true
+        ) visible
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM user_media_deletions umd
+            WHERE umd.user_id = :viewer_id
+              AND umd.media_id = visible.media_id
+        )
     """
 
 

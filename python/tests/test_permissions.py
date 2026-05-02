@@ -113,6 +113,17 @@ def _add_closure_edge(db: Session, default_library_id, media_id, source_library_
     db.flush()
 
 
+def _add_tombstone(db: Session, user_id, media_id) -> None:
+    db.execute(
+        text("""
+            INSERT INTO user_media_deletions (user_id, media_id)
+            VALUES (:uid, :mid)
+        """),
+        {"uid": user_id, "mid": media_id},
+    )
+    db.flush()
+
+
 def _add_membership(db: Session, library_id, user_id, role="member") -> None:
     db.execute(
         text("""
@@ -274,6 +285,32 @@ class TestCanReadMedia:
         # Immediately not readable
         assert can_read_media(db_session, user_id, media_id) is False
 
+    def test_can_read_media_false_for_tombstoned_media_across_s4_paths(self, db_session: Session):
+        user_id = uuid4()
+        default_lib = ensure_user_and_default_library(db_session, user_id)
+
+        non_default_lib = _create_non_default_library(db_session, user_id)
+        non_default_media = _create_media(db_session, "non-default")
+        _add_media_to_library(db_session, non_default_lib, non_default_media)
+
+        intrinsic_media = _create_media(db_session, "intrinsic")
+        _add_media_to_library(db_session, default_lib, intrinsic_media)
+        _add_intrinsic(db_session, default_lib, intrinsic_media)
+
+        owner_id = uuid4()
+        ensure_user_and_default_library(db_session, owner_id)
+        source_lib = _create_non_default_library(db_session, owner_id)
+        _add_membership(db_session, source_lib, user_id)
+        closure_media = _create_media(db_session, "closure")
+        _add_media_to_library(db_session, source_lib, closure_media)
+        _add_media_to_library(db_session, default_lib, closure_media)
+        _add_closure_edge(db_session, default_lib, closure_media, source_lib)
+
+        for media_id in (non_default_media, intrinsic_media, closure_media):
+            assert can_read_media(db_session, user_id, media_id) is True
+            _add_tombstone(db_session, user_id, media_id)
+            assert can_read_media(db_session, user_id, media_id) is False
+
 
 # =============================================================================
 # can_read_media_bulk - S4 Provenance
@@ -298,7 +335,7 @@ class TestCanReadMediaBulk:
         _add_media_to_library(db_session, default_lib, media_intr)
         _add_intrinsic(db_session, default_lib, media_intr)
 
-        # Closure path
+        # Closure path, then hidden by viewer tombstone.
         other_id = uuid4()
         ensure_user_and_default_library(db_session, other_id)
         source_lib = _create_non_default_library(db_session, other_id)
@@ -307,6 +344,7 @@ class TestCanReadMediaBulk:
         _add_media_to_library(db_session, source_lib, media_closure)
         _add_media_to_library(db_session, default_lib, media_closure)
         _add_closure_edge(db_session, default_lib, media_closure, source_lib)
+        _add_tombstone(db_session, user_id, media_closure)
 
         # Unreadable (default library_entries only, no provenance)
         media_unreadable = _create_media(db_session, "no provenance")
@@ -324,7 +362,7 @@ class TestCanReadMediaBulk:
         assert len(result) == 5
         assert result[media_nd] is True
         assert result[media_intr] is True
-        assert result[media_closure] is True
+        assert result[media_closure] is False
         assert result[media_unreadable] is False
         assert result[media_nonexist] is False
 

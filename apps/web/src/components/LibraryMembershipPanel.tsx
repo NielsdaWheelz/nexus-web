@@ -196,7 +196,7 @@ export default function LibraryMembershipPanel({
                     {library.name}
                   </span>
                   <span className={styles.itemMeta}>
-                    {library.isInLibrary ? "Remove from library" : "Add to library"}
+                    {library.isInLibrary ? "Remove from this library" : "Add to library"}
                   </span>
                 </span>
                 {library.isInLibrary ? <Check size={16} aria-hidden="true" /> : null}

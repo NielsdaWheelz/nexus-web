@@ -579,7 +579,7 @@ class TestRemoveMediaFromLibrary:
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
         library_id = me_resp.json()["data"]["default_library_id"]
         storage = FakeStorageClient()
-        monkeypatch.setattr("nexus.services.libraries.get_storage_client", lambda: storage)
+        monkeypatch.setattr("nexus.services.media_deletion.get_storage_client", lambda: storage)
 
         with direct_db.session() as session:
             media_id = _create_pdf_media_for_library(
@@ -614,9 +614,10 @@ class TestRemoveMediaFromLibrary:
         assert delete_resp.status_code == 200
         assert delete_resp.json()["data"] == {
             "status": "deleted",
-            "removed_from_library_ids": [library_id],
             "hard_deleted": True,
-            "remaining_library_count": 0,
+            "removed_from_library_ids": [library_id],
+            "hidden_for_viewer": False,
+            "remaining_reference_count": 0,
         }
         assert storage.get_object(storage_path) is None
 
@@ -645,7 +646,7 @@ class TestRemoveMediaFromLibrary:
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
         library_id = me_resp.json()["data"]["default_library_id"]
         storage = FakeStorageClient()
-        monkeypatch.setattr("nexus.services.libraries.get_storage_client", lambda: storage)
+        monkeypatch.setattr("nexus.services.media_deletion.get_storage_client", lambda: storage)
 
         media_id = uuid4()
         original_path = f"media/{media_id}/original.epub"
@@ -4207,7 +4208,7 @@ class TestVisibilityClosureScenarios:
         assert response.json()["data"] == []
 
     def test_v6_different_users_independent(self, auth_client, direct_db: DirectSessionManager):
-        """V6: User B adds same media M to their library → B can read; A still cannot."""
+        """V6: User B keeps their copy when User A removes their default reference."""
         user_a = create_test_user_id()
         user_b = create_test_user_id()
 
@@ -4220,25 +4221,22 @@ class TestVisibilityClosureScenarios:
         # User A adds media then removes it
         me_resp_a = auth_client.get("/me", headers=auth_headers(user_a))
         library_a = me_resp_a.json()["data"]["default_library_id"]
+        me_resp_b = auth_client.get("/me", headers=auth_headers(user_b))
+        library_b = me_resp_b.json()["data"]["default_library_id"]
 
         auth_client.post(
             f"/libraries/{library_a}/media",
             json={"media_id": str(media_id)},
             headers=auth_headers(user_a),
         )
-        auth_client.delete(
-            f"/media/{media_id}?library_id={library_a}",
-            headers=auth_headers(user_a),
-        )
-
-        # User B adds media to their library
-        me_resp_b = auth_client.get("/me", headers=auth_headers(user_b))
-        library_b = me_resp_b.json()["data"]["default_library_id"]
-
         auth_client.post(
             f"/libraries/{library_b}/media",
             json={"media_id": str(media_id)},
             headers=auth_headers(user_b),
+        )
+        auth_client.delete(
+            f"/media/{media_id}?library_id={library_a}",
+            headers=auth_headers(user_a),
         )
 
         # User B can read

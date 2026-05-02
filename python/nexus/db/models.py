@@ -4575,6 +4575,37 @@ class LibraryInvitation(Base):
     invitee: Mapped["User"] = relationship("User", foreign_keys=[invitee_user_id])
 
 
+class UserMediaDeletion(Base):
+    """Viewer-specific tombstone for media hidden after delete."""
+
+    __tablename__ = "user_media_deletions"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "media_id", name="uix_user_media_deletions_user_media"),
+    )
+
+
 class DefaultLibraryIntrinsic(Base):
     """Tracks media intentionally present in a user's default library.
 
