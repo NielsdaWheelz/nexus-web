@@ -93,6 +93,8 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "m.created_at",
     "m.updated_at",
     "EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file",
+    "m.created_by_user_id = :viewer_id AS is_creator",
+    "m.requested_url IS NOT NULL AS has_requested_url",
     "m.published_date",
     "m.publisher",
     "m.language",
@@ -585,6 +587,8 @@ def _media_out_from_row(
         transcript_state=row["transcript_state"],
         transcript_coverage=row["transcript_coverage"],
         can_delete=bool(row.get("can_delete")),
+        is_creator=bool(row.get("is_creator")),
+        requested_url_exists=bool(row.get("has_requested_url")),
     )
     playback_source = derive_playback_source(
         kind=row["kind"],

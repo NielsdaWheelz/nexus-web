@@ -25,6 +25,7 @@ class CapabilitiesOut(BaseModel):
     can_play: bool
     can_download_file: bool
     can_delete: bool = False
+    can_retry: bool = False
 
 
 class PlaybackSourceOut(BaseModel):

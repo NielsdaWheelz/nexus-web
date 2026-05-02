@@ -387,3 +387,40 @@ class TestProcessingStatusProgression:
         )
 
         assert caps.can_read is expected_read
+
+    def test_failed_web_article_can_retry_when_creator_and_original_url_exists(self):
+        caps = derive_capabilities(
+            kind="web_article",
+            processing_status="failed",
+            last_error_code="E_INGEST_FAILED",
+            media_file_exists=False,
+            external_playback_url_exists=False,
+            is_creator=True,
+            requested_url_exists=True,
+        )
+
+        assert caps.can_retry is True
+
+    def test_failed_pdf_password_error_cannot_retry(self):
+        caps = derive_capabilities(
+            kind="pdf",
+            processing_status="failed",
+            last_error_code="E_PDF_PASSWORD_REQUIRED",
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            is_creator=True,
+        )
+
+        assert caps.can_retry is False
+
+    def test_failed_epub_archive_error_cannot_retry(self):
+        caps = derive_capabilities(
+            kind="epub",
+            processing_status="failed",
+            last_error_code="E_ARCHIVE_UNSAFE",
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            is_creator=True,
+        )
+
+        assert caps.can_retry is False

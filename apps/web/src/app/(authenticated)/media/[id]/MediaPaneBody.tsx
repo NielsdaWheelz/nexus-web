@@ -114,7 +114,7 @@ import {
   buildEpubLocationHref,
   resolveSectionAnchorId,
 } from "./epubHelpers";
-import { PanelRight } from "lucide-react";
+import { PanelRight, RefreshCw } from "lucide-react";
 import styles from "./page.module.css";
 
 // =============================================================================
@@ -139,6 +139,7 @@ interface Media {
     can_play: boolean;
     can_download_file: boolean;
     can_delete?: boolean;
+    can_retry?: boolean;
   };
   playback_source?: TranscriptPlaybackSource | null;
   chapters?: TranscriptChapter[];
@@ -543,16 +544,16 @@ function useIntervalPoll({
 
 function shouldPollDocumentProcessing(
   mediaKind: string | null | undefined,
-  processingStatus: string | null | undefined,
-  canRead: boolean
+  processingStatus: string | null | undefined
 ): boolean {
-  if (mediaKind !== "epub" && mediaKind !== "pdf") {
+  if (mediaKind !== "epub" && mediaKind !== "pdf" && mediaKind !== "web_article") {
     return false;
   }
-  if (canRead) {
-    return false;
-  }
-  return processingStatus !== null && processingStatus !== undefined && processingStatus !== "failed";
+  return (
+    processingStatus === "pending" ||
+    processingStatus === "extracting" ||
+    processingStatus === "embedding"
+  );
 }
 
 type ReaderRestorePhase =
@@ -1313,13 +1314,27 @@ export default function MediaPaneBody() {
   );
 
   const refreshDocumentProcessingState = useCallback(async () => {
-    if (!media?.id || (media.kind !== "epub" && media.kind !== "pdf")) {
+    if (
+      !media?.id ||
+      (media.kind !== "epub" && media.kind !== "pdf" && media.kind !== "web_article")
+    ) {
       return;
     }
 
     const mediaResp = await apiFetch<{ data: Media }>(`/api/media/${media.id}`);
-    setMedia(mediaResp.data);
-  }, [media?.id, media?.kind]);
+    const nextMedia = mediaResp.data;
+    setMedia(nextMedia);
+    if (
+      nextMedia.kind === "web_article" &&
+      nextMedia.capabilities?.can_read &&
+      fragments.length === 0
+    ) {
+      const fragmentsResp = await apiFetch<{ data: Fragment[] }>(
+        `/api/media/${nextMedia.id}/fragments`
+      );
+      setFragments(fragmentsResp.data);
+    }
+  }, [fragments.length, media?.id, media?.kind]);
 
   const pollDocumentProcessing = useCallback(async () => {
     try {
@@ -1331,8 +1346,7 @@ export default function MediaPaneBody() {
 
   const documentProcessingPollEnabled = shouldPollDocumentProcessing(
     media?.kind,
-    media?.processing_status,
-    canRead
+    media?.processing_status
   );
 
   useIntervalPoll({
@@ -2984,6 +2998,7 @@ export default function MediaPaneBody() {
   const [libraryPickerError, setLibraryPickerError] = useState<string | null>(null);
   const [libraryMembershipBusy, setLibraryMembershipBusy] = useState(false);
   const [documentDeleteBusy, setDocumentDeleteBusy] = useState(false);
+  const [retryProcessingBusy, setRetryProcessingBusy] = useState(false);
   const [videoSeekTargetMs, setVideoSeekTargetMs] = useState<number | null>(null);
   const resumeNoticeMediaIdRef = useRef<string | null>(null);
   const seededPodcastTrackRef = useRef<string | null>(null);
@@ -3128,6 +3143,50 @@ export default function MediaPaneBody() {
     }
   }, [documentDeleteBusy, media?.id, media?.title, router, toast]);
 
+  const handleRetryProcessing = useCallback(async () => {
+    if (!media?.id || retryProcessingBusy || !media.capabilities?.can_retry) {
+      return;
+    }
+
+    setRetryProcessingBusy(true);
+    try {
+      await apiFetch(`/api/media/${media.id}/retry`, { method: "POST" });
+      setFragments([]);
+      setEpubSections(null);
+      setEpubToc(null);
+      setActiveSectionId(null);
+      setEpubError("processing");
+      setMedia((prev) =>
+        prev && prev.id === media.id
+          ? {
+              ...prev,
+              processing_status: "extracting",
+              failure_stage: null,
+              last_error_code: null,
+              capabilities: prev.capabilities
+                ? {
+                    ...prev.capabilities,
+                    can_read: false,
+                    can_highlight: false,
+                    can_quote: false,
+                    can_search: false,
+                    can_retry: false,
+                  }
+                : prev.capabilities,
+            }
+          : prev
+      );
+      toast({ variant: "success", message: "Processing retry started." });
+    } catch (err) {
+      toast({
+        variant: "error",
+        message: isApiError(err) ? err.message : "Failed to retry processing",
+      });
+    } finally {
+      setRetryProcessingBusy(false);
+    }
+  }, [media?.capabilities?.can_retry, media?.id, retryProcessingBusy, toast]);
+
   const handleContentClick = useCallback(
     (e: React.MouseEvent) => {
       const highlightId = handleMediaContentClick(e);
@@ -3267,6 +3326,16 @@ export default function MediaPaneBody() {
   }
 
   if (media) {
+    if (media.capabilities?.can_retry) {
+      mediaHeaderOptions.push({
+        id: "retry-processing",
+        label: "Retry processing",
+        disabled: retryProcessingBusy,
+        onSelect: () => {
+          void handleRetryProcessing();
+        },
+      });
+    }
     mediaHeaderOptions.push({
       id: "document-chat",
       label: "Chat about this document",
@@ -3777,6 +3846,19 @@ export default function MediaPaneBody() {
                     <p>This media cannot be opened right now.</p>
                   )}
                   {media.last_error_code && <p>Error: {media.last_error_code}</p>}
+                  {media.capabilities?.can_retry ? (
+                    <button
+                      type="button"
+                      className={styles.retryProcessingButton}
+                      onClick={() => {
+                        void handleRetryProcessing();
+                      }}
+                      disabled={retryProcessingBusy}
+                    >
+                      <RefreshCw size={15} aria-hidden="true" />
+                      <span>{retryProcessingBusy ? "Retrying..." : "Retry processing"}</span>
+                    </button>
+                  ) : null}
                 </>
               ) : (
                 <>

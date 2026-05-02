@@ -1989,33 +1989,8 @@ class TestRetryEpubEndpoint:
         auth_client.get("/me", headers=auth_headers(user_a))
         auth_client.get("/me", headers=auth_headers(user_b))
 
-        # non-EPUB
-        non_epub_id = uuid4()
-        with direct_db.session() as session:
-            media = Media(
-                id=non_epub_id,
-                kind=MediaKind.web_article.value,
-                title="Article",
-                processing_status=ProcessingStatus.failed,
-                created_by_user_id=user_a,
-            )
-            session.add(media)
-            session.commit()
-
-        direct_db.register_cleanup("library_entries", "media_id", non_epub_id)
-        direct_db.register_cleanup("media", "id", non_epub_id)
-
         me_resp = auth_client.get("/me", headers=auth_headers(user_a))
         library_id = me_resp.json()["data"]["default_library_id"]
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(non_epub_id)},
-            headers=auth_headers(user_a),
-        )
-
-        resp = auth_client.post(f"/media/{non_epub_id}/retry", headers=auth_headers(user_a))
-        assert resp.status_code == 400
-        assert resp.json()["error"]["code"] == "E_INVALID_KIND"
 
         # non-creator
         with direct_db.session() as session:
@@ -2257,6 +2232,133 @@ class TestRetryEpubEndpoint:
             media_row = session.get(Media, media_id)
             assert media_row is not None
             assert media_row.processing_status != ProcessingStatus.extracting
+
+
+class TestRetryWebArticleEndpoint:
+    """POST /media/{id}/retry for failed web articles."""
+
+    def test_retry_failed_web_article_resets_and_dispatches(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        media_id = uuid4()
+        fragment_id = uuid4()
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id, kind, title, processing_status, failure_stage,
+                        last_error_code, requested_url, created_by_user_id,
+                        processing_attempts
+                    )
+                    VALUES (
+                        :id, 'web_article', 'Failed article', 'failed', 'extract',
+                        'E_INGEST_FAILED', 'https://example.com/article', :user_id, 1
+                    )
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                    VALUES (:fragment_id, :media_id, 0, '<p>old</p>', 'old')
+                """),
+                {"fragment_id": fragment_id, "media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragment_blocks (
+                        fragment_id, block_idx, start_offset, end_offset, is_empty
+                    )
+                    VALUES (:fragment_id, 0, 0, 3, false)
+                """),
+                {"fragment_id": fragment_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media_authors (media_id, name, role, sort_order)
+                    VALUES (:media_id, 'Old Author', 'author', 0)
+                """),
+                {"media_id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("fragment_blocks", "fragment_id", fragment_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("media_authors", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        add_media_to_default_library(auth_client, user_id, media_id)
+
+        resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+
+        assert resp.status_code == 202
+        data = resp.json()["data"]
+        assert data["processing_status"] == "extracting"
+        assert data["retry_enqueued"] is True
+        assert _count_jobs_for_media(direct_db, kind="ingest_web_article", media_id=media_id) == 1
+        with direct_db.session() as session:
+            job_id = session.execute(
+                text("""
+                    SELECT id FROM background_jobs
+                    WHERE kind = 'ingest_web_article'
+                      AND payload->>'media_id' = :media_id
+                """),
+                {"media_id": str(media_id)},
+            ).scalar_one()
+            direct_db.register_cleanup("background_jobs", "id", job_id)
+
+        with direct_db.session() as session:
+            media_row = session.get(Media, media_id)
+            assert media_row is not None
+            assert media_row.processing_status == ProcessingStatus.extracting
+            assert media_row.processing_attempts == 2
+            assert media_row.last_error_code is None
+
+            artifact_counts = session.execute(
+                text("""
+                    SELECT
+                        (SELECT count(*) FROM fragments WHERE media_id = :media_id),
+                        (SELECT count(*) FROM fragment_blocks WHERE fragment_id = :fragment_id),
+                        (SELECT count(*) FROM media_authors WHERE media_id = :media_id)
+                """),
+                {"media_id": media_id, "fragment_id": fragment_id},
+            ).one()
+            assert tuple(artifact_counts) == (0, 0, 0)
+
+    def test_retry_web_article_without_original_url_is_not_allowed(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        media_id = uuid4()
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.web_article.value,
+                    title="Failed article",
+                    processing_status=ProcessingStatus.failed,
+                    created_by_user_id=user_id,
+                )
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        add_media_to_default_library(auth_client, user_id, media_id)
+
+        resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "E_RETRY_NOT_ALLOWED"
 
 
 # =============================================================================

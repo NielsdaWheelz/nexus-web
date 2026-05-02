@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { useToast } from "@/components/Toast";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import {
   BarChart3,
@@ -16,7 +17,7 @@ import {
 } from "lucide-react";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import StateMessage from "@/components/ui/StateMessage";
-import ActionMenu from "@/components/ui/ActionMenu";
+import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import SectionCard from "@/components/ui/SectionCard";
 import SortableList from "@/components/sortable/SortableList";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
@@ -62,6 +63,9 @@ interface LibraryMediaEntry {
     | "embedding"
     | "ready"
     | "failed";
+  capabilities?: {
+    can_retry?: boolean;
+  };
 }
 
 interface LibraryPodcastEntry {
@@ -190,9 +194,11 @@ export default function LibraryPaneBody() {
     throw new Error("library route requires an id");
   }
   const router = usePaneRouter();
+  const { toast } = useToast();
   const [library, setLibrary] = useState<Library | null>(null);
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
   const [removedEntryIds, setRemovedEntryIds] = useState<Set<string>>(new Set());
+  const [retryingMediaIds, setRetryingMediaIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
@@ -511,6 +517,49 @@ export default function LibraryPaneBody() {
       }
     },
     [closeLibraryPanel, entries, id, libraryPanelBusy, libraryPanelEntry, removedEntryIds]
+  );
+
+  const handleRetryProcessing = useCallback(
+    async (mediaId: string) => {
+      if (retryingMediaIds.has(mediaId)) {
+        return;
+      }
+
+      setRetryingMediaIds((current) => new Set(current).add(mediaId));
+      try {
+        await apiFetch(`/api/media/${mediaId}/retry`, { method: "POST" });
+        setEntries((current) =>
+          current.map((entry) =>
+            entry.kind === "media" && entry.media.id === mediaId
+              ? {
+                  ...entry,
+                  media: {
+                    ...entry.media,
+                    processing_status: "extracting",
+                    capabilities: {
+                      ...(entry.media.capabilities ?? {}),
+                      can_retry: false,
+                    },
+                  },
+                }
+              : entry
+          )
+        );
+        toast({ variant: "success", message: "Processing retry started." });
+      } catch (err) {
+        toast({
+          variant: "error",
+          message: isApiError(err) ? err.message : "Failed to retry processing",
+        });
+      } finally {
+        setRetryingMediaIds((current) => {
+          const next = new Set(current);
+          next.delete(mediaId);
+          return next;
+        });
+      }
+    },
+    [retryingMediaIds, toast]
   );
 
   const handleDeleteLibrary = async () => {
@@ -974,7 +1023,7 @@ export default function LibraryPaneBody() {
                         ...handleProps.listeners,
                       }
                     : undefined;
-                const rowOptions =
+                const rowOptions: ActionMenuOption[] =
                   library.role === "admin"
                     ? [
                         {
@@ -1022,12 +1071,26 @@ export default function LibraryPaneBody() {
                           </span>
                         </a>
                       </div>
-                      <ActionMenu options={rowOptions} className={styles.rowActionMenu} />
+                      {rowOptions.length > 0 ? (
+                        <ActionMenu options={rowOptions} className={styles.rowActionMenu} />
+                      ) : null}
                     </div>
                   );
                 }
 
                 const Icon = MEDIA_KIND_ICONS[item.media.kind] ?? Globe;
+                const retryProcessingBusy = retryingMediaIds.has(item.media.id);
+                if (item.media.capabilities?.can_retry) {
+                  rowOptions.push({
+                    id: "retry-processing",
+                    label: "Retry processing",
+                    separatorBefore: rowOptions.length > 0,
+                    disabled: retryProcessingBusy,
+                    onSelect: () => {
+                      void handleRetryProcessing(item.media.id);
+                    },
+                  });
+                }
                 const authorNames = item.media.authors
                   .map((author) => author.name.trim())
                   .filter((name) => name.length > 0);
@@ -1098,7 +1161,9 @@ export default function LibraryPaneBody() {
                         ) : null}
                       </a>
                     </div>
-                    <ActionMenu options={rowOptions} className={styles.rowActionMenu} />
+                    {rowOptions.length > 0 ? (
+                      <ActionMenu options={rowOptions} className={styles.rowActionMenu} />
+                    ) : null}
                   </div>
                 );
               }}
