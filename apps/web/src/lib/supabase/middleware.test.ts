@@ -40,6 +40,17 @@ describe("updateSession", () => {
     expect(response.headers.get("location")).toBeNull();
   });
 
+  it("allows unauthenticated API routes through so route handlers can return JSON errors", async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null } });
+
+    const { updateSession } = await import("./middleware");
+    const response = await updateSession(
+      new NextRequest("http://localhost:3000/api/libraries")
+    );
+
+    expect(response.headers.get("location")).toBeNull();
+  });
+
   it("allows authenticated protected requests through", async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
 

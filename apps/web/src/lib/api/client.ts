@@ -85,7 +85,14 @@ export async function apiFetch<T>(
         `Request failed with status ${response.status}`
       );
     }
-    return undefined as T;
+    if (response.status === 204 || response.status === 205) {
+      return undefined as T;
+    }
+    throw new ApiError(
+      response.status,
+      "E_INVALID_RESPONSE",
+      "API returned a non-JSON response"
+    );
   }
 
   // Check for error response

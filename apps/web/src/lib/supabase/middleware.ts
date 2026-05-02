@@ -28,6 +28,10 @@ function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTES.has(pathname) || pathname.startsWith("/_next");
 }
 
+function isApiRoute(pathname: string): boolean {
+  return pathname === "/api" || pathname.startsWith("/api/");
+}
+
 /**
  * Update the Supabase session and handle auth redirects.
  *
@@ -85,6 +89,12 @@ export async function updateSession(request: NextRequest) {
   // Allow public routes without auth
   const pathname = request.nextUrl.pathname;
   if (isPublicRoute(pathname)) {
+    return supabaseResponse;
+  }
+
+  // API route handlers own their auth response shape. Let unauthenticated API
+  // requests reach the BFF so callers receive JSON errors instead of login HTML.
+  if (isApiRoute(pathname)) {
     return supabaseResponse;
   }
 
