@@ -17,6 +17,7 @@ This script:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -257,16 +258,51 @@ def _build_epub_bytes(variant_id: str = "base") -> bytes:
                 )
                 nav_play_order += 1
 
+            if idx == 0:
+                chapter_body_html += (
+                    '<p><img src="images/e2e-raster.png" alt="E2E EPUB raster asset"/></p>\n'
+                    '<p><img src="images/e2e-vector.svg" alt="E2E EPUB SVG asset"/></p>\n'
+                    '<p class="publisher-css-fixture" style="display:none">'
+                    "Publisher styling should not control the app reader.</p>\n"
+                )
+
             # Chapter XHTML
             zf.writestr(
                 f"OEBPS/{fname}",
                 '<?xml version="1.0" encoding="UTF-8"?>\n'
                 "<!DOCTYPE html>\n"
                 '<html xmlns="http://www.w3.org/1999/xhtml">\n'
-                f"<head><title>{ch['title']}</title></head>\n"
+                f"<head><title>{ch['title']}</title>"
+                '<link rel="stylesheet" href="styles/publisher.css"/>'
+                "</head>\n"
                 f"<body>\n{chapter_body_html}</body>\n"
                 "</html>",
             )
+
+        manifest_items.extend(
+            [
+                '    <item id="raster-img" href="images/e2e-raster.png" media-type="image/png"/>',
+                '    <item id="svg-img" href="images/e2e-vector.svg" media-type="image/svg+xml"/>',
+                '    <item id="publisher-css" href="styles/publisher.css" media-type="text/css"/>',
+            ]
+        )
+        zf.writestr(
+            "OEBPS/images/e2e-raster.png",
+            base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+            ),
+        )
+        zf.writestr(
+            "OEBPS/images/e2e-vector.svg",
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
+            '<rect width="16" height="16" fill="#0f766e"/>'
+            '<circle cx="8" cy="8" r="4" fill="#ffffff"/>'
+            "</svg>",
+        )
+        zf.writestr(
+            "OEBPS/styles/publisher.css",
+            '[data-testid="pane-shell-chrome"] { display: none !important; }',
+        )
 
         # Navigation document (toc.ncx)
         zf.writestr(

@@ -179,7 +179,7 @@ _EPUB_ALLOWED_SVG_TAGS = frozenset(
 _EPUB_GLOBAL_ATTRS = frozenset({"id", "title", "lang", "dir", "xml:lang"})
 _EPUB_ALLOWED_ATTRS = {
     "a": {"href", "title", "name"},
-    "img": {"src", "alt", "title", "width", "height"},
+    "img": {"src", "srcset", "alt", "title", "width", "height"},
     "th": {"colspan", "rowspan", "scope"},
     "td": {"colspan", "rowspan"},
 }
@@ -286,11 +286,33 @@ _EPUB_ALLOWED_SVG_ATTRS = {
 _FORBIDDEN_URL_SCHEMES = frozenset({"javascript", "vbscript", "data", "file"})
 _EVENT_HANDLER_RE = re.compile(r"^on", re.IGNORECASE)
 _RESOURCE_ATTRS = frozenset({"src", "href", "xlink:href", "poster"})
-_STATIC_ASSET_MEDIA_PREFIXES = (
-    "image/",
-    "font/",
-    "audio/",
-    "video/",
+_SUPPORTED_SVG_IMAGE_TYPE = "image/svg+xml"
+_SUPPORTED_IMAGE_TYPES = frozenset(
+    {
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/svg+xml",
+        "image/webp",
+    }
+)
+_SVG_FORBIDDEN_TAGS = frozenset(
+    {
+        "script",
+        "animate",
+        "animatemotion",
+        "animatetransform",
+        "set",
+        "foreignobject",
+        "iframe",
+        "object",
+        "embed",
+        "audio",
+        "video",
+        "source",
+        "track",
+        "style",
+    }
 )
 
 
@@ -467,7 +489,8 @@ def extract_epub_artifacts(
                 error_message="Zero renderable XHTML spine items after extraction",
             )
 
-        asset_entries, asset_key_map = _collect_manifest_assets(zf, manifest)
+        asset_entries: list[_AssetEntry] = []
+        asset_key_map: dict[str, str] = {}
         readable_paths = {
             item.href for item in manifest.values() if item.media_type in _READABLE_MEDIA_TYPES
         }
@@ -1071,16 +1094,17 @@ def _rewrite_chapter_resources(
     chapter_dir = posixpath.dirname(chapter_href)
     try:
         doc = _parse_epub_html_document(html)
-    except Exception:
-        return html
+    except Exception as exc:
+        raise ValueError(f"Failed to parse EPUB chapter resources: {chapter_href}") from exc
 
     for element in doc.iter():
         if not isinstance(element, HtmlElement):
             continue
+        tag = _local_name(element.tag)
         for attr in list(element.attrib):
             normalized_attr = _normalized_attr_name(attr)
             value = element.attrib.get(attr, "")
-            if normalized_attr == "srcset":
+            if tag == "img" and normalized_attr == "srcset":
                 rewritten = _rewrite_srcset(
                     value,
                     chapter_dir,
@@ -1095,17 +1119,42 @@ def _rewrite_chapter_resources(
                 else:
                     del element.attrib[attr]
                 continue
+            if tag == "img" and normalized_attr == "src":
+                rewritten = _rewrite_image_resource_url(
+                    value,
+                    chapter_dir,
+                    zf,
+                    media_id,
+                    manifest,
+                    asset_entries,
+                    asset_key_map,
+                )
+                if rewritten is None:
+                    del element.attrib[attr]
+                else:
+                    element.attrib[attr] = rewritten
+                continue
+            if tag == "image" and normalized_attr in {"href", "xlink:href"}:
+                rewritten = _rewrite_image_resource_url(
+                    value,
+                    chapter_dir,
+                    zf,
+                    media_id,
+                    manifest,
+                    asset_entries,
+                    asset_key_map,
+                )
+                if rewritten is None:
+                    del element.attrib[attr]
+                else:
+                    element.attrib[attr] = rewritten
+                continue
             if normalized_attr not in _RESOURCE_ATTRS:
                 continue
             rewritten = _rewrite_resource_url(
                 value,
                 normalized_attr,
                 chapter_dir,
-                zf,
-                media_id,
-                manifest,
-                asset_entries,
-                asset_key_map,
                 readable_paths,
             )
             if rewritten is None:
@@ -1116,15 +1165,43 @@ def _rewrite_chapter_resources(
     return _document_body_inner_html(doc)
 
 
-def _rewrite_resource_url(
+def _rewrite_image_resource_url(
     raw_url: str,
-    attr_name: str,
     base_dir: str,
     zf: zipfile.ZipFile,
     media_id: UUID,
     manifest: dict[str, _ManifestItem],
     asset_entries: list[_AssetEntry],
     asset_key_map: dict[str, str],
+) -> str | None:
+    if not raw_url or raw_url.startswith("#"):
+        return None
+
+    parsed = urlparse(raw_url)
+    if parsed.scheme or raw_url.startswith("//"):
+        return None
+
+    resolved = _resolve_epub_path(base_dir, parsed.path or "")
+    if resolved is None:
+        return None
+
+    key = _ensure_asset_entry(
+        resolved,
+        zf,
+        manifest,
+        asset_entries,
+        asset_key_map,
+    )
+    if key is None:
+        return None
+    rewritten = f"/api/media/{media_id}/assets/{key}"
+    return f"{rewritten}#{parsed.fragment}" if parsed.fragment else rewritten
+
+
+def _rewrite_resource_url(
+    raw_url: str,
+    attr_name: str,
+    base_dir: str,
     readable_paths: set[str],
 ) -> str | None:
     if not raw_url or raw_url.startswith("#"):
@@ -1141,17 +1218,7 @@ def _rewrite_resource_url(
     if attr_name == "href" and resolved in readable_paths:
         return f"{resolved}#{parsed.fragment}" if parsed.fragment else resolved
 
-    key = _ensure_asset_entry(
-        resolved,
-        zf,
-        manifest,
-        asset_entries,
-        asset_key_map,
-    )
-    if key is None:
-        return None
-    rewritten = f"/api/media/{media_id}/assets/{key}"
-    return f"{rewritten}#{parsed.fragment}" if parsed.fragment else rewritten
+    return None
 
 
 def _rewrite_srcset(
@@ -1168,16 +1235,14 @@ def _rewrite_srcset(
         tokens = candidate.strip().split()
         if not tokens:
             continue
-        rewritten = _rewrite_resource_url(
+        rewritten = _rewrite_image_resource_url(
             tokens[0],
-            "src",
             base_dir,
             zf,
             media_id,
             manifest,
             asset_entries,
             asset_key_map,
-            set(),
         )
         if rewritten:
             parts.append(" ".join([rewritten, *tokens[1:]]))
@@ -1204,44 +1269,6 @@ def _parse_epub_html_document(html: str) -> HtmlElement:
     return document_fromstring(html)
 
 
-def _collect_manifest_assets(
-    zf: zipfile.ZipFile,
-    manifest: dict[str, _ManifestItem],
-) -> tuple[list[_AssetEntry], dict[str, str]]:
-    asset_entries: list[_AssetEntry] = []
-    asset_key_map: dict[str, str] = {}
-    for item in manifest.values():
-        if _is_static_asset_manifest_item(item):
-            key = _ensure_asset_entry(item.href, zf, manifest, asset_entries, asset_key_map)
-            if key is None:
-                raise ValueError(f"Manifest asset missing from EPUB archive: {item.href}")
-    return asset_entries, asset_key_map
-
-
-def _is_static_asset_manifest_item(item: _ManifestItem) -> bool:
-    if item.media_type == "text/css":
-        return True
-    font_like_media_type = item.media_type in {
-        "application/font-woff",
-        "application/font-woff2",
-        "application/vnd.ms-opentype",
-        "application/x-font-ttf",
-        "application/octet-stream",
-    }
-    font_like_extension = posixpath.splitext(item.href)[1].lower() in {
-        ".woff",
-        ".woff2",
-        ".ttf",
-        ".otf",
-    }
-    if font_like_media_type and font_like_extension:
-        return True
-    if item.media_type.startswith(_STATIC_ASSET_MEDIA_PREFIXES):
-        return True
-    props = set((item.properties or "").split())
-    return "cover-image" in props
-
-
 def _ensure_asset_entry(
     epub_path: str,
     zf: zipfile.ZipFile,
@@ -1251,25 +1278,41 @@ def _ensure_asset_entry(
 ) -> str | None:
     if epub_path in asset_key_map:
         return asset_key_map[epub_path]
+    manifest_item = _manifest_item_for_href(epub_path, manifest)
+    if manifest_item is None:
+        if posixpath.splitext(epub_path)[1].lower() in {
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".svg",
+            ".webp",
+        }:
+            raise ValueError(f"Referenced EPUB image asset missing from OPF manifest: {epub_path}")
+        return None
+    if manifest_item.media_type not in _SUPPORTED_IMAGE_TYPES:
+        return None
+
     try:
         content = zf.read(epub_path)
-    except (KeyError, Exception):
-        return None
+    except KeyError as exc:
+        raise ValueError(f"Referenced EPUB image asset missing from archive: {epub_path}") from exc
+
+    content_type = manifest_item.media_type
+    if content_type == _SUPPORTED_SVG_IMAGE_TYPE:
+        content = _sanitize_svg_asset(content, epub_path)
 
     key = _derive_asset_key(epub_path, asset_key_map)
     asset_key_map[epub_path] = key
-    manifest_item = _manifest_item_for_href(epub_path, manifest)
     asset_entries.append(
         _AssetEntry(
             epub_path=epub_path,
-            manifest_id=manifest_item.manifest_id if manifest_item else None,
+            manifest_id=manifest_item.manifest_id,
             asset_key=key,
             content=content,
-            content_type=(
-                manifest_item.media_type if manifest_item else _guess_content_type(epub_path)
-            ),
-            fallback_id=manifest_item.fallback_id if manifest_item else None,
-            properties=manifest_item.properties if manifest_item else None,
+            content_type=content_type,
+            fallback_id=manifest_item.fallback_id,
+            properties=manifest_item.properties,
         )
     )
     return key
@@ -1301,26 +1344,49 @@ def _manifest_item_for_href(
     return None
 
 
-def _guess_content_type(path: str) -> str:
-    ext = posixpath.splitext(path)[1].lower()
-    ct_map = {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".gif": "image/gif",
-        ".svg": "image/svg+xml",
-        ".webp": "image/webp",
-        ".css": "text/css",
-        ".woff": "font/woff",
-        ".woff2": "font/woff2",
-        ".ttf": "font/ttf",
-        ".otf": "font/otf",
-        ".mp3": "audio/mpeg",
-        ".m4a": "audio/mp4",
-        ".mp4": "video/mp4",
-        ".webm": "video/webm",
-    }
-    return ct_map.get(ext, "application/octet-stream")
+def _sanitize_svg_asset(content: bytes, epub_path: str) -> bytes:
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError as exc:
+        raise ValueError(f"Referenced SVG asset cannot be parsed: {epub_path}") from exc
+
+    if _local_name(root.tag) != "svg":
+        raise ValueError(f"Referenced SVG asset is not an SVG document: {epub_path}")
+
+    _sanitize_svg_asset_element(root)
+    return ET.tostring(root, encoding="utf-8", method="xml")
+
+
+def _sanitize_svg_asset_element(element: ET.Element) -> bool:
+    for child in list(element):
+        if _sanitize_svg_asset_element(child):
+            element.remove(child)
+
+    tag = _local_name(element.tag)
+    if tag in _SVG_FORBIDDEN_TAGS:
+        return True
+
+    for attr in list(element.attrib):
+        normalized_attr = _normalized_attr_name(attr)
+        normalized_lower = normalized_attr.lower()
+        value = element.attrib.get(attr, "")
+        if _EVENT_HANDLER_RE.match(normalized_lower):
+            del element.attrib[attr]
+            continue
+        if normalized_lower == "style":
+            del element.attrib[attr]
+            continue
+        if normalized_attr in {"href", "xlink:href"}:
+            if tag == "image":
+                if not _is_safe_svg_image_href(value):
+                    del element.attrib[attr]
+            elif not _is_safe_svg_href(value):
+                del element.attrib[attr]
+            continue
+        if "url(" in value.lower() and not _is_safe_svg_url_reference(value):
+            del element.attrib[attr]
+
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -1495,11 +1561,9 @@ def _is_safe_svg_image_href(value: str) -> bool:
         return False
     parsed = urlparse(value)
     scheme = parsed.scheme.lower()
-    if scheme in _FORBIDDEN_URL_SCHEMES:
+    if scheme:
         return False
-    if not scheme:
-        return value.startswith("/api/media/")
-    return scheme in {"http", "https"}
+    return value.startswith("/api/media/")
 
 
 def _is_safe_svg_url_reference(value: str) -> bool:

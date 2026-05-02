@@ -723,6 +723,91 @@ test.describe("epub", () => {
     ).toBeVisible({ timeout: 15_000 });
   });
 
+  test("renders EPUB image assets through the BFF when present", async ({ page }) => {
+    const seed = readSeededEpubMedia();
+    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    await expect(
+      page.getByRole("heading", { name: seed.chapter_titles[0] })
+    ).toBeVisible({ timeout: 15_000 });
+
+    const renderer = page.getByTestId("html-renderer").first();
+    await expect(renderer).toBeVisible();
+    const imageCount = await renderer.locator("img").count();
+    expect(imageCount).toBeGreaterThan(0);
+
+    const imageStates = await renderer.locator("img").evaluateAll((images) =>
+      images.map((image) => {
+        const img = image as HTMLImageElement;
+        return {
+          complete: img.complete,
+          naturalHeight: img.naturalHeight,
+          naturalWidth: img.naturalWidth,
+          src: img.getAttribute("src") ?? "",
+          resolvedSrc: img.currentSrc || img.src,
+        };
+      })
+    );
+
+    for (const image of imageStates) {
+      expect(image.src).toContain(`/api/media/${seed.media_id}/assets/`);
+      expect(image.resolvedSrc).toContain(`/api/media/${seed.media_id}/assets/`);
+    }
+
+    await expect
+      .poll(
+        async () =>
+          renderer.locator("img").evaluateAll((images) =>
+            images.every((image) => {
+              const img = image as HTMLImageElement;
+              return img.complete && img.naturalWidth > 0 && img.naturalHeight > 0;
+            })
+          ),
+        { timeout: 10_000 }
+      )
+      .toBe(true);
+  });
+
+  test("publisher CSS does not affect EPUB reader chrome", async ({ page }) => {
+    const seed = readSeededEpubMedia();
+    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    await expect(
+      page.getByRole("heading", { name: seed.chapter_titles[0] })
+    ).toBeVisible({ timeout: 15_000 });
+
+    const renderer = page.getByTestId("html-renderer").first();
+    await expect(renderer).toBeVisible();
+    await expect
+      .poll(async () =>
+        renderer.evaluate((root) => ({
+          inlineStyleCount: root.querySelectorAll("[style]").length,
+          stylesheetCount: root.querySelectorAll('style, link[rel="stylesheet"]').length,
+        }))
+      )
+      .toEqual({
+        inlineStyleCount: 0,
+        stylesheetCount: 0,
+      });
+
+    const chrome = page.locator('[data-testid="pane-shell-chrome"]').first();
+    await expect(chrome).toBeVisible();
+    const chromeState = await chrome.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const rendererRoot = document.querySelector('[data-testid="html-renderer"]');
+      return {
+        height: rect.height,
+        visible: rect.width > 0 && rect.height > 0,
+        insideRenderer: rendererRoot?.contains(element) ?? false,
+      };
+    });
+    expect(chromeState).toMatchObject({
+      visible: true,
+      insideRenderer: false,
+    });
+    expect(chromeState.height).toBeGreaterThan(0);
+  });
+
   test("navigate sections", async ({ page }) => {
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);

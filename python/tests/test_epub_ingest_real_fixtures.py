@@ -96,7 +96,8 @@ CORPUS: list[dict] = [
     # ── Synthetic edge-case fixtures ───────────────────────────────────
     {
         "file": "epub3_assets.epub",
-        "expected": "success",
+        "expected": "failed",
+        "error_contains": "Referenced EPUB image asset missing",
         "tags": ["epub3", "assets", "sanitization"],
         "min_chapters": 1,
         "has_toc": True,
@@ -209,6 +210,8 @@ class TestRealEpubFixtureCorpusExtractsToS5ContractMinimums:
             assert not isinstance(result, EpubExtractionResult), (
                 f"{fixture_meta['file']}: expected failure, got success"
             )
+            if fixture_meta.get("error_contains"):
+                assert fixture_meta["error_contains"] in result.error_message
 
 
 class TestRealEpubFixtureCorpusAssetsAndSanitizationDegradeSafely:
@@ -216,8 +219,8 @@ class TestRealEpubFixtureCorpusAssetsAndSanitizationDegradeSafely:
 
     @pytest.mark.parametrize(
         "fixture_meta",
-        [c for c in CORPUS if c.get("has_assets")],
-        ids=[c["file"] for c in CORPUS if c.get("has_assets")],
+        [c for c in CORPUS if c.get("has_assets") and c.get("expected") == "success"],
+        ids=[c["file"] for c in CORPUS if c.get("has_assets") and c.get("expected") == "success"],
     )
     def test_assets_and_sanitization(self, db_session: Session, fixture_meta: dict):
         fixture_path = FIXTURES_DIR / fixture_meta["file"]

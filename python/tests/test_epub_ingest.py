@@ -480,8 +480,10 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
 
         chapter_html = _build_chapter_xhtml(
             '<p>Internal: <img src="images/fig1.png" alt="fig1"/></p>'
+            '<p>Responsive: <img srcset="images/fig2.png 1x, images/fig3.webp 2x" '
+            'alt="responsive"/></p>'
             '<p>External: <img src="https://example.com/photo.jpg" alt="ext"/></p>'
-            '<p>Broken: <img src="images/missing.png" alt="gone"/></p>'
+            '<p>Unsupported: <img src="styles/book.css" alt="gone"/></p>'
             '<p>Link: <a href="chapter2.xhtml#sec1">Jump</a></p>'
             '<p onclick="alert(1)">Handler test</p>'
             '<p><a href="javascript:void(0)">JS link</a></p>'
@@ -496,11 +498,17 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
                         ("ch1", "chapter1.xhtml", "application/xhtml+xml"),
                         ("ch2", "chapter2.xhtml", "application/xhtml+xml"),
                         ("img1", "images/fig1.png", "image/png"),
+                        ("img2", "images/fig2.png", "image/png"),
+                        ("img3", "images/fig3.webp", "image/webp"),
+                        ("css1", "styles/book.css", "text/css"),
                     ],
                 ),
                 "OEBPS/chapter1.xhtml": chapter_html,
                 "OEBPS/chapter2.xhtml": _build_chapter_xhtml("<p>Second chapter.</p>"),
                 "OEBPS/images/fig1.png": img_bytes,
+                "OEBPS/images/fig2.png": img_bytes,
+                "OEBPS/images/fig3.webp": b"RIFF\x1a\x00\x00\x00WEBPVP8 " + b"\x00" * 32,
+                "OEBPS/styles/book.css": "body { color: red; }",
             },
         )
         mid = _create_media_with_epub(db_session, storage, epub)
@@ -508,9 +516,9 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
         db_session.flush()
 
         assert isinstance(result, EpubExtractionResult)
-        # Only static assets should be extracted/uploaded. Chapter-to-chapter
-        # xhtml links must not be treated as binary assets.
-        assert result.asset_count == 1
+        # Only referenced image assets should be extracted/uploaded.
+        # Chapter-to-chapter XHTML links must not be treated as binary assets.
+        assert result.asset_count == 3
 
         frag = db_session.execute(
             text("SELECT html_sanitized FROM fragments WHERE media_id = :mid AND idx = 0"),
@@ -520,12 +528,14 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
 
         # internal image rewritten to safe fetch path
         assert f"/api/media/{mid}/assets/" in html
+        assert f"/api/media/{mid}/assets/OEBPS/images/fig2.png 1x" in html
+        assert f"/api/media/{mid}/assets/OEBPS/images/fig3.webp 2x" in html
         # chapter xhtml links remain logical chapter links, not asset fetches
         assert f"/api/media/{mid}/assets/OEBPS/chapter2.xhtml" not in html
         # external images are not fetched by the reader pipeline
         assert "https://example.com/photo.jpg" not in html
-        # broken ref degraded (src removed or empty)
-        assert "images/missing.png" not in html
+        # unsupported local resources are stripped, not stored or rewritten
+        assert "styles/book.css" not in html
         # active content stripped: script tags
         assert "<script" not in html
         assert "alert" not in html.lower()
@@ -534,6 +544,103 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
         assert "onerror" not in html.lower()
         # javascript: protocol stripped from href
         assert "javascript:" not in html.lower()
+
+    def test_unsupported_manifest_resources_are_not_stored(self, db_session: Session):
+        storage = FakeStorageClient()
+        img_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
+
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[
+                        ("ch1", "chapter1.xhtml", "application/xhtml+xml"),
+                        ("img1", "images/fig1.png", "image/png"),
+                        ("css1", "styles/book.css", "text/css"),
+                        ("font1", "fonts/book.woff2", "font/woff2"),
+                        ("audio1", "audio/ch1.mp3", "audio/mpeg"),
+                        ("video1", "video/clip.mp4", "video/mp4"),
+                    ],
+                ),
+                "OEBPS/chapter1.xhtml": _build_chapter_xhtml(
+                    '<img src="images/fig1.png" alt="fig1"/>'
+                ),
+                "OEBPS/images/fig1.png": img_bytes,
+                "OEBPS/styles/book.css": "body { color: red; }",
+                "OEBPS/fonts/book.woff2": b"font-bytes",
+                "OEBPS/audio/ch1.mp3": b"audio-bytes",
+                "OEBPS/video/clip.mp4": b"video-bytes",
+            },
+        )
+        mid = _create_media_with_epub(db_session, storage, epub)
+        result = run_epub_ingest_sync(db_session, mid, storage)
+        db_session.flush()
+
+        assert isinstance(result, EpubExtractionResult)
+        assert result.asset_count == 1
+
+        rows = db_session.execute(
+            text("SELECT package_href, content_type FROM epub_resources WHERE media_id = :mid"),
+            {"mid": mid},
+        ).fetchall()
+        assert rows == [("OEBPS/images/fig1.png", "image/png")]
+
+    def test_missing_referenced_image_fails_ingest(self, db_session: Session):
+        storage = FakeStorageClient()
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[
+                        ("ch1", "chapter1.xhtml", "application/xhtml+xml"),
+                        ("img1", "images/missing.png", "image/png"),
+                    ],
+                ),
+                "OEBPS/chapter1.xhtml": _build_chapter_xhtml(
+                    '<img src="images/missing.png" alt="missing"/>'
+                ),
+            },
+        )
+        mid = _create_media_with_epub(db_session, storage, epub)
+        result = extract_epub_artifacts(db_session, mid, storage)
+
+        assert isinstance(result, EpubExtractionError)
+        assert result.error_code == ApiErrorCode.E_INGEST_FAILED.value
+        assert "Referenced EPUB image asset missing" in result.error_message
+
+    def test_svg_asset_is_sanitized_before_storage(self, db_session: Session):
+        storage = FakeStorageClient()
+        svg = b"""<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)">
+          <script>alert(1)</script>
+          <foreignObject><body>html</body></foreignObject>
+          <image href="https://example.com/pixel.png" />
+          <rect width="10" height="10" fill="url(https://example.com/x)" />
+        </svg>"""
+
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[
+                        ("ch1", "chapter1.xhtml", "application/xhtml+xml"),
+                        ("svg1", "images/unsafe.svg", "image/svg+xml"),
+                    ],
+                ),
+                "OEBPS/chapter1.xhtml": _build_chapter_xhtml(
+                    '<img src="images/unsafe.svg" alt="svg"/>'
+                ),
+                "OEBPS/images/unsafe.svg": svg,
+            },
+        )
+        mid = _create_media_with_epub(db_session, storage, epub)
+        result = run_epub_ingest_sync(db_session, mid, storage)
+        db_session.flush()
+
+        assert isinstance(result, EpubExtractionResult)
+        stored = storage.get_object(f"media/{mid}/assets/OEBPS/images/unsafe.svg")
+        assert stored is not None
+        stored_text = stored.decode("utf-8").lower()
+        assert "<script" not in stored_text
+        assert "foreignobject" not in stored_text
+        assert "onload" not in stored_text
+        assert "https://example.com" not in stored_text
 
 
 class TestEpubExtractTocMappingIncludesImageOnlySpineItems:
@@ -552,6 +659,7 @@ class TestEpubExtractTocMappingIncludesImageOnlySpineItems:
                         ("ch0", "chapter0.xhtml", "application/xhtml+xml"),
                         ("ch1", "chapter1.xhtml", "application/xhtml+xml"),
                         ("ch2", "chapter2.xhtml", "application/xhtml+xml"),
+                        ("cover", "cover.png", "image/png"),
                     ],
                     ncx_id="ncx",
                 ),

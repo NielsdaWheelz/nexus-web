@@ -1963,25 +1963,15 @@ def list_fragments_for_viewer(
 
 _ASSET_KEY_RE = re.compile(r"^[a-zA-Z0-9_./-]+$")
 
-# Allowlist of content types served for EPUB-internal assets.
-# Intentionally restrictive — only known-safe static asset types.
-_EPUB_ASSET_CONTENT_TYPES: dict[str, str] = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".svg": "image/svg+xml",
-    ".webp": "image/webp",
-    ".css": "text/css",
-    ".woff": "font/woff",
-    ".woff2": "font/woff2",
-    ".ttf": "font/ttf",
-    ".otf": "font/otf",
-    ".mp3": "audio/mpeg",
-    ".m4a": "audio/mp4",
-    ".mp4": "video/mp4",
-    ".webm": "video/webm",
-}
+_EPUB_ASSET_CONTENT_TYPES = frozenset(
+    {
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/svg+xml",
+        "image/webp",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -2025,6 +2015,8 @@ def get_epub_asset_for_viewer(
 
     if not asset_key or not _ASSET_KEY_RE.match(asset_key):
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid asset key format")
+    if any(part in {"", ".", ".."} for part in asset_key.split("/")):
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid asset key format")
 
     row = db.execute(
         text(
@@ -2038,17 +2030,19 @@ def get_epub_asset_for_viewer(
         {"media_id": media_id, "asset_key": asset_key},
     ).fetchone()
     if row is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "EPUB asset not found")
+
+    content_type = row[1]
+    if content_type not in _EPUB_ASSET_CONTENT_TYPES:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "EPUB asset not found")
 
     sc = storage_client or get_storage_client()
     try:
         data = b"".join(sc.stream_object(row[0]))
-    except Exception as exc:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found") from exc
-
-    ext = posixpath.splitext(asset_key)[1].lower()
-    content_type = row[1] if row[1] in _EPUB_ASSET_CONTENT_TYPES.values() else None
-    if content_type is None:
-        content_type = _EPUB_ASSET_CONTENT_TYPES.get(ext, "application/octet-stream")
+    except StorageError as exc:
+        raise ApiError(
+            ApiErrorCode.E_STORAGE_ERROR,
+            "Stored EPUB asset object is missing or unreadable",
+        ) from exc
 
     return EpubAssetOut(data=data, content_type=content_type)

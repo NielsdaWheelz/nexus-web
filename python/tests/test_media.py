@@ -1441,6 +1441,8 @@ class TestGetEpubAssetSuccessAndMasking:
         assert resp.status_code == 200, resp.text
         assert resp.content == asset_content
         assert "image/png" in resp.headers.get("content-type", "")
+        assert resp.headers.get("content-length") == str(len(asset_content))
+        assert resp.headers.get("x-content-type-options") == "nosniff"
 
     def test_unauthorized_viewer_gets_404(self, auth_client, direct_db: DirectSessionManager):
         other_user = create_test_user_id()
@@ -1506,6 +1508,250 @@ class TestGetEpubAssetSuccessAndMasking:
                 headers=auth_headers(user_id),
             )
         assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+    def test_invalid_asset_key_returns_400(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Test EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
+            )
+            session.add(media)
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(
+            f"/media/{media_id}/assets/bad%20key.png",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_missing_storage_object_is_500_defect(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        asset_content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
+
+        with direct_db.session() as session:
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Test EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
+            )
+            session.add(media)
+            session.flush()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO epub_resources (
+                        media_id,
+                        manifest_item_id,
+                        package_href,
+                        asset_key,
+                        storage_path,
+                        content_type,
+                        size_bytes,
+                        sha256
+                    )
+                    VALUES (
+                        :media_id,
+                        'fig1',
+                        'images/fig1.png',
+                        'images/fig1.png',
+                        :storage_path,
+                        'image/png',
+                        :size_bytes,
+                        :sha256
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "storage_path": f"media/{media_id}/assets/images/fig1.png",
+                    "size_bytes": len(asset_content),
+                    "sha256": "0" * 64,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("epub_resources", "media_id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        from nexus.storage.client import FakeStorageClient
+
+        fake = FakeStorageClient()
+
+        from unittest.mock import patch
+
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
+        with patch("nexus.storage.get_storage_client", return_value=fake):
+            resp = auth_client.get(
+                f"/media/{media_id}/assets/images/fig1.png",
+                headers=auth_headers(user_id),
+            )
+
+        assert resp.status_code == 500
+        assert resp.json()["error"]["code"] == "E_STORAGE_ERROR"
+
+    def test_unsupported_asset_content_type_is_not_served(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Test EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
+            )
+            session.add(media)
+            session.flush()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO epub_resources (
+                        media_id,
+                        manifest_item_id,
+                        package_href,
+                        asset_key,
+                        storage_path,
+                        content_type,
+                        size_bytes,
+                        sha256
+                    )
+                    VALUES (
+                        :media_id,
+                        'css1',
+                        'styles/book.css',
+                        'styles/book.css',
+                        :storage_path,
+                        'text/css',
+                        6,
+                        :sha256
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "storage_path": f"media/{media_id}/assets/styles/book.css",
+                    "sha256": "0" * 64,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("epub_resources", "media_id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(
+            f"/media/{media_id}/assets/styles/book.css",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+    def test_svg_asset_headers_include_restrictive_csp(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        asset_content = b'<svg xmlns="http://www.w3.org/2000/svg"></svg>'
+
+        with direct_db.session() as session:
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Test EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
+            )
+            session.add(media)
+            session.flush()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO epub_resources (
+                        media_id,
+                        manifest_item_id,
+                        package_href,
+                        asset_key,
+                        storage_path,
+                        content_type,
+                        size_bytes,
+                        sha256
+                    )
+                    VALUES (
+                        :media_id,
+                        'svg1',
+                        'images/fig.svg',
+                        'images/fig.svg',
+                        :storage_path,
+                        'image/svg+xml',
+                        :size_bytes,
+                        :sha256
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "storage_path": f"media/{media_id}/assets/images/fig.svg",
+                    "size_bytes": len(asset_content),
+                    "sha256": "0" * 64,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("epub_resources", "media_id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        from nexus.storage.client import FakeStorageClient
+
+        fake = FakeStorageClient()
+        fake.put_object(f"media/{media_id}/assets/images/fig.svg", asset_content, "image/svg+xml")
+
+        from unittest.mock import patch
+
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
+        with patch("nexus.storage.get_storage_client", return_value=fake):
+            resp = auth_client.get(
+                f"/media/{media_id}/assets/images/fig.svg",
+                headers=auth_headers(user_id),
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert "image/svg+xml" in resp.headers.get("content-type", "")
+        assert resp.headers.get("content-length") == str(len(asset_content))
+        assert resp.headers.get("x-content-type-options") == "nosniff"
+        csp = resp.headers.get("content-security-policy", "")
+        assert "default-src 'none'" in csp
+        assert "script-src 'none'" in csp
 
 
 class TestGetEpubAssetKindAndReadyGuards:

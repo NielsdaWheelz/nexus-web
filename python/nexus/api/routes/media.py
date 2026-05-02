@@ -490,18 +490,26 @@ def get_epub_asset(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    """Serve an EPUB-internal asset (image, font, css) through canonical safe fetch path.
+    """Serve an EPUB reader image asset through the canonical safe fetch path.
 
     Returns binary payload with resolved content type and cache headers.
     Visibility, kind, readiness, and key-format guards enforced by service layer.
     """
     result = media_service.get_epub_asset_for_viewer(db, viewer.user_id, media_id, asset_key)
+    headers = {
+        "Cache-Control": "private, max-age=86400, immutable",
+        "Content-Length": str(len(result.data)),
+        "X-Content-Type-Options": "nosniff",
+    }
+    if result.content_type == "image/svg+xml":
+        headers["Content-Security-Policy"] = (
+            "default-src 'none'; img-src 'self' data:; script-src 'none'; "
+            "object-src 'none'; base-uri 'none'"
+        )
     return Response(
         content=result.data,
         media_type=result.content_type,
-        headers={
-            "Cache-Control": "private, max-age=86400, immutable",
-        },
+        headers=headers,
     )
 
 
