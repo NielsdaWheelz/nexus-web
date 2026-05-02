@@ -143,4 +143,36 @@ describe("GET /api/media/:id/assets/:assetKey*", () => {
     expect(response.headers.get("accept-ranges")).toBeNull();
     expect(response.headers.get("content-range")).toBeNull();
   });
+
+  it("recomputes content-length from the rebuilt response body", async () => {
+    const body = JSON.stringify({ data: [{ name: "Library A" }] });
+    const fetchMock = vi.fn<typeof fetch>(
+      async () =>
+        new Response(body, {
+          headers: {
+            "content-length": "7",
+            "content-type": "application/json",
+          },
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const req = new Request(
+      "http://localhost:3000/api/media/media-123/assets/asset.json"
+    );
+    const { GET } = await import("./route");
+
+    const response = await GET(req, {
+      params: Promise.resolve({
+        id: "media-123",
+        assetKey: ["asset.json"],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-length")).toBe(
+      String(new TextEncoder().encode(body).byteLength)
+    );
+    expect(await response.json()).toEqual({ data: [{ name: "Library A" }] });
+  });
 });

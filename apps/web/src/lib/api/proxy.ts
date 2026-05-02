@@ -48,7 +48,6 @@ const BLOCKED_REQUEST_HEADERS = new Set([
 const ALLOWED_RESPONSE_HEADERS = new Set([
   "x-request-id",
   "content-type",
-  "content-length",
   "cache-control",
   "etag",
   "vary",
@@ -134,6 +133,14 @@ function isTextContentType(contentType: string | null): boolean {
   if (!contentType) return false;
   const lower = contentType.toLowerCase();
   return lower.includes("application/json") || lower.includes("text/");
+}
+
+function setBodyContentLength(headers: Headers, body: string | ArrayBuffer) {
+  const byteLength =
+    typeof body === "string"
+      ? new TextEncoder().encode(body).byteLength
+      : body.byteLength;
+  headers.set("content-length", String(byteLength));
 }
 
 function isAbortLikeError(error: unknown): boolean {
@@ -282,6 +289,7 @@ async function proxyToFastAPIWithDeps(
     if (isTextContentType(contentType)) {
       // Text/JSON response - use text() to preserve encoding
       const text = await response.text();
+      setBodyContentLength(responseHeaders, text);
       return new Response(text, {
         status: response.status,
         statusText: response.statusText,
@@ -290,6 +298,7 @@ async function proxyToFastAPIWithDeps(
     } else {
       // Binary response - use arrayBuffer() to preserve bytes
       const buffer = await response.arrayBuffer();
+      setBodyContentLength(responseHeaders, buffer);
       return new Response(buffer, {
         status: response.status,
         statusText: response.statusText,
