@@ -1,13 +1,18 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { apiFetch } from "@/lib/api/client";
+import { ToastProvider } from "@/components/Toast";
 import LibraryPaneBody from "./LibraryPaneBody";
 
-vi.mock("@/lib/panes/paneRuntime", () => ({
-  usePaneParam: () => "library-1",
-  usePaneRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
-  useSetPaneTitle: vi.fn(),
-}));
+vi.mock("@/lib/panes/paneRuntime", () => {
+  const paneSearchParams = new URLSearchParams();
+  return {
+    usePaneParam: () => "library-1",
+    usePaneRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+    usePaneSearchParams: () => paneSearchParams,
+    useSetPaneTitle: vi.fn(),
+  };
+});
 
 vi.mock("@/lib/api/client", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api/client")>(
@@ -115,7 +120,11 @@ describe("LibraryPaneBody intelligence", () => {
   });
 
   it("loads and refreshes library intelligence from the assumed endpoints", async () => {
-    render(<LibraryPaneBody />);
+    render(
+      <ToastProvider>
+        <LibraryPaneBody />
+      </ToastProvider>
+    );
 
     expect(await screen.findByText("No podcasts or media in this library yet.")).toBeVisible();
     expect(apiFetchMock).not.toHaveBeenCalledWith(
@@ -143,5 +152,57 @@ describe("LibraryPaneBody intelligence", () => {
       );
     });
     expect(apiFetchMock).toHaveBeenCalledWith("/api/libraries/library-1/intelligence");
+  });
+});
+
+describe("LibraryPaneBody resource actions", () => {
+  beforeEach(() => {
+    apiFetchMock.mockReset();
+  });
+
+  it("shows the media library action on library rows for non-admin members", async () => {
+    apiFetchMock.mockImplementation(async (path) => {
+      if (path === "/api/libraries/library-1") {
+        return { data: { ...library, role: "member" } };
+      }
+
+      if (path === "/api/libraries/library-1/entries") {
+        return {
+          data: [
+            {
+              id: "entry-1",
+              kind: "media",
+              position: 0,
+              created_at: "2026-04-30T18:00:00Z",
+              media: {
+                id: "media-1",
+                kind: "pdf",
+                title: "Design Notes",
+                authors: [],
+                published_date: null,
+                publisher: null,
+                canonical_source_url: null,
+                processing_status: "ready",
+                capabilities: { can_delete: true, can_retry: false },
+              },
+            },
+          ],
+        };
+      }
+
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    render(
+      <ToastProvider>
+        <LibraryPaneBody />
+      </ToastProvider>
+    );
+
+    expect(await screen.findByText("Design Notes")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+
+    expect(await screen.findByRole("menuitem", { name: "Libraries..." })).toBeVisible();
   });
 });

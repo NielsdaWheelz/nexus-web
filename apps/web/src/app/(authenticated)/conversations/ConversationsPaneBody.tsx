@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import StateMessage from "@/components/ui/StateMessage";
 import StatusPill from "@/components/ui/StatusPill";
 import { AppList, AppListItem } from "@/components/ui/AppList";
@@ -143,14 +144,9 @@ function ConversationListItem({
           {formatConversationScopeBadge(scope)}
         </StatusPill>
       }
-      options={[
-        {
-          id: "delete",
-          label: "Delete",
-          tone: "danger",
-          onSelect: () => void onDelete(conversation.id),
-        },
-      ]}
+      options={conversationResourceOptions({
+        onDelete: () => void onDelete(conversation.id),
+      })}
     />
   );
 }

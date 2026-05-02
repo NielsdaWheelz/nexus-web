@@ -5,6 +5,11 @@ import { flushSync } from "react-dom";
 import { useToast } from "@/components/Toast";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import {
+  libraryResourceOptions,
+  mediaResourceOptions,
+  podcastResourceOptions,
+} from "@/lib/actions/resourceActions";
+import {
   BarChart3,
   BookOpen,
   FileText,
@@ -17,7 +22,7 @@ import {
 } from "lucide-react";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import StateMessage from "@/components/ui/StateMessage";
-import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
+import ActionMenu from "@/components/ui/ActionMenu";
 import SectionCard from "@/components/ui/SectionCard";
 import SortableList from "@/components/sortable/SortableList";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
@@ -30,7 +35,12 @@ import type {
 } from "@/components/LibraryEditDialog";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
-import { usePaneParam, usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
+import {
+  usePaneParam,
+  usePaneRouter,
+  usePaneSearchParams,
+  useSetPaneTitle,
+} from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 const MEDIA_KIND_ICONS: Record<string, typeof Globe> = {
@@ -64,6 +74,7 @@ interface LibraryMediaEntry {
     | "ready"
     | "failed";
   capabilities?: {
+    can_delete?: boolean;
     can_retry?: boolean;
   };
 }
@@ -194,6 +205,7 @@ export default function LibraryPaneBody() {
     throw new Error("library route requires an id");
   }
   const router = usePaneRouter();
+  const paneSearchParams = usePaneSearchParams();
   const { toast } = useToast();
   const [library, setLibrary] = useState<Library | null>(null);
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
@@ -202,7 +214,9 @@ export default function LibraryPaneBody() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
-  const [activeView, setActiveView] = useState<LibraryView>("contents");
+  const [activeView, setActiveView] = useState<LibraryView>(() =>
+    paneSearchParams.get("view") === "intelligence" ? "intelligence" : "contents"
+  );
   const [intelligence, setIntelligence] = useState<LibraryIntelligence | null>(null);
   const [intelligenceLoading, setIntelligenceLoading] = useState(false);
   const [intelligenceRefreshing, setIntelligenceRefreshing] = useState(false);
@@ -222,6 +236,12 @@ export default function LibraryPaneBody() {
   const [libraryPanelBusy, setLibraryPanelBusy] = useState(false);
   const [libraryPanelError, setLibraryPanelError] = useState<string | null>(null);
   const libraryPanelRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    setActiveView(
+      paneSearchParams.get("view") === "intelligence" ? "intelligence" : "contents"
+    );
+  }, [paneSearchParams]);
   const libraryPanelEntryIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -565,6 +585,34 @@ export default function LibraryPaneBody() {
     [retryingMediaIds, toast]
   );
 
+  const handleDeleteMedia = useCallback(
+    async (entry: LibraryMediaListEntry) => {
+      if (
+        !confirm(
+          `Delete "${entry.media.title}" from My Library and libraries you manage? This cannot be undone.`
+        )
+      ) {
+        return;
+      }
+
+      try {
+        await apiFetch(`/api/media/${entry.media.id}`, { method: "DELETE" });
+        setEntries((current) =>
+          current.filter(
+            (candidate) =>
+              candidate.kind !== "media" || candidate.media.id !== entry.media.id
+          )
+        );
+      } catch (err) {
+        toast({
+          variant: "error",
+          message: isApiError(err) ? err.message : "Failed to delete document",
+        });
+      }
+    },
+    [toast]
+  );
+
   const handleDeleteLibrary = async () => {
     if (!library || library.is_default) {
       return;
@@ -726,6 +774,27 @@ export default function LibraryPaneBody() {
     }
   }, [library, router]);
 
+  const handleOpenMediaChat = useCallback(
+    async (media: LibraryMediaEntry) => {
+      try {
+        const response = await apiFetch<{ data: { id: string; title: string } }>(
+          "/api/conversations/resolve",
+          {
+            method: "POST",
+            body: JSON.stringify({ type: "media", media_id: media.id }),
+          }
+        );
+        const route = `/conversations/${response.data.id}`;
+        if (!requestOpenInAppPane(route, { titleHint: response.data.title || media.title })) {
+          router.push(route);
+        }
+      } catch (err) {
+        setError(isApiError(err) ? err.message : "Failed to open media chat");
+      }
+    },
+    [router]
+  );
+
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {
     if (!library || library.role !== "admin") {
       return;
@@ -751,41 +820,15 @@ export default function LibraryPaneBody() {
       });
   };
 
-  const paneOptions = !library
-    ? []
-    : [
-        {
-          id: "library-chat",
-          label: "Chat about this library",
-          onSelect: () => void handleOpenLibraryChat(),
-        },
-        {
-          id: "library-intelligence",
-          label: "Intelligence",
-          onSelect: () => setActiveView("intelligence"),
-        },
-        ...(library.is_default
-          ? []
-          : [
-              {
-                id: "edit-library",
-                label: "Edit library",
-                onSelect: () => void openEditDialog(),
-              },
-              ...(library.role === "admin"
-                ? [
-                    {
-                      id: "delete-library",
-                      label: "Delete library",
-                      tone: "danger" as const,
-                      onSelect: () => {
-                        void handleDeleteLibrary();
-                      },
-                    },
-                  ]
-                : []),
-            ]),
-      ];
+  const paneOptions = libraryResourceOptions({
+    library,
+    onOpenChat: () => void handleOpenLibraryChat(),
+    onViewIntelligence: () => setActiveView("intelligence"),
+    onEdit: () => void openEditDialog(),
+    onDelete: () => {
+      void handleDeleteLibrary();
+    },
+  });
 
   usePaneChromeOverride({ options: paneOptions });
 
@@ -1026,22 +1069,14 @@ export default function LibraryPaneBody() {
                         ...handleProps.listeners,
                       }
                     : undefined;
-                const rowOptions: ActionMenuOption[] =
-                  library.role === "admin"
-                    ? [
-                        {
-                          id: "libraries",
-                          label: "Libraries…",
-                          restoreFocusOnClose: false,
-                          onSelect: ({ triggerEl }: { triggerEl: HTMLButtonElement | null }) => {
-                            void openLibraryPanel(item, triggerEl);
-                          },
-                        },
-                      ]
-                    : [];
-
                 if (item.kind === "podcast") {
                   const subscription = item.subscription;
+                  const rowOptions = podcastResourceOptions({
+                    canUsePodcastActions: library.role === "admin",
+                    onManageLibraries: ({ triggerEl }) => {
+                      void openLibraryPanel(item, triggerEl);
+                    },
+                  });
                   return (
                     <div className={styles.mediaRow} data-dragging={isDragging ? "true" : "false"}>
                       <div className={styles.mediaRowMain}>
@@ -1083,17 +1118,27 @@ export default function LibraryPaneBody() {
 
                 const Icon = MEDIA_KIND_ICONS[item.media.kind] ?? Globe;
                 const retryProcessingBusy = retryingMediaIds.has(item.media.id);
-                if (item.media.capabilities?.can_retry) {
-                  rowOptions.push({
-                    id: "retry-processing",
-                    label: "Retry processing",
-                    separatorBefore: rowOptions.length > 0,
-                    disabled: retryProcessingBusy,
-                    onSelect: () => {
-                      void handleRetryProcessing(item.media.id);
-                    },
-                  });
-                }
+                const rowOptions = mediaResourceOptions({
+                  media: item.media,
+                  canManageLibraries: true,
+                  retryBusy: retryProcessingBusy,
+                  onRetry: item.media.capabilities?.can_retry
+                    ? () => {
+                        void handleRetryProcessing(item.media.id);
+                      }
+                    : undefined,
+                  onOpenChat: () => {
+                    void handleOpenMediaChat(item.media);
+                  },
+                  onManageLibraries: ({ triggerEl }) => {
+                    void openLibraryPanel(item, triggerEl);
+                  },
+                  onDelete: item.media.capabilities?.can_delete
+                    ? () => {
+                        void handleDeleteMedia(item);
+                      }
+                    : undefined,
+                });
                 const authorNames = item.media.authors
                   .map((author) => author.name.trim())
                   .filter((name) => name.length > 0);

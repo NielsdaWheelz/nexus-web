@@ -18,6 +18,7 @@ import PdfReader, {
 import SelectionPopover from "@/components/SelectionPopover";
 import { useToast } from "@/components/Toast";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { mediaResourceOptions } from "@/lib/actions/resourceActions";
 import type { ContextItem } from "@/lib/api/sse";
 import {
   applyHighlightsToHtml,
@@ -3306,83 +3307,68 @@ export default function MediaPaneBody() {
     </div>
   );
 
-  const mediaHeaderOptions: ActionMenuOption[] = [];
-
-  if (media?.canonical_source_url) {
-    mediaHeaderOptions.push({
-      id: "open-source",
-      label: "Open source",
-      href: media.canonical_source_url,
-    });
-  }
+  const mediaHeaderOptions = mediaResourceOptions({
+    media,
+    canManageLibraries: Boolean(media),
+    retryBusy: retryProcessingBusy,
+    deleteBusy: documentDeleteBusy,
+    onRetry: media?.capabilities?.can_retry
+      ? () => {
+          void handleRetryProcessing();
+        }
+      : undefined,
+    onOpenChat: media
+      ? () => {
+          void openResolvedConversation(
+            { type: "media", media_id: media.id },
+            media.title || "Document chat"
+          );
+        }
+      : undefined,
+    onManageLibraries: ({ triggerEl }) => {
+      setLibraryPanelAnchorEl(triggerEl);
+      setLibraryPanelOpen(true);
+      void loadLibraryPickerLibraries();
+    },
+    onDelete: media?.capabilities?.can_delete
+      ? () => {
+          void handleDeleteDocument();
+        }
+      : undefined,
+  });
+  const mediaReaderOptions: ActionMenuOption[] = [];
 
   if (isEpub && canRead && (hasEpubToc || tocWarning)) {
-    mediaHeaderOptions.push({
-      id: "toggle-toc",
+    mediaReaderOptions.push({
+      id: "toggle-epub-toc",
       label: epubTocExpanded ? "Hide table of contents" : "Show table of contents",
       onSelect: () => setEpubTocExpanded((value) => !value),
     });
   }
 
   if (isReflowableReader) {
-    mediaHeaderOptions.push({
-      id: "theme-light",
+    mediaReaderOptions.push({
+      id: "reader-theme-light",
       label:
         readerProfile.theme === "light" ? "Light theme (current)" : "Light theme",
       disabled: readerProfile.theme === "light",
       onSelect: () => updateTheme("light"),
     });
-    mediaHeaderOptions.push({
-      id: "theme-dark",
+    mediaReaderOptions.push({
+      id: "reader-theme-dark",
       label: readerProfile.theme === "dark" ? "Dark theme (current)" : "Dark theme",
       disabled: readerProfile.theme === "dark",
       onSelect: () => updateTheme("dark"),
     });
   }
 
-  if (media) {
-    if (media.capabilities?.can_retry) {
-      mediaHeaderOptions.push({
-        id: "retry-processing",
-        label: "Retry processing",
-        disabled: retryProcessingBusy,
-        onSelect: () => {
-          void handleRetryProcessing();
-        },
-      });
-    }
-    mediaHeaderOptions.push({
-      id: "document-chat",
-      label: "Chat about this document",
-      onSelect: () => {
-        void openResolvedConversation(
-          { type: "media", media_id: media.id },
-          media.title || "Document chat"
-        );
-      },
-    });
-    mediaHeaderOptions.push({
-      id: "libraries",
-      label: "Libraries…",
-      restoreFocusOnClose: false,
-      onSelect: ({ triggerEl }) => {
-        setLibraryPanelAnchorEl(triggerEl);
-        setLibraryPanelOpen(true);
-        void loadLibraryPickerLibraries();
-      },
-    });
-    if (media.capabilities?.can_delete) {
-      mediaHeaderOptions.push({
-        id: "delete-document",
-        label: "Delete document",
-        tone: "danger",
-        separatorBefore: true,
-        disabled: documentDeleteBusy,
-        onSelect: () => {
-          void handleDeleteDocument();
-        },
-      });
-    }
+  const mediaDangerOptionIndex = mediaHeaderOptions.findIndex(
+    (option) => option.tone === "danger"
+  );
+  if (mediaDangerOptionIndex === -1) {
+    mediaHeaderOptions.push(...mediaReaderOptions);
+  } else {
+    mediaHeaderOptions.splice(mediaDangerOptionIndex, 0, ...mediaReaderOptions);
   }
 
   const mediaToolbar =

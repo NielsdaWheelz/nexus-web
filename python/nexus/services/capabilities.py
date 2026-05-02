@@ -116,13 +116,11 @@ def derive_capabilities(
     can_search = can_quote
 
     terminal_retry_error = (
-        (kind == MediaKind.pdf.value and last_error_code == "E_PDF_PASSWORD_REQUIRED")
-        or (kind == MediaKind.epub.value and last_error_code == "E_ARCHIVE_UNSAFE")
-    )
+        kind == MediaKind.pdf.value and last_error_code == "E_PDF_PASSWORD_REQUIRED"
+    ) or (kind == MediaKind.epub.value and last_error_code == "E_ARCHIVE_UNSAFE")
     retry_source_available = (
-        (kind in {MediaKind.pdf.value, MediaKind.epub.value} and media_file_exists)
-        or (kind == MediaKind.web_article.value and requested_url_exists)
-    )
+        kind in {MediaKind.pdf.value, MediaKind.epub.value} and media_file_exists
+    ) or (kind == MediaKind.web_article.value and requested_url_exists)
     can_retry = (
         is_creator
         and kind in _RETRYABLE_DOCUMENT_MEDIA_KINDS

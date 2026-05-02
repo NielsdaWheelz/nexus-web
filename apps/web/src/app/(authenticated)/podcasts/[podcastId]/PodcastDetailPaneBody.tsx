@@ -5,11 +5,16 @@ import Link from "next/link";
 import Image from "next/image";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import {
+  episodeResourceOptions,
+  podcastResourceOptions,
+} from "@/lib/actions/resourceActions";
+import {
   usePaneParam,
   usePaneRouter,
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
@@ -75,6 +80,8 @@ interface MediaCapabilities {
   can_search: boolean;
   can_play: boolean;
   can_download_file: boolean;
+  can_delete?: boolean;
+  can_retry?: boolean;
 }
 
 interface PodcastEpisodeAuthor {
@@ -1006,6 +1013,96 @@ export default function PodcastDetailPaneBody() {
     [refreshEpisodeStates]
   );
 
+  const handleOpenEpisodeChat = useCallback(
+    async (episode: PodcastEpisodeMedia) => {
+      try {
+        const response = await apiFetch<{ data: { id: string; title: string } }>(
+          "/api/conversations/resolve",
+          {
+            method: "POST",
+            body: JSON.stringify({ type: "media", media_id: episode.id }),
+          }
+        );
+        const route = `/conversations/${response.data.id}`;
+        if (!requestOpenInAppPane(route, { titleHint: response.data.title || episode.title })) {
+          paneRouter.push(route);
+        }
+      } catch (chatError) {
+        if (isApiError(chatError)) {
+          setError(chatError.message);
+        } else {
+          setError("Failed to open episode chat");
+        }
+      }
+    },
+    [paneRouter]
+  );
+
+  const handleRetryEpisodeProcessing = useCallback(
+    async (mediaId: string) => {
+      setBusyMediaIds((prev) => new Set(prev).add(mediaId));
+      setError(null);
+      try {
+        const response = await apiFetch<{ data: PodcastEpisodeMedia }>(
+          `/api/media/${mediaId}/retry`,
+          { method: "POST" }
+        );
+        setEpisodes((prev) =>
+          prev.map((episode) =>
+            episode.id === mediaId ? { ...episode, ...response.data } : episode
+          )
+        );
+      } catch (retryError) {
+        if (isApiError(retryError)) {
+          setError(retryError.message);
+        } else {
+          setError("Failed to retry episode processing");
+        }
+      } finally {
+        setBusyMediaIds((prev) => {
+          const next = new Set(prev);
+          next.delete(mediaId);
+          return next;
+        });
+      }
+    },
+    []
+  );
+
+  const handleDeleteEpisode = useCallback(async (episode: PodcastEpisodeMedia) => {
+    if (
+      !confirm(
+        `Delete "${episode.title}" from My Library and libraries you manage? This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    setBusyMediaIds((prev) => new Set(prev).add(episode.id));
+    setError(null);
+    try {
+      await apiFetch(`/api/media/${episode.id}`, { method: "DELETE" });
+      setEpisodes((prev) => prev.filter((candidate) => candidate.id !== episode.id));
+      setEpisodeLibrariesById((prev) => {
+        const next = { ...prev };
+        delete next[episode.id];
+        return next;
+      });
+    } catch (deleteError) {
+      if (isApiError(deleteError)) {
+        setError(deleteError.message);
+      } else {
+        setError("Failed to delete episode");
+      }
+    } finally {
+      setBusyMediaIds((prev) => {
+        const next = new Set(prev);
+        next.delete(episode.id);
+        return next;
+      });
+    }
+  }, []);
+
   const applyEpisodeCompletionState = useCallback(
     (episode: PodcastEpisodeMedia, isCompleted: boolean): PodcastEpisodeMedia => {
       const previousListeningState = episode.listening_state;
@@ -1460,46 +1557,25 @@ export default function PodcastDetailPaneBody() {
         canRemove: episodeMembershipBusy ? false : library.canRemove,
       }))
     : [];
-  const paneOptions = activeSubscription
-    ? [
-        {
-          id: "libraries",
-          label: "Libraries…",
-          restoreFocusOnClose: false,
-          disabled: unsubscribeBusy,
-          onSelect: ({ triggerEl }: { triggerEl: HTMLButtonElement | null }) => {
-            setEpisodeMembershipPanelMediaId(null);
-            setEpisodeMembershipPanelTriggerEl(null);
-            setPodcastMembershipPanelOpen(true);
-            setPodcastMembershipPanelTriggerEl(triggerEl);
-            void loadPodcastLibraries();
-          },
-        },
-        {
-          id: "settings",
-          label: "Settings",
-          disabled: unsubscribeBusy,
-          onSelect: () => openSettingsModal(),
-        },
-        {
-          id: "refresh-sync",
-          label: refreshSyncBusy ? "Refreshing..." : "Refresh sync",
-          disabled: refreshSyncBusy,
-          onSelect: () => {
-            void handleRefreshSync();
-          },
-        },
-        {
-          id: "unsubscribe",
-          label: unsubscribeBusy ? "Unsubscribing..." : "Unsubscribe",
-          tone: "danger" as const,
-          disabled: unsubscribeBusy,
-          onSelect: () => {
-            void handleUnsubscribe();
-          },
-        },
-      ]
-    : [];
+  const paneOptions = podcastResourceOptions({
+    canUsePodcastActions: Boolean(activeSubscription),
+    refreshBusy: refreshSyncBusy,
+    unsubscribeBusy,
+    onManageLibraries: ({ triggerEl }) => {
+      setEpisodeMembershipPanelMediaId(null);
+      setEpisodeMembershipPanelTriggerEl(null);
+      setPodcastMembershipPanelOpen(true);
+      setPodcastMembershipPanelTriggerEl(triggerEl);
+      void loadPodcastLibraries();
+    },
+    onOpenSettings: () => openSettingsModal(),
+    onRefreshSync: () => {
+      void handleRefreshSync();
+    },
+    onUnsubscribe: () => {
+      void handleUnsubscribe();
+    },
+  });
 
   usePaneChromeOverride({
     actions: isMobileViewport ? (
@@ -1623,29 +1699,37 @@ export default function PodcastDetailPaneBody() {
               authorSummary && `${episode.title} · ${authorSummary}`.length <= 56
                 ? `${episode.title} · ${authorSummary}`
                 : episode.title;
-            const rowOptions = [
-              {
-                id: "libraries",
-                label: "Libraries…",
-                restoreFocusOnClose: false,
-                disabled: busy,
-                onSelect: ({ triggerEl }: { triggerEl: HTMLButtonElement | null }) => {
-                  setPodcastMembershipPanelOpen(false);
-                  setPodcastMembershipPanelTriggerEl(null);
-                  setEpisodeMembershipPanelMediaId(episode.id);
-                  setEpisodeMembershipPanelTriggerEl(triggerEl);
-                  void loadEpisodeLibraries(episode.id);
-                },
+            const rowOptions = episodeResourceOptions({
+              media: episode,
+              busy,
+              retryBusy: busy,
+              deleteBusy: busy,
+              played: episodeState === "played",
+              markingBusy: markingEpisodeIds.has(episode.id),
+              onManageLibraries: ({ triggerEl }) => {
+                setPodcastMembershipPanelOpen(false);
+                setPodcastMembershipPanelTriggerEl(null);
+                setEpisodeMembershipPanelMediaId(episode.id);
+                setEpisodeMembershipPanelTriggerEl(triggerEl);
+                void loadEpisodeLibraries(episode.id);
               },
-              {
-                id: "toggle-played",
-                label: episodeState === "played" ? "Mark as unplayed" : "Mark as played",
-                disabled: markingEpisodeIds.has(episode.id),
-                onSelect: () => {
-                  void handleMarkEpisodeCompletion(episode, episodeState !== "played");
-                },
+              onOpenChat: () => {
+                void handleOpenEpisodeChat(episode);
               },
-            ];
+              onRetry: episode.capabilities.can_retry
+                ? () => {
+                    void handleRetryEpisodeProcessing(episode.id);
+                  }
+                : undefined,
+              onDelete: episode.capabilities.can_delete
+                ? () => {
+                    void handleDeleteEpisode(episode);
+                  }
+                : undefined,
+              onTogglePlayed: () => {
+                void handleMarkEpisodeCompletion(episode, episodeState !== "played");
+              },
+            });
             return (
               <AppListItem
                 key={episode.id}

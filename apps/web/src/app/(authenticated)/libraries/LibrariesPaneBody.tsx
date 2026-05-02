@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { FolderOpen, Library as LibraryIcon } from "lucide-react";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { libraryResourceOptions } from "@/lib/actions/resourceActions";
+import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import StateMessage from "@/components/ui/StateMessage";
 import StatusPill from "@/components/ui/StatusPill";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import SectionCard from "@/components/ui/SectionCard";
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
 import type {
   LibraryForEdit,
@@ -94,6 +95,24 @@ export default function LibrariesPaneBody() {
       }
     }
   };
+
+  const handleOpenLibraryChat = useCallback(async (library: Library) => {
+    try {
+      const response = await apiFetch<{ data: { id: string; title: string } }>(
+        "/api/conversations/resolve",
+        {
+          method: "POST",
+          body: JSON.stringify({ type: "library", library_id: library.id }),
+        }
+      );
+      const route = `/conversations/${response.data.id}`;
+      if (!requestOpenInAppPane(route, { titleHint: response.data.title || library.name })) {
+        window.location.assign(route);
+      }
+    } catch (err) {
+      setError(isApiError(err) ? err.message : "Failed to open library chat");
+    }
+  }, []);
 
   /* ---- Edit dialog handlers ---- */
 
@@ -222,29 +241,6 @@ export default function LibrariesPaneBody() {
     await fetchLibraries();
   }, [editLibrary, closeEditDialog]);
 
-  /* ---- Build options for list items ---- */
-
-  const buildOptions = (library: Library): ActionMenuOption[] => {
-    if (library.is_default) return [];
-
-    const opts: ActionMenuOption[] = [
-      {
-        id: "edit-library",
-        label: "Edit library",
-        onSelect: () => void openEditDialog(library),
-      },
-    ];
-    if (library.role === "admin") {
-      opts.push({
-        id: "delete-library",
-        label: "Delete library",
-        tone: "danger",
-        onSelect: () => void handleDeleteLibrary(library),
-      });
-    }
-    return opts;
-  };
-
   /* ---- Edit dialog library data ---- */
 
   const editLibraryForDialog: LibraryForEdit | null = editLibrary
@@ -312,7 +308,18 @@ export default function LibrariesPaneBody() {
                       <StatusPill variant="info">default</StatusPill>
                     ) : null
                   }
-                  options={buildOptions(library)}
+                  options={libraryResourceOptions({
+                    library,
+                    onOpenChat: () => void handleOpenLibraryChat(library),
+                    onViewIntelligence: () => {
+                      const route = `/libraries/${library.id}?view=intelligence`;
+                      if (!requestOpenInAppPane(route, { titleHint: library.name })) {
+                        window.location.assign(route);
+                      }
+                    },
+                    onEdit: () => void openEditDialog(library),
+                    onDelete: () => void handleDeleteLibrary(library),
+                  })}
                 />
               ))}
             </AppList>

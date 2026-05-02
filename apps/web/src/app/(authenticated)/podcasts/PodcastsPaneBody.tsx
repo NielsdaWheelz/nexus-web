@@ -7,6 +7,7 @@ import {
   formatPlaybackSpeedLabel,
 } from "@/lib/player/subscriptionPlaybackSpeed";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { podcastResourceOptions } from "@/lib/actions/resourceActions";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -671,47 +672,24 @@ export default function PodcastsPaneBody() {
                         ) : null}
                       </span>
                     }
-                    actions={
-                      <>
-                        <button
-                          type="button"
-                          className={styles.rowActionButton}
-                          onClick={() => {
-                            void handleUnsubscribe(row);
-                          }}
-                          disabled={rowBusy}
-                        >
-                          {rowBusy ? "Unsubscribing..." : "Unsubscribe"}
-                        </button>
-                      </>
-                    }
-                    options={[
-                      {
-                        id: "libraries",
-                        label: "Libraries…",
-                        restoreFocusOnClose: false,
-                        disabled: rowBusy,
-                        onSelect: ({ triggerEl }) => {
-                          setMembershipPanelPodcastId(row.podcast_id);
-                          setMembershipPanelTriggerEl(triggerEl);
-                          void loadPodcastLibraries(row.podcast_id);
-                        },
+                    options={podcastResourceOptions({
+                      canUsePodcastActions: true,
+                      busy: rowBusy,
+                      refreshBusy: rowRefreshing,
+                      unsubscribeBusy: rowBusy,
+                      onManageLibraries: ({ triggerEl }) => {
+                        setMembershipPanelPodcastId(row.podcast_id);
+                        setMembershipPanelTriggerEl(triggerEl);
+                        void loadPodcastLibraries(row.podcast_id);
                       },
-                      {
-                        id: "settings",
-                        label: "Settings",
-                        disabled: rowBusy,
-                        onSelect: () => openSettingsModal(row),
+                      onOpenSettings: () => openSettingsModal(row),
+                      onRefreshSync: () => {
+                        void handleRefreshSync(row.podcast_id);
                       },
-                      {
-                        id: "refresh-sync",
-                        label: rowRefreshing ? "Refreshing..." : "Refresh sync",
-                        disabled: rowRefreshing,
-                        onSelect: () => {
-                          void handleRefreshSync(row.podcast_id);
-                        },
+                      onUnsubscribe: () => {
+                        void handleUnsubscribe(row);
                       },
-                    ]}
+                    })}
                   />
                 );
               })}

@@ -171,6 +171,9 @@ test.describe("conversations", () => {
       const input = page.getByRole("textbox", { name: /ask anything|type a message/i });
       const sendButton = page.getByRole("button", { name: /send message/i });
 
+      await expect(input).toBeVisible({ timeout: 30_000 });
+      await expect(modelSettingsButton).toBeVisible();
+
       await expect
         .poll(async () => {
           if (await missingKeyError.isVisible().catch(() => false)) {

@@ -16,6 +16,7 @@ import {
   useLayoutEffect,
 } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { type ContextItem } from "@/lib/api/sse";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
 import ChatComposer from "@/components/ChatComposer";
@@ -309,17 +310,12 @@ function ChatView({
   }, [id, router]);
 
   usePaneChromeOverride({
-    options: [
-      {
-        id: "delete-conversation",
-        label: deleting ? "Deleting..." : "Delete conversation",
-        tone: "danger",
-        disabled: deleting,
-        onSelect: () => {
-          void handleDeleteConversation();
-        },
+    options: conversationResourceOptions({
+      deleting,
+      onDelete: () => {
+        void handleDeleteConversation();
       },
-    ],
+    }),
   });
 
   // --------------------------------------------------------------------------
