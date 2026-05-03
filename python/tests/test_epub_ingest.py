@@ -266,6 +266,87 @@ class TestEpubExtractMaterializesContiguousSpineFragmentsAndBlocks:
         assert block_count >= 3
 
 
+class TestEpubExtractSemanticChunking:
+    """EPUB semantic indexing must not block reader artifact extraction."""
+
+    def test_long_fragment_text_is_chunked_before_embedding(self, db_session: Session):
+        storage = FakeStorageClient()
+        long_text = " ".join(f"chapterword{i}" for i in range(1600))
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[("ch1", "chapter1.xhtml", "application/xhtml+xml")],
+                ),
+                "OEBPS/chapter1.xhtml": _build_chapter_xhtml(f"<p>{long_text}</p>"),
+            },
+        )
+        mid = _create_media_with_epub(db_session, storage, epub)
+
+        embedded_inputs: list[str] = []
+
+        def fake_embeddings(texts: list[str]):
+            from nexus.services.semantic_chunks import transcript_embedding_dimensions
+
+            embedded_inputs.extend(texts)
+            assert all(len(text) <= 4000 for text in texts)
+            dimensions = transcript_embedding_dimensions()
+            return "test_epub_chunks", [[0.0] * dimensions for _ in texts]
+
+        with patch("nexus.services.epub_ingest.build_text_embeddings", fake_embeddings):
+            result = run_epub_ingest_sync(db_session, mid, storage)
+        db_session.flush()
+
+        assert isinstance(result, EpubExtractionResult)
+        assert len(embedded_inputs) > 1
+        chunk_rows = db_session.execute(
+            text(
+                """
+                SELECT COUNT(*), MAX(char_length(chunk_text))
+                FROM content_chunks
+                WHERE media_id = :mid AND source_kind = 'fragment'
+                """
+            ),
+            {"mid": mid},
+        ).one()
+        assert chunk_rows[0] == len(embedded_inputs)
+        assert chunk_rows[1] <= 4000
+
+    def test_embedding_failure_does_not_fail_reader_extraction(self, db_session: Session):
+        storage = FakeStorageClient()
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[("ch1", "chapter1.xhtml", "application/xhtml+xml")],
+                ),
+                "OEBPS/chapter1.xhtml": _build_chapter_xhtml(
+                    "<p>Readable EPUB text should still be persisted.</p>"
+                ),
+            },
+        )
+        mid = _create_media_with_epub(db_session, storage, epub)
+
+        with patch(
+            "nexus.services.epub_ingest.build_text_embeddings",
+            side_effect=RuntimeError("forced embedding outage"),
+        ):
+            result = run_epub_ingest_sync(db_session, mid, storage)
+        db_session.flush()
+
+        assert isinstance(result, EpubExtractionResult)
+        assert _count_fragments(db_session, mid) == 1
+        chunk_count = db_session.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM content_chunks
+                WHERE media_id = :mid AND source_kind = 'fragment'
+                """
+            ),
+            {"mid": mid},
+        ).scalar_one()
+        assert chunk_count == 0
+
+
 class TestEpubExtractPersistsDeterministicTocSnapshot:
     """test_epub_extract_persists_deterministic_toc_snapshot"""
 

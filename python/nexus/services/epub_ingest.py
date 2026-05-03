@@ -38,6 +38,7 @@ from nexus.db.models import (
     Media,
 )
 from nexus.errors import ApiErrorCode
+from nexus.logging import get_logger
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.semantic_chunks import (
@@ -48,6 +49,8 @@ from nexus.services.semantic_chunks import (
 
 if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
+
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Public result types
@@ -314,6 +317,8 @@ _SVG_FORBIDDEN_TAGS = frozenset(
         "style",
     }
 )
+_EPUB_SEMANTIC_CHUNK_MAX_CHARS = 4_000
+_EPUB_SEMANTIC_EMBEDDING_BATCH_SIZE = 16
 
 
 @dataclass
@@ -385,6 +390,14 @@ class _ArchiveSafetyConfig:
     max_single_entry_uncompressed_bytes: int
     max_compression_ratio: int
     max_parse_time_ms: int
+
+
+@dataclass(frozen=True)
+class _FragmentTextChunk:
+    fragment: Fragment
+    chunk_text: str
+    start_offset: int
+    end_offset: int
 
 
 # ---------------------------------------------------------------------------
@@ -658,76 +671,7 @@ def extract_epub_artifacts(
 
         db.flush()
 
-        text_fragments = [frag for frag in fragments if frag.canonical_text.strip()]
-        if text_fragments:
-            embedding_model, embeddings = build_text_embeddings(
-                [frag.canonical_text for frag in text_fragments]
-            )
-            embedding_dims = transcript_embedding_dimensions()
-            for chunk_idx, (frag, embedding) in enumerate(
-                zip(text_fragments, embeddings, strict=True)
-            ):
-                db.execute(
-                    text(
-                        f"""
-                        INSERT INTO content_chunks (
-                            media_id,
-                            fragment_id,
-                            transcript_version_id,
-                            chunk_idx,
-                            source_kind,
-                            chunk_text,
-                            start_offset,
-                            end_offset,
-                            t_start_ms,
-                            t_end_ms,
-                            heading,
-                            locator,
-                            embedding,
-                            embedding_vector,
-                            embedding_model,
-                            created_at
-                        )
-                        VALUES (
-                            :media_id,
-                            :fragment_id,
-                            NULL,
-                            :chunk_idx,
-                            'fragment',
-                            :chunk_text,
-                            0,
-                            :end_offset,
-                            NULL,
-                            NULL,
-                            :heading,
-                            CAST(:locator AS jsonb),
-                            CAST(:embedding AS jsonb),
-                            CAST(:embedding_vector AS vector({embedding_dims})),
-                            :embedding_model,
-                            :created_at
-                        )
-                        """
-                    ),
-                    {
-                        "media_id": media_id,
-                        "fragment_id": frag.id,
-                        "chunk_idx": chunk_idx,
-                        "chunk_text": frag.canonical_text,
-                        "end_offset": len(frag.canonical_text),
-                        "heading": _fallback_fragment_label(frag.canonical_text, frag.idx),
-                        "locator": json.dumps(
-                            {
-                                "kind": "fragment",
-                                "fragment_id": str(frag.id),
-                                "fragment_idx": frag.idx,
-                            }
-                        ),
-                        "embedding": json.dumps(embedding),
-                        "embedding_vector": to_pgvector_literal(embedding),
-                        "embedding_model": embedding_model,
-                        "created_at": now,
-                    },
-                )
+        _try_persist_fragment_content_chunks(db, media_id, fragments, now=now)
 
     except Exception as exc:
         db.rollback()
@@ -751,6 +695,152 @@ def extract_epub_artifacts(
         description=opf_meta.get("description"),
         published_date=opf_meta.get("published_date"),
     )
+
+
+def _try_persist_fragment_content_chunks(
+    db: Session,
+    media_id: UUID,
+    fragments: list[Fragment],
+    *,
+    now: datetime,
+) -> None:
+    chunks = [chunk for fragment in fragments for chunk in _iter_fragment_text_chunks(fragment)]
+    if not chunks:
+        return
+
+    try:
+        with db.begin_nested():
+            embedding_dims = transcript_embedding_dimensions()
+            chunk_idx = 0
+            for batch in _batched(chunks, _EPUB_SEMANTIC_EMBEDDING_BATCH_SIZE):
+                embedding_model, embeddings = build_text_embeddings(
+                    [chunk.chunk_text for chunk in batch]
+                )
+                if len(embeddings) != len(batch):
+                    raise ValueError(
+                        f"Embedding provider returned {len(embeddings)} vectors "
+                        f"for {len(batch)} EPUB chunks."
+                    )
+                for chunk, embedding in zip(batch, embeddings, strict=True):
+                    db.execute(
+                        text(
+                            f"""
+                            INSERT INTO content_chunks (
+                                media_id,
+                                fragment_id,
+                                transcript_version_id,
+                                chunk_idx,
+                                source_kind,
+                                chunk_text,
+                                start_offset,
+                                end_offset,
+                                t_start_ms,
+                                t_end_ms,
+                                heading,
+                                locator,
+                                embedding,
+                                embedding_vector,
+                                embedding_model,
+                                created_at
+                            )
+                            VALUES (
+                                :media_id,
+                                :fragment_id,
+                                NULL,
+                                :chunk_idx,
+                                'fragment',
+                                :chunk_text,
+                                :start_offset,
+                                :end_offset,
+                                NULL,
+                                NULL,
+                                :heading,
+                                CAST(:locator AS jsonb),
+                                CAST(:embedding AS jsonb),
+                                CAST(:embedding_vector AS vector({embedding_dims})),
+                                :embedding_model,
+                                :created_at
+                            )
+                            """
+                        ),
+                        {
+                            "media_id": media_id,
+                            "fragment_id": chunk.fragment.id,
+                            "chunk_idx": chunk_idx,
+                            "chunk_text": chunk.chunk_text,
+                            "start_offset": chunk.start_offset,
+                            "end_offset": chunk.end_offset,
+                            "heading": _fallback_fragment_label(
+                                chunk.fragment.canonical_text,
+                                chunk.fragment.idx,
+                            ),
+                            "locator": json.dumps(
+                                {
+                                    "kind": "fragment",
+                                    "fragment_id": str(chunk.fragment.id),
+                                    "fragment_idx": chunk.fragment.idx,
+                                    "start_offset": chunk.start_offset,
+                                    "end_offset": chunk.end_offset,
+                                }
+                            ),
+                            "embedding": json.dumps(embedding),
+                            "embedding_vector": to_pgvector_literal(embedding),
+                            "embedding_model": embedding_model,
+                            "created_at": now,
+                        },
+                    )
+                    chunk_idx += 1
+    except Exception as exc:
+        logger.warning(
+            "epub_semantic_index_failed",
+            media_id=str(media_id),
+            chunk_count=len(chunks),
+            error=str(exc),
+        )
+
+
+def _iter_fragment_text_chunks(fragment: Fragment) -> list[_FragmentTextChunk]:
+    text_value = str(fragment.canonical_text or "")
+    chunks: list[_FragmentTextChunk] = []
+    length = len(text_value)
+    start = 0
+
+    while start < length:
+        while start < length and text_value[start].isspace():
+            start += 1
+        if start >= length:
+            break
+
+        end = min(start + _EPUB_SEMANTIC_CHUNK_MAX_CHARS, length)
+        if end < length:
+            floor = start + (_EPUB_SEMANTIC_CHUNK_MAX_CHARS // 2)
+            line_break = text_value.rfind("\n", floor, end)
+            space_break = text_value.rfind(" ", floor, end)
+            break_at = max(line_break, space_break)
+            if break_at > start:
+                end = break_at
+
+        chunk_end = end
+        while chunk_end > start and text_value[chunk_end - 1].isspace():
+            chunk_end -= 1
+
+        if chunk_end > start:
+            chunks.append(
+                _FragmentTextChunk(
+                    fragment=fragment,
+                    chunk_text=text_value[start:chunk_end],
+                    start_offset=start,
+                    end_offset=chunk_end,
+                )
+            )
+
+        start = max(end, start + 1)
+
+    return chunks
+
+
+def _batched(items: list[_FragmentTextChunk], size: int) -> list[list[_FragmentTextChunk]]:
+    return [items[idx : idx + size] for idx in range(0, len(items), max(1, size))]
 
 
 # ---------------------------------------------------------------------------
