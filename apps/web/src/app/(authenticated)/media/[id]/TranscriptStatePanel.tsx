@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import { useBillingAccount, type BillingPlanTier } from "@/lib/billing/useBillingAccount";
+import { toFeedback } from "@/components/feedback/Feedback";
 import {
   canRequestTranscript,
   shouldPollTranscriptProvisioning,
@@ -212,11 +213,7 @@ export default function TranscriptStatePanel({
         await refreshTranscriptState();
       }
     } catch (error) {
-      if (isApiError(error)) {
-        setRequestError(error.message);
-      } else {
-        setRequestError("Failed to request transcript.");
-      }
+      setRequestError(toFeedback(error, { fallback: "Failed to request transcript." }).title);
     } finally {
       setTranscriptRequestInFlight(false);
     }

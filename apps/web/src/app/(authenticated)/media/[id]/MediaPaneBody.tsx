@@ -16,8 +16,13 @@ import PdfReader, {
   type PdfReaderControlsState,
 } from "@/components/PdfReader";
 import SelectionPopover from "@/components/SelectionPopover";
-import { useToast } from "@/components/Toast";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import {
+  FeedbackNotice,
+  toFeedback,
+  useFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import { mediaResourceOptions } from "@/lib/actions/resourceActions";
 import type { ContextItem } from "@/lib/api/sse";
 import {
@@ -46,7 +51,6 @@ import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { setPendingContextParam } from "@/lib/conversations/attachedContext";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import MediaHighlightsPaneBody from "./MediaHighlightsPaneBody";
-import StateMessage from "@/components/ui/StateMessage";
 import StatusPill from "@/components/ui/StatusPill";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
@@ -812,7 +816,7 @@ export default function MediaPaneBody() {
     const parsed = Number.parseInt(raw, 10);
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
   })();
-  const { toast } = useToast();
+  const feedback = useFeedback();
   const isMobileViewport = useIsMobileViewport();
   const {
     profile: readerProfile,
@@ -872,7 +876,7 @@ export default function MediaPaneBody() {
   // ---- Core data state ----
   const [media, setMedia] = useState<Media | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FeedbackContent | null>(null);
   useSetPaneTitle(buildCompactMediaPaneTitle(media));
 
   // ---- Non-EPUB fragment state ----
@@ -1260,12 +1264,15 @@ export default function MediaPaneBody() {
         if (cancelled) return;
         if (isApiError(err)) {
           if (err.status === 404) {
-            setError("Media not found or you don't have access to it.");
+            setError({
+              severity: "error",
+              title: "Media not found or you don't have access to it.",
+            });
           } else {
-            setError(err.message);
+            setError(toFeedback(err, { fallback: "Failed to load media" }));
           }
         } else {
-          setError("Failed to load media");
+          setError({ severity: "error", title: "Failed to load media" });
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -1419,9 +1426,12 @@ export default function MediaPaneBody() {
           if (err.code === "E_MEDIA_NOT_READY") {
             setEpubError("processing");
           } else if (err.code === "E_MEDIA_NOT_FOUND") {
-            setError("Media not found or you don't have access to it.");
+            setError({
+              severity: "error",
+              title: "Media not found or you don't have access to it.",
+            });
           } else {
-            setEpubError(err.message);
+            setEpubError(toFeedback(err, { fallback: "Failed to load EPUB navigation." }).title);
           }
         } else {
           setEpubError("Failed to load EPUB navigation.");
@@ -1470,11 +1480,14 @@ export default function MediaPaneBody() {
       }
 
       if (err.code === "E_MEDIA_NOT_FOUND") {
-        setError("Media not found or you don't have access to it.");
+        setError({
+          severity: "error",
+          title: "Media not found or you don't have access to it.",
+        });
         return;
       }
 
-      setEpubError(err.message);
+      setEpubError(toFeedback(err, { fallback: "Failed to load EPUB section." }).title);
     },
     []
   );
@@ -2244,7 +2257,10 @@ export default function MediaPaneBody() {
       const mismatchKey = activeContent?.fragmentId ?? "__unknown__";
       if (mismatchToastFragmentRef.current !== mismatchKey) {
         mismatchToastFragmentRef.current = mismatchKey;
-        toast({ variant: "warning", message: "Highlights disabled due to content mismatch." });
+        feedback.show({
+          severity: "warning",
+          title: "Highlights disabled due to content mismatch.",
+        });
       }
       return;
     }
@@ -2316,7 +2332,7 @@ export default function MediaPaneBody() {
     isMobileViewport,
     isPdf,
     publishSelection,
-    toast,
+    feedback,
   ]);
 
   useEffect(() => {
@@ -2336,13 +2352,19 @@ export default function MediaPaneBody() {
       if (!activeSelection || !activeContent || isCreating) return null;
 
       if (isMismatchDisabled) {
-        toast({ variant: "warning", message: "Highlights disabled due to content mismatch." });
+        feedback.show({
+          severity: "warning",
+          title: "Highlights disabled due to content mismatch.",
+        });
         clearRetainedSelection(false);
         return null;
       }
 
       if (activeSelection.fragmentId !== activeContent.fragmentId) {
-        toast({ variant: "warning", message: "Selection changed. Select text again." });
+        feedback.show({
+          severity: "warning",
+          title: "Selection changed. Select text again.",
+        });
         clearRetainedSelection(false);
         return null;
       }
@@ -2426,12 +2448,15 @@ export default function MediaPaneBody() {
             return existing?.id ?? null;
           } catch (refreshErr) {
             console.error("Failed to refresh highlights after conflict:", refreshErr);
-            toast({ variant: "error", message: "Failed to resolve existing highlight" });
+            feedback.show({
+              severity: "error",
+              title: "Failed to resolve existing highlight",
+            });
             return null;
           }
         } else {
           console.error("Failed to create highlight:", err);
-          toast({ variant: "error", message: "Failed to create highlight" });
+          feedback.show({ severity: "error", title: "Failed to create highlight" });
           return null;
         }
       } finally {
@@ -2447,7 +2472,7 @@ export default function MediaPaneBody() {
       isMismatchDisabled,
       highlights,
       focusHighlight,
-      toast,
+      feedback,
     ]
   );
 
@@ -2546,7 +2571,7 @@ export default function MediaPaneBody() {
         clearRetainedSelection(true);
       } catch (err) {
         console.error("Failed to update bounds:", err);
-        toast({ variant: "error", message: "Failed to update highlight bounds" });
+        feedback.show({ severity: "error", title: "Failed to update highlight bounds" });
       }
     };
 
@@ -2562,7 +2587,7 @@ export default function MediaPaneBody() {
     clearRetainedSelection,
     focusHighlight,
     cancelEditBounds,
-    toast,
+    feedback,
   ]);
 
   // ==========================================================================
@@ -2810,9 +2835,9 @@ export default function MediaPaneBody() {
           }));
 
         if (libraries.length === 0) {
-          toast({
-            variant: "info",
-            message: "Add this document to a library before asking in a library chat.",
+          feedback.show({
+            severity: "info",
+            title: "Add this document to a library before asking in a library chat.",
           });
           return;
         }
@@ -2852,7 +2877,7 @@ export default function MediaPaneBody() {
       openChatRouteWithHighlight,
       openResolvedConversationWithHighlight,
       resolveConversationForScope,
-      toast,
+      feedback,
     ]
   );
 
@@ -2878,9 +2903,8 @@ export default function MediaPaneBody() {
         }
         setQuoteLibraryPickerState(null);
       } catch (err) {
-        toast({
-          variant: "error",
-          message: isApiError(err) ? err.message : "Failed to open library chat",
+        feedback.show({
+          ...toFeedback(err, { fallback: "Failed to open library chat" }),
         });
       } finally {
         setQuoteLibraryPickerBusy(false);
@@ -2891,7 +2915,7 @@ export default function MediaPaneBody() {
       quoteLibraryPickerBusy,
       quoteLibraryPickerState,
       resolveConversationForScope,
-      toast,
+      feedback,
     ]
   );
 
@@ -3045,7 +3069,7 @@ export default function MediaPaneBody() {
       );
     } catch (err) {
       setLibraryPickerLibraries([]);
-      setLibraryPickerError(isApiError(err) ? err.message : "Failed to load libraries");
+      setLibraryPickerError(toFeedback(err, { fallback: "Failed to load libraries" }).title);
     } finally {
       setLibraryPickerLoading(false);
     }
@@ -3076,7 +3100,9 @@ export default function MediaPaneBody() {
           )
         );
       } catch (err) {
-        setLibraryPickerError(isApiError(err) ? err.message : "Failed to add media to library");
+        setLibraryPickerError(
+          toFeedback(err, { fallback: "Failed to add media to library" }).title
+        );
       } finally {
         setLibraryMembershipBusy(false);
       }
@@ -3116,7 +3142,7 @@ export default function MediaPaneBody() {
         );
       } catch (err) {
         setLibraryPickerError(
-          isApiError(err) ? err.message : "Failed to remove media from library"
+          toFeedback(err, { fallback: "Failed to remove media from library" }).title
         );
       } finally {
         setLibraryMembershipBusy(false);
@@ -3150,14 +3176,13 @@ export default function MediaPaneBody() {
       }>(`/api/media/${media.id}`, { method: "DELETE" });
       router.push("/libraries");
     } catch (err) {
-      toast({
-        variant: "error",
-        message: isApiError(err) ? err.message : "Failed to delete document",
+      feedback.show({
+        ...toFeedback(err, { fallback: "Failed to delete document" }),
       });
     } finally {
       setDocumentDeleteBusy(false);
     }
-  }, [documentDeleteBusy, media?.id, media?.title, router, toast]);
+  }, [documentDeleteBusy, feedback, media?.id, media?.title, router]);
 
   const handleRetryProcessing = useCallback(async () => {
     if (!media?.id || retryProcessingBusy || !media.capabilities?.can_retry) {
@@ -3192,16 +3217,15 @@ export default function MediaPaneBody() {
             }
           : prev
       );
-      toast({ variant: "success", message: "Processing retry started." });
+      feedback.show({ severity: "success", title: "Processing retry started." });
     } catch (err) {
-      toast({
-        variant: "error",
-        message: isApiError(err) ? err.message : "Failed to retry processing",
+      feedback.show({
+        ...toFeedback(err, { fallback: "Failed to retry processing" }),
       });
     } finally {
       setRetryProcessingBusy(false);
     }
-  }, [media?.capabilities?.can_retry, media?.id, retryProcessingBusy, toast]);
+  }, [feedback, media?.capabilities?.can_retry, media?.id, retryProcessingBusy]);
 
   const handleContentClick = useCallback(
     (e: React.MouseEvent) => {
@@ -3683,9 +3707,9 @@ export default function MediaPaneBody() {
     }
 
     resumeNoticeMediaIdRef.current = media.id;
-    toast({
-      variant: "info",
-      message: `Resuming from ${formatResumeTime(listeningState.position_ms)}`,
+    feedback.show({
+      severity: "info",
+      title: `Resuming from ${formatResumeTime(listeningState.position_ms)}`,
     });
   }, [
     isTranscriptMedia,
@@ -3702,7 +3726,7 @@ export default function MediaPaneBody() {
     playbackSource?.source_url,
     playbackSource?.stream_url,
     setTrack,
-    toast,
+    feedback,
   ]);
 
   // ==========================================================================
@@ -3710,13 +3734,15 @@ export default function MediaPaneBody() {
   // ==========================================================================
 
   if (loading) {
-    return <StateMessage variant="loading">Loading media...</StateMessage>;
+    return <FeedbackNotice severity="info" title="Loading media..." />;
   }
 
   if (error || !media) {
     return (
       <div className={styles.errorContainer}>
-        <StateMessage variant="error">{error || "Media not found"}</StateMessage>
+        <FeedbackNotice
+          feedback={error ?? { severity: "error", title: "Media not found" }}
+        />
       </div>
     );
   }

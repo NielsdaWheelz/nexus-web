@@ -10,6 +10,10 @@ import {
 } from "react";
 import { Check, X } from "lucide-react";
 import { createPortal } from "react-dom";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import Dialog from "@/components/ui/Dialog";
 import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -22,7 +26,7 @@ interface LibraryMembershipPanelProps {
   libraries: LibraryTargetPickerItem[];
   loading?: boolean;
   busy?: boolean;
-  error?: string | null;
+  error?: string | FeedbackContent | null;
   emptyMessage?: string;
   onClose: () => void;
   onAddToLibrary: (libraryId: string) => void;
@@ -158,7 +162,11 @@ export default function LibraryMembershipPanel({
         />
       </div>
 
-      {error ? <div className={styles.error}>{error}</div> : null}
+      {typeof error === "string" ? (
+        <div className={styles.error}>{error}</div>
+      ) : error ? (
+        <FeedbackNotice feedback={error} />
+      ) : null}
 
       <div className={styles.list}>
         {loading ? (

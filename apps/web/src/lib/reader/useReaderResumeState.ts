@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { toFeedback } from "@/components/feedback/Feedback";
 import {
   parseReaderResumeState,
   readerResumeStatesEqual,
@@ -99,7 +100,7 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
         stateRef.current = null;
         setState(null);
       } else {
-        setError(isApiError(err) ? err.message : "Failed to load reader state");
+        setError(toFeedback(err, { fallback: "Failed to load reader state" }).title);
       }
     } finally {
       hydratedRef.current = true;

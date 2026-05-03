@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { toFeedback } from "@/components/feedback/Feedback";
 import type { ReaderFontFamily, ReaderProfile, ReaderTheme } from "./types";
 import { DEFAULT_READER_PROFILE } from "./types";
 
@@ -34,9 +35,7 @@ export function useReaderProfile(options: UseReaderProfileOptions = {}) {
       if (isApiError(err) && err.status === 404) {
         setProfile(null);
       } else {
-        setError(
-          isApiError(err) ? err.message : "Failed to load reader settings"
-        );
+        setError(toFeedback(err, { fallback: "Failed to load reader settings" }).title);
       }
     } finally {
       setLoading(false);
@@ -64,7 +63,7 @@ export function useReaderProfile(options: UseReaderProfileOptions = {}) {
       });
       setProfile(res.data);
     } catch (err) {
-      setError(isApiError(err) ? err.message : "Failed to save reader settings");
+      setError(toFeedback(err, { fallback: "Failed to save reader settings" }).title);
     } finally {
       setSaving(false);
     }

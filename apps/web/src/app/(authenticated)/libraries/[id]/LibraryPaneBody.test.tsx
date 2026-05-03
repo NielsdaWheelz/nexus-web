@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { apiFetch } from "@/lib/api/client";
-import { ToastProvider } from "@/components/Toast";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import LibraryPaneBody from "./LibraryPaneBody";
 
 vi.mock("@/lib/panes/paneRuntime", () => {
@@ -121,9 +121,9 @@ describe("LibraryPaneBody intelligence", () => {
 
   it("loads and refreshes library intelligence from the assumed endpoints", async () => {
     render(
-      <ToastProvider>
+      <FeedbackProvider>
         <LibraryPaneBody />
-      </ToastProvider>
+      </FeedbackProvider>
     );
 
     expect(await screen.findByText("No podcasts or media in this library yet.")).toBeVisible();
@@ -194,9 +194,9 @@ describe("LibraryPaneBody resource actions", () => {
     });
 
     render(
-      <ToastProvider>
+      <FeedbackProvider>
         <LibraryPaneBody />
-      </ToastProvider>
+      </FeedbackProvider>
     );
 
     expect(await screen.findByText("Design Notes")).toBeVisible();

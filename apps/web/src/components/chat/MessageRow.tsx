@@ -1,6 +1,7 @@
 "use client";
 
-import { AlertCircle, BookOpen, ExternalLink, Globe, Search } from "lucide-react";
+import { BookOpen, ExternalLink, Globe, Search } from "lucide-react";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import InlineCitations from "@/components/ui/InlineCitations";
 import {
   MarkdownMessage,
@@ -37,10 +38,10 @@ export function MessageRow({ message }: { message: ConversationMessage }) {
     message.status !== "complete" ? (styles[message.status] ?? "") : "";
   const contexts = message.contexts ?? [];
   const toolCalls = message.tool_calls ?? [];
-  let errorLabel = message.error_code;
-  if (message.error_code === "E_LLM_INCOMPLETE") {
-    errorLabel = "Response stopped before completion.";
-  }
+  const errorLabel =
+    message.error_code === "E_LLM_INCOMPLETE"
+      ? "Response stopped before completion."
+      : "The response failed.";
 
   return (
     <div className={`${styles.message} ${roleClass} ${statusClass}`}>
@@ -65,13 +66,7 @@ export function MessageRow({ message }: { message: ConversationMessage }) {
       )}
 
       {message.status === "error" && errorLabel ? (
-        <span className={styles.messageError}>
-          <AlertCircle size={14} />
-          {errorLabel}
-          {message.error_code !== errorLabel ? (
-            <span className={styles.errorCode}> {message.error_code}</span>
-          ) : null}
-        </span>
+        <FeedbackNotice severity="error" title={errorLabel} className={styles.messageFeedback} />
       ) : null}
 
       <span className={styles.timestamp}>{formatTime(message.created_at)}</span>

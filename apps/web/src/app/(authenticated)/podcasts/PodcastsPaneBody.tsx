@@ -6,13 +6,17 @@ import {
   SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
   formatPlaybackSpeedLabel,
 } from "@/lib/player/subscriptionPlaybackSpeed";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import ActionMenu from "@/components/ui/ActionMenu";
 import SectionCard from "@/components/ui/SectionCard";
-import StateMessage from "@/components/ui/StateMessage";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import {
   addPodcastToLibrary,
@@ -66,7 +70,7 @@ export default function PodcastsPaneBody() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [nextOffset, setNextOffset] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FeedbackContent | null>(null);
   const [busyPodcastIds, setBusyPodcastIds] = useState<Set<string>>(new Set());
   const [refreshingPodcastIds, setRefreshingPodcastIds] = useState<Set<string>>(new Set());
   const [subscriptionSort, setSubscriptionSort] = useState<SubscriptionSort>("recent_episode");
@@ -93,7 +97,7 @@ export default function PodcastsPaneBody() {
   const [settingsDefaultSpeed, setSettingsDefaultSpeed] = useState("default");
   const [settingsAutoQueue, setSettingsAutoQueue] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<FeedbackContent | null>(null);
 
   const loadLibraries = useCallback(async () => {
     if (librariesLoading) {
@@ -103,11 +107,7 @@ export default function PodcastsPaneBody() {
     try {
       setLibraries(await fetchNonDefaultLibraries());
     } catch (loadError) {
-      if (isApiError(loadError)) {
-        setError(loadError.message);
-      } else {
-        setError("Failed to load libraries");
-      }
+      setError(toFeedback(loadError, { fallback: "Failed to load libraries" }));
     } finally {
       setLibrariesLoading(false);
     }
@@ -141,11 +141,7 @@ export default function PodcastsPaneBody() {
         setHasMore(response.data.length === PAGE_SIZE);
         setNextOffset(offset + response.data.length);
       } catch (loadError) {
-        if (isApiError(loadError)) {
-          setError(loadError.message);
-        } else {
-          setError("Failed to load followed podcasts");
-        }
+        setError(toFeedback(loadError, { fallback: "Failed to load followed podcasts" }));
       } finally {
         if (append) {
           setLoadingMore(false);
@@ -175,11 +171,7 @@ export default function PodcastsPaneBody() {
         }));
         return nextLibraries;
       } catch (loadError) {
-        if (isApiError(loadError)) {
-          setError(loadError.message);
-        } else {
-          setError("Failed to load podcast libraries");
-        }
+        setError(toFeedback(loadError, { fallback: "Failed to load podcast libraries" }));
         return [];
       } finally {
         setLoadingLibraryPodcastIds((prev) => {
@@ -240,11 +232,7 @@ export default function PodcastsPaneBody() {
           })
         );
       } catch (mutationError) {
-        if (isApiError(mutationError)) {
-          setError(mutationError.message);
-        } else {
-          setError("Failed to add podcast to library");
-        }
+        setError(toFeedback(mutationError, { fallback: "Failed to add podcast to library" }));
       } finally {
         setBusyLibraryMembershipKeys((prev) => {
           const next = new Set(prev);
@@ -283,11 +271,9 @@ export default function PodcastsPaneBody() {
           )
         );
       } catch (mutationError) {
-        if (isApiError(mutationError)) {
-          setError(mutationError.message);
-        } else {
-          setError("Failed to remove podcast from library");
-        }
+        setError(
+          toFeedback(mutationError, { fallback: "Failed to remove podcast from library" })
+        );
       } finally {
         setBusyLibraryMembershipKeys((prev) => {
           const next = new Set(prev);
@@ -325,11 +311,9 @@ export default function PodcastsPaneBody() {
           return next;
         });
       } catch (unsubscribeError) {
-        if (isApiError(unsubscribeError)) {
-          setError(unsubscribeError.message);
-        } else {
-          setError("Failed to unsubscribe from podcast");
-        }
+        setError(
+          toFeedback(unsubscribeError, { fallback: "Failed to unsubscribe from podcast" })
+        );
       } finally {
         setBusyPodcastIds((prev) => {
           const next = new Set(prev);
@@ -357,11 +341,7 @@ export default function PodcastsPaneBody() {
         )
       );
     } catch (refreshError) {
-      if (isApiError(refreshError)) {
-        setError(refreshError.message);
-      } else {
-        setError("Failed to refresh podcast sync");
-      }
+      setError(toFeedback(refreshError, { fallback: "Failed to refresh podcast sync" }));
     } finally {
       setRefreshingPodcastIds((prev) => {
         const next = new Set(prev);
@@ -415,11 +395,9 @@ export default function PodcastsPaneBody() {
       );
       setSettingsPodcastId(null);
     } catch (settingsUpdateError) {
-      if (isApiError(settingsUpdateError)) {
-        setSettingsError(settingsUpdateError.message);
-      } else {
-        setSettingsError("Failed to save subscription settings");
-      }
+      setSettingsError(
+        toFeedback(settingsUpdateError, { fallback: "Failed to save subscription settings" })
+      );
     } finally {
       setSettingsBusy(false);
     }
@@ -552,11 +530,13 @@ export default function PodcastsPaneBody() {
             ) : null}
           </div>
 
-          {loading ? <StateMessage variant="loading">Loading followed podcasts...</StateMessage> : null}
-          {error ? <StateMessage variant="error">{error}</StateMessage> : null}
+          {loading ? (
+            <FeedbackNotice severity="info" title="Loading followed podcasts..." />
+          ) : null}
+          {error ? <FeedbackNotice feedback={error} /> : null}
 
           {!loading && rows.length === 0 && !error ? (
-            <StateMessage variant="empty">
+            <FeedbackNotice severity="neutral">
               {hasActiveFilters ? (
                 <>
                   No podcasts match the current filters.{" "}
@@ -585,7 +565,7 @@ export default function PodcastsPaneBody() {
                   </button>
                 </>
               )}
-            </StateMessage>
+            </FeedbackNotice>
           ) : null}
 
           {rows.length > 0 ? (
@@ -722,7 +702,7 @@ export default function PodcastsPaneBody() {
             : false
         }
         busy={membershipPanelBusy}
-        error={error}
+        error={error?.title ?? null}
         emptyMessage="No non-default libraries available."
         onClose={() => {
           setMembershipPanelPodcastId(null);
@@ -776,7 +756,7 @@ export default function PodcastsPaneBody() {
               />
               Automatically add new episodes to my queue
             </label>
-            {settingsError ? <StateMessage variant="error">{settingsError}</StateMessage> : null}
+            {settingsError ? <FeedbackNotice feedback={settingsError} /> : null}
             <div className={styles.modalActions}>
               <button
                 type="button"

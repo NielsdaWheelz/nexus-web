@@ -6,7 +6,7 @@ type StatusPillVariant =
   | "info"
   | "success"
   | "warning"
-  | "danger";
+  | "error";
 
 interface StatusPillProps {
   variant: StatusPillVariant;

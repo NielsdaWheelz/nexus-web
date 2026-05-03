@@ -2,8 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { useToast } from "@/components/Toast";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import {
+  FeedbackNotice,
+  toFeedback,
+  useFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import {
   libraryResourceOptions,
   mediaResourceOptions,
@@ -21,7 +26,6 @@ import {
   Video,
 } from "lucide-react";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
-import StateMessage from "@/components/ui/StateMessage";
 import ActionMenu from "@/components/ui/ActionMenu";
 import SectionCard from "@/components/ui/SectionCard";
 import SortableList from "@/components/sortable/SortableList";
@@ -206,13 +210,13 @@ export default function LibraryPaneBody() {
   }
   const router = usePaneRouter();
   const paneSearchParams = usePaneSearchParams();
-  const { toast } = useToast();
+  const feedback = useFeedback();
   const [library, setLibrary] = useState<Library | null>(null);
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
   const [removedEntryIds, setRemovedEntryIds] = useState<Set<string>>(new Set());
   const [retryingMediaIds, setRetryingMediaIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FeedbackContent | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
   const [activeView, setActiveView] = useState<LibraryView>(() =>
     paneSearchParams.get("view") === "intelligence" ? "intelligence" : "contents"
@@ -220,7 +224,7 @@ export default function LibraryPaneBody() {
   const [intelligence, setIntelligence] = useState<LibraryIntelligence | null>(null);
   const [intelligenceLoading, setIntelligenceLoading] = useState(false);
   const [intelligenceRefreshing, setIntelligenceRefreshing] = useState(false);
-  const [intelligenceError, setIntelligenceError] = useState<string | null>(null);
+  const [intelligenceError, setIntelligenceError] = useState<FeedbackContent | null>(null);
   useSetPaneTitle(library?.name ?? "Library");
 
   const [editOpen, setEditOpen] = useState(false);
@@ -256,17 +260,11 @@ export default function LibraryPaneBody() {
         setRemovedEntryIds(new Set());
         setError(null);
       } catch (err) {
-        if (isApiError(err)) {
-          if (err.status === 404) {
-            router.push("/libraries");
-            return;
-          }
-          setError(err.message);
-        } else if (err instanceof Error) {
-          setError(err.message);
-        } else {
-          setError("Failed to load library");
+        if (isApiError(err) && err.status === 404) {
+          router.push("/libraries");
+          return;
         }
+        setError(toFeedback(err, { fallback: "Failed to load library" }));
       } finally {
         setLoading(false);
       }
@@ -284,13 +282,9 @@ export default function LibraryPaneBody() {
       );
       setIntelligence(response.data);
     } catch (err) {
-      if (isApiError(err)) {
-        setIntelligenceError(err.message);
-      } else if (err instanceof Error) {
-        setIntelligenceError(err.message);
-      } else {
-        setIntelligenceError("Failed to load library intelligence");
-      }
+      setIntelligenceError(
+        toFeedback(err, { fallback: "Failed to load library intelligence" })
+      );
     } finally {
       setIntelligenceLoading(false);
     }
@@ -313,13 +307,9 @@ export default function LibraryPaneBody() {
       );
       await loadIntelligence();
     } catch (err) {
-      if (isApiError(err)) {
-        setIntelligenceError(err.message);
-      } else if (err instanceof Error) {
-        setIntelligenceError(err.message);
-      } else {
-        setIntelligenceError("Failed to refresh library intelligence");
-      }
+      setIntelligenceError(
+        toFeedback(err, { fallback: "Failed to refresh library intelligence" })
+      );
     } finally {
       setIntelligenceRefreshing(false);
     }
@@ -383,13 +373,7 @@ export default function LibraryPaneBody() {
         if (libraryPanelRequestIdRef.current !== requestId) {
           return;
         }
-        if (isApiError(err)) {
-          setLibraryPanelError(err.message);
-        } else if (err instanceof Error) {
-          setLibraryPanelError(err.message);
-        } else {
-          setLibraryPanelError("Failed to load libraries");
-        }
+        setLibraryPanelError(toFeedback(err, { fallback: "Failed to load libraries" }).title);
       } finally {
         if (libraryPanelRequestIdRef.current === requestId) {
           setLibraryPanelLoading(false);
@@ -434,13 +418,9 @@ export default function LibraryPaneBody() {
           );
         }
       } catch (err) {
-        if (isApiError(err)) {
-          setLibraryPanelError(err.message);
-        } else if (err instanceof Error) {
-          setLibraryPanelError(err.message);
-        } else {
-          setLibraryPanelError("Failed to add item to library");
-        }
+        setLibraryPanelError(
+          toFeedback(err, { fallback: "Failed to add item to library" }).title
+        );
       } finally {
         setLibraryPanelBusy(false);
       }
@@ -528,13 +508,9 @@ export default function LibraryPaneBody() {
           setEntries(previousEntries);
           setRemovedEntryIds(previousRemovedEntryIds);
         }
-        if (isApiError(err)) {
-          setLibraryPanelError(err.message);
-        } else if (err instanceof Error) {
-          setLibraryPanelError(err.message);
-        } else {
-          setLibraryPanelError("Failed to remove item from library");
-        }
+        setLibraryPanelError(
+          toFeedback(err, { fallback: "Failed to remove item from library" }).title
+        );
       } finally {
         setLibraryPanelBusy(false);
       }
@@ -568,11 +544,15 @@ export default function LibraryPaneBody() {
               : entry
           )
         );
-        toast({ variant: "success", message: "Processing retry started." });
+        feedback.show({
+          severity: "success",
+          title: "Processing retry started.",
+        });
       } catch (err) {
-        toast({
-          variant: "error",
-          message: isApiError(err) ? err.message : "Failed to retry processing",
+        feedback.show({
+          ...toFeedback(err, {
+            fallback: "Failed to retry processing",
+          }),
         });
       } finally {
         setRetryingMediaIds((current) => {
@@ -582,7 +562,7 @@ export default function LibraryPaneBody() {
         });
       }
     },
-    [retryingMediaIds, toast]
+    [feedback, retryingMediaIds]
   );
 
   const handleDeleteMedia = useCallback(
@@ -604,13 +584,14 @@ export default function LibraryPaneBody() {
           )
         );
       } catch (err) {
-        toast({
-          variant: "error",
-          message: isApiError(err) ? err.message : "Failed to delete document",
+        feedback.show({
+          ...toFeedback(err, {
+            fallback: "Failed to delete document",
+          }),
         });
       }
     },
-    [toast]
+    [feedback]
   );
 
   const handleDeleteLibrary = async () => {
@@ -628,9 +609,13 @@ export default function LibraryPaneBody() {
       router.push("/libraries");
     } catch (err) {
       if (isApiError(err)) {
-        setError(err.message);
+        setError(
+          toFeedback(err, {
+            fallback: "Failed to delete library",
+          })
+        );
       } else {
-        setError("Failed to delete library");
+        setError({ severity: "error", title: "Failed to delete library" });
       }
     }
   };
@@ -651,7 +636,11 @@ export default function LibraryPaneBody() {
       setEditInvites(invitesResp.data);
     } catch (err) {
       if (isApiError(err)) {
-        setError(err.message);
+        setError(
+          toFeedback(err, {
+            fallback: "Failed to load library sharing",
+          })
+        );
       }
     }
   }, [library]);
@@ -770,7 +759,11 @@ export default function LibraryPaneBody() {
         router.push(route);
       }
     } catch (err) {
-      setError(isApiError(err) ? err.message : "Failed to open library chat");
+      setError(
+        toFeedback(err, {
+          fallback: "Failed to open library chat",
+        })
+      );
     }
   }, [library, router]);
 
@@ -789,7 +782,11 @@ export default function LibraryPaneBody() {
           router.push(route);
         }
       } catch (err) {
-        setError(isApiError(err) ? err.message : "Failed to open media chat");
+        setError(
+          toFeedback(err, {
+            fallback: "Failed to open media chat",
+          })
+        );
       }
     },
     [router]
@@ -810,10 +807,14 @@ export default function LibraryPaneBody() {
       .catch((err: unknown) => {
         setEntries(previousEntries);
         if (isApiError(err)) {
-          setError(err.message);
+          setError(
+            toFeedback(err, {
+              fallback: "Failed to reorder library entries",
+            })
+          );
           return;
         }
-        setError("Failed to reorder library entries");
+        setError({ severity: "error", title: "Failed to reorder library entries" });
       })
       .finally(() => {
         setReorderBusy(false);
@@ -833,11 +834,15 @@ export default function LibraryPaneBody() {
   usePaneChromeOverride({ options: paneOptions });
 
   if (loading) {
-    return <StateMessage variant="loading">Loading library...</StateMessage>;
+    return <FeedbackNotice severity="info" title="Loading library..." />;
   }
 
   if (!library) {
-    return <StateMessage variant="error">{error || "Library not found"}</StateMessage>;
+    return (
+      <FeedbackNotice
+        {...(error ?? { severity: "error", title: "Library not found" })}
+      />
+    );
   }
 
   const editLibraryForDialog: LibraryForEdit = {
@@ -886,7 +891,7 @@ export default function LibraryPaneBody() {
       />
       <SectionCard>
         <div className={styles.content}>
-          {error && <StateMessage variant="error">{error}</StateMessage>}
+          {error && <FeedbackNotice {...error} />}
 
           <div className={styles.viewSwitch} role="tablist" aria-label="Library view">
             <button
@@ -935,11 +940,11 @@ export default function LibraryPaneBody() {
               </div>
 
               {intelligenceError ? (
-                <StateMessage variant="error">{intelligenceError}</StateMessage>
+                <FeedbackNotice {...intelligenceError} />
               ) : null}
 
               {intelligenceLoading && !intelligence ? (
-                <StateMessage variant="loading">Loading intelligence...</StateMessage>
+                <FeedbackNotice severity="info" title="Loading intelligence..." />
               ) : intelligence ? (
                 <>
                   <div className={styles.intelligenceStats}>
@@ -1048,11 +1053,17 @@ export default function LibraryPaneBody() {
                   </section>
                 </>
               ) : (
-                <StateMessage variant="empty">No intelligence has been built yet.</StateMessage>
+                <FeedbackNotice
+                  severity="neutral"
+                  title="No intelligence has been built yet."
+                />
               )}
             </div>
           ) : visibleEntries.length === 0 ? (
-            <StateMessage variant="empty">No podcasts or media in this library yet.</StateMessage>
+            <FeedbackNotice
+              severity="neutral"
+              title="No podcasts or media in this library yet."
+            />
           ) : (
             <SortableList
               key={visibleEntries.map((entry) => entry.id).join(":")}

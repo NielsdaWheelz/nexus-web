@@ -6,8 +6,8 @@ import {
   type ReaderFontFamily,
   type ReaderTheme,
 } from "@/lib/reader/types";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import SectionCard from "@/components/ui/SectionCard";
-import StateMessage from "@/components/ui/StateMessage";
 import styles from "./page.module.css";
 
 export default function SettingsReaderPaneBody() {
@@ -28,8 +28,8 @@ export default function SettingsReaderPaneBody() {
 
   return (
     <SectionCard title="Appearance">
-      {loading && <StateMessage variant="loading">Loading...</StateMessage>}
-      {error && <StateMessage variant="error">{error}</StateMessage>}
+      {loading && <FeedbackNotice severity="info">Loading...</FeedbackNotice>}
+      {error && <FeedbackNotice severity="error">{error}</FeedbackNotice>}
 
       {!loading && (
         <div className={styles.form}>

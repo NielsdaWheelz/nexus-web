@@ -3,7 +3,7 @@
 import ContextRow from "@/components/ui/ContextRow";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import ActionMenu from "@/components/ui/ActionMenu";
-import StateMessage from "@/components/ui/StateMessage";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ConversationMemoryPanel from "@/components/chat/ConversationMemoryPanel";
 import ConversationScopeChip from "@/components/chat/ConversationScopeChip";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
@@ -69,7 +69,7 @@ export default function ConversationContextPane({
       contexts.length === 0 &&
       persistedRows.length === 0 &&
       !hasMemory ? (
-        <StateMessage variant="empty">No linked context yet.</StateMessage>
+        <FeedbackNotice severity="neutral" title="No linked context yet." />
       ) : null}
 
       {scope && scope.type !== "general" ? (

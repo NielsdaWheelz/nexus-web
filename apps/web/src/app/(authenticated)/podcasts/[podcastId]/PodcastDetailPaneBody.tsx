@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import {
   episodeResourceOptions,
   podcastResourceOptions,
@@ -28,7 +28,11 @@ import LibraryTargetPicker, {
 } from "@/components/LibraryTargetPicker";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import SectionCard from "@/components/ui/SectionCard";
-import StateMessage from "@/components/ui/StateMessage";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
@@ -398,13 +402,13 @@ export default function PodcastDetailPaneBody() {
     Record<string, TranscriptRequestReason>
   >({});
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FeedbackContent | null>(null);
   const [subscribeBusy, setSubscribeBusy] = useState(false);
   const [unsubscribeBusy, setUnsubscribeBusy] = useState(false);
   const [refreshSyncBusy, setRefreshSyncBusy] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<FeedbackContent | null>(null);
   const [settingsDefaultSpeed, setSettingsDefaultSpeed] = useState<string>("default");
   const [settingsAutoQueue, setSettingsAutoQueue] = useState(false);
   const [episodesDrawerOpen, setEpisodesDrawerOpen] = useState(false);
@@ -432,11 +436,7 @@ export default function PodcastDetailPaneBody() {
       );
       setAvailableLibrariesLoaded(true);
     } catch (loadError) {
-      if (isApiError(loadError)) {
-        setError(loadError.message);
-      } else {
-        setError("Failed to load libraries");
-      }
+      setError(toFeedback(loadError, { fallback: "Failed to load libraries" }));
       setAvailableLibraries([]);
     } finally {
       setAvailableLibrariesLoading(false);
@@ -461,11 +461,7 @@ export default function PodcastDetailPaneBody() {
         setPodcastLibraries(nextLibraries);
         return nextLibraries;
       } catch (loadError) {
-        if (isApiError(loadError)) {
-          setError(loadError.message);
-        } else {
-          setError("Failed to load podcast libraries");
-        }
+        setError(toFeedback(loadError, { fallback: "Failed to load podcast libraries" }));
         setPodcastLibraries([]);
         return [];
       } finally {
@@ -504,11 +500,7 @@ export default function PodcastDetailPaneBody() {
           })),
         }));
       } catch (loadError) {
-        if (isApiError(loadError)) {
-          setError(loadError.message);
-        } else {
-          setError("Failed to load episode libraries");
-        }
+        setError(toFeedback(loadError, { fallback: "Failed to load episode libraries" }));
       } finally {
         setLoadingEpisodeLibraryMediaIds((prev) => {
           const next = new Set(prev);
@@ -523,7 +515,7 @@ export default function PodcastDetailPaneBody() {
   const load = useCallback(async () => {
     if (!podcastId) {
       setLoading(false);
-      setError("Podcast id is missing");
+      setError({ severity: "error", title: "Podcast id is missing" });
       return;
     }
 
@@ -567,11 +559,7 @@ export default function PodcastDetailPaneBody() {
         setLoadingEpisodeLibraryMediaIds(new Set());
       }
     } catch (loadError) {
-      if (isApiError(loadError)) {
-        setError(loadError.message);
-      } else {
-        setError("Failed to load podcast detail");
-      }
+      setError(toFeedback(loadError, { fallback: "Failed to load podcast detail" }));
     } finally {
       setLoading(false);
     }
@@ -659,11 +647,7 @@ export default function PodcastDetailPaneBody() {
           ),
         }));
       } catch (mutationError) {
-        if (isApiError(mutationError)) {
-          setError(mutationError.message);
-        } else {
-          setError("Failed to add episode to library");
-        }
+        setError(toFeedback(mutationError, { fallback: "Failed to add episode to library" }));
       } finally {
         setBusyMediaIds((prev) => {
           const next = new Set(prev);
@@ -697,11 +681,9 @@ export default function PodcastDetailPaneBody() {
           ),
         }));
       } catch (mutationError) {
-        if (isApiError(mutationError)) {
-          setError(mutationError.message);
-        } else {
-          setError("Failed to remove episode from library");
-        }
+        setError(
+          toFeedback(mutationError, { fallback: "Failed to remove episode from library" })
+        );
       } finally {
         setBusyMediaIds((prev) => {
           const next = new Set(prev);
@@ -735,11 +717,7 @@ export default function PodcastDetailPaneBody() {
       setEpisodes((prev) => [...prev, ...response.data]);
       setHasMoreEpisodes(response.data.length === EPISODES_PAGE_SIZE);
     } catch (loadError) {
-      if (isApiError(loadError)) {
-        setError(loadError.message);
-      } else {
-        setError("Failed to load more podcast episodes");
-      }
+      setError(toFeedback(loadError, { fallback: "Failed to load more podcast episodes" }));
     } finally {
       setLoadingMoreEpisodes(false);
     }
@@ -772,11 +750,7 @@ export default function PodcastDetailPaneBody() {
       });
       await load();
     } catch (subscribeError) {
-      if (isApiError(subscribeError)) {
-        setError(subscribeError.message);
-      } else {
-        setError("Failed to subscribe to podcast");
-      }
+      setError(toFeedback(subscribeError, { fallback: "Failed to subscribe to podcast" }));
     } finally {
       setSubscribeBusy(false);
     }
@@ -795,11 +769,7 @@ export default function PodcastDetailPaneBody() {
         updatePodcastLibraryMemberships(prev, { libraryId, isInLibrary: true })
       );
     } catch (mutationError) {
-      if (isApiError(mutationError)) {
-        setError(mutationError.message);
-      } else {
-        setError("Failed to add podcast to library");
-      }
+      setError(toFeedback(mutationError, { fallback: "Failed to add podcast to library" }));
     } finally {
       setBusyPodcastLibraryKeys((prev) => {
         const next = new Set(prev);
@@ -822,11 +792,9 @@ export default function PodcastDetailPaneBody() {
         updatePodcastLibraryMemberships(prev, { libraryId, isInLibrary: false })
       );
     } catch (mutationError) {
-      if (isApiError(mutationError)) {
-        setError(mutationError.message);
-      } else {
-        setError("Failed to remove podcast from library");
-      }
+      setError(
+        toFeedback(mutationError, { fallback: "Failed to remove podcast from library" })
+      );
     } finally {
       setBusyPodcastLibraryKeys((prev) => {
         const next = new Set(prev);
@@ -860,11 +828,7 @@ export default function PodcastDetailPaneBody() {
       );
       await load();
     } catch (refreshError) {
-      if (isApiError(refreshError)) {
-        setError(refreshError.message);
-      } else {
-        setError("Failed to refresh podcast sync");
-      }
+      setError(toFeedback(refreshError, { fallback: "Failed to refresh podcast sync" }));
     } finally {
       setRefreshSyncBusy(false);
     }
@@ -899,11 +863,7 @@ export default function PodcastDetailPaneBody() {
       setEpisodeMembershipPanelMediaId(null);
       setEpisodeMembershipPanelTriggerEl(null);
     } catch (unsubscribeError) {
-      if (isApiError(unsubscribeError)) {
-        setError(unsubscribeError.message);
-      } else {
-        setError("Failed to unsubscribe from podcast");
-      }
+      setError(toFeedback(unsubscribeError, { fallback: "Failed to unsubscribe from podcast" }));
     } finally {
       setUnsubscribeBusy(false);
     }
@@ -962,11 +922,9 @@ export default function PodcastDetailPaneBody() {
       );
       setSettingsModalOpen(false);
     } catch (settingsUpdateError) {
-      if (isApiError(settingsUpdateError)) {
-        setSettingsError(settingsUpdateError.message);
-      } else {
-        setSettingsError("Failed to save subscription settings");
-      }
+      setSettingsError(
+        toFeedback(settingsUpdateError, { fallback: "Failed to save subscription settings" })
+      );
     } finally {
       setSettingsBusy(false);
     }
@@ -1028,11 +986,7 @@ export default function PodcastDetailPaneBody() {
           paneRouter.push(route);
         }
       } catch (chatError) {
-        if (isApiError(chatError)) {
-          setError(chatError.message);
-        } else {
-          setError("Failed to open episode chat");
-        }
+        setError(toFeedback(chatError, { fallback: "Failed to open episode chat" }));
       }
     },
     [paneRouter]
@@ -1053,11 +1007,7 @@ export default function PodcastDetailPaneBody() {
           )
         );
       } catch (retryError) {
-        if (isApiError(retryError)) {
-          setError(retryError.message);
-        } else {
-          setError("Failed to retry episode processing");
-        }
+        setError(toFeedback(retryError, { fallback: "Failed to retry episode processing" }));
       } finally {
         setBusyMediaIds((prev) => {
           const next = new Set(prev);
@@ -1089,11 +1039,7 @@ export default function PodcastDetailPaneBody() {
         return next;
       });
     } catch (deleteError) {
-      if (isApiError(deleteError)) {
-        setError(deleteError.message);
-      } else {
-        setError("Failed to delete episode");
-      }
+      setError(toFeedback(deleteError, { fallback: "Failed to delete episode" }));
     } finally {
       setBusyMediaIds((prev) => {
         const next = new Set(prev);
@@ -1162,11 +1108,13 @@ export default function PodcastDetailPaneBody() {
         });
       } catch (markError) {
         setEpisodes(previousEpisodes);
-        if (isApiError(markError)) {
-          setError(markError.message);
-        } else {
-          setError(isCompleted ? "Failed to mark episode as played" : "Failed to mark episode as unplayed");
-        }
+        setError(
+          toFeedback(markError, {
+            fallback: isCompleted
+              ? "Failed to mark episode as played"
+              : "Failed to mark episode as unplayed",
+          })
+        );
       } finally {
         setMarkingEpisodeIds((prev) => {
           const next = new Set(prev);
@@ -1248,11 +1196,11 @@ export default function PodcastDetailPaneBody() {
       });
     } catch (markError) {
       setEpisodes(previousEpisodes);
-      if (isApiError(markError)) {
-        setError(markError.message);
-      } else {
-        setError("Failed to mark visible episodes as played");
-      }
+      setError(
+        toFeedback(markError, {
+          fallback: "Failed to mark visible episodes as played",
+        })
+      );
     } finally {
       setMarkAllAsPlayedBusy(false);
     }
@@ -1307,11 +1255,7 @@ export default function PodcastDetailPaneBody() {
       setBatchTranscriptSummary(summarizeBatchTranscriptResults(response.data.results));
       await load();
     } catch (requestError) {
-      if (isApiError(requestError)) {
-        setError(requestError.message);
-      } else {
-        setError("Failed to request batch transcripts");
-      }
+      setError(toFeedback(requestError, { fallback: "Failed to request batch transcripts" }));
     } finally {
       setBatchTranscriptBusy(false);
     }
@@ -1514,11 +1458,7 @@ export default function PodcastDetailPaneBody() {
           // Keep optimistic row state if one refresh fails; polling continues.
         }
       } catch (requestError) {
-        if (isApiError(requestError)) {
-          setError(requestError.message);
-        } else {
-          setError("Failed to request transcript");
-        }
+        setError(toFeedback(requestError, { fallback: "Failed to request transcript" }));
       } finally {
         setRequestingTranscriptMediaIds((prev) => {
           const next = new Set(prev);
@@ -1619,7 +1559,7 @@ export default function PodcastDetailPaneBody() {
       </div>
 
       {!loading && episodes.length === 0 && !error && (
-        <StateMessage variant="empty">No episodes found for this podcast.</StateMessage>
+        <FeedbackNotice severity="neutral" title="No episodes found for this podcast." />
       )}
 
       <div className={styles.episodeFilterBar}>
@@ -1943,7 +1883,7 @@ export default function PodcastDetailPaneBody() {
   if (!podcastId) {
     return (
       <>
-        <StateMessage variant="error">Podcast id is missing.</StateMessage>
+        <FeedbackNotice severity="error" title="Podcast id is missing." />
       </>
     );
   }
@@ -1986,8 +1926,10 @@ export default function PodcastDetailPaneBody() {
               </div>
             </div>
             <SectionCard>
-              {loading && <StateMessage variant="loading">Loading podcast detail...</StateMessage>}
-              {error && <StateMessage variant="error">{error}</StateMessage>}
+              {loading && (
+                <FeedbackNotice severity="info" title="Loading podcast detail..." />
+              )}
+              {error && <FeedbackNotice feedback={error} />}
               {!loading && detail && (
                 <div className={styles.summaryCard}>
                   <div className={styles.summaryHeader}>
@@ -2187,7 +2129,7 @@ export default function PodcastDetailPaneBody() {
               New episodes from this podcast will be added to the end of your playback queue when
               they&apos;re synced.
             </p>
-            {settingsError && <StateMessage variant="error">{settingsError}</StateMessage>}
+            {settingsError && <FeedbackNotice feedback={settingsError} />}
             <div className={styles.modalActions}>
               <button
                 type="button"

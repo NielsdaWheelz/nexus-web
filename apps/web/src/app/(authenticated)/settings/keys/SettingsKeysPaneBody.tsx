@@ -12,8 +12,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { apiFetch, isApiError } from "@/lib/api/client";
-import StateMessage from "@/components/ui/StateMessage";
+import { apiFetch } from "@/lib/api/client";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import StatusPill from "@/components/ui/StatusPill";
 import styles from "./page.module.css";
 
@@ -48,7 +52,7 @@ type EditState = {
 function statusVariant(status: ApiKeyStatus) {
   if (status === "valid") return "success";
   if (status === "untested") return "warning";
-  if (status === "invalid") return "danger";
+  if (status === "invalid") return "error";
   return "neutral";
 }
 
@@ -86,11 +90,11 @@ function statusLabel(status: ApiKeyStatus): string {
 export default function SettingsKeysPaneBody() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FeedbackContent | null>(null);
   const [editing, setEditing] = useState<EditState>(null);
   const [apiKey, setApiKey] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [formSuccess, setFormSuccess] = useState<string | null>(null);
+  const [formError, setFormError] = useState<FeedbackContent | null>(null);
+  const [formSuccess, setFormSuccess] = useState<FeedbackContent | null>(null);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
 
   const providerStates = useMemo(() => {
@@ -107,11 +111,7 @@ export default function SettingsKeysPaneBody() {
       setKeys(response.data);
       setError(null);
     } catch (err) {
-      if (isApiError(err)) {
-        setError(err.message);
-      } else {
-        setError("Failed to load keys");
-      }
+      setError(toFeedback(err, { fallback: "Failed to load keys" }));
     } finally {
       setLoading(false);
     }
@@ -149,15 +149,11 @@ export default function SettingsKeysPaneBody() {
           method: "POST",
           body: JSON.stringify({ provider, api_key: apiKey }),
         });
-        setFormSuccess(`${providerLabel(provider)} key saved.`);
+        setFormSuccess({ severity: "success", title: `${providerLabel(provider)} key saved.` });
         setEditing(null);
         await fetchKeys();
       } catch (err) {
-        if (isApiError(err)) {
-          setFormError(err.message);
-        } else {
-          setFormError("Failed to save key");
-        }
+        setFormError(toFeedback(err, { fallback: "Failed to save key" }));
       } finally {
         // SECURITY: always clear key input regardless of success/failure
         setApiKey("");
@@ -177,13 +173,12 @@ export default function SettingsKeysPaneBody() {
       try {
         await apiFetch(`/api/keys/${key.id}`, { method: "DELETE" });
         await fetchKeys();
-        setFormSuccess(`${providerLabel(key.provider, key)} key revoked.`);
+        setFormSuccess({
+          severity: "success",
+          title: `${providerLabel(key.provider, key)} key revoked.`,
+        });
       } catch (err) {
-        if (isApiError(err)) {
-          setFormError(err.message);
-        } else {
-          setFormError("Failed to revoke key");
-        }
+        setFormError(toFeedback(err, { fallback: "Failed to revoke key" }));
       } finally {
         setBusyProvider(null);
       }
@@ -194,7 +189,10 @@ export default function SettingsKeysPaneBody() {
   const handleTest = useCallback(
     async (key: ApiKey) => {
       if (!key.id) {
-        setFormError(`Connect ${providerLabel(key.provider, key)} before testing.`);
+        setFormError({
+          severity: "error",
+          title: `Connect ${providerLabel(key.provider, key)} before testing.`,
+        });
         return;
       }
 
@@ -204,15 +202,12 @@ export default function SettingsKeysPaneBody() {
       try {
         await apiFetch(`/api/keys/${key.id}/test`, { method: "POST" });
         await fetchKeys();
-        setFormSuccess(`${providerLabel(key.provider, key)} key tested.`);
+        setFormSuccess({
+          severity: "success",
+          title: `${providerLabel(key.provider, key)} key tested.`,
+        });
       } catch (err) {
-        if (isApiError(err)) {
-          setFormError(
-            err.requestId ? `${err.message} (Nexus request id: ${err.requestId})` : err.message
-          );
-        } else {
-          setFormError("Failed to test key");
-        }
+        setFormError(toFeedback(err, { fallback: "Failed to test key" }));
       } finally {
         setBusyProvider(null);
       }
@@ -223,14 +218,14 @@ export default function SettingsKeysPaneBody() {
   return (
     <div className={styles.content}>
       <div className={styles.messages}>
-        {loading && <StateMessage variant="loading">Loading...</StateMessage>}
-        {error && <StateMessage variant="error">{error}</StateMessage>}
-        {formError && <StateMessage variant="error">{formError}</StateMessage>}
-        {formSuccess && <StateMessage variant="success">{formSuccess}</StateMessage>}
+        {loading && <FeedbackNotice severity="info">Loading...</FeedbackNotice>}
+        {error ? <FeedbackNotice feedback={error} /> : null}
+        {formError ? <FeedbackNotice feedback={formError} /> : null}
+        {formSuccess ? <FeedbackNotice feedback={formSuccess} /> : null}
       </div>
 
       {!loading && !error && providerStates.length === 0 && (
-        <StateMessage variant="empty">No providers are enabled.</StateMessage>
+        <FeedbackNotice severity="neutral">No providers are enabled.</FeedbackNotice>
       )}
 
       <div className={styles.providerGrid}>

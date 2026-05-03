@@ -12,9 +12,12 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import { isApiError } from "@/lib/api/client";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import SectionCard from "@/components/ui/SectionCard";
-import StateMessage from "@/components/ui/StateMessage";
 import SearchResultRow from "@/components/search/SearchResultRow";
 import {
   ALL_SEARCH_TYPES,
@@ -33,7 +36,7 @@ export default function SearchPaneBody() {
   const [types, setTypes] = useState<Set<SearchType>>(new Set(ALL_SEARCH_TYPES));
   const [results, setResults] = useState<SearchResultRowViewModel[]>([]);
   const [searching, setSearching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FeedbackContent | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
 
@@ -65,11 +68,7 @@ export default function SearchPaneBody() {
         setNextCursor(page.nextCursor);
         setHasSearched(true);
       } catch (err) {
-        if (isApiError(err)) {
-          setError(err.message);
-        } else {
-          setError("Search failed");
-        }
+        setError(toFeedback(err, { fallback: "Search failed" }));
       } finally {
         setSearching(false);
       }
@@ -142,19 +141,19 @@ export default function SearchPaneBody() {
           </div>
         </form>
 
-        {error && <StateMessage variant="error">{error}</StateMessage>}
+        {error ? <FeedbackNotice feedback={error} /> : null}
 
         {!hasSearched && (
-          <StateMessage variant="info">
+          <FeedbackNotice severity="info">
             Enter a query to search content already in Nexus, including media, annotations, transcript chunks, and conversations.
-          </StateMessage>
+          </FeedbackNotice>
         )}
 
         {hasSearched && results.length === 0 && !searching && (
-          <StateMessage variant="empty">No results found.</StateMessage>
+          <FeedbackNotice severity="neutral">No results found.</FeedbackNotice>
         )}
 
-        {searching && <StateMessage variant="loading">Searching...</StateMessage>}
+        {searching && <FeedbackNotice severity="info">Searching...</FeedbackNotice>}
 
         {results.length > 0 && (
           <div className={styles.resultRows}>

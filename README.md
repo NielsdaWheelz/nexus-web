@@ -90,6 +90,7 @@ make test-real
 - `apps/worker/` -> worker entrypoint: see `apps/worker/README.md`
 - `docs/rules/` -> repository rules and boundaries: start at `docs/rules/index.md`
 - `docs/sdlc/` -> planning and execution workflow: `docs/sdlc/README.md`
+- `docs/feedback-layer-hard-cutover.md` -> unified frontend feedback layer hard-cutover plan
 - `docs/reader-implementation.md` -> current reader behavior contract
 - `docs/scoped-chat-hard-cutover.md` -> document/library scoped chat hard-cutover plan
 - `docs/library-intelligence-hard-cutover.md` -> library-wide synthesis and intelligence hard-cutover plan

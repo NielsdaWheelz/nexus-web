@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { FolderOpen, RefreshCcw, UploadCloud } from "lucide-react";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
+import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import {
   getVaultAutoSync,
   hasVaultPermission,
@@ -16,7 +17,6 @@ import {
   type VaultSyncPayload,
 } from "@/lib/vault/localVault";
 import SectionCard from "@/components/ui/SectionCard";
-import StateMessage from "@/components/ui/StateMessage";
 import StatusPill from "@/components/ui/StatusPill";
 import styles from "./page.module.css";
 
@@ -39,7 +39,7 @@ function statusVariant(status: VaultStatus) {
   if (status === "synced") return "success" as const;
   if (status === "syncing") return "info" as const;
   if (status === "conflicts" || status === "needsPermission") return "warning" as const;
-  if (status === "error") return "danger" as const;
+  if (status === "error") return "error" as const;
   return "neutral" as const;
 }
 
@@ -71,13 +71,7 @@ export default function SettingsLocalVaultPaneBody() {
 
   const showError = useCallback((error: unknown, fallback: string) => {
     setStatus("error");
-    if (isApiError(error)) {
-      setMessage(error.message);
-    } else if (error instanceof Error) {
-      setMessage(error.message);
-    } else {
-      setMessage(fallback);
-    }
+    setMessage(toFeedback(error, { fallback }).title);
   }, []);
 
   const connectFolder = useCallback(async () => {
@@ -172,9 +166,9 @@ export default function SettingsLocalVaultPaneBody() {
   if (!supported) {
     return (
       <SectionCard>
-        <StateMessage variant="error">
+        <FeedbackNotice severity="error">
           This browser cannot connect a writable local folder. Use a supported desktop browser.
-        </StateMessage>
+        </FeedbackNotice>
       </SectionCard>
     );
   }

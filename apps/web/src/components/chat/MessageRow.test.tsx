@@ -313,7 +313,9 @@ describe("MessageRow", () => {
 
     render(<MessageRow message={message} />);
 
-    expect(screen.getByText("Response stopped before completion.")).toBeInTheDocument();
-    expect(screen.getByText("E_LLM_INCOMPLETE")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Response stopped before completion."
+    );
+    expect(screen.queryByText("E_LLM_INCOMPLETE")).not.toBeInTheDocument();
   });
 });

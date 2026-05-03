@@ -261,11 +261,11 @@
   outline-offset: 2px;
 }
 
-.mobileStateMessage {
+.mobileFeedbackMessage {
   padding: var(--space-3) 0;
 }
 
-.emptyStateMessage {
+.emptyFeedbackMessage {
   display: flex;
   align-items: center;
   justify-content: center;

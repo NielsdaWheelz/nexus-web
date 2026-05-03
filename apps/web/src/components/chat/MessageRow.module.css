@@ -281,17 +281,8 @@
   line-height: 1.5;
 }
 
-.messageError {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
+.messageFeedback {
   margin-top: var(--space-2);
-  font-size: var(--font-size-xs);
-  color: var(--color-error);
-}
-
-.errorCode {
-  color: var(--color-text-muted);
 }
 
 .timestamp {

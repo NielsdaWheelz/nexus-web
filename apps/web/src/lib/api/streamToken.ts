@@ -7,6 +7,8 @@
  * 3. Use token as Authorization: Bearer for /stream/* endpoints
  */
 
+import { apiFetch } from "@/lib/api/client";
+
 export interface StreamTokenResponse {
   token: string;
   stream_base_url: string;
@@ -16,27 +18,11 @@ export interface StreamTokenResponse {
 /**
  * Fetch a stream token from the BFF.
  *
- * @throws Error if the request fails or returns non-200.
+ * @throws ApiError if the request fails or returns non-200.
  */
 export async function fetchStreamToken(): Promise<StreamTokenResponse> {
-  const response = await fetch("/api/stream-token", {
+  const body = await apiFetch<{ data: StreamTokenResponse }>("/api/stream-token", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
   });
-
-  if (!response.ok) {
-    let errorMessage = `Stream token request failed with status ${response.status}`;
-    try {
-      const errorBody = await response.json();
-      if (errorBody?.error?.message) {
-        errorMessage = errorBody.error.message;
-      }
-    } catch {
-      // ignore parse failures
-    }
-    throw new Error(errorMessage);
-  }
-
-  const body = await response.json();
-  return body.data as StreamTokenResponse;
+  return body.data;
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps, RefObject } from "react";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
-import { ToastProvider } from "@/components/Toast";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 
 const scrollHosts: HTMLDivElement[] = [];
 const linkedItemsPaneBaseProps = {
@@ -74,9 +74,9 @@ function mockViewportAnchors(
 
 function renderLinkedItemsPane(props: ComponentProps<typeof LinkedItemsPane>) {
   return render(
-    <ToastProvider>
+    <FeedbackProvider>
       <LinkedItemsPane {...props} />
-    </ToastProvider>
+    </FeedbackProvider>
   );
 }
 

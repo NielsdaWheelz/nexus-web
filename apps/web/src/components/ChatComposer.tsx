@@ -10,7 +10,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { ArrowUp, ChevronDown, Search, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
+import { toFeedback } from "@/components/feedback/Feedback";
 import {
   toWireContextItem,
   type ContextItem,
@@ -235,7 +236,7 @@ export default function ChatComposer({
           headers: { "Idempotency-Key": idempotencyKey },
         });
       } catch (err) {
-        setError(isApiError(err) ? err.message : "Failed to start chat run");
+        setError(toFeedback(err, { fallback: "Failed to start chat run" }).title);
         return false;
       }
 

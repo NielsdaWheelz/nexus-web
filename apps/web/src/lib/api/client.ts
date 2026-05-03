@@ -52,32 +52,11 @@ function isErrorResponse(body: unknown): body is ErrorResponse {
   );
 }
 
-/**
- * Fetch data from the API with typed response.
- *
- * @param path - API path (e.g., "/api/libraries")
- * @param options - Fetch options
- * @returns Parsed JSON response
- * @throws ApiError on non-2xx responses
- */
-export async function apiFetch<T>(
-  path: string,
-  options: RequestInit = {}
-): Promise<T> {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
-
-  // Try to parse JSON response
+async function parseApiResponse<T>(response: Response): Promise<T> {
   let body: unknown;
   try {
     body = await response.json();
   } catch {
-    // Non-JSON response
     if (!response.ok) {
       throw new ApiError(
         response.status,
@@ -95,7 +74,6 @@ export async function apiFetch<T>(
     );
   }
 
-  // Check for error response
   if (!response.ok) {
     if (
       response.status === 401 &&
@@ -120,4 +98,39 @@ export async function apiFetch<T>(
   }
 
   return body as T;
+}
+
+/**
+ * Fetch data from the API with typed response.
+ *
+ * @param path - API path (e.g., "/api/libraries")
+ * @param options - Fetch options
+ * @returns Parsed JSON response
+ * @throws ApiError on non-2xx responses
+ */
+export async function apiFetch<T>(
+  path: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+  return parseApiResponse<T>(response);
+}
+
+export async function apiPostFormData<T>(
+  path: string,
+  formData: FormData
+): Promise<T> {
+  const response = await fetch(path, {
+    method: "POST",
+    body: formData,
+  });
+
+  return parseApiResponse<T>(response);
 }

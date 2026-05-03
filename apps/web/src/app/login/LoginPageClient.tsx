@@ -2,6 +2,11 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import { buildAuthCallbackUrl } from "@/lib/auth/redirects";
 import { createClient } from "@/lib/supabase/client";
 import styles from "./page.module.css";
@@ -60,7 +65,9 @@ export default function LoginPageClient({
   nextPath,
 }: LoginPageClientProps) {
   const [activeProvider, setActiveProvider] = useState<OAuthProvider | null>(null);
-  const [error, setError] = useState<string | null>(initialError);
+  const [error, setError] = useState<FeedbackContent | null>(
+    initialError ? { severity: "error", title: initialError } : null
+  );
 
   const handleProviderSignIn = async (provider: OAuthProvider) => {
     setError(null);
@@ -76,11 +83,18 @@ export default function LoginPageClient({
       });
 
       if (oauthError) {
-        setError(oauthError.message);
+        setError({
+          severity: "error",
+          title: "We couldn't start sign in. Please try again.",
+        });
         setActiveProvider(null);
       }
-    } catch {
-      setError("We couldn't start sign in. Please try again.");
+    } catch (signInError) {
+      setError(
+        toFeedback(signInError, {
+          fallback: "We couldn't start sign in. Please try again.",
+        })
+      );
       setActiveProvider(null);
     }
   };
@@ -99,7 +113,7 @@ export default function LoginPageClient({
           </div>
 
           <div className={styles.form} aria-live="polite">
-            {error && <div className={styles.error}>{error}</div>}
+            {error ? <FeedbackNotice feedback={error} className={styles.error} /> : null}
 
             <button
               type="button"

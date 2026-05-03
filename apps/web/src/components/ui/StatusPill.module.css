@@ -34,7 +34,7 @@
   background: rgba(224, 175, 104, 0.15);
 }
 
-.danger {
+.error {
   color: var(--color-error);
   border-color: rgba(247, 118, 142, 0.45);
   background: rgba(247, 118, 142, 0.15);

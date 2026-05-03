@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import {
   getVaultAutoSync,
   hasVaultPermission,
@@ -11,14 +11,14 @@ import {
   writeVaultPayload,
   type VaultSyncPayload,
 } from "@/lib/vault/localVault";
-import { useToast } from "@/components/Toast";
+import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 
 interface VaultResponse {
   data: VaultSyncPayload;
 }
 
 export default function LocalVaultAutoSync() {
-  const { toast } = useToast();
+  const feedback = useFeedback();
 
   useEffect(() => {
     if (!isLocalVaultSupported() || !getVaultAutoSync()) {
@@ -45,21 +45,15 @@ export default function LocalVaultAutoSync() {
         });
         await writeVaultPayload(handle, response.data);
         if (response.data.conflicts.length > 0) {
-          toast({
-            variant: "warning",
-            message: `${response.data.conflicts.length} Local Vault conflict file${response.data.conflicts.length === 1 ? "" : "s"} written.`,
+          feedback.show({
+            severity: "warning",
+            title: `${response.data.conflicts.length} Local Vault conflict file${response.data.conflicts.length === 1 ? "" : "s"} written.`,
+            dedupeKey: "local-vault-conflicts",
           });
         }
       } catch (error) {
         if (!cancelled) {
-          toast({
-            variant: "error",
-            message: isApiError(error)
-              ? error.message
-              : error instanceof Error
-                ? error.message
-                : "Local Vault refresh failed",
-          });
+          feedback.show(toFeedback(error, { fallback: "Local Vault refresh failed" }));
         }
       } finally {
         running = false;
@@ -79,7 +73,7 @@ export default function LocalVaultAutoSync() {
       cancelled = true;
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [toast]);
+  }, [feedback]);
 
   return null;
 }

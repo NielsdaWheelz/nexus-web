@@ -9,7 +9,8 @@ import {
   type UIEvent,
   type MutableRefObject,
 } from "react";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
+import { toFeedback } from "@/components/feedback/Feedback";
 import type { PdfReaderResumeState } from "@/lib/reader/types";
 import { usePaneMobileChromeController } from "@/components/workspace/PaneShell";
 import {
@@ -289,10 +290,7 @@ function toUserFacingError(error: unknown): string {
   if (isPasswordPdfError(error)) {
     return "This PDF is password-protected and cannot be opened in v1.";
   }
-  if (isApiError(error)) {
-    return error.message;
-  }
-  return "Unable to load this PDF right now. Please retry.";
+  return toFeedback(error, { fallback: "Unable to load this PDF right now. Please retry." }).title;
 }
 
 function isTextLayerEligibleNode(node: Node | null, textLayerRoot: HTMLElement | null): boolean {

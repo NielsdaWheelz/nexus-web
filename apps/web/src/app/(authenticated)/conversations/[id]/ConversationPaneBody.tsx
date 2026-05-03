@@ -15,7 +15,7 @@ import {
   useMemo,
   useLayoutEffect,
 } from "react";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { type ContextItem } from "@/lib/api/sse";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
@@ -24,7 +24,6 @@ import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
-import StateMessage from "@/components/ui/StateMessage";
 import type {
   ConversationMessage,
   ConversationMessagesResponse,
@@ -42,6 +41,11 @@ import {
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import styles from "../page.module.css";
 
 type Conversation = ConversationSummary;
@@ -120,7 +124,7 @@ function ChatView({
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FeedbackContent | null>(null);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const conversationScope = conversation?.scope ?? { type: "general" as const };
@@ -218,11 +222,7 @@ function ChatView({
           console.error("Failed to load active chat runs:", err);
         }
       } catch (err) {
-        if (isApiError(err)) {
-          setError(err.message);
-        } else {
-          setError("Failed to load conversation");
-        }
+        setError(toFeedback(err, { fallback: "Failed to load conversation" }));
       } finally {
         setLoading(false);
       }
@@ -299,11 +299,7 @@ function ChatView({
       await apiFetch(`/api/conversations/${id}`, { method: "DELETE" });
       router.push("/conversations");
     } catch (err) {
-      if (isApiError(err)) {
-        setError(err.message);
-      } else {
-        setError("Failed to delete conversation");
-      }
+      setError(toFeedback(err, { fallback: "Failed to delete conversation" }));
     } finally {
       setDeleting(false);
     }
@@ -323,11 +319,15 @@ function ChatView({
   // --------------------------------------------------------------------------
 
   if (loading) {
-    return <StateMessage variant="loading">Loading conversation...</StateMessage>;
+    return <FeedbackNotice severity="info">Loading conversation...</FeedbackNotice>;
   }
 
   if (error || !conversation) {
-    return <StateMessage variant="error">{error || "Conversation not found"}</StateMessage>;
+    return error ? (
+      <FeedbackNotice feedback={error} />
+    ) : (
+      <FeedbackNotice severity="error">Conversation not found</FeedbackNotice>
+    );
   }
 
   return (

@@ -17,8 +17,12 @@ import {
 import LibraryTargetPicker, {
   type LibraryTargetPickerItem,
 } from "@/components/LibraryTargetPicker";
-import StateMessage from "@/components/ui/StateMessage";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
+import { apiFetch, apiPostFormData } from "@/lib/api/client";
 import {
   addMediaFromUrl,
   getFileUploadError,
@@ -106,11 +110,11 @@ export default function AddContentTray() {
   const [libraries, setLibraries] = useState<LibraryTargetPickerItem[]>([]);
   const [librariesLoading, setLibrariesLoading] = useState(false);
   const [librariesLoaded, setLibrariesLoaded] = useState(false);
-  const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [libraryError, setLibraryError] = useState<FeedbackContent | null>(null);
   const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importBusy, setImportBusy] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
+  const [importError, setImportError] = useState<FeedbackContent | null>(null);
   const [importResult, setImportResult] = useState<PodcastOpmlImportResult | null>(null);
   const nextIdRef = useRef(1);
   const activeIdsRef = useRef<Set<number>>(new Set());
@@ -142,11 +146,7 @@ export default function AddContentTray() {
       );
       setLibrariesLoaded(true);
     } catch (error) {
-      if (isApiError(error)) {
-        setLibraryError(error.message);
-      } else {
-        setLibraryError("Failed to load libraries");
-      }
+      setLibraryError(toFeedback(error, { fallback: "Failed to load libraries" }));
       setLibraries([]);
     } finally {
       setLibrariesLoading(false);
@@ -275,7 +275,10 @@ export default function AddContentTray() {
 
   const handleImportOpml = useCallback(async () => {
     if (!importFile) {
-      setImportError("Select an OPML/XML file to import.");
+      setImportError({
+        severity: "error",
+        title: "Select an OPML/XML file to import.",
+      });
       return;
     }
     setImportBusy(true);
@@ -284,26 +287,16 @@ export default function AddContentTray() {
     try {
       const formData = new FormData();
       formData.append("file", importFile);
-      const response = await fetch("/api/podcasts/import/opml", {
-        method: "POST",
-        body: formData,
-      });
-      const responseBody = (await response.json().catch(() => null)) as
-        | { data?: PodcastOpmlImportResult; error?: { message?: string } }
-        | null;
-      if (!response.ok) {
-        throw new Error(responseBody?.error?.message || "Failed to import OPML file");
-      }
+      const responseBody = await apiPostFormData<{ data?: PodcastOpmlImportResult }>(
+        "/api/podcasts/import/opml",
+        formData
+      );
       if (!responseBody?.data) {
         throw new Error("Import response missing summary payload");
       }
       setImportResult(responseBody.data);
     } catch (error) {
-      if (error instanceof Error && error.message) {
-        setImportError(error.message);
-      } else {
-        setImportError("Failed to import OPML file");
-      }
+      setImportError(toFeedback(error, { fallback: "Failed to import OPML file" }));
     } finally {
       setImportBusy(false);
     }
@@ -567,7 +560,7 @@ export default function AddContentTray() {
                   emptyMessage="No non-default libraries available."
                 />
                 <small className={styles.libraryHelp}>
-                  {libraryError ??
+                  {libraryError?.title ??
                     "Pick one non-default library to add there too, or use My Library only."}
                 </small>
               </div>
@@ -735,7 +728,7 @@ export default function AddContentTray() {
                 </button>
               </div>
 
-              {importError ? <StateMessage variant="error">{importError}</StateMessage> : null}
+              {importError ? <FeedbackNotice feedback={importError} /> : null}
 
               {importResult ? (
                 <div className={styles.importSummary}>

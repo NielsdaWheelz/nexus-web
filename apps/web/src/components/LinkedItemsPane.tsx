@@ -11,10 +11,13 @@ import {
   type RefObject,
 } from "react";
 import { MessageSquare, NotebookPen } from "lucide-react";
-import StateMessage from "@/components/ui/StateMessage";
+import {
+  FeedbackNotice,
+  toFeedback,
+  useFeedback,
+} from "@/components/feedback/Feedback";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
-import { useToast } from "@/components/Toast";
 import { COLOR_LABELS } from "@/lib/highlights/colors";
 import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
@@ -142,7 +145,7 @@ export default function LinkedItemsPane({
   onAnnotationDelete,
   onOpenConversation,
 }: LinkedItemsPaneProps) {
-  const { toast } = useToast();
+  const feedback = useFeedback();
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollParentRef = useRef<HTMLElement | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -679,7 +682,7 @@ export default function LinkedItemsPane({
         await onAnnotationDelete(focusedHighlight.id);
       }
     } catch (error) {
-      toast({ variant: "error", message: "Failed to save note" });
+      feedback.show(toFeedback(error, { fallback: "Failed to save note" }));
       console.error("linked_items_note_save_failed", error);
     } finally {
       setSavingNote(false);
@@ -690,7 +693,7 @@ export default function LinkedItemsPane({
     onAnnotationDelete,
     onAnnotationSave,
     savingNote,
-    toast,
+    feedback,
   ]);
 
   const handleDelete = useCallback(
@@ -706,12 +709,12 @@ export default function LinkedItemsPane({
       try {
         await onDelete(highlight.id);
       } catch (error) {
-        toast({ variant: "error", message: "Failed to delete highlight" });
+        feedback.show(toFeedback(error, { fallback: "Failed to delete highlight" }));
         console.error("linked_items_delete_failed", error);
         setDeleting(false);
       }
     },
-    [deleting, onDelete, toast]
+    [deleting, feedback, onDelete]
   );
 
   const handleColorChange = useCallback(
@@ -724,13 +727,13 @@ export default function LinkedItemsPane({
       try {
         await onColorChange(highlight.id, color);
       } catch (error) {
-        toast({ variant: "error", message: "Failed to change color" });
+        feedback.show(toFeedback(error, { fallback: "Failed to change color" }));
         console.error("linked_items_color_change_failed", error);
       } finally {
         setChangingColor(false);
       }
     },
-    [changingColor, onColorChange, toast]
+    [changingColor, feedback, onColorChange]
   );
 
   const renderRow = useCallback(
@@ -926,8 +929,8 @@ export default function LinkedItemsPane({
   if (highlights.length === 0) {
     return (
       <div className={styles.linkedItemsContainer} data-testid="linked-items-container">
-        <div className={styles.emptyStateMessage}>
-          <StateMessage variant="empty">No highlights in this context.</StateMessage>
+        <div className={styles.emptyFeedbackMessage}>
+          <FeedbackNotice severity="neutral" title="No highlights in this context." />
         </div>
       </div>
     );
@@ -959,8 +962,8 @@ export default function LinkedItemsPane({
         )}
 
         {mobileHighlightsState.visibleHighlights.length === 0 && hasMeasuredAnchors ? (
-          <div className={styles.mobileStateMessage}>
-            <StateMessage variant="empty">No highlights in view.</StateMessage>
+          <div className={styles.mobileFeedbackMessage}>
+            <FeedbackNotice severity="neutral" title="No highlights in view." />
           </div>
         ) : null}
 

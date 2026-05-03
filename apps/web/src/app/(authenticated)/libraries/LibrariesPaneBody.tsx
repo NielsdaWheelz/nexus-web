@@ -2,10 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { FolderOpen, Library as LibraryIcon } from "lucide-react";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import { libraryResourceOptions } from "@/lib/actions/resourceActions";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
-import StateMessage from "@/components/ui/StateMessage";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import StatusPill from "@/components/ui/StatusPill";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import SectionCard from "@/components/ui/SectionCard";
@@ -31,7 +35,7 @@ interface Library {
 export default function LibrariesPaneBody() {
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FeedbackContent | null>(null);
   const [newLibraryName, setNewLibraryName] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -46,11 +50,11 @@ export default function LibrariesPaneBody() {
       setLibraries(libsResponse.data);
       setError(null);
     } catch (err) {
-      if (isApiError(err)) {
-        setError(err.message);
-      } else {
-        setError("Failed to load libraries");
-      }
+      setError(
+        toFeedback(err, {
+          fallback: "Failed to load libraries",
+        })
+      );
     } finally {
       setLoading(false);
     }
@@ -73,9 +77,11 @@ export default function LibrariesPaneBody() {
       setNewLibraryName("");
       await fetchLibraries();
     } catch (err) {
-      if (isApiError(err)) {
-        setError(err.message);
-      }
+      setError(
+        toFeedback(err, {
+          fallback: "Failed to create library",
+        })
+      );
     } finally {
       setCreating(false);
     }
@@ -90,9 +96,11 @@ export default function LibrariesPaneBody() {
       });
       await fetchLibraries();
     } catch (err) {
-      if (isApiError(err)) {
-        setError(err.message);
-      }
+      setError(
+        toFeedback(err, {
+          fallback: "Failed to delete library",
+        })
+      );
     }
   };
 
@@ -110,7 +118,11 @@ export default function LibrariesPaneBody() {
         window.location.assign(route);
       }
     } catch (err) {
-      setError(isApiError(err) ? err.message : "Failed to open library chat");
+      setError(
+        toFeedback(err, {
+          fallback: "Failed to open library chat",
+        })
+      );
     }
   }, []);
 
@@ -134,9 +146,11 @@ export default function LibrariesPaneBody() {
       setEditMembers(membersResp.data);
       setEditInvites(invitesResp.data);
     } catch (err) {
-      if (isApiError(err)) {
-        setError(err.message);
-      }
+      setError(
+        toFeedback(err, {
+          fallback: "Failed to load library sharing",
+        })
+      );
     }
   }, []);
 
@@ -275,14 +289,16 @@ export default function LibrariesPaneBody() {
             </button>
           </form>
 
-          {error && <StateMessage variant="error">{error}</StateMessage>}
+          {error && <FeedbackNotice {...error} />}
 
           {loading ? (
-            <StateMessage variant="loading">Loading libraries...</StateMessage>
+            <FeedbackNotice severity="info" title="Loading libraries..." />
           ) : libraries.length === 0 ? (
-            <StateMessage variant="empty">
-              No libraries yet. Create your first library above.
-            </StateMessage>
+            <FeedbackNotice
+              severity="neutral"
+              title="No libraries yet."
+              message="Create your first library above."
+            />
           ) : (
             <AppList>
               {libraries.map((library) => (

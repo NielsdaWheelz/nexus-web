@@ -5,7 +5,6 @@ import Navbar from "@/components/Navbar";
 import CommandPalette from "@/components/CommandPalette";
 import AddContentTray from "@/components/AddContentTray";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
-import { ToastProvider } from "@/components/Toast";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import LocalVaultAutoSync from "./LocalVaultAutoSync";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
@@ -17,7 +16,7 @@ export default function AuthenticatedLayout() {
   const [navbarCollapsed, setNavbarCollapsed] = useState(false);
 
   return (
-    <ToastProvider>
+    <>
       <LocalVaultAutoSync />
       <ReaderProvider>
         <Suspense fallback={null}>
@@ -38,6 +37,6 @@ export default function AuthenticatedLayout() {
           </WorkspaceStoreProvider>
         </Suspense>
       </ReaderProvider>
-    </ToastProvider>
+    </>
   );
 }

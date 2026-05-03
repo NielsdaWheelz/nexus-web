@@ -116,6 +116,10 @@
   color: var(--color-warning);
 }
 
-.item[data-status="danger"] .icon {
+.item[data-status="success"] .icon {
+  color: var(--color-success);
+}
+
+.item[data-status="error"] .icon {
   color: var(--color-error);
 }

@@ -1,8 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import SectionCard from "@/components/ui/SectionCard";
-import StateMessage from "@/components/ui/StateMessage";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import {
   formatIdentityProvider,
@@ -30,8 +34,8 @@ function linkedDate(identity: LinkedIdentity): string {
 export default function SettingsIdentitiesPaneBody() {
   const [identities, setIdentities] = useState<LinkedIdentity[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<FeedbackContent | null>(null);
+  const [notice, setNotice] = useState<FeedbackContent | null>(null);
   const [linkingProvider, setLinkingProvider] = useState<OAuthProvider | null>(
     null
   );
@@ -43,7 +47,7 @@ export default function SettingsIdentitiesPaneBody() {
     const supabase = createClient();
     const { data, error: identitiesError } = await supabase.auth.getUserIdentities();
     if (identitiesError) {
-      setError(identitiesError.message);
+      setError(toFeedback(identitiesError, { fallback: "Failed to load identities" }));
       setIdentities([]);
       return;
     }
@@ -80,10 +84,18 @@ export default function SettingsIdentitiesPaneBody() {
       });
 
       if (linkError) {
-        setError(linkError.message);
+        setError(
+          toFeedback(linkError, {
+            fallback: "We couldn't start identity linking. Please try again.",
+          })
+        );
       }
-    } catch {
-      setError("We couldn't start identity linking. Please try again.");
+    } catch (linkError) {
+      setError(
+        toFeedback(linkError, {
+          fallback: "We couldn't start identity linking. Please try again.",
+        })
+      );
     } finally {
       setLinkingProvider(null);
     }
@@ -92,7 +104,7 @@ export default function SettingsIdentitiesPaneBody() {
   const handleUnlinkIdentity = useCallback(
     async (identity: LinkedIdentity) => {
       if (!mayUnlinkIdentity(identities, identity.id)) {
-        setError("Link at least one additional identity before unlinking.");
+        setError({ severity: "error", title: "Link at least one additional identity before unlinking." });
         return;
       }
 
@@ -111,14 +123,25 @@ export default function SettingsIdentitiesPaneBody() {
         );
 
         if (unlinkError) {
-          setError(unlinkError.message);
+          setError(
+            toFeedback(unlinkError, {
+              fallback: "We couldn't unlink this identity. Please try again.",
+            })
+          );
           return;
         }
 
-        setNotice(`${formatIdentityProvider(identity.provider)} sign-in was removed.`);
+        setNotice({
+          severity: "success",
+          title: `${formatIdentityProvider(identity.provider)} sign-in was removed.`,
+        });
         await loadIdentities();
-      } catch {
-        setError("We couldn't unlink this identity. Please try again.");
+      } catch (unlinkError) {
+        setError(
+          toFeedback(unlinkError, {
+            fallback: "We couldn't unlink this identity. Please try again.",
+          })
+        );
       } finally {
         setUnlinkingIdentityId(null);
       }
@@ -129,14 +152,14 @@ export default function SettingsIdentitiesPaneBody() {
   return (
     <SectionCard>
       <div className={styles.content}>
-        {loading && <StateMessage variant="loading">Loading identities...</StateMessage>}
-        {error && <StateMessage variant="error">{error}</StateMessage>}
-        {notice && <StateMessage variant="success">{notice}</StateMessage>}
+        {loading && <FeedbackNotice severity="info">Loading identities...</FeedbackNotice>}
+        {error ? <FeedbackNotice feedback={error} /> : null}
+        {notice ? <FeedbackNotice feedback={notice} /> : null}
 
         {!loading && identities.length === 0 && (
-          <StateMessage variant="empty">
+          <FeedbackNotice severity="neutral">
             No linked identities were found for this account.
-          </StateMessage>
+          </FeedbackNotice>
         )}
 
         {!loading && identities.length > 0 && (
@@ -172,9 +195,9 @@ export default function SettingsIdentitiesPaneBody() {
         )}
 
         {connectableProviders.length === 0 ? (
-          <StateMessage variant="success">
+          <FeedbackNotice severity="success">
             Google and GitHub are already linked for this account.
-          </StateMessage>
+          </FeedbackNotice>
         ) : (
           <div className={styles.linkButtons}>
             {connectableProviders.map((provider) => {

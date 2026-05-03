@@ -12,8 +12,12 @@ import { ExternalLink, X } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
-import StateMessage from "@/components/ui/StateMessage";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
+import { apiFetch } from "@/lib/api/client";
 import { type ContextItem } from "@/lib/api/sse";
 import {
   getContextExact,
@@ -57,7 +61,7 @@ export default function QuoteChatSheet({
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [loadingMessages, setLoadingMessages] = useState(Boolean(conversationId));
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
   const [pendingContexts, setPendingContexts] = useState<ContextItem[]>([context]);
   const [composerFocused, setComposerFocused] = useState(false);
   const { activeRunId, abortAll, tailChatRun } = useChatRunTail({
@@ -128,7 +132,7 @@ export default function QuoteChatSheet({
       })
       .catch((err) => {
         if (cancelled) return;
-        setLoadError(isApiError(err) ? err.message : "Failed to load chat history");
+        setLoadError(toFeedback(err, { fallback: "Failed to load chat history" }));
       })
       .finally(() => {
         if (!cancelled) {
@@ -281,11 +285,11 @@ export default function QuoteChatSheet({
 
         {loadingMessages ? (
           <div className={styles.status}>
-            <StateMessage variant="loading">Loading chat...</StateMessage>
+            <FeedbackNotice severity="info" title="Loading chat..." />
           </div>
         ) : loadError ? (
           <div className={styles.status}>
-            <StateMessage variant="error">{loadError}</StateMessage>
+            <FeedbackNotice feedback={loadError} />
           </div>
         ) : (
           <ChatSurface

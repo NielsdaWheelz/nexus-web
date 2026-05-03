@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError, apiFetch } from "@/lib/api/client";
 import SettingsKeysPaneBody from "./SettingsKeysPaneBody";
@@ -51,10 +51,8 @@ describe("SettingsKeysPaneBody", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Test" }));
 
-    await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "Provider test failed (Nexus request id: nexus-req-123)"
-      );
-    });
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Provider test failed");
+    expect(alert).toHaveTextContent("Nexus request ID: nexus-req-123");
   });
 });

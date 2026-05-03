@@ -1,9 +1,13 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import SectionCard from "@/components/ui/SectionCard";
-import StateMessage from "@/components/ui/StateMessage";
 import StatusPill from "@/components/ui/StatusPill";
 import { useBillingAccount, type BillingPlanTier } from "@/lib/billing/useBillingAccount";
 import styles from "./page.module.css";
@@ -116,7 +120,7 @@ export default function SettingsBillingPaneBody() {
   const { account, loading, error } = useBillingAccount();
   const [checkoutBusy, setCheckoutBusy] = useState<BillingPlanTier | null>(null);
   const [portalBusy, setPortalBusy] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<FeedbackContent | null>(null);
 
   const paidPlan = account?.plan_tier ?? "free";
   const billingEnabled = account?.billing_enabled ?? false;
@@ -143,7 +147,7 @@ export default function SettingsBillingPaneBody() {
   const launchCheckout = useCallback(
     async (planTier: BillingPlanTier) => {
       if (!billingEnabled) {
-        setActionError(BILLING_DISABLED_MESSAGE);
+        setActionError({ severity: "error", title: BILLING_DISABLED_MESSAGE });
         return;
       }
       setCheckoutBusy(planTier);
@@ -155,11 +159,7 @@ export default function SettingsBillingPaneBody() {
         });
         window.location.assign(response.data.url);
       } catch (checkoutError) {
-        if (isApiError(checkoutError)) {
-          setActionError(checkoutError.message);
-        } else {
-          setActionError("Failed to start checkout");
-        }
+        setActionError(toFeedback(checkoutError, { fallback: "Failed to start checkout" }));
       } finally {
         setCheckoutBusy(null);
       }
@@ -169,7 +169,7 @@ export default function SettingsBillingPaneBody() {
 
   const launchBillingPortal = useCallback(async () => {
     if (!billingEnabled) {
-      setActionError(BILLING_DISABLED_MESSAGE);
+      setActionError({ severity: "error", title: BILLING_DISABLED_MESSAGE });
       return;
     }
     setPortalBusy(true);
@@ -180,11 +180,7 @@ export default function SettingsBillingPaneBody() {
       });
       window.location.assign(response.data.url);
     } catch (portalError) {
-      if (isApiError(portalError)) {
-        setActionError(portalError.message);
-      } else {
-        setActionError("Failed to open billing portal");
-      }
+      setActionError(toFeedback(portalError, { fallback: "Failed to open billing portal" }));
     } finally {
       setPortalBusy(false);
     }
@@ -193,11 +189,11 @@ export default function SettingsBillingPaneBody() {
   return (
     <SectionCard>
       <div className={styles.content}>
-        {loading && <StateMessage variant="loading">Loading billing account...</StateMessage>}
-        {error && <StateMessage variant="error">{error}</StateMessage>}
-        {actionError && <StateMessage variant="error">{actionError}</StateMessage>}
+        {loading && <FeedbackNotice severity="info">Loading billing account...</FeedbackNotice>}
+        {error && <FeedbackNotice severity="error">{error}</FeedbackNotice>}
+        {actionError ? <FeedbackNotice feedback={actionError} /> : null}
         {!loading && account && !billingEnabled && (
-          <StateMessage variant="info">{BILLING_DISABLED_MESSAGE}</StateMessage>
+          <FeedbackNotice severity="info">{BILLING_DISABLED_MESSAGE}</FeedbackNotice>
         )}
 
         {!loading && account && (

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiFetch } from "./client";
+import { ApiError, apiFetch, apiPostFormData } from "./client";
 
 describe("apiFetch", () => {
   afterEach(() => {
@@ -44,5 +44,21 @@ describe("apiFetch", () => {
     await expect(apiFetch("/api/libraries")).rejects.toEqual(
       new ApiError(401, "E_UNAUTHENTICATED", "Authentication required", "request-1")
     );
+  });
+
+  it("posts form data without overriding multipart headers", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ data: { imported: 1 } }, { status: 200 })
+    );
+    const formData = new FormData();
+    formData.append("file", new Blob(["opml"]), "feeds.opml");
+
+    await expect(
+      apiPostFormData<{ data: { imported: number } }>("/api/podcasts/import/opml", formData)
+    ).resolves.toEqual({ data: { imported: 1 } });
+    expect(fetchSpy).toHaveBeenCalledWith("/api/podcasts/import/opml", {
+      method: "POST",
+      body: formData,
+    });
   });
 });

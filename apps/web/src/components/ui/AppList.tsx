@@ -22,7 +22,7 @@ interface AppListItemProps {
   trailing?: ReactNode;
   actions?: ReactNode;
   options?: ActionMenuOption[];
-  status?: "success" | "info" | "warning" | "danger" | "neutral";
+  status?: "success" | "info" | "warning" | "error" | "neutral";
 }
 
 export function AppList({ children }: AppListProps) {

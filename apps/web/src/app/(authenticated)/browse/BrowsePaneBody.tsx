@@ -6,9 +6,13 @@ import { FileText, Mic, Play, Video } from "lucide-react";
 import LibraryTargetPicker, {
   type LibraryTargetPickerItem,
 } from "@/components/LibraryTargetPicker";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import SectionCard from "@/components/ui/SectionCard";
-import StateMessage from "@/components/ui/StateMessage";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
@@ -327,7 +331,7 @@ export default function BrowsePaneBody() {
   const [searching, setSearching] = useState(false);
   const [loadingMoreTypes, setLoadingMoreTypes] = useState<Set<BrowseSectionType>>(new Set());
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FeedbackContent | null>(null);
   const [hasSearched, setHasSearched] = useState(Boolean(appliedQuery));
   const [libraries, setLibraries] = useState<LibraryTargetPickerItem[]>([]);
   const [librariesLoading, setLibrariesLoading] = useState(false);
@@ -369,11 +373,7 @@ export default function BrowsePaneBody() {
         }
         setSections(emptySections());
         setHasSearched(true);
-        if (isApiError(searchError)) {
-          setError(searchError.message);
-        } else {
-          setError("Browse failed");
-        }
+        setError(toFeedback(searchError, { fallback: "Browse failed" }));
       } finally {
         if (!cancelled) {
           setSearching(false);
@@ -458,11 +458,7 @@ export default function BrowsePaneBody() {
       );
       requestOpenInAppPane(`/podcasts/${podcastId}`);
     } catch (openError) {
-      if (isApiError(openError)) {
-        setError(openError.message);
-      } else {
-        setError("Failed to open podcast");
-      }
+      setError(toFeedback(openError, { fallback: "Failed to open podcast" }));
     } finally {
       setBusyKeys((current) => {
         const next = new Set(current);
@@ -497,11 +493,7 @@ export default function BrowsePaneBody() {
         )
       );
     } catch (followError) {
-      if (isApiError(followError)) {
-        setError(followError.message);
-      } else {
-        setError("Failed to follow podcast");
-      }
+      setError(toFeedback(followError, { fallback: "Failed to follow podcast" }));
     } finally {
       setBusyKeys((current) => {
         const next = new Set(current);
@@ -545,13 +537,7 @@ export default function BrowsePaneBody() {
       );
       requestOpenInAppPane(`/media/${added.mediaId}`);
     } catch (addError) {
-      if (isApiError(addError)) {
-        setError(addError.message);
-      } else if (addError instanceof Error && addError.message) {
-        setError(addError.message);
-      } else {
-        setError("Failed to add result");
-      }
+      setError(toFeedback(addError, { fallback: "Failed to add result" }));
     } finally {
       setBusyKeys((current) => {
         const next = new Set(current);
@@ -580,11 +566,7 @@ export default function BrowsePaneBody() {
         mergeSectionResults(current, sectionType, getSection(normalizeSections(response.data), sectionType))
       );
     } catch (loadMoreError) {
-      if (isApiError(loadMoreError)) {
-        setError(loadMoreError.message);
-      } else {
-        setError("Failed to load more results");
-      }
+      setError(toFeedback(loadMoreError, { fallback: "Failed to load more results" }));
     } finally {
       setLoadingMoreTypes((current) => {
         const next = new Set(current);
@@ -653,22 +635,22 @@ export default function BrowsePaneBody() {
           </div>
         </form>
 
-        {error ? <StateMessage variant="error">{error}</StateMessage> : null}
+        {error ? <FeedbackNotice feedback={error} /> : null}
 
         {!hasSearched ? (
-          <StateMessage variant="info">
+          <FeedbackNotice severity="info">
             Search once, then filter which result types stay visible. Browse finds things that are not already in your workspace.
-          </StateMessage>
+          </FeedbackNotice>
         ) : null}
 
-        {searching ? <StateMessage variant="loading">Searching...</StateMessage> : null}
+        {searching ? <FeedbackNotice severity="info">Searching...</FeedbackNotice> : null}
 
         {hasSearched && !searching && visibleSections.length === 0 ? (
-          <StateMessage variant="empty">
+          <FeedbackNotice severity="neutral">
             {visibleTypes.length === 0
               ? "Select at least one visible result type."
               : "No browse results found for this query."}
-          </StateMessage>
+          </FeedbackNotice>
         ) : null}
 
         {visibleSections.map((sectionType) => (
