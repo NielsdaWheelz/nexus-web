@@ -61,6 +61,7 @@ make test
 make verify
 make verify-full
 make test-e2e
+make test-e2e-real-media
 make test-e2e-ui
 ```
 
@@ -75,6 +76,7 @@ make test-migrations
 make test-supabase
 make test-network
 make test-real
+make test-real-media
 ```
 
 ## Environment
@@ -91,6 +93,7 @@ make test-real
 - `docs/rules/` -> repository rules and boundaries: start at `docs/rules/index.md`
 - `docs/feedback-layer-hard-cutover.md` -> unified frontend feedback layer hard-cutover plan
 - `docs/evidence-layer-hard-cutover.md` -> unified evidence indexing and citation hard-cutover plan
+- `docs/real-media-test-hard-cutover.md` -> real-media evidence test hard-cutover plan
 - `docs/notes-layer-hard-cutover.md` -> ProseMirror notes, object links, and annotation hard-cutover plan
 - `docs/anchored-projection-hard-cutover.md` -> visible reader highlight projection and secondary-pane hard-cutover plan
 - `docs/authors-layer-hard-cutover.md` -> contributor identity and author surface hard-cutover plan

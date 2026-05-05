@@ -164,4 +164,6 @@ markers = [
     "slow: tests that are materially slower than normal local feedback loops",
     "supabase: requires Supabase local auth/storage services",
     "network: requires internet access (hits real external services)",
+    "real_media: strict acceptance tests over real media artifacts and evidence traces",
+    "live_provider: strict acceptance tests over live external providers",
 ]

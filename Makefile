@@ -4,12 +4,12 @@
 .PHONY: help setup dev down logs clean api web worker migrate migrate-test migrate-down seed \
 	check check-back type-back check-front check-workflows format format-back fix-front build audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
-	test-migrations test-supabase test-network test-real test-e2e test-e2e-ui \
+	test-migrations test-supabase test-network test-real test-real-media test-e2e test-e2e-real-media test-e2e-ui \
 	verify verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw \
-	_test-supabase-raw _test-network-raw _test-real-raw \
-	_test-e2e-raw _test-e2e-ui-raw
+	_test-supabase-raw _test-network-raw _test-real-raw _test-real-media-raw \
+	_test-e2e-raw _test-e2e-real-media-raw _test-e2e-ui-raw
 
 -include .env
 -include .dev-ports
@@ -48,7 +48,7 @@ help:
 	@echo "  make test-unit          - Fast backend and frontend unit tests"
 	@echo "  make test               - All non-E2E automated tests"
 	@echo "  make verify             - check + build + test"
-	@echo "  make verify-full        - verify + real-stack Playwright E2E"
+	@echo "  make verify-full        - verify + real-media backend + real-stack Playwright E2E"
 	@echo ""
 	@echo "Narrow test tiers:"
 	@echo "  make test-back-unit        - Backend unit tests only"
@@ -59,7 +59,9 @@ help:
 	@echo "  make test-supabase         - Supabase auth/storage integration tests"
 	@echo "  make test-network          - Backend tests requiring internet"
 	@echo "  make test-real             - Slow real-content backend tests"
+	@echo "  make test-real-media       - Strict real-media evidence backend tests"
 	@echo "  make test-e2e              - Playwright E2E tests"
+	@echo "  make test-e2e-real-media   - Playwright real-media acceptance tests"
 	@echo "  make test-e2e-ui           - Playwright E2E in UI mode"
 	@echo ""
 	@echo "Formatting:"
@@ -242,6 +244,13 @@ _test-real-raw:
 	cd python && NEXUS_ENV=test uv run pytest -v --tb=short \
 		-m "slow and not network and not supabase"
 
+test-real-media:
+	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-back-db-ready _test-real-media-raw
+
+_test-real-media-raw:
+	make _ensure-node-ingest
+	cd python && NEXUS_ENV=local uv run pytest -v --tb=short -m real_media
+
 test-e2e: _ensure-e2e-deps
 	./scripts/with_supabase_services.sh make _test-e2e-raw
 
@@ -252,6 +261,17 @@ _test-e2e-raw:
 	cd e2e && \
 	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright install --with-deps chromium && \
 	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bun run test:e2e -- $(PLAYWRIGHT_ARGS)
+
+test-e2e-real-media: _ensure-e2e-deps
+	./scripts/with_supabase_services.sh make _test-e2e-real-media-raw
+
+_test-e2e-real-media-raw:
+	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
+	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
+	echo "Running real-media e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
+	cd e2e && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT E2E_REAL_MEDIA=1 bunx playwright install --with-deps chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT E2E_REAL_MEDIA=1 bun run test:e2e -- --project=real-media $(PLAYWRIGHT_ARGS)
 
 test-e2e-ui: _ensure-e2e-deps
 	./scripts/with_supabase_services.sh make _test-e2e-ui-raw
@@ -272,6 +292,7 @@ verify:
 
 verify-full:
 	make verify
+	make test-real-media
 	make test-e2e
 	@echo "=== full verification passed ==="
 

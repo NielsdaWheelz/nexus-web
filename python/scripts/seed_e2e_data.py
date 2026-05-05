@@ -429,6 +429,7 @@ def _write_seed_file(
     seed_path = repo_root / SEED_FILE_RELATIVE
     seed_path.parent.mkdir(parents=True, exist_ok=True)
     seed_payload = {
+        "media_fixture_kind": "synthetic",
         "media_id": media_id,
         "title": title,
         "page_count": page_count,
@@ -475,6 +476,7 @@ def _write_non_pdf_seed_file(
     seed_path = repo_root / NON_PDF_SEED_FILE_RELATIVE
     seed_path.parent.mkdir(parents=True, exist_ok=True)
     seed_payload = {
+        "media_fixture_kind": "synthetic",
         "media_id": media_id,
         "fragment_id": fragment_id,
         "quote_highlight_id": quote_highlight_id,
@@ -501,6 +503,7 @@ def _write_epub_seed_file(
     seed_path = repo_root / EPUB_SEED_FILE_RELATIVE
     seed_path.parent.mkdir(parents=True, exist_ok=True)
     seed_payload = {
+        "media_fixture_kind": "synthetic",
         "media_id": media_id,
         "chapter_count": chapter_count,
         "chapter_titles": chapter_titles,
@@ -527,6 +530,7 @@ def _write_youtube_seed_file(
     seed_path = repo_root / YOUTUBE_SEED_FILE_RELATIVE
     seed_path.parent.mkdir(parents=True, exist_ok=True)
     seed_payload = {
+        "media_fixture_kind": "synthetic",
         "media_id": media_id,
         "playback_only_media_id": playback_only_media_id,
         "watch_url": watch_url,
@@ -553,6 +557,7 @@ def _write_reader_resume_seed_file(
     seed_path = repo_root / READER_RESUME_SEED_FILE_RELATIVE
     seed_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "media_fixture_kind": "synthetic",
         "web_media_id": web_media_id,
         "web_anchor_text": web_anchor_text,
         "epub_media_id": epub_media_id,

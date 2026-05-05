@@ -7,6 +7,7 @@ applyResolvedSupabaseEnv(ROOT_DIR, process.env);
 
 const WEB_PORT = process.env.WEB_PORT ?? "3000";
 const API_PORT = process.env.API_PORT ?? "8000";
+const REAL_MEDIA_ENABLED = process.env.E2E_REAL_MEDIA === "1";
 
 export default defineConfig({
   globalSetup: "./global-setup.mjs",
@@ -28,12 +29,26 @@ export default defineConfig({
     { name: "setup", testMatch: /.*\.setup\.ts/ },
     {
       name: "chromium",
+      grepInvert: /@real-media/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: ".auth/user.json",
       },
       dependencies: ["setup"],
     },
+    ...(REAL_MEDIA_ENABLED
+      ? [
+          {
+            name: "real-media",
+            grep: /@real-media/,
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: ".auth/user.json",
+            },
+            dependencies: ["setup"],
+          },
+        ]
+      : []),
   ],
   webServer: [
     {
