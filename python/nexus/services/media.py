@@ -30,9 +30,9 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.config import get_settings
 from nexus.db.models import (
+    FailureStage,
     Fragment,
     Media,
-    MediaAuthor,
     MediaFile,
     MediaKind,
     PodcastListeningState,
@@ -42,6 +42,7 @@ from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
+from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.media import (
     ArticleCaptureResponse,
     FragmentOut,
@@ -49,13 +50,20 @@ from nexus.schemas.media import (
     ListeningStateBatchUpsertRequest,
     ListeningStateOut,
     ListeningStateUpsertRequest,
-    MediaAuthorOut,
     MediaOut,
     PodcastEpisodeChapterOut,
 )
 from nexus.services import libraries as libraries_service
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.capabilities import derive_capabilities
+from nexus.services.content_indexing import (
+    mark_content_index_failed,
+    rebuild_fragment_content_index,
+)
+from nexus.services.contributor_credits import (
+    load_contributor_credits_for_media,
+    replace_media_contributor_credits,
+)
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
@@ -103,6 +111,8 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "pe.description_text AS podcast_description_text",
     "mts.transcript_state",
     "mts.transcript_coverage",
+    "COALESCE(mcis.status, 'pending') AS retrieval_status",
+    "mcis.status_reason AS retrieval_status_reason",
     """EXISTS(
         SELECT 1
         WHERE m.kind IN ('pdf', 'epub', 'web_article')
@@ -213,6 +223,8 @@ def list_media_for_viewer_by_ids(
               ON vm.media_id = m.id
             LEFT JOIN media_transcript_states mts
               ON mts.media_id = m.id
+            LEFT JOIN media_content_index_states mcis
+              ON mcis.media_id = m.id
             LEFT JOIN podcast_episodes pe
               ON pe.media_id = m.id
             {_media_listening_state_join_sql(include_listening_state=True)}
@@ -237,7 +249,7 @@ def list_media_for_viewer_by_ids(
             pdf_media_ids.append(media_id)
 
     pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
-    authors_by_media = _load_media_authors_by_ids(db, list(row_by_media_id.keys()))
+    contributors_by_media = load_contributor_credits_for_media(db, list(row_by_media_id.keys()))
     chapters_by_media = _load_podcast_episode_chapters_by_ids(db, list(row_by_media_id.keys()))
 
     media_list: list[MediaOut] = []
@@ -248,35 +260,12 @@ def list_media_for_viewer_by_ids(
         media_list.append(
             _media_out_from_row(
                 row=row,
-                authors=authors_by_media.get(media_id, []),
+                contributors=contributors_by_media.get(media_id, []),
                 chapters=chapters_by_media.get(media_id, []),
                 pdf_quote_ready=pdf_readiness.get(media_id, False),
             )
         )
     return media_list
-
-
-def _load_media_authors_by_ids(
-    db: Session,
-    media_ids: list[UUID],
-) -> dict[UUID, list[MediaAuthorOut]]:
-    authors_by_media: dict[UUID, list[MediaAuthorOut]] = {media_id: [] for media_id in media_ids}
-    if not media_ids:
-        return authors_by_media
-
-    author_rows = db.execute(
-        text(
-            "SELECT id, media_id, name, role FROM media_authors "
-            "WHERE media_id = ANY(:ids) ORDER BY sort_order"
-        ),
-        {"ids": media_ids},
-    ).fetchall()
-    for author_row in author_rows:
-        author_media_id = UUID(str(author_row[1]))
-        authors_by_media.setdefault(author_media_id, []).append(
-            MediaAuthorOut(id=author_row[0], name=author_row[2], role=author_row[3])
-        )
-    return authors_by_media
 
 
 def _load_podcast_episode_chapters_by_ids(
@@ -342,7 +331,7 @@ def _media_listening_state_from_row(
 def _media_out_from_row(
     *,
     row: Mapping[str, object],
-    authors: list[MediaAuthorOut],
+    contributors: list[ContributorCreditOut],
     chapters: list[PodcastEpisodeChapterOut] | None = None,
     pdf_quote_ready: bool = False,
 ) -> MediaOut:
@@ -356,6 +345,7 @@ def _media_out_from_row(
         pdf_quote_text_ready=pdf_quote_ready,
         transcript_state=row["transcript_state"],
         transcript_coverage=row["transcript_coverage"],
+        retrieval_status=row["retrieval_status"],
         can_delete=bool(row.get("can_delete")),
         is_creator=bool(row.get("is_creator")),
         requested_url_exists=bool(row.get("has_requested_url")),
@@ -375,6 +365,8 @@ def _media_out_from_row(
         processing_status=processing_status,
         transcript_state=row["transcript_state"],
         transcript_coverage=row["transcript_coverage"],
+        retrieval_status=row["retrieval_status"],
+        retrieval_status_reason=row["retrieval_status_reason"],
         failure_stage=row["failure_stage"],
         last_error_code=row["last_error_code"],
         playback_source=playback_source,
@@ -386,7 +378,7 @@ def _media_out_from_row(
         ),
         chapters=chapters or [],
         capabilities=capabilities,
-        authors=authors,
+        contributors=contributors,
         published_date=row["published_date"],
         publisher=row["publisher"],
         language=row["language"],
@@ -701,6 +693,7 @@ def list_visible_media(
         FROM media m
         JOIN visible_media vm ON vm.media_id = m.id
         LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
+        LEFT JOIN media_content_index_states mcis ON mcis.media_id = m.id
         LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
         WHERE {" AND ".join(where_clauses)}
         ORDER BY m.updated_at DESC, m.id DESC
@@ -717,7 +710,7 @@ def list_visible_media(
     pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
 
     page_media_ids = [UUID(str(row["id"])) for row in page_rows]
-    authors_by_media = _load_media_authors_by_ids(db, page_media_ids)
+    contributors_by_media = load_contributor_credits_for_media(db, page_media_ids)
     chapters_by_media = _load_podcast_episode_chapters_by_ids(db, page_media_ids)
 
     media_list: list[MediaOut] = []
@@ -726,7 +719,7 @@ def list_visible_media(
         media_list.append(
             _media_out_from_row(
                 row=row,
-                authors=authors_by_media.get(media_id, []),
+                contributors=contributors_by_media.get(media_id, []),
                 chapters=chapters_by_media.get(media_id, []),
                 pdf_quote_ready=pdf_readiness.get(media_id, False),
             )
@@ -982,35 +975,76 @@ def create_captured_web_article(
     try:
         db.add(media)
         db.flush()
-        db.add(
-            Fragment(
-                media_id=media.id,
-                idx=0,
-                html_sanitized=html_sanitized,
-                canonical_text=canonical_text,
-            )
+        fragment = Fragment(
+            media_id=media.id,
+            idx=0,
+            html_sanitized=html_sanitized,
+            canonical_text=canonical_text,
         )
+        db.add(fragment)
+        db.flush()
+        insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(canonical_text))
 
         if byline and byline.strip():
             clean_byline = re.sub(r"^by\s+", "", byline.strip(), flags=re.IGNORECASE)
-            for sort_order, name in enumerate(
+            credits: list[dict[str, object]] = []
+            for ordinal, name in enumerate(
                 re.split(r"\s*[,;]\s*|\s+and\s+", clean_byline, flags=re.IGNORECASE)
             ):
                 if name.strip():
-                    db.add(
-                        MediaAuthor(
-                            media_id=media.id,
-                            name=name.strip()[:255],
-                            role="author",
-                            sort_order=sort_order,
-                        )
+                    credits.append(
+                        {
+                            "name": name.strip(),
+                            "role": "author",
+                            "ordinal": ordinal,
+                            "source": "web_article_capture",
+                            "source_ref": {"media_id": str(media.id)},
+                        }
                     )
+            replace_media_contributor_credits(db, media_id=media.id, credits=credits)
 
         _ensure_in_default_library(db, viewer_id, media.id)
+        fragment_id = fragment.id
+        media_id = media.id
+        media_language = media.language
         db.commit()
     except Exception:
         db.rollback()
         raise
+
+    try:
+        rebuild_fragment_content_index(
+            db,
+            media_id=media_id,
+            source_kind="web_article",
+            artifact_ref=f"fragments:{fragment_id}",
+            fragments=[fragment],
+            reason="web_article_capture",
+            language=media_language,
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.exception(
+            "captured_web_article_content_index_failed",
+            media_id=str(media_id),
+            error=str(exc),
+        )
+        media = db.get(Media, media_id)
+        if media is not None:
+            now = datetime.now(UTC)
+            media.failure_stage = FailureStage.embed
+            media.last_error_code = ApiErrorCode.E_INGEST_FAILED.value
+            media.last_error_message = f"Web article evidence index failed: {exc}"[:1000]
+            media.failed_at = now
+            media.updated_at = now
+            mark_content_index_failed(
+                db,
+                media_id=media_id,
+                failure_code=ApiErrorCode.E_INGEST_FAILED.value,
+                failure_message=media.last_error_message,
+            )
+            db.commit()
 
     _try_enrich_dispatch(str(media.id), None)
 
@@ -1421,17 +1455,30 @@ def create_or_reuse_x_oembed_article(
         insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(canonical_text))
 
         if author_name:
-            db.add(
-                MediaAuthor(media_id=media.id, name=author_name[:255], role="author", sort_order=0)
+            replace_media_contributor_credits(
+                db,
+                media_id=media.id,
+                credits=[
+                    {
+                        "name": author_name[:255],
+                        "role": "author",
+                        "source": "x_oembed_article",
+                        "source_ref": {"media_id": str(media.id)},
+                    }
+                ],
             )
 
         _ensure_in_default_library(db, viewer_id, media.id)
+        fragment_id = fragment.id
+        media_id = media.id
+        media_language = media.language
         db.commit()
     except IntegrityError as exc:
         if not _is_media_provider_conflict(exc):
             db.rollback()
             raise
         db.rollback()
+        created = False
         media = (
             db.query(Media)
             .filter(Media.provider == identity.provider, Media.provider_id == identity.provider_id)
@@ -1445,6 +1492,41 @@ def create_or_reuse_x_oembed_article(
     except Exception:
         db.rollback()
         raise
+
+    if created:
+        try:
+            rebuild_fragment_content_index(
+                db,
+                media_id=media_id,
+                source_kind="web_article",
+                artifact_ref=f"fragments:{fragment_id}",
+                fragments=[fragment],
+                reason="x_oembed_article",
+                language=media_language,
+            )
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.exception(
+                "x_oembed_content_index_failed",
+                media_id=str(media_id),
+                error=str(exc),
+            )
+            media = db.get(Media, media_id)
+            if media is not None:
+                now = datetime.now(UTC)
+                media.failure_stage = FailureStage.embed
+                media.last_error_code = ApiErrorCode.E_INGEST_FAILED.value
+                media.last_error_message = f"Web article evidence index failed: {exc}"[:1000]
+                media.failed_at = now
+                media.updated_at = now
+                mark_content_index_failed(
+                    db,
+                    media_id=media_id,
+                    failure_code=ApiErrorCode.E_INGEST_FAILED.value,
+                    failure_message=media.last_error_message,
+                )
+                db.commit()
 
     _try_enrich_dispatch(str(media.id), None)
 

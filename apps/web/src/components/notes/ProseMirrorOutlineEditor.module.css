@@ -1,0 +1,93 @@
+.editorShell {
+  position: relative;
+  width: 100%;
+}
+
+.editorHost {
+  width: 100%;
+}
+
+.autocomplete {
+  position: absolute;
+  z-index: 30;
+}
+
+.editorView {
+  color: var(--color-text);
+  font-size: 16px;
+  line-height: 1.55;
+  max-width: 76ch;
+  outline: none;
+}
+
+.editorView :global(.ProseMirror) {
+  outline: none;
+  white-space: pre-wrap;
+}
+
+.editorView :global(ul),
+.editorView :global(ol) {
+  margin: 0;
+  padding: 0;
+}
+
+.editorView :global(li[data-note-block-id]) {
+  display: block;
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 24px;
+  position: relative;
+}
+
+.editorView :global(.note-block-handle) {
+  background: currentColor;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  height: 6px;
+  left: 6px;
+  opacity: 0.72;
+  padding: 0;
+  position: absolute;
+  top: 0.82em;
+  width: 6px;
+}
+
+.editorView :global(.note-block-handle:hover),
+.editorView :global(.note-block-handle:focus-visible) {
+  height: 10px;
+  left: 4px;
+  opacity: 1;
+  outline: none;
+  top: calc(0.82em - 2px);
+  width: 10px;
+}
+
+.editorView :global(.note-block-content) {
+  min-height: 24px;
+}
+
+.editorView :global(p) {
+  margin: 0;
+  min-height: 24px;
+}
+
+.editorView :global(.note-object-ref) {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.editorView :global(.note-object-ref:focus-visible) {
+  outline: 2px solid color-mix(in srgb, currentColor 42%, transparent);
+  outline-offset: 2px;
+}
+
+.editorView :global(.note-object-embed) {
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 8px;
+  margin: 8px 0;
+  padding: 8px 10px;
+}

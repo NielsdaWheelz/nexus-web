@@ -6,25 +6,28 @@ These schemas are introduced in Slice 3 (PR-06: Keyword Search).
 Search returns mixed typed results from different content types:
 - media (titles)
 - podcasts (titles/descriptions)
-- fragments (canonical_text)
-- annotations (body)
+- content chunks (indexed document evidence)
+- pages (titles/descriptions)
+- note blocks (body)
 - messages (content)
-- transcript chunks (semantic transcript windows)
 """
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
+
+from nexus.schemas.contributors import ContributorCreditOut, ContributorOut
 
 # Valid search result types
 SEARCH_RESULT_TYPES = Literal[
     "media",
     "podcast",
-    "fragment",
-    "annotation",
+    "content_chunk",
+    "contributor",
+    "page",
+    "note_block",
     "message",
-    "transcript_chunk",
 ]
 
 # Valid search scopes
@@ -37,19 +40,19 @@ SEARCH_SCOPE_PREFIXES = ("all", "media:", "library:", "conversation:")
 
 
 class SearchResultSourceOut(BaseModel):
-    """Source metadata shared by media/fragment/annotation search rows."""
+    """Source metadata shared by media/content search rows."""
 
     media_id: UUID
     media_kind: str
     title: str
-    authors: list[str] = Field(default_factory=list)
+    contributors: list[ContributorCreditOut] = Field(default_factory=list)
     published_date: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
 
 class SearchResultHighlightOut(BaseModel):
-    """Quote-context snippet for annotation search results."""
+    """Quote-context snippet for highlight-backed search results."""
 
     exact: str
     prefix: str = ""
@@ -62,7 +65,30 @@ class SearchResultContextRefOut(BaseModel):
     """Backend-owned context reference for model retrieval and citations."""
 
     type: SEARCH_RESULT_TYPES
-    id: UUID
+    id: UUID | str
+    evidence_span_ids: list[UUID] = Field(default_factory=list)
+
+    @model_serializer
+    def serialize(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"type": self.type, "id": str(self.id)}
+        if self.evidence_span_ids:
+            payload["evidence_span_ids"] = [
+                str(evidence_span_id) for evidence_span_id in self.evidence_span_ids
+            ]
+        return payload
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchResultResolverOut(BaseModel):
+    """Backend-owned reader locator for evidence-backed results."""
+
+    kind: Literal["web", "epub", "pdf", "transcript"]
+    route: str
+    params: dict[str, str]
+    status: str
+    selector: dict[str, Any]
+    highlight: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -105,7 +131,7 @@ class SearchResultPodcastOut(BaseModel):
     id: UUID
     score: float
     snippet: str
-    author: str | None = None
+    contributors: list[ContributorCreditOut] = Field(default_factory=list)
     title: str
     source_label: str | None = None
     media_id: UUID | None = None
@@ -116,16 +142,37 @@ class SearchResultPodcastOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultFragmentOut(BaseModel):
-    """V2 typed search result for fragment text hits."""
+class SearchResultContentChunkOut(BaseModel):
+    """Typed search result for indexed document evidence."""
 
-    type: Literal["fragment"]
+    type: Literal["content_chunk"]
     id: UUID
     score: float
     snippet: str
-    fragment_idx: int
-    section_id: str | None = None
+    source_kind: str
+    evidence_span_ids: list[UUID] = Field(default_factory=list)
     source: SearchResultSourceOut
+    title: str
+    source_label: str | None = None
+    media_id: UUID | None = None
+    media_kind: str | None = None
+    deep_link: str
+    citation_label: str
+    resolver: SearchResultResolverOut
+    context_ref: SearchResultContextRefOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchResultContributorOut(BaseModel):
+    """Typed search result for contributor identity hits."""
+
+    type: Literal["contributor"]
+    id: str
+    score: float
+    snippet: str
+    contributor_handle: str
+    contributor: ContributorOut
     title: str
     source_label: str | None = None
     media_id: UUID | None = None
@@ -136,20 +183,34 @@ class SearchResultFragmentOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultAnnotationOut(BaseModel):
-    """V2 typed search result for annotation-body hits."""
+class SearchResultNoteBlockOut(BaseModel):
+    """Typed search result for note-block body hits."""
 
-    type: Literal["annotation"]
+    type: Literal["note_block"]
     id: UUID
     score: float
     snippet: str
-    highlight_id: UUID
-    fragment_id: UUID
-    fragment_idx: int
-    section_id: str | None = None
-    annotation_body: str
-    highlight: SearchResultHighlightOut
-    source: SearchResultSourceOut
+    page_id: UUID
+    page_title: str
+    body_text: str
+    title: str
+    source_label: str | None = None
+    media_id: UUID | None = None
+    media_kind: str | None = None
+    deep_link: str
+    context_ref: SearchResultContextRefOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchResultPageOut(BaseModel):
+    """Typed search result for note pages."""
+
+    type: Literal["page"]
+    id: UUID
+    score: float
+    snippet: str
+    description: str | None = None
     title: str
     source_label: str | None = None
     media_id: UUID | None = None
@@ -179,33 +240,14 @@ class SearchResultMessageOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultTranscriptChunkOut(BaseModel):
-    """Typed search result for semantic transcript chunk hits."""
-
-    type: Literal["transcript_chunk"]
-    id: UUID
-    score: float
-    snippet: str
-    t_start_ms: int
-    t_end_ms: int
-    source: SearchResultSourceOut
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
-    deep_link: str
-    context_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
-
-
 SearchResultOut = Annotated[
     SearchResultMediaOut
     | SearchResultPodcastOut
-    | SearchResultFragmentOut
-    | SearchResultAnnotationOut
-    | SearchResultMessageOut
-    | SearchResultTranscriptChunkOut,
+    | SearchResultContentChunkOut
+    | SearchResultContributorOut
+    | SearchResultPageOut
+    | SearchResultNoteBlockOut
+    | SearchResultMessageOut,
     Field(discriminator="type"),
 ]
 

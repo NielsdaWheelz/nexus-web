@@ -10,6 +10,7 @@ import { apiFetch } from "@/lib/api/client";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
+import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ActionMenu from "@/components/ui/ActionMenu";
 import SectionCard from "@/components/ui/SectionCard";
 import {
@@ -604,13 +605,8 @@ export default function PodcastsPaneBody() {
                     description={
                       <span className={styles.rowDescription}>
                         <span className={styles.rowSummary}>
-                          {row.podcast.description?.trim() ||
-                            row.podcast.author ||
-                            "No summary from source."}
+                          {row.podcast.description?.trim() || "No summary from source."}
                         </span>
-                        {row.podcast.author ? (
-                          <span className={styles.rowAuthor}>{row.podcast.author}</span>
-                        ) : null}
                       </span>
                     }
                     meta={
@@ -651,6 +647,15 @@ export default function PodcastsPaneBody() {
                           </span>
                         ) : null}
                       </span>
+                    }
+                    actions={
+                      row.podcast.contributors.length > 0 ? (
+                        <ContributorCreditList
+                          credits={row.podcast.contributors}
+                          className={styles.rowAuthor}
+                          maxVisible={2}
+                        />
+                      ) : undefined
                     }
                     options={podcastResourceOptions({
                       canUsePodcastActions: true,

@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from uuid import UUID
 
 from llm_calling.types import Turn
 
 from nexus.errors import ApiError, ApiErrorCode
 
 APP_SEARCH_QUERY_MAX_CHARS = 512
-APP_SEARCH_TYPES_ALL = ("media", "podcast", "fragment", "annotation", "message", "transcript_chunk")
-APP_SEARCH_TYPES_SCOPED = ("media", "podcast", "fragment", "annotation", "transcript_chunk")
+APP_SEARCH_TYPES_ALL = ("media", "podcast", "content_chunk", "contributor", "note_block", "message")
+APP_SEARCH_TYPES_SCOPED = ("content_chunk",)
 
 _SHORT_NON_SEARCH_MESSAGES = {
     "hi",
@@ -36,7 +37,6 @@ _APP_SEARCH_CUE_TERMS = (
     "saved",
     "library",
     "highlight",
-    "annotation",
     "note",
     "notes",
     "fragment",
@@ -95,6 +95,7 @@ class AppSearchPlan:
     scope: str
     types: tuple[str, ...]
     semantic: bool
+    filters: Mapping[str, object]
     reason: str
 
 
@@ -131,6 +132,7 @@ def build_retrieval_plan(
     app_scope = app_search_scope_for_conversation(scope_metadata)
     scope_type = str(scope_metadata.get("type") or "general")
     has_user_context = bool(attached_context_refs)
+    app_filters = _app_search_filters_for_context(scope_metadata, attached_context_refs)
     normalized = " ".join(user_content.lower().split())
     app_enabled = _should_run_app_search(
         normalized,
@@ -156,6 +158,7 @@ def build_retrieval_plan(
         if scope_type in {"media", "library"}
         else APP_SEARCH_TYPES_ALL,
         semantic=True,
+        filters=app_filters,
         reason=app_reason,
     )
 
@@ -188,6 +191,52 @@ def app_search_scope_for_conversation(scope_metadata: Mapping[str, object]) -> s
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid library conversation scope")
         return f"library:{library_id}"
     raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid conversation scope")
+
+
+def _app_search_filters_for_context(
+    scope_metadata: Mapping[str, object],
+    attached_context_refs: Sequence[Mapping[str, object]],
+) -> Mapping[str, object]:
+    contributor_handles: list[str] = []
+    roles: list[str] = []
+    content_kinds: list[str] = []
+
+    for ref in attached_context_refs:
+        if ref.get("type") != "contributor":
+            continue
+        handle = _contributor_handle_from_ref(ref)
+        if handle:
+            contributor_handles.append(handle)
+
+    for key, target in (("roles", roles), ("content_kinds", content_kinds)):
+        raw_values = scope_metadata.get(key)
+        if isinstance(raw_values, str):
+            values = [raw_values]
+        elif isinstance(raw_values, Sequence):
+            values = list(raw_values)
+        else:
+            values = []
+        seen_values: set[str] = set()
+        for raw_value in values:
+            value = str(raw_value or "").strip()
+            if not value or value in seen_values:
+                continue
+            target.append(value)
+            seen_values.add(value)
+
+    seen_handles: set[str] = set()
+    deduped_handles: list[str] = []
+    for handle in contributor_handles:
+        if handle in seen_handles:
+            continue
+        deduped_handles.append(handle)
+        seen_handles.add(handle)
+
+    return {
+        "contributor_handles": deduped_handles,
+        "roles": roles,
+        "content_kinds": content_kinds,
+    }
 
 
 def build_app_search_query(
@@ -326,7 +375,27 @@ def _source_ref_identity(source_ref: Mapping[str, object]) -> str | None:
     context_ref = source_ref.get("context_ref")
     if isinstance(context_ref, Mapping):
         ref_type = context_ref.get("type")
-        ref_id = context_ref.get("id")
+        ref_id = (
+            _contributor_handle_from_ref(context_ref)
+            if ref_type == "contributor"
+            else context_ref.get("id")
+        )
         if isinstance(ref_type, str) and isinstance(ref_id, str):
             return f"{ref_type}:{ref_id}"
+    return None
+
+
+def _contributor_handle_from_ref(ref: Mapping[str, object]) -> str | None:
+    for key in ("contributor_handle", "handle"):
+        value = ref.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    value = ref.get("id")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    try:
+        UUID(text)
+    except ValueError:
+        return text
     return None

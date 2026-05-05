@@ -10,10 +10,11 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from nexus.db.models import FailureStage, Media, MediaAuthor, ProcessingStatus
+from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
+from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.epub_ingest import (
     EpubExtractionError,
     EpubExtractionResult,
@@ -163,19 +164,22 @@ def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
 
 
 def _persist_epub_metadata(db: Session, media: Media, result: EpubExtractionResult) -> None:
-    """Persist EPUB OPF metadata to media and media_authors."""
-    if result.creators:
-        for i, name in enumerate(result.creators):
-            name = name.strip() if name else ""
-            if name:
-                db.add(
-                    MediaAuthor(
-                        media_id=media.id,
-                        name=name[:255],
-                        role="author",
-                        sort_order=i,
-                    )
-                )
+    """Persist EPUB OPF metadata to media and contributor credits."""
+    replace_media_contributor_credits(
+        db,
+        media_id=media.id,
+        source="epub_opf",
+        credits=[
+            {
+                "name": name.strip()[:255],
+                "role": "author",
+                "ordinal": i,
+                "source": "epub_opf",
+            }
+            for i, name in enumerate(result.creators or [])
+            if name and name.strip()
+        ],
+    )
 
     if result.publisher and not media.publisher:
         media.publisher = result.publisher[:255]

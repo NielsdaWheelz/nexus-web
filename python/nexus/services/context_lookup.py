@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -11,10 +12,15 @@ from xml.sax.saxutils import escape as xml_escape
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_conversation, can_read_media
-from nexus.db.models import Annotation, Highlight, MessageContext, MessageRetrieval
+from nexus.auth.permissions import can_read_conversation, can_read_highlight, can_read_media
+from nexus.db.models import Contributor, MessageContextItem, MessageRetrieval
+from nexus.errors import NotFoundError
 from nexus.schemas.conversation import MessageContextRef
+from nexus.schemas.notes import ObjectRef
 from nexus.services.context_rendering import render_context_blocks
+from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
+from nexus.services.contributors import get_contributor_by_handle, get_contributor_by_id
+from nexus.services.object_refs import render_object_context
 from nexus.services.prompt_budget import estimate_tokens
 from nexus.services.quote_context_errors import QuoteContextBlockingError
 
@@ -30,11 +36,12 @@ LookupFailureCode = Literal[
 SUPPORTED_CONTEXT_REF_TYPES = {
     "media",
     "highlight",
-    "annotation",
-    "fragment",
-    "transcript_chunk",
+    "page",
+    "note_block",
+    "content_chunk",
     "message",
     "podcast",
+    "contributor",
     "web_result",
 }
 SUPPORTED_SOURCE_REF_TYPES = {
@@ -90,7 +97,7 @@ def hydrate_context_ref(
     source_ref = {"type": "app_context_ref", "context_ref": dict(context_ref)}
     if not isinstance(context_type, str) or context_type not in SUPPORTED_CONTEXT_REF_TYPES:
         return _failed(source_ref, context_ref, "unsupported", "Unsupported context_ref type")
-    if context_type != "web_result" and context_id is None:
+    if context_type not in {"web_result", "contributor"} and context_id is None:
         return _failed(source_ref, context_ref, "invalid", "context_ref id is invalid")
 
     if context_type == "media":
@@ -113,31 +120,43 @@ def hydrate_context_ref(
         )
         return _resolve_text_result(source_ref, context_ref, text_block, max_chars=max_chars)
 
-    if context_type == "annotation":
-        assert context_id is not None
-        if not _can_read_annotation(db, viewer_id, context_id):
-            return _failed(source_ref, context_ref, "forbidden", "Context not readable")
-        text_block = _render_message_context_ref(
-            db,
-            MessageContextRef(type="annotation", id=context_id),
-        )
-        return _resolve_text_result(source_ref, context_ref, text_block, max_chars=max_chars)
-
-    if context_type == "fragment":
+    if context_type == "page":
         assert context_id is not None
         return _resolve_text_result(
             source_ref,
             context_ref,
-            _render_fragment_context(db, viewer_id, context_id),
+            render_object_context(
+                db,
+                viewer_id,
+                ObjectRef(object_type="page", object_id=context_id),
+            ),
             max_chars=max_chars,
         )
 
-    if context_type == "transcript_chunk":
+    if context_type == "note_block":
         assert context_id is not None
         return _resolve_text_result(
             source_ref,
             context_ref,
-            _render_transcript_chunk_context(db, viewer_id, context_id),
+            render_object_context(
+                db,
+                viewer_id,
+                ObjectRef(object_type="note_block", object_id=context_id),
+            ),
+            max_chars=max_chars,
+        )
+
+    if context_type == "content_chunk":
+        assert context_id is not None
+        return _resolve_text_result(
+            source_ref,
+            context_ref,
+            _render_content_chunk_context(
+                db,
+                viewer_id,
+                context_id,
+                _evidence_span_ids_from_context_ref(context_ref),
+            ),
             max_chars=max_chars,
         )
 
@@ -156,6 +175,33 @@ def hydrate_context_ref(
             source_ref,
             context_ref,
             _render_podcast_context(db, viewer_id, context_id),
+            max_chars=max_chars,
+        )
+
+    if context_type == "contributor":
+        rendered_contributor = _render_contributor_context(
+            db,
+            viewer_id,
+            context_ref.get("contributor_handle")
+            or context_ref.get("handle")
+            or context_ref.get("id"),
+        )
+        if isinstance(rendered_contributor, ContextLookupFailure):
+            return _failed(
+                source_ref,
+                context_ref,
+                rendered_contributor.code,
+                rendered_contributor.message,
+            )
+        contributor_handle, text_block = rendered_contributor
+        return _resolve_text_result(
+            source_ref,
+            {
+                "type": "contributor",
+                "id": contributor_handle,
+                "contributor_handle": contributor_handle,
+            },
+            text_block,
             max_chars=max_chars,
         )
 
@@ -279,11 +325,38 @@ def _hydrate_message_retrieval(
     tool_call = retrieval.tool_call
     if tool_call is None or not can_read_conversation(db, viewer_id, tool_call.conversation_id):
         return _failed(source_ref, None, "forbidden", "Retrieval not readable")
+    if retrieval.result_ref.get("status") in {"no_indexed_evidence", "no_results"}:
+        return _resolved(
+            source_ref,
+            retrieval.context_ref,
+            _render_app_search_status(retrieval.result_ref),
+            max_chars=max_chars,
+            citations=(retrieval.result_ref,),
+        )
     if retrieval.result_type == "web_result":
         return _resolved(
             source_ref,
             retrieval.context_ref,
             _render_web_result(retrieval.result_ref),
+            max_chars=max_chars,
+            citations=(retrieval.result_ref,),
+        )
+    if retrieval.evidence_span_id is not None:
+        text_block = _render_evidence_span_context(
+            db,
+            viewer_id,
+            retrieval.evidence_span_id,
+            index_run_id=_index_run_id_from_content_chunk_context_ref(db, retrieval.context_ref),
+        )
+        if isinstance(text_block, ContextLookupFailure):
+            return _failed(source_ref, retrieval.context_ref, text_block.code, text_block.message)
+        return _resolved(
+            source_ref,
+            _context_ref_with_evidence_span_id(
+                retrieval.context_ref,
+                retrieval.evidence_span_id,
+            ),
+            text_block,
             max_chars=max_chars,
             citations=(retrieval.result_ref,),
         )
@@ -302,19 +375,34 @@ def _context_ref_from_message_context(
     context_row_id: UUID,
 ) -> dict[str, object] | None:
     row = db.execute(
-        select(MessageContext).where(MessageContext.id == context_row_id)
+        select(MessageContextItem).where(MessageContextItem.id == context_row_id)
     ).scalar_one_or_none()
     if row is None or row.message is None:
         return None
     if not can_read_conversation(db, viewer_id, row.message.conversation_id):
         return None
-    if row.target_type == "media" and row.media_id is not None:
-        return {"type": "media", "id": str(row.media_id)}
-    if row.target_type == "highlight" and row.highlight_id is not None:
-        return {"type": "highlight", "id": str(row.highlight_id)}
-    if row.target_type == "annotation" and row.annotation_id is not None:
-        return {"type": "annotation", "id": str(row.annotation_id)}
-    return None
+    if row.object_type == "contributor":
+        contributor_handle = db.scalar(
+            select(Contributor.handle).where(
+                Contributor.id == row.object_id,
+                Contributor.status.in_(("unverified", "verified")),
+            )
+        )
+        if contributor_handle is None:
+            return None
+        return {
+            "type": "contributor",
+            "id": contributor_handle,
+            "contributor_handle": contributor_handle,
+        }
+    context_ref: dict[str, object] = {"type": row.object_type, "id": str(row.object_id)}
+    if row.object_type == "content_chunk":
+        evidence_span_ids = _evidence_span_ids_from_context_ref(row.context_snapshot_json)
+        if evidence_span_ids:
+            context_ref["evidence_span_ids"] = [
+                str(evidence_span_id) for evidence_span_id in evidence_span_ids
+            ]
+    return context_ref
 
 
 def _resolve_text_result(
@@ -395,116 +483,198 @@ def _with_source_ref(
     )
 
 
+def _context_ref_with_evidence_span_id(
+    context_ref: Mapping[str, object],
+    evidence_span_id: UUID,
+) -> dict[str, object]:
+    next_ref = dict(context_ref)
+    evidence_span_ids = _evidence_span_ids_from_context_ref(next_ref)
+    if evidence_span_id not in evidence_span_ids:
+        evidence_span_ids.append(evidence_span_id)
+    next_ref["evidence_span_ids"] = [str(span_id) for span_id in evidence_span_ids]
+    return next_ref
+
+
 def _can_read_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> bool:
-    highlight = db.get(Highlight, highlight_id)
-    media_id = _highlight_anchor_media_id(highlight) if highlight is not None else None
-    return media_id is not None and can_read_media(db, viewer_id, media_id)
+    return can_read_highlight(db, viewer_id, highlight_id)
 
 
-def _can_read_annotation(db: Session, viewer_id: UUID, annotation_id: UUID) -> bool:
-    annotation = db.get(Annotation, annotation_id)
-    highlight = annotation.highlight if annotation is not None else None
-    media_id = _highlight_anchor_media_id(highlight) if highlight is not None else None
-    return media_id is not None and can_read_media(db, viewer_id, media_id)
-
-
-def _highlight_anchor_media_id(highlight: Highlight | None) -> UUID | None:
-    if highlight is None or highlight.anchor_media_id is None:
-        return None
-    if highlight.anchor_kind == "fragment_offsets":
-        fragment_anchor = highlight.fragment_anchor
-        fragment = fragment_anchor.fragment if fragment_anchor is not None else None
-        if fragment is not None and fragment.media_id == highlight.anchor_media_id:
-            return highlight.anchor_media_id
-        return None
-    if highlight.anchor_kind == "pdf_page_geometry":
-        pdf_anchor = highlight.pdf_anchor
-        if pdf_anchor is not None and pdf_anchor.media_id == highlight.anchor_media_id:
-            return highlight.anchor_media_id
-        return None
-    return None
-
-
-def _render_fragment_context(
-    db: Session,
-    viewer_id: UUID,
-    fragment_id: UUID,
-) -> str | ContextLookupFailure:
-    row = db.execute(
-        text(
-            """
-            SELECT
-                f.media_id,
-                f.canonical_text,
-                f.t_start_ms,
-                f.speaker_label,
-                m.title,
-                m.canonical_source_url
-            FROM fragments f
-            JOIN media m ON m.id = f.media_id
-            WHERE f.id = :fragment_id
-            """
-        ),
-        {"fragment_id": fragment_id},
-    ).fetchone()
-    if row is None:
-        return ContextLookupFailure(code="not_found", message="Fragment not found")
-    if not can_read_media(db, viewer_id, row[0]):
-        return ContextLookupFailure(code="forbidden", message="Fragment not readable")
-
-    lines = ['<context_lookup_result type="fragment">', f"<source>{xml_escape(row[4])}</source>"]
-    if row[5]:
-        lines.append(f"<url>{xml_escape(row[5])}</url>")
-    timestamp = _format_timestamp_ms(row[2])
-    if timestamp:
-        lines.append(f"<timestamp>{timestamp}</timestamp>")
-    if row[3]:
-        lines.append(f"<speaker>{xml_escape(row[3])}</speaker>")
-    lines.append(f"<excerpt>{xml_escape(row[1] or '')}</excerpt>")
-    lines.append("</context_lookup_result>")
-    return "\n".join(lines)
-
-
-def _render_transcript_chunk_context(
+def _render_content_chunk_context(
     db: Session,
     viewer_id: UUID,
     chunk_id: UUID,
+    evidence_span_ids: Sequence[UUID] = (),
 ) -> str | ContextLookupFailure:
+    if evidence_span_ids:
+        return _render_content_chunk_evidence_spans(
+            db,
+            viewer_id,
+            chunk_id,
+            evidence_span_ids,
+        )
+
     row = db.execute(
         text(
             """
             SELECT
-                tc.media_id,
-                tc.chunk_text,
-                tc.t_start_ms,
-                tc.t_end_ms,
+                cc.media_id,
+                cc.chunk_text,
+                cc.summary_locator,
+                cc.source_kind,
                 m.title,
                 m.canonical_source_url
-            FROM content_chunks tc
-            JOIN media m ON m.id = tc.media_id
-            WHERE tc.id = :chunk_id
-              AND tc.source_kind = 'transcript'
+            FROM content_chunks cc
+            JOIN media m ON m.id = cc.media_id
+            WHERE cc.id = :chunk_id
             """
         ),
         {"chunk_id": chunk_id},
     ).fetchone()
     if row is None:
-        return ContextLookupFailure(code="not_found", message="Transcript chunk not found")
+        return ContextLookupFailure(code="not_found", message="Content chunk not found")
     if not can_read_media(db, viewer_id, row[0]):
-        return ContextLookupFailure(code="forbidden", message="Transcript chunk not readable")
+        return ContextLookupFailure(code="forbidden", message="Content chunk not readable")
 
     lines = [
-        '<context_lookup_result type="transcript_chunk">',
+        '<context_lookup_result type="content_chunk">',
         f"<source>{xml_escape(row[4])}</source>",
     ]
     if row[5]:
         lines.append(f"<url>{xml_escape(row[5])}</url>")
-    timestamp = _format_timestamp_ms(row[2])
+    locator = dict(row[2] or {})
+    timestamp = _format_timestamp_ms(locator.get("t_start_ms"))
     if timestamp:
         lines.append(f"<timestamp>{timestamp}</timestamp>")
+    if row[3]:
+        lines.append(f"<source_kind>{xml_escape(str(row[3]))}</source_kind>")
     lines.append(f"<excerpt>{xml_escape(row[1] or '')}</excerpt>")
     lines.append("</context_lookup_result>")
     return "\n".join(lines)
+
+
+def _render_content_chunk_evidence_spans(
+    db: Session,
+    viewer_id: UUID,
+    chunk_id: UUID,
+    evidence_span_ids: Sequence[UUID],
+) -> str | ContextLookupFailure:
+    lines: list[str] = []
+    seen: set[UUID] = set()
+    media_id: UUID | None = None
+    for evidence_span_id in evidence_span_ids:
+        if evidence_span_id in seen:
+            continue
+        seen.add(evidence_span_id)
+        row = db.execute(
+            text(
+                """
+                SELECT
+                    cc.media_id,
+                    cc.source_kind,
+                    m.title,
+                    m.canonical_source_url,
+                    es.id,
+                    es.citation_label,
+                    es.span_text
+                FROM content_chunks cc
+                JOIN evidence_spans es ON es.id = :evidence_span_id
+                    AND es.media_id = cc.media_id
+                    AND es.index_run_id = cc.index_run_id
+                JOIN media m ON m.id = cc.media_id
+                WHERE cc.id = :chunk_id
+                """
+            ),
+            {"chunk_id": chunk_id, "evidence_span_id": evidence_span_id},
+        ).fetchone()
+        if row is None:
+            continue
+        if media_id is None:
+            media_id = row[0]
+            if not can_read_media(db, viewer_id, media_id):
+                return ContextLookupFailure(code="forbidden", message="Content chunk not readable")
+            lines.extend(
+                [
+                    '<context_lookup_result type="content_chunk">',
+                    f"<source>{xml_escape(row[2])}</source>",
+                ]
+            )
+            if row[3]:
+                lines.append(f"<url>{xml_escape(row[3])}</url>")
+            if row[1]:
+                lines.append(f"<source_kind>{xml_escape(str(row[1]))}</source_kind>")
+        lines.append(f"<evidence_span_id>{row[4]}</evidence_span_id>")
+        lines.append(f"<citation_label>{xml_escape(row[5])}</citation_label>")
+        lines.append(f"<evidence_span>{xml_escape(row[6] or '')}</evidence_span>")
+
+    if not lines:
+        return ContextLookupFailure(code="not_found", message="Evidence span not found")
+    lines.append("</context_lookup_result>")
+    return "\n".join(lines)
+
+
+def _render_evidence_span_context(
+    db: Session,
+    viewer_id: UUID,
+    evidence_span_id: UUID,
+    *,
+    index_run_id: UUID | None = None,
+) -> str | ContextLookupFailure:
+    run_filter = ""
+    params = {"evidence_span_id": evidence_span_id}
+    if index_run_id is not None:
+        run_filter = "AND es.index_run_id = :index_run_id"
+        params["index_run_id"] = index_run_id
+
+    row = db.execute(
+        text(
+            f"""
+            SELECT
+                es.media_id,
+                es.span_text,
+                es.citation_label,
+                es.resolver_kind,
+                m.title,
+                m.canonical_source_url
+            FROM evidence_spans es
+            JOIN media m ON m.id = es.media_id
+            WHERE es.id = :evidence_span_id
+              {run_filter}
+            """
+        ),
+        params,
+    ).fetchone()
+    if row is None:
+        return ContextLookupFailure(code="not_found", message="Evidence span not found")
+    if not can_read_media(db, viewer_id, row[0]):
+        return ContextLookupFailure(code="forbidden", message="Evidence span not readable")
+
+    lines = [
+        '<context_lookup_result type="evidence_span">',
+        f"<source>{xml_escape(row[4])}</source>",
+        f"<evidence_span_id>{evidence_span_id}</evidence_span_id>",
+        f"<citation_label>{xml_escape(row[2])}</citation_label>",
+        f"<source_kind>{xml_escape(row[3])}</source_kind>",
+    ]
+    if row[5]:
+        lines.append(f"<url>{xml_escape(row[5])}</url>")
+    lines.append(f"<excerpt>{xml_escape(row[1] or '')}</excerpt>")
+    lines.append("</context_lookup_result>")
+    return "\n".join(lines)
+
+
+def _index_run_id_from_content_chunk_context_ref(
+    db: Session,
+    context_ref: Mapping[str, object],
+) -> UUID | None:
+    if context_ref.get("type") != "content_chunk":
+        return None
+    chunk_id = _parse_uuid(context_ref.get("id"))
+    if chunk_id is None:
+        return None
+    return db.execute(
+        text("SELECT index_run_id FROM content_chunks WHERE id = :chunk_id"),
+        {"chunk_id": chunk_id},
+    ).scalar_one_or_none()
 
 
 def _render_message_context(
@@ -548,7 +718,7 @@ def _render_podcast_context(
     row = db.execute(
         text(
             """
-            SELECT p.title, p.author, p.description, p.website_url
+            SELECT p.title, p.description, p.website_url
             FROM podcasts p
             WHERE p.id = :podcast_id
               AND (
@@ -575,14 +745,63 @@ def _render_podcast_context(
         return ContextLookupFailure(code="not_found", message="Podcast not found")
 
     lines = ['<context_lookup_result type="podcast">', f"<source>{xml_escape(row[0])}</source>"]
-    if row[1]:
-        lines.append(f"<author>{xml_escape(row[1])}</author>")
-    if row[3]:
-        lines.append(f"<url>{xml_escape(row[3])}</url>")
+    contributors = load_contributor_credits_for_podcasts(db, [podcast_id]).get(podcast_id, [])
+    if contributors:
+        lines.append("<contributors>")
+        for contributor in contributors:
+            lines.append(
+                f'<contributor role="{xml_escape(contributor.role)}">'
+                f"{xml_escape(contributor.credited_name)}</contributor>"
+            )
+        lines.append("</contributors>")
     if row[2]:
-        lines.append(f"<description>{xml_escape(row[2])}</description>")
+        lines.append(f"<url>{xml_escape(row[2])}</url>")
+    if row[1]:
+        lines.append(f"<description>{xml_escape(row[1])}</description>")
     lines.append("</context_lookup_result>")
     return "\n".join(lines)
+
+
+def _render_contributor_context(
+    db: Session, viewer_id: UUID, contributor_ref: object
+) -> tuple[str, str] | ContextLookupFailure:
+    ref_text = str(contributor_ref or "").strip()
+    if not ref_text:
+        return ContextLookupFailure(code="invalid", message="Contributor handle is invalid")
+    contributor_id = _parse_uuid(ref_text)
+    if contributor_id is not None:
+        try:
+            contributor = get_contributor_by_id(db, contributor_id, viewer_id=viewer_id)
+        except NotFoundError:
+            return ContextLookupFailure(code="not_found", message="Contributor not found")
+    else:
+        try:
+            contributor = get_contributor_by_handle(db, ref_text, viewer_id=viewer_id)
+        except NotFoundError:
+            return ContextLookupFailure(code="not_found", message="Contributor not found")
+
+    handle = contributor.handle
+    lines = [
+        '<context_lookup_result type="contributor">',
+        f"<contributor_handle>{xml_escape(handle)}</contributor_handle>",
+        f"<display_name>{xml_escape(contributor.display_name)}</display_name>",
+    ]
+    if contributor.sort_name:
+        lines.append(f"<sort_name>{xml_escape(contributor.sort_name)}</sort_name>")
+    if contributor.kind:
+        lines.append(f"<kind>{xml_escape(contributor.kind)}</kind>")
+    if contributor.disambiguation:
+        lines.append(f"<disambiguation>{xml_escape(contributor.disambiguation)}</disambiguation>")
+    lines.append("</context_lookup_result>")
+    return handle, "\n".join(lines)
+
+
+def _render_app_search_status(result_ref: Mapping[str, object]) -> str:
+    return (
+        f'<app_search_results status="{xml_escape(str(result_ref.get("status") or "no_results"))}" '
+        f'scope="{xml_escape(str(result_ref.get("scope") or "all"))}" '
+        f'filters="{xml_escape(json.dumps(result_ref.get("filters") or {}, sort_keys=True))}" />'
+    )
 
 
 def _render_web_result(result_ref: Mapping[str, object]) -> str:
@@ -619,6 +838,32 @@ def _format_timestamp_ms(timestamp_ms: int | None) -> str | None:
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _evidence_span_ids_from_context_ref(context_ref: Mapping[str, object]) -> list[UUID]:
+    raw_values = context_ref.get("evidence_span_ids")
+    if raw_values is None:
+        raw_values = context_ref.get("evidenceSpanIds")
+    if raw_values is None:
+        raw_values = context_ref.get("evidence_span_id")
+    if raw_values is None:
+        raw_values = context_ref.get("evidenceSpanId")
+    if isinstance(raw_values, str):
+        values = [raw_values]
+    elif isinstance(raw_values, Sequence) and not isinstance(raw_values, (str, bytes)):
+        values = list(raw_values)
+    else:
+        values = []
+
+    evidence_span_ids: list[UUID] = []
+    seen: set[UUID] = set()
+    for value in values:
+        evidence_span_id = _parse_uuid(value)
+        if evidence_span_id is None or evidence_span_id in seen:
+            continue
+        seen.add(evidence_span_id)
+        evidence_span_ids.append(evidence_span_id)
+    return evidence_span_ids
 
 
 def _parse_uuid(value: Any) -> UUID | None:

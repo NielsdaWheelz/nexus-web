@@ -1,5 +1,6 @@
 """Persistence tests for assistant app-search tool metadata."""
 
+from typing import get_args
 from uuid import uuid4
 
 import pytest
@@ -8,12 +9,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
+    AppSearchResultType,
     AssistantMessageClaim,
     AssistantMessageClaimEvidence,
     AssistantMessageEvidenceSummary,
     MessageRetrieval,
     MessageToolCall,
 )
+from nexus.schemas.conversation import APP_SEARCH_RESULT_TYPES
 from tests.factories import create_test_conversation, create_test_message
 from tests.helpers import create_test_user_id
 
@@ -42,6 +45,15 @@ def _create_message_pair(session: Session) -> tuple:
     return conversation_id, user_message_id, assistant_message_id
 
 
+def test_message_retrieval_result_type_enum_matches_response_contract():
+    orm_types = {result_type.value for result_type in AppSearchResultType}
+    schema_types = set(get_args(APP_SEARCH_RESULT_TYPES))
+
+    assert orm_types == schema_types
+    assert "contributor" in orm_types
+    assert "annotation" not in orm_types
+
+
 def test_message_tool_call_and_retrieval_round_trip(db_session: Session):
     conversation_id, user_message_id, assistant_message_id = _create_message_pair(db_session)
     source_id = str(uuid4())
@@ -54,20 +66,20 @@ def test_message_tool_call_and_retrieval_round_trip(db_session: Session):
         tool_call_index=0,
         query_hash="sha256:memory",
         scope="all",
-        requested_types=["media", "transcript_chunk"],
+        requested_types=["media", "content_chunk"],
         semantic=True,
-        result_refs=[{"type": "transcript_chunk", "id": source_id}],
-        selected_context_refs=[{"type": "transcript_chunk", "id": source_id}],
+        result_refs=[{"type": "content_chunk", "id": source_id}],
+        selected_context_refs=[{"type": "content_chunk", "id": source_id}],
         provider_request_ids=["req_123"],
         latency_ms=42,
         status="complete",
         retrievals=[
             MessageRetrieval(
                 ordinal=0,
-                result_type="transcript_chunk",
+                result_type="content_chunk",
                 source_id=source_id,
-                context_ref={"type": "transcript_chunk", "id": source_id},
-                result_ref={"type": "transcript_chunk", "id": source_id, "rank": 0},
+                context_ref={"type": "content_chunk", "id": source_id},
+                result_ref={"type": "content_chunk", "id": source_id, "rank": 0},
                 deep_link=f"/media/{source_id}?t=12",
                 score=0.91,
                 selected=True,
@@ -85,11 +97,11 @@ def test_message_tool_call_and_retrieval_round_trip(db_session: Session):
     assert persisted is not None
     assert persisted.tool_name == "app_search"
     assert persisted.query_hash == "sha256:memory"
-    assert persisted.requested_types == ["media", "transcript_chunk"]
-    assert persisted.selected_context_refs == [{"type": "transcript_chunk", "id": source_id}]
+    assert persisted.requested_types == ["media", "content_chunk"]
+    assert persisted.selected_context_refs == [{"type": "content_chunk", "id": source_id}]
     assert len(persisted.retrievals) == 1
-    assert persisted.retrievals[0].result_type == "transcript_chunk"
-    assert persisted.retrievals[0].context_ref == {"type": "transcript_chunk", "id": source_id}
+    assert persisted.retrievals[0].result_type == "content_chunk"
+    assert persisted.retrievals[0].context_ref == {"type": "content_chunk", "id": source_id}
     assert persisted.retrievals[0].selected is True
     assert persisted.retrievals[0].exact_snippet == "A retrieved transcript excerpt."
     assert persisted.retrievals[0].retrieval_status == "included_in_prompt"

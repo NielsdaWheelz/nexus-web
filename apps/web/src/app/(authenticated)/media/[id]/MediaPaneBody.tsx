@@ -14,6 +14,7 @@ import PdfReader, {
   type PdfHighlightOut,
   type PdfReaderControlActions,
   type PdfReaderControlsState,
+  type PdfTemporaryHighlight,
 } from "@/components/PdfReader";
 import SelectionPopover from "@/components/SelectionPopover";
 import { apiFetch, isApiError } from "@/lib/api/client";
@@ -105,15 +106,11 @@ import {
   createHighlight,
   updateHighlight,
   deleteHighlight,
-  saveAnnotation,
-  deleteAnnotation,
 } from "./mediaHighlights";
-import {
-  buildCompactMediaPaneTitle,
-  formatMediaAuthors,
-  formatResumeTime,
-  type MediaAuthor,
-} from "./mediaFormatting";
+import { createNoteBlock, deleteNoteBlock, updateNoteBlock } from "@/lib/notes/api";
+import ContributorCreditList from "@/components/contributors/ContributorCreditList";
+import type { ContributorCredit } from "@/lib/contributors/types";
+import { buildCompactMediaPaneTitle, formatResumeTime } from "./mediaFormatting";
 import {
   type NavigationTocNodeLike,
   buildEpubLocationHref,
@@ -136,6 +133,8 @@ interface Media {
   processing_status: string;
   transcript_state?: TranscriptState;
   transcript_coverage?: TranscriptCoverage;
+  retrieval_status?: string | null;
+  retrieval_status_reason?: string | null;
   capabilities?: {
     can_read: boolean;
     can_highlight: boolean;
@@ -148,7 +147,7 @@ interface Media {
   };
   playback_source?: TranscriptPlaybackSource | null;
   chapters?: TranscriptChapter[];
-  authors: MediaAuthor[];
+  contributors: ContributorCredit[];
   published_date?: string | null;
   publisher?: string | null;
   language?: string | null;
@@ -188,6 +187,18 @@ interface PdfHighlightsPaneState {
   activePage: number;
   highlights: PdfHighlightOut[];
   version: number;
+}
+
+interface EvidenceResolutionResponse {
+  data: {
+    evidence_span_id: string;
+    resolver: {
+      kind: "web" | "epub" | "pdf" | "transcript";
+      params: Record<string, string>;
+      status: string;
+      highlight?: Record<string, unknown> | null;
+    };
+  };
 }
 
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
@@ -452,6 +463,27 @@ function findCanonicalOffsetFromQuote(
   }
 
   return bestOffset;
+}
+
+function parsePositivePageNumber(raw: string | null | undefined): number | null {
+  if (!raw || !/^\d+$/.test(raw)) return null;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : null;
+}
+
+function parseNonnegativeMs(raw: string | null | undefined): number | null {
+  if (!raw || !/^\d+$/.test(raw)) return null;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function textQuoteField(highlight: Record<string, unknown>, key: string): string | null {
+  const textQuote = highlight.text_quote;
+  if (typeof textQuote !== "object" || textQuote === null || Array.isArray(textQuote)) {
+    return null;
+  }
+  const value = (textQuote as Record<string, unknown>)[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function isCanonicalTextAnchorVisible(
@@ -772,10 +804,6 @@ function resolveInitialEpubRestoreRequest({
   return buildEmptyEpubRestoreRequest(sections[0].section_id, "default", null);
 }
 
-function buildHistoryEpubRestoreRequest(sectionId: string): EpubRestoreRequest {
-  return buildEmptyEpubRestoreRequest(sectionId, "history", null);
-}
-
 function buildManualSectionRestoreRequest(
   sectionId: string,
   anchorId: string | null = null
@@ -809,13 +837,10 @@ export default function MediaPaneBody() {
   const paneMobileChrome = usePaneMobileChromeController();
   const requestedFragmentId = searchParams.get("fragment");
   const requestedHighlightId = searchParams.get("highlight");
+  const requestedEvidenceId = searchParams.get("evidence");
   const requestedEpubLoc = searchParams.get("loc");
-  const requestedStartMs = (() => {
-    const raw = searchParams.get("t_start_ms");
-    if (!raw) return null;
-    const parsed = Number.parseInt(raw, 10);
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-  })();
+  const requestedPdfPageNumber = parsePositivePageNumber(searchParams.get("page"));
+  const requestedStartMs = parseNonnegativeMs(searchParams.get("t_start_ms"));
   const feedback = useFeedback();
   const isMobileViewport = useIsMobileViewport();
   const {
@@ -910,7 +935,63 @@ export default function MediaPaneBody() {
   const [pdfHighlightsPaneState, setPdfHighlightsPaneState] = useState<PdfHighlightsPaneState>(
     createEmptyPdfHighlightsPaneState
   );
+  const [resolvedEvidence, setResolvedEvidence] = useState<
+    EvidenceResolutionResponse["data"] | null
+  >(null);
   const [pdfRefreshToken, setPdfRefreshToken] = useState(0);
+
+  useEffect(() => {
+    if (!requestedEvidenceId) {
+      setResolvedEvidence(null);
+      return;
+    }
+
+    let cancelled = false;
+    void apiFetch<EvidenceResolutionResponse>(
+      `/api/media/${id}/evidence/${requestedEvidenceId}`
+    )
+      .then((response) => {
+        if (!cancelled) {
+          setResolvedEvidence(response.data);
+        }
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        setResolvedEvidence(null);
+        if (!isApiError(error) || error.status !== 404) {
+          feedback.show({ severity: "error", title: "Failed to resolve citation" });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [feedback, id, requestedEvidenceId]);
+
+  const resolvedEvidenceParams = resolvedEvidence?.resolver.params ?? null;
+  const resolvedEvidenceHighlight = resolvedEvidence?.resolver.highlight ?? null;
+  const resolvedEvidenceFragmentId =
+    typeof resolvedEvidenceParams?.fragment === "string"
+      ? resolvedEvidenceParams.fragment
+      : null;
+  const resolvedEvidenceEpubLoc =
+    typeof resolvedEvidenceParams?.loc === "string" ? resolvedEvidenceParams.loc : null;
+  const resolvedEvidenceStartMs =
+    parseNonnegativeMs(resolvedEvidenceParams?.t_start_ms) ??
+    (resolvedEvidenceHighlight?.kind === "transcript_time_text" &&
+    typeof resolvedEvidenceHighlight.t_start_ms === "number" &&
+    Number.isInteger(resolvedEvidenceHighlight.t_start_ms) &&
+    resolvedEvidenceHighlight.t_start_ms >= 0
+      ? resolvedEvidenceHighlight.t_start_ms
+      : null);
+  const activeRequestedFragmentId = requestedFragmentId ?? resolvedEvidenceFragmentId;
+  const activeRequestedEpubLoc = requestedEpubLoc ?? resolvedEvidenceEpubLoc;
+  const activeRequestedStartMs = requestedStartMs ?? resolvedEvidenceStartMs;
+  const activeRequestedPdfPageNumber =
+    requestedPdfPageNumber ?? parsePositivePageNumber(resolvedEvidenceParams?.page);
+
   const {
     focusState,
     focusHighlight,
@@ -921,6 +1002,7 @@ export default function MediaPaneBody() {
   } = useHighlightInteraction();
   const focusedHighlightIdRef = useRef<string | null>(focusState.focusedId);
   const urlHighlightAppliedRef = useRef<string | null>(null);
+  const urlEvidenceAppliedRef = useRef<string | null>(null);
   const mismatchToastFragmentRef = useRef<string | null>(null);
   const mismatchLoggedFragmentRef = useRef<string | null>(null);
 
@@ -1052,19 +1134,19 @@ export default function MediaPaneBody() {
 
     return resolveActiveTranscriptFragment(fragments, {
       activeFragmentId: activeTranscriptFragmentId,
-      requestedFragmentId,
-      requestedStartMs,
+      requestedFragmentId: activeRequestedFragmentId,
+      requestedStartMs: activeRequestedStartMs,
       readerResumeFragmentId: readerResumeSource,
       waitForInitialResumeState: initialReaderResumeStateLoading,
     });
   }, [
     activeTranscriptFragmentId,
+    activeRequestedFragmentId,
+    activeRequestedStartMs,
     fragments,
     initialReaderResumeStateLoading,
     isTranscriptMedia,
     readerResumeSource,
-    requestedFragmentId,
-    requestedStartMs,
   ]);
 
   useEffect(() => {
@@ -1118,7 +1200,11 @@ export default function MediaPaneBody() {
         canonicalText: activeEpubSection.canonical_text,
       };
     }
-    const frag = isTranscriptMedia ? activeTranscriptFragment : (fragments[0] ?? null);
+    const frag = isTranscriptMedia
+      ? activeTranscriptFragment
+      : fragments.find((fragment) => fragment.id === activeRequestedFragmentId) ??
+        fragments[0] ??
+        null;
     if (frag) {
       return {
         fragmentId: frag.id,
@@ -1131,6 +1217,7 @@ export default function MediaPaneBody() {
     isPdf,
     isEpub,
     isTranscriptMedia,
+    activeRequestedFragmentId,
     activeEpubSection,
     activeTranscriptFragment,
     fragments,
@@ -1383,7 +1470,7 @@ export default function MediaPaneBody() {
         if (cancelled || sessionId !== restoreSessionIdRef.current) return;
 
         const restoreRequest = resolveInitialEpubRestoreRequest({
-          requestedSectionId: requestedEpubLoc,
+          requestedSectionId: activeRequestedEpubLoc,
           resumeState: initialEpubResumeState,
           sections,
           readerPositionBucketCp: READER_POSITION_BUCKET_CP,
@@ -1404,10 +1491,10 @@ export default function MediaPaneBody() {
           return;
         }
 
-        if (requestedEpubLoc !== restoreRequest.sectionId) {
+        if (activeRequestedEpubLoc !== restoreRequest.sectionId) {
           router.replace(
             buildEpubLocationHref(id, restoreRequest.sectionId, {
-              fragmentId: requestedFragmentId,
+              fragmentId: activeRequestedFragmentId,
               highlightId: requestedHighlightId,
             })
           );
@@ -1445,13 +1532,13 @@ export default function MediaPaneBody() {
     };
   }, [
     beginRestoreSession,
+    activeRequestedEpubLoc,
+    activeRequestedFragmentId,
     id,
     initialEpubResumeState,
     initialReaderResumeStateLoading,
     loadEpubNavigation,
     media,
-    requestedEpubLoc,
-    requestedFragmentId,
     requestedHighlightId,
     router,
     settleRestoreSession,
@@ -1540,14 +1627,23 @@ export default function MediaPaneBody() {
   // EPUB URL/state sync for browser back/forward on ?loc=
   useEffect(() => {
     if (!isEpub || !epubSections || epubSections.length === 0) return;
-    const locParam = requestedEpubLoc;
+    const locParam = activeRequestedEpubLoc;
     if (!locParam || locParam === activeSectionId) return;
     const section = epubSections.find((item) => item.section_id === locParam);
     if (!section) return;
     beginRestoreSession("opening_target");
     setActiveSectionId(section.section_id);
-    setEpubRestoreRequest(buildHistoryEpubRestoreRequest(section.section_id));
-  }, [activeSectionId, beginRestoreSession, epubSections, isEpub, requestedEpubLoc]);
+    setEpubRestoreRequest(
+      buildManualSectionRestoreRequest(section.section_id, activeRequestedFragmentId)
+    );
+  }, [
+    activeRequestedEpubLoc,
+    activeRequestedFragmentId,
+    activeSectionId,
+    beginRestoreSession,
+    epubSections,
+    isEpub,
+  ]);
 
   useEffect(() => {
     restoreSessionIdRef.current = 0;
@@ -2109,6 +2205,131 @@ export default function MediaPaneBody() {
   // Highlight Rendering
   // ==========================================================================
 
+  const temporaryTextHighlight = useMemo<HighlightInput | null>(() => {
+    const highlight = resolvedEvidence?.resolver.highlight;
+    if (!activeContent || !highlight) {
+      return null;
+    }
+    const kind = highlight.kind;
+    if (kind !== "web_text" && kind !== "epub_text" && kind !== "transcript_time_text") {
+      return null;
+    }
+    const fragmentId = highlight.fragment_id;
+    const startOffset = highlight.start_offset;
+    const endOffset = highlight.end_offset;
+    if (
+      fragmentId !== activeContent.fragmentId ||
+      typeof startOffset !== "number" ||
+      typeof endOffset !== "number" ||
+      endOffset <= startOffset
+    ) {
+      if (kind !== "transcript_time_text") {
+        return null;
+      }
+      const exact = textQuoteField(highlight, "exact");
+      const prefix = textQuoteField(highlight, "prefix");
+      const suffix = textQuoteField(highlight, "suffix");
+      const matchedOffset = findCanonicalOffsetFromQuote(
+        activeContent.canonicalText,
+        exact,
+        prefix,
+        suffix
+      );
+      if (matchedOffset === null || !exact) {
+        return null;
+      }
+      return {
+        id: `evidence-${resolvedEvidence.evidence_span_id}`,
+        start_offset: matchedOffset,
+        end_offset: matchedOffset + [...exact].length,
+        color: "blue",
+        created_at: "1970-01-01T00:00:00.000Z",
+      };
+    }
+    if (kind === "transcript_time_text" && fragmentId !== activeContent.fragmentId) {
+      return null;
+    }
+    return {
+      id: `evidence-${resolvedEvidence.evidence_span_id}`,
+      start_offset: startOffset,
+      end_offset: endOffset,
+      color: "blue",
+      created_at: "1970-01-01T00:00:00.000Z",
+    };
+  }, [activeContent, resolvedEvidence]);
+
+  const resolvedPdfPageNumber = useMemo(() => {
+    const highlight = resolvedEvidence?.resolver.highlight;
+    if (!highlight || highlight.kind !== "pdf_text") {
+      return null;
+    }
+    const pageNumber = highlight.page_number;
+    return typeof pageNumber === "number" && Number.isInteger(pageNumber) && pageNumber >= 1
+      ? pageNumber
+      : null;
+  }, [resolvedEvidence]);
+
+  const temporaryPdfHighlight = useMemo<PdfTemporaryHighlight | null>(() => {
+    const highlight = resolvedEvidence?.resolver.highlight;
+    if (!highlight || highlight.kind !== "pdf_text") {
+      return null;
+    }
+    const pageNumber = highlight.page_number;
+    const geometry = highlight.geometry;
+    if (
+      typeof pageNumber !== "number" ||
+      !Number.isInteger(pageNumber) ||
+      pageNumber < 1 ||
+      typeof geometry !== "object" ||
+      geometry === null ||
+      Array.isArray(geometry)
+    ) {
+      return null;
+    }
+
+    const rawQuads = (geometry as Record<string, unknown>).quads;
+    if (!Array.isArray(rawQuads)) {
+      return null;
+    }
+
+    const quads = rawQuads.flatMap((rawQuad) => {
+      if (typeof rawQuad !== "object" || rawQuad === null || Array.isArray(rawQuad)) {
+        return [];
+      }
+      const quad = rawQuad as Record<string, unknown>;
+      const x1 = quad.x1;
+      const y1 = quad.y1;
+      const x2 = quad.x2;
+      const y2 = quad.y2;
+      const x3 = quad.x3;
+      const y3 = quad.y3;
+      const x4 = quad.x4;
+      const y4 = quad.y4;
+      if (
+        typeof x1 !== "number" ||
+        typeof y1 !== "number" ||
+        typeof x2 !== "number" ||
+        typeof y2 !== "number" ||
+        typeof x3 !== "number" ||
+        typeof y3 !== "number" ||
+        typeof x4 !== "number" ||
+        typeof y4 !== "number"
+      ) {
+        return [];
+      }
+      return [{ x1, y1, x2, y2, x3, y3, x4, y4 }];
+    });
+    if (quads.length === 0) {
+      return null;
+    }
+    return {
+      id: `evidence-${resolvedEvidence.evidence_span_id}`,
+      pageNumber,
+      quads,
+      color: "blue",
+    };
+  }, [resolvedEvidence]);
+
   const renderedHtml = useMemo(
     () =>
       activeContent
@@ -2116,16 +2337,19 @@ export default function MediaPaneBody() {
             activeContent.htmlSanitized,
             activeContent.canonicalText,
             activeContent.fragmentId,
-            highlights.map((highlight) => ({
-              id: highlight.id,
-              start_offset: highlight.anchor.start_offset,
-              end_offset: highlight.anchor.end_offset,
-              color: highlight.color,
-              created_at: highlight.created_at,
-            })) as HighlightInput[]
+            [
+              ...highlights.map((highlight) => ({
+                id: highlight.id,
+                start_offset: highlight.anchor.start_offset,
+                end_offset: highlight.anchor.end_offset,
+                color: highlight.color,
+                created_at: highlight.created_at,
+              })),
+              ...(temporaryTextHighlight ? [temporaryTextHighlight] : []),
+            ] as HighlightInput[]
           ).html
         : "",
-    [activeContent, highlights]
+    [activeContent, highlights, temporaryTextHighlight]
   );
 
   // ==========================================================================
@@ -2226,6 +2450,51 @@ export default function MediaPaneBody() {
     focusHighlight,
     isMobileViewport,
     paneMobileChrome,
+  ]);
+
+  useEffect(() => {
+    if (!requestedEvidenceId || !temporaryTextHighlight) {
+      urlEvidenceAppliedRef.current = null;
+      return;
+    }
+    if (!activeContent || !contentRef.current || epubSectionLoading) {
+      return;
+    }
+    if (urlEvidenceAppliedRef.current === temporaryTextHighlight.id) {
+      return;
+    }
+
+    const escapedId = escapeAttrValue(temporaryTextHighlight.id);
+    const anchor = contentRef.current.querySelector<HTMLElement>(
+      `[data-highlight-anchor="${escapedId}"]`
+    );
+    let unlockChromeFrame = 0;
+    let releaseChromeLock: (() => void) | null = null;
+    if (anchor) {
+      if (isMobileViewport && paneMobileChrome) {
+        releaseChromeLock = paneMobileChrome.acquireVisibleLock("highlight-navigation");
+        unlockChromeFrame = window.requestAnimationFrame(() => {
+          releaseChromeLock?.();
+          releaseChromeLock = null;
+        });
+      }
+      anchor.scrollIntoView({ behavior: "auto", block: "center" });
+    }
+    urlEvidenceAppliedRef.current = temporaryTextHighlight.id;
+    return () => {
+      if (unlockChromeFrame) {
+        window.cancelAnimationFrame(unlockChromeFrame);
+      }
+      releaseChromeLock?.();
+    };
+  }, [
+    requestedEvidenceId,
+    activeContent,
+    epubSectionLoading,
+    isMobileViewport,
+    paneMobileChrome,
+    renderedHtml,
+    temporaryTextHighlight,
   ]);
 
   // ==========================================================================
@@ -2636,16 +2905,39 @@ export default function MediaPaneBody() {
     [activeContent, clearFocus, isPdf]
   );
 
-  const handleAnnotationSave = useCallback(
-    async (highlightId: string, body: string) => {
+  const handleNoteSave = useCallback(
+    async (
+      highlightId: string,
+      noteBlockId: string | null,
+      createBlockId: string,
+      bodyPmJson: Record<string, unknown>
+    ) => {
       if (isPdf) {
-        await saveAnnotation(highlightId, body);
+        if (noteBlockId) {
+          await updateNoteBlock(noteBlockId, { bodyPmJson });
+        } else {
+          await createNoteBlock({
+            id: createBlockId,
+            bodyPmJson,
+            linkedObject: { objectType: "highlight", objectId: highlightId },
+            relationType: "note_about",
+          });
+        }
         setPdfRefreshToken((v) => v + 1);
         return;
       }
       if (!activeContent) return;
       const requestVersion = ++highlightVersionRef.current;
-      await saveAnnotation(highlightId, body);
+      if (noteBlockId) {
+        await updateNoteBlock(noteBlockId, { bodyPmJson });
+      } else {
+        await createNoteBlock({
+          id: createBlockId,
+          bodyPmJson,
+          linkedObject: { objectType: "highlight", objectId: highlightId },
+          relationType: "note_about",
+        });
+      }
       const newHighlights = await fetchHighlights(activeContent.fragmentId);
       if (requestVersion !== highlightVersionRef.current) {
         return;
@@ -2656,16 +2948,16 @@ export default function MediaPaneBody() {
     [activeContent, isPdf]
   );
 
-  const handleAnnotationDelete = useCallback(
-    async (highlightId: string) => {
+  const handleNoteDelete = useCallback(
+    async (noteBlockId: string) => {
       if (isPdf) {
-        await deleteAnnotation(highlightId);
+        await deleteNoteBlock(noteBlockId);
         setPdfRefreshToken((v) => v + 1);
         return;
       }
       if (!activeContent) return;
       const requestVersion = ++highlightVersionRef.current;
-      await deleteAnnotation(highlightId);
+      await deleteNoteBlock(noteBlockId);
       const newHighlights = await fetchHighlights(activeContent.fragmentId);
       if (requestVersion !== highlightVersionRef.current) {
         return;
@@ -3313,11 +3605,15 @@ export default function MediaPaneBody() {
   );
 
   const isReflowableReader = canRead && !isPdf;
-  const mediaAuthorMeta = formatMediaAuthors(media?.authors, 2);
   const mediaHeaderMeta = (
     <div className={styles.metadata}>
       <span className={styles.kind}>{media?.kind}</span>
-      {mediaAuthorMeta ? <span className={styles.authorMeta}>{mediaAuthorMeta}</span> : null}
+      <ContributorCreditList
+        credits={media?.contributors}
+        className={styles.authorMeta}
+        maxVisible={2}
+        showRole
+      />
       {media?.canonical_source_url ? (
         <a
           href={media.canonical_source_url}
@@ -3779,8 +4075,8 @@ export default function MediaPaneBody() {
       onStartEditBounds={startEditBounds}
       onCancelEditBounds={cancelEditBounds}
       isEditingBounds={focusState.editingBounds}
-      onAnnotationSave={handleAnnotationSave}
-      onAnnotationDelete={handleAnnotationDelete}
+      onNoteSave={handleNoteSave}
+      onNoteDelete={handleNoteDelete}
       onOpenConversation={handleOpenConversation}
     />
   ) : null;
@@ -3840,6 +4136,16 @@ export default function MediaPaneBody() {
               </StatusPill>
             </div>
           )}
+          {media.retrieval_status && media.retrieval_status !== "ready" && canRead ? (
+            <div className={styles.retrievalBanner} data-testid="retrieval-readiness">
+              <StatusPill variant={media.retrieval_status === "failed" ? "error" : "warning"}>
+                Search index: {media.retrieval_status.replaceAll("_", " ")}
+              </StatusPill>
+              {media.retrieval_status_reason ? (
+                <span>{media.retrieval_status_reason}</span>
+              ) : null}
+            </div>
+          ) : null}
 
           {isTranscriptMedia ? (
             <div
@@ -3857,7 +4163,9 @@ export default function MediaPaneBody() {
                   chapters={media.chapters ?? []}
                   descriptionHtml={media.description_html ?? null}
                   descriptionText={media.description_text ?? null}
-                  videoSeekTargetMs={videoSeekTargetMs}
+                  videoSeekTargetMs={
+                    media.kind === "video" ? videoSeekTargetMs ?? activeRequestedStartMs : null
+                  }
                   onSeek={handleTranscriptSeek}
                 />
                 {transcriptPaneBody}
@@ -3901,6 +4209,7 @@ export default function MediaPaneBody() {
               </div>
             ) : (
               <PdfReader
+                key={`${id}:${activeRequestedPdfPageNumber ?? resolvedPdfPageNumber ?? "resume"}`}
                 mediaId={id}
                 contentRef={pdfContentRef}
                 focusedHighlightId={focusState.focusedId}
@@ -3908,6 +4217,7 @@ export default function MediaPaneBody() {
                 highlightRefreshToken={pdfRefreshToken}
                 onPageHighlightsChange={handlePdfPageHighlightsChange}
                 onHighlightTap={handlePdfHighlightTap}
+                temporaryHighlight={temporaryPdfHighlight}
                 quoteDestinations={quoteDestinations}
                 onQuoteToChat={
                   media.capabilities?.can_quote ? handleExistingHighlightSendToChat : undefined
@@ -3916,8 +4226,17 @@ export default function MediaPaneBody() {
                 onControlsReady={(controls) => {
                   pdfControlsRef.current = controls;
                 }}
-                startPageNumber={pdfReaderResumeState?.page ?? undefined}
-                startPageProgression={pdfReaderResumeState?.page_progression ?? undefined}
+                startPageNumber={
+                  activeRequestedPdfPageNumber ??
+                  resolvedPdfPageNumber ??
+                  pdfReaderResumeState?.page ??
+                  undefined
+                }
+                startPageProgression={
+                  activeRequestedPdfPageNumber || resolvedPdfPageNumber
+                    ? undefined
+                    : pdfReaderResumeState?.page_progression ?? undefined
+                }
                 startZoom={pdfReaderResumeState?.zoom ?? undefined}
                 onResumeStateChange={saveReaderResumeState}
               />

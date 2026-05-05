@@ -8,7 +8,6 @@ import {
   FileText,
   FolderPlus,
   Globe,
-  Highlighter,
   Keyboard,
   KeyRound,
   Link,
@@ -21,6 +20,7 @@ import {
   Settings,
   Type,
   Upload,
+  UserRound,
   X,
 } from "lucide-react";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
@@ -83,6 +83,7 @@ const ACTIONS: Action[] = [
 
   // Create
   { id: "create-conversation", label: "New conversation", keywords: ["chat", "message"], section: "Create", icon: MessageSquarePlus, execute: () => requestOpenInAppPane("/conversations/new") },
+  { id: "open-notes", label: "Open notes", keywords: ["notes", "page", "outline"], section: "Navigate", icon: FileText, execute: () => requestOpenInAppPane("/notes") },
   { id: "create-library", label: "New library", keywords: ["collection", "create"], section: "Create", icon: FolderPlus, execute: () => requestOpenInAppPane("/libraries") },
   { id: "create-upload", label: "Upload file", keywords: ["pdf", "epub", "import", "add"], section: "Create", icon: Upload, execute: () => dispatchOpenAddContent("content") },
   { id: "create-url", label: "Add from URL", keywords: ["link", "paste", "import"], section: "Create", icon: Link, execute: () => dispatchOpenAddContent("content") },
@@ -92,12 +93,13 @@ const ACTIONS: Action[] = [
 const ACTIONS_BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
 
 const SEARCH_TYPE_ICON: Record<SearchType, LucideIcon> = {
+  contributor: UserRound,
   media: Globe,
   podcast: Mic,
-  fragment: FileText,
-  annotation: Highlighter,
+  content_chunk: FileText,
+  page: FileText,
+  note_block: FileText,
   message: MessageSquare,
-  transcript_chunk: Mic,
 };
 const EMPTY_RUNTIME_TITLE_BY_PANE_ID = new Map<string, string>();
 
@@ -117,6 +119,8 @@ function getRecentDestinationIcon(routeId: string): LucideIcon {
     case "podcasts":
     case "podcastDetail":
       return Mic;
+    case "author":
+      return UserRound;
     case "search":
       return Search;
     case "settings":

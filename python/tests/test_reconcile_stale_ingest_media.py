@@ -362,56 +362,152 @@ def _insert_ready_podcast_with_semantic_backlog(
             "updated_at": updated_at,
         },
     )
+    db.flush()
+    return media_id, version_id
+
+
+def _insert_ready_document_with_pending_content_index(db: Session, *, kind: str) -> UUID:
+    media_id = uuid4()
+    user_id = uuid4()
+    fragment_id = uuid4()
+    db.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
     db.execute(
         text(
             """
-            INSERT INTO content_chunks (
-                transcript_version_id,
-                media_id,
-                chunk_idx,
-                source_kind,
-                chunk_text,
-                t_start_ms,
-                t_end_ms,
-                embedding,
-                embedding_model,
-                created_at
+            INSERT INTO media (
+                id,
+                kind,
+                title,
+                processing_status,
+                plain_text,
+                page_count,
+                created_by_user_id
             )
-            VALUES
-                (
-                    :version_id,
-                    :media_id,
-                    0,
-                    'transcript',
-                    'legacy stale chunk one',
-                    0,
-                    1300,
-                    '[0.1,0.2,0.3]'::jsonb,
-                    'hash_v1_frozen_0026',
-                    :updated_at
-                ),
-                (
-                    :version_id,
-                    :media_id,
-                    1,
-                    'transcript',
-                    'legacy stale chunk two',
-                    1500,
-                    2900,
-                    '[0.3,0.2,0.1]'::jsonb,
-                    'hash_v1_frozen_0026',
-                    :updated_at
-                )
+            VALUES (
+                :media_id,
+                :kind,
+                'Legacy indexed document',
+                'ready_for_reading',
+                :plain_text,
+                :page_count,
+                :user_id
+            )
             """
         ),
         {
-            "version_id": version_id,
             "media_id": media_id,
-            "updated_at": updated_at,
+            "kind": kind,
+            "plain_text": "Legacy PDF evidence repair needle." if kind == "pdf" else None,
+            "page_count": 1 if kind == "pdf" else None,
+            "user_id": user_id,
         },
     )
+    if kind in {"web_article", "epub"}:
+        db.execute(
+            text(
+                """
+                INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                VALUES (
+                    :fragment_id,
+                    :media_id,
+                    0,
+                    '<p>Legacy evidence repair needle.</p>',
+                    'Legacy evidence repair needle.'
+                )
+                """
+            ),
+            {"fragment_id": fragment_id, "media_id": media_id},
+        )
+    if kind == "pdf":
+        db.execute(
+            text(
+                """
+                INSERT INTO media_file (media_id, storage_path, content_type, size_bytes)
+                VALUES (:media_id, 'media/test/legacy.pdf', 'application/pdf', 1024)
+                """
+            ),
+            {"media_id": media_id},
+        )
+        db.execute(
+            text(
+                """
+                INSERT INTO pdf_page_text_spans (
+                    media_id,
+                    page_number,
+                    start_offset,
+                    end_offset,
+                    text_extract_version
+                )
+                VALUES (:media_id, 1, 0, 34, 1)
+                """
+            ),
+            {"media_id": media_id},
+        )
+    db.execute(
+        text(
+            """
+            INSERT INTO media_content_index_states (media_id, status, status_reason)
+            VALUES (:media_id, 'pending', 'test')
+            """
+        ),
+        {"media_id": media_id},
+    )
     db.flush()
-    return media_id, version_id
+    return media_id
+
+
+def _mark_content_index_state_stale_indexing(db: Session, *, media_id: UUID) -> UUID:
+    started_at = datetime.now(UTC) - timedelta(hours=2)
+    run_id = db.execute(
+        text(
+            """
+            INSERT INTO content_index_runs (
+                media_id,
+                state,
+                source_version,
+                extractor_version,
+                chunker_version,
+                embedding_provider,
+                embedding_model,
+                embedding_version,
+                embedding_config_hash,
+                started_at,
+                created_at
+            )
+            VALUES (
+                :media_id,
+                'indexing',
+                'stale_source_v1',
+                'stale_extractor_v1',
+                'stale_chunker_v1',
+                'test',
+                'stale_model',
+                'stale_model',
+                'stale_config_hash',
+                :started_at,
+                :started_at
+            )
+            RETURNING id
+            """
+        ),
+        {"media_id": media_id, "started_at": started_at},
+    ).scalar_one()
+    db.execute(
+        text(
+            """
+            UPDATE media_content_index_states
+            SET
+                latest_run_id = :run_id,
+                status = 'indexing',
+                status_reason = 'stale indexing test',
+                updated_at = :started_at
+            WHERE media_id = :media_id
+            """
+        ),
+        {"media_id": media_id, "run_id": run_id, "started_at": started_at},
+    )
+    db.flush()
+    return run_id
 
 
 def test_reconciler_requeues_stale_pdf_when_attempts_below_limit(db_session: Session):
@@ -506,6 +602,101 @@ def test_reconciler_requeues_stale_podcast_episode_when_attempts_below_limit(
     refreshed = db_session.get(Media, media_id)
     assert refreshed.processing_status == ProcessingStatus.extracting
     assert refreshed.processing_attempts == 1
+
+
+@pytest.mark.parametrize("kind", ["web_article", "epub", "pdf"])
+def test_reconciler_repairs_pending_document_content_index(db_session: Session, kind: str):
+    media_id = _insert_ready_document_with_pending_content_index(db_session, kind=kind)
+
+    with (
+        patch(
+            "nexus.tasks.reconcile_stale_ingest_media.get_settings",
+            return_value=_recovery_settings(stale_seconds=10_000_000, semantic_batch_limit=5000),
+        ),
+        patch(
+            "nexus.tasks.reconcile_stale_ingest_media.get_session_factory",
+            return_value=task_session_factory(db_session),
+        ),
+    ):
+        from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
+
+        result = reconcile_stale_ingest_media_job()
+
+    assert result["content_index_scanned"] >= 1, (
+        f"expected content-index scan to include pending {kind}, got: {result}"
+    )
+    assert result["content_index_repaired"] >= 1, (
+        f"expected pending {kind} to be rebuilt, got: {result}"
+    )
+
+    row = db_session.execute(
+        text(
+            """
+            SELECT mcis.status, count(cc.id)
+            FROM media_content_index_states mcis
+            JOIN content_chunks cc ON cc.index_run_id = mcis.active_run_id
+            WHERE mcis.media_id = :media_id
+            GROUP BY mcis.status
+            """
+        ),
+        {"media_id": media_id},
+    ).fetchone()
+    assert row is not None, f"expected repaired content index for media_id={media_id}"
+    assert row[0] == "ready"
+    assert row[1] >= 1
+
+
+def test_reconciler_recovers_stale_indexing_document_content_index(db_session: Session):
+    media_id = _insert_ready_document_with_pending_content_index(db_session, kind="web_article")
+    stale_run_id = _mark_content_index_state_stale_indexing(db_session, media_id=media_id)
+
+    with (
+        patch(
+            "nexus.tasks.reconcile_stale_ingest_media.get_settings",
+            return_value=_recovery_settings(stale_seconds=60, semantic_batch_limit=5000),
+        ),
+        patch(
+            "nexus.tasks.reconcile_stale_ingest_media.get_session_factory",
+            return_value=task_session_factory(db_session),
+        ),
+    ):
+        from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
+
+        result = reconcile_stale_ingest_media_job()
+
+    assert result["content_index_scanned"] >= 1, (
+        f"expected stale indexing content-index row to be scanned, got: {result}"
+    )
+    assert result["content_index_requeued"] >= 1, (
+        f"expected stale indexing content-index row to be requeued for repair, got: {result}"
+    )
+    assert result["content_index_repaired"] >= 1, (
+        f"expected stale indexing content-index row to be rebuilt, got: {result}"
+    )
+
+    rows = db_session.execute(
+        text(
+            """
+            SELECT
+                mcis.status,
+                mcis.active_run_id,
+                stale_run.state,
+                stale_run.failure_code,
+                active_chunk.chunk_text
+            FROM media_content_index_states mcis
+            JOIN content_index_runs stale_run ON stale_run.id = :stale_run_id
+            JOIN content_chunks active_chunk ON active_chunk.index_run_id = mcis.active_run_id
+            WHERE mcis.media_id = :media_id
+            """
+        ),
+        {"media_id": media_id, "stale_run_id": stale_run_id},
+    ).fetchall()
+    assert rows, f"expected repaired content index for media_id={media_id}"
+    assert rows[0][0] == "ready"
+    assert rows[0][1] != stale_run_id
+    assert rows[0][2] == "failed"
+    assert rows[0][3] == "E_INGEST_TIMEOUT"
+    assert rows[0][4] == "Legacy evidence repair needle."
 
 
 def test_reconciler_fails_stale_pdf_after_max_recovery_attempts(db_session: Session):
@@ -671,14 +862,17 @@ def test_reconciler_repairs_pending_semantic_backlog_for_ready_podcast_transcrip
     model_row = db_session.execute(
         text(
             """
-            SELECT DISTINCT embedding_model
-            FROM content_chunks
-            WHERE transcript_version_id = :transcript_version_id
-              AND source_kind = 'transcript'
-            ORDER BY embedding_model
+            SELECT DISTINCT ce.embedding_model
+            FROM content_chunks cc
+            JOIN content_embeddings ce ON ce.chunk_id = cc.id
+            JOIN source_snapshots ss ON ss.id = cc.source_snapshot_id
+            WHERE cc.media_id = :media_id
+              AND cc.source_kind = 'transcript'
+              AND ss.metadata->>'transcript_version_id' = :transcript_version_id
+            ORDER BY ce.embedding_model
             """
         ),
-        {"transcript_version_id": version_id},
+        {"media_id": media_id, "transcript_version_id": str(version_id)},
     ).fetchall()
     assert model_row == [(current_transcript_embedding_model(),)], (
         "semantic repair must fully replace legacy cutover embeddings with current runtime model"
@@ -742,14 +936,17 @@ def test_reconciler_repairs_ready_semantic_rows_when_active_model_changes(
     model_row = db_session.execute(
         text(
             """
-            SELECT DISTINCT embedding_model
-            FROM content_chunks
-            WHERE transcript_version_id = :transcript_version_id
-              AND source_kind = 'transcript'
-            ORDER BY embedding_model
+            SELECT DISTINCT ce.embedding_model
+            FROM content_chunks cc
+            JOIN content_embeddings ce ON ce.chunk_id = cc.id
+            JOIN source_snapshots ss ON ss.id = cc.source_snapshot_id
+            WHERE cc.media_id = :media_id
+              AND cc.source_kind = 'transcript'
+              AND ss.metadata->>'transcript_version_id' = :transcript_version_id
+            ORDER BY ce.embedding_model
             """
         ),
-        {"transcript_version_id": version_id},
+        {"media_id": media_id, "transcript_version_id": str(version_id)},
     ).fetchall()
     assert model_row == [(current_transcript_embedding_model(),)], (
         "auto-repair for stale ready rows must converge to the active embedding model"
@@ -810,12 +1007,14 @@ def test_reconciler_retries_failed_semantic_backlog_after_retry_window(
         text(
             """
             SELECT COUNT(*)
-            FROM content_chunks
-            WHERE transcript_version_id = :transcript_version_id
-              AND source_kind = 'transcript'
+            FROM content_chunks cc
+            JOIN source_snapshots ss ON ss.id = cc.source_snapshot_id
+            WHERE cc.media_id = :media_id
+              AND cc.source_kind = 'transcript'
+              AND ss.metadata->>'transcript_version_id' = :transcript_version_id
             """
         ),
-        {"transcript_version_id": version_id},
+        {"media_id": media_id, "transcript_version_id": str(version_id)},
     ).scalar()
     assert int(chunk_count or 0) == 2, (
         "semantic repair retry must regenerate a complete chunk set for the active transcript version"

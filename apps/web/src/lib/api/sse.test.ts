@@ -14,7 +14,6 @@ describe("toWireContextItem", () => {
       // Enriched fields that must NOT appear in wire format
       prefix: "before ",
       suffix: " after",
-      annotationBody: "my note",
       mediaKind: "web_article",
     };
 
@@ -32,8 +31,22 @@ describe("toWireContextItem", () => {
     expect("mediaTitle" in wire).toBe(false);
     expect("prefix" in wire).toBe(false);
     expect("suffix" in wire).toBe(false);
-    expect("annotationBody" in wire).toBe(false);
     expect("mediaKind" in wire).toBe(false);
+  });
+
+  it("preserves evidence span ids for content chunk context", () => {
+    const wire = toWireContextItem({
+      type: "content_chunk",
+      id: "chunk-123",
+      evidence_span_ids: ["span-1", "span-2"],
+      preview: "selected text",
+    });
+
+    expect(wire).toEqual({
+      type: "content_chunk",
+      id: "chunk-123",
+      evidence_span_ids: ["span-1", "span-2"],
+    });
   });
 
   it("omits undefined optional display fields", () => {
@@ -429,5 +442,42 @@ describe("sseClientDirect", () => {
     ]);
     expect(completedWithTerminal).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports malformed JSON without waiting for the stream to close", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(["event: delta", 'data: {"delta":', "", ""].join("\n")),
+        );
+      },
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(stream, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    let stop: () => void = () => undefined;
+    let rejectStream!: (reason?: unknown) => void;
+    const onError = vi.fn((error: Error) => rejectStream(error));
+    await expect(
+      new Promise<void>((resolve, reject) => {
+        rejectStream = reject;
+        stop = sseClientDirect(
+          "https://stream.nexus.test",
+          "stream-token",
+          "run-1",
+          {
+            onEvent: () => reject(new Error("unexpected event")),
+            onError,
+            onComplete: () => resolve(),
+          },
+        );
+      }),
+    ).rejects.toThrow("Failed to parse SSE data as JSON");
+
+    stop();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
   });
 });

@@ -34,7 +34,7 @@ function makeFragmentHighlight({
     updated_at: createdAt,
     author_user_id: "user-1",
     is_owner: true,
-    annotation: null,
+    linked_note_blocks: [],
     linked_conversations: [],
   };
 }
@@ -75,7 +75,7 @@ function makePdfHighlight({
     suffix: "",
     created_at: createdAt,
     updated_at: createdAt,
-    annotation: null,
+    linked_note_blocks: [],
     author_user_id: "user-1",
     is_owner: true,
     linked_conversations: [],

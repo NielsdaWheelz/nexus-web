@@ -11,15 +11,24 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import SectionCard from "@/components/ui/SectionCard";
 import { apiFetch } from "@/lib/api/client";
+import type { ContributorCredit } from "@/lib/contributors/types";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
-import { subscribeToPodcast } from "../podcasts/podcastSubscriptions";
+import {
+  subscribeToPodcast,
+  toPodcastContributorInputs,
+} from "../podcasts/podcastSubscriptions";
 import styles from "./page.module.css";
 
-type BrowseSectionType = "documents" | "videos" | "podcasts" | "podcast_episodes";
+type BrowseSectionType =
+  | "documents"
+  | "videos"
+  | "podcasts"
+  | "podcast_episodes";
 
 type BrowsePageInfo = {
   has_more: boolean;
@@ -36,6 +45,7 @@ type BrowseDocumentResult = {
   source_label?: string | null;
   source_type?: string | null;
   media_id?: string | null;
+  contributors?: ContributorCredit[];
 };
 
 type BrowseVideoResult = {
@@ -44,10 +54,10 @@ type BrowseVideoResult = {
   title: string;
   description: string | null;
   watch_url: string;
-  channel_title: string | null;
   published_at: string | null;
   thumbnail_url: string | null;
   media_id?: string | null;
+  contributors: ContributorCredit[];
 };
 
 type BrowsePodcastResult = {
@@ -55,7 +65,7 @@ type BrowsePodcastResult = {
   podcast_id: string | null;
   provider_podcast_id: string;
   title: string;
-  author: string | null;
+  contributors: ContributorCredit[];
   feed_url: string;
   website_url: string | null;
   image_url: string | null;
@@ -68,7 +78,7 @@ type BrowseEpisodeResult = {
   provider_podcast_id: string;
   provider_episode_id: string;
   podcast_title: string;
-  podcast_author: string | null;
+  podcast_contributors: ContributorCredit[];
   podcast_image_url: string | null;
   title: string;
   audio_url: string;
@@ -123,7 +133,10 @@ function emptySections(): Record<BrowseSectionType, BrowseSectionData> {
     documents: { results: [], page: { has_more: false, next_cursor: null } },
     videos: { results: [], page: { has_more: false, next_cursor: null } },
     podcasts: { results: [], page: { has_more: false, next_cursor: null } },
-    podcast_episodes: { results: [], page: { has_more: false, next_cursor: null } },
+    podcast_episodes: {
+      results: [],
+      page: { has_more: false, next_cursor: null },
+    },
   };
 }
 
@@ -157,7 +170,10 @@ function parseVisibleTypes(searchParams: URLSearchParams): BrowseSectionType[] {
   return seen.size > 0 ? BROWSE_TYPES.filter((type) => seen.has(type)) : [];
 }
 
-function buildBrowseHref(query: string, visibleTypes: BrowseSectionType[]): string {
+function buildBrowseHref(
+  query: string,
+  visibleTypes: BrowseSectionType[],
+): string {
   const params = new URLSearchParams();
   const trimmedQuery = query.trim();
   if (trimmedQuery) {
@@ -175,7 +191,9 @@ function buildBrowseHref(query: string, visibleTypes: BrowseSectionType[]): stri
 function formatEpisodeMeta(result: BrowseEpisodeResult): string {
   const bits: string[] = [];
   if (result.published_at) {
-    bits.push(`Published ${new Date(result.published_at).toLocaleDateString()}`);
+    bits.push(
+      `Published ${new Date(result.published_at).toLocaleDateString()}`,
+    );
   }
   if (result.duration_seconds) {
     bits.push(`${Math.round(result.duration_seconds / 60)} min`);
@@ -207,7 +225,10 @@ function isProjectGutenbergDocument(result: BrowseDocumentResult): boolean {
   return sourceLabel === "Project Gutenberg";
 }
 
-function getDocumentActionLabel(result: BrowseDocumentResult, busy: boolean): string {
+function getDocumentActionLabel(
+  result: BrowseDocumentResult,
+  busy: boolean,
+): string {
   if (result.media_id) {
     return busy ? "Opening..." : "Open";
   }
@@ -218,7 +239,9 @@ function getDocumentActionLabel(result: BrowseDocumentResult, busy: boolean): st
 }
 
 function getDocumentLibraryActionLabel(result: BrowseDocumentResult): string {
-  return isProjectGutenbergDocument(result) ? "Import + library" : "Add + library";
+  return isProjectGutenbergDocument(result)
+    ? "Import + library"
+    : "Add + library";
 }
 
 function getDocumentFallbackDescription(result: BrowseDocumentResult): string {
@@ -231,7 +254,9 @@ function getDocumentFallbackDescription(result: BrowseDocumentResult): string {
   return "Add this document to open it in the reader.";
 }
 
-function normalizeSections(data: BrowseResponse["data"]): Record<BrowseSectionType, BrowseSectionData> {
+function normalizeSections(
+  data: BrowseResponse["data"],
+): Record<BrowseSectionType, BrowseSectionData> {
   const nextSections = emptySections();
   for (const type of BROWSE_TYPES) {
     const section = data.sections[type];
@@ -245,7 +270,7 @@ function normalizeSections(data: BrowseResponse["data"]): Record<BrowseSectionTy
 function replaceSection(
   current: Record<BrowseSectionType, BrowseSectionData>,
   sectionType: BrowseSectionType,
-  nextSection: BrowseSectionData
+  nextSection: BrowseSectionData,
 ): Record<BrowseSectionType, BrowseSectionData> {
   return {
     ...current,
@@ -256,7 +281,7 @@ function replaceSection(
 function updateSectionResults<T extends BrowseResult>(
   results: BrowseResult[],
   match: (row: BrowseResult) => row is T,
-  update: (row: T) => T
+  update: (row: T) => T,
 ): BrowseResult[] {
   return results.map((row) => (match(row) ? update(row) : row));
 }
@@ -279,21 +304,21 @@ function isVideoResult(row: BrowseResult): row is BrowseVideoResult {
 
 function getSection(
   sections: Record<BrowseSectionType, BrowseSectionData>,
-  sectionType: BrowseSectionType
+  sectionType: BrowseSectionType,
 ): BrowseSectionData {
   return sections[sectionType];
 }
 
 function getSectionResults(
   sections: Record<BrowseSectionType, BrowseSectionData>,
-  sectionType: BrowseSectionType
+  sectionType: BrowseSectionType,
 ): BrowseResult[] {
   return getSection(sections, sectionType).results;
 }
 
 function getSectionPage(
   sections: Record<BrowseSectionType, BrowseSectionData>,
-  sectionType: BrowseSectionType
+  sectionType: BrowseSectionType,
 ): BrowsePageInfo {
   return getSection(sections, sectionType).page;
 }
@@ -301,10 +326,13 @@ function getSectionPage(
 function mergeSectionResults(
   current: Record<BrowseSectionType, BrowseSectionData>,
   sectionType: BrowseSectionType,
-  nextSection: BrowseSectionData
+  nextSection: BrowseSectionData,
 ): Record<BrowseSectionType, BrowseSectionData> {
   return replaceSection(current, sectionType, {
-    results: [...getSectionResults(current, sectionType), ...nextSection.results],
+    results: [
+      ...getSectionResults(current, sectionType),
+      ...nextSection.results,
+    ],
     page: nextSection.page,
   });
 }
@@ -312,7 +340,7 @@ function mergeSectionResults(
 function updateSection(
   current: Record<BrowseSectionType, BrowseSectionData>,
   sectionType: BrowseSectionType,
-  updateResults: (results: BrowseResult[]) => BrowseResult[]
+  updateResults: (results: BrowseResult[]) => BrowseResult[],
 ): Record<BrowseSectionType, BrowseSectionData> {
   return replaceSection(current, sectionType, {
     ...getSection(current, sectionType),
@@ -327,9 +355,12 @@ export default function BrowsePaneBody() {
   const visibleTypes = parseVisibleTypes(paneSearchParams);
 
   const [draftQuery, setDraftQuery] = useState(appliedQuery);
-  const [sections, setSections] = useState<Record<BrowseSectionType, BrowseSectionData>>(emptySections);
+  const [sections, setSections] =
+    useState<Record<BrowseSectionType, BrowseSectionData>>(emptySections);
   const [searching, setSearching] = useState(false);
-  const [loadingMoreTypes, setLoadingMoreTypes] = useState<Set<BrowseSectionType>>(new Set());
+  const [loadingMoreTypes, setLoadingMoreTypes] = useState<
+    Set<BrowseSectionType>
+  >(new Set());
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [hasSearched, setHasSearched] = useState(Boolean(appliedQuery));
@@ -361,7 +392,9 @@ export default function BrowsePaneBody() {
           q: appliedQuery,
           limit: "10",
         });
-        const response = await apiFetch<BrowseResponse>(`/api/browse?${params.toString()}`);
+        const response = await apiFetch<BrowseResponse>(
+          `/api/browse?${params.toString()}`,
+        );
         if (cancelled) {
           return;
         }
@@ -392,7 +425,9 @@ export default function BrowsePaneBody() {
     }
     setLibrariesLoading(true);
     try {
-      const response = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
+      const response = await apiFetch<{ data: LibrarySummary[] }>(
+        "/api/libraries",
+      );
       setLibraries(
         response.data
           .filter((library) => !library.is_default)
@@ -403,7 +438,7 @@ export default function BrowsePaneBody() {
             isInLibrary: false,
             canAdd: true,
             canRemove: false,
-          }))
+          })),
       );
       setLibrariesLoaded(true);
     } finally {
@@ -415,7 +450,9 @@ export default function BrowsePaneBody() {
     paneRouter.replace(buildBrowseHref(appliedQuery, nextVisibleTypes));
   }
 
-  async function ensureAndOpenPodcast(result: BrowsePodcastResult | BrowseEpisodeResult) {
+  async function ensureAndOpenPodcast(
+    result: BrowsePodcastResult | BrowseEpisodeResult,
+  ) {
     if (result.podcast_id) {
       requestOpenInAppPane(`/podcasts/${result.podcast_id}`);
       return;
@@ -425,18 +462,29 @@ export default function BrowsePaneBody() {
     setBusyKeys((current) => new Set(current).add(busyKey));
     setError(null);
     try {
-      const response = await apiFetch<{ data: { podcast_id: string } }>("/api/podcasts/ensure", {
-        method: "POST",
-        body: JSON.stringify({
-          provider_podcast_id: result.provider_podcast_id,
-          title: result.type === "podcasts" ? result.title : result.podcast_title,
-          author: result.type === "podcasts" ? result.author : result.podcast_author,
-          feed_url: result.feed_url,
-          website_url: result.website_url,
-          image_url: result.type === "podcasts" ? result.image_url : result.podcast_image_url,
-          description: result.description,
-        }),
-      });
+      const response = await apiFetch<{ data: { podcast_id: string } }>(
+        "/api/podcasts/ensure",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            provider_podcast_id: result.provider_podcast_id,
+            title:
+              result.type === "podcasts" ? result.title : result.podcast_title,
+            contributors: toPodcastContributorInputs(
+              result.type === "podcasts"
+                ? result.contributors
+                : result.podcast_contributors,
+            ),
+            feed_url: result.feed_url,
+            website_url: result.website_url,
+            image_url:
+              result.type === "podcasts"
+                ? result.image_url
+                : result.podcast_image_url,
+            description: result.description,
+          }),
+        },
+      );
       const podcastId = response.data.podcast_id;
       setSections((current) =>
         updateSection(
@@ -444,17 +492,17 @@ export default function BrowsePaneBody() {
             updateSectionResults(results, isPodcastResult, (row) =>
               row.provider_podcast_id === result.provider_podcast_id
                 ? { ...row, podcast_id: podcastId }
-                : row
-            )
+                : row,
+            ),
           ),
           "podcast_episodes",
           (results) =>
             updateSectionResults(results, isPodcastEpisodeResult, (row) =>
               row.provider_podcast_id === result.provider_podcast_id
                 ? { ...row, podcast_id: podcastId }
-                : row
-            )
-        )
+                : row,
+            ),
+        ),
       );
       requestOpenInAppPane(`/podcasts/${podcastId}`);
     } catch (openError) {
@@ -468,7 +516,10 @@ export default function BrowsePaneBody() {
     }
   }
 
-  async function followPodcast(result: BrowsePodcastResult, libraryId: string | null = null) {
+  async function followPodcast(
+    result: BrowsePodcastResult,
+    libraryId: string | null = null,
+  ) {
     const busyKey = `podcast:${result.provider_podcast_id}`;
     setBusyKeys((current) => new Set(current).add(busyKey));
     setError(null);
@@ -476,7 +527,7 @@ export default function BrowsePaneBody() {
       const response = await subscribeToPodcast({
         provider_podcast_id: result.provider_podcast_id,
         title: result.title,
-        author: result.author,
+        contributors: result.contributors,
         feed_url: result.feed_url,
         website_url: result.website_url,
         image_url: result.image_url,
@@ -488,12 +539,14 @@ export default function BrowsePaneBody() {
           updateSectionResults(results, isPodcastResult, (row) =>
             row.provider_podcast_id === result.provider_podcast_id
               ? { ...row, podcast_id: response.podcast_id }
-              : row
-          )
-        )
+              : row,
+          ),
+        ),
       );
     } catch (followError) {
-      setError(toFeedback(followError, { fallback: "Failed to follow podcast" }));
+      setError(
+        toFeedback(followError, { fallback: "Failed to follow podcast" }),
+      );
     } finally {
       setBusyKeys((current) => {
         const next = new Set(current);
@@ -505,7 +558,7 @@ export default function BrowsePaneBody() {
 
   async function addAndOpenResult(
     result: BrowseDocumentResult | BrowseVideoResult,
-    libraryId: string | null = null
+    libraryId: string | null = null,
   ) {
     if (result.media_id) {
       requestOpenInAppPane(`/media/${result.media_id}`);
@@ -513,7 +566,9 @@ export default function BrowsePaneBody() {
     }
 
     const busyKey =
-      result.type === "documents" ? `document:${result.url}` : `video:${result.provider_video_id}`;
+      result.type === "documents"
+        ? `document:${result.url}`
+        : `video:${result.provider_video_id}`;
     setBusyKeys((current) => new Set(current).add(busyKey));
     setError(null);
     try {
@@ -525,15 +580,17 @@ export default function BrowsePaneBody() {
         updateSection(current, result.type, (results) => {
           if (result.type === "documents") {
             return updateSectionResults(results, isDocumentResult, (row) =>
-              row.url === result.url ? { ...row, media_id: added.mediaId } : row
+              row.url === result.url
+                ? { ...row, media_id: added.mediaId }
+                : row,
             );
           }
           return updateSectionResults(results, isVideoResult, (row) =>
             row.provider_video_id === result.provider_video_id
               ? { ...row, media_id: added.mediaId }
-              : row
+              : row,
           );
-        })
+        }),
       );
       requestOpenInAppPane(`/media/${added.mediaId}`);
     } catch (addError) {
@@ -561,12 +618,20 @@ export default function BrowsePaneBody() {
         page_type: sectionType,
         cursor: nextCursor,
       });
-      const response = await apiFetch<BrowseResponse>(`/api/browse?${params.toString()}`);
+      const response = await apiFetch<BrowseResponse>(
+        `/api/browse?${params.toString()}`,
+      );
       setSections((current) =>
-        mergeSectionResults(current, sectionType, getSection(normalizeSections(response.data), sectionType))
+        mergeSectionResults(
+          current,
+          sectionType,
+          getSection(normalizeSections(response.data), sectionType),
+        ),
       );
     } catch (loadMoreError) {
-      setError(toFeedback(loadMoreError, { fallback: "Failed to load more results" }));
+      setError(
+        toFeedback(loadMoreError, { fallback: "Failed to load more results" }),
+      );
     } finally {
       setLoadingMoreTypes((current) => {
         const next = new Set(current);
@@ -576,7 +641,9 @@ export default function BrowsePaneBody() {
     }
   }
 
-  const visibleSections = visibleTypes.filter((type) => getSectionResults(sections, type).length > 0);
+  const visibleSections = visibleTypes.filter(
+    (type) => getSectionResults(sections, type).length > 0,
+  );
   const selectedTypeSet = new Set(visibleTypes);
 
   return (
@@ -611,7 +678,10 @@ export default function BrowsePaneBody() {
             </button>
           </div>
 
-          <div className={styles.filters} aria-label="Browse visible result types">
+          <div
+            className={styles.filters}
+            aria-label="Browse visible result types"
+          >
             {BROWSE_TYPES.map((type) => (
               <label key={type} className={styles.filterOption}>
                 <input
@@ -621,12 +691,15 @@ export default function BrowsePaneBody() {
                     if (event.target.checked) {
                       updateVisibleTypes(
                         [...visibleTypes, type].filter(
-                          (value, index, values) => values.indexOf(value) === index
-                        )
+                          (value, index, values) =>
+                            values.indexOf(value) === index,
+                        ),
                       );
                       return;
                     }
-                    updateVisibleTypes(visibleTypes.filter((value) => value !== type));
+                    updateVisibleTypes(
+                      visibleTypes.filter((value) => value !== type),
+                    );
                   }}
                 />
                 <span>{TYPE_LABELS[type]}</span>
@@ -639,11 +712,14 @@ export default function BrowsePaneBody() {
 
         {!hasSearched ? (
           <FeedbackNotice severity="info">
-            Search once, then filter which result types stay visible. Browse finds things that are not already in your workspace.
+            Search once, then filter which result types stay visible. Browse
+            finds things that are not already in your workspace.
           </FeedbackNotice>
         ) : null}
 
-        {searching ? <FeedbackNotice severity="info">Searching...</FeedbackNotice> : null}
+        {searching ? (
+          <FeedbackNotice severity="info">Searching...</FeedbackNotice>
+        ) : null}
 
         {hasSearched && !searching && visibleSections.length === 0 ? (
           <FeedbackNotice severity="neutral">
@@ -656,7 +732,9 @@ export default function BrowsePaneBody() {
         {visibleSections.map((sectionType) => (
           <section key={sectionType} className={styles.section}>
             <div className={styles.sectionHeader}>
-              <h2 className={styles.sectionTitle}>{TYPE_LABELS[sectionType]}</h2>
+              <h2 className={styles.sectionTitle}>
+                {TYPE_LABELS[sectionType]}
+              </h2>
             </div>
 
             <div className={styles.resultRows}>
@@ -688,15 +766,23 @@ export default function BrowsePaneBody() {
                                   : "Article"}
                             </span>
                             {sourceLabel ? (
-                              <span className={styles.typeBadge}>{sourceLabel}</span>
+                              <span className={styles.typeBadge}>
+                                {sourceLabel}
+                              </span>
                             ) : null}
                           </div>
                           <div className={styles.title}>{result.title}</div>
                           <div className={styles.description}>
-                            {result.description || getDocumentFallbackDescription(result)}
+                            {result.description ||
+                              getDocumentFallbackDescription(result)}
                           </div>
                         </div>
                       </button>
+                      <ContributorCreditList
+                        credits={result.contributors}
+                        className={styles.rowContributors}
+                        maxVisible={2}
+                      />
                       <div className={styles.actions}>
                         <button
                           type="button"
@@ -729,7 +815,9 @@ export default function BrowsePaneBody() {
                 }
 
                 if (result.type === "videos") {
-                  const busy = busyKeys.has(`video:${result.provider_video_id}`);
+                  const busy = busyKeys.has(
+                    `video:${result.provider_video_id}`,
+                  );
                   return (
                     <div key={result.provider_video_id} className={styles.row}>
                       <button
@@ -750,7 +838,10 @@ export default function BrowsePaneBody() {
                               unoptimized
                             />
                           ) : (
-                            <span className={styles.fallback} aria-hidden="true">
+                            <span
+                              className={styles.fallback}
+                              aria-hidden="true"
+                            >
                               <Video size={18} />
                             </span>
                           )}
@@ -758,16 +849,19 @@ export default function BrowsePaneBody() {
                         <div className={styles.copy}>
                           <div className={styles.headingRow}>
                             <span className={styles.typeBadge}>Video</span>
-                            {result.channel_title ? (
-                              <span className={styles.meta}>{result.channel_title}</span>
-                            ) : null}
                           </div>
                           <div className={styles.title}>{result.title}</div>
                           <div className={styles.description}>
-                            {result.description || "Add this video to open it in the media reader."}
+                            {result.description ||
+                              "Add this video to open it in the media reader."}
                           </div>
                         </div>
                       </button>
+                      <ContributorCreditList
+                        credits={result.contributors}
+                        className={styles.rowContributors}
+                        maxVisible={2}
+                      />
                       <div className={styles.actions}>
                         <button
                           type="button"
@@ -777,7 +871,13 @@ export default function BrowsePaneBody() {
                             void addAndOpenResult(result);
                           }}
                         >
-                          {result.media_id ? (busy ? "Opening..." : "Open") : busy ? "Adding..." : "Add"}
+                          {result.media_id
+                            ? busy
+                              ? "Opening..."
+                              : "Open"
+                            : busy
+                              ? "Adding..."
+                              : "Add"}
                         </button>
                         {!result.media_id ? (
                           <LibraryTargetPicker
@@ -800,9 +900,14 @@ export default function BrowsePaneBody() {
                 }
 
                 if (result.type === "podcasts") {
-                  const busy = busyKeys.has(`podcast:${result.provider_podcast_id}`);
+                  const busy = busyKeys.has(
+                    `podcast:${result.provider_podcast_id}`,
+                  );
                   return (
-                    <div key={result.provider_podcast_id} className={styles.row}>
+                    <div
+                      key={result.provider_podcast_id}
+                      className={styles.row}
+                    >
                       <button
                         type="button"
                         className={styles.primary}
@@ -821,7 +926,10 @@ export default function BrowsePaneBody() {
                               unoptimized
                             />
                           ) : (
-                            <span className={styles.fallback} aria-hidden="true">
+                            <span
+                              className={styles.fallback}
+                              aria-hidden="true"
+                            >
                               <Mic size={18} />
                             </span>
                           )}
@@ -829,14 +937,19 @@ export default function BrowsePaneBody() {
                         <div className={styles.copy}>
                           <div className={styles.headingRow}>
                             <span className={styles.typeBadge}>Podcast</span>
-                            {result.author ? <span className={styles.meta}>{result.author}</span> : null}
                           </div>
                           <div className={styles.title}>{result.title}</div>
                           <div className={styles.description}>
-                            {result.description || "Open the show page or follow it from browse."}
+                            {result.description ||
+                              "Open the show page or follow it from browse."}
                           </div>
                         </div>
                       </button>
+                      <ContributorCreditList
+                        credits={result.contributors}
+                        className={styles.rowContributors}
+                        maxVisible={2}
+                      />
                       <div className={styles.actions}>
                         {result.podcast_id ? (
                           <button
@@ -881,7 +994,9 @@ export default function BrowsePaneBody() {
                   );
                 }
 
-                const busy = busyKeys.has(`podcast:${result.provider_podcast_id}`);
+                const busy = busyKeys.has(
+                  `podcast:${result.provider_podcast_id}`,
+                );
                 return (
                   <div key={result.provider_episode_id} className={styles.row}>
                     <button
@@ -910,12 +1025,21 @@ export default function BrowsePaneBody() {
                       <div className={styles.copy}>
                         <div className={styles.headingRow}>
                           <span className={styles.typeBadge}>Episode</span>
-                          <span className={styles.meta}>{result.podcast_title}</span>
+                          <span className={styles.meta}>
+                            {result.podcast_title}
+                          </span>
                         </div>
                         <div className={styles.title}>{result.title}</div>
-                        <div className={styles.description}>{formatEpisodeMeta(result)}</div>
+                        <div className={styles.description}>
+                          {formatEpisodeMeta(result)}
+                        </div>
                       </div>
                     </button>
+                    <ContributorCreditList
+                      credits={result.podcast_contributors}
+                      className={styles.rowContributors}
+                      maxVisible={2}
+                    />
                     <div className={styles.actions}>
                       <button
                         type="button"

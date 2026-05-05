@@ -134,7 +134,13 @@ class TestLibraryTargetPickerOptions:
             json={
                 "provider_podcast_id": "picker-read-target",
                 "title": "Picker Read Podcast",
-                "author": "Nexus",
+                "contributors": [
+                    {
+                        "credited_name": "Nexus",
+                        "role": "author",
+                        "source": "test",
+                    }
+                ],
                 "feed_url": "https://feeds.example.com/picker-read.xml",
                 "website_url": "https://example.com/picker-read",
                 "image_url": "https://example.com/picker-read.png",

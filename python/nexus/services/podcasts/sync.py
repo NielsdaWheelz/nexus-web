@@ -31,6 +31,14 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionSyncRefreshOut,
 )
 from nexus.services import playback_queue as playback_queue_service
+from nexus.services.content_indexing import (
+    deactivate_media_content_index,
+    mark_content_index_failed,
+)
+from nexus.services.contributor_credits import (
+    load_contributor_credits_for_podcasts,
+    replace_media_contributor_credits,
+)
 from nexus.services.rss_transcript_fetch import fetch_rss_transcript
 from nexus.services.sanitize_html import sanitize_html
 from nexus.services.transcript_segments import (
@@ -48,8 +56,8 @@ from .provider import (
 from .transcripts import (
     _create_next_transcript_version,
     _ensure_media_transcript_state_row,
-    _insert_transcript_chunks_for_version,
     _insert_transcript_segments_for_version,
+    _rebuild_transcript_content_index_for_version,
     _set_media_transcript_state,
     _try_enqueue_metadata_enrichment,
 )
@@ -646,8 +654,15 @@ def _sync_subscription_ingest(
     enrichment_media_ids: set[UUID] = set()
     chapter_sync_rows: list[tuple[UUID, list[dict[str, Any]] | None]] = []
     transcript_sync_rows: list[dict[str, Any]] = []
-    podcast = _get_podcast_sync_metadata(db, podcast_id)
-    podcast_author = str(podcast["author"] or "").strip() or None
+    podcast_contributors = load_contributor_credits_for_podcasts(db, [podcast_id]).get(
+        podcast_id,
+        [],
+    )
+    podcast_author_names = [
+        credit.credited_name
+        for credit in podcast_contributors
+        if credit.role == "author" and credit.credited_name
+    ]
 
     for episode in selected_episodes:
         guid = _normalize_guid(episode.get("guid"))
@@ -668,8 +683,8 @@ def _sync_subscription_ingest(
                 name = str(raw_author or "").strip()
                 if name and name not in author_names:
                     author_names.append(name)
-        if not author_names and podcast_author:
-            author_names.append(podcast_author)
+        if not author_names:
+            author_names.extend(podcast_author_names)
         rss_transcript_refs = episode.get("rss_transcript_refs")
         rss_transcript_url = None
         if isinstance(rss_transcript_refs, list):
@@ -739,27 +754,21 @@ def _sync_subscription_ingest(
                     "rss_transcript_url": rss_transcript_url,
                 },
             )
-            if author_names:
-                db.execute(
-                    text("DELETE FROM media_authors WHERE media_id = :media_id"),
-                    {"media_id": media_id},
-                )
-                for sort_order, name in enumerate(author_names):
-                    db.execute(
-                        text(
-                            """
-                            INSERT INTO media_authors (id, media_id, name, role, sort_order)
-                            VALUES (:id, :media_id, :name, 'author', :sort_order)
-                            """
-                        ),
-                        {
-                            "id": uuid4(),
-                            "media_id": media_id,
-                            "name": name[:255],
-                            "sort_order": sort_order,
-                        },
-                    )
-            else:
+            replace_media_contributor_credits(
+                db,
+                media_id=media_id,
+                source="rss",
+                credits=[
+                    {
+                        "name": name[:255],
+                        "role": "author",
+                        "ordinal": sort_order,
+                        "source": "rss",
+                    }
+                    for sort_order, name in enumerate(author_names)
+                ],
+            )
+            if not author_names:
                 enrichment_media_ids.add(media_id)
             reused_episode_count += 1
         else:
@@ -873,23 +882,21 @@ def _sync_subscription_ingest(
                     "created_at": now,
                 },
             )
-            if author_names:
-                for sort_order, name in enumerate(author_names):
-                    db.execute(
-                        text(
-                            """
-                            INSERT INTO media_authors (id, media_id, name, role, sort_order)
-                            VALUES (:id, :media_id, :name, 'author', :sort_order)
-                            """
-                        ),
-                        {
-                            "id": uuid4(),
-                            "media_id": media_id,
-                            "name": name[:255],
-                            "sort_order": sort_order,
-                        },
-                    )
-            else:
+            replace_media_contributor_credits(
+                db,
+                media_id=media_id,
+                source="rss",
+                credits=[
+                    {
+                        "name": name[:255],
+                        "role": "author",
+                        "ordinal": sort_order,
+                        "source": "rss",
+                    }
+                    for sort_order, name in enumerate(author_names)
+                ],
+            )
+            if not author_names:
                 enrichment_media_ids.add(media_id)
             _ensure_in_default_library(db, viewer_id, media_id)
             ingested_episode_count += 1
@@ -1012,16 +1019,21 @@ def _sync_subscription_ingest(
             transcript_segments=transcript_segments,
             now=now,
         )
+        deactivate_media_content_index(
+            db,
+            media_id=media_id,
+            reason="rss_transcript_replacement",
+        )
 
         semantic_status = "ready"
         semantic_error_code: str | None = None
         try:
-            _insert_transcript_chunks_for_version(
+            _rebuild_transcript_content_index_for_version(
                 db,
                 media_id=media_id,
                 transcript_version_id=transcript_version_id,
                 transcript_segments=transcript_segments,
-                now=now,
+                reason="rss_feed",
             )
         except Exception as exc:
             semantic_status = "failed"
@@ -1032,15 +1044,11 @@ def _sync_subscription_ingest(
                 transcript_version_id=str(transcript_version_id),
                 error=str(exc),
             )
-            db.execute(
-                text(
-                    """
-                    DELETE FROM content_chunks
-                    WHERE transcript_version_id = :transcript_version_id
-                      AND source_kind = 'transcript'
-                    """
-                ),
-                {"transcript_version_id": transcript_version_id},
+            mark_content_index_failed(
+                db,
+                media_id=media_id,
+                failure_code=ApiErrorCode.E_INTERNAL.value,
+                failure_message=str(exc),
             )
 
         db.execute(
@@ -1107,53 +1115,82 @@ def _upsert_podcast_episode_chapters(
         return
 
     for chapter_idx, chapter in enumerate(normalized_rows):
-        db.execute(
+        existing_chapter_id = db.scalar(
             text(
                 """
-                INSERT INTO podcast_episode_chapters (
-                    media_id,
-                    chapter_idx,
-                    title,
-                    t_start_ms,
-                    t_end_ms,
-                    url,
-                    image_url,
-                    source,
-                    created_at
-                )
-                VALUES (
-                    :media_id,
-                    :chapter_idx,
-                    :title,
-                    :t_start_ms,
-                    :t_end_ms,
-                    :url,
-                    :image_url,
-                    :source,
-                    :created_at
-                )
-                ON CONFLICT (media_id, chapter_idx)
-                DO UPDATE SET
-                    title = EXCLUDED.title,
-                    t_start_ms = EXCLUDED.t_start_ms,
-                    t_end_ms = EXCLUDED.t_end_ms,
-                    url = EXCLUDED.url,
-                    image_url = EXCLUDED.image_url,
-                    source = EXCLUDED.source
+                SELECT id
+                FROM podcast_episode_chapters
+                WHERE media_id = :media_id
+                  AND chapter_idx = :chapter_idx
                 """
             ),
-            {
-                "media_id": media_id,
-                "chapter_idx": chapter_idx,
-                "title": chapter["title"],
-                "t_start_ms": chapter["t_start_ms"],
-                "t_end_ms": chapter["t_end_ms"],
-                "url": chapter["url"],
-                "image_url": chapter["image_url"],
-                "source": chapter["source"],
-                "created_at": now,
-            },
+            {"media_id": media_id, "chapter_idx": chapter_idx},
         )
+        if existing_chapter_id is None:
+            db.execute(
+                text(
+                    """
+                    INSERT INTO podcast_episode_chapters (
+                        media_id,
+                        chapter_idx,
+                        title,
+                        t_start_ms,
+                        t_end_ms,
+                        url,
+                        image_url,
+                        source,
+                        created_at
+                    )
+                    VALUES (
+                        :media_id,
+                        :chapter_idx,
+                        :title,
+                        :t_start_ms,
+                        :t_end_ms,
+                        :url,
+                        :image_url,
+                        :source,
+                        :created_at
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "chapter_idx": chapter_idx,
+                    "title": chapter["title"],
+                    "t_start_ms": chapter["t_start_ms"],
+                    "t_end_ms": chapter["t_end_ms"],
+                    "url": chapter["url"],
+                    "image_url": chapter["image_url"],
+                    "source": chapter["source"],
+                    "created_at": now,
+                },
+            )
+        else:
+            db.execute(
+                text(
+                    """
+                    UPDATE podcast_episode_chapters
+                    SET
+                        title = :title,
+                        t_start_ms = :t_start_ms,
+                        t_end_ms = :t_end_ms,
+                        url = :url,
+                        image_url = :image_url,
+                        source = :source
+                    WHERE id = :id
+                    """
+                ),
+                {
+                    "id": existing_chapter_id,
+                    "title": chapter["title"],
+                    "t_start_ms": chapter["t_start_ms"],
+                    "t_end_ms": chapter["t_end_ms"],
+                    "url": chapter["url"],
+                    "image_url": chapter["image_url"],
+                    "source": chapter["source"],
+                },
+            )
 
     if normalized_rows:
         keep_indices = list(range(len(normalized_rows)))
@@ -1252,7 +1289,6 @@ def refresh_subscription_sync_for_viewer(
                     COALESCE(sync_started_at, updated_at)
                 FROM podcast_subscriptions
                 WHERE user_id = :user_id AND podcast_id = :podcast_id
-                FOR UPDATE
                 """
             ),
             {
@@ -1482,7 +1518,7 @@ def _get_podcast_sync_metadata(db: Session, podcast_id: UUID) -> dict[str, Any]:
     row = db.execute(
         text(
             """
-            SELECT id, provider_podcast_id, feed_url, author
+            SELECT id, provider_podcast_id, feed_url
             FROM podcasts
             WHERE id = :podcast_id
             """
@@ -1495,7 +1531,6 @@ def _get_podcast_sync_metadata(db: Session, podcast_id: UUID) -> dict[str, Any]:
         "id": row[0],
         "provider_podcast_id": row[1],
         "feed_url": row[2],
-        "author": row[3],
     }
 
 

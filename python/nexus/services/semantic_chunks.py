@@ -133,33 +133,3 @@ def build_text_embeddings(texts: list[str]) -> tuple[str, list[list[float]]]:
 def build_text_embedding(text: str) -> tuple[str, list[float]]:
     model_name, vectors = build_text_embeddings([text])
     return model_name, (vectors[0] if vectors else [0.0] * transcript_embedding_dimensions())
-
-
-def chunk_transcript_segments(transcript_segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Build one semantic chunk per normalized transcript segment."""
-    chunks: list[dict[str, Any]] = []
-    for idx, segment in enumerate(transcript_segments):
-        chunk_text = str(segment.get("text") or "").strip()
-        if not chunk_text:
-            continue
-        t_start_ms = int(segment.get("t_start_ms") or 0)
-        t_end_ms = int(segment.get("t_end_ms") or 0)
-        if t_end_ms <= t_start_ms:
-            continue
-        chunks.append(
-            {
-                "chunk_idx": idx,
-                "chunk_text": chunk_text,
-                "t_start_ms": t_start_ms,
-                "t_end_ms": t_end_ms,
-            }
-        )
-
-    if not chunks:
-        return []
-
-    model_name, embeddings = build_text_embeddings([chunk["chunk_text"] for chunk in chunks])
-    for chunk, embedding in zip(chunks, embeddings, strict=True):
-        chunk["embedding_model"] = model_name
-        chunk["embedding"] = embedding
-    return chunks

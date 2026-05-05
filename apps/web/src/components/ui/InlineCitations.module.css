@@ -51,8 +51,20 @@
   color: var(--color-text);
 }
 
+.cardTitle {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-text);
+}
+
+.cardTitle + .cardText {
+  margin-top: var(--space-1);
+}
+
 .cardMeta {
   margin-top: var(--space-1);
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
+  overflow-wrap: anywhere;
 }

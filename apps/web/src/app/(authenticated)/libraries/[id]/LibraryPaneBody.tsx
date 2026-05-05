@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 import { flushSync } from "react-dom";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import {
@@ -26,6 +33,7 @@ import {
   Video,
 } from "lucide-react";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
+import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ActionMenu from "@/components/ui/ActionMenu";
 import SectionCard from "@/components/ui/SectionCard";
 import SortableList from "@/components/sortable/SortableList";
@@ -45,6 +53,7 @@ import {
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import type { ContributorCredit } from "@/lib/contributors/types";
 import styles from "./page.module.css";
 
 const MEDIA_KIND_ICONS: Record<string, typeof Globe> = {
@@ -66,7 +75,7 @@ interface LibraryMediaEntry {
   id: string;
   kind: string;
   title: string;
-  authors: Array<{ id: string; name: string; role: string | null }>;
+  contributors: ContributorCredit[];
   published_date: string | null;
   publisher: string | null;
   canonical_source_url: string | null;
@@ -86,7 +95,7 @@ interface LibraryMediaEntry {
 interface LibraryPodcastEntry {
   id: string;
   title: string;
-  author: string | null;
+  contributors: ContributorCredit[];
   feed_url: string;
   website_url: string | null;
   image_url: string | null;
@@ -95,7 +104,13 @@ interface LibraryPodcastEntry {
 
 interface LibraryPodcastSubscription {
   status: "active" | "unsubscribed";
-  sync_status: "pending" | "running" | "partial" | "complete" | "source_limited" | "failed";
+  sync_status:
+    | "pending"
+    | "running"
+    | "partial"
+    | "complete"
+    | "source_limited"
+    | "failed";
 }
 
 interface LibraryEntryBase {
@@ -203,6 +218,27 @@ function formatDateTime(value: string | null | undefined): string | null {
   });
 }
 
+function hasContributorLinks(
+  contributors: ContributorCredit[] | null | undefined,
+): boolean {
+  return Array.isArray(contributors)
+    ? contributors.some((credit) => credit.contributor_handle?.trim())
+    : false;
+}
+
+function isInteractiveRowTarget(
+  target: EventTarget | null,
+  currentTarget: HTMLElement,
+): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  const interactive = target.closest(
+    'a, button, input, textarea, select, [role="button"], [role="menuitem"]',
+  );
+  return Boolean(interactive && currentTarget.contains(interactive));
+}
+
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");
   if (!id) {
@@ -213,24 +249,34 @@ export default function LibraryPaneBody() {
   const feedback = useFeedback();
   const [library, setLibrary] = useState<Library | null>(null);
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
-  const [removedEntryIds, setRemovedEntryIds] = useState<Set<string>>(new Set());
-  const [retryingMediaIds, setRetryingMediaIds] = useState<Set<string>>(new Set());
+  const [removedEntryIds, setRemovedEntryIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [retryingMediaIds, setRetryingMediaIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
   const [activeView, setActiveView] = useState<LibraryView>(() =>
-    paneSearchParams.get("view") === "intelligence" ? "intelligence" : "contents"
+    paneSearchParams.get("view") === "intelligence"
+      ? "intelligence"
+      : "contents",
   );
-  const [intelligence, setIntelligence] = useState<LibraryIntelligence | null>(null);
+  const [intelligence, setIntelligence] = useState<LibraryIntelligence | null>(
+    null,
+  );
   const [intelligenceLoading, setIntelligenceLoading] = useState(false);
   const [intelligenceRefreshing, setIntelligenceRefreshing] = useState(false);
-  const [intelligenceError, setIntelligenceError] = useState<FeedbackContent | null>(null);
+  const [intelligenceError, setIntelligenceError] =
+    useState<FeedbackContent | null>(null);
   useSetPaneTitle(library?.name ?? "Library");
 
   const [editOpen, setEditOpen] = useState(false);
   const [editMembers, setEditMembers] = useState<LibraryMember[]>([]);
   const [editInvites, setEditInvites] = useState<LibraryInvite[]>([]);
-  const [libraryPanelEntry, setLibraryPanelEntry] = useState<LibraryEntry | null>(null);
+  const [libraryPanelEntry, setLibraryPanelEntry] =
+    useState<LibraryEntry | null>(null);
   const [libraryPanelAnchorEl, setLibraryPanelAnchorEl] =
     useState<HTMLElement | null>(null);
   const [libraryPanelLibraries, setLibraryPanelLibraries] = useState<
@@ -238,12 +284,16 @@ export default function LibraryPaneBody() {
   >([]);
   const [libraryPanelLoading, setLibraryPanelLoading] = useState(false);
   const [libraryPanelBusy, setLibraryPanelBusy] = useState(false);
-  const [libraryPanelError, setLibraryPanelError] = useState<string | null>(null);
+  const [libraryPanelError, setLibraryPanelError] = useState<string | null>(
+    null,
+  );
   const libraryPanelRequestIdRef = useRef(0);
 
   useEffect(() => {
     setActiveView(
-      paneSearchParams.get("view") === "intelligence" ? "intelligence" : "contents"
+      paneSearchParams.get("view") === "intelligence"
+        ? "intelligence"
+        : "contents",
     );
   }, [paneSearchParams]);
   const libraryPanelEntryIdRef = useRef<string | null>(null);
@@ -278,12 +328,12 @@ export default function LibraryPaneBody() {
     setIntelligenceError(null);
     try {
       const response = await apiFetch<{ data: LibraryIntelligence }>(
-        `/api/libraries/${id}/intelligence`
+        `/api/libraries/${id}/intelligence`,
       );
       setIntelligence(response.data);
     } catch (err) {
       setIntelligenceError(
-        toFeedback(err, { fallback: "Failed to load library intelligence" })
+        toFeedback(err, { fallback: "Failed to load library intelligence" }),
       );
     } finally {
       setIntelligenceLoading(false);
@@ -303,12 +353,12 @@ export default function LibraryPaneBody() {
     try {
       await apiFetch<{ data: { build_id: string; status: string } }>(
         `/api/libraries/${id}/intelligence/refresh`,
-        { method: "POST" }
+        { method: "POST" },
       );
       await loadIntelligence();
     } catch (err) {
       setIntelligenceError(
-        toFeedback(err, { fallback: "Failed to refresh library intelligence" })
+        toFeedback(err, { fallback: "Failed to refresh library intelligence" }),
       );
     } finally {
       setIntelligenceRefreshing(false);
@@ -325,6 +375,54 @@ export default function LibraryPaneBody() {
     setLibraryPanelBusy(false);
     setLibraryPanelError(null);
   }, []);
+
+  const openLibraryEntry = useCallback(
+    (href: string, title: string, openInNewPane: boolean) => {
+      if (openInNewPane) {
+        if (!requestOpenInAppPane(href, { titleHint: title })) {
+          window.location.assign(href);
+        }
+        return;
+      }
+      router.push(href);
+    },
+    [router],
+  );
+
+  const handleLibraryEntryRowClick = useCallback(
+    (event: MouseEvent<HTMLDivElement>, href: string, title: string) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        isInteractiveRowTarget(event.target, event.currentTarget)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      openLibraryEntry(href, title, event.shiftKey);
+    },
+    [openLibraryEntry],
+  );
+
+  const handleLibraryEntryRowKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>, href: string, title: string) => {
+      if (
+        event.target !== event.currentTarget ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        (event.key !== "Enter" && event.key !== " ")
+      ) {
+        return;
+      }
+      event.preventDefault();
+      openLibraryEntry(href, title, event.shiftKey);
+    },
+    [openLibraryEntry],
+  );
 
   const openLibraryPanel = useCallback(
     async (entry: LibraryEntry, triggerEl: HTMLElement | null) => {
@@ -367,20 +465,22 @@ export default function LibraryPaneBody() {
               isInLibrary: library.is_in_library,
               canAdd: library.can_add,
               canRemove: library.can_remove,
-            }))
+            })),
         );
       } catch (err) {
         if (libraryPanelRequestIdRef.current !== requestId) {
           return;
         }
-        setLibraryPanelError(toFeedback(err, { fallback: "Failed to load libraries" }).title);
+        setLibraryPanelError(
+          toFeedback(err, { fallback: "Failed to load libraries" }).title,
+        );
       } finally {
         if (libraryPanelRequestIdRef.current === requestId) {
           setLibraryPanelLoading(false);
         }
       }
     },
-    []
+    [],
   );
 
   const handleAddToLibrary = useCallback(
@@ -413,19 +513,19 @@ export default function LibraryPaneBody() {
                     canAdd: false,
                     canRemove: true,
                   }
-                : library
-            )
+                : library,
+            ),
           );
         }
       } catch (err) {
         setLibraryPanelError(
-          toFeedback(err, { fallback: "Failed to add item to library" }).title
+          toFeedback(err, { fallback: "Failed to add item to library" }).title,
         );
       } finally {
         setLibraryPanelBusy(false);
       }
     },
-    [libraryPanelBusy, libraryPanelEntry]
+    [libraryPanelBusy, libraryPanelEntry],
   );
 
   const handleRemoveFromLibrary = useCallback(
@@ -467,7 +567,7 @@ export default function LibraryPaneBody() {
                 return false;
               }
               return true;
-            })
+            }),
           );
         });
         closeLibraryPanel();
@@ -475,13 +575,16 @@ export default function LibraryPaneBody() {
 
       try {
         if (entry.kind === "podcast") {
-          await apiFetch(`/api/libraries/${libraryId}/podcasts/${entry.podcast.id}`, {
-            method: "DELETE",
-          });
+          await apiFetch(
+            `/api/libraries/${libraryId}/podcasts/${entry.podcast.id}`,
+            {
+              method: "DELETE",
+            },
+          );
         } else {
           await apiFetch(
             `/api/media/${entry.media.id}?library_id=${encodeURIComponent(libraryId)}`,
-            { method: "DELETE" }
+            { method: "DELETE" },
           );
         }
 
@@ -499,8 +602,8 @@ export default function LibraryPaneBody() {
                     canAdd: true,
                     canRemove: false,
                   }
-                : library
-            )
+                : library,
+            ),
           );
         }
       } catch (err) {
@@ -509,13 +612,21 @@ export default function LibraryPaneBody() {
           setRemovedEntryIds(previousRemovedEntryIds);
         }
         setLibraryPanelError(
-          toFeedback(err, { fallback: "Failed to remove item from library" }).title
+          toFeedback(err, { fallback: "Failed to remove item from library" })
+            .title,
         );
       } finally {
         setLibraryPanelBusy(false);
       }
     },
-    [closeLibraryPanel, entries, id, libraryPanelBusy, libraryPanelEntry, removedEntryIds]
+    [
+      closeLibraryPanel,
+      entries,
+      id,
+      libraryPanelBusy,
+      libraryPanelEntry,
+      removedEntryIds,
+    ],
   );
 
   const handleRetryProcessing = useCallback(
@@ -541,8 +652,8 @@ export default function LibraryPaneBody() {
                     },
                   },
                 }
-              : entry
-          )
+              : entry,
+          ),
         );
         feedback.show({
           severity: "success",
@@ -562,14 +673,14 @@ export default function LibraryPaneBody() {
         });
       }
     },
-    [feedback, retryingMediaIds]
+    [feedback, retryingMediaIds],
   );
 
   const handleDeleteMedia = useCallback(
     async (entry: LibraryMediaListEntry) => {
       if (
         !confirm(
-          `Delete "${entry.media.title}" from My Library and libraries you manage? This cannot be undone.`
+          `Delete "${entry.media.title}" from My Library and libraries you manage? This cannot be undone.`,
         )
       ) {
         return;
@@ -580,8 +691,9 @@ export default function LibraryPaneBody() {
         setEntries((current) =>
           current.filter(
             (candidate) =>
-              candidate.kind !== "media" || candidate.media.id !== entry.media.id
-          )
+              candidate.kind !== "media" ||
+              candidate.media.id !== entry.media.id,
+          ),
         );
       } catch (err) {
         feedback.show({
@@ -591,7 +703,7 @@ export default function LibraryPaneBody() {
         });
       }
     },
-    [feedback]
+    [feedback],
   );
 
   const handleDeleteLibrary = async () => {
@@ -612,7 +724,7 @@ export default function LibraryPaneBody() {
         setError(
           toFeedback(err, {
             fallback: "Failed to delete library",
-          })
+          }),
         );
       } else {
         setError({ severity: "error", title: "Failed to delete library" });
@@ -626,10 +738,14 @@ export default function LibraryPaneBody() {
     try {
       const [membersResp, invitesResp] = await Promise.all([
         library.role === "admin"
-          ? apiFetch<{ data: LibraryMember[] }>(`/api/libraries/${library.id}/members`)
+          ? apiFetch<{ data: LibraryMember[] }>(
+              `/api/libraries/${library.id}/members`,
+            )
           : Promise.resolve({ data: [] as LibraryMember[] }),
         library.role === "admin"
-          ? apiFetch<{ data: LibraryInvite[] }>(`/api/libraries/${library.id}/invites`)
+          ? apiFetch<{ data: LibraryInvite[] }>(
+              `/api/libraries/${library.id}/invites`,
+            )
           : Promise.resolve({ data: [] as LibraryInvite[] }),
       ]);
       setEditMembers(membersResp.data);
@@ -639,7 +755,7 @@ export default function LibraryPaneBody() {
         setError(
           toFeedback(err, {
             fallback: "Failed to load library sharing",
-          })
+          }),
         );
       }
     }
@@ -660,7 +776,7 @@ export default function LibraryPaneBody() {
       });
       setLibrary({ ...library, name });
     },
-    [library]
+    [library],
   );
 
   const handleUpdateMemberRole = useCallback(
@@ -671,10 +787,12 @@ export default function LibraryPaneBody() {
         body: JSON.stringify({ role }),
       });
       setEditMembers((prev) =>
-        prev.map((member) => (member.user_id === userId ? { ...member, role } : member))
+        prev.map((member) =>
+          member.user_id === userId ? { ...member, role } : member,
+        ),
       );
     },
-    [library]
+    [library],
   );
 
   const handleRemoveMember = useCallback(
@@ -683,9 +801,11 @@ export default function LibraryPaneBody() {
       await apiFetch(`/api/libraries/${library.id}/members/${userId}`, {
         method: "DELETE",
       });
-      setEditMembers((prev) => prev.filter((member) => member.user_id !== userId));
+      setEditMembers((prev) =>
+        prev.filter((member) => member.user_id !== userId),
+      );
     },
-    [library]
+    [library],
   );
 
   const handleCreateInvite = useCallback(
@@ -699,23 +819,23 @@ export default function LibraryPaneBody() {
           body: JSON.stringify(
             isEmail
               ? { invitee_email: inviteeIdentifier, role }
-              : { invitee_user_id: inviteeIdentifier, role }
+              : { invitee_user_id: inviteeIdentifier, role },
           ),
-        }
+        },
       );
       setEditInvites((prev) => [response.data, ...prev]);
     },
-    [library]
+    [library],
   );
 
   const handleSearchUsers = useCallback(
     async (query: string): Promise<UserSearchResult[]> => {
       const response = await apiFetch<{ data: UserSearchResult[] }>(
-        `/api/users/search?q=${encodeURIComponent(query)}`
+        `/api/users/search?q=${encodeURIComponent(query)}`,
       );
       return response.data;
     },
-    []
+    [],
   );
 
   const handleRevokeInvite = useCallback(async (inviteId: string) => {
@@ -724,8 +844,8 @@ export default function LibraryPaneBody() {
     });
     setEditInvites((prev) =>
       prev.map((invite) =>
-        invite.id === inviteId ? { ...invite, status: "revoked" } : invite
-      )
+        invite.id === inviteId ? { ...invite, status: "revoked" } : invite,
+      ),
     );
   }, []);
 
@@ -752,17 +872,21 @@ export default function LibraryPaneBody() {
         {
           method: "POST",
           body: JSON.stringify({ type: "library", library_id: library.id }),
-        }
+        },
       );
       const route = `/conversations/${response.data.id}`;
-      if (!requestOpenInAppPane(route, { titleHint: response.data.title || library.name })) {
+      if (
+        !requestOpenInAppPane(route, {
+          titleHint: response.data.title || library.name,
+        })
+      ) {
         router.push(route);
       }
     } catch (err) {
       setError(
         toFeedback(err, {
           fallback: "Failed to open library chat",
-        })
+        }),
       );
     }
   }, [library, router]);
@@ -770,26 +894,29 @@ export default function LibraryPaneBody() {
   const handleOpenMediaChat = useCallback(
     async (media: LibraryMediaEntry) => {
       try {
-        const response = await apiFetch<{ data: { id: string; title: string } }>(
-          "/api/conversations/resolve",
-          {
-            method: "POST",
-            body: JSON.stringify({ type: "media", media_id: media.id }),
-          }
-        );
+        const response = await apiFetch<{
+          data: { id: string; title: string };
+        }>("/api/conversations/resolve", {
+          method: "POST",
+          body: JSON.stringify({ type: "media", media_id: media.id }),
+        });
         const route = `/conversations/${response.data.id}`;
-        if (!requestOpenInAppPane(route, { titleHint: response.data.title || media.title })) {
+        if (
+          !requestOpenInAppPane(route, {
+            titleHint: response.data.title || media.title,
+          })
+        ) {
           router.push(route);
         }
       } catch (err) {
         setError(
           toFeedback(err, {
             fallback: "Failed to open media chat",
-          })
+          }),
         );
       }
     },
-    [router]
+    [router],
   );
 
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {
@@ -810,11 +937,14 @@ export default function LibraryPaneBody() {
           setError(
             toFeedback(err, {
               fallback: "Failed to reorder library entries",
-            })
+            }),
           );
           return;
         }
-        setError({ severity: "error", title: "Failed to reorder library entries" });
+        setError({
+          severity: "error",
+          title: "Failed to reorder library entries",
+        });
       })
       .finally(() => {
         setReorderBusy(false);
@@ -852,13 +982,19 @@ export default function LibraryPaneBody() {
     role: library.role,
     owner_user_id: library.owner_user_id,
   };
-  const visibleEntries = entries.filter((entry) => !removedEntryIds.has(entry.id));
+  const visibleEntries = entries.filter(
+    (entry) => !removedEntryIds.has(entry.id),
+  );
   const intelligenceSections = intelligence?.sections ?? [];
   const updatedAt = formatDateTime(intelligence?.updated_at);
   const buildUpdatedAt = formatDateTime(
-    intelligence?.build?.updated_at ?? intelligence?.build?.completed_at ?? null
+    intelligence?.build?.updated_at ??
+      intelligence?.build?.completed_at ??
+      null,
   );
-  const buildStartedAt = formatDateTime(intelligence?.build?.started_at ?? null);
+  const buildStartedAt = formatDateTime(
+    intelligence?.build?.started_at ?? null,
+  );
   const intelligenceStatus = intelligence?.status ?? "unavailable";
   const buildStatus = intelligence?.build?.status ?? null;
   const statusText =
@@ -893,7 +1029,11 @@ export default function LibraryPaneBody() {
         <div className={styles.content}>
           {error && <FeedbackNotice {...error} />}
 
-          <div className={styles.viewSwitch} role="tablist" aria-label="Library view">
+          <div
+            className={styles.viewSwitch}
+            role="tablist"
+            aria-label="Library view"
+          >
             <button
               type="button"
               role="tab"
@@ -944,17 +1084,24 @@ export default function LibraryPaneBody() {
               ) : null}
 
               {intelligenceLoading && !intelligence ? (
-                <FeedbackNotice severity="info" title="Loading intelligence..." />
+                <FeedbackNotice
+                  severity="info"
+                  title="Loading intelligence..."
+                />
               ) : intelligence ? (
                 <>
                   <div className={styles.intelligenceStats}>
                     <div className={styles.intelligenceStat}>
                       <span className={styles.statLabel}>Sources</span>
-                      <strong>{intelligence.source_count.toLocaleString()}</strong>
+                      <strong>
+                        {intelligence.source_count.toLocaleString()}
+                      </strong>
                     </div>
                     <div className={styles.intelligenceStat}>
                       <span className={styles.statLabel}>Chunks</span>
-                      <strong>{intelligence.chunk_count.toLocaleString()}</strong>
+                      <strong>
+                        {intelligence.chunk_count.toLocaleString()}
+                      </strong>
                     </div>
                     <div className={styles.intelligenceStat}>
                       <span className={styles.statLabel}>Updated</span>
@@ -969,7 +1116,9 @@ export default function LibraryPaneBody() {
                     <div
                       className={styles.buildState}
                       data-status={intelligenceStatus}
-                      role={intelligenceStatus === "failed" ? "alert" : "status"}
+                      role={
+                        intelligenceStatus === "failed" ? "alert" : "status"
+                      }
                     >
                       <strong>
                         {intelligenceStatus === "stale"
@@ -996,11 +1145,16 @@ export default function LibraryPaneBody() {
                   <section className={styles.intelligenceSection}>
                     <h3>Overview</h3>
                     {intelligenceSections.length === 0 ? (
-                      <p className={styles.mutedText}>No overview sections are available yet.</p>
+                      <p className={styles.mutedText}>
+                        No overview sections are available yet.
+                      </p>
                     ) : (
                       <div className={styles.sectionGrid}>
                         {intelligenceSections.map((section) => (
-                          <article className={styles.overviewSection} key={section.id}>
+                          <article
+                            className={styles.overviewSection}
+                            key={section.id}
+                          >
                             <h4>{section.title}</h4>
                             <p>{section.body}</p>
                             {section.claims.length > 0 ? (
@@ -1028,16 +1182,24 @@ export default function LibraryPaneBody() {
                         {intelligence.coverage.map((source) => (
                           <div
                             className={styles.coverageItem}
-                            key={source.media_id ?? source.podcast_id ?? source.title}
+                            key={
+                              source.media_id ??
+                              source.podcast_id ??
+                              source.title
+                            }
                           >
                             <dt>{source.title}</dt>
                             <dd>
                               {[
                                 formatLabel(source.source_kind),
-                                source.media_kind ? formatLabel(source.media_kind) : null,
+                                source.media_kind
+                                  ? formatLabel(source.media_kind)
+                                  : null,
                                 source.included
                                   ? "Included"
-                                  : formatLabel(source.exclusion_reason ?? "excluded"),
+                                  : formatLabel(
+                                      source.exclusion_reason ?? "excluded",
+                                    ),
                                 `${source.chunk_count.toLocaleString()} chunks`,
                                 formatLabel(source.readiness_state),
                               ]
@@ -1048,7 +1210,9 @@ export default function LibraryPaneBody() {
                         ))}
                       </dl>
                     ) : (
-                      <p className={styles.mutedText}>No coverage data is available yet.</p>
+                      <p className={styles.mutedText}>
+                        No coverage data is available yet.
+                      </p>
                     )}
                   </section>
                 </>
@@ -1082,14 +1246,45 @@ export default function LibraryPaneBody() {
                     : undefined;
                 if (item.kind === "podcast") {
                   const subscription = item.subscription;
+                  const hasContributors = hasContributorLinks(
+                    item.podcast.contributors,
+                  );
+                  const podcastMetaParts = [
+                    subscription?.status === "active"
+                      ? subscription.sync_status
+                      : "unsubscribed",
+                    item.podcast.unplayed_count > 0
+                      ? `${item.podcast.unplayed_count} new`
+                      : null,
+                  ].filter(Boolean);
                   const rowOptions = podcastResourceOptions({
                     canUsePodcastActions: library.role === "admin",
                     onManageLibraries: ({ triggerEl }) => {
                       void openLibraryPanel(item, triggerEl);
                     },
                   });
+                  const href = `/podcasts/${item.podcast.id}`;
                   return (
-                    <div className={styles.mediaRow} data-dragging={isDragging ? "true" : "false"}>
+                    <div
+                      className={styles.mediaRow}
+                      data-dragging={isDragging ? "true" : "false"}
+                      role="link"
+                      tabIndex={0}
+                      onClick={(event) =>
+                        handleLibraryEntryRowClick(
+                          event,
+                          href,
+                          item.podcast.title,
+                        )
+                      }
+                      onKeyDown={(event) =>
+                        handleLibraryEntryRowKeyDown(
+                          event,
+                          href,
+                          item.podcast.title,
+                        )
+                      }
+                    >
                       <div className={styles.mediaRowMain}>
                         {library.role === "admin" && (
                           <button
@@ -1102,26 +1297,33 @@ export default function LibraryPaneBody() {
                             ⋮⋮
                           </button>
                         )}
-                        <a href={`/podcasts/${item.podcast.id}`} className={styles.mediaLink}>
+                        <div className={styles.mediaLink}>
                           <span className={styles.mediaTitleRow}>
                             <Radio size={18} aria-hidden="true" />
-                            <span className={styles.mediaTitle}>{item.podcast.title}</span>
+                            <span className={styles.mediaTitle}>
+                              {item.podcast.title}
+                            </span>
                           </span>
-                          <span className={styles.mediaMeta}>
-                            {[
-                              item.podcast.author || "Unknown author",
-                              subscription?.status === "active" ? subscription.sync_status : "unsubscribed",
-                              item.podcast.unplayed_count > 0
-                                ? `${item.podcast.unplayed_count} new`
-                                : null,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </span>
-                        </a>
+                          {hasContributors || podcastMetaParts.length > 0 ? (
+                            <span className={styles.mediaMetaRow}>
+                              <ContributorCreditList
+                                credits={item.podcast.contributors}
+                                maxVisible={1}
+                              />
+                              {podcastMetaParts.length > 0 ? (
+                                <span className={styles.mediaMeta}>
+                                  {podcastMetaParts.join(" · ")}
+                                </span>
+                              ) : null}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                       {rowOptions.length > 0 ? (
-                        <ActionMenu options={rowOptions} className={styles.rowActionMenu} />
+                        <ActionMenu
+                          options={rowOptions}
+                          className={styles.rowActionMenu}
+                        />
                       ) : null}
                     </div>
                   );
@@ -1150,28 +1352,22 @@ export default function LibraryPaneBody() {
                       }
                     : undefined,
                 });
-                const authorNames = item.media.authors
-                  .map((author) => author.name.trim())
-                  .filter((name) => name.length > 0);
-                let authorSummary: string | null = null;
-                if (authorNames.length === 1) {
-                  authorSummary = authorNames[0] ?? null;
-                } else if (authorNames.length > 1) {
-                  authorSummary = `${authorNames[0]} +${authorNames.length - 1}`;
-                }
+                const hasContributors = hasContributorLinks(
+                  item.media.contributors,
+                );
                 let publishedDate = item.media.published_date?.trim() || null;
-                if (publishedDate && /^\d{4}-\d{2}-\d{2}T/.test(publishedDate)) {
+                if (
+                  publishedDate &&
+                  /^\d{4}-\d{2}-\d{2}T/.test(publishedDate)
+                ) {
                   publishedDate = publishedDate.slice(0, 10);
                 }
                 const publisher = item.media.publisher?.trim() || null;
                 const metaParts: string[] = [];
-                if (authorSummary) {
-                  metaParts.push(authorSummary);
-                }
                 if (publishedDate) {
                   metaParts.push(publishedDate);
                 }
-                if (metaParts.length === 0 && publisher) {
+                if (!hasContributors && metaParts.length === 0 && publisher) {
                   metaParts.push(publisher);
                 }
                 let statusLabel: string | null = null;
@@ -1184,8 +1380,24 @@ export default function LibraryPaneBody() {
                 } else if (item.media.processing_status === "failed") {
                   statusLabel = "Failed";
                 }
+                const href = `/media/${item.media.id}`;
                 return (
-                  <div className={styles.mediaRow} data-dragging={isDragging ? "true" : "false"}>
+                  <div
+                    className={styles.mediaRow}
+                    data-dragging={isDragging ? "true" : "false"}
+                    role="link"
+                    tabIndex={0}
+                    onClick={(event) =>
+                      handleLibraryEntryRowClick(event, href, item.media.title)
+                    }
+                    onKeyDown={(event) =>
+                      handleLibraryEntryRowKeyDown(
+                        event,
+                        href,
+                        item.media.title,
+                      )
+                    }
+                  >
                     <div className={styles.mediaRowMain}>
                       {library.role === "admin" && (
                         <button
@@ -1198,15 +1410,25 @@ export default function LibraryPaneBody() {
                           ⋮⋮
                         </button>
                       )}
-                      <a href={`/media/${item.media.id}`} className={styles.mediaLink}>
+                      <div className={styles.mediaLink}>
                         <span className={styles.mediaTitleRow}>
                           <Icon size={18} aria-hidden="true" />
-                          <span className={styles.mediaTitle}>{item.media.title}</span>
+                          <span className={styles.mediaTitle}>
+                            {item.media.title}
+                          </span>
                         </span>
-                        {metaParts.length > 0 || statusLabel ? (
+                        {hasContributors ||
+                        metaParts.length > 0 ||
+                        statusLabel ? (
                           <span className={styles.mediaMetaRow}>
+                            <ContributorCreditList
+                              credits={item.media.contributors}
+                              maxVisible={1}
+                            />
                             {metaParts.length > 0 ? (
-                              <span className={styles.mediaMeta}>{metaParts.join(" · ")}</span>
+                              <span className={styles.mediaMeta}>
+                                {metaParts.join(" · ")}
+                              </span>
                             ) : null}
                             {statusLabel ? (
                               <span
@@ -1218,10 +1440,13 @@ export default function LibraryPaneBody() {
                             ) : null}
                           </span>
                         ) : null}
-                      </a>
+                      </div>
                     </div>
                     {rowOptions.length > 0 ? (
-                      <ActionMenu options={rowOptions} className={styles.rowActionMenu} />
+                      <ActionMenu
+                        options={rowOptions}
+                        className={styles.rowActionMenu}
+                      />
                     ) : null}
                   </div>
                 );

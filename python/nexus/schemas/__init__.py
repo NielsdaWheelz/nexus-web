@@ -23,11 +23,9 @@ from nexus.schemas.conversation import (
     SetConversationSharesRequest,
 )
 from nexus.schemas.highlights import (
-    AnnotationOut,
     CreateHighlightRequest,
     TypedHighlightOut,
     UpdateHighlightRequest,
-    UpsertAnnotationRequest,
 )
 from nexus.schemas.ingest import IngestReconcileEnqueueOut, IngestRecoveryHealthOut
 from nexus.schemas.library import (
@@ -90,10 +88,8 @@ __all__ = [
     "FragmentOut",
     # Highlight schemas (Slice 2)
     "TypedHighlightOut",
-    "AnnotationOut",
     "CreateHighlightRequest",
     "UpdateHighlightRequest",
-    "UpsertAnnotationRequest",
     # Conversation schemas (Slice 3)
     "ConversationOut",
     "MessageOut",

@@ -1,7 +1,7 @@
 [project]
 name = "nexus"
 version = "0.1.0"
-description = "Nexus backend API - a reading and annotation platform"
+description = "Nexus backend API - a reading and notes platform"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -104,6 +104,9 @@ include = [
     "nexus/services/context_rendering.py",
     "nexus/services/context_window.py",
     "nexus/services/contexts.py",
+    "nexus/services/content_indexing.py",
+    "nexus/services/contributor_credits.py",
+    "nexus/services/contributors.py",
     "nexus/services/crypto.py",
     "nexus/services/epub_ingest.py",
     "nexus/services/epub_lifecycle.py",
@@ -112,7 +115,12 @@ include = [
     "nexus/services/image_proxy.py",
     "nexus/services/ingest_recovery.py",
     "nexus/services/metadata_enrichment.py",
+    "nexus/services/message_context_items.py",
     "nexus/services/node_ingest.py",
+    "nexus/services/notes.py",
+    "nexus/services/object_links.py",
+    "nexus/services/object_refs.py",
+    "nexus/services/oracle.py",
     "nexus/services/pdf_highlight_geometry.py",
     "nexus/services/pdf_lifecycle.py",
     "nexus/services/pdf_locking.py",
@@ -127,6 +135,7 @@ include = [
     "nexus/services/semantic_chunks.py",
     "nexus/services/seq.py",
     "nexus/services/shares.py",
+    "nexus/services/locator_resolver.py",
     "nexus/services/transcript_media.py",
     "nexus/services/transcript_segments.py",
     "nexus/services/url_normalize.py",

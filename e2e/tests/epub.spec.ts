@@ -25,17 +25,77 @@ interface HighlightOut {
     start_offset: number;
     end_offset: number;
   };
+  linked_note_blocks?: Array<{
+    note_block_id: string;
+    body_text: string;
+  }>;
 }
 
-async function upsertHighlightAnnotation(
+interface ObjectLinksResponse {
+  data: {
+    links: Array<{
+      id: string;
+      a: { objectType: string; objectId: string };
+      b: { objectType: string; objectId: string };
+    }>;
+  };
+}
+
+function paragraphPmJsonFromText(text: string) {
+  return text
+    ? { type: "paragraph", content: [{ type: "text", text }] }
+    : { type: "paragraph" };
+}
+
+async function upsertHighlightNote(
   page: Page,
   highlightId: string,
   body: string,
 ): Promise<void> {
-  const response = await page.request.put(`/api/highlights/${highlightId}/annotation`, {
-    data: { body },
+  const linksResponse = await page.request.get(
+    `/api/object-links?object_type=highlight&object_id=${highlightId}&relation_type=note_about`
+  );
+  expect(linksResponse.ok()).toBeTruthy();
+  const linksPayload = (await linksResponse.json()) as ObjectLinksResponse;
+  const noteBlockIds = Array.from(
+    new Set(
+      linksPayload.data.links
+        .map((link) => {
+          if (link.a.objectType === "note_block") return link.a.objectId;
+          if (link.b.objectType === "note_block") return link.b.objectId;
+          return null;
+        })
+        .filter((value): value is string => value !== null)
+    )
+  );
+
+  if (noteBlockIds.length === 0) {
+    const response = await page.request.post("/api/notes/blocks", {
+      data: {
+        body_markdown: body,
+        linked_object: {
+          object_type: "highlight",
+          object_id: highlightId,
+          relation_type: "note_about",
+        },
+      },
+    });
+    expect(response.ok()).toBeTruthy();
+    return;
+  }
+
+  const [primaryNoteBlockId, ...duplicateNoteBlockIds] = noteBlockIds;
+  const updateResponse = await page.request.patch(`/api/notes/blocks/${primaryNoteBlockId}`, {
+    data: {
+      body_pm_json: paragraphPmJsonFromText(body),
+    },
   });
-  expect(response.ok()).toBeTruthy();
+  expect(updateResponse.ok()).toBeTruthy();
+
+  for (const noteBlockId of duplicateNoteBlockIds) {
+    const deleteResponse = await page.request.delete(`/api/notes/blocks/${noteBlockId}`);
+    expect(deleteResponse.ok()).toBeTruthy();
+  }
 }
 
 interface ReaderTextLocations {
@@ -195,12 +255,27 @@ function isEpubReaderResumeState(
   return state?.kind === "epub";
 }
 
-function createDeferred<T = void>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((resolver) => {
-    resolve = resolver;
+async function fetchReaderState(
+  page: Page,
+  mediaId: string
+): Promise<ReaderResumeState | null> {
+  const response = await page.request.get(`/api/media/${mediaId}/reader-state`);
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as ReaderStateResponse;
+  return payload.data;
+}
+
+async function putReaderState(
+  page: Page,
+  mediaId: string,
+  locator: ReaderResumeState | null
+): Promise<ReaderResumeState | null> {
+  const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
+    data: locator,
   });
-  return { promise, resolve };
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as ReaderStateResponse;
+  return payload.data;
 }
 
 async function fetchEpubSectionDetail(
@@ -216,7 +291,7 @@ async function fetchEpubSectionDetail(
 }
 
 async function ensureFragmentHighlight(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   fragmentId: string,
   startOffset: number,
   endOffset: number,
@@ -263,7 +338,7 @@ async function ensureFragmentHighlight(
 }
 
 async function readLinkedItemOrder(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   highlightIds: string[]
 ): Promise<{ order: string[]; missing: string[] }> {
   return await page.evaluate((ids) => {
@@ -562,99 +637,16 @@ function readSeededEpubMedia(): SeededEpubMedia {
   return JSON.parse(readFileSync(seedPath, "utf-8"));
 }
 
-async function putReaderState(
-  page: Parameters<typeof test>[0]["page"],
-  mediaId: string,
-  locator: ReaderResumeState | null
-): Promise<void> {
-  const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
-    data: locator,
-  });
-  expect(response.ok()).toBeTruthy();
-}
-
-async function fetchReaderState(
-  page: Parameters<typeof test>[0]["page"],
-  mediaId: string
-): Promise<ReaderResumeState | null> {
-  const response = await page.request.get(`/api/media/${mediaId}/reader-state`);
-  expect(response.ok()).toBeTruthy();
-  const payload = (await response.json()) as ReaderStateResponse;
-  return payload.data;
-}
-
-async function seedBaselineEpubReaderState(
-  page: Parameters<typeof test>[0]["page"],
-  mediaId: string
-): Promise<void> {
-  const navigation = await fetchEpubNavigation(page, mediaId);
-  const firstNavigableSection = navigation.data.sections.find((section) => section.href_path);
-  expect(firstNavigableSection).toBeTruthy();
-  if (!firstNavigableSection?.href_path) {
-    throw new Error(`Expected a navigable EPUB section for ${mediaId}.`);
-  }
-
-  await putReaderState(
-    page,
-    mediaId,
-    buildEpubReaderState({
-      section_id: firstNavigableSection.section_id,
-      href_path: firstNavigableSection.href_path,
-    })
-  );
-}
-
-async function resetEpubReaderState(
-  page: Parameters<typeof test>[0]["page"],
-  mediaId: string,
-): Promise<void> {
-  try {
-    await expect
-      .poll(
-        async () => {
-          try {
-            await putReaderState(page, mediaId, null);
-            return true;
-          } catch {
-            return false;
-          }
-        },
-        {
-          timeout: 4_000,
-          intervals: [100, 200, 400, 800],
-        },
-      )
-      .toBe(true);
-    return;
-  } catch (clearError) {
-    try {
-      await expect
-        .poll(
-          async () => {
-            try {
-              await seedBaselineEpubReaderState(page, mediaId);
-              return true;
-            } catch {
-              return false;
-            }
-          },
-          {
-            timeout: 4_000,
-            intervals: [100, 200, 400, 800],
-          },
-        )
-        .toBe(true);
-      return;
-    } catch (seedError) {
-      throw new Error(
-        `Failed to reset EPUB reader state for ${mediaId}. null_clear=${clearError instanceof Error ? clearError.message : String(clearError)} fallback_seed=${seedError instanceof Error ? seedError.message : String(seedError)}`
-      );
-    }
-  }
-}
+const RESERVED_EPUB_HIGHLIGHT_EXACTS = [
+  "introduction chapter of the E2E test EPUB",
+  "Deterministic pre-anchor filler paragraph 2 for E2E.",
+  "Deterministic pre-anchor filler paragraph 3 for E2E.",
+  "Deterministic post-anchor filler paragraph 8 for E2E.",
+  "core concepts for E2E testing",
+];
 
 async function selectSectionByLabel(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   label: string,
 ): Promise<void> {
   const sectionSelect = page.getByLabel("Select section");
@@ -666,7 +658,7 @@ async function selectSectionByLabel(
 }
 
 async function clickToolbarAction(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   name: string | RegExp,
 ): Promise<void> {
   const inlineButton = page.getByRole("button", { name }).first();
@@ -696,9 +688,11 @@ async function clickToolbarAction(
 }
 
 test.describe("epub", () => {
+  test.describe.configure({ mode: "serial" });
+
   test.beforeEach(async ({ page }) => {
     const seed = readSeededEpubMedia();
-    await resetEpubReaderState(page, seed.media_id);
+    await putReaderState(page, seed.media_id, null);
   });
 
   test("upload EPUB", async ({ page }) => {
@@ -890,38 +884,16 @@ test.describe("epub", () => {
 
     expect(restoreOffset).toBeGreaterThanOrEqual(0);
 
-    const readerStateRequested = createDeferred<void>();
-    const releaseReaderState = createDeferred<void>();
-    let interceptedReaderStateRequest = false;
+    await putReaderState(page, seed.media_id, buildEpubReaderState(firstSection, {
+      locations: {
+        text_offset: restoreOffset,
+      },
+      text: {
+        quote: restoreQuote,
+      },
+    }));
 
-    await page.route(`**/api/media/${seed.media_id}/reader-state`, async (route) => {
-      if (route.request().method() !== "GET" || interceptedReaderStateRequest) {
-        await route.continue();
-        return;
-      }
-
-      interceptedReaderStateRequest = true;
-      readerStateRequested.resolve();
-      await releaseReaderState.promise;
-
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          data: buildEpubReaderState(firstSection, {
-            locations: {
-              text_offset: restoreOffset,
-            },
-            text: {
-              quote: restoreQuote,
-            },
-          }),
-        }),
-      });
-    });
-
-    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
-    await readerStateRequested.promise;
+    await page.goto(`/media/${seed.media_id}`);
     await expect(
       page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
@@ -933,8 +905,6 @@ test.describe("epub", () => {
     const manualScrollTop = await readEpubContentScrollTop(page);
     expect(manualScrollTop).not.toBeNull();
     expect(manualScrollTop ?? 0).toBeGreaterThan(200);
-
-    releaseReaderState.resolve();
 
     for (let attempt = 0; attempt < 8; attempt += 1) {
       await page.waitForTimeout(200);
@@ -1015,7 +985,10 @@ test.describe("epub", () => {
     const existingHighlightsPayload = (await existingHighlightsResponse.json()) as {
       data: { highlights: Array<{ exact: string }> };
     };
-    const existingExacts = existingHighlightsPayload.data.highlights.map((highlight) => highlight.exact);
+    const existingExacts = [
+      ...existingHighlightsPayload.data.highlights.map((highlight) => highlight.exact),
+      ...RESERVED_EPUB_HIGHLIGHT_EXACTS,
+    ];
     await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
 
     // Wait for section content to load
@@ -1043,6 +1016,9 @@ test.describe("epub", () => {
     await highlightActions.getByRole("button", { name: /^Green/ }).first().click();
     const createdHighlightResponse = await createHighlightResponse;
     expect(createdHighlightResponse.ok()).toBeTruthy();
+    const createdHighlightPayload = (await createdHighlightResponse.json()) as {
+      data: HighlightOut;
+    };
 
     const linkedRow = page.locator("[data-highlight-id]").filter({ hasText: selectedText }).first();
     await expect(linkedRow).toBeVisible({ timeout: 10_000 });
@@ -1058,6 +1034,11 @@ test.describe("epub", () => {
         .filter({ hasText: selectedText })
         .first()
     ).toBeVisible();
+
+    const deleteResponse = await page.request.delete(
+      `/api/highlights/${createdHighlightPayload.data.id}`
+    );
+    expect(deleteResponse.ok()).toBeTruthy();
   });
 
   test("linked-items keep highlight order stable after reload", async ({ page }) => {
@@ -1069,8 +1050,8 @@ test.describe("epub", () => {
     ).toBeVisible({ timeout: 15_000 });
     const section = await fetchEpubSectionDetail(page, seed.media_id, firstSection.section_id);
 
-    const needleA = "introduction chapter of the E2E test EPUB";
-    const needleB = "Deterministic pre-anchor filler paragraph 2 for E2E.";
+    const needleA = "Deterministic pre-anchor filler paragraph 2 for E2E.";
+    const needleB = "Deterministic pre-anchor filler paragraph 3 for E2E.";
     const startA = section.data.canonical_text.indexOf(needleA);
     const startB = section.data.canonical_text.indexOf(needleB);
     expect(startA).toBeGreaterThanOrEqual(0);
@@ -1149,12 +1130,12 @@ test.describe("epub", () => {
       chapter1SecondaryStart + chapter1SecondaryNeedle.length,
       "green"
     );
-    await upsertHighlightAnnotation(
+    await upsertHighlightNote(
       page,
       chapter1PrimaryHighlight.id,
       "EPUB chapter one inspector note alpha."
     );
-    await upsertHighlightAnnotation(
+    await upsertHighlightNote(
       page,
       chapter1SecondaryHighlight.id,
       "EPUB chapter one inspector note omega."
@@ -1176,7 +1157,7 @@ test.describe("epub", () => {
       chapter2Start + chapter2Needle.length,
       "blue"
     );
-    await upsertHighlightAnnotation(
+    await upsertHighlightNote(
       page,
       chapter2Highlight.id,
       "EPUB chapter two inspector note."

@@ -63,7 +63,6 @@ def _create_podcast_episode_media_with_podcast_id(
                 provider="podcast_index",
                 provider_podcast_id=provider_podcast_id,
                 title=podcast_title,
-                author="Queue Test",
                 feed_url=f"https://feeds.example.com/{provider_podcast_id}.xml",
                 website_url=f"https://example.com/{provider_podcast_id}",
                 image_url=None,

@@ -12,6 +12,12 @@ import BrowsePaneBody from "@/app/(authenticated)/browse/BrowsePaneBody";
 import PodcastsPaneBody from "@/app/(authenticated)/podcasts/PodcastsPaneBody";
 import PodcastDetailPaneBody from "@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody";
 import SearchPaneBody from "@/app/(authenticated)/search/SearchPaneBody";
+import AuthorPaneBody from "@/app/(authenticated)/authors/[handle]/AuthorPaneBody";
+import NotesPaneBody from "@/app/(authenticated)/notes/NotesPaneBody";
+import PagePaneBody from "@/app/(authenticated)/pages/[pageId]/PagePaneBody";
+import NotePaneBody from "@/app/(authenticated)/notes/[blockId]/NotePaneBody";
+import OracleLandingPaneBody from "@/app/(authenticated)/oracle/OracleLandingPaneBody";
+import OracleReadingPaneBody from "@/app/(authenticated)/oracle/[readingId]/OracleReadingPaneBody";
 import SettingsPaneBody from "@/app/(authenticated)/settings/SettingsPaneBody";
 import SettingsBillingPaneBody from "@/app/(authenticated)/settings/billing/SettingsBillingPaneBody";
 import SettingsReaderPaneBody from "@/app/(authenticated)/settings/reader/SettingsReaderPaneBody";
@@ -48,6 +54,12 @@ export type PaneRouteId =
   | "podcasts"
   | "podcastDetail"
   | "search"
+  | "author"
+  | "notes"
+  | "page"
+  | "note"
+  | "oracle"
+  | "oracleReading"
   | "settings"
   | "settingsBilling"
   | "settingsReader"
@@ -225,8 +237,85 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Search",
-      subtitle: "Search across media, fragments, annotations, chat, and transcript chunks.",
+      subtitle: "Search across authors, media, podcasts, evidence, notes, and chat.",
     }),
+  },
+  {
+    id: "author",
+    pattern: ["authors", ":handle"],
+    staticTitle: "Author",
+    resourceRef: (params) => {
+      const handle = params.handle;
+      return handle ? `contributor:${handle}` : null;
+    },
+    render: () => <AuthorPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Author" }),
+  },
+  {
+    id: "notes",
+    pattern: ["notes"],
+    staticTitle: "Notes",
+    render: () => <NotesPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Notes" }),
+  },
+  {
+    id: "page",
+    pattern: ["pages", ":pageId"],
+    staticTitle: "Page",
+    resourceRef: (params) => (params.pageId ? `page:${params.pageId}` : null),
+    render: () => <PagePaneBody />,
+    bodyMode: "document",
+    defaultWidthPx: 760,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Page" }),
+  },
+  {
+    id: "note",
+    pattern: ["notes", ":blockId"],
+    staticTitle: "Note",
+    resourceRef: (params) => (params.blockId ? `note_block:${params.blockId}` : null),
+    render: () => <NotePaneBody />,
+    bodyMode: "document",
+    defaultWidthPx: 760,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Note" }),
+  },
+  {
+    id: "oracle",
+    pattern: ["oracle"],
+    staticTitle: "Oracle",
+    render: () => <OracleLandingPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: 760,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Oracle",
+      subtitle: "One-question readings from the Black Forest Oracle.",
+    }),
+  },
+  {
+    id: "oracleReading",
+    pattern: ["oracle", ":readingId"],
+    staticTitle: "Oracle reading",
+    resourceRef: (params) =>
+      params.readingId ? `oracle_reading:${params.readingId}` : null,
+    render: () => <OracleReadingPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: 960,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Oracle Reading" }),
   },
   {
     id: "settings",

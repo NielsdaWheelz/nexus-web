@@ -27,6 +27,7 @@ from nexus.db.models import (
     MediaKind,
     ProcessingStatus,
 )
+from nexus.services.contributor_credits import replace_media_contributor_credits
 from tests.factories import (
     create_failed_epub_media,
     create_ready_epub_with_chapters,
@@ -2248,6 +2249,8 @@ class TestRetryWebArticleEndpoint:
         media_id = uuid4()
         fragment_id = uuid4()
         with direct_db.session() as session:
+            from nexus.services.content_indexing import rebuild_fragment_content_index
+
             session.execute(
                 text("""
                     INSERT INTO media (
@@ -2278,18 +2281,25 @@ class TestRetryWebArticleEndpoint:
                 """),
                 {"fragment_id": fragment_id},
             )
-            session.execute(
-                text("""
-                    INSERT INTO media_authors (media_id, name, role, sort_order)
-                    VALUES (:media_id, 'Old Author', 'author', 0)
-                """),
-                {"media_id": media_id},
+            replace_media_contributor_credits(
+                session,
+                media_id=media_id,
+                credits=[{"name": "Old Author", "role": "author", "ordinal": 0}],
+            )
+            fragment = session.get(Fragment, fragment_id)
+            assert fragment is not None
+            rebuild_fragment_content_index(
+                session,
+                media_id=media_id,
+                source_kind="web_article",
+                artifact_ref=f"fragments:{fragment_id}",
+                fragments=[fragment],
+                reason="retry_cleanup_test",
             )
             session.commit()
 
         direct_db.register_cleanup("fragment_blocks", "fragment_id", fragment_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("media_authors", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         add_media_to_default_library(auth_client, user_id, media_id)
@@ -2324,11 +2334,17 @@ class TestRetryWebArticleEndpoint:
                     SELECT
                         (SELECT count(*) FROM fragments WHERE media_id = :media_id),
                         (SELECT count(*) FROM fragment_blocks WHERE fragment_id = :fragment_id),
-                        (SELECT count(*) FROM media_authors WHERE media_id = :media_id)
+                        (SELECT count(*) FROM contributor_credits WHERE media_id = :media_id),
+                        (SELECT count(*) FROM media_content_index_states WHERE media_id = :media_id),
+                        (SELECT count(*) FROM content_chunks WHERE media_id = :media_id),
+                        (SELECT count(*) FROM evidence_spans WHERE media_id = :media_id),
+                        (SELECT count(*) FROM content_blocks WHERE media_id = :media_id),
+                        (SELECT count(*) FROM source_snapshots WHERE media_id = :media_id),
+                        (SELECT count(*) FROM content_index_runs WHERE media_id = :media_id)
                 """),
                 {"media_id": media_id, "fragment_id": fragment_id},
             ).one()
-            assert tuple(artifact_counts) == (0, 0, 0)
+            assert tuple(artifact_counts) == (0, 0, 0, 0, 0, 0, 0, 0, 0)
 
     def test_retry_web_article_without_original_url_is_not_allowed(
         self,
@@ -2857,7 +2873,7 @@ class TestPdfCapabilityDerivation:
         assert resp.status_code == 200
         caps = resp.json()["data"]["capabilities"]
         assert caps["can_quote"] is True
-        assert caps["can_search"] is True
+        assert caps["can_search"] is False
 
     def test_pr03_get_media_pdf_capabilities_do_not_flip_quote_search_on_plain_text_without_full_page_span_readiness(
         self, auth_client, direct_db: DirectSessionManager

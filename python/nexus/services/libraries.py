@@ -37,6 +37,7 @@ from nexus.schemas.library import (
     LibraryRole,
 )
 from nexus.schemas.media import MediaOut
+from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 from nexus.storage import get_storage_client
 
 logger = logging.getLogger(__name__)
@@ -926,7 +927,6 @@ def _hydrate_library_entries(
                     p.provider,
                     p.provider_podcast_id,
                     p.title,
-                    p.author,
                     p.feed_url,
                     p.website_url,
                     p.image_url,
@@ -957,6 +957,7 @@ def _hydrate_library_entries(
             {"viewer_id": viewer_id, "podcast_ids": podcast_ids},
         ).fetchall()
         podcast_rows_by_id = {UUID(str(row[0])): row for row in podcast_rows}
+    contributors_by_podcast_id = load_contributor_credits_for_podcasts(db, podcast_ids)
 
     hydrated: list[LibraryEntryOut] = []
     for row in rows:
@@ -990,21 +991,21 @@ def _hydrate_library_entries(
             continue
 
         subscription = None
-        if podcast_row[12] is not None:
+        if podcast_row[11] is not None:
             subscription = LibraryPodcastSubscriptionOut(
-                status=podcast_row[12],
-                default_playback_speed=float(podcast_row[13])
-                if podcast_row[13] is not None
+                status=podcast_row[11],
+                default_playback_speed=float(podcast_row[12])
+                if podcast_row[12] is not None
                 else None,
-                auto_queue=bool(podcast_row[14]),
-                sync_status=podcast_row[15],
-                sync_error_code=podcast_row[16],
-                sync_error_message=podcast_row[17],
-                sync_attempts=int(podcast_row[18] or 0),
-                sync_started_at=podcast_row[19],
-                sync_completed_at=podcast_row[20],
-                last_synced_at=podcast_row[21],
-                updated_at=podcast_row[22],
+                auto_queue=bool(podcast_row[13]),
+                sync_status=podcast_row[14],
+                sync_error_code=podcast_row[15],
+                sync_error_message=podcast_row[16],
+                sync_attempts=int(podcast_row[17] or 0),
+                sync_started_at=podcast_row[18],
+                sync_completed_at=podcast_row[19],
+                last_synced_at=podcast_row[20],
+                updated_at=podcast_row[21],
             )
 
         hydrated.append(
@@ -1020,14 +1021,14 @@ def _hydrate_library_entries(
                     provider=podcast_row[1],
                     provider_podcast_id=podcast_row[2],
                     title=podcast_row[3],
-                    author=podcast_row[4],
-                    feed_url=podcast_row[5],
-                    website_url=podcast_row[6],
-                    image_url=podcast_row[7],
-                    description=podcast_row[8],
-                    created_at=podcast_row[9],
-                    updated_at=podcast_row[10],
-                    unplayed_count=int(podcast_row[11] or 0),
+                    contributors=contributors_by_podcast_id.get(podcast_id, []),
+                    feed_url=podcast_row[4],
+                    website_url=podcast_row[5],
+                    image_url=podcast_row[6],
+                    description=podcast_row[7],
+                    created_at=podcast_row[8],
+                    updated_at=podcast_row[9],
+                    unplayed_count=int(podcast_row[10] or 0),
                 ),
                 subscription=subscription,
             )

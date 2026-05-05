@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import hashlib
 import math
 import threading
 from datetime import UTC, date, datetime, timedelta
@@ -11,6 +11,7 @@ from uuid import UUID
 
 import httpx
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.config import Environment, get_settings
@@ -26,10 +27,13 @@ from nexus.errors import (
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.services.billing import get_entitlements, get_transcription_usage
+from nexus.services.content_indexing import (
+    CHUNKER_VERSION,
+    mark_content_index_failed,
+    rebuild_transcript_content_index,
+)
 from nexus.services.semantic_chunks import (
-    chunk_transcript_segments,
     current_transcript_embedding_model,
-    to_pgvector_literal,
     transcript_embedding_dimensions,
 )
 from nexus.services.transcript_segments import (
@@ -62,41 +66,47 @@ def _semantic_index_requires_repair(
     *,
     transcript_version_id: UUID,
 ) -> bool:
-    """Whether active transcript chunks are absent/stale for the current embedding model."""
-    active_embedding_model = current_transcript_embedding_model()
+    """Whether active transcript evidence is absent or stale."""
+    embedding_model = current_transcript_embedding_model()
+    embedding_provider = "test" if embedding_model.startswith("test_") else "openai"
+    embedding_config_hash = hashlib.sha256(
+        f"{embedding_provider}:{embedding_model}:{transcript_embedding_dimensions()}:{CHUNKER_VERSION}".encode()
+    ).hexdigest()
     row = db.execute(
         text(
             """
             SELECT
-                EXISTS (
-                    SELECT 1
-                    FROM content_chunks tc
-                    WHERE tc.transcript_version_id = :transcript_version_id
-                      AND tc.source_kind = 'transcript'
-                ) AS has_chunks,
-                EXISTS (
-                    SELECT 1
-                    FROM content_chunks tc
-                    WHERE tc.transcript_version_id = :transcript_version_id
-                      AND tc.source_kind = 'transcript'
-                      AND (
-                          tc.embedding_vector IS NULL
-                          OR tc.embedding_model IS NULL
-                          OR tc.embedding_model <> :active_embedding_model
-                      )
-                ) AS has_stale_chunks
+                mcis.status,
+                ss.metadata ->> 'transcript_version_id',
+                mcis.active_embedding_provider,
+                mcis.active_embedding_model,
+                mcis.active_embedding_version,
+                mcis.active_embedding_config_hash
+            FROM podcast_transcript_versions ptv
+            LEFT JOIN media_content_index_states mcis ON mcis.media_id = ptv.media_id
+            LEFT JOIN source_snapshots ss ON ss.id = (
+                SELECT id
+                FROM source_snapshots
+                WHERE index_run_id = mcis.active_run_id
+                  AND source_kind = 'transcript'
+                ORDER BY created_at DESC
+                LIMIT 1
+            )
+            WHERE ptv.id = :transcript_version_id
             """
         ),
-        {
-            "transcript_version_id": transcript_version_id,
-            "active_embedding_model": active_embedding_model,
-        },
+        {"transcript_version_id": transcript_version_id},
     ).fetchone()
     if row is None:
         return True
-    has_chunks = bool(row[0])
-    has_stale_chunks = bool(row[1])
-    return (not has_chunks) or has_stale_chunks
+    return (
+        row[0] != "ready"
+        or row[1] != str(transcript_version_id)
+        or row[2] != embedding_provider
+        or row[3] != embedding_model
+        or row[4] != embedding_model
+        or row[5] != embedding_config_hash
+    )
 
 
 def request_podcast_transcript_for_viewer(
@@ -162,7 +172,6 @@ def request_podcast_transcript_for_viewer(
                 ) AS active_transcript_version_id
             FROM media m
             WHERE m.id = :media_id
-            FOR UPDATE
             """
         ),
         {"media_id": media_id},
@@ -378,60 +387,81 @@ def request_podcast_transcript_for_viewer(
         int(monthly_limit_minutes) - int(usage_snapshot_after["total"]),
     )
 
-    db.execute(
-        text(
-            """
-            INSERT INTO podcast_transcription_jobs (
-                media_id,
-                requested_by_user_id,
-                request_reason,
-                reserved_minutes,
-                reservation_usage_date,
-                status,
-                error_code,
-                attempts,
-                started_at,
-                completed_at,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                :media_id,
-                :requested_by_user_id,
-                :request_reason,
-                :reserved_minutes,
-                :reservation_usage_date,
-                'pending',
-                NULL,
-                0,
-                NULL,
-                NULL,
-                :created_at,
-                :updated_at
-            )
-            ON CONFLICT (media_id)
-            DO UPDATE SET
-                requested_by_user_id = EXCLUDED.requested_by_user_id,
-                request_reason = EXCLUDED.request_reason,
-                reserved_minutes = EXCLUDED.reserved_minutes,
-                reservation_usage_date = EXCLUDED.reservation_usage_date,
-                status = 'pending',
-                error_code = NULL,
-                started_at = NULL,
-                completed_at = NULL,
-                updated_at = EXCLUDED.updated_at
-            """
-        ),
-        {
-            "media_id": media_id,
-            "requested_by_user_id": viewer_id,
-            "request_reason": normalized_reason,
-            "reserved_minutes": required_minutes,
-            "reservation_usage_date": usage_date,
-            "created_at": now,
-            "updated_at": now,
-        },
+    existing_job_id = db.scalar(
+        text("SELECT media_id FROM podcast_transcription_jobs WHERE media_id = :media_id"),
+        {"media_id": media_id},
     )
+    if existing_job_id is None:
+        db.execute(
+            text(
+                """
+                INSERT INTO podcast_transcription_jobs (
+                    media_id,
+                    requested_by_user_id,
+                    request_reason,
+                    reserved_minutes,
+                    reservation_usage_date,
+                    status,
+                    error_code,
+                    attempts,
+                    started_at,
+                    completed_at,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :media_id,
+                    :requested_by_user_id,
+                    :request_reason,
+                    :reserved_minutes,
+                    :reservation_usage_date,
+                    'pending',
+                    NULL,
+                    0,
+                    NULL,
+                    NULL,
+                    :created_at,
+                    :updated_at
+                )
+                """
+            ),
+            {
+                "media_id": media_id,
+                "requested_by_user_id": viewer_id,
+                "request_reason": normalized_reason,
+                "reserved_minutes": required_minutes,
+                "reservation_usage_date": usage_date,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+    else:
+        db.execute(
+            text(
+                """
+                UPDATE podcast_transcription_jobs
+                SET
+                    requested_by_user_id = :requested_by_user_id,
+                    request_reason = :request_reason,
+                    reserved_minutes = :reserved_minutes,
+                    reservation_usage_date = :reservation_usage_date,
+                    status = 'pending',
+                    error_code = NULL,
+                    started_at = NULL,
+                    completed_at = NULL,
+                    updated_at = :updated_at
+                WHERE media_id = :media_id
+                """
+            ),
+            {
+                "media_id": media_id,
+                "requested_by_user_id": viewer_id,
+                "request_reason": normalized_reason,
+                "reserved_minutes": required_minutes,
+                "reservation_usage_date": usage_date,
+                "updated_at": now,
+            },
+        )
 
     db.execute(
         text(
@@ -604,16 +634,6 @@ def request_podcast_transcripts_batch_for_viewer(
                 )
                 continue
             raise
-        except (InvalidRequestError, NotFoundError, ForbiddenError) as exc:
-            results.append(
-                {
-                    "media_id": media_id_str,
-                    "status": "rejected_invalid",
-                    "required_minutes": None,
-                    "remaining_minutes": None,
-                    "error": exc.message,
-                }
-            )
             continue
 
         status = _batch_transcript_status_from_admission(admission)
@@ -704,7 +724,6 @@ def retry_transcript_media_for_viewer(
             SELECT kind, created_by_user_id, processing_status, failure_stage
             FROM media
             WHERE id = :media_id
-            FOR UPDATE
             """
         ),
         {"media_id": media_id},
@@ -1374,12 +1393,12 @@ def run_podcast_transcription_now(
         semantic_status = "ready"
         semantic_error_code: str | None = None
         try:
-            _insert_transcript_chunks_for_version(
+            _rebuild_transcript_content_index_for_version(
                 db,
                 media_id=media_id,
                 transcript_version_id=transcript_version_id,
                 transcript_segments=transcript_segments,
-                now=now,
+                reason="podcast_transcription",
             )
         except Exception as exc:
             # Transcript text remains usable even when semantic indexing fails.
@@ -1391,15 +1410,11 @@ def run_podcast_transcription_now(
                 transcript_version_id=str(transcript_version_id),
                 error=str(exc),
             )
-            db.execute(
-                text(
-                    """
-                    DELETE FROM content_chunks
-                    WHERE transcript_version_id = :transcript_version_id
-                      AND source_kind = 'transcript'
-                    """
-                ),
-                {"transcript_version_id": transcript_version_id},
+            mark_content_index_failed(
+                db,
+                media_id=media_id,
+                failure_code=ApiErrorCode.E_INTERNAL.value,
+                failure_message=str(exc),
             )
         db.execute(
             text(
@@ -1482,7 +1497,6 @@ def repair_podcast_transcript_semantic_index_now(
 ) -> dict[str, Any]:
     _ = request_id
     now = datetime.now(UTC)
-    active_embedding_model = current_transcript_embedding_model()
     normalized_reason = (
         request_reason
         if request_reason in PODCAST_TRANSCRIPT_REQUEST_REASONS
@@ -1495,6 +1509,12 @@ def repair_podcast_transcript_semantic_index_now(
     ).scalar()
     if not bool(lock_acquired):
         return {"status": "skipped", "reason": "locked"}
+
+    embedding_model = current_transcript_embedding_model()
+    embedding_provider = "test" if embedding_model.startswith("test_") else "openai"
+    embedding_config_hash = hashlib.sha256(
+        f"{embedding_provider}:{embedding_model}:{transcript_embedding_dimensions()}:{CHUNKER_VERSION}".encode()
+    ).hexdigest()
 
     claim_row = db.execute(
         text(
@@ -1516,20 +1536,17 @@ def repair_podcast_transcript_semantic_index_now(
                       AND (
                           NOT EXISTS (
                               SELECT 1
-                              FROM content_chunks tc
-                              WHERE tc.transcript_version_id = mts.active_transcript_version_id
-                                AND tc.source_kind = 'transcript'
-                          )
-                          OR EXISTS (
-                              SELECT 1
-                              FROM content_chunks tc
-                              WHERE tc.transcript_version_id = mts.active_transcript_version_id
-                                AND tc.source_kind = 'transcript'
-                                AND (
-                                    tc.embedding_vector IS NULL
-                                    OR tc.embedding_model IS NULL
-                                    OR tc.embedding_model <> :active_embedding_model
-                                )
+                              FROM media_content_index_states mcis
+                              JOIN source_snapshots ss ON ss.index_run_id = mcis.active_run_id
+                              WHERE mcis.media_id = mts.media_id
+                                AND mcis.status = 'ready'
+                                AND mcis.active_embedding_provider = :embedding_provider
+                                AND mcis.active_embedding_model = :embedding_model
+                                AND mcis.active_embedding_version = :embedding_model
+                                AND mcis.active_embedding_config_hash = :embedding_config_hash
+                                AND ss.source_kind = 'transcript'
+                                AND ss.metadata ->> 'transcript_version_id'
+                                    = mts.active_transcript_version_id::text
                           )
                       )
                   )
@@ -1540,8 +1557,10 @@ def repair_podcast_transcript_semantic_index_now(
         {
             "media_id": media_id,
             "request_reason": normalized_reason,
+            "embedding_provider": embedding_provider,
+            "embedding_model": embedding_model,
+            "embedding_config_hash": embedding_config_hash,
             "now": now,
-            "active_embedding_model": active_embedding_model,
         },
     ).fetchone()
     if claim_row is None:
@@ -1597,22 +1616,12 @@ def repair_podcast_transcript_semantic_index_now(
         }
 
     try:
-        db.execute(
-            text(
-                """
-                DELETE FROM content_chunks
-                WHERE transcript_version_id = :transcript_version_id
-                  AND source_kind = 'transcript'
-                """
-            ),
-            {"transcript_version_id": transcript_version_id},
-        )
-        _insert_transcript_chunks_for_version(
+        _rebuild_transcript_content_index_for_version(
             db,
             media_id=media_id,
             transcript_version_id=transcript_version_id,
             transcript_segments=transcript_segments,
-            now=now,
+            reason=normalized_reason,
         )
         _set_media_transcript_state(
             db,
@@ -1637,15 +1646,11 @@ def repair_podcast_transcript_semantic_index_now(
             transcript_version_id=str(transcript_version_id),
             error=str(exc),
         )
-        db.execute(
-            text(
-                """
-                DELETE FROM content_chunks
-                WHERE transcript_version_id = :transcript_version_id
-                  AND source_kind = 'transcript'
-                """
-            ),
-            {"transcript_version_id": transcript_version_id},
+        mark_content_index_failed(
+            db,
+            media_id=media_id,
+            failure_code=ApiErrorCode.E_INTERNAL.value,
+            failure_message=str(exc),
         )
         _set_media_transcript_state(
             db,
@@ -1685,6 +1690,12 @@ def _ensure_media_transcript_state_row(
     now: datetime,
     request_reason: str | None = None,
 ) -> None:
+    existing_state_id = db.scalar(
+        text("SELECT media_id FROM media_transcript_states WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    if existing_state_id is not None:
+        return
     db.execute(
         text(
             """
@@ -1710,7 +1721,6 @@ def _ensure_media_transcript_state_row(
                 :created_at,
                 :updated_at
             )
-            ON CONFLICT (media_id) DO NOTHING
             """
         ),
         {
@@ -1734,46 +1744,67 @@ def _set_media_transcript_state(
     last_error_code: str | None = None,
     now: datetime,
 ) -> None:
+    existing_state_id = db.scalar(
+        text("SELECT media_id FROM media_transcript_states WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    if existing_state_id is None:
+        db.execute(
+            text(
+                """
+                INSERT INTO media_transcript_states (
+                    media_id,
+                    transcript_state,
+                    transcript_coverage,
+                    semantic_status,
+                    active_transcript_version_id,
+                    last_request_reason,
+                    last_error_code,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :media_id,
+                    :transcript_state,
+                    :transcript_coverage,
+                    COALESCE(:semantic_status, 'none'),
+                    :active_transcript_version_id,
+                    :last_request_reason,
+                    :last_error_code,
+                    :updated_at,
+                    :updated_at
+                )
+                """
+            ),
+            {
+                "media_id": media_id,
+                "transcript_state": transcript_state,
+                "transcript_coverage": transcript_coverage,
+                "semantic_status": semantic_status,
+                "active_transcript_version_id": active_transcript_version_id,
+                "last_request_reason": last_request_reason,
+                "last_error_code": last_error_code,
+                "updated_at": now,
+            },
+        )
+        return
+
     db.execute(
         text(
             """
-            INSERT INTO media_transcript_states (
-                media_id,
-                transcript_state,
-                transcript_coverage,
-                semantic_status,
-                active_transcript_version_id,
-                last_request_reason,
-                last_error_code,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                :media_id,
-                :transcript_state,
-                :transcript_coverage,
-                COALESCE(:semantic_status, 'none'),
-                :active_transcript_version_id,
-                :last_request_reason,
-                :last_error_code,
-                :updated_at,
-                :updated_at
-            )
-            ON CONFLICT (media_id)
-            DO UPDATE SET
-                transcript_state = EXCLUDED.transcript_state,
-                transcript_coverage = EXCLUDED.transcript_coverage,
-                semantic_status = COALESCE(:semantic_status, media_transcript_states.semantic_status),
+            UPDATE media_transcript_states
+            SET
+                transcript_state = :transcript_state,
+                transcript_coverage = :transcript_coverage,
+                semantic_status = COALESCE(:semantic_status, semantic_status),
                 active_transcript_version_id = COALESCE(
-                    EXCLUDED.active_transcript_version_id,
-                    media_transcript_states.active_transcript_version_id
+                    :active_transcript_version_id,
+                    active_transcript_version_id
                 ),
-                last_request_reason = COALESCE(
-                    EXCLUDED.last_request_reason,
-                    media_transcript_states.last_request_reason
-                ),
-                last_error_code = EXCLUDED.last_error_code,
-                updated_at = EXCLUDED.updated_at
+                last_request_reason = COALESCE(:last_request_reason, last_request_reason),
+                last_error_code = :last_error_code,
+                updated_at = :updated_at
+            WHERE media_id = :media_id
             """
         ),
         {
@@ -1964,80 +1995,21 @@ def _insert_transcript_segments_for_version(
         )
 
 
-def _insert_transcript_chunks_for_version(
+def _rebuild_transcript_content_index_for_version(
     db: Session,
     *,
     media_id: UUID,
     transcript_version_id: UUID,
     transcript_segments: list[dict[str, Any]],
-    now: datetime,
+    reason: str,
 ) -> None:
-    chunks = chunk_transcript_segments(transcript_segments)
-    embedding_dims = transcript_embedding_dimensions()
-    for chunk in chunks:
-        db.execute(
-            text(
-                f"""
-                INSERT INTO content_chunks (
-                    media_id,
-                    fragment_id,
-                    transcript_version_id,
-                    chunk_idx,
-                    source_kind,
-                    chunk_text,
-                    start_offset,
-                    end_offset,
-                    t_start_ms,
-                    t_end_ms,
-                    heading,
-                    locator,
-                    embedding,
-                    embedding_vector,
-                    embedding_model,
-                    created_at
-                )
-                VALUES (
-                    :media_id,
-                    NULL,
-                    :transcript_version_id,
-                    :chunk_idx,
-                    'transcript',
-                    :chunk_text,
-                    NULL,
-                    NULL,
-                    :t_start_ms,
-                    :t_end_ms,
-                    NULL,
-                    CAST(:locator AS jsonb),
-                    CAST(:embedding AS jsonb),
-                    CAST(:embedding_vector AS vector({embedding_dims})),
-                    :embedding_model,
-                    :created_at
-                )
-                """
-            ),
-            {
-                "transcript_version_id": transcript_version_id,
-                "media_id": media_id,
-                "chunk_idx": chunk["chunk_idx"],
-                "chunk_text": chunk["chunk_text"],
-                "t_start_ms": chunk["t_start_ms"],
-                "t_end_ms": chunk["t_end_ms"],
-                "locator": json.dumps(
-                    {
-                        "kind": "transcript",
-                        "transcript_version_id": str(transcript_version_id),
-                        "chunk_idx": chunk["chunk_idx"],
-                        "t_start_ms": chunk["t_start_ms"],
-                        "t_end_ms": chunk["t_end_ms"],
-                    }
-                ),
-                "embedding": json.dumps(chunk["embedding"]),
-                "embedding_vector": to_pgvector_literal(chunk["embedding"]),
-                "embedding_model": chunk["embedding_model"],
-                "created_at": now,
-            },
-        )
+    rebuild_transcript_content_index(
+        db,
+        media_id=media_id,
+        transcript_version_id=transcript_version_id,
+        transcript_segments=transcript_segments,
+        reason=reason,
+    )
 
 
 def _get_usage_snapshot(
@@ -2084,8 +2056,62 @@ def _reserve_usage_minutes_or_raise(
             "total": usage_snapshot["used"] + usage_snapshot["reserved"],
         }
 
-    usage_before = get_transcription_usage(db, user_id, usage_start_date, usage_end_date)
-    if usage_before["used"] + usage_before["reserved"] + required_minutes > monthly_limit_minutes:
+    # One user row serializes quota checks across all usage days without adding
+    # zero-minute rows to the daily usage ledger.
+    user_lock = db.execute(
+        text("SELECT 1 FROM users WHERE id = :user_id FOR UPDATE"),
+        {"user_id": user_id},
+    ).fetchone()
+    assert (
+        user_lock is not None
+    )  # justify-service-invariant-check: caller already resolved the user.
+    _ensure_usage_daily_row(
+        db,
+        user_id=user_id,
+        usage_date=usage_date,
+        now=now,
+    )
+
+    admitted_row = db.execute(
+        text(
+            """
+            UPDATE podcast_transcription_usage_daily AS usage
+            SET
+                minutes_reserved = usage.minutes_reserved + :required_minutes,
+                updated_at = :updated_at
+            WHERE usage.user_id = :user_id
+              AND usage.usage_date = :usage_date
+              AND (
+                    COALESCE(
+                        (
+                            SELECT SUM(other.minutes_used + other.minutes_reserved)
+                            FROM podcast_transcription_usage_daily other
+                            WHERE other.user_id = :user_id
+                              AND other.usage_date >= :usage_start_date
+                              AND other.usage_date < :usage_end_date
+                              AND other.usage_date <> :usage_date
+                        ),
+                        0
+                    )
+                    + usage.minutes_used
+                    + usage.minutes_reserved
+                    + :required_minutes
+                  ) <= :monthly_limit_minutes
+            RETURNING usage.minutes_used, usage.minutes_reserved
+            """
+        ),
+        {
+            "user_id": user_id,
+            "usage_date": usage_date,
+            "usage_start_date": usage_start_date,
+            "usage_end_date": usage_end_date,
+            "required_minutes": required_minutes,
+            "monthly_limit_minutes": monthly_limit_minutes,
+            "updated_at": now,
+        },
+    ).fetchone()
+    if admitted_row is None:
+        usage_before = get_transcription_usage(db, user_id, usage_start_date, usage_end_date)
         logger.warning(
             "podcast_quota_exceeded",
             viewer_id=str(user_id),
@@ -2100,63 +2126,6 @@ def _reserve_usage_minutes_or_raise(
             "Monthly transcription quota exceeded",
         )
 
-    row = db.execute(
-        text(
-            """
-            INSERT INTO podcast_transcription_usage_daily (
-                user_id,
-                usage_date,
-                minutes_used,
-                minutes_reserved,
-                updated_at
-            )
-            SELECT
-                :user_id,
-                :usage_date,
-                0,
-                :minutes_reserved,
-                :updated_at
-            WHERE :minutes_reserved <= :monthly_limit_minutes
-            ON CONFLICT (user_id, usage_date)
-            DO UPDATE SET
-                minutes_reserved = (
-                    podcast_transcription_usage_daily.minutes_reserved
-                    + EXCLUDED.minutes_reserved
-                ),
-                updated_at = EXCLUDED.updated_at
-            WHERE (
-                podcast_transcription_usage_daily.minutes_used
-                + podcast_transcription_usage_daily.minutes_reserved
-                + EXCLUDED.minutes_reserved
-                <= :monthly_limit_minutes
-            )
-            RETURNING minutes_used, minutes_reserved
-            """
-        ),
-        {
-            "user_id": user_id,
-            "usage_date": usage_date,
-            "minutes_reserved": required_minutes,
-            "monthly_limit_minutes": monthly_limit_minutes,
-            "updated_at": now,
-        },
-    ).fetchone()
-
-    if row is None:
-        usage_snapshot = _get_usage_snapshot(db, viewer_id=user_id, usage_date=usage_date)
-        logger.warning(
-            "podcast_quota_exceeded",
-            viewer_id=str(user_id),
-            usage_date=usage_date.isoformat(),
-            used_minutes=usage_snapshot["used"],
-            reserved_minutes=usage_snapshot["reserved"],
-            required_minutes=required_minutes,
-            monthly_limit_minutes=monthly_limit_minutes,
-        )
-        raise ApiError(
-            ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
-            "Monthly transcription quota exceeded",
-        )
     usage_after = get_transcription_usage(db, user_id, usage_start_date, usage_end_date)
     used_after = int(usage_after["used"] or 0)
     reserved_after = int(usage_after["reserved"] or 0)
@@ -2167,25 +2136,113 @@ def _reserve_usage_minutes_or_raise(
     }
 
 
-def _clear_job_reservation(
+def _ensure_usage_daily_row(
+    db: Session,
+    *,
+    user_id: UUID,
+    usage_date: date,
+    now: datetime,
+) -> None:
+    existing_row = db.execute(
+        text(
+            """
+            SELECT 1
+            FROM podcast_transcription_usage_daily
+            WHERE user_id = :user_id
+              AND usage_date = :usage_date
+            """
+        ),
+        {"user_id": user_id, "usage_date": usage_date},
+    ).fetchone()
+    if existing_row is not None:
+        return
+
+    try:
+        with db.begin_nested():
+            db.execute(
+                text(
+                    """
+                    INSERT INTO podcast_transcription_usage_daily (
+                        user_id,
+                        usage_date,
+                        minutes_used,
+                        minutes_reserved,
+                        updated_at
+                    )
+                    VALUES (
+                        :user_id,
+                        :usage_date,
+                        0,
+                        0,
+                        :updated_at
+                    )
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "usage_date": usage_date,
+                    "updated_at": now,
+                },
+            )
+    except IntegrityError as exc:
+        if not _is_usage_daily_identity_conflict(exc):
+            raise
+
+
+def _is_usage_daily_identity_conflict(exc: IntegrityError) -> bool:
+    orig = getattr(exc, "orig", None)
+    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    if constraint_name:
+        return constraint_name == "podcast_transcription_usage_daily_pkey"
+    return "podcast_transcription_usage_daily_pkey" in str(orig or exc)
+
+
+def _claim_job_reservation(
     db: Session,
     *,
     media_id: UUID,
     now: datetime,
-) -> None:
-    db.execute(
+) -> tuple[UUID | None, date | None, int] | None:
+    row = db.execute(
         text(
             """
-            UPDATE podcast_transcription_jobs
-            SET
-                reserved_minutes = 0,
-                reservation_usage_date = NULL,
-                updated_at = :now
-            WHERE media_id = :media_id
+            WITH claimed AS MATERIALIZED (
+                SELECT
+                    media_id,
+                    requested_by_user_id,
+                    reservation_usage_date,
+                    reserved_minutes
+                FROM podcast_transcription_jobs
+                WHERE media_id = :media_id
+                  AND reserved_minutes > 0
+                  AND reservation_usage_date IS NOT NULL
+            ),
+            cleared AS (
+                UPDATE podcast_transcription_jobs job
+                SET
+                    reserved_minutes = 0,
+                    reservation_usage_date = NULL,
+                    updated_at = :now
+                FROM claimed
+                WHERE job.media_id = claimed.media_id
+                  AND job.reserved_minutes = claimed.reserved_minutes
+                  AND job.reservation_usage_date = claimed.reservation_usage_date
+                  AND job.reserved_minutes > 0
+                  AND job.reservation_usage_date IS NOT NULL
+                RETURNING
+                    claimed.requested_by_user_id,
+                    claimed.reservation_usage_date,
+                    claimed.reserved_minutes
+            )
+            SELECT requested_by_user_id, reservation_usage_date, reserved_minutes
+            FROM cleared
             """
         ),
         {"media_id": media_id, "now": now},
-    )
+    ).fetchone()
+    if row is None:
+        return None
+    return row[0], row[1], int(row[2] or 0)
 
 
 def _release_reserved_usage_for_media(
@@ -2194,23 +2251,11 @@ def _release_reserved_usage_for_media(
     media_id: UUID,
     now: datetime,
 ) -> None:
-    reservation_row = db.execute(
-        text(
-            """
-            SELECT requested_by_user_id, reservation_usage_date, reserved_minutes
-            FROM podcast_transcription_jobs
-            WHERE media_id = :media_id
-            FOR UPDATE
-            """
-        ),
-        {"media_id": media_id},
-    ).fetchone()
-    if reservation_row is None:
+    reservation = _claim_job_reservation(db, media_id=media_id, now=now)
+    if reservation is None:
         return
 
-    user_id = reservation_row[0]
-    usage_date = reservation_row[1]
-    reserved_minutes = int(reservation_row[2] or 0)
+    user_id, usage_date, reserved_minutes = reservation
     if user_id is not None and usage_date is not None and reserved_minutes > 0:
         db.execute(
             text(
@@ -2230,7 +2275,6 @@ def _release_reserved_usage_for_media(
                 "updated_at": now,
             },
         )
-    _clear_job_reservation(db, media_id=media_id, now=now)
 
 
 def _commit_reserved_usage_for_media(
@@ -2239,54 +2283,30 @@ def _commit_reserved_usage_for_media(
     media_id: UUID,
     now: datetime,
 ) -> None:
-    reservation_row = db.execute(
-        text(
-            """
-            SELECT requested_by_user_id, reservation_usage_date, reserved_minutes
-            FROM podcast_transcription_jobs
-            WHERE media_id = :media_id
-            FOR UPDATE
-            """
-        ),
-        {"media_id": media_id},
-    ).fetchone()
-    if reservation_row is None:
+    reservation = _claim_job_reservation(db, media_id=media_id, now=now)
+    if reservation is None:
         return
 
-    user_id = reservation_row[0]
-    usage_date = reservation_row[1]
-    reserved_minutes = int(reservation_row[2] or 0)
+    user_id, usage_date, reserved_minutes = reservation
     if user_id is None or usage_date is None or reserved_minutes <= 0:
-        _clear_job_reservation(db, media_id=media_id, now=now)
         return
 
-    db.execute(
+    _ensure_usage_daily_row(
+        db,
+        user_id=user_id,
+        usage_date=usage_date,
+        now=now,
+    )
+    result = db.execute(
         text(
             """
-            INSERT INTO podcast_transcription_usage_daily (
-                user_id,
-                usage_date,
-                minutes_used,
-                minutes_reserved,
-                updated_at
-            )
-            VALUES (
-                :user_id,
-                :usage_date,
-                :minutes_used,
-                0,
-                :updated_at
-            )
-            ON CONFLICT (user_id, usage_date)
-            DO UPDATE SET
-                minutes_used = (
-                    podcast_transcription_usage_daily.minutes_used + EXCLUDED.minutes_used
-                ),
-                minutes_reserved = GREATEST(
-                    podcast_transcription_usage_daily.minutes_reserved - EXCLUDED.minutes_used,
-                    0
-                ),
-                updated_at = EXCLUDED.updated_at
+            UPDATE podcast_transcription_usage_daily
+            SET
+                minutes_used = minutes_used + :minutes_used,
+                minutes_reserved = GREATEST(minutes_reserved - :minutes_used, 0),
+                updated_at = :updated_at
+            WHERE user_id = :user_id
+              AND usage_date = :usage_date
             """
         ),
         {
@@ -2296,7 +2316,7 @@ def _commit_reserved_usage_for_media(
             "updated_at": now,
         },
     )
-    _clear_job_reservation(db, media_id=media_id, now=now)
+    assert result.rowcount == 1  # justify-service-invariant-check: ensured usage row exists.
 
 
 def _episode_minutes(episode: dict[str, Any]) -> int:

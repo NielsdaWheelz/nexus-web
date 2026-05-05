@@ -182,7 +182,7 @@ def create_app(
 
     app = FastAPI(
         title="Nexus API",
-        description="Backend API for Nexus - a reading and annotation platform",
+        description="Backend API for Nexus - a reading and notes platform",
         version="0.1.0",
         docs_url="/docs",
         redoc_url="/redoc",

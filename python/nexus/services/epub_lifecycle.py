@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -331,16 +331,6 @@ def _delete_extraction_artifacts(db: Session, media_id: UUID) -> None:
     db.execute(delete(EpubFragmentSource).where(EpubFragmentSource.media_id == media_id))
     db.execute(delete(EpubNavLocation).where(EpubNavLocation.media_id == media_id))
     db.execute(delete(EpubTocNode).where(EpubTocNode.media_id == media_id))
-    db.execute(
-        text(
-            """
-            DELETE FROM content_chunks
-            WHERE media_id = :media_id
-              AND source_kind = 'fragment'
-            """
-        ),
-        {"media_id": media_id},
-    )
 
     fragment_ids = (
         db.execute(select(Fragment.id).where(Fragment.media_id == media_id)).scalars().all()

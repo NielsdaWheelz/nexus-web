@@ -14,6 +14,7 @@ from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.media import DeleteDocumentResponse, DeleteDocumentStatus
+from nexus.services.content_indexing import delete_media_content_index
 from nexus.services.default_library_closure import remove_media_from_non_default_closure
 from nexus.storage import get_storage_client
 
@@ -328,17 +329,44 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
 
     db.execute(
         text("""
-            DELETE FROM message_contexts
-            WHERE media_id = :media_id
-               OR highlight_id IN (
+            DELETE FROM message_context_items
+            WHERE (object_type = 'media' AND object_id = :media_id)
+               OR (object_type = 'highlight' AND object_id IN (
                     SELECT id FROM highlights WHERE anchor_media_id = :media_id
+               ))
+               OR (object_type = 'content_chunk' AND object_id IN (
+                    SELECT id FROM content_chunks WHERE media_id = :media_id
+               ))
+               OR id IN (
+                    SELECT mci.id
+                    FROM message_context_items mci
+                    JOIN object_links ol ON ol.a_type = 'message'
+                                        AND ol.a_id = mci.message_id
+                                        AND ol.b_type = mci.object_type
+                                        AND ol.b_id = mci.object_id
+                    WHERE ol.b_type = 'media'
+                      AND ol.b_id = :media_id
                )
-               OR annotation_id IN (
-                    SELECT a.id
-                    FROM annotations a
-                    JOIN highlights h ON h.id = a.highlight_id
-                    WHERE h.anchor_media_id = :media_id
-               )
+        """),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("""
+            DELETE FROM object_links
+            WHERE (a_type = 'media' AND a_id = :media_id)
+               OR (b_type = 'media' AND b_id = :media_id)
+               OR (a_type = 'highlight' AND a_id IN (
+                    SELECT id FROM highlights WHERE anchor_media_id = :media_id
+               ))
+               OR (b_type = 'highlight' AND b_id IN (
+                    SELECT id FROM highlights WHERE anchor_media_id = :media_id
+               ))
+               OR (a_type = 'content_chunk' AND a_id IN (
+                    SELECT id FROM content_chunks WHERE media_id = :media_id
+               ))
+               OR (b_type = 'content_chunk' AND b_id IN (
+                    SELECT id FROM content_chunks WHERE media_id = :media_id
+               ))
         """),
         {"media_id": media_id},
     )
@@ -352,15 +380,6 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     )
     db.execute(
         text("DELETE FROM conversations WHERE scope_media_id = :media_id"),
-        {"media_id": media_id},
-    )
-    db.execute(
-        text("""
-            DELETE FROM annotations
-            WHERE highlight_id IN (
-                SELECT id FROM highlights WHERE anchor_media_id = :media_id
-            )
-        """),
         {"media_id": media_id},
     )
     db.execute(
@@ -395,19 +414,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM highlights WHERE anchor_media_id = :media_id"),
         {"media_id": media_id},
     )
-    db.execute(
-        text("""
-            DELETE FROM content_chunks
-            WHERE media_id = :media_id
-               OR fragment_id IN (
-                    SELECT id FROM fragments WHERE media_id = :media_id
-               )
-               OR transcript_version_id IN (
-                    SELECT id FROM podcast_transcript_versions WHERE media_id = :media_id
-               )
-        """),
-        {"media_id": media_id},
-    )
+    delete_media_content_index(db, media_id=media_id)
     db.execute(
         text("""
             DELETE FROM fragment_blocks
@@ -476,7 +483,10 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM user_media_deletions WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
-    db.execute(text("DELETE FROM media_authors WHERE media_id = :media_id"), {"media_id": media_id})
+    db.execute(
+        text("DELETE FROM contributor_credits WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
     db.execute(text("DELETE FROM media_file WHERE media_id = :media_id"), {"media_id": media_id})
     db.execute(text("DELETE FROM fragments WHERE media_id = :media_id"), {"media_id": media_id})
     db.execute(
@@ -490,26 +500,57 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
 def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     db.execute(
         text("""
-            DELETE FROM message_contexts mc
+            DELETE FROM message_context_items mci
             USING messages msg, conversations c
-            WHERE mc.message_id = msg.id
+            WHERE mci.message_id = msg.id
               AND msg.conversation_id = c.id
               AND c.owner_user_id = :viewer_id
               AND (
-                    mc.media_id = :media_id
-                 OR mc.highlight_id IN (
+                    (mci.object_type = 'media' AND mci.object_id = :media_id)
+                 OR (mci.object_type = 'highlight' AND mci.object_id IN (
                         SELECT id
                         FROM highlights
                         WHERE user_id = :viewer_id
                           AND anchor_media_id = :media_id
-                    )
-                 OR mc.annotation_id IN (
-                        SELECT a.id
-                        FROM annotations a
-                        JOIN highlights h ON h.id = a.highlight_id
-                        WHERE h.user_id = :viewer_id
-                          AND h.anchor_media_id = :media_id
-                    )
+                    ))
+                 OR (mci.object_type = 'content_chunk' AND mci.object_id IN (
+                        SELECT id
+                        FROM content_chunks
+                        WHERE media_id = :media_id
+                    ))
+              )
+        """),
+        {"viewer_id": viewer_id, "media_id": media_id},
+    )
+    db.execute(
+        text("""
+            DELETE FROM object_links
+            WHERE user_id = :viewer_id
+              AND (
+                    (a_type = 'media' AND a_id = :media_id)
+                 OR (b_type = 'media' AND b_id = :media_id)
+                 OR (a_type = 'highlight' AND a_id IN (
+                        SELECT id
+                        FROM highlights
+                        WHERE user_id = :viewer_id
+                          AND anchor_media_id = :media_id
+                    ))
+                 OR (b_type = 'highlight' AND b_id IN (
+                        SELECT id
+                        FROM highlights
+                        WHERE user_id = :viewer_id
+                          AND anchor_media_id = :media_id
+                    ))
+                 OR (a_type = 'content_chunk' AND a_id IN (
+                        SELECT id
+                        FROM content_chunks
+                        WHERE media_id = :media_id
+                    ))
+                 OR (b_type = 'content_chunk' AND b_id IN (
+                        SELECT id
+                        FROM content_chunks
+                        WHERE media_id = :media_id
+                    ))
               )
         """),
         {"viewer_id": viewer_id, "media_id": media_id},
@@ -541,16 +582,6 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
             DELETE FROM conversations
             WHERE owner_user_id = :viewer_id
               AND scope_media_id = :media_id
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
-    )
-    db.execute(
-        text("""
-            DELETE FROM annotations a
-            USING highlights h
-            WHERE a.highlight_id = h.id
-              AND h.user_id = :viewer_id
-              AND h.anchor_media_id = :media_id
         """),
         {"viewer_id": viewer_id, "media_id": media_id},
     )

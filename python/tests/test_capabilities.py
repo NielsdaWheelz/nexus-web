@@ -44,6 +44,7 @@ class TestPdfCapabilities:
             media_file_exists=True,
             external_playback_url_exists=False,
             pdf_quote_text_ready=True,
+            retrieval_status="ready",
         )
 
         assert caps.can_read is True
@@ -76,6 +77,7 @@ class TestPdfCapabilities:
             media_file_exists=True,
             external_playback_url_exists=False,
             pdf_quote_text_ready=True,
+            retrieval_status="ready",
         )
         assert caps_ready.can_read is True
         assert caps_ready.can_quote is True
@@ -122,6 +124,7 @@ class TestEpubCapabilities:
             last_error_code=None,
             media_file_exists=True,
             external_playback_url_exists=False,
+            retrieval_status="ready",
         )
 
         assert caps.can_read is True
@@ -129,6 +132,38 @@ class TestEpubCapabilities:
         assert caps.can_quote is True
         assert caps.can_search is True
         assert caps.can_download_file is True
+
+    def test_epub_search_uses_active_ready_retrieval_gate(self):
+        """Search remains available when the active run is ready even if latest state failed."""
+        caps = derive_capabilities(
+            kind="epub",
+            processing_status="ready_for_reading",
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            retrieval_status="failed",
+            retrieval_active_ready=True,
+        )
+
+        assert caps.can_read is True
+        assert caps.can_quote is True
+        assert caps.can_search is True
+
+    def test_epub_search_excludes_missing_active_ready_run(self):
+        """A ready status is not enough when the caller knows no active ready run exists."""
+        caps = derive_capabilities(
+            kind="epub",
+            processing_status="ready_for_reading",
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            retrieval_status="ready",
+            retrieval_active_ready=False,
+        )
+
+        assert caps.can_read is True
+        assert caps.can_quote is True
+        assert caps.can_search is False
 
 
 class TestWebArticleCapabilities:
@@ -175,6 +210,7 @@ class TestVideoCapabilities:
             external_playback_url_exists=True,
             transcript_state="ready",
             transcript_coverage="full",
+            retrieval_status="ready",
         )
 
         assert caps.can_read is True
@@ -245,6 +281,7 @@ class TestPodcastEpisodeCapabilities:
             external_playback_url_exists=True,
             transcript_state="ready",
             transcript_coverage="full",
+            retrieval_status="ready",
         )
 
         assert caps.can_read is True
@@ -298,6 +335,7 @@ class TestPodcastEpisodeCapabilities:
             external_playback_url_exists=True,
             transcript_state="ready",
             transcript_coverage="full",
+            retrieval_status="ready",
         )
 
         assert caps.can_play is True

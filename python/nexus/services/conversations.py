@@ -17,9 +17,8 @@ Routes are transport-only and call exactly one service function.
 
 import base64
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import cast
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, text
@@ -27,22 +26,18 @@ from sqlalchemy.orm import Session, joinedload
 
 from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
 from nexus.db.models import (
-    Annotation,
     AssistantMessageClaim,
     AssistantMessageEvidenceSummary,
     Conversation,
-    Highlight,
-    HighlightFragmentAnchor,
     Library,
     Media,
     Message,
-    MessageContext,
+    MessageContextItem,
     MessageToolCall,
 )
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.conversation import (
-    HIGHLIGHT_COLORS,
     ConversationOut,
     ConversationScopeOut,
     ConversationScopeRequest,
@@ -54,15 +49,10 @@ from nexus.schemas.conversation import (
     MessageToolCallOut,
     PageInfo,
 )
+from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.conversation_memory import conversation_memory_inspection
 
 logger = get_logger(__name__)
-
-
-def _message_context_color(color: str | None) -> HIGHLIGHT_COLORS | None:
-    if color not in {"yellow", "green", "blue", "pink", "purple"}:
-        return None
-    return cast(HIGHLIGHT_COLORS, color)
 
 
 # =============================================================================
@@ -255,13 +245,13 @@ def conversation_scope_to_out(db: Session, conversation: Conversation) -> Conver
         media = db.get(Media, conversation.scope_media_id) if conversation.scope_media_id else None
         if media is None:
             return ConversationScopeOut(type="media", media_id=conversation.scope_media_id)
-        authors = [author.name for author in media.authors]
+        contributors = load_contributor_credits_for_media(db, [media.id]).get(media.id, [])
         return ConversationScopeOut(
             type="media",
             media_id=media.id,
             title=media.title,
             media_kind=media.kind,
-            authors=authors,
+            contributors=contributors,
             published_date=media.published_date,
             publisher=media.publisher,
             canonical_source_url=media.canonical_source_url,
@@ -454,104 +444,6 @@ def message_to_out(
     )
 
 
-def _resolve_context_highlight_media_id(highlight: Highlight) -> UUID | None:
-    """Return the canonical media id for a typed highlight context."""
-
-    media_id = highlight.anchor_media_id
-    if media_id is None:
-        return None
-
-    if highlight.anchor_kind == "fragment_offsets":
-        fragment_anchor = highlight.fragment_anchor
-        fragment = fragment_anchor.fragment if fragment_anchor is not None else None
-        if fragment is not None and fragment.media_id == media_id:
-            return media_id
-        return None
-
-    if highlight.anchor_kind == "pdf_page_geometry":
-        pdf_anchor = highlight.pdf_anchor
-        if pdf_anchor is not None and pdf_anchor.media_id == media_id:
-            return media_id
-        return None
-
-    return None
-
-
-def _message_context_snapshot_from_media(
-    context_id: UUID,
-    media: Media | None,
-) -> MessageContextSnapshot:
-    if media is None:
-        return MessageContextSnapshot(type="media", id=context_id)
-
-    return MessageContextSnapshot(
-        type="media",
-        id=context_id,
-        preview=media.title,
-        media_id=media.id,
-        media_title=media.title,
-        media_kind=media.kind,
-    )
-
-
-def _message_context_snapshot_from_highlight(
-    context_id: UUID,
-    highlight: Highlight | None,
-    media_by_id: dict[UUID, Media],
-) -> MessageContextSnapshot:
-    if highlight is None:
-        return MessageContextSnapshot(type="highlight", id=context_id)
-
-    media_id = _resolve_context_highlight_media_id(highlight)
-    media = media_by_id.get(media_id) if media_id is not None else None
-    return MessageContextSnapshot(
-        type="highlight",
-        id=context_id,
-        color=_message_context_color(highlight.color),
-        preview=highlight.exact,
-        exact=highlight.exact,
-        prefix=highlight.prefix,
-        suffix=highlight.suffix,
-        annotation_body=highlight.annotation.body if highlight.annotation is not None else None,
-        media_id=media.id if media is not None else media_id,
-        media_title=media.title if media is not None else None,
-        media_kind=media.kind if media is not None else None,
-    )
-
-
-def _message_context_snapshot_from_annotation(
-    context_id: UUID,
-    annotation: Annotation | None,
-    media_by_id: dict[UUID, Media],
-) -> MessageContextSnapshot:
-    if annotation is None:
-        return MessageContextSnapshot(type="annotation", id=context_id)
-
-    highlight = annotation.highlight
-    if highlight is None:
-        return MessageContextSnapshot(
-            type="annotation",
-            id=context_id,
-            annotation_body=annotation.body,
-        )
-
-    media_id = _resolve_context_highlight_media_id(highlight)
-    media = media_by_id.get(media_id) if media_id is not None else None
-    return MessageContextSnapshot(
-        type="annotation",
-        id=context_id,
-        color=_message_context_color(highlight.color),
-        preview=highlight.exact,
-        exact=highlight.exact,
-        prefix=highlight.prefix,
-        suffix=highlight.suffix,
-        annotation_body=annotation.body,
-        media_id=media.id if media is not None else media_id,
-        media_title=media.title if media is not None else None,
-        media_kind=media.kind if media is not None else None,
-    )
-
-
 def load_message_context_snapshots_for_message_ids(
     db: Session,
     message_ids: list[UUID],
@@ -561,83 +453,78 @@ def load_message_context_snapshots_for_message_ids(
     if not message_ids:
         return {}
 
-    context_rows = list(
-        db.scalars(
-            select(MessageContext)
-            .options(
-                joinedload(MessageContext.media),
-                joinedload(MessageContext.highlight).joinedload(Highlight.annotation),
-                joinedload(MessageContext.highlight)
-                .joinedload(Highlight.fragment_anchor)
-                .joinedload(HighlightFragmentAnchor.fragment),
-                joinedload(MessageContext.highlight).joinedload(Highlight.pdf_anchor),
-                joinedload(MessageContext.annotation)
-                .joinedload(Annotation.highlight)
-                .joinedload(Highlight.annotation),
-                joinedload(MessageContext.annotation)
-                .joinedload(Annotation.highlight)
-                .joinedload(Highlight.fragment_anchor)
-                .joinedload(HighlightFragmentAnchor.fragment),
-                joinedload(MessageContext.annotation)
-                .joinedload(Annotation.highlight)
-                .joinedload(Highlight.pdf_anchor),
-            )
-            .where(MessageContext.message_id.in_(message_ids))
-            .order_by(MessageContext.message_id.asc(), MessageContext.ordinal.asc())
-        )
-    )
-
-    media_ids: set[UUID] = set()
-    for context_row in context_rows:
-        if context_row.media is not None:
-            media_ids.add(context_row.media.id)
-
-        highlight = context_row.highlight
-        if highlight is not None:
-            media_id = _resolve_context_highlight_media_id(highlight)
-            if media_id is not None:
-                media_ids.add(media_id)
-
-        annotation = context_row.annotation
-        annotation_highlight = annotation.highlight if annotation is not None else None
-        if annotation_highlight is not None:
-            media_id = _resolve_context_highlight_media_id(annotation_highlight)
-            if media_id is not None:
-                media_ids.add(media_id)
-
-    media_by_id = {
-        media.id: media for media in db.scalars(select(Media).where(Media.id.in_(media_ids))).all()
-    }
-
     snapshots_by_message_id: dict[UUID, list[MessageContextSnapshot]] = {
         message_id: [] for message_id in message_ids
     }
-    for context_row in context_rows:
-        if context_row.target_type == "media":
-            if context_row.media_id is None:
-                continue
-            snapshot = _message_context_snapshot_from_media(context_row.media_id, context_row.media)
-        elif context_row.target_type == "highlight":
-            if context_row.highlight_id is None:
-                continue
-            snapshot = _message_context_snapshot_from_highlight(
-                context_row.highlight_id,
-                context_row.highlight,
-                media_by_id,
+    context_rows = db.scalars(
+        select(MessageContextItem)
+        .where(MessageContextItem.message_id.in_(message_ids))
+        .order_by(MessageContextItem.message_id.asc(), MessageContextItem.ordinal.asc())
+    ).all()
+    for row in context_rows:
+        stored = row.context_snapshot_json if isinstance(row.context_snapshot_json, Mapping) else {}
+        snapshots_by_message_id.setdefault(row.message_id, []).append(
+            MessageContextSnapshot(
+                type=row.object_type,
+                id=row.object_id,
+                evidence_span_ids=_snapshot_evidence_span_ids(stored),
+                color=_optional_highlight_color(stored.get("color")),
+                preview=_optional_string(stored.get("preview") or stored.get("snippet")),
+                exact=_optional_string(stored.get("exact")),
+                prefix=_optional_string(stored.get("prefix")),
+                suffix=_optional_string(stored.get("suffix")),
+                media_id=_optional_uuid(stored.get("media_id") or stored.get("mediaId")),
+                media_title=_optional_string(stored.get("media_title") or stored.get("mediaTitle")),
+                media_kind=_optional_string(stored.get("media_kind") or stored.get("mediaKind")),
+                title=_optional_string(stored.get("title") or stored.get("label")),
+                route=_optional_string(stored.get("route")),
             )
-        elif context_row.target_type == "annotation":
-            if context_row.annotation_id is None:
-                continue
-            snapshot = _message_context_snapshot_from_annotation(
-                context_row.annotation_id,
-                context_row.annotation,
-                media_by_id,
-            )
-        else:
-            continue
-        snapshots_by_message_id.setdefault(context_row.message_id, []).append(snapshot)
+        )
 
     return snapshots_by_message_id
+
+
+def _optional_string(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _optional_uuid(value: object) -> UUID | None:
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_highlight_color(value: object) -> str | None:
+    if value in {"yellow", "green", "blue", "pink", "purple"}:
+        return str(value)
+    return None
+
+
+def _snapshot_evidence_span_ids(snapshot: Mapping[str, object]) -> list[UUID]:
+    raw_values = snapshot.get("evidence_span_ids")
+    if raw_values is None:
+        raw_values = snapshot.get("evidenceSpanIds")
+    if raw_values is None:
+        raw_values = snapshot.get("evidence_span_id")
+    if raw_values is None:
+        raw_values = snapshot.get("evidenceSpanId")
+    if isinstance(raw_values, str):
+        values = [raw_values]
+    elif isinstance(raw_values, Sequence) and not isinstance(raw_values, (str, bytes)):
+        values = list(raw_values)
+    else:
+        values = []
+
+    evidence_span_ids: list[UUID] = []
+    seen: set[UUID] = set()
+    for value in values:
+        evidence_span_id = _optional_uuid(value)
+        if evidence_span_id is None or evidence_span_id in seen:
+            continue
+        seen.add(evidence_span_id)
+        evidence_span_ids.append(evidence_span_id)
+    return evidence_span_ids
 
 
 def load_message_tool_calls_for_message_ids(
@@ -1012,33 +899,7 @@ def delete_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> 
     # Verify ownership (write = owner-only)
     get_conversation_for_owner_write_or_404(db, viewer_id, conversation_id)
 
-    db.execute(
-        text("DELETE FROM chat_prompt_assemblies WHERE conversation_id = :conversation_id"),
-        {"conversation_id": conversation_id},
-    )
-    db.execute(
-        text(
-            """
-            DELETE FROM conversation_memory_item_sources
-            WHERE memory_item_id IN (
-                SELECT id
-                FROM conversation_memory_items
-                WHERE conversation_id = :conversation_id
-            )
-            """
-        ),
-        {"conversation_id": conversation_id},
-    )
-    db.execute(
-        text("DELETE FROM conversation_memory_items WHERE conversation_id = :conversation_id"),
-        {"conversation_id": conversation_id},
-    )
-    db.execute(
-        text("DELETE FROM conversation_state_snapshots WHERE conversation_id = :conversation_id"),
-        {"conversation_id": conversation_id},
-    )
-    db.execute(delete(Conversation).where(Conversation.id == conversation_id))
-    db.flush()
+    delete_conversation_rows_without_commit(db, conversation_id)
     db.commit()
 
 
@@ -1178,7 +1039,7 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> None:
 
     conversation_id = conversation.id
 
-    db.execute(delete(Message).where(Message.id == message_id))
+    delete_message_rows_without_commit(db, [message_id])
     db.flush()
 
     # Check remaining message count in same transaction
@@ -1188,7 +1049,208 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> None:
 
     # If no messages remain, delete conversation
     if remaining == 0:
-        db.execute(delete(Conversation).where(Conversation.id == conversation_id))
+        delete_conversation_rows_without_commit(db, conversation_id)
         db.flush()
 
     db.commit()
+
+
+def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) -> None:
+    message_ids = _message_ids_for_conversation(db, conversation_id)
+    delete_message_rows_without_commit(db, message_ids)
+
+    db.execute(
+        text("""
+            DELETE FROM object_links
+            WHERE (a_type = 'conversation' AND a_id = :conversation_id)
+               OR (b_type = 'conversation' AND b_id = :conversation_id)
+        """),
+        {"conversation_id": conversation_id},
+    )
+
+    memory_item_ids = _conversation_memory_item_ids(db, conversation_id)
+    if memory_item_ids:
+        db.execute(
+            text("""
+                DELETE FROM conversation_memory_item_sources
+                WHERE memory_item_id = ANY(:memory_item_ids)
+            """),
+            {"memory_item_ids": memory_item_ids},
+        )
+    db.execute(
+        text("DELETE FROM conversation_memory_items WHERE conversation_id = :conversation_id"),
+        {"conversation_id": conversation_id},
+    )
+    db.execute(
+        text("DELETE FROM conversation_state_snapshots WHERE conversation_id = :conversation_id"),
+        {"conversation_id": conversation_id},
+    )
+    db.execute(
+        text("DELETE FROM conversation_media WHERE conversation_id = :conversation_id"),
+        {"conversation_id": conversation_id},
+    )
+    db.execute(
+        text("DELETE FROM conversation_shares WHERE conversation_id = :conversation_id"),
+        {"conversation_id": conversation_id},
+    )
+    db.execute(delete(Conversation).where(Conversation.id == conversation_id))
+    db.flush()
+
+
+def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID]) -> None:
+    if not message_ids:
+        return
+
+    chat_run_ids = _chat_run_ids_for_messages(db, message_ids)
+    if chat_run_ids:
+        db.execute(
+            text("DELETE FROM chat_run_events WHERE run_id = ANY(:chat_run_ids)"),
+            {"chat_run_ids": chat_run_ids},
+        )
+        db.execute(
+            text("""
+                DELETE FROM chat_prompt_assemblies
+                WHERE chat_run_id = ANY(:chat_run_ids)
+            """),
+            {"chat_run_ids": chat_run_ids},
+        )
+
+    db.execute(
+        text("""
+            DELETE FROM chat_prompt_assemblies
+            WHERE assistant_message_id = ANY(:message_ids)
+        """),
+        {"message_ids": list(message_ids)},
+    )
+
+    claim_ids = _assistant_claim_ids_for_messages(db, message_ids)
+    if claim_ids:
+        db.execute(
+            text("""
+                DELETE FROM assistant_message_claim_evidence
+                WHERE claim_id = ANY(:claim_ids)
+            """),
+            {"claim_ids": claim_ids},
+        )
+    db.execute(
+        text("""
+            DELETE FROM assistant_message_claims
+            WHERE message_id = ANY(:message_ids)
+        """),
+        {"message_ids": list(message_ids)},
+    )
+    db.execute(
+        text("""
+            DELETE FROM assistant_message_evidence_summaries
+            WHERE message_id = ANY(:message_ids)
+        """),
+        {"message_ids": list(message_ids)},
+    )
+
+    tool_call_ids = _message_tool_call_ids_for_messages(db, message_ids)
+    if tool_call_ids:
+        db.execute(
+            text("DELETE FROM message_retrievals WHERE tool_call_id = ANY(:tool_call_ids)"),
+            {"tool_call_ids": tool_call_ids},
+        )
+        db.execute(
+            text("DELETE FROM message_tool_calls WHERE id = ANY(:tool_call_ids)"),
+            {"tool_call_ids": tool_call_ids},
+        )
+
+    if chat_run_ids:
+        db.execute(
+            text("DELETE FROM chat_runs WHERE id = ANY(:chat_run_ids)"),
+            {"chat_run_ids": chat_run_ids},
+        )
+
+    db.execute(
+        text("DELETE FROM message_context_items WHERE message_id = ANY(:message_ids)"),
+        {"message_ids": list(message_ids)},
+    )
+    db.execute(
+        text("""
+            DELETE FROM object_links
+            WHERE (a_type = 'message' AND a_id = ANY(:message_ids))
+               OR (b_type = 'message' AND b_id = ANY(:message_ids))
+        """),
+        {"message_ids": list(message_ids)},
+    )
+    db.execute(
+        text("DELETE FROM message_llm WHERE message_id = ANY(:message_ids)"),
+        {"message_ids": list(message_ids)},
+    )
+    db.execute(
+        text("""
+            UPDATE conversation_memory_items
+            SET created_by_message_id = NULL
+            WHERE created_by_message_id = ANY(:message_ids)
+        """),
+        {"message_ids": list(message_ids)},
+    )
+    db.execute(delete(Message).where(Message.id.in_(message_ids)))
+    db.flush()
+
+
+def _message_ids_for_conversation(db: Session, conversation_id: UUID) -> list[UUID]:
+    return list(
+        db.scalars(
+            select(Message.id)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.seq.asc(), Message.id.asc())
+        )
+    )
+
+
+def _conversation_memory_item_ids(db: Session, conversation_id: UUID) -> list[UUID]:
+    rows = db.execute(
+        text("""
+            SELECT id
+            FROM conversation_memory_items
+            WHERE conversation_id = :conversation_id
+            ORDER BY created_at ASC, id ASC
+        """),
+        {"conversation_id": conversation_id},
+    )
+    return [row[0] for row in rows]
+
+
+def _chat_run_ids_for_messages(db: Session, message_ids: Sequence[UUID]) -> list[UUID]:
+    rows = db.execute(
+        text("""
+            SELECT id
+            FROM chat_runs
+            WHERE user_message_id = ANY(:message_ids)
+               OR assistant_message_id = ANY(:message_ids)
+            ORDER BY created_at ASC, id ASC
+        """),
+        {"message_ids": list(message_ids)},
+    )
+    return [row[0] for row in rows]
+
+
+def _assistant_claim_ids_for_messages(db: Session, message_ids: Sequence[UUID]) -> list[UUID]:
+    rows = db.execute(
+        text("""
+            SELECT id
+            FROM assistant_message_claims
+            WHERE message_id = ANY(:message_ids)
+            ORDER BY ordinal ASC, id ASC
+        """),
+        {"message_ids": list(message_ids)},
+    )
+    return [row[0] for row in rows]
+
+
+def _message_tool_call_ids_for_messages(db: Session, message_ids: Sequence[UUID]) -> list[UUID]:
+    rows = db.execute(
+        text("""
+            SELECT id
+            FROM message_tool_calls
+            WHERE user_message_id = ANY(:message_ids)
+               OR assistant_message_id = ANY(:message_ids)
+            ORDER BY tool_call_index ASC, id ASC
+        """),
+        {"message_ids": list(message_ids)},
+    )
+    return [row[0] for row in rows]

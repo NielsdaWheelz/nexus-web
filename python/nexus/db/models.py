@@ -28,12 +28,25 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.types import UserDefinedType
 
 
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
 
     pass
+
+
+class PGVector(UserDefinedType):
+    """PostgreSQL pgvector column type."""
+
+    cache_ok = True
+
+    def __init__(self, dimensions: int):
+        self.dimensions = dimensions
+
+    def get_col_spec(self, **_kw: object) -> str:
+        return f"vector({self.dimensions})"
 
 
 # =============================================================================
@@ -194,7 +207,7 @@ class User(Base):
 
 
 class Page(Base):
-    """User-owned Markdown page synced through the local vault."""
+    """User-owned note page."""
 
     __tablename__ = "pages"
 
@@ -209,7 +222,7 @@ class Page(Base):
         nullable=False,
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
-    body: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -223,6 +236,153 @@ class Page(Base):
 
     __table_args__ = (
         CheckConstraint("char_length(title) BETWEEN 1 AND 200", name="ck_pages_title_length"),
+    )
+
+
+class NoteBlock(Base):
+    """Smallest editable note unit in a page or focused note pane."""
+
+    __tablename__ = "note_blocks"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    page_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("pages.id"),
+        nullable=False,
+    )
+    parent_block_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("note_blocks.id"),
+        nullable=True,
+    )
+    order_key: Mapped[str] = mapped_column(Text, nullable=False)
+    block_kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="bullet")
+    body_pm_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    body_markdown: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    body_text: Mapped[str] = mapped_column(Text, nullable=False)
+    collapsed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "block_kind IN ('bullet', 'heading', 'todo', 'quote', 'code', 'image', 'embed')",
+            name="ck_note_blocks_kind",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(body_pm_json) = 'object'", name="ck_note_blocks_pm_json_object"
+        ),
+        CheckConstraint(
+            "char_length(order_key) BETWEEN 1 AND 64",
+            name="ck_note_blocks_order_key_length",
+        ),
+    )
+
+
+class ObjectLink(Base):
+    """User-owned relationship between two typed object refs."""
+
+    __tablename__ = "object_links"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    relation_type: Mapped[str] = mapped_column(Text, nullable=False)
+    a_type: Mapped[str] = mapped_column(Text, nullable=False)
+    a_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    b_type: Mapped[str] = mapped_column(Text, nullable=False)
+    b_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    a_order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    b_order_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    a_locator_json: Mapped[dict[str, object] | None] = mapped_column(
+        "a_locator", JSONB(none_as_null=True), nullable=True
+    )
+    b_locator_json: Mapped[dict[str, object] | None] = mapped_column(
+        "b_locator", JSONB(none_as_null=True), nullable=True
+    )
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "a_type IN ('page', 'note_block', 'media', 'highlight', 'conversation', "
+            "'message', 'podcast', 'content_chunk', 'contributor')",
+            name="ck_object_links_a_type",
+        ),
+        CheckConstraint(
+            "b_type IN ('page', 'note_block', 'media', 'highlight', 'conversation', "
+            "'message', 'podcast', 'content_chunk', 'contributor')",
+            name="ck_object_links_b_type",
+        ),
+        CheckConstraint(
+            "relation_type IN ('references', 'embeds', 'note_about', 'used_as_context', "
+            "'derived_from', 'related')",
+            name="ck_object_links_relation",
+        ),
+        CheckConstraint(
+            "a_order_key IS NULL OR char_length(a_order_key) BETWEEN 1 AND 64",
+            name="ck_object_links_a_order_key_length",
+        ),
+        CheckConstraint(
+            "b_order_key IS NULL OR char_length(b_order_key) BETWEEN 1 AND 64",
+            name="ck_object_links_b_order_key_length",
+        ),
+        CheckConstraint(
+            "a_locator IS NULL OR jsonb_typeof(a_locator) = 'object'",
+            name="ck_object_links_a_locator",
+        ),
+        CheckConstraint(
+            "b_locator IS NULL OR jsonb_typeof(b_locator) = 'object'",
+            name="ck_object_links_b_locator",
+        ),
+        CheckConstraint("jsonb_typeof(metadata) = 'object'", name="ck_object_links_metadata"),
+        Index(
+            "uix_object_links_unlocated_pair",
+            "user_id",
+            "relation_type",
+            text("LEAST(a_type || ':' || a_id::text, b_type || ':' || b_id::text)"),
+            text("GREATEST(a_type || ':' || a_id::text, b_type || ':' || b_id::text)"),
+            unique=True,
+            postgresql_where=text("a_locator IS NULL AND b_locator IS NULL"),
+        ),
     )
 
 
@@ -474,47 +634,29 @@ class Media(Base):
         "ContentChunk",
         back_populates="media",
     )
+    source_snapshots: Mapped[list["SourceSnapshot"]] = relationship(
+        "SourceSnapshot",
+        back_populates="media",
+    )
+    content_index_runs: Mapped[list["ContentIndexRun"]] = relationship(
+        "ContentIndexRun",
+        back_populates="media",
+    )
+    content_index_state: Mapped["MediaContentIndexState | None"] = relationship(
+        "MediaContentIndexState",
+        back_populates="media",
+        uselist=False,
+    )
     transcript_request_audits: Mapped[list["PodcastTranscriptRequestAudit"]] = relationship(
         "PodcastTranscriptRequestAudit",
         back_populates="media",
         cascade="all, delete-orphan",
     )
-    authors: Mapped[list["MediaAuthor"]] = relationship(
-        "MediaAuthor",
+    contributor_credits: Mapped[list["ContributorCredit"]] = relationship(
+        "ContributorCredit",
         back_populates="media",
-        cascade="all, delete-orphan",
-        order_by=lambda: MediaAuthor.sort_order,
+        order_by=lambda: ContributorCredit.ordinal,
     )
-
-
-class MediaAuthor(Base):
-    """Author/creator associated with a media item."""
-
-    __tablename__ = "media_authors"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    role: Mapped[str | None] = mapped_column(Text, nullable=True)
-    sort_order: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (Index("ix_media_authors_media_id", "media_id"),)
-
-    # Relationship
-    media: Mapped["Media"] = relationship("Media", back_populates="authors")
 
 
 class ProjectGutenbergCatalogEntry(Base):
@@ -527,7 +669,6 @@ class ProjectGutenbergCatalogEntry(Base):
     gutenberg_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     issued: Mapped[date | None] = mapped_column(Date, nullable=True)
     language: Mapped[str | None] = mapped_column(Text, nullable=True)
-    authors: Mapped[str | None] = mapped_column(Text, nullable=True)
     subjects: Mapped[str | None] = mapped_column(Text, nullable=True)
     locc: Mapped[str | None] = mapped_column(Text, nullable=True)
     bookshelves: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -558,6 +699,312 @@ class ProjectGutenbergCatalogEntry(Base):
         CheckConstraint("ebook_id > 0", name="ck_project_gutenberg_catalog_ebook_id_positive"),
         Index("ix_project_gutenberg_catalog_language", "language"),
         Index("ix_project_gutenberg_catalog_title", "title"),
+    )
+
+    contributor_credits: Mapped[list["ContributorCredit"]] = relationship(
+        "ContributorCredit",
+        back_populates="project_gutenberg_catalog_entry",
+        order_by=lambda: ContributorCredit.ordinal,
+    )
+
+
+class Contributor(Base):
+    """Canonical person, organization, group, or local creator identity."""
+
+    __tablename__ = "contributors"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    handle: Mapped[str] = mapped_column(Text, nullable=False)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    sort_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="unknown")
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="unverified")
+    disambiguation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    merged_into_contributor_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributors.id"),
+        nullable=True,
+    )
+    merged_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('person', 'organization', 'group', 'unknown')",
+            name="ck_contributors_kind",
+        ),
+        CheckConstraint(
+            "status IN ('unverified', 'verified', 'tombstoned', 'merged')",
+            name="ck_contributors_status",
+        ),
+        UniqueConstraint("handle", name="uq_contributors_handle"),
+    )
+
+    aliases: Mapped[list["ContributorAlias"]] = relationship(
+        "ContributorAlias",
+        back_populates="contributor",
+        order_by=lambda: [ContributorAlias.is_primary.desc(), ContributorAlias.alias.asc()],
+    )
+    external_ids: Mapped[list["ContributorExternalId"]] = relationship(
+        "ContributorExternalId",
+        back_populates="contributor",
+        order_by=lambda: [
+            ContributorExternalId.authority.asc(),
+            ContributorExternalId.external_key.asc(),
+        ],
+    )
+    credits: Mapped[list["ContributorCredit"]] = relationship(
+        "ContributorCredit",
+        back_populates="contributor",
+        order_by=lambda: ContributorCredit.ordinal,
+    )
+    merged_into_contributor: Mapped["Contributor | None"] = relationship(
+        "Contributor",
+        remote_side=lambda: Contributor.id,
+    )
+
+
+class ContributorAlias(Base):
+    """Searchable name associated with a contributor."""
+
+    __tablename__ = "contributor_aliases"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    contributor_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributors.id"),
+        nullable=False,
+    )
+    alias: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_alias: Mapped[str] = mapped_column(Text, nullable=False)
+    sort_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    alias_kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="credited")
+    locale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    script: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "alias_kind IN ('display', 'credited', 'legal', 'pseudonym', 'transliteration', 'search')",
+            name="ck_contributor_aliases_kind",
+        ),
+        Index("ix_contributor_aliases_contributor_id", "contributor_id"),
+        Index("ix_contributor_aliases_normalized_alias", "normalized_alias"),
+    )
+
+    contributor: Mapped["Contributor"] = relationship("Contributor", back_populates="aliases")
+
+
+class ContributorExternalId(Base):
+    """Provider or authority identifier for a contributor."""
+
+    __tablename__ = "contributor_external_ids"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    contributor_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributors.id"),
+        nullable=False,
+    )
+    authority: Mapped[str] = mapped_column(Text, nullable=False)
+    external_key: Mapped[str] = mapped_column(Text, nullable=False)
+    external_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "authority IN ('orcid', 'isni', 'viaf', 'wikidata', 'openalex', 'lcnaf', "
+            "'podcast_index', 'rss', 'youtube', 'gutenberg')",
+            name="ck_contributor_external_ids_authority",
+        ),
+        UniqueConstraint(
+            "authority",
+            "external_key",
+            name="uq_contributor_external_ids_authority_key",
+        ),
+        Index("ix_contributor_external_ids_contributor_id", "contributor_id"),
+    )
+
+    contributor: Mapped["Contributor"] = relationship(
+        "Contributor",
+        back_populates="external_ids",
+    )
+
+
+class ContributorCredit(Base):
+    """Ordered contributor credit on a media item, podcast, or catalog item."""
+
+    __tablename__ = "contributor_credits"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    contributor_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributors.id"),
+        nullable=False,
+    )
+    media_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id"),
+        nullable=True,
+    )
+    podcast_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("podcasts.id"),
+        nullable=True,
+    )
+    project_gutenberg_catalog_ebook_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("project_gutenberg_catalog.ebook_id"),
+        nullable=True,
+    )
+    credited_name: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_credited_name: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    raw_role: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    source_ref: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    resolution_status: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "num_nonnulls(media_id, podcast_id, project_gutenberg_catalog_ebook_id) = 1",
+            name="ck_contributor_credits_one_target",
+        ),
+        CheckConstraint(
+            "role IN ('author', 'editor', 'translator', 'host', 'guest', 'narrator', "
+            "'creator', 'producer', 'publisher', 'channel', 'organization', 'unknown')",
+            name="ck_contributor_credits_role",
+        ),
+        CheckConstraint(
+            "resolution_status IN ('external_id', 'manual', 'confirmed_alias', 'unverified')",
+            name="ck_contributor_credits_resolution_status",
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_contributor_credits_ordinal"),
+        CheckConstraint(
+            "jsonb_typeof(source_ref) = 'object'",
+            name="ck_contributor_credits_source_ref",
+        ),
+        Index("ix_contributor_credits_contributor_id", "contributor_id"),
+        Index("ix_contributor_credits_media_id", "media_id"),
+        Index("ix_contributor_credits_podcast_id", "podcast_id"),
+        Index(
+            "ix_contributor_credits_gutenberg_ebook_id",
+            "project_gutenberg_catalog_ebook_id",
+        ),
+    )
+
+    contributor: Mapped["Contributor"] = relationship("Contributor", back_populates="credits")
+    media: Mapped["Media | None"] = relationship("Media", back_populates="contributor_credits")
+    podcast: Mapped["Podcast | None"] = relationship(
+        "Podcast",
+        back_populates="contributor_credits",
+    )
+    project_gutenberg_catalog_entry: Mapped["ProjectGutenbergCatalogEntry | None"] = relationship(
+        "ProjectGutenbergCatalogEntry",
+        back_populates="contributor_credits",
+    )
+
+
+class ContributorIdentityEvent(Base):
+    """Audit trail for contributor identity changes."""
+
+    __tablename__ = "contributor_identity_events"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+    source_contributor_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributors.id"),
+        nullable=True,
+    )
+    target_contributor_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("contributors.id"),
+        nullable=True,
+    )
+    payload: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('create', 'alias_add', 'alias_remove', 'external_id_add', "
+            "'external_id_remove', 'merge', 'split', 'tombstone')",
+            name="ck_contributor_identity_events_type",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(payload) = 'object'",
+            name="ck_contributor_identity_events_payload",
+        ),
     )
 
 
@@ -1283,7 +1730,6 @@ class Podcast(Base):
     provider: Mapped[str] = mapped_column(Text, nullable=False)
     provider_podcast_id: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
-    author: Mapped[str | None] = mapped_column(Text, nullable=True)
     feed_url: Mapped[str] = mapped_column(Text, nullable=False)
     website_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1313,6 +1759,11 @@ class Podcast(Base):
     )
     library_entries: Mapped[list["LibraryEntry"]] = relationship(
         "LibraryEntry", back_populates="podcast", cascade="all, delete-orphan"
+    )
+    contributor_credits: Mapped[list["ContributorCredit"]] = relationship(
+        "ContributorCredit",
+        back_populates="podcast",
+        order_by=lambda: ContributorCredit.ordinal,
     )
 
 
@@ -1827,10 +2278,6 @@ class PodcastTranscriptVersion(Base):
         back_populates="transcript_version",
         cascade="all, delete-orphan",
     )
-    content_chunks: Mapped[list["ContentChunk"]] = relationship(
-        "ContentChunk",
-        back_populates="transcript_version",
-    )
     fragments: Mapped[list["Fragment"]] = relationship(
         "Fragment",
         back_populates="transcript_version",
@@ -1896,10 +2343,371 @@ class PodcastTranscriptSegment(Base):
     media: Mapped["Media"] = relationship("Media")
 
 
+class ContentIndexRun(Base):
+    """One versioned evidence-index attempt for a media item."""
+
+    __tablename__ = "content_index_runs"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+    source_version: Mapped[str] = mapped_column(Text, nullable=False)
+    extractor_version: Mapped[str] = mapped_column(Text, nullable=False)
+    chunker_version: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_provider: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_version: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_config_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    activated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    deactivated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    superseded_by_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("content_index_runs.id"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('pending', 'extracting', 'indexing', 'embedding', 'ready', "
+            "'no_text', 'ocr_required', 'failed')",
+            name="ck_content_index_runs_state",
+        ),
+        Index("ix_content_index_runs_media", "media_id"),
+    )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="content_index_runs")
+
+
+class SourceSnapshot(Base):
+    """Immutable source artifact used by a content index run."""
+
+    __tablename__ = "source_snapshots"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
+    index_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("content_index_runs.id"),
+    )
+    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    byte_length: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    source_version: Mapped[str] = mapped_column(Text, nullable=False)
+    extractor_version: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_snapshot_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("source_snapshots.id"),
+        nullable=True,
+    )
+    language: Mapped[str | None] = mapped_column(Text, nullable=True)
+    snapshot_metadata: Mapped[dict[str, object]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("byte_length >= 0", name="ck_source_snapshots_byte_length"),
+        CheckConstraint(
+            "char_length(btrim(source_fingerprint)) > 0",
+            name="ck_source_snapshots_fingerprint",
+        ),
+        CheckConstraint("char_length(content_sha256) = 64", name="ck_source_snapshots_sha"),
+        CheckConstraint("jsonb_typeof(metadata) = 'object'", name="ck_source_snapshots_metadata"),
+        Index("ix_source_snapshots_media_run", "media_id", "index_run_id"),
+    )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="source_snapshots")
+
+
+class ContentBlock(Base):
+    """Format-aware block of canonical source text."""
+
+    __tablename__ = "content_blocks"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
+    index_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("content_index_runs.id"),
+    )
+    source_snapshot_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("source_snapshots.id"),
+    )
+    block_idx: Mapped[int] = mapped_column(Integer, nullable=False)
+    block_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
+    text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    extraction_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source_start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    parent_block_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("content_blocks.id"),
+        nullable=True,
+    )
+    heading_path: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    locator: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    selector: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("block_idx >= 0", name="ck_content_blocks_block_idx"),
+        CheckConstraint("source_start_offset >= 0", name="ck_content_blocks_start"),
+        CheckConstraint(
+            "source_end_offset >= source_start_offset", name="ck_content_blocks_offsets"
+        ),
+        CheckConstraint("char_length(text_sha256) = 64", name="ck_content_blocks_sha"),
+        CheckConstraint("jsonb_typeof(heading_path) = 'array'", name="ck_content_blocks_heading"),
+        CheckConstraint("jsonb_typeof(locator) = 'object'", name="ck_content_blocks_locator"),
+        CheckConstraint("jsonb_typeof(selector) = 'object'", name="ck_content_blocks_selector"),
+        CheckConstraint("jsonb_typeof(metadata) = 'object'", name="ck_content_blocks_metadata"),
+        CheckConstraint(
+            "extraction_confidence IS NULL OR "
+            "(extraction_confidence >= 0 AND extraction_confidence <= 1)",
+            name="ck_content_blocks_extraction_confidence",
+        ),
+        UniqueConstraint("index_run_id", "block_idx", name="uq_content_blocks_run_idx"),
+        Index("ix_content_blocks_media_run", "media_id", "index_run_id"),
+    )
+
+
+class EvidenceSpan(Base):
+    """Durable citeable span over content blocks."""
+
+    __tablename__ = "evidence_spans"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
+    index_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("content_index_runs.id"),
+    )
+    source_snapshot_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("source_snapshots.id"),
+    )
+    start_block_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("content_blocks.id"),
+    )
+    end_block_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("content_blocks.id"),
+    )
+    start_block_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_block_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    span_text: Mapped[str] = mapped_column(Text, nullable=False)
+    span_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    selector: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    citation_label: Mapped[str] = mapped_column(Text, nullable=False)
+    resolver_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("start_block_offset >= 0", name="ck_evidence_spans_start"),
+        CheckConstraint(
+            "start_block_id <> end_block_id OR end_block_offset >= start_block_offset",
+            name="ck_evidence_spans_offsets",
+        ),
+        CheckConstraint("char_length(span_sha256) = 64", name="ck_evidence_spans_sha"),
+        CheckConstraint("jsonb_typeof(selector) = 'object'", name="ck_evidence_spans_selector"),
+        CheckConstraint(
+            "resolver_kind IN ('web', 'epub', 'pdf', 'transcript')",
+            name="ck_evidence_spans_resolver",
+        ),
+        Index("ix_evidence_spans_media_run", "media_id", "index_run_id"),
+    )
+
+
 class ContentChunk(Base):
-    """Single semantic retrieval chunk table for text-bearing media."""
+    """Retrieval chunk built from content blocks."""
 
     __tablename__ = "content_chunks"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
+    index_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("content_index_runs.id"),
+    )
+    source_snapshot_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("source_snapshots.id"),
+    )
+    primary_evidence_span_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("evidence_spans.id"),
+        nullable=True,
+    )
+    chunk_idx: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    chunk_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    chunker_version: Mapped[str] = mapped_column(Text, nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    heading_path: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    summary_locator: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("chunk_idx >= 0", name="ck_content_chunks_chunk_idx_non_negative"),
+        CheckConstraint(
+            "source_kind IN ('web_article', 'epub', 'pdf', 'transcript')",
+            name="ck_content_chunks_source_kind",
+        ),
+        CheckConstraint("char_length(chunk_sha256) = 64", name="ck_content_chunks_sha"),
+        CheckConstraint("token_count >= 0", name="ck_content_chunks_token_count"),
+        CheckConstraint("jsonb_typeof(heading_path) = 'array'", name="ck_content_chunks_heading"),
+        CheckConstraint(
+            "jsonb_typeof(summary_locator) = 'object'", name="ck_content_chunks_locator"
+        ),
+        UniqueConstraint("index_run_id", "chunk_idx", name="uq_content_chunks_run_idx"),
+        Index("ix_content_chunks_media_run", "media_id", "index_run_id"),
+        Index("ix_content_chunks_run_idx", "index_run_id", "chunk_idx"),
+    )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="content_chunks")
+
+
+class ContentChunkPart(Base):
+    """Exact block slice that composes a content chunk."""
+
+    __tablename__ = "content_chunk_parts"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    chunk_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("content_chunks.id"))
+    part_idx: Mapped[int] = mapped_column(Integer, nullable=False)
+    block_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("content_blocks.id"))
+    block_start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    block_end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    separator_before: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("part_idx >= 0", name="ck_content_chunk_parts_part_idx"),
+        CheckConstraint("block_start_offset >= 0", name="ck_content_chunk_parts_block_start"),
+        CheckConstraint(
+            "block_end_offset >= block_start_offset",
+            name="ck_content_chunk_parts_block_offsets",
+        ),
+        CheckConstraint("chunk_start_offset >= 0", name="ck_content_chunk_parts_chunk_start"),
+        CheckConstraint(
+            "chunk_end_offset >= chunk_start_offset",
+            name="ck_content_chunk_parts_chunk_offsets",
+        ),
+        UniqueConstraint("chunk_id", "part_idx", name="uq_content_chunk_parts_chunk_part"),
+        Index("ix_content_chunk_parts_chunk", "chunk_id"),
+    )
+
+
+class ContentEmbedding(Base):
+    """Model-specific embedding for one content chunk."""
+
+    __tablename__ = "content_embeddings"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    chunk_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("content_chunks.id"))
+    embedding_provider: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_version: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_config_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding_vector: Mapped[list[float] | None] = mapped_column(PGVector(256), nullable=True)
+    embedding_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("embedding_dimensions > 0", name="ck_content_embeddings_dimensions"),
+        CheckConstraint("char_length(embedding_sha256) = 64", name="ck_content_embeddings_sha"),
+        Index(
+            "ix_content_embeddings_model",
+            "embedding_provider",
+            "embedding_model",
+            "embedding_version",
+            "embedding_config_hash",
+        ),
+    )
+
+
+class MediaContentIndexState(Base):
+    """Active evidence index pointer for a media item."""
+
+    __tablename__ = "media_content_index_states"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -1911,27 +2719,27 @@ class ContentChunk(Base):
         ForeignKey("media.id"),
         nullable=False,
     )
-    fragment_id: Mapped[UUID | None] = mapped_column(
+    active_run_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("fragments.id"),
+        ForeignKey("content_index_runs.id"),
         nullable=True,
     )
-    transcript_version_id: Mapped[UUID | None] = mapped_column(
+    latest_run_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("podcast_transcript_versions.id"),
+        ForeignKey("content_index_runs.id"),
         nullable=True,
     )
-    chunk_idx: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
-    start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    t_start_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    t_end_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    heading: Mapped[str | None] = mapped_column(Text, nullable=True)
-    locator: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    embedding: Mapped[list[float]] = mapped_column(JSONB, nullable=False)
-    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active_embedding_provider: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active_embedding_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active_embedding_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active_embedding_config_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1939,72 +2747,14 @@ class ContentChunk(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("chunk_idx >= 0", name="ck_content_chunks_chunk_idx_non_negative"),
+        UniqueConstraint("media_id", name="uq_media_content_index_states_media"),
         CheckConstraint(
-            "source_kind IN ('fragment', 'transcript')",
-            name="ck_content_chunks_source_kind",
+            "status IN ('pending', 'indexing', 'ready', 'no_text', 'ocr_required', 'failed')",
+            name="ck_media_content_index_states_status",
         ),
-        CheckConstraint(
-            """
-            (
-                source_kind = 'fragment'
-                AND fragment_id IS NOT NULL
-                AND transcript_version_id IS NULL
-                AND start_offset IS NOT NULL
-                AND end_offset IS NOT NULL
-                AND start_offset >= 0
-                AND end_offset > start_offset
-                AND t_start_ms IS NULL
-                AND t_end_ms IS NULL
-            )
-            OR (
-                source_kind = 'transcript'
-                AND fragment_id IS NULL
-                AND transcript_version_id IS NOT NULL
-                AND start_offset IS NULL
-                AND end_offset IS NULL
-                AND t_start_ms IS NOT NULL
-                AND t_end_ms IS NOT NULL
-                AND t_start_ms >= 0
-                AND t_end_ms > t_start_ms
-            )
-            """,
-            name="ck_content_chunks_locator_shape",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(embedding) = 'array'",
-            name="ck_content_chunks_embedding_array",
-        ),
-        CheckConstraint(
-            "locator IS NULL OR jsonb_typeof(locator) = 'object'",
-            name="ck_content_chunks_locator_object",
-        ),
-        Index(
-            "uq_content_chunks_fragment_media_idx",
-            "media_id",
-            "chunk_idx",
-            unique=True,
-            postgresql_where=text("source_kind = 'fragment'"),
-        ),
-        Index(
-            "uq_content_chunks_transcript_version_idx",
-            "transcript_version_id",
-            "chunk_idx",
-            unique=True,
-            postgresql_where=text("source_kind = 'transcript'"),
-        ),
-        Index("ix_content_chunks_media_source", "media_id", "source_kind", "chunk_idx"),
-        Index("ix_content_chunks_transcript_version", "transcript_version_id"),
-        Index("ix_content_chunks_fragment", "fragment_id"),
-        Index("ix_content_chunks_embedding_model", "embedding_model"),
     )
 
-    media: Mapped["Media"] = relationship("Media", back_populates="content_chunks")
-    fragment: Mapped["Fragment | None"] = relationship("Fragment")
-    transcript_version: Mapped["PodcastTranscriptVersion | None"] = relationship(
-        "PodcastTranscriptVersion",
-        back_populates="content_chunks",
-    )
+    media: Mapped["Media"] = relationship("Media", back_populates="content_index_state")
 
 
 class MediaTranscriptState(Base):
@@ -2143,7 +2893,7 @@ class PodcastTranscriptRequestAudit(Base):
 
 
 # =============================================================================
-# Slice 2: Highlights + Annotations
+# Slice 2: Highlights
 # =============================================================================
 
 
@@ -2208,13 +2958,6 @@ class Highlight(Base):
     )
 
     # Relationships
-    annotation: Mapped["Annotation | None"] = relationship(
-        "Annotation",
-        uselist=False,
-        back_populates="highlight",
-        lazy="joined",
-        passive_deletes=True,
-    )
     fragment_anchor: Mapped["HighlightFragmentAnchor | None"] = relationship(
         "HighlightFragmentAnchor",
         back_populates="highlight",
@@ -2235,51 +2978,6 @@ class Highlight(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-
-
-class Annotation(Base):
-    """Annotation model - optional note attached to a highlight (0..1).
-
-    An annotation does not have its own user_id; ownership is derived via
-    highlights.user_id to avoid ownership drift.
-
-    Deleting a highlight cascades to delete its annotation.
-    Deleting an annotation leaves the highlight intact (service behavior).
-    """
-
-    __tablename__ = "annotations"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    highlight_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("highlights.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    body: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "highlight_id",
-            name="uix_annotations_one_per_highlight",
-        ),
-    )
-
-    # Relationships (PR-06)
-    highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="annotation")
 
 
 # =============================================================================
@@ -2435,6 +3133,10 @@ class PdfPageTextSpan(Base):
     start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     text_extract_version: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    page_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    page_width: Mapped[float | None] = mapped_column(Float, nullable=True)
+    page_height: Mapped[float | None] = mapped_column(Float, nullable=True)
+    page_rotation_degrees: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -2446,6 +3148,12 @@ class PdfPageTextSpan(Base):
         CheckConstraint("start_offset >= 0", name="ck_ppts_start_offset"),
         CheckConstraint("end_offset >= start_offset", name="ck_ppts_offsets_valid"),
         CheckConstraint("text_extract_version >= 1", name="ck_ppts_extract_version"),
+        CheckConstraint("page_width IS NULL OR page_width > 0", name="ck_ppts_page_width"),
+        CheckConstraint("page_height IS NULL OR page_height > 0", name="ck_ppts_page_height"),
+        CheckConstraint(
+            "page_rotation_degrees IS NULL OR page_rotation_degrees >= 0",
+            name="ck_ppts_page_rotation",
+        ),
     )
 
     media: Mapped["Media"] = relationship("Media", back_populates="pdf_page_text_spans")
@@ -2457,7 +3165,7 @@ class PdfPageTextSpan(Base):
 
 
 class SharingMode(str, PyEnum):
-    """Sharing modes for social objects (conversations, highlights, annotations)."""
+    """Sharing modes for social objects."""
 
     private = "private"
     library = "library"
@@ -2514,11 +3222,17 @@ class ApiKeyStatus(str, PyEnum):
 
 
 class ContextTargetType(str, PyEnum):
-    """Types of context targets for message_context."""
+    """Types of universal message context targets."""
 
     media = "media"
     highlight = "highlight"
-    annotation = "annotation"
+    page = "page"
+    note_block = "note_block"
+    conversation = "conversation"
+    message = "message"
+    podcast = "podcast"
+    content_chunk = "content_chunk"
+    contributor = "contributor"
 
 
 class MessageToolStatus(str, PyEnum):
@@ -2553,12 +3267,14 @@ class ChatRunEventType(str, PyEnum):
 class AppSearchResultType(str, PyEnum):
     """Typed app-search result classes surfaced to assistant retrieval."""
 
+    page = "page"
+    note_block = "note_block"
     media = "media"
     podcast = "podcast"
-    fragment = "fragment"
-    annotation = "annotation"
+    content_chunk = "content_chunk"
     message = "message"
-    transcript_chunk = "transcript_chunk"
+    contributor = "contributor"
+    web_result = "web_result"
 
 
 class SourceRefType(str, PyEnum):
@@ -2902,11 +3618,11 @@ class Message(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
-    contexts: Mapped[list["MessageContext"]] = relationship(
-        "MessageContext",
+    contexts: Mapped[list["MessageContextItem"]] = relationship(
+        "MessageContextItem",
         back_populates="message",
         cascade="all, delete-orphan",
-        order_by="MessageContext.ordinal",
+        order_by="MessageContextItem.ordinal",
     )
     evidence_summary: Mapped["AssistantMessageEvidenceSummary | None"] = relationship(
         "AssistantMessageEvidenceSummary",
@@ -3185,6 +3901,11 @@ class MessageRetrieval(Base):
         ForeignKey("media.id", ondelete="SET NULL"),
         nullable=True,
     )
+    evidence_span_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("evidence_spans.id"),
+        nullable=True,
+    )
     scope: Mapped[str] = mapped_column(Text, nullable=False, server_default="all")
     context_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     result_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
@@ -3222,12 +3943,13 @@ class MessageRetrieval(Base):
         CheckConstraint(
             """
             result_type IN (
+                'page',
+                'note_block',
                 'media',
                 'podcast',
-                'fragment',
-                'annotation',
+                'content_chunk',
                 'message',
-                'transcript_chunk',
+                'contributor',
                 'web_result'
             )
             """,
@@ -3284,6 +4006,7 @@ class MessageRetrieval(Base):
         ),
         Index("idx_message_retrievals_media", "media_id"),
         Index("idx_message_retrievals_result_type", "result_type"),
+        Index("idx_message_retrievals_evidence_span", "evidence_span_id"),
     )
 
     tool_call: Mapped["MessageToolCall"] = relationship(
@@ -3492,6 +4215,11 @@ class AssistantMessageClaimEvidence(Base):
         ForeignKey("message_retrievals.id", ondelete="SET NULL"),
         nullable=True,
     )
+    evidence_span_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("evidence_spans.id"),
+        nullable=True,
+    )
     context_ref: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     result_ref: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     exact_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -3564,6 +4292,7 @@ class AssistantMessageClaimEvidence(Base):
         UniqueConstraint("claim_id", "ordinal", name="uix_assistant_claim_evidence_ordinal"),
         Index("idx_assistant_claim_evidence_claim", "claim_id", "ordinal"),
         Index("idx_assistant_claim_evidence_retrieval", "retrieval_id"),
+        Index("idx_assistant_claim_evidence_evidence_span", "evidence_span_id"),
     )
 
     claim: Mapped["AssistantMessageClaim"] = relationship(
@@ -4414,10 +5143,10 @@ class ExtensionSession(Base):
     user: Mapped["User"] = relationship("User")
 
 
-class MessageContext(Base):
-    """MessageContext model - links messages to context objects."""
+class MessageContextItem(Base):
+    """Universal context object attached to one message."""
 
-    __tablename__ = "message_contexts"
+    __tablename__ = "message_context_items"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -4426,25 +5155,22 @@ class MessageContext(Base):
     )
     message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
+        ForeignKey("messages.id"),
         nullable=False,
     )
-    target_type: Mapped[str] = mapped_column(Text, nullable=False)
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    object_type: Mapped[str] = mapped_column(Text, nullable=False)
+    object_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    media_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        nullable=True,
-    )
-    highlight_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("highlights.id", ondelete="CASCADE"),
-        nullable=True,
-    )
-    annotation_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("annotations.id", ondelete="CASCADE"),
-        nullable=True,
+    context_snapshot_json: Mapped[dict[str, object]] = mapped_column(
+        "context_snapshot",
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
     )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -4454,29 +5180,27 @@ class MessageContext(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "target_type IN ('media', 'highlight', 'annotation')",
-            name="ck_message_contexts_target_type",
+            "object_type IN ('page', 'note_block', 'media', 'highlight', 'conversation', "
+            "'message', 'podcast', 'content_chunk', 'contributor')",
+            name="ck_message_context_items_object_type",
         ),
         CheckConstraint(
             "ordinal >= 0",
-            name="ck_message_contexts_ordinal_non_negative",
+            name="ck_message_context_items_ordinal_non_negative",
         ),
         CheckConstraint(
-            """(
-                (CASE WHEN media_id IS NOT NULL THEN 1 ELSE 0 END) +
-                (CASE WHEN highlight_id IS NOT NULL THEN 1 ELSE 0 END) +
-                (CASE WHEN annotation_id IS NOT NULL THEN 1 ELSE 0 END)
-            ) = 1""",
-            name="ck_message_contexts_one_target",
+            "jsonb_typeof(context_snapshot) = 'object'",
+            name="ck_message_context_items_snapshot",
         ),
-        UniqueConstraint("message_id", "ordinal", name="uix_message_contexts_message_ordinal"),
+        UniqueConstraint(
+            "message_id",
+            "ordinal",
+            name="uix_message_context_items_message_ordinal",
+        ),
     )
 
     # Relationships
     message: Mapped["Message"] = relationship("Message", back_populates="contexts")
-    media: Mapped["Media | None"] = relationship("Media")
-    highlight: Mapped["Highlight | None"] = relationship("Highlight")
-    annotation: Mapped["Annotation | None"] = relationship("Annotation")
 
 
 class ConversationMedia(Base):
@@ -5126,3 +5850,371 @@ class ReaderMediaState(Base):
     # Relationships
     user: Mapped["User"] = relationship("User")
     media: Mapped["Media"] = relationship("Media")
+
+
+class OracleCorpusSetVersion(Base):
+    """Versioned, immutable oracle corpus release."""
+
+    __tablename__ = "oracle_corpus_set_versions"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    version: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(version) BETWEEN 1 AND 128",
+            name="ck_oracle_corpus_versions_version_length",
+        ),
+        CheckConstraint(
+            "char_length(label) BETWEEN 1 AND 200",
+            name="ck_oracle_corpus_versions_label_length",
+        ),
+        CheckConstraint(
+            "char_length(embedding_model) BETWEEN 1 AND 128",
+            name="ck_oracle_corpus_versions_embedding_model_length",
+        ),
+        UniqueConstraint("version", name="uix_oracle_corpus_versions_version"),
+    )
+
+
+class OracleCorpusWork(Base):
+    """Curated public-domain work in the oracle corpus."""
+
+    __tablename__ = "oracle_corpus_works"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    corpus_set_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("oracle_corpus_set_versions.id"),
+        nullable=False,
+    )
+    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    author: Mapped[str] = mapped_column(Text, nullable=False)
+    year: Mapped[str | None] = mapped_column(Text, nullable=True)
+    edition_label: Mapped[str] = mapped_column(Text, nullable=False)
+    source_repository: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("char_length(slug) BETWEEN 1 AND 160", name="ck_oracle_works_slug_length"),
+        UniqueConstraint(
+            "corpus_set_version_id",
+            "slug",
+            name="uix_oracle_works_version_slug",
+        ),
+    )
+
+
+class OracleCorpusPassage(Base):
+    """One indexed passage of a public-domain work in the oracle corpus."""
+
+    __tablename__ = "oracle_corpus_passages"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    corpus_set_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("oracle_corpus_set_versions.id"),
+        nullable=False,
+    )
+    work_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("oracle_corpus_works.id"),
+        nullable=False,
+    )
+    passage_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
+    locator_label: Mapped[str] = mapped_column(Text, nullable=False)
+    locator: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    source: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    tags: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    embedding_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(PGVector(256), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    work: Mapped["OracleCorpusWork"] = relationship("OracleCorpusWork")
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(canonical_text) BETWEEN 1 AND 4000",
+            name="ck_oracle_passages_text_length",
+        ),
+        CheckConstraint("passage_index >= 0", name="ck_oracle_passages_index"),
+        CheckConstraint(
+            "jsonb_typeof(locator) = 'object'", name="ck_oracle_passages_locator_object"
+        ),
+        CheckConstraint("jsonb_typeof(source) = 'object'", name="ck_oracle_passages_source_object"),
+        CheckConstraint("jsonb_typeof(tags) = 'array'", name="ck_oracle_passages_tags_array"),
+        CheckConstraint(
+            "embedding_model IS NULL OR char_length(embedding_model) BETWEEN 1 AND 128",
+            name="ck_oracle_passages_embedding_model_length",
+        ),
+        UniqueConstraint("work_id", "passage_index", name="uix_oracle_passages_work_index"),
+        Index("idx_oracle_passages_version_embedding", "corpus_set_version_id", "embedding_model"),
+    )
+
+
+class OracleCorpusImage(Base):
+    """Curated public-domain image plate in the oracle corpus."""
+
+    __tablename__ = "oracle_corpus_images"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    corpus_set_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("oracle_corpus_set_versions.id"),
+        nullable=False,
+    )
+    source_repository: Mapped[str] = mapped_column(Text, nullable=False)
+    source_page_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    license_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    artist: Mapped[str] = mapped_column(Text, nullable=False)
+    work_title: Mapped[str] = mapped_column(Text, nullable=False)
+    year: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attribution_text: Mapped[str] = mapped_column(Text, nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    tags: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    embedding_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(PGVector(256), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("width > 0", name="ck_oracle_images_width_positive"),
+        CheckConstraint("height > 0", name="ck_oracle_images_height_positive"),
+        CheckConstraint("jsonb_typeof(tags) = 'array'", name="ck_oracle_images_tags_array"),
+        CheckConstraint(
+            "embedding_model IS NULL OR char_length(embedding_model) BETWEEN 1 AND 128",
+            name="ck_oracle_images_embedding_model_length",
+        ),
+        UniqueConstraint(
+            "corpus_set_version_id",
+            "source_url",
+            name="uix_oracle_images_version_source_url",
+        ),
+        Index("idx_oracle_images_version_embedding", "corpus_set_version_id", "embedding_model"),
+    )
+
+
+class OracleReading(Base):
+    """One oracle reading: a question, retrieved sources, generated interpretation."""
+
+    __tablename__ = "oracle_readings"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    corpus_set_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("oracle_corpus_set_versions.id"),
+        nullable=False,
+    )
+    folio_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    folio_title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    argument_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    question_text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    provider_request_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generator_model_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("models.id"),
+        nullable=True,
+    )
+    image_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("oracle_corpus_images.id"),
+        nullable=True,
+    )
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    failed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    image: Mapped["OracleCorpusImage | None"] = relationship("OracleCorpusImage")
+
+    __table_args__ = (
+        CheckConstraint("folio_number > 0", name="ck_oracle_readings_folio_positive"),
+        CheckConstraint(
+            "status IN ('pending', 'streaming', 'complete', 'failed')",
+            name="ck_oracle_readings_status",
+        ),
+        CheckConstraint(
+            "char_length(btrim(question_text)) BETWEEN 1 AND 280",
+            name="ck_oracle_readings_question_length",
+        ),
+        CheckConstraint(
+            "char_length(prompt_version) BETWEEN 1 AND 64",
+            name="ck_oracle_readings_prompt_version_length",
+        ),
+        CheckConstraint(
+            "provider_request_hash IS NULL OR char_length(provider_request_hash) BETWEEN 1 AND 128",
+            name="ck_oracle_readings_provider_request_hash_length",
+        ),
+        CheckConstraint(
+            "(status = 'complete' AND completed_at IS NOT NULL) OR status != 'complete'",
+            name="ck_oracle_readings_complete_has_timestamp",
+        ),
+        CheckConstraint(
+            "(status = 'failed' AND failed_at IS NOT NULL AND error_code IS NOT NULL) "
+            "OR status != 'failed'",
+            name="ck_oracle_readings_failed_has_error",
+        ),
+        UniqueConstraint("user_id", "folio_number", name="uix_oracle_readings_user_folio"),
+        Index("idx_oracle_readings_user_created", "user_id", text("created_at DESC")),
+    )
+
+
+class OracleReadingPassage(Base):
+    """One persisted citation in an oracle reading, library or public-domain."""
+
+    __tablename__ = "oracle_reading_passages"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    reading_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("oracle_readings.id"),
+        nullable=False,
+    )
+    phase: Mapped[str] = mapped_column(Text, nullable=False)
+    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    source_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    exact_snippet: Mapped[str] = mapped_column(Text, nullable=False)
+    locator_label: Mapped[str] = mapped_column(Text, nullable=False)
+    locator: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    source: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    attribution_text: Mapped[str] = mapped_column(Text, nullable=False)
+    marginalia_text: Mapped[str] = mapped_column(Text, nullable=False)
+    deep_link: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "source_kind IN ('user_media', 'public_domain')",
+            name="ck_oracle_reading_passages_source_kind",
+        ),
+        CheckConstraint(
+            "phase IN ('descent', 'ordeal', 'ascent')",
+            name="ck_oracle_reading_passages_phase",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(source_ref) = 'object'",
+            name="ck_oracle_reading_passages_source_ref_object",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(locator) = 'object'",
+            name="ck_oracle_reading_passages_locator_object",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(source) = 'object'",
+            name="ck_oracle_reading_passages_source_object",
+        ),
+        UniqueConstraint("reading_id", "phase", name="uix_oracle_reading_passages_phase"),
+    )
+
+
+class OracleReadingEvent(Base):
+    """Append-only SSE replay event for an oracle reading."""
+
+    __tablename__ = "oracle_reading_events"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    reading_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("oracle_readings.id"),
+        nullable=False,
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("seq >= 1", name="ck_oracle_reading_events_seq_positive"),
+        CheckConstraint(
+            "event_type IN ("
+            "'meta', 'bind', 'argument', 'plate', 'passage', 'delta', 'omens', 'error', 'done'"
+            ")",
+            name="ck_oracle_reading_events_type",
+        ),
+        UniqueConstraint("reading_id", "seq", name="uix_oracle_reading_events_seq"),
+        Index("idx_oracle_reading_events_reading_seq", "reading_id", "seq"),
+    )

@@ -11,7 +11,7 @@ This document covers the architectural layers and their responsibilities.
 - **FastAPI middleware**: JWT verification, request ID, viewer injection.
 - **FastAPI route handlers**: validate input, call services, return response envelopes.
 - **Services** (`python/nexus/services/`): business logic. No HTTP or framework types.
-- **Models** (`python/nexus/models/`): SQLAlchemy table definitions.
+- **Models** (`python/nexus/db/models.py`): SQLAlchemy table definitions.
 
 ## Rules
 

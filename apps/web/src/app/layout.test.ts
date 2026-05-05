@@ -1,5 +1,17 @@
-import { describe, it, expect } from "vitest";
-import { viewport } from "@/app/viewport";
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("next/font/google", () => {
+  const loadFont = () => ({ variable: "test-font-variable" });
+  return {
+    EB_Garamond: loadFont,
+    IM_Fell_English: loadFont,
+    Inter: loadFont,
+    JetBrains_Mono: loadFont,
+    UnifrakturMaguntia: loadFont,
+  };
+});
+
+import { viewport } from "@/app/layout";
 
 /**
  * Verifies the root layout exports a Next.js Viewport with viewport-fit=cover.

@@ -1,0 +1,129 @@
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-panel);
+  color: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.name {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-xl);
+  line-height: 1.2;
+}
+
+.identityMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.disambiguation {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.identityDetails {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+}
+
+.identityDetails h2,
+.worksSection h2 {
+  margin: 0 0 var(--space-2);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+.pillRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.detailPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  text-decoration: none;
+}
+
+.worksSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.workToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: flex-end;
+}
+
+.workToolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 150px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.workToolbar input,
+.workToolbar select {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.workToolbar input {
+  min-width: min(260px, 100%);
+}
+
+.workToolbar input:focus,
+.workToolbar select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}

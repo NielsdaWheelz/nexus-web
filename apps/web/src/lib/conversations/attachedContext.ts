@@ -1,5 +1,6 @@
 import type { ContextItem } from "@/lib/api/sse";
 import type { ConversationScope } from "@/lib/conversations/types";
+import { isObjectType } from "@/lib/objectRefs";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -7,15 +8,36 @@ const UUID_RE =
 const PENDING_CONTEXT_PARAM = "context";
 const PENDING_SCOPE_PARAM = "scope";
 
-function parseTypedId(value: string): { type: ContextItem["type"]; id: string } | null {
-  const [type, id, extra] = value.split(":");
-  if (extra !== undefined || !id || !UUID_RE.test(id)) {
+function parseEvidenceSpanIds(value: string | undefined): string[] | null {
+  if (value === undefined) {
+    return [];
+  }
+  if (!value) {
     return null;
   }
-  if (type === "highlight" || type === "annotation" || type === "media") {
-    return { type, id };
+  const ids = value.split(",").filter(Boolean);
+  if (ids.length === 0 || !ids.every((id) => UUID_RE.test(id))) {
+    return null;
   }
-  return null;
+  return Array.from(new Set(ids));
+}
+
+function parseTypedId(value: string): ContextItem | null {
+  const [type, id, evidenceSpanIds, extra] = value.split(":");
+  if (extra !== undefined || !type || !id || !UUID_RE.test(id) || !isObjectType(type)) {
+    return null;
+  }
+  const parsedEvidenceSpanIds = parseEvidenceSpanIds(evidenceSpanIds);
+  if (parsedEvidenceSpanIds === null) {
+    return null;
+  }
+  return {
+    type,
+    id,
+    ...(parsedEvidenceSpanIds.length > 0
+      ? { evidence_span_ids: parsedEvidenceSpanIds }
+      : {}),
+  };
 }
 
 export function parsePendingContexts(searchParams: URLSearchParams): ContextItem[] {
@@ -51,7 +73,13 @@ export function parseConversationScopeFromUrl(
 }
 
 export function getPendingContextSignature(items: ContextItem[]): string {
-  return items.map((item) => `${item.type}:${item.id}`).join("\u001e");
+  return items
+    .map((item) =>
+      item.evidence_span_ids?.length
+        ? `${item.type}:${item.id}:${item.evidence_span_ids.join(",")}`
+        : `${item.type}:${item.id}`
+    )
+    .join("\u001e");
 }
 
 export function getConversationScopeSignature(scope: ConversationScope): string {
@@ -79,11 +107,16 @@ export function stripPendingContextParams(
 
 export function setPendingContextParam(
   searchParams: URLSearchParams,
-  context: Pick<ContextItem, "type" | "id">,
+  context: Pick<ContextItem, "type" | "id" | "evidence_span_ids">,
 ): URLSearchParams {
   const next = new URLSearchParams(searchParams);
   next.delete(PENDING_CONTEXT_PARAM);
-  next.append(PENDING_CONTEXT_PARAM, `${context.type}:${context.id}`);
+  next.append(
+    PENDING_CONTEXT_PARAM,
+    context.evidence_span_ids?.length
+      ? `${context.type}:${context.id}:${context.evidence_span_ids.join(",")}`
+      : `${context.type}:${context.id}`,
+  );
   return next;
 }
 

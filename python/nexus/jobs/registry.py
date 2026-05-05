@@ -170,6 +170,13 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(60, 300, 900, 3600, 21600),
             lease_seconds=900,
         ),
+        "oracle_reading_generate": JobDefinition(
+            kind="oracle_reading_generate",
+            handler=_run_oracle_reading_generate,
+            max_attempts=1,
+            retry_delays_seconds=(0,),
+            lease_seconds=120,
+        ),
     }
 
 
@@ -303,6 +310,12 @@ def _run_backfill_default_library_closure(
         user_id=str(payload["user_id"]),
         request_id=_optional_str(payload.get("request_id")),
     )
+
+
+def _run_oracle_reading_generate(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.oracle_reading import oracle_reading_generate
+
+    return oracle_reading_generate(reading_id=str(payload["reading_id"]))
 
 
 def _optional_str(value: Any) -> str | None:

@@ -101,12 +101,6 @@
   border-left-color: var(--highlight-purple);
 }
 
-.replyBarAnnotation {
-  margin-top: 2px;
-  font-style: italic;
-  color: var(--color-text-muted);
-}
-
 .claimAnswer a[href^="#claim-evidence-"] {
   display: inline-flex;
   align-items: center;

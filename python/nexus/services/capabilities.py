@@ -59,6 +59,8 @@ def derive_capabilities(
     pdf_quote_text_ready: bool = False,
     transcript_state: str | None = None,
     transcript_coverage: str | None = None,
+    retrieval_status: str | None = None,
+    retrieval_active_ready: bool | None = None,
     can_delete: bool = False,
     is_creator: bool = False,
     requested_url_exists: bool = False,
@@ -113,7 +115,10 @@ def derive_capabilities(
     else:
         can_quote = can_read
 
-    can_search = can_quote
+    retrieval_ready = (
+        retrieval_status == "ready" if retrieval_active_ready is None else retrieval_active_ready
+    )
+    can_search = can_quote and retrieval_ready
 
     terminal_retry_error = (
         kind == MediaKind.pdf.value and last_error_code == "E_PDF_PASSWORD_REQUIRED"

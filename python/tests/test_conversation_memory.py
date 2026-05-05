@@ -38,7 +38,7 @@ def test_valid_source_refs_cover_message_retrieval_and_app_context_ref():
         {
             "type": "app_context_ref",
             "id": str(uuid4()),
-            "context_ref": {"type": "fragment", "id": str(uuid4())},
+            "context_ref": {"type": "content_chunk", "id": str(uuid4())},
         }
     )
 

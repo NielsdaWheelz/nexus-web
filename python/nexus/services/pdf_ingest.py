@@ -7,6 +7,7 @@ behind parser-agnostic typed outcomes.
 Does NOT own lifecycle transitions or background-job dispatch.
 """
 
+import hashlib
 import re
 import time
 from dataclasses import dataclass, field
@@ -37,6 +38,10 @@ class PdfPageSpan:
     page_number: int
     start_offset: int
     end_offset: int
+    page_label: str | None = None
+    page_width: float | None = None
+    page_height: float | None = None
+    page_rotation_degrees: int | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +53,13 @@ class PdfExtractionResult:
     plain_text: str = ""
     page_spans: list[PdfPageSpan] = field(default_factory=list)
     has_text: bool = False
+    source_fingerprint: str | None = None
+    source_byte_length: int = 0
+    text_extract_version: int = TEXT_EXTRACT_VERSION
+    extraction_method: str = "digital_text"
+    ocr_engine: str | None = None
+    ocr_engine_version: str | None = None
+    ocr_confidence: float | None = None
     pdf_title: str | None = None
     pdf_author: str | None = None
     pdf_subject: str | None = None
@@ -206,6 +218,8 @@ def _extract_with_pymupdf(
             terminal=True,
         )
 
+    source_fingerprint = f"sha256:{hashlib.sha256(pdf_bytes).hexdigest()}"
+
     # Read document metadata
     raw_meta = doc.metadata or {}
     pdf_title = (raw_meta.get("title") or "").strip() or None
@@ -223,37 +237,79 @@ def _extract_with_pymupdf(
             )
 
         raw_page_texts: list[str] = []
+        page_labels: list[str | None] = []
+        page_sizes: list[tuple[float, float] | None] = []
+        page_rotations: list[int | None] = []
         for page_num in range(page_count):
             try:
                 page = doc[page_num]
-                page_text = page.get_text("text") or ""
+                page_text = str(page.get_text("text") or "")
+                try:
+                    raw_page_label = page.get_label()
+                except AttributeError:
+                    raw_page_label = None
+                except RuntimeError:
+                    raw_page_label = None
+                page_label = (
+                    raw_page_label.strip()
+                    if isinstance(raw_page_label, str) and raw_page_label.strip()
+                    else None
+                )
+                page_rect = page.rect
+                page_size = (float(page_rect.width), float(page_rect.height))
+                page_rotation = int(page.rotation or 0)
             except Exception:
                 page_text = ""
+                page_label = None
+                page_size = None
+                page_rotation = None
             raw_page_texts.append(page_text)
+            page_labels.append(page_label)
+            page_sizes.append(page_size)
+            page_rotations.append(page_rotation)
 
         combined_raw = "\f".join(raw_page_texts)
         normalized = normalize_pdf_text(combined_raw)
+
+        normalized_pages = _build_page_texts_from_raw(raw_page_texts)
 
         if not normalized:
             return PdfExtractionResult(
                 page_count=page_count,
                 plain_text="",
-                page_spans=[],
+                page_spans=_build_page_spans(
+                    normalized_pages,
+                    normalized,
+                    page_count,
+                    page_labels,
+                    page_sizes,
+                    page_rotations,
+                ),
                 has_text=False,
+                source_fingerprint=source_fingerprint,
+                source_byte_length=len(pdf_bytes),
                 pdf_title=pdf_title,
                 pdf_author=pdf_author,
                 pdf_subject=pdf_subject,
                 pdf_creation_date=pdf_creation_date,
             )
 
-        normalized_pages = _build_page_texts_from_raw(raw_page_texts)
-        page_spans = _build_page_spans(normalized_pages, normalized, page_count)
+        page_spans = _build_page_spans(
+            normalized_pages,
+            normalized,
+            page_count,
+            page_labels,
+            page_sizes,
+            page_rotations,
+        )
 
         return PdfExtractionResult(
             page_count=page_count,
             plain_text=normalized,
             page_spans=page_spans,
             has_text=True,
+            source_fingerprint=source_fingerprint,
+            source_byte_length=len(pdf_bytes),
             pdf_title=pdf_title,
             pdf_author=pdf_author,
             pdf_subject=pdf_subject,
@@ -276,6 +332,9 @@ def _build_page_spans(
     normalized_pages: list[str],
     full_normalized: str,
     page_count: int,
+    page_labels: list[str | None] | None = None,
+    page_sizes: list[tuple[float, float] | None] | None = None,
+    page_rotations: list[int | None] | None = None,
 ) -> list[PdfPageSpan]:
     """Build page-indexed spans over the post-normalization plain_text.
 
@@ -287,11 +346,18 @@ def _build_page_spans(
 
     for i, page_text in enumerate(normalized_pages):
         page_len = len(page_text)
+        page_size = page_sizes[i] if page_sizes and i < len(page_sizes) else None
         spans.append(
             PdfPageSpan(
                 page_number=i + 1,
                 start_offset=offset,
                 end_offset=offset + page_len,
+                page_label=page_labels[i] if page_labels and i < len(page_labels) else None,
+                page_width=page_size[0] if page_size else None,
+                page_height=page_size[1] if page_size else None,
+                page_rotation_degrees=(
+                    page_rotations[i] if page_rotations and i < len(page_rotations) else None
+                ),
             )
         )
         offset += page_len
@@ -302,11 +368,25 @@ def _build_page_spans(
             pass
 
     while len(spans) < page_count:
+        page_index = len(spans)
+        page_size = page_sizes[page_index] if page_sizes and page_index < len(page_sizes) else None
         spans.append(
             PdfPageSpan(
-                page_number=len(spans) + 1,
+                page_number=page_index + 1,
                 start_offset=offset,
                 end_offset=offset,
+                page_label=(
+                    page_labels[page_index]
+                    if page_labels and page_index < len(page_labels)
+                    else None
+                ),
+                page_width=page_size[0] if page_size else None,
+                page_height=page_size[1] if page_size else None,
+                page_rotation_degrees=(
+                    page_rotations[page_index]
+                    if page_rotations and page_index < len(page_rotations)
+                    else None
+                ),
             )
         )
 
@@ -456,12 +536,17 @@ def extract_pdf_artifacts(
                     start_offset=span.start_offset,
                     end_offset=span.end_offset,
                     text_extract_version=TEXT_EXTRACT_VERSION,
+                    page_label=span.page_label,
+                    page_width=span.page_width,
+                    page_height=span.page_height,
+                    page_rotation_degrees=span.page_rotation_degrees,
                 )
             )
         db.flush()
     else:
         media.page_count = result.page_count
         media.plain_text = None
+        db.execute(delete(PdfPageTextSpan).where(PdfPageTextSpan.media_id == media_id))
         db.flush()
 
     return result
@@ -517,6 +602,9 @@ def delete_pdf_text_artifacts(db: Session, media_id: UUID) -> None:
 
     Used before text-rebuild retry paths.
     """
+    from nexus.services.content_indexing import deactivate_media_content_index
+
+    deactivate_media_content_index(db, media_id=media_id, reason="pdf_text_rebuild")
     db.execute(delete(PdfPageTextSpan).where(PdfPageTextSpan.media_id == media_id))
     db.execute(
         text("""

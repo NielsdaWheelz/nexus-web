@@ -42,11 +42,19 @@
   color: var(--color-text-muted);
 }
 
+.actions {
+  padding-right: var(--space-3);
+}
+
+.contributors {
+  justify-content: flex-end;
+}
+
 .expanded {
   padding: 0 var(--space-3) var(--space-3);
 }
 
-.annotationBody {
+.noteBody {
   margin-left: calc(12px + var(--space-3));
   padding: var(--space-2) var(--space-3);
   border-left: 2px solid var(--color-border);

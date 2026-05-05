@@ -35,7 +35,8 @@ interface ContextRowViewModel {
   preview?: string;
   prefix?: string;
   suffix?: string;
-  annotationBody?: string;
+  title?: string;
+  route?: string;
   mediaId?: string;
   mediaTitle?: string;
   mediaKind?: string;
@@ -93,7 +94,6 @@ export default function ConversationContextPane({
                 preview: contextItem.preview,
                 prefix: contextItem.prefix,
                 suffix: contextItem.suffix,
-                annotationBody: contextItem.annotationBody,
                 mediaId: contextItem.mediaId,
                 mediaTitle: contextItem.mediaTitle,
                 mediaKind: contextItem.mediaKind,
@@ -118,7 +118,8 @@ export default function ConversationContextPane({
                 preview: context.preview,
                 prefix: context.prefix,
                 suffix: context.suffix,
-                annotationBody: context.annotation_body,
+                title: context.title,
+                route: context.route,
                 mediaId: context.media_id,
                 mediaTitle: context.media_title,
                 mediaKind: context.media_kind,
@@ -150,6 +151,12 @@ function renderContextRow(row: ContextRowViewModel) {
       label: "Open source",
       href: `/media/${row.mediaId}`,
     });
+  } else if (row.route) {
+    menuOptions.push({
+      id: "open-context",
+      label: "Open",
+      href: row.route,
+    });
   }
 
   const baseMeta = formatContextMeta(row.mediaTitle, row.mediaKind);
@@ -168,37 +175,51 @@ function renderContextRow(row: ContextRowViewModel) {
           />
         ) : undefined
       }
-      title={formatContextTitle(row.type, row.exact, row.preview, row.color)}
+      title={formatContextTitle(row.type, row.exact, row.preview, row.title, row.color)}
       titleClassName={styles.contextTitle}
       description={formatSelectionContext(row.prefix, row.suffix)}
       descriptionClassName={styles.contextDescription}
       meta={meta || undefined}
       metaClassName={styles.contextMeta}
       actions={menuOptions.length > 0 ? <ActionMenu options={menuOptions} /> : undefined}
-      expandedContent={
-        row.annotationBody ? (
-          <div className={styles.annotationNote}>{row.annotationBody}</div>
-        ) : undefined
-      }
     />
   );
 }
 
 function formatContextTitle(
-  type: "highlight" | "annotation" | "media",
+  type: ContextItem["type"],
   exact?: string,
   preview?: string,
+  title?: string,
   color?: "yellow" | "green" | "blue" | "pink" | "purple",
 ): ReactNode {
-  const text = exact || preview;
+  const text = exact || preview || title;
   if (text) {
     return <HighlightSnippet exact={text} color={color ?? "neutral"} compact />;
   }
   if (type === "highlight") {
     return "Highlight";
   }
-  if (type === "annotation") {
-    return "Annotation";
+  if (type === "note_block") {
+    return "Note";
+  }
+  if (type === "page") {
+    return "Page";
+  }
+  if (type === "message") {
+    return "Message";
+  }
+  if (type === "conversation") {
+    return "Conversation";
+  }
+  if (type === "podcast") {
+    return "Podcast";
+  }
+  if (type === "content_chunk") {
+    return "Passage";
+  }
+  if (type === "contributor") {
+    return "Contributor";
   }
   return "Media";
 }

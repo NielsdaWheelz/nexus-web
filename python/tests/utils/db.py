@@ -120,6 +120,146 @@ class DirectSessionManager:
                     session.execute(text(f"DELETE FROM {table} WHERE {column} IS NULL"))
                     continue
 
+                if table == "media" and column == "id":
+                    session.execute(
+                        text("DELETE FROM media_content_index_states WHERE media_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM content_embeddings ce
+                            USING content_chunks cc
+                            WHERE ce.chunk_id = cc.id
+                              AND cc.media_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM content_chunk_parts ccp
+                            USING content_chunks cc
+                            WHERE ccp.chunk_id = cc.id
+                              AND cc.media_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM content_chunks WHERE media_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM evidence_spans WHERE media_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM content_blocks WHERE media_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM source_snapshots WHERE media_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM content_index_runs WHERE media_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM contributor_credits WHERE media_id = :value"),
+                        {"value": value},
+                    )
+
+                if table == "content_chunks" and column == "media_id":
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM content_embeddings ce
+                            USING content_chunks cc
+                            WHERE ce.chunk_id = cc.id
+                              AND cc.media_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM content_chunk_parts ccp
+                            USING content_chunks cc
+                            WHERE ccp.chunk_id = cc.id
+                              AND cc.media_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+
+                if table == "podcasts" and column == "id":
+                    session.execute(
+                        text("DELETE FROM contributor_credits WHERE podcast_id = :value"),
+                        {"value": value},
+                    )
+
+                if table == "conversations" and column == "id":
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_context_items
+                            WHERE message_id IN (
+                                SELECT id FROM messages WHERE conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+
+                if table == "messages" and column == "id":
+                    session.execute(
+                        text("DELETE FROM message_context_items WHERE message_id = :value"),
+                        {"value": value},
+                    )
+
+                if table == "pages" and column == "id":
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM object_links
+                            WHERE (a_type = 'note_block' AND a_id IN (
+                                    SELECT id FROM note_blocks WHERE page_id = :value
+                                  ))
+                               OR (b_type = 'note_block' AND b_id IN (
+                                    SELECT id FROM note_blocks WHERE page_id = :value
+                                  ))
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM note_blocks WHERE page_id = :value"),
+                        {"value": value},
+                    )
+
+                if table == "pages" and column == "user_id":
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM object_links
+                            WHERE user_id = :value
+                              AND (
+                                  a_type IN ('page', 'note_block')
+                               OR b_type IN ('page', 'note_block')
+                              )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM note_blocks WHERE user_id = :value"),
+                        {"value": value},
+                    )
+
                 session.execute(
                     text(f"DELETE FROM {table} WHERE {column} = :value"), {"value": value}
                 )

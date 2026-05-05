@@ -9,6 +9,8 @@
  * 5. If JSON parse fails on a `data:` line: stream error.
  */
 
+import type { ObjectType } from "@/lib/objectRefs";
+
 /** Maximum single event payload size (256 KB). */
 const MAX_EVENT_SIZE_BYTES = 256 * 1024;
 const RECONNECT_DELAY_MS = 1000;
@@ -47,20 +49,31 @@ export interface SSEDoneEvent {
   };
 }
 
+export type ContextItemType = ObjectType;
+
 export interface SearchCitationEventData {
   result_type:
     | "media"
     | "podcast"
-    | "fragment"
-    | "annotation"
+    | "content_chunk"
+    | "note_block"
     | "message"
-    | "transcript_chunk";
+    | "contributor";
   source_id: string;
   title: string;
   source_label: string | null;
   snippet: string;
   deep_link: string;
-  context_ref: { type: string; id: string };
+  citation_label?: string | null;
+  context_ref: { type: string; id: string; evidence_span_ids?: string[] };
+  resolver?: {
+    kind: "web" | "epub" | "pdf" | "transcript";
+    route: string;
+    params: Record<string, string>;
+    status?: string;
+    selector?: Record<string, unknown>;
+    highlight?: unknown;
+  } | null;
   media_id: string | null;
   media_kind: string | null;
   score: number | null;
@@ -136,17 +149,25 @@ export type SSEEvent =
 
 type SSEEventHandler = (event: SSEEvent) => void;
 type SSEErrorHandler = (error: Error) => void;
-type SSEEventIdHandler = (id: string) => void;
 type SSECompleteHandler = (terminalEventSeen: boolean) => void;
 type SSERetryHandler = (milliseconds: number) => void;
+
+export interface SSEJsonEvent {
+  id: string;
+  type: string;
+  data: unknown;
+}
+
+type SSEJsonEventHandler = (event: SSEJsonEvent) => void;
 
 // ============================================================================
 // Request payload types
 // ============================================================================
 
 export interface ContextItem {
-  type: "highlight" | "annotation" | "media";
+  type: ContextItemType;
   id: string;
+  evidence_span_ids?: string[];
   /** Display fields carried by the caller when available. */
   color?: "yellow" | "green" | "blue" | "pink" | "purple";
   preview?: string;
@@ -155,7 +176,6 @@ export interface ContextItem {
   exact?: string;
   prefix?: string;
   suffix?: string;
-  annotationBody?: string;
   mediaKind?: string;
 }
 
@@ -168,7 +188,7 @@ export type ConversationScopeInput =
  * Strip client-side enriched fields from a ContextItem before sending to the API.
  * Only keeps the wire-format fields that the backend expects.
  */
-export type ChatRunContext = Pick<ContextItem, "type" | "id">;
+export type ChatRunContext = Pick<ContextItem, "type" | "id" | "evidence_span_ids">;
 
 export function toWireContextItem(
   item: ContextItem,
@@ -176,6 +196,9 @@ export function toWireContextItem(
   return {
     type: item.type,
     id: item.id,
+    ...(item.evidence_span_ids?.length
+      ? { evidence_span_ids: item.evidence_span_ids }
+      : {}),
   };
 }
 
@@ -204,11 +227,9 @@ export interface ChatRunCreateRequest {
  * Follows the SSE spec: events are separated by blank lines.
  * Each event has optional `event:` and required `data:` fields.
  */
-async function parseSSEStream(
+export async function parseSSEJsonStream(
   body: ReadableStream<Uint8Array>,
-  onEvent: SSEEventHandler,
-  onError: SSEErrorHandler,
-  onEventId: SSEEventIdHandler,
+  onEvent: SSEJsonEventHandler,
   onRetry: SSERetryHandler,
 ): Promise<void> {
   const reader = body.getReader();
@@ -222,8 +243,12 @@ async function parseSSEStream(
 
   const dispatchEvent = () => {
     if (currentDataLines.length > 0) {
-      processEvent(currentEvent, currentDataLines.join("\n"), onEvent, onError);
-      if (currentId) onEventId(currentId);
+      processJsonEvent(
+        currentEvent,
+        currentDataLines.join("\n"),
+        currentId,
+        onEvent,
+      );
     }
     currentId = "";
     currentEvent = "";
@@ -323,44 +348,41 @@ async function parseSSEStream(
 }
 
 /**
- * Process a single SSE event: parse JSON data and dispatch typed event.
+ * Process a single SSE event: parse JSON data and dispatch it with raw type.
  */
-function processEvent(
+function processJsonEvent(
   eventType: string,
   data: string,
-  onEvent: SSEEventHandler,
-  onError: SSEErrorHandler
+  id: string,
+  onEvent: SSEJsonEventHandler
 ): void {
   let parsed: unknown;
   try {
     parsed = JSON.parse(data);
   } catch {
-    onError(new Error(`Failed to parse SSE data as JSON: ${data.slice(0, 100)}`));
-    return;
+    throw new Error(`Failed to parse SSE data as JSON: ${data.slice(0, 100)}`);
   }
 
+  onEvent({ id, type: eventType, data: parsed });
+}
+
+function toChatSSEEvent(eventType: string, data: unknown): SSEEvent | null {
   switch (eventType) {
     case "meta":
-      onEvent({ type: "meta", data: parsed as SSEMetaEvent["data"] });
-      break;
+      return { type: "meta", data: data as SSEMetaEvent["data"] };
     case "delta":
-      onEvent({ type: "delta", data: parsed as SSEDeltaEvent["data"] });
-      break;
+      return { type: "delta", data: data as SSEDeltaEvent["data"] };
     case "done":
-      onEvent({ type: "done", data: parsed as SSEDoneEvent["data"] });
-      break;
+      return { type: "done", data: data as SSEDoneEvent["data"] };
     case "tool_call":
-      onEvent({ type: "tool_call", data: parsed as SSEToolCallEvent["data"] });
-      break;
+      return { type: "tool_call", data: data as SSEToolCallEvent["data"] };
     case "tool_result":
-      onEvent({ type: "tool_result", data: parsed as SSEToolResultEvent["data"] });
-      break;
+      return { type: "tool_result", data: data as SSEToolResultEvent["data"] };
     case "citation":
-      onEvent({ type: "citation", data: parsed as SSECitationEvent["data"] });
-      break;
+      return { type: "citation", data: data as SSECitationEvent["data"] };
     default:
       // Unknown event type — ignore per spec
-      break;
+      return null;
   }
 }
 
@@ -438,7 +460,7 @@ export function sseClientDirect(
             errorMessage = errorBody.error.message;
           }
         } catch {
-          // ignore parse failures
+          // justify-ignore-error: error bodies are optional; the HTTP status fallback is enough.
         }
         handlers.onError(new Error(errorMessage));
         return;
@@ -449,19 +471,15 @@ export function sseClientDirect(
         return;
       }
 
-      let streamError: Error | null = null;
       try {
-        await parseSSEStream(
+        await parseSSEJsonStream(
           response.body,
-          (event) => {
+          (jsonEvent) => {
+            if (jsonEvent.id) lastEventId = jsonEvent.id;
+            const event = toChatSSEEvent(jsonEvent.type, jsonEvent.data);
+            if (!event) return;
             handlers.onEvent(event);
             if (event.type === "done") terminalEventSeen = true;
-          },
-          (error) => {
-            streamError = error;
-          },
-          (id) => {
-            lastEventId = id;
           },
           (milliseconds) => {
             reconnectDelayMs = milliseconds;
@@ -474,18 +492,14 @@ export function sseClientDirect(
         }
         if (
           err instanceof Error &&
-          err.message.startsWith("SSE event exceeds maximum size")
+          (err.message.startsWith("SSE event exceeds maximum size") ||
+            err.message.startsWith("Failed to parse SSE data as JSON"))
         ) {
           handlers.onError(err);
           return;
         }
         await delay(reconnectDelayMs);
         continue;
-      }
-
-      if (streamError) {
-        handlers.onError(streamError);
-        return;
       }
 
       break;

@@ -1,5 +1,6 @@
 import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
 import { apiFetch } from "@/lib/api/client";
+import type { ContributorCredit } from "@/lib/contributors/types";
 
 export type PodcastSubscriptionSyncStatus =
   | "pending"
@@ -21,7 +22,7 @@ export type PodcastSummary = {
   provider: string;
   provider_podcast_id: string;
   title: string;
-  author: string | null;
+  contributors: ContributorCredit[];
   feed_url: string;
   website_url: string | null;
   image_url: string | null;
@@ -111,7 +112,7 @@ export type PodcastSubscriptionSyncRefreshResult = {
 export type PodcastSubscribeInput = {
   provider_podcast_id: string;
   title: string;
-  author: string | null;
+  contributors: ContributorCredit[];
   feed_url: string;
   website_url: string | null;
   image_url: string | null;
@@ -131,8 +132,43 @@ export type PodcastSubscribeResult = {
   window_size: number;
 };
 
+type ContributorCreditInput = {
+  credited_name: string;
+  role: string;
+  raw_role?: string;
+  ordinal?: number;
+  source: string;
+  source_ref?: Record<string, unknown>;
+  confidence?: string | number;
+};
+
+export function toPodcastContributorInputs(
+  contributors: ContributorCredit[],
+): ContributorCreditInput[] {
+  return contributors.map((credit) => {
+    const creditedName = credit.credited_name.trim();
+    const role = credit.role?.trim();
+    const source = credit.source?.trim();
+    if (!creditedName || !role || !source) {
+      throw new Error("Contributor credit payload is malformed");
+    }
+
+    return {
+      credited_name: creditedName,
+      role,
+      ...(credit.raw_role?.trim() ? { raw_role: credit.raw_role.trim() } : {}),
+      ...(typeof credit.ordinal === "number"
+        ? { ordinal: credit.ordinal }
+        : {}),
+      source,
+      ...(credit.source_ref ? { source_ref: credit.source_ref } : {}),
+      ...(credit.confidence != null ? { confidence: credit.confidence } : {}),
+    };
+  });
+}
+
 function toPodcastLibraryMembership(
-  library: PodcastLibraryResponseItem
+  library: PodcastLibraryResponseItem,
 ): PodcastLibraryMembership {
   return {
     id: library.id,
@@ -150,10 +186,10 @@ export async function fetchNonDefaultLibraries(): Promise<LibrarySummary[]> {
 }
 
 export async function fetchPodcastLibraries(
-  podcastId: string
+  podcastId: string,
 ): Promise<PodcastLibraryMembership[]> {
   const response = await apiFetch<{ data: PodcastLibraryResponseItem[] }>(
-    `/api/podcasts/${podcastId}/libraries`
+    `/api/podcasts/${podcastId}/libraries`,
   );
   return response.data.map(toPodcastLibraryMembership);
 }
@@ -166,7 +202,7 @@ export function updatePodcastLibraryMemberships(
   }: {
     libraryId: string;
     isInLibrary: boolean;
-  }
+  },
 ): PodcastLibraryMembership[] {
   return libraries.map((library) =>
     library.id === libraryId
@@ -176,12 +212,12 @@ export function updatePodcastLibraryMemberships(
           canAdd: !isInLibrary,
           canRemove: isInLibrary,
         }
-      : library
+      : library,
   );
 }
 
 export function getPodcastSubscriptionSettingsDraft(
-  subscription: PodcastSubscriptionSettingsFields | null | undefined
+  subscription: PodcastSubscriptionSettingsFields | null | undefined,
 ): PodcastSubscriptionSettingsDraft {
   return {
     defaultSpeed:
@@ -193,13 +229,13 @@ export function getPodcastSubscriptionSettingsDraft(
 }
 
 export function parsePodcastSubscriptionDefaultPlaybackSpeed(
-  value: string
+  value: string,
 ): number | null {
   return value === "default" ? null : Number.parseFloat(value);
 }
 
 export function getPodcastSubscriptionSyncPatch(
-  result: PodcastSubscriptionSyncRefreshResult
+  result: PodcastSubscriptionSyncRefreshResult,
 ) {
   return {
     sync_status: result.sync_status,
@@ -225,7 +261,7 @@ export function getPodcastSubscriptionSettingsPatch({
 
 export async function addPodcastToLibrary(
   podcastId: string,
-  libraryId: string
+  libraryId: string,
 ): Promise<void> {
   await apiFetch(`/api/libraries/${libraryId}/podcasts`, {
     method: "POST",
@@ -235,7 +271,7 @@ export async function addPodcastToLibrary(
 
 export async function removePodcastFromLibrary(
   podcastId: string,
-  libraryId: string
+  libraryId: string,
 ): Promise<void> {
   await apiFetch(`/api/libraries/${libraryId}/podcasts/${podcastId}`, {
     method: "DELETE",
@@ -243,12 +279,11 @@ export async function removePodcastFromLibrary(
 }
 
 export async function refreshPodcastSubscriptionSync(
-  podcastId: string
+  podcastId: string,
 ): Promise<PodcastSubscriptionSyncRefreshResult> {
-  const response = await apiFetch<{ data: PodcastSubscriptionSyncRefreshResult }>(
-    `/api/podcasts/subscriptions/${podcastId}/sync`,
-    { method: "POST" }
-  );
+  const response = await apiFetch<{
+    data: PodcastSubscriptionSyncRefreshResult;
+  }>(`/api/podcasts/subscriptions/${podcastId}/sync`, { method: "POST" });
   return response.data;
 }
 
@@ -260,18 +295,17 @@ export async function savePodcastSubscriptionSettings(
   }: {
     defaultPlaybackSpeed: number | null;
     autoQueue: boolean;
-  }
+  },
 ): Promise<PodcastSubscriptionSettingsResponse> {
-  const response = await apiFetch<{ data: PodcastSubscriptionSettingsResponse }>(
-    `/api/podcasts/subscriptions/${podcastId}/settings`,
-    {
-      method: "PATCH",
-      body: JSON.stringify({
-        default_playback_speed: defaultPlaybackSpeed,
-        auto_queue: autoQueue,
-      }),
-    }
-  );
+  const response = await apiFetch<{
+    data: PodcastSubscriptionSettingsResponse;
+  }>(`/api/podcasts/subscriptions/${podcastId}/settings`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      default_playback_speed: defaultPlaybackSpeed,
+      auto_queue: autoQueue,
+    }),
+  });
   return response.data;
 }
 
@@ -282,27 +316,30 @@ export async function unsubscribeFromPodcast(podcastId: string): Promise<void> {
 }
 
 export async function subscribeToPodcast(
-  input: PodcastSubscribeInput
+  input: PodcastSubscribeInput,
 ): Promise<PodcastSubscribeResult> {
   const response = await apiFetch<{ data: PodcastSubscribeResult }>(
     "/api/podcasts/subscriptions",
     {
       method: "POST",
-      body: JSON.stringify(input),
-    }
+      body: JSON.stringify({
+        ...input,
+        contributors: toPodcastContributorInputs(input.contributors),
+      }),
+    },
   );
   return response.data;
 }
 
 export function buildPodcastUnsubscribeConfirmation(
   title: string,
-  libraries: PodcastLibraryMembership[]
+  libraries: PodcastLibraryMembership[],
 ): string {
   const removableLibraries = libraries.filter(
-    (library) => library.isInLibrary && library.canRemove
+    (library) => library.isInLibrary && library.canRemove,
   );
   const retainedLibraries = libraries.filter(
-    (library) => library.isInLibrary && !library.canRemove
+    (library) => library.isInLibrary && !library.canRemove,
   );
   const confirmationLines = [
     `Unsubscribe from "${title}"?`,
@@ -312,7 +349,7 @@ export function buildPodcastUnsubscribeConfirmation(
   ];
   if (retainedLibraries.length > 0) {
     confirmationLines.push(
-      `It will remain in ${retainedLibraries.length} shared librar${retainedLibraries.length === 1 ? "y" : "ies"} you cannot administer.`
+      `It will remain in ${retainedLibraries.length} shared librar${retainedLibraries.length === 1 ? "y" : "ies"} you cannot administer.`,
     );
   }
   return confirmationLines.join("\n\n");

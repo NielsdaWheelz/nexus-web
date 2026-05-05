@@ -5,15 +5,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
-    Annotation,
     Fragment,
     Highlight,
     HighlightFragmentAnchor,
     Media,
     MediaKind,
+    NoteBlock,
+    ObjectLink,
     Page,
     ProcessingStatus,
 )
+from nexus.services.notes import set_highlight_note_body
 from nexus.services.vault import export_vault, sync_vault
 from tests.factories import (
     add_media_to_library,
@@ -37,7 +39,7 @@ def test_vault_api_exports_snapshot(
     direct_db.register_cleanup("users", "id", user_id)
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("memberships", "library_id", library_id)
-    _register_seed_cleanup(direct_db, media_id, highlight_id)
+    _register_seed_cleanup(direct_db, media_id, highlight_id, user_id)
 
     response = auth_client.get("/vault", headers=auth_headers(user_id))
 
@@ -62,7 +64,7 @@ def test_vault_api_syncs_highlight_file(
     direct_db.register_cleanup("users", "id", user_id)
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("memberships", "library_id", library_id)
-    _register_seed_cleanup(direct_db, media_id, highlight_id)
+    _register_seed_cleanup(direct_db, media_id, highlight_id, user_id)
 
     snapshot = auth_client.get("/vault", headers=auth_headers(user_id)).json()["data"]
     highlight_path = f"Highlights/hl_{highlight_id.hex}.md"
@@ -91,8 +93,7 @@ def test_vault_api_syncs_highlight_file(
         highlight = session.get(Highlight, highlight_id)
         assert highlight is not None
         assert highlight.color == "green"
-        assert highlight.annotation is not None
-        assert highlight.annotation.body == "Edited through API"
+        assert _highlight_note_body(session, highlight_id) == "Edited through API"
 
 
 def test_vault_exports_and_syncs_existing_highlight_note_and_color(
@@ -123,8 +124,66 @@ def test_vault_exports_and_syncs_existing_highlight_note_and_color(
     highlight = db_session.get(Highlight, highlight_id)
     assert highlight is not None
     assert highlight.color == "green"
-    assert highlight.annotation is not None
-    assert highlight.annotation.body == "Edited note"
+    assert _highlight_note_body(db_session, highlight_id) == "Edited note"
+
+
+def test_vault_projects_multiple_highlight_notes_with_markers(
+    db_session: Session, bootstrapped_user: UUID, tmp_path
+) -> None:
+    _media_id, _fragment_id, highlight_id = _seed_article_highlight(db_session, bootstrapped_user)
+    first_note = (
+        db_session.query(NoteBlock)
+        .join(ObjectLink, (ObjectLink.a_type == "note_block") & (ObjectLink.a_id == NoteBlock.id))
+        .filter(
+            ObjectLink.relation_type == "note_about",
+            ObjectLink.b_type == "highlight",
+            ObjectLink.b_id == highlight_id,
+        )
+        .one()
+    )
+    second_note = NoteBlock(
+        user_id=bootstrapped_user,
+        page_id=first_note.page_id,
+        parent_block_id=None,
+        order_key="0000000002",
+        block_kind="bullet",
+        body_pm_json={"type": "paragraph", "content": [{"type": "text", "text": "Second note"}]},
+        body_markdown="Second note",
+        body_text="Second note",
+        collapsed=False,
+    )
+    db_session.add(second_note)
+    db_session.flush()
+    db_session.add(
+        ObjectLink(
+            user_id=bootstrapped_user,
+            relation_type="note_about",
+            a_type="highlight",
+            a_id=highlight_id,
+            b_type="note_block",
+            b_id=second_note.id,
+            a_order_key="0000000002",
+            metadata_json={},
+        )
+    )
+    db_session.commit()
+
+    export_vault(db_session, bootstrapped_user, tmp_path)
+    highlight_path = tmp_path / "Highlights" / f"hl_{highlight_id.hex}.md"
+    exported = highlight_path.read_text(encoding="utf-8")
+
+    assert f'<!-- nexus:highlight-note id="{first_note.id}" -->' in exported
+    assert f'<!-- nexus:highlight-note id="{second_note.id}" -->' in exported
+    highlight_path.write_text(
+        exported.replace("Original note", "First edited").replace("Second note", "Second edited"),
+        encoding="utf-8",
+    )
+
+    sync_vault(db_session, bootstrapped_user, tmp_path)
+
+    db_session.expire_all()
+    assert db_session.get(NoteBlock, first_note.id).body_text == "First edited"
+    assert db_session.get(NoteBlock, second_note.id).body_text == "Second edited"
 
 
 def test_vault_creates_fragment_highlight_from_fragment_offsets(
@@ -160,8 +219,7 @@ New note from Codex.
         .one()
     )
     assert created.exact == "second sentence"
-    assert created.annotation is not None
-    assert created.annotation.body == "New note from Codex."
+    assert _highlight_note_body(db_session, created.id) == "New note from Codex."
     assert (tmp_path / "Highlights" / f"hl_{created.id.hex}.md").exists()
 
 
@@ -232,7 +290,7 @@ First body.
 
     page = db_session.query(Page).filter(Page.user_id == bootstrapped_user).one()
     assert page.title == "Scratch"
-    assert page.body.strip() == "First body."
+    assert _page_body(db_session, page.id) == "First body."
 
     exported_path = next((tmp_path / "Pages").glob(f"*--page_{page.id.hex}.md"))
     exported = exported_path.read_text(encoding="utf-8")
@@ -248,7 +306,7 @@ First body.
     page = db_session.get(Page, page.id)
     assert page is not None
     assert page.title == "Scratch Updated"
-    assert page.body.strip() == "Second body."
+    assert _page_body(db_session, page.id) == "Second body."
 
     exported_path = next((tmp_path / "Pages").glob(f"*--page_{page.id.hex}.md"))
     exported_path.write_text(
@@ -363,7 +421,7 @@ def _seed_article_highlight(
             end_offset=end,
         )
     )
-    session.add(Annotation(highlight_id=highlight.id, body="Original note"))
+    set_highlight_note_body(session, user_id, highlight.id, "Original note", commit=False)
     session.commit()
     return media.id, fragment.id, highlight.id
 
@@ -372,11 +430,38 @@ def _register_seed_cleanup(
     direct_db: DirectSessionManager,
     media_id: UUID,
     highlight_id: UUID,
+    user_id: UUID,
 ) -> None:
-    direct_db.register_cleanup("annotations", "highlight_id", highlight_id)
+    direct_db.register_cleanup("pages", "user_id", user_id)
+    direct_db.register_cleanup("note_blocks", "user_id", user_id)
+    direct_db.register_cleanup("object_links", "b_id", highlight_id)
     direct_db.register_cleanup("highlight_fragment_anchors", "highlight_id", highlight_id)
     direct_db.register_cleanup("highlights", "id", highlight_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
+
+
+def _highlight_note_body(session: Session, highlight_id: UUID) -> str | None:
+    block = (
+        session.query(NoteBlock)
+        .join(ObjectLink, (ObjectLink.a_type == "note_block") & (ObjectLink.a_id == NoteBlock.id))
+        .filter(
+            ObjectLink.relation_type == "note_about",
+            ObjectLink.b_type == "highlight",
+            ObjectLink.b_id == highlight_id,
+        )
+        .one_or_none()
+    )
+    return None if block is None else block.body_text
+
+
+def _page_body(session: Session, page_id: UUID) -> str:
+    blocks = (
+        session.query(NoteBlock)
+        .filter(NoteBlock.page_id == page_id)
+        .order_by(NoteBlock.order_key.asc())
+        .all()
+    )
+    return "\n\n".join(block.body_text for block in blocks)

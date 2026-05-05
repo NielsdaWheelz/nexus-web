@@ -906,7 +906,6 @@ class TestFromUrlXPost:
         data = response.json()["data"]
         media_id = UUID(data["media_id"])
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("media_authors", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -992,7 +991,6 @@ class TestFromUrlXPost:
         first_data = first_response.json()["data"]
         media_id = UUID(first_data["media_id"])
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("media_authors", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 

@@ -9,7 +9,7 @@ Do NOT run with: make test (these are excluded)
 
 import os
 import subprocess
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -48,6 +48,19 @@ def run_alembic_command(command: str) -> subprocess.CompletedProcess:
         cwd=migrations_dir,
     )
     return result
+
+
+def reset_test_schema() -> None:
+    """Reset the dedicated migration database without relying on downgrades."""
+    engine = create_engine(get_test_database_url(), isolation_level="AUTOCOMMIT")
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+            connection.execute(text("CREATE SCHEMA public"))
+            connection.execute(text("GRANT ALL ON SCHEMA public TO postgres"))
+            connection.execute(text("GRANT ALL ON SCHEMA public TO public"))
+    finally:
+        engine.dispose()
 
 
 def insert_canonical_fragment_highlight(
@@ -160,6 +173,212 @@ def insert_canonical_fragment_highlight(
     )
 
 
+def insert_evidence_span_offset_fixture(session: Session) -> dict[str, UUID]:
+    """Insert the minimum rows needed to exercise evidence_span offset constraints."""
+    user_id = uuid4()
+    media_id = uuid4()
+    run_id = uuid4()
+    snapshot_id = uuid4()
+    first_block_id = uuid4()
+    second_block_id = uuid4()
+
+    session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+    session.execute(
+        text(
+            """
+            INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+            VALUES (:id, 'web_article', 'Evidence Offset Fixture', 'ready_for_reading', :user_id)
+            """
+        ),
+        {"id": media_id, "user_id": user_id},
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO content_index_runs (
+                id,
+                media_id,
+                state,
+                source_version,
+                extractor_version,
+                chunker_version,
+                embedding_provider,
+                embedding_model,
+                embedding_version,
+                embedding_config_hash,
+                started_at
+            )
+            VALUES (
+                :id,
+                :media_id,
+                'ready',
+                'test_source_v1',
+                'test_extractor_v1',
+                'test_chunker_v1',
+                'test',
+                'test_model',
+                'test_model',
+                :hash,
+                now()
+            )
+            """
+        ),
+        {"id": run_id, "media_id": media_id, "hash": "a" * 64},
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO source_snapshots (
+                id,
+                media_id,
+                index_run_id,
+                source_kind,
+                artifact_kind,
+                artifact_ref,
+                content_type,
+                byte_length,
+                source_fingerprint,
+                source_version,
+                extractor_version,
+                content_sha256,
+                metadata
+            )
+            VALUES (
+                :id,
+                :media_id,
+                :run_id,
+                'web_article',
+                'html',
+                'fixture',
+                'text/html',
+                22,
+                'fixture-fingerprint',
+                'test_source_v1',
+                'test_extractor_v1',
+                :sha,
+                '{}'::jsonb
+            )
+            """
+        ),
+        {"id": snapshot_id, "media_id": media_id, "run_id": run_id, "sha": "b" * 64},
+    )
+    for block_idx, block_id, text_value, start_offset, end_offset in (
+        (0, first_block_id, "first block", 0, 11),
+        (1, second_block_id, "second block", 13, 25),
+    ):
+        session.execute(
+            text(
+                """
+                INSERT INTO content_blocks (
+                    id,
+                    media_id,
+                    index_run_id,
+                    source_snapshot_id,
+                    block_idx,
+                    block_kind,
+                    canonical_text,
+                    text_sha256,
+                    source_start_offset,
+                    source_end_offset,
+                    heading_path,
+                    locator,
+                    selector,
+                    metadata
+                )
+                VALUES (
+                    :id,
+                    :media_id,
+                    :run_id,
+                    :snapshot_id,
+                    :block_idx,
+                    'paragraph',
+                    :text_value,
+                    :sha,
+                    :start_offset,
+                    :end_offset,
+                    '[]'::jsonb,
+                    '{}'::jsonb,
+                    '{}'::jsonb,
+                    '{}'::jsonb
+                )
+                """
+            ),
+            {
+                "id": block_id,
+                "media_id": media_id,
+                "run_id": run_id,
+                "snapshot_id": snapshot_id,
+                "block_idx": block_idx,
+                "text_value": text_value,
+                "sha": str(block_idx) * 64,
+                "start_offset": start_offset,
+                "end_offset": end_offset,
+            },
+        )
+    session.commit()
+
+    return {
+        "media_id": media_id,
+        "run_id": run_id,
+        "snapshot_id": snapshot_id,
+        "first_block_id": first_block_id,
+        "second_block_id": second_block_id,
+    }
+
+
+def insert_cross_block_backwards_evidence_span(
+    session: Session,
+    fixture: dict[str, UUID],
+) -> UUID:
+    evidence_span_id = uuid4()
+    session.execute(
+        text(
+            """
+            INSERT INTO evidence_spans (
+                id,
+                media_id,
+                index_run_id,
+                source_snapshot_id,
+                start_block_id,
+                end_block_id,
+                start_block_offset,
+                end_block_offset,
+                span_text,
+                span_sha256,
+                selector,
+                citation_label,
+                resolver_kind
+            )
+            VALUES (
+                :id,
+                :media_id,
+                :run_id,
+                :snapshot_id,
+                :first_block_id,
+                :second_block_id,
+                9,
+                2,
+                'cross block span',
+                :sha,
+                '{}'::jsonb,
+                'Fixture',
+                'web'
+            )
+            """
+        ),
+        {
+            "id": evidence_span_id,
+            "media_id": fixture["media_id"],
+            "run_id": fixture["run_id"],
+            "snapshot_id": fixture["snapshot_id"],
+            "first_block_id": fixture["first_block_id"],
+            "second_block_id": fixture["second_block_id"],
+            "sha": "c" * 64,
+        },
+    )
+    return evidence_span_id
+
+
 @pytest.fixture(scope="session", autouse=True)
 def verify_schema_exists():
     """Override the global verify_schema_exists fixture.
@@ -179,8 +398,7 @@ def migrated_engine():
     database_url = get_test_database_url()
     engine = create_engine(database_url)
 
-    # First, downgrade to clean state (in case previous test run left data)
-    run_alembic_command("downgrade base")
+    reset_test_schema()
 
     # Run migrations
     result = run_alembic_command("upgrade head")
@@ -189,8 +407,7 @@ def migrated_engine():
 
     yield engine
 
-    # Clean up: downgrade to base
-    run_alembic_command("downgrade base")
+    reset_test_schema()
     engine.dispose()
 
 
@@ -199,25 +416,762 @@ class TestMigrationUpgradeDowngrade:
 
     def test_upgrade_succeeds(self):
         """Migration upgrade to head succeeds on empty database."""
-        # Start fresh
-        run_alembic_command("downgrade base")
+        reset_test_schema()
 
         result = run_alembic_command("upgrade head")
 
         assert result.returncode == 0, f"Upgrade failed: {result.stderr}"
 
-    def test_downgrade_succeeds(self):
-        """Migration downgrade to base succeeds."""
-        # First ensure we're at head
+    def test_hard_cutover_downgrade_to_base_is_blocked(self):
+        """Head intentionally cannot downgrade through hard-cutover migrations."""
+        reset_test_schema()
         run_alembic_command("upgrade head")
 
         result = run_alembic_command("downgrade base")
 
-        assert result.returncode == 0, f"Downgrade failed: {result.stderr}"
+        assert result.returncode != 0
+        assert "hard cutover migration and has no downgrade path" in result.stderr
+        reset_test_schema()
+
+    def test_0070_rejects_annotations_without_valid_owned_highlights(self):
+        """Annotation cutover must not drop notes that cannot attach to a valid highlight."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0069")
+            assert result.returncode == 0, f"upgrade to 0069 failed: {result.stderr}"
+
+            user_id = uuid4()
+            highlight_id = uuid4()
+            annotation_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO highlights (
+                            id,
+                            user_id,
+                            anchor_kind,
+                            anchor_media_id,
+                            color,
+                            exact,
+                            prefix,
+                            suffix
+                        )
+                        VALUES (
+                            :id,
+                            :user_id,
+                            NULL,
+                            NULL,
+                            'yellow',
+                            'orphaned annotation',
+                            '',
+                            ''
+                        )
+                        """
+                    ),
+                    {"id": highlight_id, "user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO annotations (id, highlight_id, body)
+                        VALUES (:id, :highlight_id, 'Must not be dropped')
+                        """
+                    ),
+                    {"id": annotation_id, "highlight_id": highlight_id},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0070")
+            assert result.returncode != 0
+            assert "highlights are not valid owned anchors" in result.stderr
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_0070_backfills_object_links_for_migrated_message_context_items(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0069")
+            assert result.returncode == 0, f"upgrade to 0069 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            message_id = uuid4()
+            media_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO conversations (id, owner_user_id, title, next_seq)
+                        VALUES (:id, :owner_user_id, 'Legacy context', 2)
+                        """
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                        VALUES (:id, :conversation_id, 1, 'user', 'legacy context', 'complete')
+                        """
+                    ),
+                    {"id": message_id, "conversation_id": conversation_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                        VALUES (:id, 'web_article', 'Legacy media', 'ready_for_reading', :user_id)
+                        """
+                    ),
+                    {"id": media_id, "user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO message_contexts (
+                            id, message_id, target_type, ordinal, media_id
+                        )
+                        VALUES (:id, :message_id, 'media', 2, :media_id)
+                        """
+                    ),
+                    {"id": uuid4(), "message_id": message_id, "media_id": media_id},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0070")
+            assert result.returncode == 0, f"upgrade to 0070 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                row = (
+                    session.execute(
+                        text(
+                            """
+                        SELECT
+                            mci.user_id,
+                            mci.object_type,
+                            mci.object_id,
+                            mci.ordinal,
+                            ol.relation_type,
+                            ol.a_type,
+                            ol.a_id,
+                            ol.b_type,
+                            ol.b_id,
+                            ol.a_order_key
+                        FROM message_context_items mci
+                        JOIN object_links ol
+                          ON ol.user_id = mci.user_id
+                         AND ol.relation_type = 'used_as_context'
+                         AND ol.a_type = 'message'
+                         AND ol.a_id = mci.message_id
+                         AND ol.b_type = mci.object_type
+                         AND ol.b_id = mci.object_id
+                        WHERE mci.message_id = :message_id
+                        """
+                        ),
+                        {"message_id": message_id},
+                    )
+                    .mappings()
+                    .one()
+                )
+
+                assert row["user_id"] == user_id
+                assert row["object_type"] == "media"
+                assert row["object_id"] == media_id
+                assert row["ordinal"] == 2
+                assert row["relation_type"] == "used_as_context"
+                assert row["a_type"] == "message"
+                assert row["a_id"] == message_id
+                assert row["b_type"] == "media"
+                assert row["b_id"] == media_id
+                assert row["a_order_key"] == "0000000003"
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_0070_migrates_page_body_markdown_into_ordered_note_blocks(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0069")
+            assert result.returncode == 0, f"upgrade to 0069 failed: {result.stderr}"
+
+            user_id = uuid4()
+            page_id = uuid4()
+            raw_ref_id = uuid4()
+            legacy_body = (
+                "# Overview\n\n"
+                f"Intro [docs](https://example.com) and [[page:{raw_ref_id}|Raw]]\n\n"
+                "- First\n"
+                "  - Nested\n"
+                "1. Ordered\n\n"
+                "```\n"
+                "print('hi')\n"
+                "```"
+            )
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO pages (id, user_id, title, body)
+                        VALUES (:id, :user_id, 'Legacy Markdown', :body)
+                        """
+                    ),
+                    {"id": page_id, "user_id": user_id, "body": legacy_body},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0070")
+            assert result.returncode == 0, f"upgrade to 0070 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                rows = (
+                    session.execute(
+                        text(
+                            """
+                            SELECT
+                                id,
+                                parent_block_id,
+                                order_key,
+                                block_kind,
+                                body_markdown,
+                                body_text,
+                                body_pm_json
+                            FROM note_blocks
+                            WHERE page_id = :page_id
+                            """
+                        ),
+                        {"page_id": page_id},
+                    )
+                    .mappings()
+                    .all()
+                )
+
+            by_text = {row["body_text"]: row for row in rows}
+            intro_text = f"Intro docs and [[page:{raw_ref_id}|Raw]]"
+
+            assert set(by_text) == {
+                "Overview",
+                intro_text,
+                "First",
+                "Nested",
+                "Ordered",
+                "print('hi')",
+            }, f"Unexpected migrated note blocks: {rows}"
+            assert by_text["Overview"]["parent_block_id"] is None
+            assert by_text["Overview"]["block_kind"] == "heading"
+            assert by_text[intro_text]["parent_block_id"] == by_text["Overview"]["id"]
+            assert by_text["First"]["parent_block_id"] == by_text["Overview"]["id"]
+            assert by_text["Ordered"]["parent_block_id"] == by_text["Overview"]["id"]
+            assert by_text["Nested"]["parent_block_id"] == by_text["First"]["id"]
+            assert by_text[intro_text]["order_key"] == "0000000001"
+            assert by_text["First"]["order_key"] == "0000000002"
+            assert by_text["Ordered"]["order_key"] == "0000000003"
+            assert by_text["print('hi')"]["block_kind"] == "code"
+            assert by_text[intro_text]["body_markdown"] == (
+                f"Intro [docs](https://example.com) and [[page:{raw_ref_id}|Raw]]"
+            )
+            assert by_text[intro_text]["body_pm_json"]["content"][1] == {
+                "type": "text",
+                "text": "docs",
+                "marks": [{"type": "link", "attrs": {"href": "https://example.com"}}],
+            }
+            assert by_text[intro_text]["body_pm_json"]["content"][2]["text"] == (
+                f" and [[page:{raw_ref_id}|Raw]]"
+            )
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_0073_evidence_span_offset_constraint_upgrade_and_downgrade(self):
+        """0073 loosens cross-block offsets and downgrade restores the prior check."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0072")
+            assert result.returncode == 0, f"upgrade to 0072 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                fixture = insert_evidence_span_offset_fixture(session)
+                with pytest.raises(IntegrityError) as exc_info:
+                    insert_cross_block_backwards_evidence_span(session, fixture)
+                    session.commit()
+                session.rollback()
+                assert "ck_evidence_spans_offsets" in str(exc_info.value)
+
+            result = run_alembic_command("upgrade 0073")
+            assert result.returncode == 0, f"upgrade to 0073 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                evidence_span_id = insert_cross_block_backwards_evidence_span(
+                    session,
+                    fixture,
+                )
+                session.commit()
+                session.execute(
+                    text("DELETE FROM evidence_spans WHERE id = :id"),
+                    {"id": evidence_span_id},
+                )
+                session.commit()
+
+            result = run_alembic_command("downgrade 0072")
+            assert result.returncode == 0, f"downgrade to 0072 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                with pytest.raises(IntegrityError) as exc_info:
+                    insert_cross_block_backwards_evidence_span(session, fixture)
+                    session.commit()
+                session.rollback()
+                assert "ck_evidence_spans_offsets" in str(exc_info.value)
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_0069_marks_ready_text_media_for_content_index_repair(self):
+        """Readable legacy media must be queued for shared evidence-index repair."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0068")
+            assert result.returncode == 0, f"upgrade to 0068 failed: {result.stderr}"
+
+            user_id = uuid4()
+            web_id = uuid4()
+            epub_id = uuid4()
+            pdf_id = uuid4()
+            pending_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                for media_id, kind, title, status in (
+                    (web_id, "web_article", "Legacy Web", "ready_for_reading"),
+                    (epub_id, "epub", "Legacy EPUB", "ready"),
+                    (pdf_id, "pdf", "Legacy PDF", "ready_for_reading"),
+                    (pending_id, "web_article", "Pending Web", "pending"),
+                ):
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+                            VALUES (:id, :kind, :title, :status, :user_id)
+                            """
+                        ),
+                        {
+                            "id": media_id,
+                            "kind": kind,
+                            "title": title,
+                            "status": status,
+                            "user_id": user_id,
+                        },
+                    )
+
+                for fragment_id, media_id, text_value in (
+                    (uuid4(), web_id, "legacy web body"),
+                    (uuid4(), epub_id, "legacy epub body"),
+                    (uuid4(), pending_id, "pending body"),
+                ):
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                            VALUES (:id, :media_id, 0, :html, :text)
+                            """
+                        ),
+                        {
+                            "id": fragment_id,
+                            "media_id": media_id,
+                            "html": f"<p>{text_value}</p>",
+                            "text": text_value,
+                        },
+                    )
+
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO media_file (media_id, storage_path, content_type, size_bytes)
+                        VALUES (:media_id, 'media/legacy/original.pdf', 'application/pdf', 1024)
+                        """
+                    ),
+                    {"media_id": pdf_id},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                rows = session.execute(
+                    text(
+                        """
+                        SELECT id, media_id, status, status_reason
+                        FROM media_content_index_states
+                        WHERE media_id = ANY(:media_ids)
+                        ORDER BY media_id
+                        """
+                    ),
+                    {"media_ids": [web_id, epub_id, pdf_id, pending_id]},
+                ).fetchall()
+
+            assert all(row[0] is not None for row in rows)
+            indexed_by_media = {row[1]: (row[2], row[3]) for row in rows}
+            assert indexed_by_media[web_id] == ("pending", "evidence_cutover_backfill")
+            assert indexed_by_media[epub_id] == ("pending", "evidence_cutover_backfill")
+            assert indexed_by_media[pdf_id] == ("pending", "evidence_cutover_backfill")
+            assert pending_id not in indexed_by_media
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_0075_repairs_media_content_index_state_id_for_existing_head_databases(self):
+        """Forward migration repairs DBs that reached head before 0069 gained id."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0074")
+            assert result.returncode == 0, f"upgrade to 0074 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                session.execute(
+                    text(
+                        """
+                        DO $$
+                        DECLARE
+                            primary_key_name text;
+                        BEGIN
+                            SELECT conname
+                            INTO primary_key_name
+                            FROM pg_constraint
+                            WHERE conrelid = 'media_content_index_states'::regclass
+                              AND contype = 'p';
+
+                            IF primary_key_name IS NOT NULL THEN
+                                EXECUTE format(
+                                    'ALTER TABLE media_content_index_states DROP CONSTRAINT %I',
+                                    primary_key_name
+                                );
+                            END IF;
+
+                            ALTER TABLE media_content_index_states DROP COLUMN id;
+                            ALTER TABLE media_content_index_states
+                            ADD PRIMARY KEY (media_id);
+                        END $$;
+                        """
+                    )
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                id_column = session.execute(
+                    text(
+                        """
+                        SELECT is_nullable, column_default
+                        FROM information_schema.columns
+                        WHERE table_name = 'media_content_index_states'
+                          AND column_name = 'id'
+                        """
+                    )
+                ).fetchone()
+                primary_key_columns = session.execute(
+                    text(
+                        """
+                        SELECT array_agg(a.attname ORDER BY key.ordinality)
+                        FROM pg_constraint c
+                        JOIN unnest(c.conkey) WITH ORDINALITY AS key(attnum, ordinality)
+                          ON true
+                        JOIN pg_attribute a
+                          ON a.attrelid = c.conrelid
+                         AND a.attnum = key.attnum
+                        WHERE c.conrelid = 'media_content_index_states'::regclass
+                          AND c.contype = 'p'
+                        """
+                    )
+                ).scalar_one()
+                media_unique = session.execute(
+                    text(
+                        """
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conrelid = 'media_content_index_states'::regclass
+                          AND conname = 'uq_media_content_index_states_media'
+                          AND contype = 'u'
+                        """
+                    )
+                ).scalar()
+
+            assert id_column is not None
+            assert id_column[0] == "NO"
+            assert "gen_random_uuid" in id_column[1]
+            assert primary_key_columns == ["id"]
+            assert media_unique == 1
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_legacy_annotation_retrievals_do_not_block_result_type_cutover(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0068")
+            assert result.returncode == 0, f"upgrade to 0068 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            user_message_id = uuid4()
+            assistant_message_id = uuid4()
+            tool_call_id = uuid4()
+
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO conversations (id, owner_user_id, title, next_seq)
+                        VALUES (:id, :owner_user_id, 'Migration Result Types', 3)
+                        """
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                        VALUES (:id, :conversation_id, 1, 'user', 'find my annotation', 'complete')
+                        """
+                    ),
+                    {"id": user_message_id, "conversation_id": conversation_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                        VALUES (:id, :conversation_id, 2, 'assistant', '', 'pending')
+                        """
+                    ),
+                    {"id": assistant_message_id, "conversation_id": conversation_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO message_tool_calls (
+                            id,
+                            conversation_id,
+                            user_message_id,
+                            assistant_message_id,
+                            tool_name,
+                            tool_call_index,
+                            scope,
+                            status
+                        )
+                        VALUES (
+                            :id,
+                            :conversation_id,
+                            :user_message_id,
+                            :assistant_message_id,
+                            'app_search',
+                            0,
+                            'all',
+                            'complete'
+                        )
+                        """
+                    ),
+                    {
+                        "id": tool_call_id,
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO message_retrievals (
+                            tool_call_id,
+                            ordinal,
+                            result_type,
+                            source_id,
+                            context_ref,
+                            result_ref
+                        )
+                        VALUES (
+                            :tool_call_id,
+                            0,
+                            'annotation',
+                            :source_id,
+                            jsonb_build_object('type', 'annotation', 'id', CAST(:source_id AS text)),
+                            jsonb_build_object('type', 'annotation', 'id', CAST(:source_id AS text))
+                        )
+                        """
+                    ),
+                    {"tool_call_id": tool_call_id, "source_id": str(uuid4())},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                stale_count = session.execute(
+                    text("SELECT COUNT(*) FROM message_retrievals WHERE result_type = 'annotation'")
+                ).scalar_one()
+                assert stale_count == 0
+
+                contributor_source_id = "contributor:test-author"
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO message_retrievals (
+                            tool_call_id,
+                            ordinal,
+                            result_type,
+                            source_id,
+                            context_ref,
+                            result_ref
+                        )
+                        VALUES (
+                            :tool_call_id,
+                            1,
+                            'contributor',
+                            :source_id,
+                            jsonb_build_object('type', 'contributor', 'id', CAST(:source_id AS text)),
+                            jsonb_build_object('type', 'contributor', 'id', CAST(:source_id AS text))
+                        )
+                        """
+                    ),
+                    {"tool_call_id": tool_call_id, "source_id": contributor_source_id},
+                )
+                session.commit()
+
+                with pytest.raises(IntegrityError) as exc_info:
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO message_retrievals (
+                                tool_call_id,
+                                ordinal,
+                                result_type,
+                                source_id,
+                                context_ref,
+                                result_ref
+                            )
+                            VALUES (
+                                :tool_call_id,
+                                2,
+                                'annotation',
+                                :source_id,
+                                jsonb_build_object('type', 'annotation', 'id', CAST(:source_id AS text)),
+                                jsonb_build_object('type', 'annotation', 'id', CAST(:source_id AS text))
+                            )
+                            """
+                        ),
+                        {"tool_call_id": tool_call_id, "source_id": str(uuid4())},
+                    )
+                    session.commit()
+                session.rollback()
+                assert "ck_message_retrievals_result_type" in str(exc_info.value)
+        finally:
+            reset_test_schema()
+            engine.dispose()
 
 
 class TestSchemaConstraints:
     """Tests that schema constraints are properly enforced."""
+
+    def test_content_embeddings_vector_column_matches_schema(self, migrated_engine):
+        """content_embeddings stores pgvector payloads in the schema dimension."""
+        with Session(migrated_engine) as session:
+            vector_type = session.execute(
+                text(
+                    """
+                    SELECT format_type(a.atttypid, a.atttypmod)
+                    FROM pg_attribute a
+                    JOIN pg_class c ON c.oid = a.attrelid
+                    WHERE c.relname = 'content_embeddings'
+                      AND a.attname = 'embedding_vector'
+                      AND NOT a.attisdropped
+                    """
+                )
+            ).scalar_one()
+
+        assert vector_type == "vector(256)"
+
+    def test_oracle_citation_metadata_columns_are_seeded(self, migrated_engine):
+        """Oracle corpus and reading passages carry structured citation metadata."""
+        with Session(migrated_engine) as session:
+            corpus_columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_name = 'oracle_corpus_passages'
+                        """
+                    )
+                )
+            }
+            reading_columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_name = 'oracle_reading_passages'
+                        """
+                    )
+                )
+            }
+            row = (
+                session.execute(
+                    text(
+                        """
+                        SELECT locator, source, embedding_model
+                        FROM oracle_corpus_passages
+                        ORDER BY passage_index
+                        LIMIT 1
+                        """
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            vector_types = dict(
+                session.execute(
+                    text(
+                        """
+                        SELECT c.relname, format_type(a.atttypid, a.atttypmod)
+                        FROM pg_attribute a
+                        JOIN pg_class c ON c.oid = a.attrelid
+                        WHERE c.relname IN ('oracle_corpus_passages', 'oracle_corpus_images')
+                          AND a.attname = 'embedding'
+                          AND NOT a.attisdropped
+                        """
+                    )
+                ).all()
+            )
+
+        assert {"locator", "source"}.issubset(corpus_columns)
+        assert {"locator", "source"}.issubset(reading_columns)
+        assert {"embedding", "embedding_model"}.issubset(corpus_columns)
+        assert vector_types == {
+            "oracle_corpus_passages": "vector(256)",
+            "oracle_corpus_images": "vector(256)",
+        }
+        assert row["locator"]["type"] == "manifest_locator"
+        assert row["locator"]["label"]
+        assert isinstance(row["locator"]["passage_index"], int)
+        assert row["source"]["type"] == "public_domain_work"
+        assert row["source"]["url"].startswith("https://")
+        assert row["source"]["citation_key"] and len(row["source"]["citation_key"]) == 64
+        assert row["embedding_model"] == "test_hash_v2_256"
 
     def test_duplicate_default_library_rejected(self, migrated_engine):
         """Partial unique index prevents duplicate default libraries per user."""
@@ -370,8 +1324,8 @@ class TestSchemaConstraints:
             with pytest.raises(IntegrityError) as exc_info:
                 session.execute(
                     text("""
-                        INSERT INTO pages (id, user_id, title, body)
-                        VALUES (:id, :user_id, '', 'body')
+                        INSERT INTO pages (id, user_id, title)
+                        VALUES (:id, :user_id, '')
                     """),
                     {"id": uuid4(), "user_id": user_id},
                 )
@@ -946,8 +1900,8 @@ class TestS1SchemaConstraints:
             session.commit()
 
 
-class TestS2HighlightsAnnotationsConstraints:
-    """Tests for S2-specific schema constraints (highlights, annotations)."""
+class TestS2HighlightsNotesConstraints:
+    """Tests for highlight and notes-layer schema constraints."""
 
     def test_invalid_highlight_color_rejected(self, migrated_engine):
         """CHECK constraint prevents invalid highlight color values."""
@@ -1157,15 +2111,23 @@ class TestS2HighlightsAnnotationsConstraints:
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
             session.commit()
 
-    def test_second_annotation_for_highlight_rejected(self, migrated_engine):
-        """Unique constraint prevents multiple annotations per highlight."""
+    def test_annotations_table_removed(self, migrated_engine):
+        """The notes hard cutover removes legacy annotation storage."""
+        with Session(migrated_engine) as session:
+            table_name = session.execute(text("SELECT to_regclass('public.annotations')")).scalar()
+            assert table_name is None
+
+    def test_multiple_note_blocks_can_link_to_one_highlight(self, migrated_engine):
+        """Highlight notes are independent note blocks, not one annotation row."""
         with Session(migrated_engine) as session:
             user_id = uuid4()
             media_id = uuid4()
             fragment_id = uuid4()
             highlight_id = uuid4()
+            page_id = uuid4()
+            note_a_id = uuid4()
+            note_b_id = uuid4()
 
-            # Create user, media, fragment, and highlight
             session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
             session.execute(
                 text("""
@@ -1202,206 +2164,82 @@ class TestS2HighlightsAnnotationsConstraints:
                 """),
                 {"highlight_id": highlight_id, "fragment_id": fragment_id},
             )
-
-            # Create first annotation
             session.execute(
                 text("""
-                    INSERT INTO annotations (id, highlight_id, body)
-                    VALUES (:id, :highlight_id, 'First annotation')
+                    INSERT INTO pages (id, user_id, title)
+                    VALUES (:id, :user_id, 'Highlight Notes')
                 """),
-                {"id": uuid4(), "highlight_id": highlight_id},
+                {"id": page_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO note_blocks (
+                        id, user_id, page_id, order_key, block_kind,
+                        body_pm_json, body_markdown, body_text, collapsed
+                    )
+                    VALUES
+                        (
+                            :note_a_id, :user_id, :page_id, '0000000001', 'bullet',
+                            jsonb_build_object('type', 'paragraph'),
+                            '', '', false
+                        ),
+                        (
+                            :note_b_id, :user_id, :page_id, '0000000002', 'bullet',
+                            jsonb_build_object('type', 'paragraph'),
+                            '', '', false
+                        )
+                """),
+                {
+                    "note_a_id": note_a_id,
+                    "note_b_id": note_b_id,
+                    "user_id": user_id,
+                    "page_id": page_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO object_links (
+                        id, user_id, relation_type, a_type, a_id, b_type, b_id, metadata
+                    )
+                    VALUES
+                        (
+                            :link_a_id, :user_id, 'note_about',
+                            'note_block', :note_a_id, 'highlight', :highlight_id, '{}'::jsonb
+                        ),
+                        (
+                            :link_b_id, :user_id, 'note_about',
+                            'note_block', :note_b_id, 'highlight', :highlight_id, '{}'::jsonb
+                        )
+                """),
+                {
+                    "link_a_id": uuid4(),
+                    "link_b_id": uuid4(),
+                    "user_id": user_id,
+                    "note_a_id": note_a_id,
+                    "note_b_id": note_b_id,
+                    "highlight_id": highlight_id,
+                },
             )
             session.commit()
 
-            # Attempt to create second annotation for same highlight
-            with pytest.raises(IntegrityError) as exc_info:
-                session.execute(
-                    text("""
-                        INSERT INTO annotations (id, highlight_id, body)
-                        VALUES (:id, :highlight_id, 'Second annotation')
-                    """),
-                    {"id": uuid4(), "highlight_id": highlight_id},
-                )
-                session.commit()
-
-            session.rollback()
-            assert "uix_annotations_one_per_highlight" in str(exc_info.value)
+            result = session.execute(
+                text("""
+                    SELECT COUNT(*)
+                    FROM object_links
+                    WHERE relation_type = 'note_about'
+                      AND b_type = 'highlight'
+                      AND b_id = :highlight_id
+                """),
+                {"highlight_id": highlight_id},
+            )
+            assert result.scalar_one() == 2
 
             # Clean up
-            session.execute(
-                text("DELETE FROM annotations WHERE highlight_id = :id"), {"id": highlight_id}
-            )
+            session.execute(text("DELETE FROM object_links WHERE b_id = :id"), {"id": highlight_id})
+            session.execute(text("DELETE FROM note_blocks WHERE page_id = :id"), {"id": page_id})
+            session.execute(text("DELETE FROM pages WHERE id = :id"), {"id": page_id})
             session.execute(text("DELETE FROM highlights WHERE id = :id"), {"id": highlight_id})
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
-            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
-            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
-            session.commit()
-
-    def test_highlight_delete_cascades_annotation(self, migrated_engine):
-        """Deleting a highlight cascades to delete its annotation."""
-        with Session(migrated_engine) as session:
-            user_id = uuid4()
-            media_id = uuid4()
-            fragment_id = uuid4()
-            highlight_id = uuid4()
-            annotation_id = uuid4()
-
-            # Create user, media, fragment, highlight, and annotation
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
-                    VALUES (:id, 'web_article', 'Test Article', 'ready_for_reading', :user_id)
-                """),
-                {"id": media_id, "user_id": user_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
-                    VALUES (:id, :media_id, 0, 'Test canonical text content', '<p>Test</p>')
-                """),
-                {"id": fragment_id, "media_id": media_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO highlights (
-                        id, user_id, anchor_kind, anchor_media_id, color, exact, prefix, suffix
-                    )
-                    VALUES (
-                        :id, :user_id, 'fragment_offsets', :media_id,
-                        'yellow', 'exact', 'prefix', 'suffix'
-                    )
-                """),
-                {"id": highlight_id, "user_id": user_id, "media_id": media_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO highlight_fragment_anchors (
-                        highlight_id, fragment_id, start_offset, end_offset
-                    )
-                    VALUES (:highlight_id, :fragment_id, 0, 10)
-                """),
-                {"highlight_id": highlight_id, "fragment_id": fragment_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO annotations (id, highlight_id, body)
-                    VALUES (:id, :highlight_id, 'Test annotation')
-                """),
-                {"id": annotation_id, "highlight_id": highlight_id},
-            )
-            session.commit()
-
-            # Verify annotation exists
-            result = session.execute(
-                text("SELECT COUNT(*) FROM annotations WHERE id = :id"),
-                {"id": annotation_id},
-            )
-            assert result.scalar() == 1
-
-            # Delete highlight
-            session.execute(text("DELETE FROM highlights WHERE id = :id"), {"id": highlight_id})
-            session.commit()
-
-            # Verify annotation was cascaded
-            result = session.execute(
-                text("SELECT COUNT(*) FROM annotations WHERE id = :id"),
-                {"id": annotation_id},
-            )
-            assert result.scalar() == 0
-
-            # Clean up
-            session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
-            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
-            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
-            session.commit()
-
-    def test_fragment_delete_cascades_highlights(self, migrated_engine):
-        """Deleting a fragment cascades to delete associated highlights (and annotations)."""
-        with Session(migrated_engine) as session:
-            user_id = uuid4()
-            media_id = uuid4()
-            fragment_id = uuid4()
-            highlight_id = uuid4()
-            annotation_id = uuid4()
-
-            # Create user, media, fragment, highlight, and annotation
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text("""
-                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
-                    VALUES (:id, 'web_article', 'Test Article', 'ready_for_reading', :user_id)
-                """),
-                {"id": media_id, "user_id": user_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
-                    VALUES (:id, :media_id, 0, 'Test canonical text content', '<p>Test</p>')
-                """),
-                {"id": fragment_id, "media_id": media_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO highlights (
-                        id, user_id, anchor_kind, anchor_media_id, color, exact, prefix, suffix
-                    )
-                    VALUES (
-                        :id, :user_id, 'fragment_offsets', :media_id,
-                        'yellow', 'exact', 'prefix', 'suffix'
-                    )
-                """),
-                {"id": highlight_id, "user_id": user_id, "media_id": media_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO highlight_fragment_anchors (
-                        highlight_id, fragment_id, start_offset, end_offset
-                    )
-                    VALUES (:highlight_id, :fragment_id, 0, 10)
-                """),
-                {"highlight_id": highlight_id, "fragment_id": fragment_id},
-            )
-            session.execute(
-                text("""
-                    INSERT INTO annotations (id, highlight_id, body)
-                    VALUES (:id, :highlight_id, 'Test annotation')
-                """),
-                {"id": annotation_id, "highlight_id": highlight_id},
-            )
-            session.commit()
-
-            # Verify highlight and annotation exist
-            result = session.execute(
-                text("SELECT COUNT(*) FROM highlights WHERE id = :id"),
-                {"id": highlight_id},
-            )
-            assert result.scalar() == 1
-            result = session.execute(
-                text("SELECT COUNT(*) FROM annotations WHERE id = :id"),
-                {"id": annotation_id},
-            )
-            assert result.scalar() == 1
-
-            # Delete fragment
-            session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
-            session.commit()
-
-            # Verify highlight was cascaded
-            result = session.execute(
-                text("SELECT COUNT(*) FROM highlights WHERE id = :id"),
-                {"id": highlight_id},
-            )
-            assert result.scalar() == 0
-
-            # Verify annotation was also cascaded (via highlight cascade)
-            result = session.execute(
-                text("SELECT COUNT(*) FROM annotations WHERE id = :id"),
-                {"id": annotation_id},
-            )
-            assert result.scalar() == 0
-
-            # Clean up
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
             session.commit()
@@ -1562,16 +2400,16 @@ class TestWorkerRuntime:
 class TestS4Migration0007:
     """Tests for S4 migration 0007 — library sharing schema.
 
-    Each test self-manages migration state (downgrade base -> upgrade target).
+    Each test self-manages migration state (reset schema -> upgrade target).
     Does NOT rely on the module-level migrated_engine fixture.
     """
 
     @pytest.fixture(autouse=True)
     def isolate_migration(self):
         """Start and end each test at a clean base state, restore to head."""
-        run_alembic_command("downgrade base")
+        reset_test_schema()
         yield
-        run_alembic_command("downgrade base")
+        reset_test_schema()
         run_alembic_command("upgrade head")
 
     @pytest.fixture
@@ -2141,16 +2979,16 @@ class TestS4Migration0007:
 class TestS5Migration0008:
     """Tests for S5 migration 0008 — epub_toc_nodes schema.
 
-    Each test self-manages migration state (downgrade base -> upgrade target).
+    Each test self-manages migration state (reset schema -> upgrade target).
     Does NOT rely on the module-level migrated_engine fixture.
     """
 
     @pytest.fixture(autouse=True)
     def isolate_migration(self):
         """Start and end each test at a clean base state, restore to head."""
-        run_alembic_command("downgrade base")
+        reset_test_schema()
         yield
-        run_alembic_command("downgrade base")
+        reset_test_schema()
         run_alembic_command("upgrade head")
 
     @pytest.fixture
@@ -2577,8 +3415,8 @@ class TestS3SchemaConstraints:
             session.rollback()
             assert "uix_messages_conversation_seq" in str(exc_info.value)
 
-    def test_message_context_one_target_constraint(self, migrated_engine):
-        """CHECK constraint: exactly one FK must be non-null."""
+    def test_message_context_item_object_type_constraint(self, migrated_engine):
+        """CHECK constraint: context item object types are known object refs."""
         with Session(migrated_engine) as session:
             user_id = uuid4()
             conversation_id = uuid4()
@@ -2609,19 +3447,26 @@ class TestS3SchemaConstraints:
             )
             session.commit()
 
-            # Context with no FK should fail
+            # Context items store typed object refs directly and reject unknown types.
             with pytest.raises(IntegrityError) as exc_info:
                 session.execute(
                     text("""
-                        INSERT INTO message_contexts (id, message_id, target_type, ordinal)
-                        VALUES (:id, :msg_id, 'media', 0)
+                        INSERT INTO message_context_items (
+                            id, message_id, user_id, object_type, object_id, ordinal, context_snapshot
+                        )
+                        VALUES (:id, :msg_id, :user_id, 'unknown', :media_id, 0, '{}'::jsonb)
                     """),
-                    {"id": uuid4(), "msg_id": message_id},
+                    {
+                        "id": uuid4(),
+                        "msg_id": message_id,
+                        "user_id": user_id,
+                        "media_id": media_id,
+                    },
                 )
                 session.commit()
 
             session.rollback()
-            assert "ck_message_contexts_one_target" in str(exc_info.value)
+            assert "ck_message_context_items_object_type" in str(exc_info.value)
 
     def test_user_api_key_nonce_length_constraint(self, migrated_engine):
         """CHECK constraint: nonce must be exactly 24 bytes."""
@@ -2838,17 +3683,6 @@ class TestS3SchemaConstraints:
             assert row is not None, "fragments.canonical_text_tsv column should exist"
             assert row[0] == "ALWAYS"
 
-            # Check annotations.body_tsv
-            result = session.execute(
-                text("""
-                    SELECT is_generated FROM information_schema.columns
-                    WHERE table_name = 'annotations' AND column_name = 'body_tsv'
-                """)
-            )
-            row = result.fetchone()
-            assert row is not None, "annotations.body_tsv column should exist"
-            assert row[0] == "ALWAYS"
-
             # Check messages.content_tsv
             result = session.execute(
                 text("""
@@ -2867,7 +3701,7 @@ class TestS3SchemaConstraints:
             result = session.execute(
                 text("""
                     SELECT indexname, indexdef FROM pg_indexes
-                    WHERE tablename IN ('media', 'fragments', 'annotations', 'messages')
+                    WHERE tablename IN ('media', 'fragments', 'note_blocks', 'messages')
                     AND indexdef LIKE '%gin%'
                 """)
             )
@@ -2876,7 +3710,7 @@ class TestS3SchemaConstraints:
 
             assert "idx_media_title_tsv" in index_names
             assert "idx_fragments_canonical_text_tsv" in index_names
-            assert "idx_annotations_body_tsv" in index_names
+            assert "ix_note_blocks_body_text_tsv" in index_names
             assert "idx_messages_content_tsv" in index_names
 
     def test_models_provider_model_name_unique(self, migrated_engine):
@@ -2915,15 +3749,15 @@ class TestS3SchemaConstraints:
 class TestS6PR01Migration0009:
     """Tests for S6 PR-01 migration 0009 — typed-highlight data foundation.
 
-    Each test self-manages migration state (downgrade base -> upgrade target).
+    Each test self-manages migration state (reset schema -> upgrade target).
     """
 
     @pytest.fixture(autouse=True)
     def isolate_migration(self):
         """Start and end each test at a clean base state, restore to head."""
-        run_alembic_command("downgrade base")
+        reset_test_schema()
         yield
-        run_alembic_command("downgrade base")
+        reset_test_schema()
         run_alembic_command("upgrade head")
 
     @pytest.fixture
@@ -3796,9 +4630,9 @@ class TestHighlightBridgeRemovalMigration0056:
 
     @pytest.fixture(autouse=True)
     def isolate_migration(self):
-        run_alembic_command("downgrade base")
+        reset_test_schema()
         yield
-        run_alembic_command("downgrade base")
+        reset_test_schema()
         run_alembic_command("upgrade head")
 
     @pytest.fixture
@@ -3920,87 +4754,13 @@ class TestHighlightBridgeRemovalMigration0056:
             assert anchor_row[1] == 0
             assert anchor_row[2] == 6
 
-    def test_downgrade_head_to_0055_restores_bridge_columns_from_canonical_rows(
-        self, migration_engine
-    ):
+    def test_downgrade_head_to_0055_is_blocked_by_hard_cutover(self):
         result = run_alembic_command("upgrade head")
         assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
 
-        user_id = uuid4()
-        media_id = uuid4()
-        fragment_id = uuid4()
-        highlight_id = uuid4()
-
-        with Session(migration_engine) as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
-                    VALUES (:id, 'web_article', 'Canonical highlight media', 'ready_for_reading', :user_id)
-                    """
-                ),
-                {"id": media_id, "user_id": user_id},
-            )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
-                    VALUES (:id, :media_id, 0, 'canonical fragment text', '<p>canonical fragment text</p>')
-                    """
-                ),
-                {"id": fragment_id, "media_id": media_id},
-            )
-            insert_canonical_fragment_highlight(
-                session,
-                highlight_id=highlight_id,
-                user_id=user_id,
-                media_id=media_id,
-                fragment_id=fragment_id,
-                start_offset=1,
-                end_offset=7,
-                color="yellow",
-                exact="anonic",
-                prefix="c",
-                suffix="al",
-            )
-            session.commit()
-
         result = run_alembic_command("downgrade 0055")
-        assert result.returncode == 0, f"downgrade 0055 failed: {result.stderr}"
-
-        with Session(migration_engine) as session:
-            column_names = {
-                row[0]
-                for row in session.execute(
-                    text(
-                        """
-                        SELECT column_name
-                        FROM information_schema.columns
-                        WHERE table_name = 'highlights'
-                          AND column_name IN ('fragment_id', 'start_offset', 'end_offset')
-                        """
-                    )
-                ).fetchall()
-            }
-            assert column_names == {"fragment_id", "start_offset", "end_offset"}
-
-            row = session.execute(
-                text(
-                    """
-                    SELECT fragment_id, start_offset, end_offset, anchor_kind, anchor_media_id
-                    FROM highlights
-                    WHERE id = :id
-                    """
-                ),
-                {"id": highlight_id},
-            ).fetchone()
-            assert row is not None
-            assert str(row[0]) == str(fragment_id)
-            assert row[1] == 1
-            assert row[2] == 7
-            assert row[3] == "fragment_offsets"
-            assert str(row[4]) == str(media_id)
+        assert result.returncode != 0
+        assert "hard cutover migration and has no downgrade path" in result.stderr
 
 
 class TestMigration0026SemanticChunkBackfill:
@@ -4008,9 +4768,9 @@ class TestMigration0026SemanticChunkBackfill:
 
     @pytest.fixture(autouse=True)
     def isolate_migration(self):
-        run_alembic_command("downgrade base")
+        reset_test_schema()
         yield
-        run_alembic_command("downgrade base")
+        reset_test_schema()
         run_alembic_command("upgrade head")
 
     @pytest.fixture
@@ -4153,18 +4913,17 @@ class TestMigration0026SemanticChunkBackfill:
                 ),
                 {"media_id": media_id},
             ).scalar()
-            chunk_models = session.execute(
+            ready_index_count = session.execute(
                 text(
                     """
-                    SELECT DISTINCT embedding_model
-                    FROM content_chunks
+                    SELECT COUNT(*)
+                    FROM media_content_index_states
                     WHERE media_id = :media_id
-                      AND source_kind = 'transcript'
-                    ORDER BY embedding_model
+                      AND status = 'ready'
                     """
                 ),
                 {"media_id": media_id},
-            ).fetchall()
+            ).scalar()
 
         assert state_row is not None
         assert state_row[0] == "ready"
@@ -4178,10 +4937,12 @@ class TestMigration0026SemanticChunkBackfill:
         assert version_row[1] == 1
         assert version_row[2] is True
         assert segment_count == 2
-        assert chunk_count == 2, "legacy transcript segments must be backfilled into chunks"
-        assert chunk_models == [("hash_v1_frozen_0026",)], (
-            "migration 0026 must use a frozen in-migration embedding implementation "
-            "so fresh installs stay time-stable even if runtime embedding code changes"
+        assert chunk_count == 0, (
+            "the evidence hard cutover must not preserve stale pre-cutover transcript chunks"
+        )
+        assert ready_index_count == 0, (
+            "legacy transcript media must not be marked retrieval-ready until rebuilt "
+            "through the shared evidence indexer"
         )
 
 
@@ -4491,7 +5252,7 @@ class TestLibraryEntriesCutoverMigration:
         assert legacy_table is None, "legacy library_media table must be removed at head"
 
     def test_upgrade_0046_to_0047_backfills_media_and_podcast_entries(self):
-        run_alembic_command("downgrade base")
+        reset_test_schema()
         result = run_alembic_command("upgrade 0046")
         assert result.returncode == 0, f"upgrade 0046 failed: {result.stderr}"
 
@@ -4807,7 +5568,6 @@ class TestProjectGutenbergCatalogMigration:
             "gutenberg_type",
             "issued",
             "language",
-            "authors",
             "subjects",
             "locc",
             "bookshelves",
@@ -4831,14 +5591,84 @@ class TestProjectGutenbergCatalogMigration:
         assert "ix_project_gutenberg_catalog_title" in index_names
 
 
+class TestAuthorsLayerHardCutoverMigration:
+    """Data migration coverage for contributor identity cutover."""
+
+    @pytest.fixture(autouse=True)
+    def isolate_migration(self):
+        reset_test_schema()
+        yield
+        reset_test_schema()
+        run_alembic_command("upgrade head")
+
+    @pytest.fixture
+    def migration_engine(self):
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+
+    def test_upgrade_0071_preserves_name_only_legacy_author_boundaries(
+        self,
+        migration_engine,
+    ):
+        result = run_alembic_command("upgrade 0070")
+        assert result.returncode == 0, f"upgrade 0070 failed: {result.stderr}"
+
+        media_a = uuid4()
+        media_b = uuid4()
+        with Session(migration_engine) as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (id, kind, title, processing_status)
+                    VALUES
+                        (:media_a, 'pdf', 'Legacy Author A', 'ready'),
+                        (:media_b, 'pdf', 'Legacy Author B', 'ready')
+                    """
+                ),
+                {"media_a": media_a, "media_b": media_b},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media_authors (media_id, name, role, sort_order)
+                    VALUES
+                        (:media_a, 'Same Legacy Name', 'author', 0),
+                        (:media_b, 'Same Legacy Name', 'author', 0)
+                    """
+                ),
+                {"media_a": media_a, "media_b": media_b},
+            )
+            session.commit()
+
+        result = run_alembic_command("upgrade 0071")
+        assert result.returncode == 0, f"upgrade 0071 failed: {result.stderr}"
+
+        with Session(migration_engine) as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT media_id, contributor_id
+                    FROM contributor_credits
+                    WHERE media_id IN (:media_a, :media_b)
+                    ORDER BY media_id
+                    """
+                ),
+                {"media_a": media_a, "media_b": media_b},
+            ).fetchall()
+
+        assert len(rows) == 2
+        assert rows[0][1] != rows[1][1]
+
+
 class TestEpubNavSourceCutoverMigration:
     """Data migration coverage for EPUB nav source cutover."""
 
     @pytest.fixture(autouse=True)
     def isolate_migration(self):
-        run_alembic_command("downgrade base")
+        reset_test_schema()
         yield
-        run_alembic_command("downgrade base")
+        reset_test_schema()
         run_alembic_command("upgrade head")
 
     @pytest.fixture

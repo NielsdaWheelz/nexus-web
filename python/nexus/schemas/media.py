@@ -10,6 +10,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nexus.schemas.contributors import ContributorCreditOut
+
 
 class CapabilitiesOut(BaseModel):
     """Derived capabilities for a media item.
@@ -60,16 +62,6 @@ class PodcastEpisodeChapterOut(BaseModel):
     image_url: str | None = None
 
 
-class MediaAuthorOut(BaseModel):
-    """Response schema for a media author."""
-
-    id: UUID
-    name: str
-    role: str | None = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class MediaOut(BaseModel):
     """Response schema for media."""
 
@@ -80,6 +72,8 @@ class MediaOut(BaseModel):
     processing_status: str  # "pending", "extracting", "ready_for_reading", etc.
     transcript_state: str | None = None
     transcript_coverage: str | None = None
+    retrieval_status: str | None = None
+    retrieval_status_reason: str | None = None
     failure_stage: str | None = None
     last_error_code: str | None = None
     playback_source: PlaybackSourceOut | None = None
@@ -88,7 +82,7 @@ class MediaOut(BaseModel):
     episode_state: Literal["unplayed", "in_progress", "played"] | None = None
     chapters: list[PodcastEpisodeChapterOut] = []
     capabilities: CapabilitiesOut
-    authors: list[MediaAuthorOut] = []
+    contributors: list[ContributorCreditOut] = Field(default_factory=list)
     published_date: str | None = None
     publisher: str | None = None
     language: str | None = None

@@ -8,7 +8,8 @@
 	verify verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw \
-	_test-supabase-raw _test-network-raw _test-real-raw
+	_test-supabase-raw _test-network-raw _test-real-raw \
+	_test-e2e-raw _test-e2e-ui-raw
 
 -include .env
 -include .dev-ports
@@ -242,6 +243,9 @@ _test-real-raw:
 		-m "slow and not network and not supabase"
 
 test-e2e: _ensure-e2e-deps
+	./scripts/with_supabase_services.sh make _test-e2e-raw
+
+_test-e2e-raw:
 	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
 	echo "Running e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
@@ -250,6 +254,9 @@ test-e2e: _ensure-e2e-deps
 	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bun run test:e2e -- $(PLAYWRIGHT_ARGS)
 
 test-e2e-ui: _ensure-e2e-deps
+	./scripts/with_supabase_services.sh make _test-e2e-ui-raw
+
+_test-e2e-ui-raw:
 	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
 	echo "Running e2e ui with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \

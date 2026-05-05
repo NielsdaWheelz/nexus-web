@@ -22,12 +22,17 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.db.models import FailureStage, Fragment, Media, MediaAuthor, MediaKind, ProcessingStatus
+from nexus.db.models import FailureStage, Fragment, Media, MediaKind, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.services.canonicalize import generate_canonical_text
+from nexus.services.content_indexing import (
+    mark_content_index_failed,
+    rebuild_fragment_content_index,
+)
+from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.node_ingest import IngestError, IngestResult, run_node_ingest
 from nexus.services.sanitize_html import sanitize_html
@@ -117,14 +122,74 @@ def _do_ingest(
     if not media:
         return {"status": "skipped", "reason": "media_not_found"}
 
-    # Idempotency check: if already ready with fragment, exit early
+    # Idempotency check: if already ready with fragments, repair the evidence index if needed.
     if media.processing_status == ProcessingStatus.ready_for_reading:
-        fragment_exists = db.execute(
-            text("SELECT EXISTS(SELECT 1 FROM fragments WHERE media_id = :id AND idx = 0)"),
+        fragments = (
+            db.query(Fragment)
+            .filter(Fragment.media_id == media_id)
+            .order_by(Fragment.idx.asc())
+            .all()
+        )
+        content_index_ready = db.execute(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM media_content_index_states mcis
+                    JOIN content_index_runs cir ON cir.id = mcis.active_run_id
+                    JOIN source_snapshots ss ON ss.index_run_id = cir.id
+                    JOIN content_chunks cc ON cc.index_run_id = cir.id
+                    WHERE mcis.media_id = :id
+                      AND mcis.status = 'ready'
+                      AND cir.state = 'ready'
+                      AND cir.deactivated_at IS NULL
+                      AND ss.source_kind = 'web_article'
+                      AND cc.source_kind = 'web_article'
+                )
+                """
+            ),
             {"id": media_id},
         ).scalar()
-        if fragment_exists:
+        if fragments and content_index_ready:
             return {"status": "skipped", "reason": "already_ready"}
+        if fragments:
+            try:
+                rebuild_fragment_content_index(
+                    db,
+                    media_id=media_id,
+                    source_kind="web_article",
+                    artifact_ref=f"fragments:{fragments[0].id}",
+                    fragments=fragments,
+                    reason="web_article_repair",
+                    language=media.language,
+                )
+                db.commit()
+                return {"status": "success", "reason": "rebuilt_content_index"}
+            except Exception as exc:
+                db.rollback()
+                logger.exception(
+                    "web_article_repair_index_failed",
+                    media_id=str(media_id),
+                    request_id=request_id,
+                    error=str(exc),
+                )
+                media = db.get(Media, media_id)
+                if media is not None:
+                    now = datetime.now(UTC)
+                    failure_message = f"Web article evidence index failed: {exc}"[:1000]
+                    media.failure_stage = FailureStage.embed
+                    media.last_error_code = ApiErrorCode.E_INGEST_FAILED.value
+                    media.last_error_message = failure_message
+                    media.failed_at = now
+                    media.updated_at = now
+                    mark_content_index_failed(
+                        db,
+                        media_id=media_id,
+                        failure_code=ApiErrorCode.E_INGEST_FAILED.value,
+                        failure_message=failure_message,
+                    )
+                    db.commit()
+                return {"status": "success", "reason": "content_index_failed"}
 
     # Step 2: Increment processing_attempts and mark extracting
     media.processing_attempts = (media.processing_attempts or 0) + 1
@@ -203,7 +268,6 @@ def _do_ingest(
     # Parse canonical_text into blocks based on \n\n separators
     block_specs = parse_fragment_blocks(canonical_text)
     insert_fragment_blocks(db, fragment.id, block_specs)
-
     # Update media
     media = db.get(Media, media_id)
     if not media:
@@ -222,7 +286,45 @@ def _do_ingest(
     media.last_error_code = None
     media.last_error_message = None
 
+    fragment_id = fragment.id
+    media_language = media.language
     db.commit()
+
+    try:
+        rebuild_fragment_content_index(
+            db,
+            media_id=media_id,
+            source_kind="web_article",
+            artifact_ref=f"fragments:{fragment_id}",
+            fragments=[fragment],
+            reason="web_article_ingest",
+            language=media_language,
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.exception(
+            "web_article_content_index_failed",
+            media_id=str(media_id),
+            request_id=request_id,
+            error=str(exc),
+        )
+        media = db.get(Media, media_id)
+        if media is not None:
+            now = datetime.now(UTC)
+            failure_message = f"Web article evidence index failed: {exc}"[:1000]
+            media.failure_stage = FailureStage.embed
+            media.last_error_code = ApiErrorCode.E_INGEST_FAILED.value
+            media.last_error_message = failure_message
+            media.failed_at = now
+            media.updated_at = now
+            mark_content_index_failed(
+                db,
+                media_id=media_id,
+                failure_code=ApiErrorCode.E_INGEST_FAILED.value,
+                failure_message=failure_message,
+            )
+            db.commit()
 
     _try_enrich_dispatch(str(media_id), request_id)
 
@@ -255,24 +357,24 @@ def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
 def _persist_web_metadata(db: Session, media: Media, ingest_result: IngestResult) -> None:
     """Persist web article metadata from Readability extraction."""
     # Parse byline into author names
-    if ingest_result.byline:
-        # Byline formats: "John Doe", "John Doe, Jane Smith", "By John Doe and Jane Smith"
-        byline = ingest_result.byline.strip()
-        # Strip leading "By " (case-insensitive)
-        byline = re.sub(r"^by\s+", "", byline, flags=re.IGNORECASE)
-        # Split on comma, semicolon, or " and "
-        names = re.split(r"\s*[,;]\s*|\s+and\s+", byline, flags=re.IGNORECASE)
-        for i, name in enumerate(names):
-            name = name.strip()
-            if name:
-                db.add(
-                    MediaAuthor(
-                        media_id=media.id,
-                        name=name[:255],
-                        role="author",
-                        sort_order=i,
-                    )
-                )
+    byline = ingest_result.byline.strip() if ingest_result.byline else ""
+    byline = re.sub(r"^by\s+", "", byline, flags=re.IGNORECASE)
+    names = re.split(r"\s*[,;]\s*|\s+and\s+", byline, flags=re.IGNORECASE) if byline else []
+    replace_media_contributor_credits(
+        db,
+        media_id=media.id,
+        source="web_article_byline",
+        credits=[
+            {
+                "name": name.strip()[:255],
+                "role": "author",
+                "ordinal": i,
+                "source": "web_article_byline",
+            }
+            for i, name in enumerate(names)
+            if name.strip()
+        ],
+    )
 
     if ingest_result.excerpt and not media.description:
         media.description = ingest_result.excerpt[:2000]

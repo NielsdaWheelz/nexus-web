@@ -422,7 +422,9 @@ def _load_inventory(db: Session, library_id: UUID) -> list[dict[str, object]]:
             FROM library_entries le
             JOIN media m ON m.id = le.media_id
             LEFT JOIN fragments f ON f.media_id = m.id
+            LEFT JOIN media_content_index_states mcis ON mcis.media_id = m.id
             LEFT JOIN content_chunks cc ON cc.media_id = m.id
+                AND cc.index_run_id = mcis.active_run_id
             WHERE le.library_id = :library_id
               AND le.media_id IS NOT NULL
             GROUP BY le.position, le.media_id, m.title, m.kind, m.processing_status, m.updated_at
@@ -459,7 +461,9 @@ def _load_inventory(db: Session, library_id: UUID) -> list[dict[str, object]]:
             LEFT JOIN podcast_episodes pe ON pe.podcast_id = p.id
             LEFT JOIN media m ON m.id = pe.media_id
             LEFT JOIN fragments f ON f.media_id = m.id
+            LEFT JOIN media_content_index_states mcis ON mcis.media_id = m.id
             LEFT JOIN content_chunks cc ON cc.media_id = m.id
+                AND cc.index_run_id = mcis.active_run_id
             WHERE le.library_id = :library_id
               AND le.podcast_id IS NOT NULL
             GROUP BY le.position, le.podcast_id, p.title, p.updated_at
@@ -476,7 +480,7 @@ def _load_inventory(db: Session, library_id: UUID) -> list[dict[str, object]]:
 
 
 def _media_inventory_item(row: Mapping[str, Any]) -> dict[str, object]:
-    text_count = max(int(row["content_chunk_count"]), int(row["fragment_count"]))
+    text_count = int(row["content_chunk_count"])
     processing_status = str(row["processing_status"])
     included = processing_status in {"ready", "ready_for_reading"} and text_count > 0
     return {
@@ -494,7 +498,7 @@ def _media_inventory_item(row: Mapping[str, Any]) -> dict[str, object]:
 
 
 def _podcast_inventory_item(row: Mapping[str, Any]) -> dict[str, object]:
-    text_count = max(int(row["content_chunk_count"]), int(row["fragment_count"]))
+    text_count = int(row["content_chunk_count"])
     included = text_count > 0
     return {
         "media_id": None,

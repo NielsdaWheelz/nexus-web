@@ -32,7 +32,7 @@ from nexus.schemas.media import (
     UploadInitRequest,
 )
 from nexus.schemas.reader import ReaderResumeState
-from nexus.services import epub_lifecycle, epub_read, image_proxy
+from nexus.services import epub_lifecycle, epub_read, image_proxy, locator_resolver
 from nexus.services import libraries as libraries_service
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
@@ -255,6 +255,22 @@ def remove_media(
             db, viewer.user_id, media_id, library_id
         )
     return success_response(result.model_dump(mode="json"))
+
+
+@router.get("/media/{media_id}/evidence/{evidence_span_id}")
+def resolve_media_evidence(
+    media_id: UUID,
+    evidence_span_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    result = locator_resolver.resolve_evidence_span(
+        db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+        evidence_span_id=evidence_span_id,
+    )
+    return success_response(result)
 
 
 @router.get("/media/{media_id}/libraries")

@@ -17,6 +17,8 @@ from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
+from nexus.schemas.contributors import ContributorCreditOut
+from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.podcasts import catalog as podcast_catalog_service
 from nexus.services.podcasts import provider as podcast_provider_service
 
@@ -111,7 +113,7 @@ def _browse_section(
     if page_type == "documents":
         return _browse_documents(db, viewer_id, query, limit=limit, cursor=cursor)
     if page_type == "videos":
-        return _browse_videos(query, limit=limit, cursor=cursor)
+        return _browse_videos(db, viewer_id, query, limit=limit, cursor=cursor)
     if page_type == "podcasts":
         return _browse_podcasts(
             db,
@@ -238,13 +240,21 @@ def _browse_documents(
     }
 
 
-def _browse_videos(query: str, *, limit: int, cursor: str | None) -> dict[str, object]:
+def _browse_videos(
+    db: Session,
+    viewer_id: UUID,
+    query: str,
+    *,
+    limit: int,
+    cursor: str | None,
+) -> dict[str, object]:
     page_token = None
     if cursor is not None:
         decoded = _decode_browse_cursor(cursor, query, "videos")
         page_token = _string_or_none(decoded.get("page_token"))
 
     rows, next_page_token = _search_video_rows(query, limit=limit, page_token=page_token)
+    rows = _attach_existing_video_contributors(db, viewer_id, rows)
     next_cursor = (
         _encode_browse_cursor(query, "videos", {"page_token": next_page_token})
         if next_page_token
@@ -344,9 +354,10 @@ def _search_nexus_document_rows(
     limit: int,
     offset: int,
 ) -> list[dict[str, object]]:
-    raw_rows = db.execute(
-        text(
-            f"""
+    raw_rows = (
+        db.execute(
+            text(
+                f"""
             WITH
                 visible_media AS ({visible_media_ids_cte_sql()}),
                 title_hits AS (
@@ -402,20 +413,26 @@ def _search_nexus_document_rows(
             OFFSET :offset
             LIMIT :limit
             """
-        ),
-        {
-            "viewer_id": viewer_id,
-            "query": query,
-            "offset": offset,
-            "limit": limit,
-        },
-    ).mappings()
+            ),
+            {
+                "viewer_id": viewer_id,
+                "query": query,
+                "offset": offset,
+                "limit": limit,
+            },
+        )
+        .mappings()
+        .all()
+    )
+    media_ids = [UUID(str(row["id"])) for row in raw_rows]
+    contributors_by_media = load_contributor_credits_for_media(db, media_ids)
     results: list[dict[str, object]] = []
     for row in raw_rows:
         source_url = _string_or_none(row["requested_url"]) or _string_or_none(
             row["canonical_source_url"]
         )
-        media_id = str(row["id"])
+        media_uuid = UUID(str(row["id"]))
+        media_id = str(media_uuid)
         document_kind = str(row["kind"])
         results.append(
             {
@@ -429,6 +446,10 @@ def _search_nexus_document_rows(
                 "source_label": "Nexus",
                 "source_type": "nexus",
                 "media_id": media_id,
+                "contributors": [
+                    credit.model_dump(mode="json")
+                    for credit in contributors_by_media.get(media_uuid, [])
+                ],
             }
         )
     return results
@@ -446,44 +467,78 @@ def _search_project_gutenberg_rows(
             """
             WITH search_hits AS (
                 SELECT
-                    ebook_id,
-                    title,
-                    authors,
-                    subjects,
-                    bookshelves,
-                    download_count,
+                    pg.ebook_id,
+                    pg.title,
+                    pg.subjects,
+                    pg.bookshelves,
+                    pg.download_count,
+                    gcc.contributor_credits,
+                    gcc.contributor_search_text,
                     ts_rank_cd(
                         to_tsvector(
                             'english',
                             concat_ws(
                                 ' ',
-                                coalesce(title, ''),
-                                coalesce(authors, ''),
-                                coalesce(subjects, ''),
-                                coalesce(bookshelves, '')
+                                coalesce(pg.title, ''),
+                                coalesce(gcc.contributor_search_text, ''),
+                                coalesce(pg.subjects, ''),
+                                coalesce(pg.bookshelves, '')
                             )
                         ),
                         websearch_to_tsquery('english', :query)
                     ) AS score
-                FROM project_gutenberg_catalog
+                FROM project_gutenberg_catalog pg
+                LEFT JOIN (
+                    SELECT
+                        cc.project_gutenberg_catalog_ebook_id AS ebook_id,
+                        jsonb_agg(
+                            jsonb_build_object(
+                                'id', cc.id,
+                                'credited_name', cc.credited_name,
+                                'role', cc.role,
+                                'raw_role', cc.raw_role,
+                                'ordinal', cc.ordinal,
+                                'source', cc.source,
+                                'contributor_handle', c.handle,
+                                'contributor_display_name', c.display_name,
+                                'href', '/authors/' || c.handle,
+                                'contributor', jsonb_build_object(
+                                    'handle', c.handle,
+                                    'display_name', c.display_name,
+                                    'sort_name', c.sort_name,
+                                    'kind', c.kind,
+                                    'status', c.status,
+                                    'disambiguation', c.disambiguation
+                                )
+                            )
+                            ORDER BY cc.ordinal ASC, cc.created_at ASC, cc.id ASC
+                        ) AS contributor_credits,
+                        string_agg(cc.credited_name || ' ' || c.display_name, ' ') AS contributor_search_text
+                    FROM contributor_credits cc
+                    JOIN contributors c ON c.id = cc.contributor_id
+                    WHERE cc.project_gutenberg_catalog_ebook_id IS NOT NULL
+                      AND c.status NOT IN ('merged', 'tombstoned')
+                    GROUP BY cc.project_gutenberg_catalog_ebook_id
+                ) gcc ON gcc.ebook_id = pg.ebook_id
                 WHERE to_tsvector(
                         'english',
                         concat_ws(
                             ' ',
-                            coalesce(title, ''),
-                            coalesce(authors, ''),
-                            coalesce(subjects, ''),
-                            coalesce(bookshelves, '')
+                            coalesce(pg.title, ''),
+                            coalesce(gcc.contributor_search_text, ''),
+                            coalesce(pg.subjects, ''),
+                            coalesce(pg.bookshelves, '')
                         )
                     ) @@ websearch_to_tsquery('english', :query)
             )
             SELECT
                 ebook_id,
                 title,
-                authors,
                 subjects,
                 bookshelves,
-                download_count
+                download_count,
+                contributor_credits,
+                contributor_search_text
             FROM search_hits
             ORDER BY score DESC, download_count DESC NULLS LAST, ebook_id ASC
             OFFSET :offset
@@ -502,10 +557,14 @@ def _search_project_gutenberg_rows(
         landing_url = _PROJECT_GUTENBERG_LANDING_URL.format(ebook_id=ebook_id)
         import_url = _PROJECT_GUTENBERG_EPUB_IMPORT_URL.format(ebook_id=ebook_id)
         description = (
-            _string_or_none(row["authors"])
+            _string_or_none(row["contributor_search_text"])
             or _string_or_none(row["bookshelves"])
             or _string_or_none(row["subjects"])
         )
+        contributors = [
+            ContributorCreditOut.model_validate(item).model_dump(mode="json")
+            for item in list(row["contributor_credits"] or [])
+        ]
         results.append(
             {
                 "type": "documents",
@@ -517,7 +576,7 @@ def _search_project_gutenberg_rows(
                 "source_label": "Project Gutenberg",
                 "source_type": "project_gutenberg",
                 "landing_url": landing_url,
-                "author": _string_or_none(row["authors"]),
+                "contributors": contributors,
                 "media_id": None,
             }
         )
@@ -537,7 +596,7 @@ def _search_video_rows(
             "Browse video provider credentials are not configured",
         )
 
-    params: dict[str, object] = {
+    params: dict[str, str | int] = {
         "key": settings.youtube_data_api_key,
         "part": "snippet",
         "q": query,
@@ -577,9 +636,62 @@ def _search_video_rows(
                 "channel_title": _string_or_none(snippet.get("channelTitle")),
                 "published_at": _string_or_none(snippet.get("publishedAt")),
                 "thumbnail_url": _youtube_thumbnail_url(snippet.get("thumbnails")),
+                "media_id": None,
+                "contributors": [],
             }
         )
     return rows, _string_or_none(payload.get("nextPageToken"))
+
+
+def _attach_existing_video_contributors(
+    db: Session,
+    viewer_id: UUID,
+    rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    provider_video_ids = [
+        provider_video_id
+        for row in rows
+        if isinstance(provider_video_id := row.get("provider_video_id"), str) and provider_video_id
+    ]
+    if not provider_video_ids:
+        return rows
+
+    media_rows = db.execute(
+        text(
+            f"""
+            WITH visible_media AS ({visible_media_ids_cte_sql()})
+            SELECT m.provider_id, m.id
+            FROM media m
+            JOIN visible_media vm ON vm.media_id = m.id
+            WHERE m.kind = 'video'
+              AND m.provider = 'youtube'
+              AND m.provider_id = ANY(:provider_video_ids)
+            ORDER BY m.updated_at DESC, m.id DESC
+            """
+        ),
+        {"viewer_id": viewer_id, "provider_video_ids": provider_video_ids},
+    ).mappings()
+    media_by_provider_id: dict[str, UUID] = {}
+    for row in media_rows:
+        provider_id = _string_or_none(row["provider_id"])
+        if provider_id and provider_id not in media_by_provider_id:
+            media_by_provider_id[provider_id] = UUID(str(row["id"]))
+
+    contributors_by_media = load_contributor_credits_for_media(
+        db,
+        list(media_by_provider_id.values()),
+    )
+    for row in rows:
+        provider_video_id = _string_or_none(row.get("provider_video_id"))
+        media_id = media_by_provider_id.get(provider_video_id or "")
+        row["contributors"] = (
+            [credit.model_dump(mode="json") for credit in contributors_by_media.get(media_id, [])]
+            if media_id is not None
+            else []
+        )
+        if media_id is not None:
+            row["media_id"] = str(media_id)
+    return rows
 
 
 def _to_podcast_result(row: Any) -> dict[str, object]:
@@ -588,7 +700,7 @@ def _to_podcast_result(row: Any) -> dict[str, object]:
         "podcast_id": str(row.podcast_id) if getattr(row, "podcast_id", None) is not None else None,
         "provider_podcast_id": row.provider_podcast_id,
         "title": row.title,
-        "author": row.author,
+        "contributors": [credit.model_dump(mode="json") for credit in row.contributors],
         "feed_url": row.feed_url,
         "website_url": row.website_url,
         "image_url": row.image_url,
@@ -605,7 +717,7 @@ def _to_podcast_episode_result(podcast: Any, episode: dict[str, object]) -> dict
         "provider_podcast_id": podcast.provider_podcast_id,
         "provider_episode_id": episode["provider_episode_id"],
         "podcast_title": podcast.title,
-        "podcast_author": podcast.author,
+        "podcast_contributors": [credit.model_dump(mode="json") for credit in podcast.contributors],
         "podcast_image_url": podcast.image_url,
         "title": episode["title"],
         "audio_url": episode["audio_url"],
@@ -658,7 +770,7 @@ def _get_json(
     url: str,
     *,
     headers: dict[str, str],
-    params: dict[str, object],
+    params: dict[str, str | int],
     provider_name: str,
 ) -> dict[str, Any]:
     last_error: Exception | None = None

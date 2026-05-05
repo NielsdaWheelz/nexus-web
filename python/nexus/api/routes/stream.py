@@ -17,6 +17,7 @@ from nexus.auth.stream_token import verify_stream_token
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import set_stream_jti
 from nexus.services import chat_runs as chat_runs_service
+from nexus.services import oracle as oracle_service
 
 router = APIRouter(prefix="/stream", tags=["streaming"])
 
@@ -131,3 +132,47 @@ def _parse_last_event_id(value: str | None) -> int:
 def _format_sse_event(seq: int, event_type: str, payload: dict) -> str:
     data = json.dumps(payload, separators=(",", ":"))
     return f"id: {seq}\nevent: {event_type}\ndata: {data}\n\n"
+
+
+@router.get("/oracle-readings/{reading_id}/events")
+async def stream_oracle_reading_events(
+    request: Request,
+    reading_id: UUID,
+    viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
+    after: int | None = Query(default=None, ge=0),
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+) -> StreamingResponse:
+    cursor = after if after is not None else _parse_last_event_id(last_event_id)
+    db_factory = get_session_factory()
+    with db_factory() as db:
+        oracle_service.assert_reading_owner(db, viewer_id=viewer_id, reading_id=reading_id)
+
+    async def _tail() -> AsyncIterator[str]:
+        local_cursor = cursor
+        last_keepalive = time.monotonic()
+        while True:
+            if await request.is_disconnected():
+                return
+            with db_factory() as db:
+                events = oracle_service.get_reading_events(
+                    db, reading_id=reading_id, after=local_cursor
+                )
+                terminal = oracle_service.is_reading_terminal(db, reading_id=reading_id)
+            for event in events:
+                local_cursor = event.seq
+                yield _format_sse_event(event.seq, event.event_type, event.payload)
+                if event.event_type == "done":
+                    return
+            if terminal:
+                return
+            now = time.monotonic()
+            if now - last_keepalive >= KEEPALIVE_INTERVAL_SECONDS:
+                yield ": keepalive\n\n"
+                last_keepalive = now
+            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
+    return StreamingResponse(
+        _tail(),
+        media_type="text/event-stream; charset=utf-8",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )

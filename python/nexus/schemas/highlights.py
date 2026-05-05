@@ -1,4 +1,4 @@
-"""Highlight and annotation schemas."""
+"""Highlight schemas."""
 
 from datetime import datetime
 from typing import Annotated, Literal
@@ -12,18 +12,6 @@ HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
 # =============================================================================
 # Output Schemas
 # =============================================================================
-
-
-class AnnotationOut(BaseModel):
-    """Response schema for an annotation."""
-
-    id: UUID
-    highlight_id: UUID
-    body: str
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Anchor discriminated union ---
@@ -71,6 +59,15 @@ class LinkedConversationRef(BaseModel):
     title: str
 
 
+class LinkedNoteBlockRef(BaseModel):
+    """Note block linked to a highlight."""
+
+    note_block_id: UUID
+    body_pm_json: dict[str, object]
+    body_markdown: str
+    body_text: str
+
+
 class TypedHighlightOut(BaseModel):
     """Canonical highlight item response."""
 
@@ -82,10 +79,10 @@ class TypedHighlightOut(BaseModel):
     suffix: str
     created_at: datetime
     updated_at: datetime
-    annotation: AnnotationOut | None = None
     author_user_id: UUID
     is_owner: bool
     linked_conversations: list[LinkedConversationRef] = Field(default_factory=list)
+    linked_note_blocks: list[LinkedNoteBlockRef] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -196,11 +193,3 @@ class UpdateHighlightRequest(BaseModel):
             raise ValueError("exact is required for pdf_page_geometry anchor updates")
 
         return self
-
-
-class UpsertAnnotationRequest(BaseModel):
-    """Request schema for creating or updating an annotation."""
-
-    body: str = Field(..., min_length=1, description="Annotation text content")
-
-    model_config = ConfigDict(extra="forbid")

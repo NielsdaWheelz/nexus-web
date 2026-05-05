@@ -3,6 +3,7 @@
 import pytest
 from llm_calling.types import Turn
 
+from nexus.errors import ApiError
 from nexus.services.retrieval_planner import (
     APP_SEARCH_TYPES_ALL,
     APP_SEARCH_TYPES_SCOPED,
@@ -55,6 +56,27 @@ def test_library_scope_never_includes_message_search():
     )
 
     assert "message" not in plan.app_search.types
+
+
+def test_contributor_conversation_scope_is_not_planned_until_persistable():
+    with pytest.raises(ApiError):
+        app_search_scope_for_conversation(
+            {"type": "contributor", "contributor_handle": "octavia-butler"}
+        )
+
+
+def test_attached_contributor_context_adds_app_search_filter():
+    plan = build_retrieval_plan(
+        user_content="Find related saved work",
+        history=[],
+        scope_metadata={"type": "general"},
+        attached_context_refs=[
+            {"type": "contributor", "id": "octavia-butler"},
+            {"type": "contributor", "contributor_handle": "octavia-butler"},
+        ],
+    )
+
+    assert plan.app_search.filters["contributor_handles"] == ["octavia-butler"]
 
 
 def test_followup_query_uses_recent_user_turn():

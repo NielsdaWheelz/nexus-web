@@ -3,6 +3,7 @@ import type {
   ContextItem,
   SearchCitationEventData,
 } from "@/lib/api/sse";
+import type { ContributorCredit } from "@/lib/contributors/types";
 
 export type ConversationScope =
   | { type: "general" }
@@ -11,7 +12,7 @@ export type ConversationScope =
       media_id: string;
       title?: string | null;
       media_kind?: string | null;
-      authors?: string[];
+      contributors?: ContributorCredit[];
       published_date?: string | null;
       publisher?: string | null;
       canonical_source_url?: string | null;
@@ -59,7 +60,8 @@ export interface MessageContextSnapshot {
   preview?: string;
   prefix?: string;
   suffix?: string;
-  annotation_body?: string;
+  title?: string;
+  route?: string;
   media_id?: string;
   media_title?: string;
   media_kind?: string;
@@ -75,6 +77,8 @@ export interface MessageRetrieval {
   context_ref: SearchCitationEventData["context_ref"] | { type: "web_result"; id: string };
   result_ref: CitationEventData;
   deep_link: string | null;
+  citation_label?: string | null;
+  resolver?: SearchCitationEventData["resolver"];
   score: number | null;
   selected: boolean;
   created_at?: string;
@@ -224,6 +228,8 @@ export interface MessageClaimEvidence {
   snippet_suffix?: string | null;
   locator?: MessageEvidenceLocator | null;
   deep_link?: string | null;
+  citation_label?: string | null;
+  resolver?: SearchCitationEventData["resolver"];
   score?: number | null;
   retrieval_status: MessageEvidenceRetrievalStatus;
   selected: boolean;

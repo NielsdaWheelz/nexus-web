@@ -18,27 +18,27 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, highlight_visibility_filter
 from nexus.db.models import (
-    Annotation,
     Conversation,
     Highlight,
     HighlightPdfAnchor,
     HighlightPdfQuad,
     Media,
     Message,
-    MessageContext,
+    MessageContextItem,
     PdfPageTextSpan,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
-    AnnotationOut,
     CreatePdfHighlightRequest,
     LinkedConversationRef,
+    LinkedNoteBlockRef,
     PdfAnchorOut,
     PdfBoundsUpdate,
     PdfQuadOut,
     TypedHighlightOut,
 )
+from nexus.services.notes import linked_note_blocks_for_highlights
 from nexus.services.pdf_highlight_geometry import (
     CanonicalGeometry,
     GeometryValidationError,
@@ -96,18 +96,6 @@ def _validate_page_number(page_number: int, page_count: int | None) -> None:
         )
 
 
-def _annotation_out(ann: Annotation | None) -> AnnotationOut | None:
-    if ann is None:
-        return None
-    return AnnotationOut(
-        id=ann.id,
-        highlight_id=ann.highlight_id,
-        body=ann.body,
-        created_at=ann.created_at,
-        updated_at=ann.updated_at,
-    )
-
-
 def _batch_linked_conversations(
     db: Session, highlight_ids: list[UUID], viewer_id: UUID
 ) -> dict[UUID, list[LinkedConversationRef]]:
@@ -115,18 +103,18 @@ def _batch_linked_conversations(
         return {}
     rows = db.execute(
         select(
-            MessageContext.highlight_id,
+            MessageContextItem.object_id,
             Conversation.id,
             Conversation.title,
         )
-        .join(Message, Message.id == MessageContext.message_id)
+        .join(Message, Message.id == MessageContextItem.message_id)
         .join(Conversation, Conversation.id == Message.conversation_id)
         .where(
-            MessageContext.target_type == "highlight",
-            MessageContext.highlight_id.in_(highlight_ids),
+            MessageContextItem.object_type == "highlight",
+            MessageContextItem.object_id.in_(highlight_ids),
             Conversation.owner_user_id == viewer_id,
         )
-        .group_by(MessageContext.highlight_id, Conversation.id, Conversation.title)
+        .group_by(MessageContextItem.object_id, Conversation.id, Conversation.title)
     ).all()
     result: dict[UUID, list[LinkedConversationRef]] = {}
     for highlight_id, conversation_id, title in rows:
@@ -134,6 +122,25 @@ def _batch_linked_conversations(
             LinkedConversationRef(conversation_id=conversation_id, title=title)
         )
     return result
+
+
+def _batch_linked_note_blocks(
+    db: Session, highlight_ids: list[UUID], viewer_id: UUID
+) -> dict[UUID, list[LinkedNoteBlockRef]]:
+    return {
+        highlight_id: [
+            LinkedNoteBlockRef(
+                note_block_id=block.id,
+                body_pm_json=block.body_pm_json,
+                body_markdown=block.body_markdown,
+                body_text=block.body_text,
+            )
+            for block in blocks
+        ]
+        for highlight_id, blocks in linked_note_blocks_for_highlights(
+            db, viewer_id, highlight_ids
+        ).items()
+    }
 
 
 def _highlight_to_typed_out(
@@ -175,7 +182,6 @@ def _highlight_to_typed_out(
         suffix=highlight.suffix,
         created_at=highlight.created_at,
         updated_at=highlight.updated_at,
-        annotation=_annotation_out(highlight.annotation),
         author_user_id=highlight.user_id,
         is_owner=(highlight.user_id == viewer_id),
     )
@@ -426,10 +432,6 @@ def list_pdf_highlights(
 ) -> list[TypedHighlightOut]:
     """List PDF highlights for a single page."""
     media = _get_pdf_media_for_viewer_or_404(db, viewer_id, media_id)
-
-    if media.processing_status.value not in READY_STATUSES:
-        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media not ready")
-
     _validate_page_number(page_number, media.page_count)
 
     query = (
@@ -454,13 +456,14 @@ def list_pdf_highlights(
         Highlight.id.asc(),
     ).all()
 
-    linked_conversations_by_highlight = _batch_linked_conversations(
-        db, [highlight.id for highlight in highlights], viewer_id
-    )
+    highlight_ids = [highlight.id for highlight in highlights]
+    linked_conversations_by_highlight = _batch_linked_conversations(db, highlight_ids, viewer_id)
+    linked_note_blocks_by_highlight = _batch_linked_note_blocks(db, highlight_ids, viewer_id)
     results = []
     for highlight in highlights:
         out = _highlight_to_typed_out(highlight, viewer_id)
         out.linked_conversations = linked_conversations_by_highlight.get(highlight.id, [])
+        out.linked_note_blocks = linked_note_blocks_by_highlight.get(highlight.id, [])
         results.append(out)
     return results
 

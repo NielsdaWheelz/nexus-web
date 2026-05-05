@@ -235,7 +235,10 @@ function EvidenceItem({ evidence }: { evidence: MessageClaimEvidence }) {
   const isWeb = isWebEvidence(evidence);
   const href = evidenceHref(evidence);
   const label = evidenceLabel(evidence, isWeb);
-  const location = evidence.locator ? locatorLabel(evidence.locator) : null;
+  const hasBackendLabel = Boolean(
+    evidence.citation_label || textField(evidence.result_ref, "citation_label"),
+  );
+  const location = !hasBackendLabel && evidence.locator ? locatorLabel(evidence.locator) : null;
 
   return (
     <div
@@ -327,8 +330,42 @@ function isWebEvidence(evidence: MessageClaimEvidence): boolean {
   );
 }
 
+function evidenceResolverHref(route: string, paramsRecord: Record<string, string>): string {
+  const params = new URLSearchParams();
+  const evidence = paramsRecord.evidence;
+  if (evidence) {
+    params.set("evidence", evidence);
+  }
+  for (const [key, value] of Object.entries(paramsRecord)) {
+    if (key !== "evidence") {
+      params.set(key, value);
+    }
+  }
+  const query = params.toString();
+  return query ? `${route}?${query}` : route;
+}
+
 function evidenceHref(evidence: MessageClaimEvidence): string | null {
   if (evidence.deep_link) return evidence.deep_link;
+  if (evidence.resolver?.route) {
+    return evidenceResolverHref(evidence.resolver.route, evidence.resolver.params);
+  }
+  const resultResolver = evidence.result_ref?.resolver;
+  if (typeof resultResolver === "object" && resultResolver !== null && !Array.isArray(resultResolver)) {
+    const resolver = resultResolver as Record<string, unknown>;
+    if (
+      typeof resolver.route === "string" &&
+      typeof resolver.params === "object" &&
+      resolver.params !== null &&
+      !Array.isArray(resolver.params)
+    ) {
+      const paramsRecord = resolver.params as Record<string, unknown>;
+      if (!Object.values(paramsRecord).every((value) => typeof value === "string")) {
+        return null;
+      }
+      return evidenceResolverHref(resolver.route, paramsRecord as Record<string, string>);
+    }
+  }
   if (evidence.locator?.type === "web_url") return evidence.locator.url;
   if (evidence.locator?.type === "external_source") return evidence.locator.url ?? null;
   return null;
@@ -338,6 +375,9 @@ function evidenceLabel(
   evidence: MessageClaimEvidence,
   isWeb: boolean,
 ): string {
+  if (evidence.citation_label) return evidence.citation_label;
+  const resultCitationLabel = textField(evidence.result_ref, "citation_label");
+  if (resultCitationLabel) return resultCitationLabel;
   if (evidence.source_ref.label) return evidence.source_ref.label;
   if (evidence.locator?.type === "web_url") {
     return evidence.locator.title || evidence.locator.display_url || evidence.locator.url;
@@ -377,16 +417,13 @@ function ToolActivity({ toolCalls }: { toolCalls: MessageToolCall[] }) {
 }
 
 export function ReplyBar({ context }: { context: MessageContextSnapshot }) {
-  const text = context.exact || context.preview;
+  const text = context.exact || context.preview || context.title;
   const colorClass = styles[`replyBar-${context.color ?? ""}`] ?? "";
 
   return (
     <div className={`${styles.replyBar} ${colorClass}`}>
       {text ? <div>{truncateText(text, 140)}</div> : null}
-      {context.annotation_body ? (
-        <div className={styles.replyBarAnnotation}>{context.annotation_body}</div>
-      ) : null}
-      {!text && !context.annotation_body && context.media_title ? (
+      {!text && context.media_title ? (
         <div>{context.media_title}</div>
       ) : null}
     </div>

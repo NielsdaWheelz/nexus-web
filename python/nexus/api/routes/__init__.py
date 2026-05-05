@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from nexus.api.routes.billing import router as billing_router
 from nexus.api.routes.browse import router as browse_router
 from nexus.api.routes.chat_runs import router as chat_runs_router
+from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.conversations import router as conversations_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
 from nexus.api.routes.health import router as health_router
@@ -21,7 +22,12 @@ from nexus.api.routes.libraries import router as libraries_router
 from nexus.api.routes.library_intelligence import router as library_intelligence_router
 from nexus.api.routes.me import router as me_router
 from nexus.api.routes.media import router as media_router
+from nexus.api.routes.message_context_items import router as message_context_items_router
 from nexus.api.routes.models import router as models_router
+from nexus.api.routes.notes import router as notes_router
+from nexus.api.routes.object_links import router as object_links_router
+from nexus.api.routes.object_refs import router as object_refs_router
+from nexus.api.routes.oracle import router as oracle_router
 from nexus.api.routes.playback import router as playback_router
 from nexus.api.routes.podcasts import router as podcasts_router
 from nexus.api.routes.search import router as search_router
@@ -46,10 +52,16 @@ def create_api_router(include_test_routes: bool = False) -> APIRouter:
     api_router.include_router(libraries_router, tags=["libraries"])
     api_router.include_router(library_intelligence_router, tags=["library-intelligence"])
     api_router.include_router(media_router, tags=["media"])
+    api_router.include_router(notes_router, tags=["notes"])
+    api_router.include_router(object_refs_router, tags=["object-refs"])
+    api_router.include_router(object_links_router, tags=["object-links"])
+    api_router.include_router(message_context_items_router, tags=["message-context-items"])
     api_router.include_router(highlights_router, tags=["highlights"])
     api_router.include_router(billing_router, tags=["billing"])
     api_router.include_router(conversations_router, tags=["conversations"])
+    api_router.include_router(contributors_router, tags=["contributors"])
     api_router.include_router(chat_runs_router, tags=["chat-runs"])
+    api_router.include_router(oracle_router, tags=["oracle"])
     api_router.include_router(models_router, tags=["models"])
     api_router.include_router(keys_router, tags=["keys"])
     api_router.include_router(browse_router, tags=["browse"])

@@ -12,6 +12,7 @@ import {
   Plus,
   Search,
   Settings,
+  Sparkles,
 } from "lucide-react";
 import Link from "next/link";
 import { useWorkspaceStore } from "@/lib/workspace/store";
@@ -50,6 +51,8 @@ export default function Navbar({ onToggle }: NavbarProps) {
   const chatsActive =
     currentPathname === "/conversations" || currentPathname.startsWith("/conversations/");
   const searchActive = currentPathname === "/search";
+  const oracleActive =
+    currentPathname === "/oracle" || currentPathname.startsWith("/oracle/");
   const settingsActive =
     currentPathname === "/settings" || currentPathname.startsWith("/settings/");
 
@@ -154,6 +157,16 @@ export default function Navbar({ onToggle }: NavbarProps) {
           </span>
           {!collapsed && <span className={styles.label}>Search</span>}
         </a>
+        <Link
+          href="/oracle"
+          className={`${styles.navItem} ${oracleActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/oracle")}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <Sparkles size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Oracle</span>}
+        </Link>
         <a
           href="/settings"
           className={`${styles.navItem} ${settingsActive ? styles.active : ""}`}

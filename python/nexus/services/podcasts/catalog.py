@@ -9,6 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
@@ -30,6 +31,11 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionListItemOut,
     PodcastSubscriptionStatusOut,
     PodcastSubscriptionVisibleLibraryOut,
+)
+from nexus.services.contributor_credits import (
+    load_contributor_credits_for_podcasts,
+    replace_podcast_contributor_credits,
+    upstream_contributor_credit_previews_for_names,
 )
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
@@ -70,12 +76,22 @@ def discover_podcasts(
         if podcast_id is None:
             podcast_id = _select_podcast_id_by_feed_url(db, feed_url)
 
+        contributors = []
+        raw_author = str(row.get("author") or "").strip()
+        if raw_author:
+            contributors = upstream_contributor_credit_previews_for_names(
+                db,
+                [raw_author],
+                role="author",
+                source="podcast_index",
+            )
+
         results.append(
             PodcastDiscoveryOut(
                 podcast_id=podcast_id,
                 provider_podcast_id=row["provider_podcast_id"],
                 title=row["title"],
-                author=row["author"],
+                contributors=contributors,
                 feed_url=feed_url,
                 website_url=row["website_url"],
                 image_url=row["image_url"],
@@ -104,7 +120,6 @@ def ensure_podcast(
                         UPDATE podcasts
                         SET
                             title = :title,
-                            author = COALESCE(:author, author),
                             website_url = COALESCE(:website_url, website_url),
                             image_url = COALESCE(:image_url, image_url),
                             description = COALESCE(:description, description),
@@ -115,7 +130,6 @@ def ensure_podcast(
                     ),
                     {
                         "title": normalized_body.title,
-                        "author": normalized_body.author,
                         "website_url": normalized_body.website_url,
                         "image_url": normalized_body.image_url,
                         "description": normalized_body.description,
@@ -123,6 +137,7 @@ def ensure_podcast(
                         "podcast_id": podcast_id,
                     },
                 ).fetchone()
+                _replace_podcast_contributors_from_body(db, row[0], normalized_body)
                 return PodcastEnsureOut(podcast_id=row[0])
 
             podcast_id = _upsert_podcast(db, normalized_body, now=now)
@@ -137,7 +152,6 @@ def ensure_podcast(
                     SET
                         provider_podcast_id = :provider_podcast_id,
                         title = :title,
-                        author = COALESCE(:author, author),
                         feed_url = :feed_url,
                         website_url = COALESCE(:website_url, website_url),
                         image_url = COALESCE(:image_url, image_url),
@@ -150,7 +164,6 @@ def ensure_podcast(
                 {
                     "provider_podcast_id": normalized_body.provider_podcast_id,
                     "title": normalized_body.title,
-                    "author": normalized_body.author,
                     "feed_url": normalized_body.feed_url,
                     "website_url": normalized_body.website_url,
                     "image_url": normalized_body.image_url,
@@ -159,6 +172,7 @@ def ensure_podcast(
                     "podcast_id": podcast_id,
                 },
             ).fetchone()
+            _replace_podcast_contributors_from_body(db, row[0], normalized_body)
             return PodcastEnsureOut(podcast_id=row[0])
 
         podcast_id = _upsert_podcast(db, normalized_body, now=now)
@@ -166,19 +180,22 @@ def ensure_podcast(
     return PodcastEnsureOut(podcast_id=podcast_id)
 
 
-def _podcast_list_item_from_row(row: Any) -> PodcastListItemOut:
+def _podcast_list_item_from_row(
+    row: Any,
+    contributors: list,
+) -> PodcastListItemOut:
     return PodcastListItemOut(
         id=row[0],
         provider=row[1],
         provider_podcast_id=row[2],
         title=row[3],
-        author=row[4],
-        feed_url=row[5],
-        website_url=row[6],
-        image_url=row[7],
-        description=row[8],
-        created_at=row[9],
-        updated_at=row[10],
+        contributors=contributors,
+        feed_url=row[4],
+        website_url=row[5],
+        image_url=row[6],
+        description=row[7],
+        created_at=row[8],
+        updated_at=row[9],
     )
 
 
@@ -324,7 +341,6 @@ def list_subscriptions(
                 p.provider,
                 p.provider_podcast_id,
                 p.title,
-                p.author,
                 p.feed_url,
                 p.website_url,
                 p.image_url,
@@ -343,7 +359,19 @@ def list_subscriptions(
               AND (
                     :has_query IS FALSE
                     OR p.title ILIKE :q_pattern
-                    OR COALESCE(p.author, '') ILIKE :q_pattern
+                    OR EXISTS (
+                        SELECT 1
+                        FROM contributor_credits cc
+                        JOIN contributors c ON c.id = cc.contributor_id
+                        LEFT JOIN contributor_aliases ca ON ca.contributor_id = c.id
+                        WHERE cc.podcast_id = p.id
+                          AND c.status NOT IN ('merged', 'tombstoned')
+                          AND (
+                                cc.credited_name ILIKE :q_pattern
+                                OR c.display_name ILIKE :q_pattern
+                                OR ca.alias ILIKE :q_pattern
+                          )
+                    )
                 )
               AND {filter_sql}
               AND (
@@ -368,10 +396,17 @@ def list_subscriptions(
         ),
         query_params,
     ).fetchall()
+    contributors_by_podcast_id = load_contributor_credits_for_podcasts(
+        db,
+        [row[12] for row in rows],
+    )
     out: list[PodcastSubscriptionListItemOut] = []
     for row in rows:
-        podcast = _podcast_list_item_from_row(row[12:23])
-        visible_libraries_payload = row[25]
+        podcast = _podcast_list_item_from_row(
+            row[12:22],
+            contributors_by_podcast_id.get(row[12], []),
+        )
+        visible_libraries_payload = row[24]
         if isinstance(visible_libraries_payload, str):
             visible_libraries_payload = json.loads(visible_libraries_payload)
         out.append(
@@ -388,8 +423,8 @@ def list_subscriptions(
                 sync_completed_at=row[9],
                 last_synced_at=row[10],
                 updated_at=row[11],
-                unplayed_count=int(row[23] or 0),
-                latest_episode_published_at=row[24],
+                unplayed_count=int(row[22] or 0),
+                latest_episode_published_at=row[23],
                 visible_libraries=[
                     PodcastSubscriptionVisibleLibraryOut(
                         id=item["id"],
@@ -417,7 +452,6 @@ def get_podcast_detail_for_viewer(
                 p.provider,
                 p.provider_podcast_id,
                 p.title,
-                p.author,
                 p.feed_url,
                 p.website_url,
                 p.image_url,
@@ -449,23 +483,27 @@ def get_podcast_detail_for_viewer(
     if row is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
 
-    podcast = _podcast_list_item_from_row(row[0:11])
+    contributors_by_podcast_id = load_contributor_credits_for_podcasts(db, [podcast_id])
+    podcast = _podcast_list_item_from_row(
+        row[0:10],
+        contributors_by_podcast_id.get(podcast_id, []),
+    )
     subscription: PodcastSubscriptionStatusOut | None = None
-    if row[11] is not None:
+    if row[10] is not None:
         subscription = PodcastSubscriptionStatusOut(
-            user_id=row[11],
-            podcast_id=row[12],
-            status=row[13],
-            default_playback_speed=float(row[14]) if row[14] is not None else None,
-            auto_queue=bool(row[15]),
-            sync_status=row[16],
-            sync_error_code=row[17],
-            sync_error_message=row[18],
-            sync_attempts=row[19],
-            sync_started_at=row[20],
-            sync_completed_at=row[21],
-            last_synced_at=row[22],
-            updated_at=row[23],
+            user_id=row[10],
+            podcast_id=row[11],
+            status=row[12],
+            default_playback_speed=float(row[13]) if row[13] is not None else None,
+            auto_queue=bool(row[14]),
+            sync_status=row[15],
+            sync_error_code=row[16],
+            sync_error_message=row[17],
+            sync_attempts=row[18],
+            sync_started_at=row[19],
+            sync_completed_at=row[20],
+            last_synced_at=row[21],
+            updated_at=row[22],
         )
     return PodcastDetailOut(podcast=podcast, subscription=subscription)
 
@@ -613,59 +651,245 @@ def _upsert_podcast(
     *,
     now: datetime,
 ) -> UUID:
-    row = db.execute(
-        text(
-            """
-            INSERT INTO podcasts (
-                provider,
-                provider_podcast_id,
-                title,
-                author,
-                feed_url,
-                website_url,
-                image_url,
-                description,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                :provider,
-                :provider_podcast_id,
-                :title,
-                :author,
-                :feed_url,
-                :website_url,
-                :image_url,
-                :description,
-                :created_at,
-                :updated_at
-            )
-            ON CONFLICT (provider, provider_podcast_id)
-            DO UPDATE SET
-                title = EXCLUDED.title,
-                author = COALESCE(EXCLUDED.author, podcasts.author),
-                feed_url = EXCLUDED.feed_url,
-                website_url = COALESCE(EXCLUDED.website_url, podcasts.website_url),
-                image_url = COALESCE(EXCLUDED.image_url, podcasts.image_url),
-                description = COALESCE(EXCLUDED.description, podcasts.description),
-                updated_at = EXCLUDED.updated_at
-            RETURNING id
-            """
-        ),
-        {
-            "provider": PODCAST_PROVIDER,
-            "provider_podcast_id": body.provider_podcast_id,
-            "title": body.title,
-            "author": body.author,
-            "feed_url": body.feed_url,
-            "website_url": body.website_url,
-            "image_url": body.image_url,
-            "description": body.description,
-            "created_at": now,
-            "updated_at": now,
-        },
-    ).fetchone()
+    existing_id = _select_podcast_id_by_provider_id(db, body.provider_podcast_id)
+    if existing_id is not None:
+        feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
+        if feed_owner_id is not None and feed_owner_id != existing_id:
+            row = db.execute(
+                text(
+                    """
+                    UPDATE podcasts
+                    SET
+                        title = :title,
+                        website_url = COALESCE(:website_url, website_url),
+                        image_url = COALESCE(:image_url, image_url),
+                        description = COALESCE(:description, description),
+                        updated_at = :updated_at
+                    WHERE id = :podcast_id
+                    RETURNING id
+                    """
+                ),
+                {
+                    "podcast_id": existing_id,
+                    "title": body.title,
+                    "website_url": body.website_url,
+                    "image_url": body.image_url,
+                    "description": body.description,
+                    "updated_at": now,
+                },
+            ).fetchone()
+            _replace_podcast_contributors_from_body(db, row[0], body)
+            return row[0]
+
+        row = db.execute(
+            text(
+                """
+                UPDATE podcasts
+                SET
+                    title = :title,
+                    feed_url = :feed_url,
+                    website_url = COALESCE(:website_url, website_url),
+                    image_url = COALESCE(:image_url, image_url),
+                    description = COALESCE(:description, description),
+                    updated_at = :updated_at
+                WHERE id = :podcast_id
+                RETURNING id
+                """
+            ),
+            {
+                "podcast_id": existing_id,
+                "title": body.title,
+                "feed_url": body.feed_url,
+                "website_url": body.website_url,
+                "image_url": body.image_url,
+                "description": body.description,
+                "updated_at": now,
+            },
+        ).fetchone()
+        _replace_podcast_contributors_from_body(db, row[0], body)
+        return row[0]
+
+    feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
+    if feed_owner_id is not None:
+        row = db.execute(
+            text(
+                """
+                UPDATE podcasts
+                SET
+                    provider_podcast_id = :provider_podcast_id,
+                    title = :title,
+                    feed_url = :feed_url,
+                    website_url = COALESCE(:website_url, website_url),
+                    image_url = COALESCE(:image_url, image_url),
+                    description = COALESCE(:description, description),
+                    updated_at = :updated_at
+                WHERE id = :podcast_id
+                RETURNING id
+                """
+            ),
+            {
+                "podcast_id": feed_owner_id,
+                "provider_podcast_id": body.provider_podcast_id,
+                "title": body.title,
+                "feed_url": body.feed_url,
+                "website_url": body.website_url,
+                "image_url": body.image_url,
+                "description": body.description,
+                "updated_at": now,
+            },
+        ).fetchone()
+        _replace_podcast_contributors_from_body(db, row[0], body)
+        return row[0]
+
+    try:
+        with db.begin_nested():
+            row = db.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (
+                        provider,
+                        provider_podcast_id,
+                        title,
+                        feed_url,
+                        website_url,
+                        image_url,
+                        description,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        :provider,
+                        :provider_podcast_id,
+                        :title,
+                        :feed_url,
+                        :website_url,
+                        :image_url,
+                        :description,
+                        :created_at,
+                        :updated_at
+                    )
+                    RETURNING id
+                    """
+                ),
+                {
+                    "provider": PODCAST_PROVIDER,
+                    "provider_podcast_id": body.provider_podcast_id,
+                    "title": body.title,
+                    "feed_url": body.feed_url,
+                    "website_url": body.website_url,
+                    "image_url": body.image_url,
+                    "description": body.description,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            ).fetchone()
+    except IntegrityError as exc:
+        if not _is_podcast_identity_conflict(exc):
+            raise
+        existing_id = _select_podcast_id_by_provider_id(db, body.provider_podcast_id)
+        if existing_id is not None:
+            feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
+            if feed_owner_id is not None and feed_owner_id != existing_id:
+                row = db.execute(
+                    text(
+                        """
+                        UPDATE podcasts
+                        SET
+                            title = :title,
+                            website_url = COALESCE(:website_url, website_url),
+                            image_url = COALESCE(:image_url, image_url),
+                            description = COALESCE(:description, description),
+                            updated_at = :updated_at
+                        WHERE id = :podcast_id
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "podcast_id": existing_id,
+                        "title": body.title,
+                        "website_url": body.website_url,
+                        "image_url": body.image_url,
+                        "description": body.description,
+                        "updated_at": now,
+                    },
+                ).fetchone()
+            else:
+                row = db.execute(
+                    text(
+                        """
+                        UPDATE podcasts
+                        SET
+                            title = :title,
+                            feed_url = :feed_url,
+                            website_url = COALESCE(:website_url, website_url),
+                            image_url = COALESCE(:image_url, image_url),
+                            description = COALESCE(:description, description),
+                            updated_at = :updated_at
+                        WHERE id = :podcast_id
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "podcast_id": existing_id,
+                        "title": body.title,
+                        "feed_url": body.feed_url,
+                        "website_url": body.website_url,
+                        "image_url": body.image_url,
+                        "description": body.description,
+                        "updated_at": now,
+                    },
+                ).fetchone()
+            _replace_podcast_contributors_from_body(db, row[0], body)
+            return row[0]
+
+        feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
+        if feed_owner_id is None:
+            raise
+        row = db.execute(
+            text(
+                """
+                UPDATE podcasts
+                SET
+                    provider_podcast_id = :provider_podcast_id,
+                    title = :title,
+                    feed_url = :feed_url,
+                    website_url = COALESCE(:website_url, website_url),
+                    image_url = COALESCE(:image_url, image_url),
+                    description = COALESCE(:description, description),
+                    updated_at = :updated_at
+                WHERE id = :podcast_id
+                RETURNING id
+                """
+            ),
+            {
+                "podcast_id": feed_owner_id,
+                "provider_podcast_id": body.provider_podcast_id,
+                "title": body.title,
+                "feed_url": body.feed_url,
+                "website_url": body.website_url,
+                "image_url": body.image_url,
+                "description": body.description,
+                "updated_at": now,
+            },
+        ).fetchone()
+        _replace_podcast_contributors_from_body(db, row[0], body)
+        return row[0]
+
+    _replace_podcast_contributors_from_body(db, row[0], body)
     return row[0]
+
+
+def _replace_podcast_contributors_from_body(
+    db: Session,
+    podcast_id: UUID,
+    body: PodcastSubscribeRequest | PodcastEnsureRequest,
+) -> None:
+    replace_podcast_contributor_credits(
+        db,
+        podcast_id=podcast_id,
+        credits=[credit.model_dump(mode="json") for credit in body.contributors],
+        source=PODCAST_PROVIDER,
+    )
 
 
 def _select_podcast_id_by_provider_id(db: Session, provider_podcast_id: str) -> UUID | None:
@@ -702,6 +926,20 @@ def _select_podcast_id_by_feed_url(db: Session, normalized_feed_url: str) -> UUI
     if row is None:
         return None
     return row[0]
+
+
+def _is_podcast_identity_conflict(exc: IntegrityError) -> bool:
+    orig = getattr(exc, "orig", None)
+    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    if constraint_name:
+        return constraint_name in {
+            "uq_podcasts_provider_provider_podcast_id",
+            "uq_podcasts_feed_url",
+        }
+    message = str(orig or exc)
+    return (
+        "uq_podcasts_provider_provider_podcast_id" in message or "uq_podcasts_feed_url" in message
+    )
 
 
 def _validate_and_normalize_feed_url(feed_url: str) -> str:

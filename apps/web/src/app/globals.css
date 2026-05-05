@@ -154,3 +154,19 @@ textarea {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-muted);
 }
+
+/* === Black Forest Oracle theme — scoped, route-local === */
+[data-theme="oracle"] {
+  --oracle-bg: #14110f;
+  --oracle-bg-elevated: #1c1814;
+  --oracle-fg: #ece1c8;
+  --oracle-fg-muted: #b6a482;
+  --oracle-rule: #4a3b2a;
+  --oracle-gold: #c39a4d;
+  --oracle-cream: #f3e9d0;
+  --oracle-maroon: #6b2a2a;
+  --oracle-marginalia-fg: #8e7848;
+  --font-oracle-body: var(--font-eb-garamond), Georgia, "Times New Roman", serif;
+  --font-oracle-display: var(--font-im-fell), "EB Garamond", Georgia, serif;
+  --font-oracle-fraktur: var(--font-unifraktur), serif;
+}

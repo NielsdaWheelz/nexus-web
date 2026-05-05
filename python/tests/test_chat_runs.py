@@ -1,5 +1,6 @@
 """Integration tests for the durable chat-run HTTP contract."""
 
+import hashlib
 from uuid import UUID, uuid4
 
 import pytest
@@ -7,7 +8,12 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 from nexus.config import clear_settings_cache
-from tests.factories import create_test_conversation, create_test_message, create_test_model
+from tests.factories import (
+    create_searchable_media,
+    create_test_conversation,
+    create_test_message,
+    create_test_model,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -277,6 +283,133 @@ class TestChatRunCreate:
         run_id = UUID(first_data["run"]["id"])
         conversation_id = UUID(first_data["conversation"]["id"])
         _register_run_cleanup(direct_db, run_id, conversation_id)
+
+    def test_idempotency_mismatch_includes_context_evidence_span_ids(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id = create_searchable_media(session, user_id, title="Hash Context Source")
+            row = session.execute(
+                text(
+                    """
+                    SELECT
+                        cc.id,
+                        cc.index_run_id,
+                        cc.source_snapshot_id,
+                        ccp.block_id,
+                        cc.primary_evidence_span_id
+                    FROM content_chunks cc
+                    JOIN content_chunk_parts ccp ON ccp.chunk_id = cc.id
+                    WHERE cc.media_id = :media_id
+                    ORDER BY cc.chunk_idx ASC, ccp.part_idx ASC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id},
+            ).one()
+            second_span_text = "Hash"
+            second_span_id = session.execute(
+                text(
+                    """
+                    INSERT INTO evidence_spans (
+                        media_id,
+                        index_run_id,
+                        source_snapshot_id,
+                        start_block_id,
+                        end_block_id,
+                        start_block_offset,
+                        end_block_offset,
+                        span_text,
+                        span_sha256,
+                        selector,
+                        citation_label,
+                        resolver_kind
+                    )
+                    VALUES (
+                        :media_id,
+                        :index_run_id,
+                        :source_snapshot_id,
+                        :block_id,
+                        :block_id,
+                        0,
+                        4,
+                        :span_text,
+                        :span_sha,
+                        '{}'::jsonb,
+                        'Hash',
+                        'web'
+                    )
+                    RETURNING id
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "index_run_id": row[1],
+                    "source_snapshot_id": row[2],
+                    "block_id": row[3],
+                    "span_text": second_span_text,
+                    "span_sha": hashlib.sha256(second_span_text.encode("utf-8")).hexdigest(),
+                },
+            ).scalar_one()
+            session.commit()
+
+        first_payload = _create_run_payload(
+            model_id,
+            contexts=[
+                {
+                    "type": "content_chunk",
+                    "id": str(row[0]),
+                    "evidence_span_ids": [str(row[4])],
+                }
+            ],
+        )
+        second_payload = _create_run_payload(
+            model_id,
+            contexts=[
+                {
+                    "type": "content_chunk",
+                    "id": str(row[0]),
+                    "evidence_span_ids": [str(second_span_id)],
+                }
+            ],
+        )
+
+        first = _post_chat_run(
+            auth_client,
+            user_id,
+            first_payload,
+            "chat-run-evidence-span-mismatch",
+        )
+        second = _post_chat_run(
+            auth_client,
+            user_id,
+            second_payload,
+            "chat-run-evidence-span-mismatch",
+        )
+
+        assert first.status_code == 200, f"Initial create failed: {first.text}"
+        assert second.status_code == 409, (
+            f"Expected evidence span id change to mismatch, got {second.status_code}: {second.text}"
+        )
+        assert second.json()["error"]["code"] == "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"
+
+        first_data = first.json()["data"]
+        run_id = UUID(first_data["run"]["id"])
+        conversation_id = UUID(first_data["conversation"]["id"])
+        _register_run_cleanup(direct_db, run_id, conversation_id)
+        direct_db.register_cleanup(
+            "message_context_items",
+            "message_id",
+            UUID(first_data["user_message"]["id"]),
+        )
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
 
     def test_conversation_busy_returns_409(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema

@@ -162,7 +162,7 @@ class TestCreatePdfHighlight:
         assert data["exact"] == "page one"
         assert data["author_user_id"] == str(user_id)
         assert data["is_owner"] is True
-        assert data["annotation"] is None
+        assert data["linked_note_blocks"] == []
 
     def test_create_empty_exact_pending_match(self, auth_client, direct_db: DirectSessionManager):
         """Empty exact → match_status=empty_exact, prefix/suffix empty."""
@@ -397,6 +397,33 @@ class TestListPdfHighlights:
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "E_INVALID_REQUEST"
 
+    def test_list_existing_highlights_when_media_not_ready(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = _setup_pdf_media(auth_client, direct_db, user_id)
+
+        create_resp = auth_client.post(
+            f"/media/{media_id}/pdf-highlights",
+            json={"page_number": 1, "quads": SAMPLE_QUADS, "exact": "saved", "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert create_resp.status_code == 201
+
+        with direct_db.session() as session:
+            session.execute(
+                text("UPDATE media SET processing_status = 'pending' WHERE id = :media_id"),
+                {"media_id": media_id},
+            )
+            session.commit()
+
+        resp = auth_client.get(
+            f"/media/{media_id}/pdf-highlights?page_number=1",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["highlights"][0]["exact"] == "saved"
+
     def test_list_deterministic_ordering(self, auth_client, direct_db: DirectSessionManager):
         """Highlights ordered by sort_top ASC, sort_left ASC."""
         user_id = create_test_user_id()
@@ -463,7 +490,6 @@ class TestListPdfHighlights:
 
         conversation_id = uuid4()
         message_id = uuid4()
-        context_id = uuid4()
         with direct_db.session() as session:
             session.execute(
                 text("""
@@ -479,20 +505,25 @@ class TestListPdfHighlights:
                 """),
                 {"id": message_id, "conversation_id": conversation_id},
             )
-            session.execute(
-                text("""
-                    INSERT INTO message_contexts (id, message_id, ordinal, target_type, highlight_id)
-                    VALUES (:id, :message_id, 0, 'highlight', :highlight_id)
-                """),
-                {
-                    "id": context_id,
-                    "message_id": message_id,
-                    "highlight_id": highlight_id,
-                },
-            )
             session.commit()
 
-        direct_db.register_cleanup("message_contexts", "id", context_id)
+        context_resp = auth_client.post(
+            "/message-context-items",
+            json={
+                "message_id": str(message_id),
+                "object_type": "highlight",
+                "object_id": str(highlight_id),
+                "ordinal": 0,
+            },
+            headers=auth_headers(user_id),
+        )
+        assert context_resp.status_code == 201, (
+            f"expected context item creation to succeed, got {context_resp.status_code}: "
+            f"{context_resp.text}"
+        )
+        context_id = context_resp.json()["data"]["id"]
+
+        direct_db.register_cleanup("message_context_items", "id", context_id)
         direct_db.register_cleanup("messages", "id", message_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
@@ -922,8 +953,8 @@ class TestGenericPdfHighlightCoverage:
             ).fetchone()
             assert quads is None
 
-    def test_annotation_on_pdf_highlight(self, auth_client, direct_db: DirectSessionManager):
-        """PUT/DELETE annotation works on PDF highlight."""
+    def test_linked_note_on_pdf_highlight(self, auth_client, direct_db: DirectSessionManager):
+        """Linked note blocks work on PDF highlights."""
         user_id = create_test_user_id()
         media_id = _setup_pdf_media(auth_client, direct_db, user_id)
 
@@ -934,16 +965,29 @@ class TestGenericPdfHighlightCoverage:
         )
         h_id = create_resp.json()["data"]["id"]
 
-        ann_resp = auth_client.put(
-            f"/highlights/{h_id}/annotation",
-            json={"body": "My note"},
+        note_resp = auth_client.post(
+            "/notes/blocks",
+            json={
+                "body_markdown": "My note",
+                "linked_object": {
+                    "object_type": "highlight",
+                    "object_id": h_id,
+                    "relation_type": "note_about",
+                },
+            },
             headers=auth_headers(user_id),
         )
-        assert ann_resp.status_code == 201
-        assert ann_resp.json()["data"]["body"] == "My note"
+        assert note_resp.status_code == 201
+        note_id = note_resp.json()["data"]["id"]
 
-        del_ann = auth_client.delete(
-            f"/highlights/{h_id}/annotation",
+        get_resp = auth_client.get(f"/highlights/{h_id}", headers=auth_headers(user_id))
+        assert get_resp.status_code == 200
+        linked_notes = get_resp.json()["data"]["linked_note_blocks"]
+        assert linked_notes[0]["note_block_id"] == note_id
+        assert linked_notes[0]["body_text"] == "My note"
+
+        del_note = auth_client.delete(
+            f"/notes/blocks/{note_id}",
             headers=auth_headers(user_id),
         )
-        assert del_ann.status_code == 204
+        assert del_note.status_code == 204

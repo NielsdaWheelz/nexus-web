@@ -1,0 +1,38 @@
+.backlinks {
+  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  margin-top: 24px;
+  padding-top: 16px;
+}
+
+.title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin: 0 0 10px;
+}
+
+.list {
+  display: grid;
+  gap: 6px;
+}
+
+.linkRow {
+  align-items: center;
+  border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  border-radius: 8px;
+  color: inherit;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 36px;
+  padding: 7px 9px;
+  text-decoration: none;
+}
+
+.linkRow:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.relation {
+  color: color-mix(in srgb, currentColor 62%, transparent);
+  font-size: 0.78rem;
+}

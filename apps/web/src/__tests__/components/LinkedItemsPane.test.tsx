@@ -1,5 +1,11 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { ComponentProps, RefObject } from "react";
 import LinkedItemsPane from "@/components/LinkedItemsPane";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
@@ -13,15 +19,17 @@ const linkedItemsPaneBaseProps = {
   onDelete: vi.fn(async () => undefined),
   onStartEditBounds: vi.fn(),
   onCancelEditBounds: vi.fn(),
-  onAnnotationSave: vi.fn(async () => undefined),
-  onAnnotationDelete: vi.fn(async () => undefined),
+  onNoteSave: vi.fn(async () => undefined),
+  onNoteDelete: vi.fn(async () => undefined),
   onOpenConversation: vi.fn(),
 } as const;
 
 function getRowButtons(): HTMLButtonElement[] {
   return screen
     .getAllByRole("button")
-    .filter((el) => el.getAttribute("aria-pressed") !== null) as HTMLButtonElement[];
+    .filter(
+      (el) => el.getAttribute("aria-pressed") !== null,
+    ) as HTMLButtonElement[];
 }
 
 function createScrollableContent(innerHtml: string): {
@@ -58,16 +66,19 @@ function mockViewportAnchors(
   contentRoot: HTMLDivElement,
   anchors: Record<string, { absoluteTop: number; height?: number }>,
   viewportTop = 100,
-  viewportHeight = 320
+  viewportHeight = 320,
 ) {
   vi.spyOn(host, "getBoundingClientRect").mockImplementation(
-    () => new DOMRect(0, viewportTop, 400, viewportHeight)
+    () => new DOMRect(0, viewportTop, 400, viewportHeight),
   );
 
-  for (const [testId, { absoluteTop, height = 16 }] of Object.entries(anchors)) {
+  for (const [testId, { absoluteTop, height = 16 }] of Object.entries(
+    anchors,
+  )) {
     const anchor = within(contentRoot).getByTestId(testId);
     vi.spyOn(anchor, "getBoundingClientRect").mockImplementation(
-      () => new DOMRect(0, viewportTop + absoluteTop - host.scrollTop, 80, height)
+      () =>
+        new DOMRect(0, viewportTop + absoluteTop - host.scrollTop, 80, height),
     );
   }
 }
@@ -76,7 +87,7 @@ function renderLinkedItemsPane(props: ComponentProps<typeof LinkedItemsPane>) {
   return render(
     <FeedbackProvider>
       <LinkedItemsPane {...props} />
-    </FeedbackProvider>
+    </FeedbackProvider>,
   );
 }
 
@@ -93,7 +104,7 @@ describe("LinkedItemsPane", () => {
       [
         '<p><span data-highlight-anchor="a-late"></span>late token ',
         '<span data-highlight-anchor="z-early"></span>early token</p>',
-      ].join("")
+      ].join(""),
     );
     host.setAttribute("data-test-scroll-host", "true");
 
@@ -102,7 +113,7 @@ describe("LinkedItemsPane", () => {
         id: "a-late",
         exact: "late token",
         color: "yellow" as const,
-        annotation: null,
+        linked_note_blocks: [],
         anchor: {
           start_offset: 10,
           end_offset: 19,
@@ -113,7 +124,7 @@ describe("LinkedItemsPane", () => {
         id: "z-early",
         exact: "early token",
         color: "green" as const,
-        annotation: null,
+        linked_note_blocks: [],
         anchor: {
           start_offset: 1,
           end_offset: 10,
@@ -142,7 +153,7 @@ describe("LinkedItemsPane", () => {
 
   it("scrolls to active-highlight segments when anchor marker is absent", async () => {
     const { host, contentRef, contentRoot } = createScrollableContent(
-      '<p><span data-active-highlight-ids="pdf-h1" data-testid="active-highlight-segment">pdf target</span></p>'
+      '<p><span data-active-highlight-ids="pdf-h1" data-testid="active-highlight-segment">pdf target</span></p>',
     );
     host.setAttribute("data-test-scroll-host", "true");
     const segment = within(contentRoot).getByTestId("active-highlight-segment");
@@ -157,7 +168,7 @@ describe("LinkedItemsPane", () => {
           id: "pdf-h1",
           exact: "pdf target",
           color: "yellow",
-          annotation: null,
+          linked_note_blocks: [],
           anchor: {
             start_offset: 0,
             end_offset: 10,
@@ -186,7 +197,7 @@ describe("LinkedItemsPane", () => {
         '<p><span data-highlight-anchor="above-h" data-testid="anchor-above"></span>above excerpt</p>',
         '<p><span data-highlight-anchor="in-view-h" data-testid="anchor-in-view"></span>current excerpt</p>',
         '<p><span data-highlight-anchor="below-h" data-testid="anchor-below"></span>below excerpt</p>',
-      ].join("")
+      ].join(""),
     );
     host.scrollTop = 200;
     mockViewportAnchors(host, contentRoot, {
@@ -202,7 +213,7 @@ describe("LinkedItemsPane", () => {
           id: "above-h",
           exact: "above excerpt",
           color: "yellow",
-          annotation: null,
+          linked_note_blocks: [],
           anchor: {
             start_offset: 0,
             end_offset: 12,
@@ -213,7 +224,7 @@ describe("LinkedItemsPane", () => {
           id: "in-view-h",
           exact: "current excerpt",
           color: "blue",
-          annotation: null,
+          linked_note_blocks: [],
           anchor: {
             start_offset: 20,
             end_offset: 35,
@@ -224,7 +235,7 @@ describe("LinkedItemsPane", () => {
           id: "below-h",
           exact: "below excerpt",
           color: "blue",
-          annotation: null,
+          linked_note_blocks: [],
           anchor: {
             start_offset: 40,
             end_offset: 53,
@@ -243,11 +254,17 @@ describe("LinkedItemsPane", () => {
     });
 
     expect(screen.getByTestId("linked-item-row-in-view-h")).toBeInTheDocument();
-    expect(screen.queryByTestId("linked-item-row-above-h")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("linked-item-row-below-h")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("linked-item-row-above-h"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("linked-item-row-below-h"),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1 above" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1 below" })).toBeInTheDocument();
-    expect(screen.queryByText("No highlights in view.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("No highlights in view."),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(getRowButtons()[0]);
     expect(onHighlightClick).toHaveBeenCalledWith("in-view-h");
@@ -255,7 +272,7 @@ describe("LinkedItemsPane", () => {
 
   it("keeps collapsed rows compact without inline note, chat, or conversation chrome", async () => {
     const { host, contentRef } = createScrollableContent(
-      '<p><span data-highlight-anchor="compact-h1"></span>compact row preview</p>'
+      '<p><span data-highlight-anchor="compact-h1"></span>compact row preview</p>',
     );
     host.setAttribute("data-test-scroll-host", "true");
 
@@ -266,10 +283,13 @@ describe("LinkedItemsPane", () => {
           id: "compact-h1",
           exact: "compact row preview",
           color: "yellow",
-          annotation: {
-            id: "annotation-1",
-            body: "This note should stay hidden while the row is collapsed.",
-          },
+          linked_note_blocks: [
+            {
+              note_block_id: "note-1",
+              body_text:
+                "This note should stay hidden while the row is collapsed.",
+            },
+          ],
           linked_conversations: [
             {
               conversation_id: "conversation-1",
@@ -296,17 +316,23 @@ describe("LinkedItemsPane", () => {
     const row = screen.getByTestId("linked-item-row-compact-h1");
     expect(within(row).getByText("compact row preview")).toBeInTheDocument();
     expect(
-      within(row).queryByText("This note should stay hidden while the row is collapsed.")
+      within(row).queryByText(
+        "This note should stay hidden while the row is collapsed.",
+      ),
     ).not.toBeInTheDocument();
     expect(within(row).queryByText("Add a note…")).not.toBeInTheDocument();
     expect(within(row).queryByText("Context thread")).not.toBeInTheDocument();
-    expect(within(row).queryByRole("button", { name: "Send to chat" })).not.toBeInTheDocument();
-    expect(within(row).queryByRole("button", { name: "Actions" })).not.toBeInTheDocument();
+    expect(
+      within(row).queryByRole("button", { name: "Send to chat" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(row).queryByRole("button", { name: "Actions" }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides the expanded ask-in-chat action when quote chat is unavailable", async () => {
     const { host, contentRef } = createScrollableContent(
-      '<p><span data-highlight-anchor="chat-disabled-h"></span>chat gated preview</p>'
+      '<p><span data-highlight-anchor="chat-disabled-h"></span>chat gated preview</p>',
     );
     host.setAttribute("data-test-scroll-host", "true");
 
@@ -318,7 +344,7 @@ describe("LinkedItemsPane", () => {
           id: "chat-disabled-h",
           exact: "chat gated preview",
           color: "yellow",
-          annotation: null,
+          linked_note_blocks: [],
           anchor: {
             start_offset: 0,
             end_offset: 18,
@@ -337,7 +363,127 @@ describe("LinkedItemsPane", () => {
     });
 
     const row = screen.getByTestId("linked-item-row-chat-disabled-h");
-    expect(within(row).queryByRole("button", { name: "Ask in chat" })).not.toBeInTheDocument();
+    expect(
+      within(row).queryByRole("button", { name: "Ask in chat" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders all linked notes on the focused highlight", async () => {
+    const { host, contentRef } = createScrollableContent(
+      '<p><span data-highlight-anchor="multi-note-h"></span>linked note preview</p>',
+    );
+    host.setAttribute("data-test-scroll-host", "true");
+
+    renderLinkedItemsPane({
+      ...linkedItemsPaneBaseProps,
+      highlights: [
+        {
+          id: "multi-note-h",
+          exact: "linked note preview",
+          color: "yellow",
+          linked_note_blocks: [
+            { note_block_id: "note-1", body_text: "First linked note." },
+            { note_block_id: "note-2", body_text: "Second linked note." },
+          ],
+          anchor: {
+            start_offset: 0,
+            end_offset: 19,
+          },
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ] as never,
+      contentRef,
+      focusedId: "multi-note-h",
+      isMobile: false,
+      onHighlightClick: vi.fn(),
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("First linked note.")).toBeInTheDocument();
+      expect(screen.getByText("Second linked note.")).toBeInTheDocument();
+    });
+  });
+
+  it("lets shared readers edit their own empty linked notes without highlight actions", async () => {
+    const { host, contentRef } = createScrollableContent(
+      '<p><span data-highlight-anchor="empty-note-h"></span>empty note preview</p>',
+    );
+    host.setAttribute("data-test-scroll-host", "true");
+
+    renderLinkedItemsPane({
+      ...linkedItemsPaneBaseProps,
+      highlights: [
+        {
+          id: "empty-note-h",
+          exact: "empty note preview",
+          color: "yellow",
+          is_owner: false,
+          linked_note_blocks: [
+            {
+              note_block_id: "empty-note-1",
+              body_text: "   ",
+              body_markdown: " ",
+              body_pm_json: { type: "paragraph" },
+            },
+          ],
+          anchor: {
+            start_offset: 0,
+            end_offset: 18,
+          },
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ] as never,
+      contentRef,
+      focusedId: "empty-note-h",
+      isMobile: true,
+      onHighlightClick: vi.fn(),
+    });
+
+    const row = await screen.findByTestId("linked-item-row-empty-note-h");
+    expect(within(row).queryByTitle("Has note")).not.toBeInTheDocument();
+    expect(
+      await within(row).findByRole("textbox", { name: "Highlight note" }),
+    ).toBeVisible();
+    expect(
+      within(row).queryByRole("button", { name: "Actions" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lets shared readers create their own linked note without highlight actions", async () => {
+    const { host, contentRef } = createScrollableContent(
+      '<p><span data-highlight-anchor="shared-new-note-h"></span>shared note preview</p>',
+    );
+    host.setAttribute("data-test-scroll-host", "true");
+
+    renderLinkedItemsPane({
+      ...linkedItemsPaneBaseProps,
+      highlights: [
+        {
+          id: "shared-new-note-h",
+          exact: "shared note preview",
+          color: "yellow",
+          is_owner: false,
+          linked_note_blocks: [],
+          anchor: {
+            start_offset: 0,
+            end_offset: 19,
+          },
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ] as never,
+      contentRef,
+      focusedId: "shared-new-note-h",
+      isMobile: true,
+      onHighlightClick: vi.fn(),
+    });
+
+    const row = await screen.findByTestId("linked-item-row-shared-new-note-h");
+    expect(
+      await within(row).findByRole("textbox", { name: "Highlight note" }),
+    ).toBeVisible();
+    expect(
+      within(row).queryByRole("button", { name: "Actions" }),
+    ).not.toBeInTheDocument();
   });
 
   it("on mobile, swaps rows as highlights move into and out of the reader viewport", async () => {
@@ -346,7 +492,7 @@ describe("LinkedItemsPane", () => {
         '<p><span data-highlight-anchor="above-h" data-testid="scroll-anchor-above"></span>above excerpt</p>',
         '<p><span data-highlight-anchor="mid-h" data-testid="scroll-anchor-mid"></span>mid excerpt</p>',
         '<p><span data-highlight-anchor="lower-h" data-testid="scroll-anchor-lower"></span>lower excerpt</p>',
-      ].join("")
+      ].join(""),
     );
     host.scrollTop = 200;
     mockViewportAnchors(host, contentRoot, {
@@ -362,7 +508,7 @@ describe("LinkedItemsPane", () => {
           id: "above-h",
           exact: "above excerpt",
           color: "yellow",
-          annotation: null,
+          linked_note_blocks: [],
           anchor: {
             start_offset: 0,
             end_offset: 12,
@@ -373,7 +519,7 @@ describe("LinkedItemsPane", () => {
           id: "mid-h",
           exact: "mid excerpt",
           color: "green",
-          annotation: null,
+          linked_note_blocks: [],
           anchor: {
             start_offset: 20,
             end_offset: 31,
@@ -384,7 +530,7 @@ describe("LinkedItemsPane", () => {
           id: "lower-h",
           exact: "lower excerpt",
           color: "blue",
-          annotation: null,
+          linked_note_blocks: [],
           anchor: {
             start_offset: 40,
             end_offset: 53,
@@ -402,7 +548,9 @@ describe("LinkedItemsPane", () => {
       expect(screen.getByTestId("linked-item-row-mid-h")).toBeInTheDocument();
     });
 
-    expect(screen.queryByTestId("linked-item-row-lower-h")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("linked-item-row-lower-h"),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1 above" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1 below" })).toBeInTheDocument();
 
@@ -411,15 +559,24 @@ describe("LinkedItemsPane", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("linked-item-row-lower-h")).toBeInTheDocument();
-      expect(screen.queryByTestId("linked-item-row-mid-h")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("linked-item-row-mid-h"),
+      ).not.toBeInTheDocument();
     });
 
     expect(
-      within(screen.getByTestId("linked-item-row-lower-h")).getByRole("button", { pressed: false })
+      within(screen.getByTestId("linked-item-row-lower-h")).getByRole(
+        "button",
+        { pressed: false },
+      ),
     ).toHaveTextContent("lower excerpt");
-    expect(screen.queryByRole("button", { pressed: true })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { pressed: true }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "2 above" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "1 below" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "1 below" }),
+    ).not.toBeInTheDocument();
   });
 
   it("on mobile, shows No highlights in view when the contextual set is entirely offscreen", async () => {
@@ -428,7 +585,7 @@ describe("LinkedItemsPane", () => {
         '<p><span data-highlight-anchor="far-above-h" data-testid="empty-anchor-above"></span>far above excerpt</p>',
         '<p><span data-highlight-anchor="far-below-h1" data-testid="empty-anchor-below-1"></span>far below excerpt 1</p>',
         '<p><span data-highlight-anchor="far-below-h2" data-testid="empty-anchor-below-2"></span>far below excerpt 2</p>',
-      ].join("")
+      ].join(""),
     );
     host.scrollTop = 300;
     mockViewportAnchors(host, contentRoot, {
@@ -444,7 +601,7 @@ describe("LinkedItemsPane", () => {
           id: "far-above-h",
           exact: "far above excerpt",
           color: "yellow",
-          annotation: null,
+          linked_note_blocks: [],
           anchor: {
             start_offset: 0,
             end_offset: 17,
@@ -455,7 +612,7 @@ describe("LinkedItemsPane", () => {
           id: "far-below-h1",
           exact: "far below excerpt 1",
           color: "green",
-          annotation: null,
+          linked_note_blocks: [],
           anchor: {
             start_offset: 20,
             end_offset: 38,
@@ -466,7 +623,7 @@ describe("LinkedItemsPane", () => {
           id: "far-below-h2",
           exact: "far below excerpt 2",
           color: "blue",
-          annotation: null,
+          linked_note_blocks: [],
           anchor: {
             start_offset: 40,
             end_offset: 58,
@@ -485,9 +642,15 @@ describe("LinkedItemsPane", () => {
     });
 
     expect(getRowButtons()).toHaveLength(0);
-    expect(screen.queryByTestId("linked-item-row-far-above-h")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("linked-item-row-far-below-h1")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("linked-item-row-far-below-h2")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("linked-item-row-far-above-h"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("linked-item-row-far-below-h1"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("linked-item-row-far-below-h2"),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1 above" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "2 below" })).toBeInTheDocument();
   });
@@ -497,7 +660,7 @@ describe("LinkedItemsPane", () => {
       [
         '<p><span data-highlight-anchor="h-b" data-testid="stable-anchor-b"></span>row b ',
         '<span data-highlight-anchor="h-a" data-testid="stable-anchor-a"></span>row a</p>',
-      ].join("")
+      ].join(""),
     );
     host.scrollTop = 0;
     mockViewportAnchors(host, contentRoot, {
@@ -512,7 +675,7 @@ describe("LinkedItemsPane", () => {
           id: "h-b",
           exact: "row b",
           color: "yellow",
-          annotation: null,
+          linked_note_blocks: [],
           anchor: {
             start_offset: 100,
             end_offset: 120,
@@ -525,7 +688,7 @@ describe("LinkedItemsPane", () => {
           id: "h-a",
           exact: "row a",
           color: "yellow",
-          annotation: null,
+          linked_note_blocks: [],
           anchor: {
             start_offset: 100,
             end_offset: 120,

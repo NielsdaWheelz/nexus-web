@@ -41,7 +41,6 @@ class TestEnrichMetadata:
                         provider,
                         provider_podcast_id,
                         title,
-                        author,
                         feed_url
                     )
                     VALUES (
@@ -49,7 +48,6 @@ class TestEnrichMetadata:
                         'podcast_index',
                         :provider_podcast_id,
                         :title,
-                        :author,
                         :feed_url
                     )
                     """
@@ -58,7 +56,6 @@ class TestEnrichMetadata:
                     "id": podcast_id,
                     "provider_podcast_id": f"enrich-podcast-{uuid4()}",
                     "title": "Systems Show",
-                    "author": "Podcast Author",
                     "feed_url": f"https://feeds.example.com/{podcast_id}.xml",
                 },
             )
@@ -165,10 +162,10 @@ class TestEnrichMetadata:
             author_rows = session.execute(
                 text(
                     """
-                    SELECT name
-                    FROM media_authors
+                    SELECT credited_name
+                    FROM contributor_credits
                     WHERE media_id = :media_id
-                    ORDER BY sort_order ASC
+                    ORDER BY ordinal ASC
                     """
                 ),
                 {"media_id": media_id},
@@ -286,10 +283,10 @@ class TestEnrichMetadata:
             author_rows = session.execute(
                 text(
                     """
-                    SELECT name
-                    FROM media_authors
+                    SELECT credited_name
+                    FROM contributor_credits
                     WHERE media_id = :media_id
-                    ORDER BY sort_order ASC
+                    ORDER BY ordinal ASC
                     """
                 ),
                 {"media_id": media_id},

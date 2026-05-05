@@ -24,6 +24,7 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "reconcile_stale_ingest_media_job",
         "sync_gutenberg_catalog_job",
         "backfill_default_library_closure_job",
+        "oracle_reading_generate",
     }
     actual_kinds = set(get_default_registry().keys())
     assert actual_kinds == expected_kinds, (

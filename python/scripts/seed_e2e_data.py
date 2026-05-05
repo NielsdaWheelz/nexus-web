@@ -35,17 +35,23 @@ import httpx
 from sqlalchemy import select, text
 
 from nexus.config import get_settings
-from nexus.db.models import Annotation, FailureStage, Fragment, Media, ProcessingStatus
+from nexus.db.models import FailureStage, Fragment, Media, ProcessingStatus
 from nexus.db.session import create_session_factory
 from nexus.schemas.highlights import CreateHighlightRequest
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.content_indexing import (
+    rebuild_fragment_content_index,
+    rebuild_transcript_content_index,
+)
 from nexus.services.epub_ingest import EpubExtractionError
+from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.highlights import create_highlight_for_fragment
 from nexus.services.media import create_or_reuse_youtube_video, create_provisional_web_article
+from nexus.services.notes import set_highlight_note_body
 from nexus.services.pdf_ingest import PdfExtractionError
 from nexus.services.upload import confirm_ingest, init_upload
 from nexus.tasks.ingest_epub import run_epub_ingest_sync
-from nexus.tasks.ingest_pdf import run_pdf_ingest_sync
+from nexus.tasks.ingest_pdf import _index_pdf_evidence, run_pdf_ingest_sync
 
 E2E_USER_EMAIL = os.getenv("E2E_USER_EMAIL", "e2e-test@nexus.local")
 PDF_PAGE_COUNT = 80
@@ -90,7 +96,7 @@ EPUB_CHAPTERS = [
     {
         "title": "Chapter 2: Core Concepts",
         "body": "This chapter covers core concepts for E2E testing. "
-        "Highlights and annotations should work across chapter boundaries. "
+        "Highlights and notes should work across chapter boundaries. "
         "Navigation between chapters is a key feature to verify.",
     },
     {
@@ -560,18 +566,72 @@ def _write_reader_resume_seed_file(
 
 
 def _clear_fragment_artifacts(db, media_id: UUID) -> None:
-    """Clear fragments/highlights/annotations attached to media transcript content."""
+    """Clear fragments, highlights, and linked notes attached to media transcript content."""
     db.execute(
         text(
             """
-            DELETE FROM annotations
-            WHERE highlight_id IN (
+            DELETE FROM message_context_items
+            WHERE object_type = 'note_block'
+              AND object_id IN (
+                  SELECT ol.a_id
+                  FROM object_links ol
+                  JOIN highlights h ON h.id = ol.b_id
+                  JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+                  JOIN fragments f ON f.id = hfa.fragment_id
+                  WHERE ol.a_type = 'note_block'
+                    AND ol.b_type = 'highlight'
+                    AND f.media_id = :media_id
+              )
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM note_blocks
+            WHERE id IN (
+                SELECT ol.a_id
+                FROM object_links ol
+                JOIN highlights h ON h.id = ol.b_id
+                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+                JOIN fragments f ON f.id = hfa.fragment_id
+                WHERE ol.a_type = 'note_block'
+                  AND ol.b_type = 'highlight'
+                  AND f.media_id = :media_id
+            )
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM object_links
+            WHERE (a_type = 'note_block' AND a_id IN (
+                SELECT ol.a_id
+                FROM object_links ol
+                JOIN highlights h ON h.id = ol.b_id
+                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+                JOIN fragments f ON f.id = hfa.fragment_id
+                WHERE ol.a_type = 'note_block'
+                  AND ol.b_type = 'highlight'
+                  AND f.media_id = :media_id
+            ))
+               OR (b_type = 'highlight' AND b_id IN (
                 SELECT h.id
                 FROM highlights h
                 JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
                 JOIN fragments f ON f.id = hfa.fragment_id
                 WHERE f.media_id = :media_id
-            )
+            ))
+               OR (a_type = 'highlight' AND a_id IN (
+                SELECT h.id
+                FROM highlights h
+                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+                JOIN fragments f ON f.id = hfa.fragment_id
+                WHERE f.media_id = :media_id
+            ))
             """
         ),
         {"media_id": media_id},
@@ -668,45 +728,84 @@ def _upsert_media_transcript_state(
     transcript_state: str,
     transcript_coverage: str,
     semantic_status: str,
+    active_transcript_version_id: UUID | None = None,
+    last_request_reason: str | None = None,
     last_error_code: str | None = None,
 ) -> None:
     """Keep seeded media aligned with the canonical transcript-state table."""
-    db.execute(
-        text(
-            """
-            INSERT INTO media_transcript_states (
-                media_id,
-                transcript_state,
-                transcript_coverage,
-                semantic_status,
-                last_error_code,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                :media_id,
-                :transcript_state,
-                :transcript_coverage,
-                :semantic_status,
-                :last_error_code,
-                now(),
-                now()
-            )
-            ON CONFLICT (media_id) DO UPDATE
-            SET transcript_state = EXCLUDED.transcript_state,
-                transcript_coverage = EXCLUDED.transcript_coverage,
-                semantic_status = EXCLUDED.semantic_status,
-                last_error_code = EXCLUDED.last_error_code,
-                updated_at = now()
-            """
-        ),
-        {
-            "media_id": media_id,
-            "transcript_state": transcript_state,
-            "transcript_coverage": transcript_coverage,
-            "semantic_status": semantic_status,
-            "last_error_code": last_error_code,
-        },
+    params = {
+        "media_id": media_id,
+        "transcript_state": transcript_state,
+        "transcript_coverage": transcript_coverage,
+        "semantic_status": semantic_status,
+        "active_transcript_version_id": active_transcript_version_id,
+        "last_request_reason": last_request_reason,
+        "last_error_code": last_error_code,
+    }
+    existing = db.execute(
+        text("SELECT media_id FROM media_transcript_states WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    ).scalar_one_or_none()
+    if existing is None:
+        result = db.execute(
+            text(
+                """
+                INSERT INTO media_transcript_states (
+                    media_id,
+                    transcript_state,
+                    transcript_coverage,
+                    semantic_status,
+                    active_transcript_version_id,
+                    last_request_reason,
+                    last_error_code,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :media_id,
+                    :transcript_state,
+                    :transcript_coverage,
+                    :semantic_status,
+                    :active_transcript_version_id,
+                    :last_request_reason,
+                    :last_error_code,
+                    now(),
+                    now()
+                )
+                """
+            ),
+            params,
+        )
+    else:
+        result = db.execute(
+            text(
+                """
+                UPDATE media_transcript_states
+                SET transcript_state = :transcript_state,
+                    transcript_coverage = :transcript_coverage,
+                    semantic_status = :semantic_status,
+                    active_transcript_version_id = :active_transcript_version_id,
+                    last_request_reason = :last_request_reason,
+                    last_error_code = :last_error_code,
+                    updated_at = now()
+                WHERE media_id = :media_id
+                """
+            ),
+            params,
+        )
+    if getattr(result, "rowcount", None) != 1:
+        raise RuntimeError("media_transcript_states seed mutation affected an unexpected row count")
+
+
+def _index_seeded_fragment(db, *, media_id: UUID, fragment: Fragment, source_url: str) -> None:
+    insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(fragment.canonical_text or ""))
+    rebuild_fragment_content_index(
+        db,
+        media_id=media_id,
+        source_kind="web_article",
+        artifact_ref=source_url,
+        fragments=[fragment],
+        reason="e2e_seed",
     )
 
 
@@ -750,6 +849,12 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
         )
         db.add(fragment)
         db.flush()
+        _index_seeded_fragment(
+            db,
+            media_id=media_id,
+            fragment=fragment,
+            source_url=NON_PDF_SOURCE_URL,
+        )
 
         quote_start = canonical_text.index(quote_exact)
         quote_end = quote_start + len(quote_exact)
@@ -777,17 +882,19 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
             ),
         )
 
-        db.add(
-            Annotation(
-                highlight_id=quote_highlight.id,
-                body="Seeded note for non-PDF linked-items e2e.",
-            )
+        set_highlight_note_body(
+            db,
+            user_id,
+            quote_highlight.id,
+            "Seeded note for non-PDF linked-items e2e.",
+            commit=False,
         )
-        db.add(
-            Annotation(
-                highlight_id=focus_highlight.id,
-                body="Seeded focus note for non-PDF linked-items e2e.",
-            )
+        set_highlight_note_body(
+            db,
+            user_id,
+            focus_highlight.id,
+            "Seeded focus note for non-PDF linked-items e2e.",
+            commit=False,
         )
         db.commit()
 
@@ -839,10 +946,111 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
         media.processing_completed_at = now
         media.updated_at = now
 
+        db.execute(
+            text(
+                """
+                UPDATE podcast_transcript_versions
+                SET is_active = false, updated_at = :updated_at
+                WHERE media_id = :media_id
+                """
+            ),
+            {"media_id": transcript_media_id, "updated_at": now},
+        )
+        next_version_no = db.execute(
+            text(
+                """
+                SELECT COALESCE(MAX(version_no), 0) + 1
+                FROM podcast_transcript_versions
+                WHERE media_id = :media_id
+                """
+            ),
+            {"media_id": transcript_media_id},
+        ).scalar_one()
+        transcript_version_id = db.execute(
+            text(
+                """
+                INSERT INTO podcast_transcript_versions (
+                    media_id,
+                    version_no,
+                    transcript_coverage,
+                    is_active,
+                    request_reason,
+                    created_by_user_id,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :media_id,
+                    :version_no,
+                    'full',
+                    true,
+                    'episode_open',
+                    :created_by_user_id,
+                    :created_at,
+                    :updated_at
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "media_id": transcript_media_id,
+                "version_no": int(next_version_no),
+                "created_by_user_id": user_id,
+                "created_at": now,
+                "updated_at": now,
+            },
+        ).scalar_one()
+
+        transcript_segments: list[dict[str, object]] = []
         for idx, segment in enumerate(YOUTUBE_TRANSCRIPT_SEGMENTS):
+            transcript_segments.append(
+                {
+                    "text": segment["canonical_text"],
+                    "speaker_label": segment["speaker_label"],
+                    "t_start_ms": segment["t_start_ms"],
+                    "t_end_ms": segment["t_end_ms"],
+                }
+            )
+            db.execute(
+                text(
+                    """
+                    INSERT INTO podcast_transcript_segments (
+                        transcript_version_id,
+                        media_id,
+                        segment_idx,
+                        canonical_text,
+                        t_start_ms,
+                        t_end_ms,
+                        speaker_label,
+                        created_at
+                    )
+                    VALUES (
+                        :transcript_version_id,
+                        :media_id,
+                        :segment_idx,
+                        :canonical_text,
+                        :t_start_ms,
+                        :t_end_ms,
+                        :speaker_label,
+                        :created_at
+                    )
+                    """
+                ),
+                {
+                    "transcript_version_id": transcript_version_id,
+                    "media_id": transcript_media_id,
+                    "segment_idx": idx,
+                    "canonical_text": segment["canonical_text"],
+                    "t_start_ms": segment["t_start_ms"],
+                    "t_end_ms": segment["t_end_ms"],
+                    "speaker_label": segment["speaker_label"],
+                    "created_at": now,
+                },
+            )
             db.add(
                 Fragment(
                     media_id=transcript_media_id,
+                    transcript_version_id=transcript_version_id,
                     idx=idx,
                     canonical_text=segment["canonical_text"],
                     html_sanitized=f"<p>{escape(segment['canonical_text'])}</p>",
@@ -857,7 +1065,25 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
             media_id=transcript_media_id,
             transcript_state="ready",
             transcript_coverage="full",
+            semantic_status="pending",
+            active_transcript_version_id=transcript_version_id,
+            last_request_reason="episode_open",
+        )
+        rebuild_transcript_content_index(
+            db,
+            media_id=transcript_media_id,
+            transcript_version_id=transcript_version_id,
+            transcript_segments=transcript_segments,
+            reason="e2e_seed",
+        )
+        _upsert_media_transcript_state(
+            db,
+            media_id=transcript_media_id,
+            transcript_state="ready",
+            transcript_coverage="full",
             semantic_status="ready",
+            active_transcript_version_id=transcript_version_id,
+            last_request_reason="episode_open",
         )
         db.commit()
 
@@ -1077,13 +1303,19 @@ def _seed_reader_resume_media(session_factory, user_id: UUID, settings) -> None:
         media.processing_completed_at = now
         media.updated_at = now
 
-        db.add(
-            Fragment(
-                media_id=web_media_id,
-                idx=0,
-                canonical_text=web_canonical_text,
-                html_sanitized=web_html,
-            )
+        fragment = Fragment(
+            media_id=web_media_id,
+            idx=0,
+            canonical_text=web_canonical_text,
+            html_sanitized=web_html,
+        )
+        db.add(fragment)
+        db.flush()
+        _index_seeded_fragment(
+            db,
+            media_id=web_media_id,
+            fragment=fragment,
+            source_url=READER_RESUME_WEB_SOURCE_URL,
         )
         db.commit()
 
@@ -1201,6 +1433,7 @@ def _seed_reader_resume_media(session_factory, user_id: UUID, settings) -> None:
         media.processing_completed_at = now
         media.updated_at = now
         db.commit()
+        _index_pdf_evidence(db, pdf_media_id, "e2e_seed", extraction_result)
 
     _write_reader_resume_seed_file(
         web_media_id=str(web_media_id),
@@ -1307,6 +1540,7 @@ def main() -> None:
         media.processing_completed_at = now
         media.updated_at = now
         db.commit()
+        _index_pdf_evidence(db, media_id, "e2e_seed", extraction_result)
 
     password_filename = f"e2e-password-seed-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.pdf"
     with session_factory() as db:

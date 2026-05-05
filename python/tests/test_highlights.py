@@ -1,4 +1,4 @@
-"""Integration tests for highlight and annotation endpoints.
+"""Integration tests for highlight and linked-note endpoints.
 
 Tests cover scenarios from PR-06 spec (retained) and PR-07 spec (s4 shared-read):
 
@@ -14,7 +14,7 @@ PR-07 (s4 highlight shared-read contract):
 - test_get_highlight_shared_reader_revoked_membership_masked_404
 - test_update_highlight_non_author_masked_404
 - test_delete_highlight_non_author_masked_404
-- test_annotation_upsert_non_author_masked_404
+- test_shared_reader_can_link_own_note_to_readable_highlight
 - test_highlight_out_includes_author_fields
 - test_list_highlights_order_is_deterministic_with_created_at_ties
 """
@@ -116,6 +116,26 @@ def register_fragment_highlight_cleanup(
     direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
 
 
+def create_linked_highlight_note(
+    client: TestClient,
+    user_id: UUID,
+    highlight_id: str,
+    body: str,
+):
+    return client.post(
+        "/notes/blocks",
+        json={
+            "body_markdown": body,
+            "linked_object": {
+                "object_type": "highlight",
+                "object_id": highlight_id,
+                "relation_type": "note_about",
+            },
+        },
+        headers=auth_headers(user_id),
+    )
+
+
 # =============================================================================
 # Test 1: create_highlight_success
 # =============================================================================
@@ -155,7 +175,7 @@ class TestCreateHighlight:
         assert data["exact"] == "Hello"
         assert data["prefix"] == ""
         assert "suffix" in data
-        assert data["annotation"] is None
+        assert data["linked_note_blocks"] == []
 
     def test_create_highlight_out_of_bounds(self, auth_client, direct_db: DirectSessionManager):
         """Test #2: end_offset > len(canonical_text) returns 400."""
@@ -254,23 +274,25 @@ class TestCreateHighlight:
 
 
 # =============================================================================
-# Test 5: list_highlights_includes_annotations
+# Test 5: list_highlights_includes_linked_notes
 # =============================================================================
 
 
 class TestListHighlights:
     """Tests for GET /fragments/{fragment_id}/highlights"""
 
-    def test_list_highlights_includes_annotations(
+    def test_list_highlights_includes_linked_notes(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Test #5: List returns highlight with embedded annotation."""
+        """Test #5: List returns highlight with linked note blocks."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("annotations", "highlight_id", None)  # will clean by FK
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        direct_db.register_cleanup("note_blocks", "user_id", user_id)
+        direct_db.register_cleanup("object_links", "user_id", user_id)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -286,12 +308,9 @@ class TestListHighlights:
         )
         highlight_id = create_resp.json()["data"]["id"]
 
-        # Add annotation
-        auth_client.put(
-            f"/highlights/{highlight_id}/annotation",
-            json={"body": "My note"},
-            headers=auth_headers(user_id),
-        )
+        note_resp = create_linked_highlight_note(auth_client, user_id, highlight_id, "My note")
+        assert note_resp.status_code == 201
+        note_id = note_resp.json()["data"]["id"]
 
         # List highlights
         list_resp = auth_client.get(
@@ -302,8 +321,8 @@ class TestListHighlights:
         assert list_resp.status_code == 200
         highlights = list_resp.json()["data"]["highlights"]
         assert len(highlights) == 1
-        assert highlights[0]["annotation"] is not None
-        assert highlights[0]["annotation"]["body"] == "My note"
+        assert highlights[0]["linked_note_blocks"][0]["note_block_id"] == note_id
+        assert highlights[0]["linked_note_blocks"][0]["body_text"] == "My note"
 
 
 # =============================================================================
@@ -497,16 +516,18 @@ class TestUpdateHighlight:
 class TestDeleteHighlight:
     """Tests for DELETE /highlights/{highlight_id}"""
 
-    def test_delete_highlight_cascades_annotation(
+    def test_delete_highlight_removes_link_edges(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Test #9: Delete highlight removes annotation."""
+        """Test #9: Delete highlight removes generic links to that highlight."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        # Note: No need to register cleanup for highlights/annotations since we delete them
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        direct_db.register_cleanup("note_blocks", "user_id", user_id)
+        direct_db.register_cleanup("object_links", "user_id", user_id)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -514,7 +535,7 @@ class TestDeleteHighlight:
 
         add_media_to_library(auth_client, user_id, media_id)
 
-        # Create highlight with annotation
+        # Create highlight with linked note
         create_resp = auth_client.post(
             f"/fragments/{fragment_id}/highlights",
             json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
@@ -522,11 +543,8 @@ class TestDeleteHighlight:
         )
         highlight_id = create_resp.json()["data"]["id"]
 
-        auth_client.put(
-            f"/highlights/{highlight_id}/annotation",
-            json={"body": "My note"},
-            headers=auth_headers(user_id),
-        )
+        note_resp = create_linked_highlight_note(auth_client, user_id, highlight_id, "My note")
+        assert note_resp.status_code == 201
 
         # Delete highlight
         delete_resp = auth_client.delete(
@@ -542,12 +560,24 @@ class TestDeleteHighlight:
         )
         assert get_resp.status_code == 404
 
+        with direct_db.session() as session:
+            link_count = session.execute(
+                text("""
+                    SELECT COUNT(*)
+                    FROM object_links
+                    WHERE (a_type = 'highlight' AND a_id = :highlight_id)
+                       OR (b_type = 'highlight' AND b_id = :highlight_id)
+                """),
+                {"highlight_id": UUID(highlight_id)},
+            ).scalar_one()
+        assert link_count == 0
 
-class TestDeleteAnnotation:
-    """Tests for DELETE /highlights/{highlight_id}/annotation"""
 
-    def test_delete_annotation_idempotent(self, auth_client, direct_db: DirectSessionManager):
-        """Test #10: Delete annotation when missing returns 204."""
+class TestLegacyAnnotationRouteRemoved:
+    """Legacy annotation routes are not part of the hard cutover."""
+
+    def test_annotation_routes_are_gone(self, auth_client, direct_db: DirectSessionManager):
+        """Test #10: Removed annotation routes return normal not-found responses."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
@@ -560,7 +590,7 @@ class TestDeleteAnnotation:
 
         add_media_to_library(auth_client, user_id, media_id)
 
-        # Create highlight WITHOUT annotation
+        # Create a highlight and verify removed routes stay removed.
         create_resp = auth_client.post(
             f"/fragments/{fragment_id}/highlights",
             json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
@@ -568,12 +598,17 @@ class TestDeleteAnnotation:
         )
         highlight_id = create_resp.json()["data"]["id"]
 
-        # Delete annotation (which doesn't exist) - should still return 204
+        put_resp = auth_client.put(
+            f"/highlights/{highlight_id}/annotation",
+            json={"body": "No legacy route"},
+            headers=auth_headers(user_id),
+        )
         delete_resp = auth_client.delete(
             f"/highlights/{highlight_id}/annotation",
             headers=auth_headers(user_id),
         )
-        assert delete_resp.status_code == 204
+        assert put_resp.status_code == 404
+        assert delete_resp.status_code == 404
 
 
 # =============================================================================
@@ -769,23 +804,23 @@ class TestLibraryMembership:
 
 
 # =============================================================================
-# Test 15: annotation_upsert_returns_correct_status
+# Test 15: linked note creation and update
 # =============================================================================
 
 
-class TestAnnotationUpsert:
-    """Tests for PUT /highlights/{highlight_id}/annotation"""
+class TestLinkedHighlightNotes:
+    """Tests for note blocks linked to highlights."""
 
-    def test_annotation_upsert_returns_correct_status(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Test #15: First PUT returns 201, second PUT returns 200."""
+    def test_linked_note_create_update_delete(self, auth_client, direct_db: DirectSessionManager):
+        """Test #15: Note blocks replace legacy annotation upsert/delete."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("annotations", "highlight_id", None)
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        direct_db.register_cleanup("note_blocks", "user_id", user_id)
+        direct_db.register_cleanup("object_links", "user_id", user_id)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -801,26 +836,34 @@ class TestAnnotationUpsert:
         )
         highlight_id = create_resp.json()["data"]["id"]
 
-        # First PUT - create annotation
-        upsert_resp1 = auth_client.put(
-            f"/highlights/{highlight_id}/annotation",
-            json={"body": "First note"},
+        create_note_resp = create_linked_highlight_note(
+            auth_client, user_id, highlight_id, "First note"
+        )
+        assert create_note_resp.status_code == 201
+        note = create_note_resp.json()["data"]
+        assert note["bodyText"] == "First note"
+
+        update_note_resp = auth_client.patch(
+            f"/notes/blocks/{note['id']}",
+            json={
+                "body_pm_json": {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": "Updated note"}],
+                }
+            },
             headers=auth_headers(user_id),
         )
-        assert upsert_resp1.status_code == 201
-        assert upsert_resp1.json()["data"]["body"] == "First note"
+        assert update_note_resp.status_code == 200
+        assert update_note_resp.json()["data"]["bodyText"] == "Updated note"
 
-        # Second PUT - update annotation
-        upsert_resp2 = auth_client.put(
-            f"/highlights/{highlight_id}/annotation",
-            json={"body": "Updated note"},
+        delete_note_resp = auth_client.delete(
+            f"/notes/blocks/{note['id']}",
             headers=auth_headers(user_id),
         )
-        assert upsert_resp2.status_code == 200
-        assert upsert_resp2.json()["data"]["body"] == "Updated note"
+        assert delete_note_resp.status_code == 204
 
-    def test_annotation_upsert_requires_body(self, auth_client, direct_db: DirectSessionManager):
-        """Test that empty body is rejected."""
+    def test_linked_note_empty_body_is_allowed(self, auth_client, direct_db: DirectSessionManager):
+        """Empty note blocks are legal while users are composing."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
@@ -841,13 +884,13 @@ class TestAnnotationUpsert:
         )
         highlight_id = create_resp.json()["data"]["id"]
 
-        # Try to create annotation with empty body
-        upsert_resp = auth_client.put(
-            f"/highlights/{highlight_id}/annotation",
-            json={"body": ""},
-            headers=auth_headers(user_id),
-        )
-        assert upsert_resp.status_code == 400
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        direct_db.register_cleanup("note_blocks", "user_id", user_id)
+        direct_db.register_cleanup("object_links", "user_id", user_id)
+
+        note_resp = create_linked_highlight_note(auth_client, user_id, highlight_id, "")
+        assert note_resp.status_code == 201
+        assert note_resp.json()["data"]["bodyText"] == ""
 
 
 # =============================================================================
@@ -1413,10 +1456,10 @@ class TestHighlightSharedRead:
         assert del_resp.status_code == 404
         assert del_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
 
-    def test_annotation_upsert_non_author_masked_404(
+    def test_shared_reader_can_link_own_note_to_readable_highlight(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Shared reader cannot PUT annotation on highlight they don't author -> masked 404."""
+        """Shared readers can create their own notes about readable highlights."""
         user_a = create_test_user_id()
         user_b = create_test_user_id()
 
@@ -1432,7 +1475,9 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("annotations", "highlight_id", None)
+        direct_db.register_cleanup("pages", "user_id", user_b)
+        direct_db.register_cleanup("note_blocks", "user_id", user_b)
+        direct_db.register_cleanup("object_links", "user_id", user_b)
         register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
@@ -1448,14 +1493,14 @@ class TestHighlightSharedRead:
         )
         hl_id = resp.json()["data"]["id"]
 
-        # B tries to upsert annotation on A's highlight
-        put_resp = auth_client.put(
-            f"/highlights/{hl_id}/annotation",
-            json={"body": "Not my highlight"},
-            headers=auth_headers(user_b),
+        note_resp = create_linked_highlight_note(
+            auth_client,
+            user_b,
+            hl_id,
+            "My note about a shared highlight",
         )
-        assert put_resp.status_code == 404
-        assert put_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+        assert note_resp.status_code == 201
+        assert note_resp.json()["data"]["bodyText"] == "My note about a shared highlight"
 
     def test_highlight_out_includes_author_fields(
         self, auth_client, direct_db: DirectSessionManager

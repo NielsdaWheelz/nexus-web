@@ -1,7 +1,7 @@
 "use client";
 
 import ContextRow from "@/components/ui/ContextRow";
-import HighlightSnippet from "@/components/ui/HighlightSnippet";
+import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import type { SearchResultRowViewModel } from "@/lib/search/resultRowAdapter";
 import styles from "./SearchResultRow.module.css";
 
@@ -10,16 +10,6 @@ interface SearchResultRowProps {
 }
 
 function renderSnippetContent(row: SearchResultRowViewModel) {
-  if (row.highlightSnippet) {
-    return (
-      <HighlightSnippet
-        prefix={row.highlightSnippet.prefix}
-        exact={row.highlightSnippet.exact}
-        suffix={row.highlightSnippet.suffix}
-      />
-    );
-  }
-
   if (row.snippetSegments.length === 0) {
     return row.primaryText;
   }
@@ -48,9 +38,19 @@ export default function SearchResultRow({ row }: SearchResultRowProps) {
       meta={row.sourceMeta ?? row.scoreLabel}
       metaClassName={styles.meta}
       trailing={<span className={styles.score}>{row.scoreLabel}</span>}
+      actions={
+        row.contributorCredits.length > 0 ? (
+          <ContributorCreditList
+            credits={row.contributorCredits}
+            className={styles.contributors}
+            showRole
+          />
+        ) : undefined
+      }
+      actionsClassName={styles.actions}
       expandedContent={
-        row.annotationBody ? (
-          <div className={styles.annotationBody}>{row.annotationBody}</div>
+        row.noteBody ? (
+          <div className={styles.noteBody}>{row.noteBody}</div>
         ) : undefined
       }
       expandedClassName={styles.expanded}

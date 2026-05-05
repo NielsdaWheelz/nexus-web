@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import json
 import posixpath
 import re
 import time
@@ -25,7 +24,6 @@ from uuid import UUID
 from xml.etree import ElementTree as ET
 
 from lxml.html import HtmlElement, document_fromstring, tostring
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
@@ -39,12 +37,8 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiErrorCode
 from nexus.services.canonicalize import generate_canonical_text
+from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
-from nexus.services.semantic_chunks import (
-    build_text_embeddings,
-    to_pgvector_literal,
-    transcript_embedding_dimensions,
-)
 
 if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
@@ -658,76 +652,15 @@ def extract_epub_artifacts(
 
         db.flush()
 
-        text_fragments = [frag for frag in fragments if frag.canonical_text.strip()]
-        if text_fragments:
-            embedding_model, embeddings = build_text_embeddings(
-                [frag.canonical_text for frag in text_fragments]
-            )
-            embedding_dims = transcript_embedding_dimensions()
-            for chunk_idx, (frag, embedding) in enumerate(
-                zip(text_fragments, embeddings, strict=True)
-            ):
-                db.execute(
-                    text(
-                        f"""
-                        INSERT INTO content_chunks (
-                            media_id,
-                            fragment_id,
-                            transcript_version_id,
-                            chunk_idx,
-                            source_kind,
-                            chunk_text,
-                            start_offset,
-                            end_offset,
-                            t_start_ms,
-                            t_end_ms,
-                            heading,
-                            locator,
-                            embedding,
-                            embedding_vector,
-                            embedding_model,
-                            created_at
-                        )
-                        VALUES (
-                            :media_id,
-                            :fragment_id,
-                            NULL,
-                            :chunk_idx,
-                            'fragment',
-                            :chunk_text,
-                            0,
-                            :end_offset,
-                            NULL,
-                            NULL,
-                            :heading,
-                            CAST(:locator AS jsonb),
-                            CAST(:embedding AS jsonb),
-                            CAST(:embedding_vector AS vector({embedding_dims})),
-                            :embedding_model,
-                            :created_at
-                        )
-                        """
-                    ),
-                    {
-                        "media_id": media_id,
-                        "fragment_id": frag.id,
-                        "chunk_idx": chunk_idx,
-                        "chunk_text": frag.canonical_text,
-                        "end_offset": len(frag.canonical_text),
-                        "heading": _fallback_fragment_label(frag.canonical_text, frag.idx),
-                        "locator": json.dumps(
-                            {
-                                "kind": "fragment",
-                                "fragment_id": str(frag.id),
-                                "fragment_idx": frag.idx,
-                            }
-                        ),
-                        "embedding": json.dumps(embedding),
-                        "embedding_vector": to_pgvector_literal(embedding),
-                        "embedding_model": embedding_model,
-                        "created_at": now,
-                    },
-                )
+        rebuild_fragment_content_index(
+            db,
+            media_id=media_id,
+            source_kind="epub",
+            artifact_ref=media_file.storage_path,
+            fragments=fragments,
+            reason="epub_ingest",
+            language=media.language,
+        )
 
     except Exception as exc:
         db.rollback()

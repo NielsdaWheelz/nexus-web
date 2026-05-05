@@ -18,6 +18,9 @@ import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import ContributorCreditList from "@/components/contributors/ContributorCreditList";
+import { formatContributorCreditSummary } from "@/lib/contributors/formatting";
+import type { ContributorCredit } from "@/lib/contributors/types";
 import {
   SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
   formatPlaybackSpeedLabel,
@@ -88,12 +91,6 @@ interface MediaCapabilities {
   can_retry?: boolean;
 }
 
-interface PodcastEpisodeAuthor {
-  id: string;
-  name: string;
-  role: string | null;
-}
-
 interface PodcastEpisodeMedia {
   id: string;
   kind: string;
@@ -104,13 +101,11 @@ interface PodcastEpisodeMedia {
   transcript_coverage: EpisodeTranscriptCoverage;
   failure_stage: string | null;
   last_error_code: string | null;
-  playback_source:
-    | {
-        kind: "external_audio" | "external_video";
-        stream_url: string;
-        source_url: string;
-      }
-    | null;
+  playback_source: {
+    kind: "external_audio" | "external_video";
+    stream_url: string;
+    source_url: string;
+  } | null;
   listening_state: {
     position_ms: number;
     duration_ms: number | null;
@@ -120,7 +115,7 @@ interface PodcastEpisodeMedia {
   subscription_default_playback_speed?: number | null;
   episode_state: EpisodeState | null;
   capabilities: MediaCapabilities;
-  authors: PodcastEpisodeAuthor[];
+  contributors: ContributorCredit[];
   published_date: string | null;
   publisher: string | null;
   language: string | null;
@@ -207,37 +202,33 @@ function deriveEpisodeState(episode: PodcastEpisodeMedia): EpisodeState {
   return "unplayed";
 }
 
-function episodeMatchesFilter(episodeState: EpisodeState, filter: EpisodeStateFilter): boolean {
+function episodeMatchesFilter(
+  episodeState: EpisodeState,
+  filter: EpisodeStateFilter,
+): boolean {
   return filter === "all" || episodeState === filter;
 }
 
 function getEpisodeProgressPercent(episode: PodcastEpisodeMedia): number {
   const listeningState = episode.listening_state;
-  if (!listeningState || listeningState.duration_ms == null || listeningState.duration_ms <= 0) {
+  if (
+    !listeningState ||
+    listeningState.duration_ms == null ||
+    listeningState.duration_ms <= 0
+  ) {
     return 0;
   }
-  const rawPercent = Math.floor((listeningState.position_ms / listeningState.duration_ms) * 100);
+  const rawPercent = Math.floor(
+    (listeningState.position_ms / listeningState.duration_ms) * 100,
+  );
   return Math.max(0, Math.min(100, rawPercent));
 }
 
 function formatAuthorSummary(
-  authors: PodcastEpisodeAuthor[] | null | undefined,
-  maxNames: number = 1
+  contributors: ContributorCredit[] | null | undefined,
+  maxNames: number = 1,
 ): string | null {
-  if (!Array.isArray(authors) || authors.length === 0) {
-    return null;
-  }
-
-  const names = authors
-    .map((author) => author.name?.trim())
-    .filter((name): name is string => Boolean(name));
-  if (names.length === 0) {
-    return null;
-  }
-  if (names.length <= maxNames) {
-    return names.join(", ");
-  }
-  return `${names.slice(0, maxNames).join(", ")} +${names.length - maxNames}`;
+  return formatContributorCreditSummary(contributors, maxNames);
 }
 
 function canRequestTranscriptForEpisode(episode: PodcastEpisodeMedia): boolean {
@@ -254,8 +245,13 @@ function canRequestTranscriptForEpisode(episode: PodcastEpisodeMedia): boolean {
   );
 }
 
-function shouldPollTranscriptProvisioningForEpisode(episode: PodcastEpisodeMedia): boolean {
-  return episode.transcript_state === "queued" || episode.transcript_state === "running";
+function shouldPollTranscriptProvisioningForEpisode(
+  episode: PodcastEpisodeMedia,
+): boolean {
+  return (
+    episode.transcript_state === "queued" ||
+    episode.transcript_state === "running"
+  );
 }
 
 function applyTranscriptResponseToEpisode(
@@ -263,7 +259,7 @@ function applyTranscriptResponseToEpisode(
   response: Pick<
     TranscriptRequestResult,
     "transcript_state" | "transcript_coverage"
-  >
+  >,
 ): PodcastEpisodeMedia {
   return {
     ...episode,
@@ -275,7 +271,7 @@ function applyTranscriptResponseToEpisode(
 function toTranscriptForecastState(
   response: TranscriptRequestResult,
   reason: TranscriptRequestReason,
-  source: "forecast" | "request"
+  source: "forecast" | "request",
 ): TranscriptRequestForecastState {
   return {
     required_minutes: response.required_minutes,
@@ -287,7 +283,9 @@ function toTranscriptForecastState(
   };
 }
 
-function summarizeBatchTranscriptResults(results: TranscriptBatchResult[]): string | null {
+function summarizeBatchTranscriptResults(
+  results: TranscriptBatchResult[],
+): string | null {
   if (results.length === 0) {
     return null;
   }
@@ -342,13 +340,18 @@ export default function PodcastDetailPaneBody() {
   const { addToQueue, queueItems } = useGlobalPlayer();
   const [detail, setDetail] = useState<PodcastDetailResponse | null>(null);
   const [episodes, setEpisodes] = useState<PodcastEpisodeMedia[]>([]);
-  const [episodeStateFilter, setEpisodeStateFilter] = useState<EpisodeStateFilter>(() => {
-    const stateParam = paneSearchParams.get("state");
-    if (stateParam === "unplayed" || stateParam === "in_progress" || stateParam === "played") {
-      return stateParam;
-    }
-    return "all";
-  });
+  const [episodeStateFilter, setEpisodeStateFilter] =
+    useState<EpisodeStateFilter>(() => {
+      const stateParam = paneSearchParams.get("state");
+      if (
+        stateParam === "unplayed" ||
+        stateParam === "in_progress" ||
+        stateParam === "played"
+      ) {
+        return stateParam;
+      }
+      return "all";
+    });
   const [episodeSort, setEpisodeSort] = useState<EpisodeSort>(() => {
     const sortParam = paneSearchParams.get("sort");
     if (
@@ -360,44 +363,63 @@ export default function PodcastDetailPaneBody() {
     }
     return "newest";
   });
-  const [episodeSearchInput, setEpisodeSearchInput] = useState(() => paneSearchParams.get("q") ?? "");
-  const [episodeSearchQuery, setEpisodeSearchQuery] = useState(() => paneSearchParams.get("q") ?? "");
+  const [episodeSearchInput, setEpisodeSearchInput] = useState(
+    () => paneSearchParams.get("q") ?? "",
+  );
+  const [episodeSearchQuery, setEpisodeSearchQuery] = useState(
+    () => paneSearchParams.get("q") ?? "",
+  );
   const [hasMoreEpisodes, setHasMoreEpisodes] = useState(false);
   const [loadingMoreEpisodes, setLoadingMoreEpisodes] = useState(false);
-  const [availableLibraries, setAvailableLibraries] = useState<LibraryTargetPickerItem[]>([]);
-  const [availableLibrariesLoading, setAvailableLibrariesLoading] = useState(false);
-  const [availableLibrariesLoaded, setAvailableLibrariesLoaded] = useState(false);
-  const [podcastLibraries, setPodcastLibraries] = useState<PodcastLibraryMembership[]>([]);
+  const [availableLibraries, setAvailableLibraries] = useState<
+    LibraryTargetPickerItem[]
+  >([]);
+  const [availableLibrariesLoading, setAvailableLibrariesLoading] =
+    useState(false);
+  const [availableLibrariesLoaded, setAvailableLibrariesLoaded] =
+    useState(false);
+  const [podcastLibraries, setPodcastLibraries] = useState<
+    PodcastLibraryMembership[]
+  >([]);
   const [podcastLibrariesLoading, setPodcastLibrariesLoading] = useState(false);
   const [episodeLibrariesById, setEpisodeLibrariesById] = useState<
     Record<string, LibraryTargetPickerItem[]>
   >({});
-  const [loadingEpisodeLibraryMediaIds, setLoadingEpisodeLibraryMediaIds] = useState<
+  const [loadingEpisodeLibraryMediaIds, setLoadingEpisodeLibraryMediaIds] =
+    useState<Set<string>>(new Set());
+  const [busyMediaIds, setBusyMediaIds] = useState<Set<string>>(new Set());
+  const [busyPodcastLibraryKeys, setBusyPodcastLibraryKeys] = useState<
     Set<string>
   >(new Set());
-  const [busyMediaIds, setBusyMediaIds] = useState<Set<string>>(new Set());
-  const [busyPodcastLibraryKeys, setBusyPodcastLibraryKeys] = useState<Set<string>>(new Set());
-  const [podcastMembershipPanelOpen, setPodcastMembershipPanelOpen] = useState(false);
+  const [podcastMembershipPanelOpen, setPodcastMembershipPanelOpen] =
+    useState(false);
   const [podcastMembershipPanelTriggerEl, setPodcastMembershipPanelTriggerEl] =
     useState<HTMLElement | null>(null);
-  const [episodeMembershipPanelMediaId, setEpisodeMembershipPanelMediaId] = useState<
-    string | null
-  >(null);
+  const [episodeMembershipPanelMediaId, setEpisodeMembershipPanelMediaId] =
+    useState<string | null>(null);
   const [episodeMembershipPanelTriggerEl, setEpisodeMembershipPanelTriggerEl] =
     useState<HTMLElement | null>(null);
-  const [markingEpisodeIds, setMarkingEpisodeIds] = useState<Set<string>>(new Set());
+  const [markingEpisodeIds, setMarkingEpisodeIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
   const [batchTranscriptBusy, setBatchTranscriptBusy] = useState(false);
-  const [batchTranscriptSummary, setBatchTranscriptSummary] = useState<string | null>(null);
-  const [expandedShowNotesMediaIds, setExpandedShowNotesMediaIds] = useState<Set<string>>(new Set());
-  const [expandedTranscriptMediaIds, setExpandedTranscriptMediaIds] = useState<Set<string>>(new Set());
-  const [requestingTranscriptMediaIds, setRequestingTranscriptMediaIds] = useState<Set<string>>(
-    new Set()
-  );
+  const [batchTranscriptSummary, setBatchTranscriptSummary] = useState<
+    string | null
+  >(null);
+  const [expandedShowNotesMediaIds, setExpandedShowNotesMediaIds] = useState<
+    Set<string>
+  >(new Set());
+  const [expandedTranscriptMediaIds, setExpandedTranscriptMediaIds] = useState<
+    Set<string>
+  >(new Set());
+  const [requestingTranscriptMediaIds, setRequestingTranscriptMediaIds] =
+    useState<Set<string>>(new Set());
   const forecastingTranscriptMediaIdsRef = useRef<Set<string>>(new Set());
-  const [transcriptRequestForecastByMediaId, setTranscriptRequestForecastByMediaId] = useState<
-    Record<string, TranscriptRequestForecastState>
-  >({});
+  const [
+    transcriptRequestForecastByMediaId,
+    setTranscriptRequestForecastByMediaId,
+  ] = useState<Record<string, TranscriptRequestForecastState>>({});
   const [transcriptReasonByMediaId, setTranscriptReasonByMediaId] = useState<
     Record<string, TranscriptRequestReason>
   >({});
@@ -408,12 +430,16 @@ export default function PodcastDetailPaneBody() {
   const [refreshSyncBusy, setRefreshSyncBusy] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
-  const [settingsError, setSettingsError] = useState<FeedbackContent | null>(null);
-  const [settingsDefaultSpeed, setSettingsDefaultSpeed] = useState<string>("default");
+  const [settingsError, setSettingsError] = useState<FeedbackContent | null>(
+    null,
+  );
+  const [settingsDefaultSpeed, setSettingsDefaultSpeed] =
+    useState<string>("default");
   const [settingsAutoQueue, setSettingsAutoQueue] = useState(false);
   const [episodesDrawerOpen, setEpisodesDrawerOpen] = useState(false);
   const billingDisabled = billingAccount?.billing_enabled === false;
-  const transcriptionAllowed = (billingAccount?.transcription_usage.limit ?? 0) > 0;
+  const transcriptionAllowed =
+    (billingAccount?.transcription_usage.limit ?? 0) > 0;
 
   useSetPaneTitle(detail?.podcast.title ?? "Podcast");
 
@@ -432,7 +458,7 @@ export default function PodcastDetailPaneBody() {
           isInLibrary: false,
           canAdd: true,
           canRemove: false,
-        }))
+        })),
       );
       setAvailableLibrariesLoaded(true);
     } catch (loadError) {
@@ -461,19 +487,26 @@ export default function PodcastDetailPaneBody() {
         setPodcastLibraries(nextLibraries);
         return nextLibraries;
       } catch (loadError) {
-        setError(toFeedback(loadError, { fallback: "Failed to load podcast libraries" }));
+        setError(
+          toFeedback(loadError, {
+            fallback: "Failed to load podcast libraries",
+          }),
+        );
         setPodcastLibraries([]);
         return [];
       } finally {
         setPodcastLibrariesLoading(false);
       }
     },
-    [podcastId, podcastLibraries, podcastLibrariesLoading]
+    [podcastId, podcastLibraries, podcastLibrariesLoading],
   );
 
   const loadEpisodeLibraries = useCallback(
     async (mediaId: string) => {
-      if (loadingEpisodeLibraryMediaIds.has(mediaId) || episodeLibrariesById[mediaId]) {
+      if (
+        loadingEpisodeLibraryMediaIds.has(mediaId) ||
+        episodeLibrariesById[mediaId]
+      ) {
         return;
       }
       setLoadingEpisodeLibraryMediaIds((prev) => new Set(prev).add(mediaId));
@@ -500,7 +533,11 @@ export default function PodcastDetailPaneBody() {
           })),
         }));
       } catch (loadError) {
-        setError(toFeedback(loadError, { fallback: "Failed to load episode libraries" }));
+        setError(
+          toFeedback(loadError, {
+            fallback: "Failed to load episode libraries",
+          }),
+        );
       } finally {
         setLoadingEpisodeLibraryMediaIds((prev) => {
           const next = new Set(prev);
@@ -509,7 +546,7 @@ export default function PodcastDetailPaneBody() {
         });
       }
     },
-    [episodeLibrariesById, loadingEpisodeLibraryMediaIds]
+    [episodeLibrariesById, loadingEpisodeLibraryMediaIds],
   );
 
   const load = useCallback(async () => {
@@ -534,7 +571,9 @@ export default function PodcastDetailPaneBody() {
 
       const [detailResp, episodesResp] = await Promise.all([
         apiFetch<{ data: PodcastDetailResponse }>(`/api/podcasts/${podcastId}`),
-        apiFetch<{ data: PodcastEpisodeMedia[] }>(`/api/podcasts/${podcastId}/episodes?${episodeParams}`),
+        apiFetch<{ data: PodcastEpisodeMedia[] }>(
+          `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
+        ),
       ]);
       setDetail(detailResp.data);
       setEpisodes(episodesResp.data);
@@ -542,14 +581,18 @@ export default function PodcastDetailPaneBody() {
       setHasMoreEpisodes(episodesResp.data.length === EPISODES_PAGE_SIZE);
       forecastingTranscriptMediaIdsRef.current.clear();
       setTranscriptRequestForecastByMediaId({});
-      const settingsDraft = getPodcastSubscriptionSettingsDraft(detailResp.data.subscription);
+      const settingsDraft = getPodcastSubscriptionSettingsDraft(
+        detailResp.data.subscription,
+      );
       setSettingsDefaultSpeed(settingsDraft.defaultSpeed);
       setSettingsAutoQueue(settingsDraft.autoQueue);
       setSettingsModalOpen(false);
       setSettingsError(null);
       try {
         setPodcastLibraries(
-          detailResp.data.subscription ? await fetchPodcastLibraries(podcastId) : []
+          detailResp.data.subscription
+            ? await fetchPodcastLibraries(podcastId)
+            : [],
         );
         setEpisodeLibrariesById({});
         setLoadingEpisodeLibraryMediaIds(new Set());
@@ -559,16 +602,13 @@ export default function PodcastDetailPaneBody() {
         setLoadingEpisodeLibraryMediaIds(new Set());
       }
     } catch (loadError) {
-      setError(toFeedback(loadError, { fallback: "Failed to load podcast detail" }));
+      setError(
+        toFeedback(loadError, { fallback: "Failed to load podcast detail" }),
+      );
     } finally {
       setLoading(false);
     }
-  }, [
-    episodeSearchQuery,
-    episodeSort,
-    episodeStateFilter,
-    podcastId,
-  ]);
+  }, [episodeSearchQuery, episodeSort, episodeStateFilter, podcastId]);
 
   useEffect(() => {
     void load();
@@ -598,7 +638,13 @@ export default function PodcastDetailPaneBody() {
       params.set("q", episodeSearchQuery);
     }
     paneRouter.replace(`/podcasts/${podcastId}?${params.toString()}`);
-  }, [episodeSearchQuery, episodeSort, episodeStateFilter, paneRouter, podcastId]);
+  }, [
+    episodeSearchQuery,
+    episodeSort,
+    episodeStateFilter,
+    paneRouter,
+    podcastId,
+  ]);
 
   useEffect(() => {
     if (!episodesDrawerOpen) {
@@ -643,11 +689,15 @@ export default function PodcastDetailPaneBody() {
                   canAdd: false,
                   canRemove: true,
                 }
-              : library
+              : library,
           ),
         }));
       } catch (mutationError) {
-        setError(toFeedback(mutationError, { fallback: "Failed to add episode to library" }));
+        setError(
+          toFeedback(mutationError, {
+            fallback: "Failed to add episode to library",
+          }),
+        );
       } finally {
         setBusyMediaIds((prev) => {
           const next = new Set(prev);
@@ -656,7 +706,7 @@ export default function PodcastDetailPaneBody() {
         });
       }
     },
-    []
+    [],
   );
 
   const handleRemoveFromLibrary = useCallback(
@@ -664,9 +714,12 @@ export default function PodcastDetailPaneBody() {
       setBusyMediaIds((prev) => new Set(prev).add(mediaId));
       setError(null);
       try {
-        await apiFetch(`/api/media/${mediaId}?library_id=${encodeURIComponent(libraryId)}`, {
-          method: "DELETE",
-        });
+        await apiFetch(
+          `/api/media/${mediaId}?library_id=${encodeURIComponent(libraryId)}`,
+          {
+            method: "DELETE",
+          },
+        );
         setEpisodeLibrariesById((prev) => ({
           ...prev,
           [mediaId]: (prev[mediaId] ?? []).map((library) =>
@@ -677,12 +730,14 @@ export default function PodcastDetailPaneBody() {
                   canAdd: true,
                   canRemove: false,
                 }
-              : library
+              : library,
           ),
         }));
       } catch (mutationError) {
         setError(
-          toFeedback(mutationError, { fallback: "Failed to remove episode from library" })
+          toFeedback(mutationError, {
+            fallback: "Failed to remove episode from library",
+          }),
         );
       } finally {
         setBusyMediaIds((prev) => {
@@ -692,7 +747,7 @@ export default function PodcastDetailPaneBody() {
         });
       }
     },
-    []
+    [],
   );
 
   const handleLoadMoreEpisodes = useCallback(async () => {
@@ -712,12 +767,16 @@ export default function PodcastDetailPaneBody() {
         episodeParams.set("q", episodeSearchQuery.trim());
       }
       const response = await apiFetch<{ data: PodcastEpisodeMedia[] }>(
-        `/api/podcasts/${podcastId}/episodes?${episodeParams}`
+        `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
       );
       setEpisodes((prev) => [...prev, ...response.data]);
       setHasMoreEpisodes(response.data.length === EPISODES_PAGE_SIZE);
     } catch (loadError) {
-      setError(toFeedback(loadError, { fallback: "Failed to load more podcast episodes" }));
+      setError(
+        toFeedback(loadError, {
+          fallback: "Failed to load more podcast episodes",
+        }),
+      );
     } finally {
       setLoadingMoreEpisodes(false);
     }
@@ -731,78 +790,103 @@ export default function PodcastDetailPaneBody() {
     podcastId,
   ]);
 
-  const handleSubscribe = useCallback(async (libraryId: string | null = null) => {
-    if (!detail) {
-      return;
-    }
-    setSubscribeBusy(true);
-    setError(null);
-    try {
-      await subscribeToPodcast({
-        provider_podcast_id: detail.podcast.provider_podcast_id,
-        title: detail.podcast.title,
-        author: detail.podcast.author,
-        feed_url: detail.podcast.feed_url,
-        website_url: detail.podcast.website_url,
-        image_url: detail.podcast.image_url,
-        description: detail.podcast.description,
-        library_id: libraryId,
-      });
-      await load();
-    } catch (subscribeError) {
-      setError(toFeedback(subscribeError, { fallback: "Failed to subscribe to podcast" }));
-    } finally {
-      setSubscribeBusy(false);
-    }
-  }, [detail, load]);
+  const handleSubscribe = useCallback(
+    async (libraryId: string | null = null) => {
+      if (!detail) {
+        return;
+      }
+      setSubscribeBusy(true);
+      setError(null);
+      try {
+        await subscribeToPodcast({
+          provider_podcast_id: detail.podcast.provider_podcast_id,
+          title: detail.podcast.title,
+          contributors: detail.podcast.contributors,
+          feed_url: detail.podcast.feed_url,
+          website_url: detail.podcast.website_url,
+          image_url: detail.podcast.image_url,
+          description: detail.podcast.description,
+          library_id: libraryId,
+        });
+        await load();
+      } catch (subscribeError) {
+        setError(
+          toFeedback(subscribeError, {
+            fallback: "Failed to subscribe to podcast",
+          }),
+        );
+      } finally {
+        setSubscribeBusy(false);
+      }
+    },
+    [detail, load],
+  );
 
-  const handleAddPodcastToLibrary = useCallback(async (libraryId: string) => {
-    if (!podcastId) {
-      return;
-    }
-    const busyKey = `${libraryId}:${podcastId}`;
-    setBusyPodcastLibraryKeys((prev) => new Set(prev).add(busyKey));
-    setError(null);
-    try {
-      await addPodcastToLibrary(podcastId, libraryId);
-      setPodcastLibraries((prev) =>
-        updatePodcastLibraryMemberships(prev, { libraryId, isInLibrary: true })
-      );
-    } catch (mutationError) {
-      setError(toFeedback(mutationError, { fallback: "Failed to add podcast to library" }));
-    } finally {
-      setBusyPodcastLibraryKeys((prev) => {
-        const next = new Set(prev);
-        next.delete(busyKey);
-        return next;
-      });
-    }
-  }, [podcastId]);
+  const handleAddPodcastToLibrary = useCallback(
+    async (libraryId: string) => {
+      if (!podcastId) {
+        return;
+      }
+      const busyKey = `${libraryId}:${podcastId}`;
+      setBusyPodcastLibraryKeys((prev) => new Set(prev).add(busyKey));
+      setError(null);
+      try {
+        await addPodcastToLibrary(podcastId, libraryId);
+        setPodcastLibraries((prev) =>
+          updatePodcastLibraryMemberships(prev, {
+            libraryId,
+            isInLibrary: true,
+          }),
+        );
+      } catch (mutationError) {
+        setError(
+          toFeedback(mutationError, {
+            fallback: "Failed to add podcast to library",
+          }),
+        );
+      } finally {
+        setBusyPodcastLibraryKeys((prev) => {
+          const next = new Set(prev);
+          next.delete(busyKey);
+          return next;
+        });
+      }
+    },
+    [podcastId],
+  );
 
-  const handleRemovePodcastFromLibrary = useCallback(async (libraryId: string) => {
-    if (!podcastId) {
-      return;
-    }
-    const busyKey = `${libraryId}:${podcastId}`;
-    setBusyPodcastLibraryKeys((prev) => new Set(prev).add(busyKey));
-    setError(null);
-    try {
-      await removePodcastFromLibrary(podcastId, libraryId);
-      setPodcastLibraries((prev) =>
-        updatePodcastLibraryMemberships(prev, { libraryId, isInLibrary: false })
-      );
-    } catch (mutationError) {
-      setError(
-        toFeedback(mutationError, { fallback: "Failed to remove podcast from library" })
-      );
-    } finally {
-      setBusyPodcastLibraryKeys((prev) => {
-        const next = new Set(prev);
-        next.delete(busyKey);
-        return next;
-      });
-    }
-  }, [podcastId]);
+  const handleRemovePodcastFromLibrary = useCallback(
+    async (libraryId: string) => {
+      if (!podcastId) {
+        return;
+      }
+      const busyKey = `${libraryId}:${podcastId}`;
+      setBusyPodcastLibraryKeys((prev) => new Set(prev).add(busyKey));
+      setError(null);
+      try {
+        await removePodcastFromLibrary(podcastId, libraryId);
+        setPodcastLibraries((prev) =>
+          updatePodcastLibraryMemberships(prev, {
+            libraryId,
+            isInLibrary: false,
+          }),
+        );
+      } catch (mutationError) {
+        setError(
+          toFeedback(mutationError, {
+            fallback: "Failed to remove podcast from library",
+          }),
+        );
+      } finally {
+        setBusyPodcastLibraryKeys((prev) => {
+          const next = new Set(prev);
+          next.delete(busyKey);
+          return next;
+        });
+      }
+    },
+    [podcastId],
+  );
 
   const handleRefreshSync = useCallback(async () => {
     if (!podcastId) {
@@ -824,11 +908,15 @@ export default function PodcastDetailPaneBody() {
                 ...getPodcastSubscriptionSyncPatch(response),
               },
             }
-          : prev
+          : prev,
       );
       await load();
     } catch (refreshError) {
-      setError(toFeedback(refreshError, { fallback: "Failed to refresh podcast sync" }));
+      setError(
+        toFeedback(refreshError, {
+          fallback: "Failed to refresh podcast sync",
+        }),
+      );
     } finally {
       setRefreshSyncBusy(false);
     }
@@ -843,11 +931,14 @@ export default function PodcastDetailPaneBody() {
     }
     const currentLibraries = await loadPodcastLibraries(true);
     const retainedLibraries = currentLibraries.filter(
-      (library) => library.isInLibrary && !library.canRemove
+      (library) => library.isInLibrary && !library.canRemove,
     );
     if (
       !window.confirm(
-        buildPodcastUnsubscribeConfirmation(detail.podcast.title, currentLibraries)
+        buildPodcastUnsubscribeConfirmation(
+          detail.podcast.title,
+          currentLibraries,
+        ),
       )
     ) {
       return;
@@ -863,7 +954,11 @@ export default function PodcastDetailPaneBody() {
       setEpisodeMembershipPanelMediaId(null);
       setEpisodeMembershipPanelTriggerEl(null);
     } catch (unsubscribeError) {
-      setError(toFeedback(unsubscribeError, { fallback: "Failed to unsubscribe from podcast" }));
+      setError(
+        toFeedback(unsubscribeError, {
+          fallback: "Failed to unsubscribe from podcast",
+        }),
+      );
     } finally {
       setUnsubscribeBusy(false);
     }
@@ -873,7 +968,9 @@ export default function PodcastDetailPaneBody() {
     if (!detail?.subscription) {
       return;
     }
-    const settingsDraft = getPodcastSubscriptionSettingsDraft(detail.subscription);
+    const settingsDraft = getPodcastSubscriptionSettingsDraft(
+      detail.subscription,
+    );
     setSettingsDefaultSpeed(settingsDraft.defaultSpeed);
     setSettingsAutoQueue(settingsDraft.autoQueue);
     setSettingsError(null);
@@ -894,12 +991,14 @@ export default function PodcastDetailPaneBody() {
     setSettingsError(null);
     setError(null);
     try {
-      const response = await savePodcastSubscriptionSettings(detail.subscription.podcast_id, {
-        defaultPlaybackSpeed: parsePodcastSubscriptionDefaultPlaybackSpeed(
-          settingsDefaultSpeed
-        ),
-        autoQueue: settingsAutoQueue,
-      });
+      const response = await savePodcastSubscriptionSettings(
+        detail.subscription.podcast_id,
+        {
+          defaultPlaybackSpeed:
+            parsePodcastSubscriptionDefaultPlaybackSpeed(settingsDefaultSpeed),
+          autoQueue: settingsAutoQueue,
+        },
+      );
       setDetail((prev) =>
         prev && prev.subscription
           ? {
@@ -912,18 +1011,20 @@ export default function PodcastDetailPaneBody() {
                 }),
               },
             }
-          : prev
+          : prev,
       );
       setEpisodes((prev) =>
         prev.map((episode) => ({
           ...episode,
           subscription_default_playback_speed: response.default_playback_speed,
-        }))
+        })),
       );
       setSettingsModalOpen(false);
     } catch (settingsUpdateError) {
       setSettingsError(
-        toFeedback(settingsUpdateError, { fallback: "Failed to save subscription settings" })
+        toFeedback(settingsUpdateError, {
+          fallback: "Failed to save subscription settings",
+        }),
       );
     } finally {
       setSettingsBusy(false);
@@ -937,8 +1038,8 @@ export default function PodcastDetailPaneBody() {
     const uniqueMediaIds = [...new Set(mediaIds)];
     const refreshResults = await Promise.allSettled(
       uniqueMediaIds.map((mediaId) =>
-        apiFetch<{ data: PodcastEpisodeMedia }>(`/api/media/${mediaId}`)
-      )
+        apiFetch<{ data: PodcastEpisodeMedia }>(`/api/media/${mediaId}`),
+      ),
     );
     const refreshedByMediaId = new Map<string, PodcastEpisodeMedia>();
     refreshResults.forEach((result, index) => {
@@ -960,7 +1061,7 @@ export default function PodcastDetailPaneBody() {
               episode_state: refreshed.episode_state ?? episode.episode_state,
             }
           : episode;
-      })
+      }),
     );
   }, []);
 
@@ -968,89 +1069,105 @@ export default function PodcastDetailPaneBody() {
     async (mediaId: string) => {
       await refreshEpisodeStates([mediaId]);
     },
-    [refreshEpisodeStates]
+    [refreshEpisodeStates],
   );
 
   const handleOpenEpisodeChat = useCallback(
     async (episode: PodcastEpisodeMedia) => {
       try {
-        const response = await apiFetch<{ data: { id: string; title: string } }>(
-          "/api/conversations/resolve",
-          {
-            method: "POST",
-            body: JSON.stringify({ type: "media", media_id: episode.id }),
-          }
-        );
+        const response = await apiFetch<{
+          data: { id: string; title: string };
+        }>("/api/conversations/resolve", {
+          method: "POST",
+          body: JSON.stringify({ type: "media", media_id: episode.id }),
+        });
         const route = `/conversations/${response.data.id}`;
-        if (!requestOpenInAppPane(route, { titleHint: response.data.title || episode.title })) {
+        if (
+          !requestOpenInAppPane(route, {
+            titleHint: response.data.title || episode.title,
+          })
+        ) {
           paneRouter.push(route);
         }
       } catch (chatError) {
-        setError(toFeedback(chatError, { fallback: "Failed to open episode chat" }));
+        setError(
+          toFeedback(chatError, { fallback: "Failed to open episode chat" }),
+        );
       }
     },
-    [paneRouter]
+    [paneRouter],
   );
 
-  const handleRetryEpisodeProcessing = useCallback(
-    async (mediaId: string) => {
-      setBusyMediaIds((prev) => new Set(prev).add(mediaId));
-      setError(null);
-      try {
-        const response = await apiFetch<{ data: PodcastEpisodeMedia }>(
-          `/api/media/${mediaId}/retry`,
-          { method: "POST" }
-        );
-        setEpisodes((prev) =>
-          prev.map((episode) =>
-            episode.id === mediaId ? { ...episode, ...response.data } : episode
-          )
-        );
-      } catch (retryError) {
-        setError(toFeedback(retryError, { fallback: "Failed to retry episode processing" }));
-      } finally {
-        setBusyMediaIds((prev) => {
-          const next = new Set(prev);
-          next.delete(mediaId);
-          return next;
-        });
-      }
-    },
-    []
-  );
-
-  const handleDeleteEpisode = useCallback(async (episode: PodcastEpisodeMedia) => {
-    if (
-      !confirm(
-        `Delete "${episode.title}" from My Library and libraries you manage? This cannot be undone.`
-      )
-    ) {
-      return;
-    }
-
-    setBusyMediaIds((prev) => new Set(prev).add(episode.id));
+  const handleRetryEpisodeProcessing = useCallback(async (mediaId: string) => {
+    setBusyMediaIds((prev) => new Set(prev).add(mediaId));
     setError(null);
     try {
-      await apiFetch(`/api/media/${episode.id}`, { method: "DELETE" });
-      setEpisodes((prev) => prev.filter((candidate) => candidate.id !== episode.id));
-      setEpisodeLibrariesById((prev) => {
-        const next = { ...prev };
-        delete next[episode.id];
-        return next;
-      });
-    } catch (deleteError) {
-      setError(toFeedback(deleteError, { fallback: "Failed to delete episode" }));
+      const response = await apiFetch<{ data: PodcastEpisodeMedia }>(
+        `/api/media/${mediaId}/retry`,
+        { method: "POST" },
+      );
+      setEpisodes((prev) =>
+        prev.map((episode) =>
+          episode.id === mediaId ? { ...episode, ...response.data } : episode,
+        ),
+      );
+    } catch (retryError) {
+      setError(
+        toFeedback(retryError, {
+          fallback: "Failed to retry episode processing",
+        }),
+      );
     } finally {
       setBusyMediaIds((prev) => {
         const next = new Set(prev);
-        next.delete(episode.id);
+        next.delete(mediaId);
         return next;
       });
     }
   }, []);
 
+  const handleDeleteEpisode = useCallback(
+    async (episode: PodcastEpisodeMedia) => {
+      if (
+        !confirm(
+          `Delete "${episode.title}" from My Library and libraries you manage? This cannot be undone.`,
+        )
+      ) {
+        return;
+      }
+
+      setBusyMediaIds((prev) => new Set(prev).add(episode.id));
+      setError(null);
+      try {
+        await apiFetch(`/api/media/${episode.id}`, { method: "DELETE" });
+        setEpisodes((prev) =>
+          prev.filter((candidate) => candidate.id !== episode.id),
+        );
+        setEpisodeLibrariesById((prev) => {
+          const next = { ...prev };
+          delete next[episode.id];
+          return next;
+        });
+      } catch (deleteError) {
+        setError(
+          toFeedback(deleteError, { fallback: "Failed to delete episode" }),
+        );
+      } finally {
+        setBusyMediaIds((prev) => {
+          const next = new Set(prev);
+          next.delete(episode.id);
+          return next;
+        });
+      }
+    },
+    [],
+  );
+
   const applyEpisodeCompletionState = useCallback(
-    (episode: PodcastEpisodeMedia, isCompleted: boolean): PodcastEpisodeMedia => {
+    (
+      episode: PodcastEpisodeMedia,
+      isCompleted: boolean,
+    ): PodcastEpisodeMedia => {
       const previousListeningState = episode.listening_state;
       const nextListeningState = isCompleted
         ? {
@@ -1071,7 +1188,7 @@ export default function PodcastDetailPaneBody() {
         episode_state: isCompleted ? "played" : "unplayed",
       };
     },
-    []
+    [],
   );
 
   const handleMarkEpisodeCompletion = useCallback(
@@ -1085,12 +1202,20 @@ export default function PodcastDetailPaneBody() {
           if (candidate.id !== mediaId) {
             return [candidate];
           }
-          const optimisticEpisode = applyEpisodeCompletionState(candidate, isCompleted);
-          if (!episodeMatchesFilter(deriveEpisodeState(optimisticEpisode), episodeStateFilter)) {
+          const optimisticEpisode = applyEpisodeCompletionState(
+            candidate,
+            isCompleted,
+          );
+          if (
+            !episodeMatchesFilter(
+              deriveEpisodeState(optimisticEpisode),
+              episodeStateFilter,
+            )
+          ) {
             return [];
           }
           return [optimisticEpisode];
-        })
+        }),
       );
       try {
         await apiFetch(`/api/media/${mediaId}/listening-state`, {
@@ -1103,7 +1228,7 @@ export default function PodcastDetailPaneBody() {
               : {
                   is_completed: false,
                   position_ms: 0,
-                }
+                },
           ),
         });
       } catch (markError) {
@@ -1113,7 +1238,7 @@ export default function PodcastDetailPaneBody() {
             fallback: isCompleted
               ? "Failed to mark episode as played"
               : "Failed to mark episode as unplayed",
-          })
+          }),
         );
       } finally {
         setMarkingEpisodeIds((prev) => {
@@ -1123,7 +1248,7 @@ export default function PodcastDetailPaneBody() {
         });
       }
     },
-    [applyEpisodeCompletionState, episodeStateFilter, episodes]
+    [applyEpisodeCompletionState, episodeStateFilter, episodes],
   );
 
   const visibleUnplayedEpisodeIds = useMemo(
@@ -1131,7 +1256,7 @@ export default function PodcastDetailPaneBody() {
       episodes
         .filter((episode) => deriveEpisodeState(episode) === "unplayed")
         .map((episode) => episode.id),
-    [episodes]
+    [episodes],
   );
 
   const batchTranscriptCandidateEpisodes = useMemo(
@@ -1144,7 +1269,7 @@ export default function PodcastDetailPaneBody() {
           canRequestTranscriptForEpisode(episode)
         );
       }),
-    [episodes, transcriptionAllowed]
+    [episodes, transcriptionAllowed],
   );
 
   const toggleEpisodeShowNotesExpansion = useCallback((mediaId: string) => {
@@ -1165,7 +1290,7 @@ export default function PodcastDetailPaneBody() {
     }
     if (
       !window.confirm(
-        `Mark ${visibleUnplayedEpisodeIds.length} visible episode${visibleUnplayedEpisodeIds.length === 1 ? "" : "s"} as played?`
+        `Mark ${visibleUnplayedEpisodeIds.length} visible episode${visibleUnplayedEpisodeIds.length === 1 ? "" : "s"} as played?`,
       )
     ) {
       return;
@@ -1180,11 +1305,16 @@ export default function PodcastDetailPaneBody() {
           return [episode];
         }
         const optimisticEpisode = applyEpisodeCompletionState(episode, true);
-        if (!episodeMatchesFilter(deriveEpisodeState(optimisticEpisode), episodeStateFilter)) {
+        if (
+          !episodeMatchesFilter(
+            deriveEpisodeState(optimisticEpisode),
+            episodeStateFilter,
+          )
+        ) {
           return [];
         }
         return [optimisticEpisode];
-      })
+      }),
     );
     try {
       await apiFetch("/api/media/listening-state/batch", {
@@ -1199,7 +1329,7 @@ export default function PodcastDetailPaneBody() {
       setError(
         toFeedback(markError, {
           fallback: "Failed to mark visible episodes as played",
-        })
+        }),
       );
     } finally {
       setMarkAllAsPlayedBusy(false);
@@ -1216,16 +1346,25 @@ export default function PodcastDetailPaneBody() {
       return;
     }
 
-    const requiredMinutes = batchTranscriptCandidateEpisodes.reduce((total, episode) => {
-      const forecast = transcriptRequestForecastByMediaId[episode.id];
-      return total + (forecast?.required_minutes ?? 1);
-    }, 0);
+    const requiredMinutes = batchTranscriptCandidateEpisodes.reduce(
+      (total, episode) => {
+        const forecast = transcriptRequestForecastByMediaId[episode.id];
+        return total + (forecast?.required_minutes ?? 1);
+      },
+      0,
+    );
     const remainingQuotaValues = batchTranscriptCandidateEpisodes
-      .map((episode) => transcriptRequestForecastByMediaId[episode.id]?.remaining_minutes)
+      .map(
+        (episode) =>
+          transcriptRequestForecastByMediaId[episode.id]?.remaining_minutes,
+      )
       .filter((value): value is number => typeof value === "number");
     const remainingQuota =
-      remainingQuotaValues.length > 0 ? Math.min(...remainingQuotaValues) : null;
-    const fitsBudget = remainingQuota == null || requiredMinutes <= remainingQuota;
+      remainingQuotaValues.length > 0
+        ? Math.min(...remainingQuotaValues)
+        : null;
+    const fitsBudget =
+      remainingQuota == null || requiredMinutes <= remainingQuota;
     const confirmationMessage = [
       `Eligible episodes: ${batchTranscriptCandidateEpisodes.length}`,
       `Estimated minutes: ${requiredMinutes}`,
@@ -1242,7 +1381,9 @@ export default function PodcastDetailPaneBody() {
     setError(null);
     try {
       const payload: TranscriptBatchRequest = {
-        media_ids: batchTranscriptCandidateEpisodes.map((episode) => episode.id),
+        media_ids: batchTranscriptCandidateEpisodes.map(
+          (episode) => episode.id,
+        ),
         reason: "search",
       };
       const response = await apiFetch<TranscriptBatchResponse>(
@@ -1250,16 +1391,26 @@ export default function PodcastDetailPaneBody() {
         {
           method: "POST",
           body: JSON.stringify(payload),
-        }
+        },
       );
-      setBatchTranscriptSummary(summarizeBatchTranscriptResults(response.data.results));
+      setBatchTranscriptSummary(
+        summarizeBatchTranscriptResults(response.data.results),
+      );
       await load();
     } catch (requestError) {
-      setError(toFeedback(requestError, { fallback: "Failed to request batch transcripts" }));
+      setError(
+        toFeedback(requestError, {
+          fallback: "Failed to request batch transcripts",
+        }),
+      );
     } finally {
       setBatchTranscriptBusy(false);
     }
-  }, [batchTranscriptCandidateEpisodes, load, transcriptRequestForecastByMediaId]);
+  }, [
+    batchTranscriptCandidateEpisodes,
+    load,
+    transcriptRequestForecastByMediaId,
+  ]);
 
   const applyTranscriptForecasts = useCallback(
     (
@@ -1267,29 +1418,43 @@ export default function PodcastDetailPaneBody() {
       requests: Array<{
         media_id: string;
         reason: TranscriptRequestReason;
-      }>
+      }>,
     ) => {
-      const reasonByMediaId = new Map(requests.map((request) => [request.media_id, request.reason]));
+      const reasonByMediaId = new Map(
+        requests.map((request) => [request.media_id, request.reason]),
+      );
       const resultByMediaId = new Map(
-        results.map((result) => [result.media_id, result] satisfies [string, TranscriptRequestResult])
+        results.map(
+          (result) =>
+            [result.media_id, result] satisfies [
+              string,
+              TranscriptRequestResult,
+            ],
+        ),
       );
 
       setEpisodes((prev) =>
         prev.map((episode) => {
           const forecast = resultByMediaId.get(episode.id);
-          return forecast ? applyTranscriptResponseToEpisode(episode, forecast) : episode;
-        })
+          return forecast
+            ? applyTranscriptResponseToEpisode(episode, forecast)
+            : episode;
+        }),
       );
       setTranscriptRequestForecastByMediaId((prev) => {
         const next = { ...prev };
         for (const result of results) {
           const reason = reasonByMediaId.get(result.media_id) ?? "search";
-          next[result.media_id] = toTranscriptForecastState(result, reason, "forecast");
+          next[result.media_id] = toTranscriptForecastState(
+            result,
+            reason,
+            "forecast",
+          );
         }
         return next;
       });
     },
-    []
+    [],
   );
 
   const fetchTranscriptForecasts = useCallback(
@@ -1297,7 +1462,7 @@ export default function PodcastDetailPaneBody() {
       requests: Array<{
         media_id: string;
         reason: TranscriptRequestReason;
-      }>
+      }>,
     ) => {
       if (requests.length === 0) {
         return [] as TranscriptRequestResult[];
@@ -1310,19 +1475,21 @@ export default function PodcastDetailPaneBody() {
           body: JSON.stringify({
             requests,
           } satisfies TranscriptForecastBatchRequest),
-        }
+        },
       );
       return response.data;
     },
-    []
+    [],
   );
 
   const provisioningEpisodeIds = useMemo(
     () =>
       episodes
-        .filter((episode) => shouldPollTranscriptProvisioningForEpisode(episode))
+        .filter((episode) =>
+          shouldPollTranscriptProvisioningForEpisode(episode),
+        )
         .map((episode) => episode.id),
-    [episodes]
+    [episodes],
   );
 
   useEffect(() => {
@@ -1414,13 +1581,21 @@ export default function PodcastDetailPaneBody() {
       try {
         let forecast = transcriptRequestForecastByMediaId[mediaId];
         if (!forecast || forecast.reason !== reason) {
-          const forecastResults = await fetchTranscriptForecasts([{ media_id: mediaId, reason }]);
-          applyTranscriptForecasts(forecastResults, [{ media_id: mediaId, reason }]);
+          const forecastResults = await fetchTranscriptForecasts([
+            { media_id: mediaId, reason },
+          ]);
+          applyTranscriptForecasts(forecastResults, [
+            { media_id: mediaId, reason },
+          ]);
           const payload = forecastResults[0];
           if (!payload) {
             return;
           }
-          const nextForecast = toTranscriptForecastState(payload, reason, "forecast");
+          const nextForecast = toTranscriptForecastState(
+            payload,
+            reason,
+            "forecast",
+          );
           forecast = nextForecast;
           setTranscriptRequestForecastByMediaId((prev) => ({
             ...prev,
@@ -1440,13 +1615,15 @@ export default function PodcastDetailPaneBody() {
               reason,
               dry_run: false,
             }),
-          }
+          },
         );
         const payload = response.data;
         setEpisodes((prev) =>
           prev.map((episode) =>
-            episode.id === mediaId ? applyTranscriptResponseToEpisode(episode, payload) : episode
-          )
+            episode.id === mediaId
+              ? applyTranscriptResponseToEpisode(episode, payload)
+              : episode,
+          ),
         );
         setTranscriptRequestForecastByMediaId((prev) => ({
           ...prev,
@@ -1458,7 +1635,11 @@ export default function PodcastDetailPaneBody() {
           // Keep optimistic row state if one refresh fails; polling continues.
         }
       } catch (requestError) {
-        setError(toFeedback(requestError, { fallback: "Failed to request transcript" }));
+        setError(
+          toFeedback(requestError, {
+            fallback: "Failed to request transcript",
+          }),
+        );
       } finally {
         setRequestingTranscriptMediaIds((prev) => {
           const next = new Set(prev);
@@ -1473,7 +1654,7 @@ export default function PodcastDetailPaneBody() {
       refreshEpisodeState,
       transcriptReasonByMediaId,
       transcriptRequestForecastByMediaId,
-    ]
+    ],
   );
 
   const activeEpisodeCount = episodes.length;
@@ -1491,11 +1672,13 @@ export default function PodcastDetailPaneBody() {
     ? busyMediaIds.has(episodeMembershipPanelMediaId)
     : false;
   const episodeMembershipLibraries = episodeMembershipPanelMediaId
-    ? (episodeLibrariesById[episodeMembershipPanelMediaId] ?? []).map((library) => ({
-        ...library,
-        canAdd: episodeMembershipBusy ? false : library.canAdd,
-        canRemove: episodeMembershipBusy ? false : library.canRemove,
-      }))
+    ? (episodeLibrariesById[episodeMembershipPanelMediaId] ?? []).map(
+        (library) => ({
+          ...library,
+          canAdd: episodeMembershipBusy ? false : library.canAdd,
+          canRemove: episodeMembershipBusy ? false : library.canRemove,
+        }),
+      )
     : [];
   const paneOptions = podcastResourceOptions({
     canUsePodcastActions: Boolean(activeSubscription),
@@ -1532,7 +1715,9 @@ export default function PodcastDetailPaneBody() {
     options: paneOptions,
   });
 
-  const podcastLibraryCount = podcastLibraries.filter((library) => library.isInLibrary).length;
+  const podcastLibraryCount = podcastLibraries.filter(
+    (library) => library.isInLibrary,
+  ).length;
   const episodePaneContent = (
     <div className={styles.episodePaneContent}>
       <div className={styles.episodePaneHeaderRow}>
@@ -1544,14 +1729,19 @@ export default function PodcastDetailPaneBody() {
           options={[
             {
               id: "transcribe-unplayed",
-              label: batchTranscriptBusy ? "Transcribing..." : "Transcribe unplayed",
-              disabled: batchTranscriptBusy || batchTranscriptCandidateEpisodes.length === 0,
+              label: batchTranscriptBusy
+                ? "Transcribing..."
+                : "Transcribe unplayed",
+              disabled:
+                batchTranscriptBusy ||
+                batchTranscriptCandidateEpisodes.length === 0,
               onSelect: () => void handleBatchTranscriptRequest(),
             },
             {
               id: "mark-all-played",
               label: markAllAsPlayedBusy ? "Marking..." : "Mark all as played",
-              disabled: markAllAsPlayedBusy || visibleUnplayedEpisodeIds.length === 0,
+              disabled:
+                markAllAsPlayedBusy || visibleUnplayedEpisodeIds.length === 0,
               onSelect: () => void handleMarkAllVisibleUnplayedAsPlayed(),
             },
           ]}
@@ -1559,17 +1749,22 @@ export default function PodcastDetailPaneBody() {
       </div>
 
       {!loading && episodes.length === 0 && !error && (
-        <FeedbackNotice severity="neutral" title="No episodes found for this podcast." />
+        <FeedbackNotice
+          severity="neutral"
+          title="No episodes found for this podcast."
+        />
       )}
 
       <div className={styles.episodeFilterBar}>
         <div className={styles.episodeFilterPills}>
-          {([
-            ["all", "All"],
-            ["unplayed", "Unplayed"],
-            ["in_progress", "In Progress"],
-            ["played", "Played"],
-          ] as const).map(([value, label]) => (
+          {(
+            [
+              ["all", "All"],
+              ["unplayed", "Unplayed"],
+              ["in_progress", "In Progress"],
+              ["played", "Played"],
+            ] as const
+          ).map(([value, label]) => (
             <button
               key={value}
               type="button"
@@ -1586,7 +1781,9 @@ export default function PodcastDetailPaneBody() {
           <select
             aria-label="Episode sort"
             value={episodeSort}
-            onChange={(event) => setEpisodeSort(event.target.value as EpisodeSort)}
+            onChange={(event) =>
+              setEpisodeSort(event.target.value as EpisodeSort)
+            }
             className={styles.episodeSortSelect}
           >
             <option value="newest">Newest</option>
@@ -1609,7 +1806,9 @@ export default function PodcastDetailPaneBody() {
       </div>
 
       {batchTranscriptSummary && (
-        <p className={styles.batchTranscriptSummary}>{batchTranscriptSummary}</p>
+        <p className={styles.batchTranscriptSummary}>
+          {batchTranscriptSummary}
+        </p>
       )}
 
       {episodes.length > 0 && (
@@ -1622,21 +1821,27 @@ export default function PodcastDetailPaneBody() {
               transcriptionAllowed && canRequestTranscriptForEpisode(episode);
             const transcriptProvisioningInProgress =
               shouldPollTranscriptProvisioningForEpisode(episode);
-            const transcriptReason = transcriptReasonByMediaId[episode.id] ?? "search";
-            const transcriptRequestForecast = transcriptRequestForecastByMediaId[episode.id];
+            const transcriptReason =
+              transcriptReasonByMediaId[episode.id] ?? "search";
+            const transcriptRequestForecast =
+              transcriptRequestForecastByMediaId[episode.id];
             const forecastForSelectedReason =
-              transcriptRequestForecast && transcriptRequestForecast.reason === transcriptReason
+              transcriptRequestForecast &&
+              transcriptRequestForecast.reason === transcriptReason
                 ? transcriptRequestForecast
                 : null;
             const transcriptRequestDisabled =
               requestingTranscriptMediaIds.has(episode.id) ||
-              (forecastForSelectedReason ? !forecastForSelectedReason.fits_budget : false);
+              (forecastForSelectedReason
+                ? !forecastForSelectedReason.fits_budget
+                : false);
             const inQueue = queueMediaIds.has(episode.id);
             const showNotesText = episode.description_text?.trim() ?? "";
             const showNotesExpanded = expandedShowNotesMediaIds.has(episode.id);
-            const authorSummary = formatAuthorSummary(episode.authors);
+            const authorSummary = formatAuthorSummary(episode.contributors);
             const paneTitleHint =
-              authorSummary && `${episode.title} · ${authorSummary}`.length <= 56
+              authorSummary &&
+              `${episode.title} · ${authorSummary}`.length <= 56
                 ? `${episode.title} · ${authorSummary}`
                 : episode.title;
             const rowOptions = episodeResourceOptions({
@@ -1667,7 +1872,10 @@ export default function PodcastDetailPaneBody() {
                   }
                 : undefined,
               onTogglePlayed: () => {
-                void handleMarkEpisodeCompletion(episode, episodeState !== "played");
+                void handleMarkEpisodeCompletion(
+                  episode,
+                  episodeState !== "played",
+                );
               },
             });
             return (
@@ -1682,7 +1890,9 @@ export default function PodcastDetailPaneBody() {
                     )}
                     <span
                       className={
-                        episodeState === "played" ? styles.playedEpisodeTitleText : undefined
+                        episodeState === "played"
+                          ? styles.playedEpisodeTitleText
+                          : undefined
                       }
                     >
                       {episode.title}
@@ -1691,7 +1901,11 @@ export default function PodcastDetailPaneBody() {
                 }
                 description={
                   <span className={styles.episodeDescription}>
-                    <span>{episode.capabilities.can_play ? "Playable episode" : "Processing"}</span>
+                    <span>
+                      {episode.capabilities.can_play
+                        ? "Playable episode"
+                        : "Processing"}
+                    </span>
                     {episodeState === "in_progress" && (
                       <span
                         className={styles.inProgressBar}
@@ -1706,51 +1920,58 @@ export default function PodcastDetailPaneBody() {
                         />
                       </span>
                     )}
-                    {showNotesText && !showNotesExpanded && (
+                    {showNotesText && showNotesExpanded && (
+                      <span className={styles.episodeShowNotes}>
+                        <span
+                          className={styles.episodeShowNotesPreview}
+                          data-expanded="true"
+                        >
+                          {showNotesText}
+                        </span>
+                      </span>
+                    )}
+                  </span>
+                }
+                meta={
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                      gap: "0.35rem",
+                    }}
+                  >
+                    <span>
+                      {[
+                        episode.processing_status,
+                        `transcript ${episode.transcript_state ?? "unknown"} (${episode.transcript_coverage ?? "unknown"} coverage)`,
+                        episodeState === "in_progress"
+                          ? "in progress"
+                          : episodeState,
+                      ].join(" · ")}
+                    </span>
+                  </span>
+                }
+                actions={
+                  <div className={styles.episodeActions}>
+                    <ContributorCreditList
+                      credits={episode.contributors}
+                      maxVisible={1}
+                    />
+                    {showNotesText ? (
                       <button
                         type="button"
                         className={styles.showNotesToggleButton}
-                        aria-label={`Show notes for ${episode.title}`}
+                        aria-label={`${showNotesExpanded ? "Hide" : "Show"} notes for ${episode.title}`}
                         onClick={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
                           toggleEpisodeShowNotesExpansion(episode.id);
                         }}
                       >
-                        Show notes
+                        {showNotesExpanded ? "Hide notes" : "Show notes"}
                       </button>
-                    )}
-                    {showNotesText && showNotesExpanded && (
-                      <span className={styles.episodeShowNotes}>
-                        <span className={styles.episodeShowNotesPreview} data-expanded="true">
-                          {showNotesText}
-                        </span>
-                        <button
-                          type="button"
-                          className={styles.showNotesToggleButton}
-                          aria-label={`Hide notes for ${episode.title}`}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            toggleEpisodeShowNotesExpansion(episode.id);
-                          }}
-                        >
-                          Hide notes
-                        </button>
-                      </span>
-                    )}
-                  </span>
-                }
-                meta={[
-                  authorSummary,
-                  episode.processing_status,
-                  `transcript ${episode.transcript_state ?? "unknown"} (${episode.transcript_coverage ?? "unknown"} coverage)`,
-                  episodeState === "in_progress" ? "in progress" : episodeState,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-                actions={
-                  <div className={styles.episodeActions}>
+                    ) : null}
                     <button
                       type="button"
                       className={styles.queueButton}
@@ -1771,72 +1992,85 @@ export default function PodcastDetailPaneBody() {
                     >
                       Add to queue
                     </button>
-                    {inQueue && <span className={styles.queueBadge}>In Queue</span>}
-                    {canRequestTranscript && !expandedTranscriptMediaIds.has(episode.id) && (
-                      <button
-                        type="button"
-                        className={styles.requestButton}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setExpandedTranscriptMediaIds((prev) => new Set(prev).add(episode.id));
-                        }}
-                        aria-label={`Request transcript for ${episode.title}`}
-                      >
-                        Request transcript...
-                      </button>
+                    {inQueue && (
+                      <span className={styles.queueBadge}>In Queue</span>
                     )}
-                    {canRequestTranscript && expandedTranscriptMediaIds.has(episode.id) && (
-                      <>
-                        <label className={styles.reasonLabel}>
-                          Transcript reason
-                          <select
-                            value={transcriptReason}
-                            onChange={(event) =>
-                              setTranscriptReasonByMediaId((prev) => ({
-                                ...prev,
-                                [episode.id]: event.target.value as TranscriptRequestReason,
-                              }))
-                            }
-                            aria-label={`Transcript request reason for ${episode.title}`}
-                            className={styles.reasonSelect}
-                          >
-                            <option value="search">search</option>
-                            <option value="highlight">highlight</option>
-                            <option value="quote">quote</option>
-                          </select>
-                        </label>
+                    {canRequestTranscript &&
+                      !expandedTranscriptMediaIds.has(episode.id) && (
                         <button
                           type="button"
                           className={styles.requestButton}
-                          aria-label={`Submit transcript request for ${episode.title}`}
-                          disabled={transcriptRequestDisabled}
-                          onClick={() => void handleRequestTranscript(episode.id)}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setExpandedTranscriptMediaIds((prev) =>
+                              new Set(prev).add(episode.id),
+                            );
+                          }}
+                          aria-label={`Request transcript for ${episode.title}`}
                         >
-                          {requestingTranscriptMediaIds.has(episode.id)
-                            ? "Requesting..."
-                            : "Request transcript"}
+                          Request transcript...
                         </button>
-                        {forecastForSelectedReason && (
-                          <span className={styles.transcriptRequestHint}>
-                            {forecastForSelectedReason.source === "request"
-                              ? forecastForSelectedReason.request_enqueued
-                                ? "queued"
-                                : "acknowledged"
-                              : "estimate"}{" "}
-                            · {forecastForSelectedReason.required_minutes} min · remaining{" "}
-                            {forecastForSelectedReason.remaining_minutes == null
-                              ? "unlimited"
-                              : `${forecastForSelectedReason.remaining_minutes} min`}
-                          </span>
-                        )}
-                        {forecastForSelectedReason && !forecastForSelectedReason.fits_budget && (
-                          <span className={styles.transcriptQuotaWarning}>
-                            Not enough monthly transcription quota for this request.
-                          </span>
-                        )}
-                      </>
-                    )}
+                      )}
+                    {canRequestTranscript &&
+                      expandedTranscriptMediaIds.has(episode.id) && (
+                        <>
+                          <label className={styles.reasonLabel}>
+                            Transcript reason
+                            <select
+                              value={transcriptReason}
+                              onChange={(event) =>
+                                setTranscriptReasonByMediaId((prev) => ({
+                                  ...prev,
+                                  [episode.id]: event.target
+                                    .value as TranscriptRequestReason,
+                                }))
+                              }
+                              aria-label={`Transcript request reason for ${episode.title}`}
+                              className={styles.reasonSelect}
+                            >
+                              <option value="search">search</option>
+                              <option value="highlight">highlight</option>
+                              <option value="quote">quote</option>
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            className={styles.requestButton}
+                            aria-label={`Submit transcript request for ${episode.title}`}
+                            disabled={transcriptRequestDisabled}
+                            onClick={() =>
+                              void handleRequestTranscript(episode.id)
+                            }
+                          >
+                            {requestingTranscriptMediaIds.has(episode.id)
+                              ? "Requesting..."
+                              : "Request transcript"}
+                          </button>
+                          {forecastForSelectedReason && (
+                            <span className={styles.transcriptRequestHint}>
+                              {forecastForSelectedReason.source === "request"
+                                ? forecastForSelectedReason.request_enqueued
+                                  ? "queued"
+                                  : "acknowledged"
+                                : "estimate"}{" "}
+                              · {forecastForSelectedReason.required_minutes} min
+                              · remaining{" "}
+                              {forecastForSelectedReason.remaining_minutes ==
+                              null
+                                ? "unlimited"
+                                : `${forecastForSelectedReason.remaining_minutes} min`}
+                            </span>
+                          )}
+                          {forecastForSelectedReason &&
+                            !forecastForSelectedReason.fits_budget && (
+                              <span className={styles.transcriptQuotaWarning}>
+                                Not enough monthly transcription quota for this
+                                request.
+                              </span>
+                            )}
+                        </>
+                      )}
                     {!canRequestTranscript && !transcriptionAllowed && (
                       <span className={styles.transcriptQuotaWarning}>
                         {billingDisabled
@@ -1927,7 +2161,10 @@ export default function PodcastDetailPaneBody() {
             </div>
             <SectionCard>
               {loading && (
-                <FeedbackNotice severity="info" title="Loading podcast detail..." />
+                <FeedbackNotice
+                  severity="info"
+                  title="Loading podcast detail..."
+                />
               )}
               {error && <FeedbackNotice feedback={error} />}
               {!loading && detail && (
@@ -1943,7 +2180,10 @@ export default function PodcastDetailPaneBody() {
                         unoptimized
                       />
                     ) : (
-                      <span className={styles.summaryArtworkFallback} aria-hidden="true">
+                      <span
+                        className={styles.summaryArtworkFallback}
+                        aria-hidden="true"
+                      >
                         {detail.podcast.title
                           .split(/\s+/)
                           .filter(Boolean)
@@ -1953,12 +2193,17 @@ export default function PodcastDetailPaneBody() {
                       </span>
                     )}
                     <div className={styles.summaryCopy}>
-                      <h2 className={styles.summaryTitle}>{detail.podcast.title}</h2>
-                      {detail.podcast.author ? (
-                        <p className={styles.summaryByline}>{detail.podcast.author}</p>
-                      ) : null}
+                      <h2 className={styles.summaryTitle}>
+                        {detail.podcast.title}
+                      </h2>
+                      <ContributorCreditList
+                        credits={detail.podcast.contributors}
+                        className={styles.summaryByline}
+                        maxVisible={3}
+                      />
                       <p className={styles.summaryDescription}>
-                        {detail.podcast.description?.trim() || "No summary from source."}
+                        {detail.podcast.description?.trim() ||
+                          "No summary from source."}
                       </p>
                     </div>
                   </div>
@@ -1967,7 +2212,8 @@ export default function PodcastDetailPaneBody() {
                       {activeSubscription ? "Subscribed" : "Not subscribed"}
                     </span>
                     <span className={styles.summaryMetaBadge}>
-                      In {podcastLibraryCount} librar{podcastLibraryCount === 1 ? "y" : "ies"}
+                      In {podcastLibraryCount} librar
+                      {podcastLibraryCount === 1 ? "y" : "ies"}
                     </span>
                     {activeSubscription ? (
                       <span className={styles.summaryMetaBadge}>
@@ -1978,7 +2224,7 @@ export default function PodcastDetailPaneBody() {
                       <span className={styles.summaryMetaBadge}>
                         {formatSubscriptionPlaybackSummary(
                           activeSubscription.default_playback_speed,
-                          activeSubscription.auto_queue
+                          activeSubscription.auto_queue,
                         )}
                       </span>
                     ) : null}
@@ -2005,12 +2251,13 @@ export default function PodcastDetailPaneBody() {
                   </div>
                   {activeSubscription ? (
                     <p className={styles.syncState}>
-                      Subscription is active. Manage playback defaults, sync, and library
-                      membership from this header.
+                      Subscription is active. Manage playback defaults, sync,
+                      and library membership from this header.
                     </p>
                   ) : (
                     <p className={styles.unsubscribedLabel}>
-                      Subscribe to save playback defaults and add this show to your libraries.
+                      Subscribe to save playback defaults and add this show to
+                      your libraries.
                     </p>
                   )}
                   {activeSubscription?.sync_error_code && (
@@ -2032,7 +2279,9 @@ export default function PodcastDetailPaneBody() {
             <div className={styles.episodesColumnHeader}>
               <h2>Episodes</h2>
             </div>
-            <div className={styles.episodesColumnBody}>{episodePaneContent}</div>
+            <div className={styles.episodesColumnBody}>
+              {episodePaneContent}
+            </div>
           </aside>
         ) : null}
       </div>
@@ -2082,7 +2331,10 @@ export default function PodcastDetailPaneBody() {
         }}
         onRemoveFromLibrary={(libraryId: string) => {
           if (episodeMembershipPanelMediaId) {
-            void handleRemoveFromLibrary(episodeMembershipPanelMediaId, libraryId);
+            void handleRemoveFromLibrary(
+              episodeMembershipPanelMediaId,
+              libraryId,
+            );
           }
         }}
       />
@@ -2097,9 +2349,13 @@ export default function PodcastDetailPaneBody() {
           <div className={styles.modalCard}>
             <h3 className={styles.modalTitle}>Subscription settings</h3>
             <p className={styles.modalDescription}>
-              Configure default playback behavior for <strong>{detail.podcast.title}</strong>.
+              Configure default playback behavior for{" "}
+              <strong>{detail.podcast.title}</strong>.
             </p>
-            <label htmlFor="detail-default-playback-speed" className={styles.settingsFieldLabel}>
+            <label
+              htmlFor="detail-default-playback-speed"
+              className={styles.settingsFieldLabel}
+            >
               Default playback speed
             </label>
             <select
@@ -2126,8 +2382,8 @@ export default function PodcastDetailPaneBody() {
               <span>Automatically add new episodes to my queue</span>
             </label>
             <p className={styles.modalDescription}>
-              New episodes from this podcast will be added to the end of your playback queue when
-              they&apos;re synced.
+              New episodes from this podcast will be added to the end of your
+              playback queue when they&apos;re synced.
             </p>
             {settingsError && <FeedbackNotice feedback={settingsError} />}
             <div className={styles.modalActions}>
@@ -2177,7 +2433,9 @@ export default function PodcastDetailPaneBody() {
                 Close
               </button>
             </header>
-            <div className={styles.episodesDrawerBody}>{episodePaneContent}</div>
+            <div className={styles.episodesDrawerBody}>
+              {episodePaneContent}
+            </div>
           </aside>
         </div>
       ) : null}

@@ -96,6 +96,11 @@
   outline: 2px solid var(--color-accent);
 }
 
+.temporaryHighlightOverlayRect {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
 .viewerA11yMarker {
   position: absolute;
   width: 1px;

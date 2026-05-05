@@ -146,6 +146,76 @@ function databaseHasSeededMedia(dbUrl) {
   }
 }
 
+function databaseHasReadyEvidenceIndexes(dbUrl) {
+  if (!seedArtifactsExist()) {
+    return false;
+  }
+
+  const probeDatabaseUrl = dbUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://");
+  const pdf = readJson(PDF_SEED);
+  const nonPdf = readJson(NON_PDF_SEED);
+  const epub = readJson(EPUB_SEED);
+  const youtube = readJson(YOUTUBE_SEED);
+  const readerResume = readJson(READER_RESUME_SEED);
+  const mediaIds = Array.from(
+    new Set(
+      [
+        pdf.media_id,
+        nonPdf.media_id,
+        epub.media_id,
+        youtube.media_id,
+        readerResume.web_media_id,
+        readerResume.epub_media_id,
+        readerResume.pdf_media_id,
+      ].filter((value) => typeof value === "string" && value.length > 0),
+    ),
+  );
+  if (mediaIds.length === 0) {
+    return false;
+  }
+
+  const command =
+    "uv run --project python python -c " +
+    JSON.stringify(
+      "import json, os, psycopg;" +
+        "ids=json.loads(os.environ['NEXUS_E2E_INDEX_MEDIA_IDS']);" +
+        "conn=psycopg.connect(os.environ['DATABASE_URL']);" +
+        "cur=conn.cursor();" +
+        "cur.execute(" +
+        JSON.stringify(
+          "select count(*) from media_content_index_states where media_id = any(%s::uuid[]) and status = 'ready'"
+        ) +
+        ", (ids,));" +
+        "row=cur.fetchone();" +
+        "print(row[0] if row else 0);" +
+        "cur.close();" +
+        "conn.close()",
+    );
+
+  try {
+    const raw = execSync(command, {
+      cwd: ROOT,
+      stdio: ["ignore", "pipe", "inherit"],
+      env: {
+        ...process.env,
+        DATABASE_URL: probeDatabaseUrl,
+        NEXUS_E2E_INDEX_MEDIA_IDS: JSON.stringify(mediaIds),
+      },
+    })
+      .toString()
+      .trim();
+    const count = Number.parseInt(raw, 10);
+    return Number.isFinite(count) && count === mediaIds.length;
+  } catch (error) {
+    throw new Error(
+      "[global-setup] Evidence-index readiness probe failed.\n" +
+        `  Command: ${command}\n` +
+        `  CWD:     ${ROOT}\n` +
+        `  Cause:   ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 function databaseHasSeededBilling(dbUrl) {
   const probeDatabaseUrl = dbUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://");
   const command =
@@ -204,11 +274,11 @@ function databaseHasSeededYoutubeTranscriptStates(dbUrl) {
         "cur=conn.cursor();" +
         "cur.execute(" +
         JSON.stringify(
-          "select media_id::text, transcript_state, transcript_coverage, semantic_status from media_transcript_states where media_id = any(%s::uuid[])"
+          "select mts.media_id::text, mts.transcript_state, mts.transcript_coverage, mts.semantic_status, mcis.status from media_transcript_states mts left join media_content_index_states mcis on mcis.media_id = mts.media_id where mts.media_id = any(%s::uuid[])"
         ) +
         ", ([seed['media_id'], seed['playback_only_media_id']],));" +
-        "rows={media_id:(state, coverage, semantic) for media_id, state, coverage, semantic in cur.fetchall()};" +
-        "ready_ok=rows.get(seed['media_id']) == ('ready', 'full', 'ready');" +
+        "rows={media_id:(state, coverage, semantic, index_status) for media_id, state, coverage, semantic, index_status in cur.fetchall()};" +
+        "ready_ok=rows.get(seed['media_id']) == ('ready', 'full', 'ready', 'ready');" +
         "playback_ok=(rows.get(seed['playback_only_media_id']) or ('', '', ''))[0] == 'unavailable';" +
         "print('1' if ready_ok and playback_ok else '0');" +
         "cur.close();" +
@@ -326,6 +396,7 @@ export default function globalSetup() {
 
   if (
     databaseHasSeededMedia(dbUrl) &&
+    databaseHasReadyEvidenceIndexes(dbUrl) &&
     databaseHasSeededBilling(dbUrl) &&
     databaseHasSeededYoutubeTranscriptStates(dbUrl) &&
     databaseHasCleanSeededHighlightFixtures(dbUrl)

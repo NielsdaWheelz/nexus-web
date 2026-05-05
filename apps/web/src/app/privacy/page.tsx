@@ -34,7 +34,7 @@ export default function PrivacyPage() {
             </p>
             <p className={styles.sectionBody}>
               We also collect the content you choose to store or generate in Nexus,
-              including documents, media, notes, highlights, and annotations, plus
+              including documents, media, notes, and highlights, plus
               technical logs needed for security, reliability, and abuse prevention.
             </p>
           </section>

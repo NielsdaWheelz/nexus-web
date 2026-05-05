@@ -66,21 +66,28 @@ export interface PdfHighlightOut {
   suffix: string;
   created_at: string;
   updated_at: string;
-  annotation: {
-    id: string;
-    body: string;
-    created_at: string;
-    updated_at: string;
-  } | null;
   author_user_id: string;
   is_owner: boolean;
   linked_conversations?: { conversation_id: string; title: string }[];
+  linked_note_blocks?: {
+    note_block_id: string;
+    body_pm_json?: Record<string, unknown>;
+    body_markdown?: string;
+    body_text: string;
+  }[];
 }
 
 export interface PdfHighlightNavigationRequest {
   highlightId: string;
   pageNumber: number;
   quads: PdfHighlightQuad[];
+}
+
+export interface PdfTemporaryHighlight {
+  id: string;
+  pageNumber: number;
+  quads: PdfHighlightQuad[];
+  color: HighlightColor;
 }
 
 export interface PdfReaderControlsState {
@@ -150,6 +157,7 @@ interface PdfReaderProps {
   onHighlightNavigationComplete?: () => void;
   onHighlightsMutated?: () => void;
   onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
+  temporaryHighlight?: PdfTemporaryHighlight | null;
   quoteDestinations?: Array<{
     id: "new" | "media" | "library";
     label: string;
@@ -181,6 +189,7 @@ interface ProjectedHighlightRect {
   highlightId: string;
   color: HighlightColor;
   index: number;
+  isTemporary: boolean;
   left: number;
   top: number;
   width: number;
@@ -335,7 +344,7 @@ function clampZoom(value: number): number {
 function projectQuadToRect(
   quad: PdfHighlightQuad,
   transform: PdfPageViewportTransform
-): Omit<ProjectedHighlightRect, "highlightId" | "color" | "index"> {
+): Omit<ProjectedHighlightRect, "highlightId" | "color" | "index" | "isTemporary"> {
   return projectPdfQuadToViewportRect(quad, transform);
 }
 
@@ -534,6 +543,7 @@ export default function PdfReader({
   onHighlightNavigationComplete,
   onHighlightsMutated,
   onHighlightTap,
+  temporaryHighlight = null,
   quoteDestinations = [],
   onQuoteToChat,
   startPageNumber,
@@ -591,6 +601,7 @@ export default function PdfReader({
   const pendingViewerScaleRef = useRef<string | number | null>(null);
   const recoveringFromRenderErrorRef = useRef(false);
   const processedNavigationKeyRef = useRef<string | null>(null);
+  const processedTemporaryHighlightKeyRef = useRef<string | null>(null);
   const onPageHighlightsChangeRef = useRef(onPageHighlightsChange);
   const onHighlightTapRef = useRef(onHighlightTap);
   const hasHighlightTapHandler = Boolean(onHighlightTap);
@@ -1789,6 +1800,50 @@ export default function PdfReader({
   }, [goToPage, navigateToHighlight, onHighlightNavigationComplete, scrollToProjectedHighlight]);
 
   useEffect(() => {
+    if (!temporaryHighlight || temporaryHighlight.quads.length === 0) {
+      processedTemporaryHighlightKeyRef.current = null;
+      return;
+    }
+
+    const navigationKey = `${temporaryHighlight.id}:${temporaryHighlight.pageNumber}`;
+    if (processedTemporaryHighlightKeyRef.current === navigationKey) {
+      return;
+    }
+    processedTemporaryHighlightKeyRef.current = navigationKey;
+
+    let cancelled = false;
+    const currentRun = runRef.current;
+
+    const tryScrollWithRetries = (remainingAttempts: number) => {
+      if (cancelled || currentRun !== runRef.current) {
+        return;
+      }
+      if (
+        scrollToProjectedHighlight(temporaryHighlight.pageNumber, temporaryHighlight.quads) ||
+        remainingAttempts <= 0
+      ) {
+        return;
+      }
+      window.requestAnimationFrame(() => {
+        tryScrollWithRetries(remainingAttempts - 1);
+      });
+    };
+
+    const runNavigation = async () => {
+      if (temporaryHighlight.pageNumber !== pageNumberRef.current) {
+        await goToPage(temporaryHighlight.pageNumber);
+      }
+      tryScrollWithRetries(8);
+    };
+
+    void runNavigation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [goToPage, scrollToProjectedHighlight, temporaryHighlight]);
+
+  useEffect(() => {
     zoomRef.current = zoom;
     const viewer = pdfViewerRef.current;
     if (!viewer) {
@@ -1991,13 +2046,25 @@ export default function PdfReader({
           highlightId: highlight.id,
           color: highlight.color,
           index,
+          isTemporary: false,
+          ...projectQuadToRect(quad, viewportTransform),
+        });
+      });
+    }
+    if (temporaryHighlight?.pageNumber === pageNumber) {
+      temporaryHighlight.quads.forEach((quad, index) => {
+        projected.push({
+          highlightId: temporaryHighlight.id,
+          color: temporaryHighlight.color,
+          index,
+          isTemporary: true,
           ...projectQuadToRect(quad, viewportTransform),
         });
       });
     }
     return projected;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- pageRenderEpoch is an intentional invalidation trigger
-  }, [pageHighlights, pageNumber, pageRenderEpoch, pageScale]);
+  }, [pageHighlights, pageNumber, pageRenderEpoch, pageScale, temporaryHighlight]);
 
   useEffect(() => {
     removeOverlayLayers();
@@ -2015,6 +2082,9 @@ export default function PdfReader({
     for (const rect of projectedHighlightRects) {
       const rectEl = document.createElement("div");
       rectEl.className = styles.highlightOverlayRect;
+      if (rect.isTemporary) {
+        rectEl.classList.add(styles.temporaryHighlightOverlayRect);
+      }
       if (focusedHighlightId === rect.highlightId) {
         rectEl.classList.add(styles.highlightOverlayRectFocused);
       }
@@ -2029,7 +2099,7 @@ export default function PdfReader({
       rectEl.style.height = `${rect.height}px`;
       rectEl.style.backgroundColor = OVERLAY_COLOR_MAP[rect.color];
       rectEl.style.mixBlendMode = "multiply";
-      if (hasHighlightTapHandler) {
+      if (hasHighlightTapHandler && !rect.isTemporary) {
         rectEl.style.pointerEvents = "auto";
         rectEl.setAttribute("role", "button");
         rectEl.setAttribute("tabindex", "0");

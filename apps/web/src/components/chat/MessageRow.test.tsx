@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MessageRow } from "./MessageRow";
 import type { ConversationMessage } from "@/lib/conversations/types";
@@ -104,7 +104,7 @@ describe("MessageRow", () => {
     expect(screen.getByText("included_in_prompt: true")).toBeInTheDocument();
   });
 
-  it("renders app evidence with app links, exact snippets, and locator detail", () => {
+  it("renders app evidence with resolver links, exact snippets, and backend labels", () => {
     const content = "The paper makes the claim.";
     const message: ConversationMessage = {
       ...baseMessage,
@@ -153,7 +153,17 @@ describe("MessageRow", () => {
           },
           retrieval_id: "retrieval-1",
           context_ref: { type: "media", id: "media-1" },
-          result_ref: { title: "Research paper" },
+          result_ref: {
+            title: "Research paper",
+            citation_label: "p. 12",
+            resolver: {
+              kind: "pdf",
+              route: "/media/media-1",
+              params: { evidence: "span-1", page: "12" },
+              status: "resolved",
+              selector: {},
+            },
+          },
           exact_snippet: "The exact app-source excerpt.",
           locator: {
             type: "pdf_page_geometry",
@@ -162,7 +172,7 @@ describe("MessageRow", () => {
             quads: [],
             exact: "The exact app-source excerpt.",
           },
-          deep_link: "/media/media-1?page=12",
+          deep_link: null,
           score: 0.82,
           retrieval_status: "included_in_prompt",
           selected: true,
@@ -174,14 +184,14 @@ describe("MessageRow", () => {
 
     render(<MessageRow message={message} />);
 
-    const link = screen.getByRole("link", { name: /research paper/i });
-    expect(link).toHaveAttribute("href", "/media/media-1?page=12");
+    const link = screen.getByRole("link", { name: /p\. 12/i });
+    expect(link).toHaveAttribute("href", "/media/media-1?evidence=span-1&page=12");
     expect(link).not.toHaveAttribute("target");
     expect(screen.getByText("The exact app-source excerpt.")).toBeInTheDocument();
     expect(
       screen.getAllByText("retrieval_status: included_in_prompt").length,
     ).toBe(2);
-    expect(screen.getByText("page: 12")).toBeInTheDocument();
+    expect(screen.queryByText("page: 12")).not.toBeInTheDocument();
   });
 
   it("renders unsupported claims as evidence diagnostics", () => {
@@ -281,6 +291,35 @@ describe("MessageRow", () => {
     expect(screen.queryByRole("link", { name: /legacy web result/i })).toBeNull();
     expect(screen.queryByRole("link", { name: /legacy app source/i })).toBeNull();
     expect(screen.queryByText("Legacy app snippet.")).toBeNull();
+  });
+
+  it("shows title and route snapshots in inline citation hover cards", () => {
+    const message: ConversationMessage = {
+      ...baseMessage,
+      role: "user",
+      content: "Use these notes.",
+      contexts: [
+        {
+          type: "note_block",
+          id: "note-1",
+          title: "Project notes",
+          route: "/notes/note-1",
+        },
+        {
+          type: "media",
+          id: "media-1",
+          title: "Source article",
+          route: "/media/media-1",
+        },
+      ],
+    };
+
+    render(<MessageRow message={message} />);
+
+    fireEvent.mouseEnter(screen.getByText("1"));
+
+    expect(screen.getByText("Project notes")).toBeInTheDocument();
+    expect(screen.getByText("/notes/note-1")).toBeInTheDocument();
   });
 
   it("labels active web-search tool activity", () => {

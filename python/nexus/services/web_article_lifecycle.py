@@ -16,7 +16,6 @@ from nexus.db.models import (
     Highlight,
     HighlightFragmentAnchor,
     Media,
-    MediaAuthor,
     MediaKind,
     ProcessingStatus,
 )
@@ -30,6 +29,7 @@ from nexus.errors import (
 )
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
+from nexus.services.content_indexing import delete_media_content_index
 
 logger = get_logger(__name__)
 
@@ -121,21 +121,10 @@ def retry_web_article_for_viewer(
 
 def _delete_web_article_artifacts(db: Session, media_id: UUID) -> None:
     """Delete retry-rebuildable artifacts for a web article media row."""
+    delete_media_content_index(db, media_id=media_id)
+
     fragment_ids = (
         db.execute(select(Fragment.id).where(Fragment.media_id == media_id)).scalars().all()
-    )
-
-    db.execute(
-        text(
-            """
-            DELETE FROM content_chunks
-            WHERE media_id = :media_id
-               OR fragment_id IN (
-                    SELECT id FROM fragments WHERE media_id = :media_id
-               )
-            """
-        ),
-        {"media_id": media_id},
     )
 
     if fragment_ids:
@@ -151,5 +140,8 @@ def _delete_web_article_artifacts(db: Session, media_id: UUID) -> None:
         db.execute(delete(FragmentBlock).where(FragmentBlock.fragment_id.in_(fragment_ids)))
 
     db.execute(delete(Fragment).where(Fragment.media_id == media_id))
-    db.execute(delete(MediaAuthor).where(MediaAuthor.media_id == media_id))
+    db.execute(
+        text("DELETE FROM contributor_credits WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
     db.flush()

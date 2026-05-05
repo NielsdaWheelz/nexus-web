@@ -1,4 +1,4 @@
-"""Highlight and annotation service layer."""
+"""Highlight service layer."""
 
 from uuid import UUID
 
@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, highlight_visibility_filter
 from nexus.db.models import (
-    Annotation,
     Conversation,
     Fragment,
     Highlight,
@@ -17,22 +16,23 @@ from nexus.db.models import (
     Media,
     Membership,
     Message,
-    MessageContext,
+    MessageContextItem,
+    ObjectLink,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
-    AnnotationOut,
     CreateHighlightRequest,
     FragmentAnchorOut,
     LinkedConversationRef,
+    LinkedNoteBlockRef,
     PdfAnchorOut,
     PdfBoundsUpdate,
     PdfQuadOut,
     TypedHighlightOut,
     UpdateHighlightRequest,
-    UpsertAnnotationRequest,
 )
+from nexus.services.notes import linked_note_blocks_for_highlights
 
 logger = get_logger(__name__)
 
@@ -241,18 +241,6 @@ def _require_media_ready_for_highlight(db: Session, highlight: Highlight) -> Non
     require_media_ready_or_409(media_obj.processing_status.value)
 
 
-def _annotation_to_out(annotation: Annotation | None) -> AnnotationOut | None:
-    if annotation is None:
-        return None
-    return AnnotationOut(
-        id=annotation.id,
-        highlight_id=annotation.highlight_id,
-        body=annotation.body,
-        created_at=annotation.created_at,
-        updated_at=annotation.updated_at,
-    )
-
-
 def _batch_linked_conversations(
     db: Session, highlight_ids: list[UUID], viewer_id: UUID
 ) -> dict[UUID, list[LinkedConversationRef]]:
@@ -261,18 +249,18 @@ def _batch_linked_conversations(
         return {}
     rows = db.execute(
         select(
-            MessageContext.highlight_id,
+            MessageContextItem.object_id,
             Conversation.id,
             Conversation.title,
         )
-        .join(Message, Message.id == MessageContext.message_id)
+        .join(Message, Message.id == MessageContextItem.message_id)
         .join(Conversation, Conversation.id == Message.conversation_id)
         .where(
-            MessageContext.target_type == "highlight",
-            MessageContext.highlight_id.in_(highlight_ids),
+            MessageContextItem.object_type == "highlight",
+            MessageContextItem.object_id.in_(highlight_ids),
             Conversation.owner_user_id == viewer_id,
         )
-        .group_by(MessageContext.highlight_id, Conversation.id, Conversation.title)
+        .group_by(MessageContextItem.object_id, Conversation.id, Conversation.title)
     ).all()
     result: dict[UUID, list[LinkedConversationRef]] = {}
     for hl_id, conv_id, title in rows:
@@ -280,6 +268,25 @@ def _batch_linked_conversations(
             LinkedConversationRef(conversation_id=conv_id, title=title)
         )
     return result
+
+
+def _batch_linked_note_blocks(
+    db: Session, highlight_ids: list[UUID], viewer_id: UUID
+) -> dict[UUID, list[LinkedNoteBlockRef]]:
+    return {
+        highlight_id: [
+            LinkedNoteBlockRef(
+                note_block_id=block.id,
+                body_pm_json=block.body_pm_json,
+                body_markdown=block.body_markdown,
+                body_text=block.body_text,
+            )
+            for block in blocks
+        ]
+        for highlight_id, blocks in linked_note_blocks_for_highlights(
+            db, viewer_id, highlight_ids
+        ).items()
+    }
 
 
 def _highlight_to_typed_out(highlight: Highlight, viewer_id: UUID) -> TypedHighlightOut:
@@ -331,7 +338,6 @@ def _highlight_to_typed_out(highlight: Highlight, viewer_id: UUID) -> TypedHighl
         suffix=highlight.suffix,
         created_at=highlight.created_at,
         updated_at=highlight.updated_at,
-        annotation=_annotation_to_out(highlight.annotation),
         author_user_id=highlight.user_id,
         is_owner=(highlight.user_id == viewer_id),
     )
@@ -490,10 +496,15 @@ def list_highlights_for_fragment(
         Highlight.id.asc(),
     ).all()
 
-    conv_map = _batch_linked_conversations(db, [h.id for h in highlights], viewer_id)
+    highlight_ids = [h.id for h in highlights]
+    conv_map = _batch_linked_conversations(db, highlight_ids, viewer_id)
+    note_map = _batch_linked_note_blocks(db, highlight_ids, viewer_id)
     return [
         _highlight_to_typed_out(h, viewer_id).model_copy(
-            update={"linked_conversations": conv_map.get(h.id, [])}
+            update={
+                "linked_conversations": conv_map.get(h.id, []),
+                "linked_note_blocks": note_map.get(h.id, []),
+            }
         )
         for h in highlights
     ]
@@ -509,7 +520,16 @@ def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHigh
         TypedHighlightOut with anchor discriminator for both fragment and PDF highlights.
     """
     highlight = get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
-    return _highlight_to_typed_out(highlight, viewer_id)
+    return _highlight_to_typed_out(highlight, viewer_id).model_copy(
+        update={
+            "linked_conversations": _batch_linked_conversations(db, [highlight.id], viewer_id).get(
+                highlight.id, []
+            ),
+            "linked_note_blocks": _batch_linked_note_blocks(db, [highlight.id], viewer_id).get(
+                highlight.id, []
+            ),
+        }
+    )
 
 
 def update_highlight(
@@ -634,7 +654,6 @@ def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
     """Delete a highlight.
 
     NO ready check - allows cleanup even if media status drifts.
-    Annotation is cascaded via FK ON DELETE CASCADE.
 
     Args:
         db: Database session.
@@ -647,104 +666,18 @@ def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
     # Verify highlight exists and is owned by viewer
     get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
 
-    # Use raw DELETE to let the database handle ON DELETE CASCADE properly
-    # This avoids SQLAlchemy ORM trying to manage the annotation relationship
+    db.execute(
+        delete(ObjectLink).where(
+            ((ObjectLink.a_type == "highlight") & (ObjectLink.a_id == highlight_id))
+            | ((ObjectLink.b_type == "highlight") & (ObjectLink.b_id == highlight_id))
+        )
+    )
+    db.execute(
+        delete(MessageContextItem).where(
+            MessageContextItem.object_type == "highlight",
+            MessageContextItem.object_id == highlight_id,
+        )
+    )
     db.execute(delete(Highlight).where(Highlight.id == highlight_id))
-    db.flush()
-    db.commit()
-
-
-def upsert_annotation_for_highlight(
-    db: Session, viewer_id: UUID, highlight_id: UUID, req: UpsertAnnotationRequest
-) -> tuple[AnnotationOut, bool]:
-    """Create or update the annotation for a highlight.
-
-    Requires media ready.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        highlight_id: The ID of the highlight.
-        req: The annotation upsert request.
-
-    Returns:
-        Tuple of (annotation, created) where created=True if inserted, False if updated.
-
-    Raises:
-        NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not owned, or not readable.
-        ApiError(E_MEDIA_NOT_READY): If media not in ready state.
-    """
-    # 1. Get highlight with ownership and readability check
-    highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
-
-    # 2. Require media ready via the anchor's media row
-    _require_media_ready_for_highlight(db, highlight)
-
-    # 3. Check for existing annotation
-    existing = db.query(Annotation).filter(Annotation.highlight_id == highlight_id).first()
-
-    if existing:
-        # Update existing
-        stmt = (
-            update(Annotation)
-            .where(Annotation.highlight_id == highlight_id)
-            .values(body=req.body, updated_at=func.now())
-        )
-        db.execute(stmt)
-        db.flush()
-        db.commit()
-        db.refresh(existing)
-
-        return (
-            AnnotationOut(
-                id=existing.id,
-                highlight_id=existing.highlight_id,
-                body=existing.body,
-                created_at=existing.created_at,
-                updated_at=existing.updated_at,
-            ),
-            False,
-        )
-    else:
-        # Create new
-        annotation = Annotation(
-            highlight_id=highlight_id,
-            body=req.body,
-        )
-        db.add(annotation)
-        db.flush()
-        db.commit()
-
-        return (
-            AnnotationOut(
-                id=annotation.id,
-                highlight_id=annotation.highlight_id,
-                body=annotation.body,
-                created_at=annotation.created_at,
-                updated_at=annotation.updated_at,
-            ),
-            True,
-        )
-
-
-def delete_annotation_for_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
-    """Delete the annotation for a highlight.
-
-    NO ready check - allows cleanup even if media status drifts.
-    Idempotent: returns 204 even if annotation doesn't exist.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        highlight_id: The ID of the highlight.
-
-    Raises:
-        NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not owned, or not readable.
-    """
-    # Verify highlight ownership and readability (no ready check)
-    get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
-
-    # Delete annotation if exists (idempotent)
-    db.execute(delete(Annotation).where(Annotation.highlight_id == highlight_id))
     db.flush()
     db.commit()

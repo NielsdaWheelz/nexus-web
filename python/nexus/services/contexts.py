@@ -1,124 +1,121 @@
-"""Message Context service layer.
+"""Message context item service."""
 
-Implements context insertion and conversation_media management for Slice 3, PR-02.
-
-This module provides helpers for:
-- Inserting message_context rows with ordinal ordering
-- Resolving media_id from canonical typed context targets
-- Transactionally upserting conversation_media
-- Recomputing conversation_media (repair helper)
-
-NO PUBLIC ROUTES use this directly. Chat runs use it while preparing user
-message context rows.
-"""
+from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select, text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_media
 from nexus.db.models import (
-    Annotation,
     ConversationMedia,
     Highlight,
     Media,
     Message,
-    MessageContext,
+    MessageContextItem,
+    NoteBlock,
+    ObjectLink,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.logging import get_logger
 from nexus.schemas.conversation import MessageContextRef
-
-logger = get_logger(__name__)
-
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
+from nexus.schemas.notes import ObjectRef
+from nexus.services.object_refs import hydrate_object_ref
 
 
-def _context_foreign_keys(
-    context: MessageContextRef,
-) -> tuple[UUID | None, UUID | None, UUID | None]:
-    if context.type == "media":
-        return context.id, None, None
-    if context.type == "highlight":
-        return None, context.id, None
-    return None, None, context.id
-
-
-def _resolve_typed_highlight_media_id(highlight: Highlight) -> UUID | None:
-    """Resolve the media id for a canonical typed highlight."""
+def _highlight_media_id(highlight: Highlight) -> UUID | None:
     if highlight.anchor_media_id is None:
         return None
-
     if highlight.anchor_kind == "fragment_offsets":
-        fragment_anchor = highlight.fragment_anchor
-        fragment = fragment_anchor.fragment if fragment_anchor is not None else None
+        anchor = highlight.fragment_anchor
+        fragment = anchor.fragment if anchor is not None else None
         if fragment is not None and fragment.media_id == highlight.anchor_media_id:
             return highlight.anchor_media_id
-
     if highlight.anchor_kind == "pdf_page_geometry":
-        pdf_anchor = highlight.pdf_anchor
-        if pdf_anchor is not None and pdf_anchor.media_id == highlight.anchor_media_id:
+        anchor = highlight.pdf_anchor
+        if anchor is not None and anchor.media_id == highlight.anchor_media_id:
             return highlight.anchor_media_id
-
     return None
 
 
-def resolve_media_id_for_context(
-    db: Session,
-    context: MessageContextRef,
-) -> UUID:
-    """Resolve the media_id for a context target.
-
-    Uses canonical typed anchors for highlight and annotation targets.
-
-    Args:
-        db: Database session.
-        context: Canonical typed context target.
-
-    Returns:
-        The resolved media_id.
-
-    Raises:
-        NotFoundError: If the target doesn't exist.
-    """
+def resolve_media_id_for_context(db: Session, context: MessageContextRef) -> UUID | None:
     if context.type == "media":
-        media_id, _, _ = _context_foreign_keys(context)
-        media = db.get(Media, media_id)
+        media = db.get(Media, context.id)
         if media is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         return media.id
 
     if context.type == "highlight":
-        _, highlight_id, _ = _context_foreign_keys(context)
-        highlight = db.get(Highlight, highlight_id)
+        highlight = db.get(Highlight, context.id)
         if highlight is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Highlight not found")
-        media_id = _resolve_typed_highlight_media_id(highlight)
+        media_id = _highlight_media_id(highlight)
         if media_id is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Highlight not found")
         return media_id
 
-    if context.type == "annotation":
-        _, _, annotation_id = _context_foreign_keys(context)
-        annotation = db.get(Annotation, annotation_id)
-        if annotation is None or annotation.highlight is None:
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Annotation not found")
-        media_id = _resolve_typed_highlight_media_id(annotation.highlight)
-        if media_id is None:
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Annotation not found")
-        return media_id
+    if context.type == "content_chunk":
+        row = db.execute(
+            text("SELECT media_id FROM content_chunks WHERE id = :id"),
+            {"id": context.id},
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Content chunk not found")
+        return row[0]
 
-    raise AssertionError(f"Unsupported context type: {context.type}")
+    if context.type == "note_block":
+        block = db.get(NoteBlock, context.id)
+        if block is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Note block not found")
+        media_link = db.scalar(
+            select(ObjectLink).where(
+                or_(
+                    (
+                        (ObjectLink.a_type == "note_block")
+                        & (ObjectLink.a_id == context.id)
+                        & (ObjectLink.b_type == "media")
+                    ),
+                    (
+                        (ObjectLink.a_type == "media")
+                        & (ObjectLink.b_type == "note_block")
+                        & (ObjectLink.b_id == context.id)
+                    ),
+                )
+            )
+        )
+        if media_link is not None:
+            return media_link.b_id if media_link.a_type == "note_block" else media_link.a_id
+        highlight_link = db.scalar(
+            select(ObjectLink).where(
+                or_(
+                    (
+                        (ObjectLink.a_type == "note_block")
+                        & (ObjectLink.a_id == context.id)
+                        & (ObjectLink.b_type == "highlight")
+                    ),
+                    (
+                        (ObjectLink.a_type == "highlight")
+                        & (ObjectLink.b_type == "note_block")
+                        & (ObjectLink.b_id == context.id)
+                    ),
+                )
+            )
+        )
+        if highlight_link is not None:
+            highlight_id = (
+                highlight_link.b_id
+                if highlight_link.a_type == "note_block"
+                else highlight_link.a_id
+            )
+            highlight = db.get(Highlight, highlight_id)
+            if highlight is None:
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Highlight not found")
+            return _highlight_media_id(highlight)
+        return None
 
-
-# =============================================================================
-# Service Functions
-# =============================================================================
+    return None
 
 
 def insert_context(
@@ -127,49 +124,87 @@ def insert_context(
     message_id: UUID,
     ordinal: int,
     context: MessageContextRef,
-) -> MessageContext:
-    """Insert a message_context row.
-
-    Args:
-        db: Database session.
-        message_id: The message to attach context to.
-        ordinal: Display order within message (0-indexed).
-        context: Canonical typed context target.
-
-    Returns:
-        The created MessageContext.
-
-    Raises:
-        NotFoundError: If target doesn't exist.
-    """
-    media_id, highlight_id, annotation_id = _context_foreign_keys(context)
-
-    # Resolve media_id for conversation_media update
-    resolved_media_id = resolve_media_id_for_context(db, context)
-
-    # Get conversation_id from message
+) -> MessageContextItem:
     message = db.get(Message, message_id)
     if message is None:
         raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
 
-    conversation_id = message.conversation_id
-
-    # Create context
-    created_context = MessageContext(
-        message_id=message_id,
-        ordinal=ordinal,
-        target_type=context.type,
-        media_id=media_id,
-        highlight_id=highlight_id,
-        annotation_id=annotation_id,
+    hydrated = hydrate_object_ref(
+        db,
+        message.conversation.owner_user_id,
+        ObjectRef(object_type=context.type, object_id=context.id),
     )
-    db.add(created_context)
+    media_id = resolve_media_id_for_context(db, context)
+    if media_id is not None and not can_read_media(
+        db, message.conversation.owner_user_id, media_id
+    ):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Context not found")
+
+    context_snapshot = hydrated.model_dump(mode="json", by_alias=True)
+    if context.type == "content_chunk" and context.evidence_span_ids:
+        context_snapshot["evidence_span_ids"] = [
+            str(span_id) for span_id in context.evidence_span_ids
+        ]
+
+    row = MessageContextItem(
+        message_id=message_id,
+        user_id=message.conversation.owner_user_id,
+        ordinal=ordinal,
+        object_type=context.type,
+        object_id=context.id,
+        context_snapshot_json=context_snapshot,
+    )
+    db.add(row)
     db.flush()
 
-    # Upsert conversation_media
-    upsert_conversation_media(db, conversation_id, resolved_media_id)
+    context_order_key = f"{ordinal + 1:010d}"
+    existing_link = db.scalar(
+        select(ObjectLink).where(
+            ObjectLink.user_id == message.conversation.owner_user_id,
+            ObjectLink.relation_type == "used_as_context",
+            or_(
+                (
+                    (ObjectLink.a_type == "message")
+                    & (ObjectLink.a_id == message_id)
+                    & (ObjectLink.b_type == context.type)
+                    & (ObjectLink.b_id == context.id)
+                ),
+                (
+                    (ObjectLink.a_type == context.type)
+                    & (ObjectLink.a_id == context.id)
+                    & (ObjectLink.b_type == "message")
+                    & (ObjectLink.b_id == message_id)
+                ),
+            ),
+            ObjectLink.a_locator_json.is_(None),
+            ObjectLink.b_locator_json.is_(None),
+        )
+    )
+    if existing_link is None:
+        db.add(
+            ObjectLink(
+                user_id=message.conversation.owner_user_id,
+                relation_type="used_as_context",
+                a_type="message",
+                a_id=message_id,
+                b_type=context.type,
+                b_id=context.id,
+                a_order_key=context_order_key,
+                b_order_key=None,
+                a_locator_json=None,
+                b_locator_json=None,
+                metadata_json={},
+            )
+        )
+    elif existing_link.a_type == "message" and existing_link.a_id == message_id:
+        if existing_link.a_order_key is None:
+            existing_link.a_order_key = context_order_key
+    elif existing_link.b_order_key is None:
+        existing_link.b_order_key = context_order_key
 
-    return created_context
+    if media_id is not None:
+        upsert_conversation_media(db, message.conversation_id, media_id)
+    return row
 
 
 def insert_contexts_batch(
@@ -177,24 +212,9 @@ def insert_contexts_batch(
     *,
     message_id: UUID,
     contexts: Sequence[MessageContextRef],
-) -> list[MessageContext]:
-    """Insert multiple message_context rows in a batch.
-
-    Args:
-        db: Database session.
-        message_id: The message to attach contexts to.
-        contexts: Ordered canonical typed context targets.
-
-    Returns:
-        List of created MessageContext objects.
-    """
+) -> list[MessageContextItem]:
     return [
-        insert_context(
-            db=db,
-            message_id=message_id,
-            ordinal=ordinal,
-            context=context,
-        )
+        insert_context(db=db, message_id=message_id, ordinal=ordinal, context=context)
         for ordinal, context in enumerate(contexts)
     ]
 
@@ -204,79 +224,56 @@ def upsert_conversation_media(
     conversation_id: UUID,
     media_id: UUID,
 ) -> ConversationMedia:
-    """Upsert a conversation_media row.
-
-    Creates the row if it doesn't exist, or updates last_message_at if it does.
-
-    Args:
-        db: Database session.
-        conversation_id: The conversation.
-        media_id: The media.
-
-    Returns:
-        The ConversationMedia object.
-    """
     now = datetime.now(UTC)
-
-    # Try to get existing
     existing = db.scalar(
         select(ConversationMedia).where(
             ConversationMedia.conversation_id == conversation_id,
             ConversationMedia.media_id == media_id,
         )
     )
-
-    if existing:
-        # Update last_message_at
+    if existing is not None:
         existing.last_message_at = now
         db.flush()
         return existing
-    else:
-        # Create new
-        conv_media = ConversationMedia(
-            conversation_id=conversation_id,
-            media_id=media_id,
-            last_message_at=now,
-        )
-        db.add(conv_media)
-        db.flush()
-        return conv_media
+
+    row = ConversationMedia(
+        conversation_id=conversation_id,
+        media_id=media_id,
+        last_message_at=now,
+    )
+    db.add(row)
+    db.flush()
+    return row
 
 
 def recompute_conversation_media(db: Session, conversation_id: UUID) -> None:
-    """Recompute conversation_media from message_context.
-
-    Idempotent repair helper. Safe to call anytime.
-
-    This function:
-    1. Bulk-loads message_context references and referenced highlights/annotations
-    2. Resolves highlight/annotation media via side-effect-free typed-anchor logic
-    3. Computes expected media set in Python
-    4. Applies set-diff updates to conversation_media
-
-    Args:
-        db: Database session.
-        conversation_id: The conversation to recompute.
-    """
-    current_media_result = db.execute(
-        select(ConversationMedia.media_id).where(
-            ConversationMedia.conversation_id == conversation_id
-        )
-    )
-    current_media_ids = {row[0] for row in current_media_result.fetchall()}
+    current_media_ids = {
+        row[0]
+        for row in db.execute(
+            select(ConversationMedia.media_id).where(
+                ConversationMedia.conversation_id == conversation_id
+            )
+        ).fetchall()
+    }
 
     context_rows = (
-        db.query(MessageContext)
-        .join(Message, Message.id == MessageContext.message_id)
-        .filter(Message.conversation_id == conversation_id)
+        db.execute(
+            select(MessageContextItem)
+            .join(Message, Message.id == MessageContextItem.message_id)
+            .where(Message.conversation_id == conversation_id)
+        )
+        .scalars()
         .all()
     )
 
     expected_media_ids: set[UUID] = set()
-    for ctx in context_rows:
-        resolved = _resolve_context_media_id(db, ctx)
-        if resolved is not None:
-            expected_media_ids.add(resolved)
+    for row in context_rows:
+        media_id = resolve_media_id_for_context(
+            db,
+            MessageContextRef.model_validate({"type": row.object_type, "id": row.object_id}),
+        )
+        if media_id is not None:
+            expected_media_ids.add(media_id)
 
     to_remove = current_media_ids - expected_media_ids
     if to_remove:
@@ -287,53 +284,20 @@ def recompute_conversation_media(db: Session, conversation_id: UUID) -> None:
             )
         )
 
-    to_add = expected_media_ids - current_media_ids
-    for mid in to_add:
-        conv_media = ConversationMedia(
-            conversation_id=conversation_id,
-            media_id=mid,
-            last_message_at=datetime.now(UTC),
+    for media_id in expected_media_ids - current_media_ids:
+        db.add(
+            ConversationMedia(
+                conversation_id=conversation_id,
+                media_id=media_id,
+                last_message_at=datetime.now(UTC),
+            )
         )
-        db.add(conv_media)
-
     db.flush()
 
 
-def _resolve_context_media_id(db, ctx) -> UUID | None:
-    """Resolve media_id for a single message_context row."""
-    if ctx.target_type == "media" and ctx.media_id is not None:
-        media = db.get(Media, ctx.media_id)
-        return media.id if media else None
-
-    if ctx.target_type == "highlight" and ctx.highlight_id is not None:
-        highlight = db.get(Highlight, ctx.highlight_id)
-        if highlight is None:
-            return None
-        return _resolve_typed_highlight_media_id(highlight)
-
-    if ctx.target_type == "annotation" and ctx.annotation_id is not None:
-        annotation = db.get(Annotation, ctx.annotation_id)
-        if annotation is None:
-            return None
-        highlight = annotation.highlight
-        if highlight is None:
-            return None
-        return _resolve_typed_highlight_media_id(highlight)
-
-    return None
-
-
 def get_conversation_media(db: Session, conversation_id: UUID) -> list[ConversationMedia]:
-    """Get all conversation_media rows for a conversation.
-
-    Args:
-        db: Database session.
-        conversation_id: The conversation.
-
-    Returns:
-        List of ConversationMedia objects.
-    """
-    result = db.scalars(
-        select(ConversationMedia).where(ConversationMedia.conversation_id == conversation_id)
+    return list(
+        db.scalars(
+            select(ConversationMedia).where(ConversationMedia.conversation_id == conversation_id)
+        )
     )
-    return list(result)

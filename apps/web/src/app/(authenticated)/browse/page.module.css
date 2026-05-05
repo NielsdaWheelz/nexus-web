@@ -200,6 +200,12 @@
   font-size: var(--font-size-sm);
 }
 
+.rowContributors {
+  flex: 0 1 280px;
+  align-self: center;
+  justify-content: flex-end;
+}
+
 .title {
   color: var(--color-text);
   font-size: var(--font-size-base);
@@ -242,5 +248,10 @@
     width: 100%;
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+
+  .rowContributors {
+    width: 100%;
+    justify-content: flex-start;
   }
 }

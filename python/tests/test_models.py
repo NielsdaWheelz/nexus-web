@@ -528,12 +528,14 @@ class TestS6PR01OrmMapperCompatibility:
     def test_pr01_orm_models_import_and_map_with_typed_anchor_foundation(self):
         """Mapper configuration succeeds with S6 models and relationships."""
         from nexus.db.models import (
-            Annotation,
             Highlight,
             HighlightFragmentAnchor,
             HighlightPdfAnchor,
             HighlightPdfQuad,
             Media,
+            MediaContentIndexState,
+            NoteBlock,
+            ObjectLink,
             PdfPageTextSpan,
         )
 
@@ -541,7 +543,10 @@ class TestS6PR01OrmMapperCompatibility:
         assert HighlightFragmentAnchor.__tablename__ == "highlight_fragment_anchors"
         assert HighlightPdfAnchor.__tablename__ == "highlight_pdf_anchors"
         assert HighlightPdfQuad.__tablename__ == "highlight_pdf_quads"
+        assert NoteBlock.__tablename__ == "note_blocks"
+        assert ObjectLink.__tablename__ == "object_links"
         assert PdfPageTextSpan.__tablename__ == "pdf_page_text_spans"
+        assert MediaContentIndexState.__tablename__ == "media_content_index_states"
 
         # Verify new fields exist on Highlight
         h_cols = {c.name for c in Highlight.__table__.columns}
@@ -560,7 +565,13 @@ class TestS6PR01OrmMapperCompatibility:
         assert hasattr(Highlight, "fragment_anchor")
         assert hasattr(Highlight, "pdf_anchor")
         assert hasattr(Highlight, "pdf_quads")
-        assert hasattr(Highlight, "annotation")
         assert not hasattr(Highlight, "fragment")
-        assert hasattr(Annotation, "highlight")
         assert hasattr(Media, "pdf_page_text_spans")
+        ppts_cols = {c.name for c in PdfPageTextSpan.__table__.columns}
+        assert "page_label" in ppts_cols
+        assert "page_width" in ppts_cols
+        assert "page_height" in ppts_cols
+        assert "page_rotation_degrees" in ppts_cols
+        index_state_cols = {c.name for c in MediaContentIndexState.__table__.columns}
+        assert "id" in index_state_cols
+        assert MediaContentIndexState.__table__.primary_key.columns.keys() == ["id"]

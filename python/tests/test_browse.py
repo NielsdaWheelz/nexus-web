@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from nexus.schemas.podcast import PodcastDiscoveryOut
 from nexus.services import browse as browse_service
+from nexus.services.contributor_credits import replace_media_contributor_credits
 from tests.factories import create_searchable_media
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -24,7 +25,6 @@ def _insert_gutenberg_catalog_row(
     *,
     ebook_id: int,
     title: str,
-    authors: str = "Doe, Jane",
     subjects: str = "Fiction",
     bookshelves: str = "Classics",
     download_count: int = 42,
@@ -37,7 +37,6 @@ def _insert_gutenberg_catalog_row(
                 INSERT INTO project_gutenberg_catalog (
                     ebook_id,
                     title,
-                    authors,
                     subjects,
                     bookshelves,
                     download_count,
@@ -49,7 +48,6 @@ def _insert_gutenberg_catalog_row(
                 VALUES (
                     :ebook_id,
                     :title,
-                    :authors,
                     :subjects,
                     :bookshelves,
                     :download_count,
@@ -63,7 +61,6 @@ def _insert_gutenberg_catalog_row(
             {
                 "ebook_id": ebook_id,
                 "title": title,
-                "authors": authors,
                 "subjects": subjects,
                 "bookshelves": bookshelves,
                 "download_count": download_count,
@@ -149,7 +146,6 @@ class TestBrowse:
                     podcast_id=None,
                     provider_podcast_id=provider_podcast_id,
                     title="AI Systems Weekly",
-                    author="Ada",
                     feed_url="https://example.com/ai.xml",
                     website_url="https://example.com/ai",
                     image_url="https://example.com/ai.png",
@@ -238,7 +234,6 @@ class TestBrowse:
                     podcast_id=None,
                     provider_podcast_id=provider_podcast_id,
                     title="AI Systems Weekly",
-                    author="Ada",
                     feed_url="https://example.com/ai.xml",
                     website_url="https://example.com/ai",
                     image_url="https://example.com/ai.png",
@@ -404,6 +399,17 @@ class TestBrowse:
                 title="Agents Handbook Hidden",
             )
 
+        visible_author = f"Visible Browse Author {uuid4()}"
+        direct_db.register_cleanup("contributors", "display_name", visible_author)
+        direct_db.register_cleanup("contributor_aliases", "alias", visible_author)
+        with direct_db.session() as session:
+            replace_media_contributor_credits(
+                session,
+                media_id=visible_media_id,
+                credits=[{"name": visible_author, "role": "author", "source": "manual"}],
+            )
+            session.commit()
+
         direct_db.register_cleanup("fragments", "media_id", visible_media_id)
         direct_db.register_cleanup("library_entries", "media_id", visible_media_id)
         direct_db.register_cleanup("media", "id", visible_media_id)
@@ -414,7 +420,6 @@ class TestBrowse:
             direct_db,
             ebook_id=1342,
             title="Agents in Literature",
-            authors="Austen, Jane",
         )
 
         monkeypatch.setattr(
@@ -450,5 +455,81 @@ class TestBrowse:
         assert visible_row["document_kind"] == "web_article"
         assert visible_row["source_type"] == "nexus"
         assert visible_row["media_id"] == str(visible_media_id)
+        assert visible_row["contributors"][0]["credited_name"] == visible_author
+        assert visible_row["contributors"][0]["href"].startswith("/authors/")
         assert gutenberg_row["source_type"] == "project_gutenberg"
         assert gutenberg_row["url"] == "https://www.gutenberg.org/ebooks/1342.epub.noimages"
+
+    def test_browse_video_rows_include_existing_nexus_contributors(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(session, user_id, title="Existing Video")
+            session.execute(
+                text(
+                    """
+                    UPDATE media
+                    SET kind = 'video',
+                        provider = 'youtube',
+                        provider_id = 'yt-1',
+                        canonical_source_url = 'https://www.youtube.com/watch?v=yt-1',
+                        external_playback_url = 'https://www.youtube.com/watch?v=yt-1'
+                    WHERE id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            session.commit()
+
+        video_author = f"Visible Video Channel {uuid4()}"
+        direct_db.register_cleanup("contributors", "display_name", video_author)
+        direct_db.register_cleanup("contributor_aliases", "alias", video_author)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        with direct_db.session() as session:
+            replace_media_contributor_credits(
+                session,
+                media_id=media_id,
+                credits=[{"name": video_author, "role": "channel", "source": "youtube"}],
+            )
+            session.commit()
+
+        monkeypatch.setattr(
+            browse_service,
+            "_search_video_rows",
+            lambda query, *, limit, page_token: (
+                [
+                    {
+                        "type": "videos",
+                        "provider_video_id": "yt-1",
+                        "title": "Existing Video",
+                        "description": "Video summary",
+                        "watch_url": "https://www.youtube.com/watch?v=yt-1",
+                        "channel_title": "Raw Channel",
+                        "published_at": "2026-04-18T00:00:00Z",
+                        "thumbnail_url": None,
+                        "media_id": None,
+                        "contributors": [],
+                    }
+                ],
+                None,
+            ),
+        )
+
+        response = auth_client.get(
+            "/browse?q=video&limit=2&page_type=videos",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        video_row = response.json()["data"]["sections"]["videos"]["results"][0]
+        assert video_row["media_id"] == str(media_id)
+        assert video_row["contributors"][0]["credited_name"] == video_author
+        assert video_row["contributors"][0]["role"] == "channel"

@@ -2,6 +2,7 @@
 
 import { apiFetch } from "@/lib/api/client";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
+import { createNoteBlock, deleteNoteBlock } from "@/lib/notes/api";
 
 export interface Highlight {
   id: string;
@@ -20,13 +21,13 @@ export interface Highlight {
   updated_at: string;
   author_user_id: string;
   is_owner: boolean;
-  annotation: {
-    id: string;
-    body: string;
-    created_at: string;
-    updated_at: string;
-  } | null;
   linked_conversations?: { conversation_id: string; title: string }[];
+  linked_note_blocks?: {
+    note_block_id: string;
+    body_pm_json?: Record<string, unknown>;
+    body_markdown?: string;
+    body_text: string;
+  }[];
 }
 
 export async function fetchHighlights(fragmentId: string): Promise<Highlight[]> {
@@ -100,18 +101,17 @@ export async function deleteHighlight(highlightId: string): Promise<void> {
   });
 }
 
-export async function saveAnnotation(
+export async function saveHighlightNote(
   highlightId: string,
-  body: string
+  bodyPmJson: Record<string, unknown>
 ): Promise<void> {
-  await apiFetch(`/api/highlights/${highlightId}/annotation`, {
-    method: "PUT",
-    body: JSON.stringify({ body }),
+  await createNoteBlock({
+    bodyPmJson,
+    linkedObject: { objectType: "highlight", objectId: highlightId },
+    relationType: "note_about",
   });
 }
 
-export async function deleteAnnotation(highlightId: string): Promise<void> {
-  await apiFetch(`/api/highlights/${highlightId}/annotation`, {
-    method: "DELETE",
-  });
+export async function deleteHighlightNote(noteBlockId: string): Promise<void> {
+  await deleteNoteBlock(noteBlockId);
 }

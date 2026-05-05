@@ -6,6 +6,7 @@ dropped/discarded or never finished. Recovery is bounded:
 - then fail closed with deterministic timeout metadata
 """
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, text
@@ -17,10 +18,19 @@ from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
+from nexus.services.content_indexing import (
+    CHUNKER_VERSION,
+    mark_content_index_failed,
+    repair_ready_media_content_index_now,
+)
+from nexus.services.semantic_chunks import (
+    current_transcript_embedding_model,
+    transcript_embedding_dimensions,
+)
 
 logger = get_logger(__name__)
 
-_RECOVERABLE_KINDS = frozenset({"pdf", "epub", "podcast_episode"})
+_RECOVERABLE_KINDS = frozenset({"web_article", "pdf", "epub", "podcast_episode"})
 _MAX_ERROR_MSG_LEN = 1000
 _BATCH_LIMIT = 100
 
@@ -150,14 +160,97 @@ def reconcile_stale_ingest_media_job(
                     request_id=request_id,
                 )
 
+        content_index_scanned = 0
+        content_index_repaired = 0
+        content_index_requeued = 0
+        content_index_failed = 0
+        content_index_rows = db.execute(
+            text(
+                """
+                SELECT mcis.media_id, mcis.status
+                FROM media_content_index_states mcis
+                JOIN media m ON m.id = mcis.media_id
+                WHERE (
+                    (
+                        mcis.status IN ('pending', 'failed')
+                        AND mcis.active_run_id IS NULL
+                    )
+                    OR (
+                        mcis.status = 'indexing'
+                        AND mcis.updated_at < :stale_before
+                    )
+                  )
+                  AND m.kind IN ('web_article', 'epub', 'pdf')
+                  AND m.processing_status IN ('ready_for_reading', 'embedding', 'ready')
+                ORDER BY mcis.updated_at ASC, mcis.media_id ASC
+                LIMIT :limit
+                """
+            ),
+            {
+                "stale_before": stale_before,
+                "limit": int(settings.ingest_semantic_repair_batch_limit),
+            },
+        ).fetchall()
+        content_index_scanned = len(content_index_rows)
+        for row in content_index_rows:
+            media_id = row[0]
+            try:
+                if str(row[1] or "") == "indexing":
+                    mark_content_index_failed(
+                        db,
+                        media_id=media_id,
+                        failure_code=ApiErrorCode.E_INGEST_TIMEOUT.value,
+                        failure_message=(
+                            "Evidence index exceeded stale-time threshold and was "
+                            "requeued for deterministic repair."
+                        ),
+                    )
+                    content_index_requeued += 1
+                result = repair_ready_media_content_index_now(
+                    db,
+                    media_id=media_id,
+                    reason="evidence_cutover_repair",
+                )
+                if result is None:
+                    _mark_content_index_state_failed(
+                        db,
+                        media_id,
+                        "No readable media exists for evidence index repair",
+                    )
+                    content_index_failed += 1
+                elif result.status in {"ready", "no_text"}:
+                    content_index_repaired += 1
+                else:
+                    _mark_content_index_state_failed(
+                        db,
+                        media_id,
+                        f"Evidence index repair ended with status {result.status}",
+                    )
+                    content_index_failed += 1
+            except Exception as exc:
+                mark_content_index_failed(
+                    db,
+                    media_id=media_id,
+                    failure_code=ApiErrorCode.E_INGEST_FAILED.value,
+                    failure_message=f"Evidence index repair failed: {exc}"[:_MAX_ERROR_MSG_LEN],
+                )
+                _mark_content_index_state_failed(
+                    db,
+                    media_id,
+                    f"Evidence index repair failed: {exc}",
+                )
+                content_index_failed += 1
+
         semantic_scanned = 0
         semantic_repaired = 0
         semantic_failed = 0
         semantic_skipped = 0
         retry_failed_before = now - timedelta(seconds=settings.ingest_semantic_failed_retry_seconds)
-        from nexus.services.semantic_chunks import current_transcript_embedding_model
-
-        active_embedding_model = current_transcript_embedding_model()
+        embedding_model = current_transcript_embedding_model()
+        embedding_provider = "test" if embedding_model.startswith("test_") else "openai"
+        embedding_config_hash = hashlib.sha256(
+            f"{embedding_provider}:{embedding_model}:{transcript_embedding_dimensions()}:{CHUNKER_VERSION}".encode()
+        ).hexdigest()
         semantic_candidates = db.execute(
             text(
                 """
@@ -179,20 +272,17 @@ def reconcile_stale_ingest_media_job(
                           AND (
                               NOT EXISTS (
                                   SELECT 1
-                                  FROM content_chunks tc
-                                  WHERE tc.transcript_version_id = mts.active_transcript_version_id
-                                    AND tc.source_kind = 'transcript'
-                              )
-                              OR EXISTS (
-                                  SELECT 1
-                                  FROM content_chunks tc
-                                  WHERE tc.transcript_version_id = mts.active_transcript_version_id
-                                    AND tc.source_kind = 'transcript'
-                                    AND (
-                                        tc.embedding_vector IS NULL
-                                        OR tc.embedding_model IS NULL
-                                        OR tc.embedding_model <> :active_embedding_model
-                                    )
+                                  FROM media_content_index_states mcis
+                                  JOIN source_snapshots ss ON ss.index_run_id = mcis.active_run_id
+                                  WHERE mcis.media_id = mts.media_id
+                                    AND mcis.status = 'ready'
+                                    AND mcis.active_embedding_provider = :embedding_provider
+                                    AND mcis.active_embedding_model = :embedding_model
+                                    AND mcis.active_embedding_version = :embedding_model
+                                    AND mcis.active_embedding_config_hash = :embedding_config_hash
+                                    AND ss.source_kind = 'transcript'
+                                    AND ss.metadata ->> 'transcript_version_id'
+                                        = mts.active_transcript_version_id::text
                               )
                           )
                       )
@@ -204,7 +294,9 @@ def reconcile_stale_ingest_media_job(
             {
                 "retry_failed_before": retry_failed_before,
                 "semantic_limit": int(settings.ingest_semantic_repair_batch_limit),
-                "active_embedding_model": active_embedding_model,
+                "embedding_provider": embedding_provider,
+                "embedding_model": embedding_model,
+                "embedding_config_hash": embedding_config_hash,
             },
         ).fetchall()
         semantic_scanned = len(semantic_candidates)
@@ -241,6 +333,10 @@ def reconcile_stale_ingest_media_job(
             scanned=len(stale_rows),
             requeued=requeued,
             failed=failed,
+            content_index_scanned=content_index_scanned,
+            content_index_repaired=content_index_repaired,
+            content_index_requeued=content_index_requeued,
+            content_index_failed=content_index_failed,
             semantic_scanned=semantic_scanned,
             semantic_repaired=semantic_repaired,
             semantic_failed=semantic_failed,
@@ -251,6 +347,10 @@ def reconcile_stale_ingest_media_job(
             "scanned": len(stale_rows),
             "requeued": requeued,
             "failed": failed,
+            "content_index_scanned": content_index_scanned,
+            "content_index_repaired": content_index_repaired,
+            "content_index_requeued": content_index_requeued,
+            "content_index_failed": content_index_failed,
             "semantic_scanned": semantic_scanned,
             "semantic_repaired": semantic_repaired,
             "semantic_failed": semantic_failed,
@@ -274,6 +374,18 @@ def _dispatch_recovery_task(db: Session, media: Media, request_id: str | None) -
                 "media_id": media_id,
                 "request_id": request_id,
                 "embedding_only": False,
+            },
+        )
+        return
+
+    if media.kind == "web_article":
+        enqueue_job(
+            db,
+            kind="ingest_web_article",
+            payload={
+                "media_id": media_id,
+                "actor_user_id": str(media.created_by_user_id),
+                "request_id": request_id,
             },
         )
         return
@@ -310,3 +422,22 @@ def _mark_failed(media: Media, *, now: datetime, error_code: str, error_message:
     media.last_error_message = error_message[:_MAX_ERROR_MSG_LEN]
     media.failed_at = now
     media.updated_at = now
+
+
+def _mark_content_index_state_failed(db: Session, media_id, message: str) -> None:
+    db.execute(
+        text(
+            """
+            UPDATE media_content_index_states
+            SET status = 'failed',
+                status_reason = :message,
+                updated_at = :now
+            WHERE media_id = :media_id
+            """
+        ),
+        {
+            "media_id": media_id,
+            "message": message[:_MAX_ERROR_MSG_LEN],
+            "now": datetime.now(UTC),
+        },
+    )

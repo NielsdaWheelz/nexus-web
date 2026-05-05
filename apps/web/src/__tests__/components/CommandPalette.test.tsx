@@ -203,7 +203,7 @@ describe("CommandPalette", () => {
             media_id: "media-search-1",
             media_kind: "web_article",
             title: "Searchable note",
-            authors: [],
+            contributors: [],
             published_date: null,
           },
         },

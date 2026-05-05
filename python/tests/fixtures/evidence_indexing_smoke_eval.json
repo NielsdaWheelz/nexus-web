@@ -1,0 +1,33 @@
+{
+  "web": {
+    "title": "Smoke Evidence Web Article",
+    "query": "citrine invariants",
+    "needle": "citrine invariants",
+    "expected_source_kind": "web_article",
+    "expected_resolver_kind": "web"
+  },
+  "epub": {
+    "fixture": "epub3_unicode.epub",
+    "query": "hello world",
+    "expected_source_kind": "epub",
+    "expected_resolver_kind": "epub"
+  },
+  "pdf": {
+    "fixture": "attention.pdf",
+    "query": "attention",
+    "expected_source_kind": "pdf",
+    "expected_resolver_kind": "pdf"
+  },
+  "transcript": {
+    "query": "saffron transcript",
+    "needle": "saffron transcript",
+    "expected_source_kind": "transcript",
+    "expected_resolver_kind": "transcript"
+  },
+  "podcast": {
+    "query": "cedar podcast",
+    "needle": "cedar podcast",
+    "expected_source_kind": "transcript",
+    "expected_resolver_kind": "transcript"
+  }
+}

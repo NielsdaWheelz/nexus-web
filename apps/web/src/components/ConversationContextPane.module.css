@@ -72,14 +72,3 @@
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
-
-.annotationNote {
-  margin-top: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-bg-tertiary);
-  border-radius: 4px;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  line-height: 1.4;
-  border-left: 2px solid var(--color-border);
-}

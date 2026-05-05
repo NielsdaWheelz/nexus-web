@@ -39,16 +39,25 @@ export default function InlineCitations({
 
 function CitationCard({ context }: { context: MessageContextSnapshot }) {
   const text = context.exact || context.preview;
+  const title = context.title || context.media_title;
+  const route = context.route;
+
+  if (!text && !title && !route) {
+    return null;
+  }
+
   return (
     <div className={styles.card}>
+      {title ? <div className={styles.cardTitle}>{truncateText(title, 96)}</div> : null}
       {text && (
         <div className={styles.cardText}>
           {truncateText(text, 120)}
         </div>
       )}
-      {context.media_title && (
+      {context.media_title && context.media_title !== title ? (
         <div className={styles.cardMeta}>{context.media_title}</div>
-      )}
+      ) : null}
+      {route ? <div className={styles.cardMeta}>{route}</div> : null}
     </div>
   );
 }

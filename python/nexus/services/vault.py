@@ -16,25 +16,32 @@ from pathlib import Path
 from typing import Any, TypedDict
 from uuid import UUID
 
-from sqlalchemy import delete, func, text
+from sqlalchemy import case, delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.db.models import (
-    Annotation,
     Fragment,
     Highlight,
     HighlightFragmentAnchor,
     Media,
+    NoteBlock,
+    ObjectLink,
     Page,
-    PdfPageTextSpan,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.schemas.notes import NOTE_BLOCK_KIND_VALUES
 from nexus.services.highlights import (
     derive_exact_prefix_suffix,
     map_integrity_error,
     validate_offsets_or_400,
+)
+from nexus.services.notes import (
+    delete_page,
+    pm_doc_from_text,
+    set_highlight_note_body,
+    set_note_block_markdown_body_without_commit,
 )
 from nexus.storage import get_file_extension, get_storage_client
 from nexus.storage.client import StorageClientBase
@@ -53,6 +60,23 @@ class VaultSyncResult(TypedDict):
     files: list[VaultFile]
     delete_paths: list[str]
     conflicts: list[VaultConflict]
+
+
+class _ParsedPageBlock(TypedDict):
+    id: UUID
+    parent_id: UUID | None
+    kind: str
+    body: str
+
+
+_BLOCK_MARKER_RE = re.compile(
+    r"^<!-- nexus:block id=\"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\" parent=\"([^\"]*)\" kind=\"([a-z_]+)\" -->$"
+)
+_HIGHLIGHT_NOTE_MARKER_RE = re.compile(
+    r"^<!-- nexus:highlight-note id=\"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\" -->$"
+)
 
 
 def export_vault(
@@ -195,7 +219,7 @@ def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
                 {visible_media_ids_cte_sql()}
             )
             SELECT m.id, m.kind, m.title, m.canonical_source_url, m.processing_status,
-                   m.file_sha256, m.plain_text, m.page_count, mf.storage_path, mf.content_type
+                   m.file_sha256, m.page_count, mf.storage_path, mf.content_type
             FROM media m
             JOIN visible_media vm ON vm.media_id = m.id
             LEFT JOIN media_file mf ON mf.media_id = m.id
@@ -224,22 +248,21 @@ def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
         media_path = f"Media/{media_slug}--{media_handle}.md"
 
         fragments = _load_fragments(db, media_id)
+        content_blocks = _load_content_blocks(db, media_id)
         if row["kind"] == "web_article":
             files[f"Sources/{media_handle}/article.md"] = _web_article_markdown(
-                media_title, fragments
+                media_title, content_blocks
             )
             files[f"Sources/{media_handle}/article.html"] = _joined_fragment_html(fragments)
-            files[f"Sources/{media_handle}/canonical.txt"] = _joined_fragment_text(fragments)
+            files[f"Sources/{media_handle}/canonical.txt"] = _joined_block_text(content_blocks)
             source_link = f"../Sources/{media_handle}/article.md"
         elif row["kind"] == "epub":
             files[f"Sources/{media_handle}/text.md"] = _fragment_text_markdown(
-                media_title, fragments
+                media_title, content_blocks
             )
             source_link = f"../Sources/{media_handle}/text.md"
         elif row["kind"] == "pdf":
-            files[f"Sources/{media_handle}/text.md"] = _pdf_markdown(
-                db, media_title, media_id, str(row["plain_text"] or "")
-            )
+            files[f"Sources/{media_handle}/text.md"] = _pdf_markdown(media_title, content_blocks)
             source_link = f"../Sources/{media_handle}/text.md"
         else:
             continue
@@ -256,13 +279,13 @@ def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
     for highlight in highlight_rows:
         media_id = _highlight_media_id(highlight)
         if media_id is not None and can_read_media(db, viewer_id, media_id):
-            path, content = _highlight_file(highlight)
+            path, content = _highlight_file(db, highlight)
             files[path] = content
 
     for page in (
         db.query(Page).filter(Page.user_id == viewer_id).order_by(Page.title.asc(), Page.id.asc())
     ):
-        path, content = _page_file(page)
+        path, content = _page_file(db, page)
         files[path] = content
 
     return files
@@ -393,7 +416,7 @@ def _create_highlight_from_file(
 
     note = body.strip()
     if note:
-        db.add(Annotation(highlight_id=highlight.id, body=note))
+        set_highlight_note_body(db, viewer_id, highlight.id, note, commit=False)
     db.flush()
     db.commit()
 
@@ -410,15 +433,7 @@ def _apply_highlight_changes(
         highlight.updated_at = func.now()
 
     note = body.strip()
-    annotation = db.query(Annotation).filter(Annotation.highlight_id == highlight.id).first()
-    if note:
-        if annotation is None:
-            db.add(Annotation(highlight_id=highlight.id, body=note))
-        elif annotation.body != note:
-            annotation.body = note
-            annotation.updated_at = func.now()
-    elif annotation is not None:
-        db.delete(annotation)
+    _sync_highlight_note_body_from_vault(db, viewer_id, highlight.id, note)
 
     selector_kind = str(metadata.get("selector_kind") or "")
     if highlight.anchor_kind == "fragment_offsets":
@@ -561,7 +576,10 @@ def _sync_page_content(
         return False, "Page title is required"
 
     if not page_handle:
-        db.add(Page(user_id=viewer_id, title=title[:200], body=body))
+        page = Page(user_id=viewer_id, title=title[:200], description=None)
+        db.add(page)
+        db.flush()
+        _create_page_body(db, viewer_id, page.id, body)
         db.commit()
         return True, None
 
@@ -579,10 +597,16 @@ def _sync_page_content(
     if str(metadata.get("server_updated_at") or "") != page.updated_at.isoformat():
         return False, "Server page changed since this file was exported"
     if _as_bool(metadata.get("deleted")):
-        db.delete(page)
-    else:
-        page.title = title[:200]
-        page.body = body
+        delete_page(db, viewer_id, page.id)
+        return True, None
+
+    body_changed, conflict_reason = _sync_page_body(db, viewer_id, page.id, body)
+    if conflict_reason is not None:
+        return False, conflict_reason
+    next_title = title[:200]
+    title_changed = page.title != next_title
+    page.title = next_title
+    if body_changed or title_changed:
         page.updated_at = func.now()
     db.commit()
     return True, None
@@ -606,26 +630,48 @@ def _load_fragments(db: Session, media_id: UUID) -> list[Fragment]:
     )
 
 
-def _write_highlight_file(vault_dir: Path, highlight: Highlight) -> None:
-    path, content = _highlight_file(highlight)
+def _load_content_blocks(db: Session, media_id: UUID) -> list[dict[str, object]]:
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT cb.canonical_text, cb.locator
+                FROM media_content_index_states mcis
+                JOIN content_blocks cb ON cb.index_run_id = mcis.active_run_id
+                WHERE mcis.media_id = :media_id
+                  AND mcis.status = 'ready'
+                  AND cb.canonical_text <> ''
+                ORDER BY cb.block_idx ASC
+                """
+            ),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .all()
+    )
+    return [dict(row) for row in rows]
+
+
+def _write_highlight_file(db: Session, vault_dir: Path, highlight: Highlight) -> None:
+    path, content = _highlight_file(db, highlight)
     _write_text(vault_dir / path, content)
 
 
-def _highlight_file(highlight: Highlight) -> tuple[str, str]:
+def _highlight_file(db: Session, highlight: Highlight) -> tuple[str, str]:
     metadata = _metadata_for_highlight(highlight)
-    body = highlight.annotation.body if highlight.annotation else ""
+    body = _highlight_note_body(db, highlight)
     metadata["last_synced_sha256"] = _highlight_hash(metadata, body)
     return f"Highlights/{_highlight_handle(highlight.id)}.md", _write_frontmatter(metadata, body)
 
 
-def _write_page_file(vault_dir: Path, page: Page) -> None:
-    path, content = _page_file(page)
+def _write_page_file(db: Session, vault_dir: Path, page: Page) -> None:
+    path, content = _page_file(db, page)
     target = vault_dir / path
     _remove_old_handle_files(target.parent, target.name, _page_handle(page.id))
     _write_text(target, content)
 
 
-def _page_file(page: Page) -> tuple[str, str]:
+def _page_file(db: Session, page: Page) -> tuple[str, str]:
     page_handle = _page_handle(page.id)
     slug = _slug(page.title)
     metadata: dict[str, object] = {
@@ -635,8 +681,371 @@ def _page_file(page: Page) -> tuple[str, str]:
         "server_updated_at": page.updated_at.isoformat(),
         "deleted": False,
     }
-    metadata["last_synced_sha256"] = _page_hash(metadata, page.body)
-    return f"Pages/{slug}--{page_handle}.md", _write_frontmatter(metadata, page.body)
+    body = _page_body(db, page)
+    metadata["last_synced_sha256"] = _page_hash(metadata, body)
+    return f"Pages/{slug}--{page_handle}.md", _write_frontmatter(metadata, body)
+
+
+def _create_page_body(db: Session, viewer_id: UUID, page_id: UUID, body: str) -> None:
+    text_body = body.strip()
+    if not text_body:
+        return
+    db.add(
+        NoteBlock(
+            user_id=viewer_id,
+            page_id=page_id,
+            parent_block_id=None,
+            order_key="0000000001",
+            block_kind="bullet",
+            body_pm_json=pm_doc_from_text(text_body),
+            body_markdown=text_body,
+            body_text=text_body,
+            collapsed=False,
+        )
+    )
+
+
+def _sync_page_body(
+    db: Session,
+    viewer_id: UUID,
+    page_id: UUID,
+    body: str,
+) -> tuple[bool, str | None]:
+    text_body = body.strip()
+    blocks = _editable_page_blocks(db, page_id)
+    current_body = _page_blocks_markdown(blocks).strip()
+    if text_body == current_body:
+        return False, None
+
+    parsed_blocks = _parse_marked_page_blocks(text_body)
+    if parsed_blocks:
+        return _sync_marked_page_blocks(db, viewer_id, page_id, blocks, parsed_blocks)
+
+    if not blocks:
+        _create_page_body(db, viewer_id, page_id, text_body)
+        return bool(text_body), None
+
+    if len(blocks) == 1:
+        set_note_block_markdown_body_without_commit(db, viewer_id, blocks[0], text_body)
+        return True, None
+
+    fallback_blocks = [part.strip() for part in re.split(r"\n{2,}", text_body) if part.strip()]
+    if len(fallback_blocks) != len([block for block in blocks if block.parent_block_id is None]):
+        return False, "Vault page sync needs exported block markers for this multi-block page"
+    for block, block_body in zip(
+        [block for block in blocks if block.parent_block_id is None],
+        fallback_blocks,
+        strict=True,
+    ):
+        set_note_block_markdown_body_without_commit(db, viewer_id, block, block_body)
+    return True, None
+
+
+def _editable_page_blocks(db: Session, page_id: UUID) -> list[NoteBlock]:
+    highlight_note_link = (
+        select(ObjectLink.id)
+        .where(
+            ObjectLink.relation_type == "note_about",
+            (
+                (
+                    (ObjectLink.a_type == "note_block")
+                    & (ObjectLink.a_id == NoteBlock.id)
+                    & (ObjectLink.b_type == "highlight")
+                )
+                | (
+                    (ObjectLink.a_type == "highlight")
+                    & (ObjectLink.b_type == "note_block")
+                    & (ObjectLink.b_id == NoteBlock.id)
+                )
+            ),
+        )
+        .exists()
+    )
+    return list(
+        db.scalars(
+            select(NoteBlock)
+            .where(
+                NoteBlock.page_id == page_id,
+                ~highlight_note_link,
+            )
+            .order_by(
+                NoteBlock.parent_block_id.asc().nullsfirst(),
+                NoteBlock.order_key.asc(),
+                NoteBlock.created_at.asc(),
+                NoteBlock.id.asc(),
+            )
+        )
+    )
+
+
+def _block_vault_body(block: NoteBlock) -> str:
+    return block.body_markdown or block.body_text
+
+
+def _page_blocks_markdown(blocks: list[NoteBlock]) -> str:
+    blocks_by_parent: dict[UUID | None, list[NoteBlock]] = {}
+    for block in blocks:
+        blocks_by_parent.setdefault(block.parent_block_id, []).append(block)
+
+    for sibling_blocks in blocks_by_parent.values():
+        sibling_blocks.sort(key=lambda block: (block.order_key, block.created_at, str(block.id)))
+
+    sections: list[str] = []
+
+    def visit(block: NoteBlock) -> None:
+        parent = "" if block.parent_block_id is None else str(block.parent_block_id)
+        marker = f'<!-- nexus:block id="{block.id}" parent="{parent}" kind="{block.block_kind}" -->'
+        body = _block_vault_body(block).strip()
+        sections.append(f"{marker}\n{body}" if body else marker)
+        for child in blocks_by_parent.get(block.id, []):
+            visit(child)
+
+    for root in blocks_by_parent.get(None, []):
+        visit(root)
+
+    return "\n\n".join(sections)
+
+
+def _parse_marked_page_blocks(body: str) -> list[_ParsedPageBlock]:
+    lines = body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    parsed_blocks: list[_ParsedPageBlock] = []
+    current: dict[str, object] | None = None
+    current_body_lines: list[str] = []
+    saw_marker = False
+    prefix_lines: list[str] = []
+
+    def flush_current() -> None:
+        if current is None:
+            return
+        parsed_blocks.append(
+            {
+                "id": current["id"],
+                "parent_id": current["parent_id"],
+                "kind": current["kind"],
+                "body": "\n".join(current_body_lines).strip(),
+            }
+        )
+        current_body_lines.clear()
+
+    for line in lines:
+        match = _BLOCK_MARKER_RE.match(line.strip())
+        if match is None:
+            if current is None:
+                prefix_lines.append(line)
+            else:
+                current_body_lines.append(line)
+            continue
+
+        saw_marker = True
+        if current is None and "\n".join(prefix_lines).strip():
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Vault page block text must appear after a block marker",
+            )
+        flush_current()
+        parent_raw = match.group(2)
+        kind = match.group(3)
+        if kind not in NOTE_BLOCK_KIND_VALUES:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Vault page block kind is invalid")
+        current = {
+            "id": UUID(match.group(1)),
+            "parent_id": UUID(parent_raw) if parent_raw else None,
+            "kind": kind,
+        }
+
+    flush_current()
+    return parsed_blocks if saw_marker else []
+
+
+def _sync_marked_page_blocks(
+    db: Session,
+    viewer_id: UUID,
+    page_id: UUID,
+    blocks: list[NoteBlock],
+    parsed_blocks: list[_ParsedPageBlock],
+) -> tuple[bool, str | None]:
+    blocks_by_id = {block.id: block for block in blocks}
+    parsed_ids = [parsed_block["id"] for parsed_block in parsed_blocks]
+    if len(set(parsed_ids)) != len(parsed_ids):
+        return False, "Vault page contains duplicate note block markers"
+
+    missing_ids = [block_id for block_id in parsed_ids if block_id not in blocks_by_id]
+    if missing_ids:
+        return False, "Vault page contains a note block marker that is not on this page"
+
+    parsed_id_set = set(parsed_ids)
+    for parsed_block in parsed_blocks:
+        parent_id = parsed_block["parent_id"]
+        if (
+            parent_id is not None
+            and parent_id not in parsed_id_set
+            and parent_id not in blocks_by_id
+        ):
+            return False, "Vault page contains a note block parent that is not on this page"
+
+    changed = False
+    order_counts: dict[UUID | None, int] = {}
+    for parsed_block in parsed_blocks:
+        block = blocks_by_id[parsed_block["id"]]
+        parent_id = parsed_block["parent_id"]
+        order_counts[parent_id] = order_counts.get(parent_id, 0) + 1
+        next_order_key = f"{order_counts[parent_id]:010d}"
+        before_state = (
+            block.parent_block_id,
+            block.order_key,
+            block.block_kind,
+            _block_vault_body(block).strip(),
+        )
+        block.parent_block_id = parent_id
+        block.order_key = next_order_key
+        block.block_kind = parsed_block["kind"]
+        set_note_block_markdown_body_without_commit(db, viewer_id, block, parsed_block["body"])
+        after_state = (
+            block.parent_block_id,
+            block.order_key,
+            block.block_kind,
+            _block_vault_body(block).strip(),
+        )
+        if after_state != before_state:
+            changed = True
+
+    return changed, None
+
+
+def _page_body(db: Session, page: Page) -> str:
+    return _page_blocks_markdown(_editable_page_blocks(db, page.id))
+
+
+def _highlight_note_body(db: Session, highlight: Highlight) -> str:
+    blocks = _highlight_note_blocks(db, highlight.user_id, highlight.id)
+    if not blocks:
+        return ""
+    if len(blocks) == 1:
+        return _block_vault_body(blocks[0])
+
+    sections: list[str] = []
+    for block in blocks:
+        marker = f'<!-- nexus:highlight-note id="{block.id}" -->'
+        body = _block_vault_body(block).strip()
+        sections.append(f"{marker}\n{body}" if body else marker)
+    return "\n\n".join(sections)
+
+
+def _sync_highlight_note_body_from_vault(
+    db: Session,
+    viewer_id: UUID,
+    highlight_id: UUID,
+    body: str,
+) -> None:
+    blocks = _highlight_note_blocks(db, viewer_id, highlight_id)
+    parsed_notes = _parse_marked_highlight_notes(body)
+    if parsed_notes:
+        blocks_by_id = {block.id: block for block in blocks}
+        parsed_ids = [note_id for note_id, _note_body in parsed_notes]
+        if len(set(parsed_ids)) != len(parsed_ids):
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Vault highlight contains duplicate note markers",
+            )
+        if set(parsed_ids) != set(blocks_by_id):
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Vault highlight note markers must match linked notes",
+            )
+        for note_id, note_body in parsed_notes:
+            set_note_block_markdown_body_without_commit(
+                db, viewer_id, blocks_by_id[note_id], note_body
+            )
+        return
+
+    if len(blocks) > 1:
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Vault highlight sync needs exported note markers for this multi-note highlight",
+        )
+    set_highlight_note_body(db, viewer_id, highlight_id, body, commit=False)
+
+
+def _parse_marked_highlight_notes(body: str) -> list[tuple[UUID, str]]:
+    lines = body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    parsed_notes: list[tuple[UUID, str]] = []
+    current_id: UUID | None = None
+    current_body_lines: list[str] = []
+    saw_marker = False
+    prefix_lines: list[str] = []
+
+    def flush_current() -> None:
+        if current_id is None:
+            return
+        parsed_notes.append((current_id, "\n".join(current_body_lines).strip()))
+        current_body_lines.clear()
+
+    for line in lines:
+        match = _HIGHLIGHT_NOTE_MARKER_RE.match(line.strip())
+        if match is None:
+            if current_id is None:
+                prefix_lines.append(line)
+            else:
+                current_body_lines.append(line)
+            continue
+
+        saw_marker = True
+        if current_id is None and "\n".join(prefix_lines).strip():
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Vault highlight note text must appear after a note marker",
+            )
+        flush_current()
+        current_id = UUID(match.group(1))
+
+    flush_current()
+    return parsed_notes if saw_marker else []
+
+
+def _highlight_note_blocks(
+    db: Session,
+    viewer_id: UUID,
+    highlight_id: UUID,
+) -> list[NoteBlock]:
+    endpoint_order = case(
+        (ObjectLink.a_type == "highlight", ObjectLink.a_order_key),
+        else_=ObjectLink.b_order_key,
+    )
+    return list(
+        db.scalars(
+            select(NoteBlock)
+            .join(
+                ObjectLink,
+                (
+                    ((ObjectLink.a_type == "note_block") & (ObjectLink.a_id == NoteBlock.id))
+                    | ((ObjectLink.b_type == "note_block") & (ObjectLink.b_id == NoteBlock.id))
+                ),
+            )
+            .where(
+                ObjectLink.user_id == viewer_id,
+                ObjectLink.relation_type == "note_about",
+                NoteBlock.user_id == viewer_id,
+                (
+                    (
+                        (ObjectLink.a_type == "note_block")
+                        & (ObjectLink.b_type == "highlight")
+                        & (ObjectLink.b_id == highlight_id)
+                    )
+                    | (
+                        (ObjectLink.a_type == "highlight")
+                        & (ObjectLink.a_id == highlight_id)
+                        & (ObjectLink.b_type == "note_block")
+                    )
+                ),
+            )
+            .order_by(
+                endpoint_order.asc().nullsfirst(),
+                ObjectLink.created_at.asc(),
+                ObjectLink.id.asc(),
+                NoteBlock.id.asc(),
+            )
+        )
+    )
 
 
 def _metadata_for_highlight(highlight: Highlight) -> dict[str, object]:
@@ -692,7 +1101,6 @@ def _resolve_fragment_selector(
 
 
 def _delete_highlight(db: Session, highlight: Highlight) -> None:
-    db.execute(delete(Annotation).where(Annotation.highlight_id == highlight.id))
     db.execute(delete(Highlight).where(Highlight.id == highlight.id))
 
 
@@ -708,10 +1116,7 @@ def _highlight_media_id_required(highlight: Highlight) -> UUID:
 
 
 def _highlight_server_updated_at(highlight: Highlight) -> str:
-    updated_at = highlight.updated_at
-    if highlight.annotation is not None and highlight.annotation.updated_at > updated_at:
-        updated_at = highlight.annotation.updated_at
-    return updated_at.isoformat()
+    return highlight.updated_at.isoformat()
 
 
 def _highlight_sort_key(highlight: Highlight) -> tuple[int, int, int]:
@@ -767,41 +1172,36 @@ def _media_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _web_article_markdown(title: str, fragments: list[Fragment]) -> str:
-    return f"# {title}\n\n{_joined_fragment_text(fragments).strip()}\n"
+def _web_article_markdown(title: str, content_blocks: list[dict[str, object]]) -> str:
+    return f"# {title}\n\n{_joined_block_text(content_blocks).strip()}\n"
 
 
-def _fragment_text_markdown(title: str, fragments: list[Fragment]) -> str:
+def _fragment_text_markdown(title: str, content_blocks: list[dict[str, object]]) -> str:
     lines = [f"# {title}", ""]
-    for fragment in fragments:
-        lines.extend([f"## Chapter {fragment.idx + 1}", "", fragment.canonical_text.strip(), ""])
+    current_section = None
+    for block in content_blocks:
+        locator = block["locator"] if isinstance(block["locator"], dict) else {}
+        section = locator.get("section_id") or locator.get("href_path")
+        if section and section != current_section:
+            current_section = section
+            lines.extend([f"## {section}", ""])
+        lines.extend([str(block["canonical_text"]).strip(), ""])
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _pdf_markdown(db: Session, title: str, media_id: UUID, plain_text: str) -> str:
-    spans = (
-        db.query(PdfPageTextSpan)
-        .filter(PdfPageTextSpan.media_id == media_id)
-        .order_by(PdfPageTextSpan.page_number.asc())
-        .all()
-    )
-    if not spans:
-        return f"# {title}\n\n{plain_text.strip()}\n"
+def _pdf_markdown(title: str, content_blocks: list[dict[str, object]]) -> str:
     lines = [f"# {title}", ""]
-    for span in spans:
-        lines.extend(
-            [
-                f"## Page {span.page_number}",
-                "",
-                plain_text[span.start_offset : span.end_offset].strip(),
-                "",
-            ]
-        )
+    for block in content_blocks:
+        locator = block["locator"] if isinstance(block["locator"], dict) else {}
+        page_label = locator.get("page_label") or locator.get("page_number")
+        if page_label:
+            lines.extend([f"## Page {page_label}", ""])
+        lines.extend([str(block["canonical_text"]).strip(), ""])
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _joined_fragment_text(fragments: list[Fragment]) -> str:
-    return "\n\n".join(fragment.canonical_text for fragment in fragments)
+def _joined_block_text(content_blocks: list[dict[str, object]]) -> str:
+    return "\n\n".join(str(block["canonical_text"]) for block in content_blocks)
 
 
 def _joined_fragment_html(fragments: list[Fragment]) -> str:

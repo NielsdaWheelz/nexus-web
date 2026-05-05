@@ -1,6 +1,6 @@
 # Nexus
 
-Nexus is a reading and annotation platform with a Next.js frontend, a FastAPI backend, and a Postgres-backed worker.
+Nexus is a reading and notes platform with a Next.js frontend, a FastAPI backend, and a Postgres-backed worker.
 
 ## Architecture
 
@@ -89,16 +89,13 @@ make test-real
 - `python/` -> backend package + tests: see `python/README.md`
 - `apps/worker/` -> worker entrypoint: see `apps/worker/README.md`
 - `docs/rules/` -> repository rules and boundaries: start at `docs/rules/index.md`
-- `docs/sdlc/` -> planning and execution workflow: `docs/sdlc/README.md`
 - `docs/feedback-layer-hard-cutover.md` -> unified frontend feedback layer hard-cutover plan
+- `docs/evidence-layer-hard-cutover.md` -> unified evidence indexing and citation hard-cutover plan
+- `docs/notes-layer-hard-cutover.md` -> ProseMirror notes, object links, and annotation hard-cutover plan
+- `docs/authors-layer-hard-cutover.md` -> contributor identity and author surface hard-cutover plan
 - `docs/reader-implementation.md` -> current reader behavior contract
-- `docs/scoped-chat-hard-cutover.md` -> document/library scoped chat hard-cutover plan
-- `docs/library-intelligence-hard-cutover.md` -> library-wide synthesis and intelligence hard-cutover plan
-- `docs/chat-live-updates-hard-cutover.md` -> chat live-update hard-cutover plan
-- `docs/chat-composer-redesign.md` -> chat composer hard-cutover plan
-- `docs/chat-scroll-hard-cutover.md` -> chat scroll ownership hard-cutover plan
-- `docs/mobile-command-palette.md` -> mobile command launcher behavior contract
-- `docs/podcast-detail-episode-pane-cutover.md` -> podcast detail split-pane cutover contract
+- `docs/black-forest-oracle-hard-cutover.md` -> hybrid public-domain + library divination feature hard-cutover plan
+- `docs/black-forest-oracle-eternal.md` -> current Oracle product contract that supersedes parts of the hard-cutover plan
 
 ## Documentation Rules
 

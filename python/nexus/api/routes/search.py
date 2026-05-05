@@ -24,11 +24,11 @@ from nexus.services import search as search_service
 router = APIRouter()
 
 
-@router.get("/search", response_model=SearchResponse)
+@router.get("/search", response_model=SearchResponse, response_model_by_alias=False)
 def search(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    q: str = Query(..., min_length=1, description="Search query string"),
+    q: str = Query(default="", min_length=0, description="Search query string"),
     scope: str = Query(
         default="all", description="Search scope (all, media:<id>, library:<id>, conversation:<id>)"
     ),
@@ -36,12 +36,24 @@ def search(
         default=None,
         description=(
             "Comma-separated list of types to search "
-            "(media, podcast, fragment, annotation, message, transcript_chunk)"
+            "(media, podcast, content_chunk, contributor, note_block, message)"
         ),
+    ),
+    contributor_handles: str | None = Query(
+        default=None,
+        description="Comma-separated contributor handles to filter credited content.",
+    ),
+    roles: str | None = Query(
+        default=None,
+        description="Comma-separated contributor credit roles to filter credited content.",
+    ),
+    content_kinds: str | None = Query(
+        default=None,
+        description="Comma-separated media/content kinds to filter credited content.",
     ),
     semantic: bool = Query(
         default=False,
-        description="Enable semantic transcript-chunk search when transcript_chunk type is requested.",
+        description="Enable semantic content chunk search when content_chunk type is requested.",
     ),
     cursor: str | None = Query(default=None, description="Pagination cursor"),
     limit: int = Query(
@@ -51,8 +63,8 @@ def search(
     """Search across all visible content.
 
     Keyword search using PostgreSQL full-text search. Returns mixed typed
-    results from media titles, podcast metadata, fragment text, annotations,
-    messages, and semantic transcript chunks.
+    results from media titles, podcast metadata, content chunks, notes,
+    and messages.
 
     **Scopes:**
     - `all` - All visible content
@@ -63,15 +75,14 @@ def search(
     **Types:**
     - `media` - Search media titles
     - `podcast` - Search visible podcast metadata
-    - `fragment` - Search document fragments
-    - `annotation` - Search user annotations
+    - `content_chunk` - Search indexed document and transcript chunks
+    - `note_block` - Search user notes
     - `message` - Search conversation messages
-    - `transcript_chunk` - Search semantic transcript chunks (requires `semantic=true`)
 
     **Visibility:**
     - Search never returns invisible content
-    - Media/fragments visible via s4 provenance (non-default membership, intrinsic, closure)
-    - Annotations visible via s4 highlight visibility (media readable + library intersection)
+    - Media/content chunks visible via s4 provenance (non-default membership, intrinsic, closure)
+    - Notes visible when owned by the viewer
     - Messages visible via conversation visibility (owner, public, or library-shared dual membership)
     - Pending messages are never searchable
 
@@ -93,12 +104,33 @@ def search(
     if types is not None:
         type_list = [t.strip() for t in types.split(",") if t.strip()]
 
+    contributor_handle_list = None
+    if contributor_handles is not None:
+        contributor_handle_list = [
+            handle.strip() for handle in contributor_handles.split(",") if handle.strip()
+        ]
+
+    role_list = None
+    if roles is not None:
+        role_list = [role.strip() for role in roles.split(",") if role.strip()]
+
+    content_kind_list = None
+    if content_kinds is not None:
+        content_kind_list = [
+            content_kind.strip()
+            for content_kind in content_kinds.split(",")
+            if content_kind.strip()
+        ]
+
     result = search_service.search(
         db=db,
         viewer_id=viewer.user_id,
         q=q,
         scope=scope,
         types=type_list,
+        contributor_handles=contributor_handle_list,
+        roles=role_list,
+        content_kinds=content_kind_list,
         semantic=semantic,
         cursor=cursor,
         limit=limit,

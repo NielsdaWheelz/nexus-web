@@ -984,7 +984,6 @@ class TestListLibraryMedia:
                         provider,
                         provider_podcast_id,
                         title,
-                        author,
                         feed_url,
                         website_url,
                         image_url,
@@ -994,7 +993,6 @@ class TestListLibraryMedia:
                         'podcast_index',
                         :provider_podcast_id,
                         'Library Hydration Podcast',
-                        'Library Host',
                         'https://example.com/library-hydration.xml',
                         'https://example.com/library-hydration',
                         NULL,
@@ -4357,7 +4355,7 @@ class TestLibraryListPdfCapabilities:
 
         ready_caps = items[str(mid_ready)]["capabilities"]
         assert ready_caps["can_quote"] is True
-        assert ready_caps["can_search"] is True
+        assert ready_caps["can_search"] is False
 
         not_ready_caps = items[str(mid_not_ready)]["capabilities"]
         assert not_ready_caps["can_quote"] is False

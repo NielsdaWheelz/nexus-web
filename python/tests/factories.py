@@ -15,7 +15,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
-    Annotation,
     Conversation,
     ConversationShare,
     DefaultLibraryIntrinsic,
@@ -32,9 +31,14 @@ from nexus.db.models import (
     Membership,
     Message,
     Model,
+    NoteBlock,
+    ObjectLink,
+    Page,
     PdfPageTextSpan,
     ProcessingStatus,
 )
+from nexus.services.content_indexing import rebuild_fragment_content_index
+from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 
 # =============================================================================
 # Models
@@ -336,6 +340,15 @@ def create_searchable_media(
     )
     session.add(fragment)
     session.flush()
+    insert_fragment_blocks(session, fragment.id, parse_fragment_blocks(fragment.canonical_text))
+    rebuild_fragment_content_index(
+        session,
+        media_id=media.id,
+        source_kind="web_article",
+        artifact_ref=f"fragments:{fragment.id}",
+        fragments=[fragment],
+        reason="test_factory",
+    )
     default_libs = (
         session.query(Library)
         .filter(
@@ -351,7 +364,7 @@ def create_searchable_media(
 
 
 # =============================================================================
-# Fragments, Highlights, Annotations
+# Fragments, Highlights, Notes
 # =============================================================================
 
 
@@ -406,16 +419,16 @@ def create_test_highlight(
     return highlight.id
 
 
-def create_test_annotation(
+def create_test_highlight_note(
     session: Session,
     user_id: UUID,
     media_id: UUID,
-    body: str = "Test annotation body",
+    body: str = "Test note body",
 ) -> tuple[UUID, UUID]:
-    """Create a highlight and annotation for a media item.
+    """Create a highlight and linked note block for a media item.
 
     Looks up the first fragment of the media item automatically.
-    Returns (highlight_id, annotation_id).
+    Returns (highlight_id, note_block_id).
     """
     fragment = session.query(Fragment).filter(Fragment.media_id == media_id).limit(1).first()
     if not fragment:
@@ -441,14 +454,47 @@ def create_test_annotation(
             end_offset=10,
         )
     )
-    annotation = Annotation(
-        id=uuid4(),
-        highlight_id=highlight.id,
-        body=body,
+    page = (
+        session.query(Page)
+        .filter(Page.user_id == user_id, Page.title == "Notes")
+        .order_by(Page.id.asc())
+        .first()
     )
-    session.add(annotation)
+    if page is None:
+        page = Page(id=uuid4(), user_id=user_id, title="Notes")
+        session.add(page)
+        session.flush()
+
+    note_block = NoteBlock(
+        id=uuid4(),
+        user_id=user_id,
+        page_id=page.id,
+        order_key="0000000001",
+        block_kind="bullet",
+        body_pm_json={
+            "type": "paragraph",
+            "content": [{"type": "text", "text": body}],
+        },
+        body_markdown=body,
+        body_text=body,
+        collapsed=False,
+    )
+    session.add(note_block)
+    session.flush()
+    session.add(
+        ObjectLink(
+            id=uuid4(),
+            user_id=user_id,
+            relation_type="note_about",
+            a_type="note_block",
+            a_id=note_block.id,
+            b_type="highlight",
+            b_id=highlight.id,
+            metadata_json={},
+        )
+    )
     session.commit()
-    return highlight.id, annotation.id
+    return highlight.id, note_block.id
 
 
 # =============================================================================
@@ -558,6 +604,15 @@ def create_searchable_media_in_library(
     )
     session.add(fragment)
     session.flush()
+    insert_fragment_blocks(session, fragment.id, parse_fragment_blocks(fragment.canonical_text))
+    rebuild_fragment_content_index(
+        session,
+        media_id=media.id,
+        source_kind="web_article",
+        artifact_ref=f"fragments:{fragment.id}",
+        fragments=[fragment],
+        reason="test_factory",
+    )
     add_media_to_library(session, library_id, media.id)
     session.commit()
     return media.id

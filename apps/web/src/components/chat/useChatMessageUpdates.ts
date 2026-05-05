@@ -164,6 +164,8 @@ export function useChatMessageUpdates({
           context_ref: citation.context_ref,
           result_ref: citation,
           deep_link: citation.deep_link,
+          citation_label: citation.citation_label ?? null,
+          resolver: citation.resolver,
           score: citation.score,
           selected: citation.selected,
         }),

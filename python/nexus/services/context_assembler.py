@@ -15,7 +15,15 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_conversation
-from nexus.db.models import ChatRun, Conversation, Message, MessageContext, MessageRetrieval, Model
+from nexus.db.models import (
+    ChatRun,
+    Contributor,
+    Conversation,
+    Message,
+    MessageContextItem,
+    MessageRetrieval,
+    Model,
+)
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import MessageContextRef
 from nexus.services.chat_prompt import (
@@ -148,13 +156,12 @@ def assemble_chat_context(
         after_seq=after_seq,
     )
     planner_history = _history_turns_from_units(history_units[-4:])
+    attached_context_ref_payloads = message_context_ref_payloads(db, attached_context_refs)
     retrieval_plan = build_retrieval_plan(
         user_content=user_message.content,
         history=planner_history,
         scope_metadata=scope_metadata,
-        attached_context_refs=[
-            {"type": ref.type, "id": str(ref.id)} for ref in attached_context_refs
-        ],
+        attached_context_refs=attached_context_ref_payloads,
         memory_source_refs=memory_source_refs,
         web_search_options=run.web_search,
     )
@@ -221,8 +228,11 @@ def assemble_chat_context(
                 required_provider_capability="prompt_cache",
             )
 
-    for ref in attached_context_refs:
-        context_ref = {"type": ref.type, "id": str(ref.id)}
+    for ref, context_ref in zip(
+        attached_context_refs,
+        attached_context_ref_payloads,
+        strict=True,
+    ):
         result = hydrate_context_ref(db, viewer_id=run.owner_user_id, context_ref=context_ref)
         lookup_results.append(result)
         if not result.resolved:
@@ -686,25 +696,83 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
     assert result.rowcount == 1  # justify-service-invariant-check: selected ledger row vanished.
 
 
+def message_context_ref_payloads(
+    db: Session,
+    refs: Sequence[MessageContextRef],
+) -> list[dict[str, object]]:
+    return [_context_ref_payload(db, ref) for ref in refs]
+
+
+def _context_ref_payload(db: Session, ref: MessageContextRef) -> dict[str, object]:
+    if ref.type == "contributor":
+        contributor_handle = db.scalar(
+            select(Contributor.handle).where(
+                Contributor.id == ref.id,
+                Contributor.status.in_(("unverified", "verified")),
+            )
+        )
+        if contributor_handle is not None:
+            return {
+                "type": "contributor",
+                "id": contributor_handle,
+                "contributor_handle": contributor_handle,
+            }
+
+    payload: dict[str, object] = {"type": ref.type, "id": str(ref.id)}
+    if ref.type == "content_chunk" and ref.evidence_span_ids:
+        payload["evidence_span_ids"] = [str(span_id) for span_id in ref.evidence_span_ids]
+    return payload
+
+
+def _context_snapshot_evidence_span_ids(snapshot: Mapping[str, Any] | None) -> list[UUID]:
+    if not isinstance(snapshot, Mapping):
+        return []
+    raw_values = snapshot.get("evidence_span_ids")
+    if raw_values is None:
+        raw_values = snapshot.get("evidenceSpanIds")
+    if raw_values is None:
+        raw_values = snapshot.get("evidence_span_id")
+    if raw_values is None:
+        raw_values = snapshot.get("evidenceSpanId")
+    if isinstance(raw_values, str):
+        values = [raw_values]
+    elif isinstance(raw_values, Sequence) and not isinstance(raw_values, (str, bytes)):
+        values = list(raw_values)
+    else:
+        values = []
+
+    evidence_span_ids: list[UUID] = []
+    seen: set[UUID] = set()
+    for value in values:
+        try:
+            evidence_span_id = UUID(str(value))
+        except (TypeError, ValueError):
+            continue
+        if evidence_span_id in seen:
+            continue
+        seen.add(evidence_span_id)
+        evidence_span_ids.append(evidence_span_id)
+    return evidence_span_ids
+
+
 def load_message_context_refs(db: Session, user_message_id: UUID) -> list[MessageContextRef]:
     rows = (
         db.execute(
-            select(MessageContext)
-            .where(MessageContext.message_id == user_message_id)
-            .order_by(MessageContext.ordinal.asc())
+            select(MessageContextItem)
+            .where(MessageContextItem.message_id == user_message_id)
+            .order_by(MessageContextItem.ordinal.asc())
         )
         .scalars()
         .all()
     )
-    refs: list[MessageContextRef] = []
-    for row in rows:
-        if row.target_type == "media" and row.media_id is not None:
-            refs.append(MessageContextRef(type="media", id=row.media_id))
-        elif row.target_type == "highlight" and row.highlight_id is not None:
-            refs.append(MessageContextRef(type="highlight", id=row.highlight_id))
-        elif row.target_type == "annotation" and row.annotation_id is not None:
-            refs.append(MessageContextRef(type="annotation", id=row.annotation_id))
-    return refs
+    return [
+        MessageContextRef(
+            type=row.object_type,
+            id=row.object_id,
+            evidence_span_ids=_context_snapshot_evidence_span_ids(row.context_snapshot_json),
+        )
+        for row in rows
+    ]
 
 
 def load_recent_history_units(

@@ -23,14 +23,12 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
 
-from nexus.auth.permissions import can_read_media
+from nexus.auth.permissions import can_read_highlight, can_read_media
 from nexus.config import get_settings
 from nexus.db.models import (
-    Annotation,
     ChatRun,
     ChatRunEvent,
     Conversation,
-    Highlight,
     Media,
     Message,
     MessageLLM,
@@ -49,6 +47,7 @@ from nexus.schemas.conversation import (
     ConversationScopeRequest,
     WebSearchOptions,
 )
+from nexus.schemas.notes import ObjectRef
 from nexus.services.agent_tools.app_search import execute_app_search
 from nexus.services.agent_tools.web_search import (
     WEB_SEARCH_TOOL_CALL_INDEX,
@@ -66,6 +65,7 @@ from nexus.services.context_assembler import (
     assemble_chat_context,
     load_message_context_refs,
     load_recent_history_units,
+    message_context_ref_payloads,
     persist_prompt_assembly,
 )
 from nexus.services.context_lookup import ContextLookupError
@@ -91,6 +91,7 @@ from nexus.services.conversations import (
     resolve_conversation_for_scope,
 )
 from nexus.services.models import get_model_catalog_metadata
+from nexus.services.object_refs import hydrate_object_ref
 from nexus.services.prompt_budget import ContextBudgetError
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
@@ -171,8 +172,22 @@ def compute_payload_hash(
     conversation_id: UUID | None,
     conversation_scope: ConversationScopeRequest | None,
 ) -> str:
-    sorted_contexts = sorted(contexts, key=lambda item: (item.type, str(item.id)))
-    payload_contexts = [(ctx.type, str(ctx.id)) for ctx in sorted_contexts]
+    sorted_contexts = sorted(
+        contexts,
+        key=lambda item: (
+            item.type,
+            str(item.id),
+            tuple(sorted(str(span_id) for span_id in item.evidence_span_ids)),
+        ),
+    )
+    payload_contexts = [
+        (
+            ctx.type,
+            str(ctx.id),
+            sorted(str(span_id) for span_id in ctx.evidence_span_ids),
+        )
+        for ctx in sorted_contexts
+    ]
     payload_scope = conversation_scope.model_dump(mode="json") if conversation_scope else None
     payload = (
         f"{conversation_id}|{content}|{model_id}|{reasoning}|{key_mode}|"
@@ -573,14 +588,13 @@ async def _execute_chat_run(
         planner_history = [
             turn for history_unit in history_units[-4:] for turn in history_unit.turns
         ]
+        attached_context_ref_payloads = message_context_ref_payloads(db, attached_context_refs)
+
         retrieval_plan = build_retrieval_plan(
             user_content=user_message.content,
             history=planner_history,
             scope_metadata=scope_metadata,
-            attached_context_refs=[
-                {"type": context_ref.type, "id": str(context_ref.id)}
-                for context_ref in attached_context_refs
-            ],
+            attached_context_refs=attached_context_ref_payloads,
             memory_source_refs=collect_memory_source_refs(
                 memory_items=memory_items,
                 snapshot=snapshot,
@@ -601,6 +615,7 @@ async def _execute_chat_run(
                     "scope": retrieval_plan.app_search.scope,
                     "types": list(retrieval_plan.app_search.types),
                     "semantic": retrieval_plan.app_search.semantic,
+                    "filters": dict(retrieval_plan.app_search.filters),
                 },
             )
             app_search_run = execute_app_search(
@@ -616,6 +631,7 @@ async def _execute_chat_run(
                 scope_metadata=scope_metadata,
                 planned_query=retrieval_plan.app_search.query,
                 planned_types=retrieval_plan.app_search.types,
+                planned_filters=retrieval_plan.app_search.filters,
                 force=True,
             )
             if app_search_run is not None:
@@ -1611,7 +1627,8 @@ def _finalize_message_evidence(db: Session, run: ChatRun, assistant_message: Mes
                    mr.locator,
                    mr.retrieval_status,
                    mr.included_in_prompt,
-                   mr.source_version
+                   mr.source_version,
+                   mr.evidence_span_id
             FROM message_retrievals mr
             JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
             WHERE mtc.assistant_message_id = :assistant_message_id
@@ -1648,9 +1665,12 @@ def _finalize_message_evidence(db: Session, run: ChatRun, assistant_message: Mes
         }
         if row[3] is not None:
             source_ref["media_id"] = str(row[3])
+        if row[17] is not None:
+            source_ref["evidence_span_id"] = str(row[17])
         evidence_rows.append(
             {
                 "retrieval_id": row[0],
+                "evidence_span_id": row[17],
                 "source_ref": source_ref,
                 "context_ref": row[4],
                 "result_ref": result_ref,
@@ -1804,6 +1824,7 @@ def _finalize_message_evidence(db: Session, run: ChatRun, assistant_message: Mes
             evidence_role,
             source_ref,
             retrieval_id,
+            evidence_span_id,
             context_ref,
             result_ref,
             exact_snippet,
@@ -1823,6 +1844,7 @@ def _finalize_message_evidence(db: Session, run: ChatRun, assistant_message: Mes
             'supports',
             :source_ref,
             :retrieval_id,
+            :evidence_span_id,
             :context_ref,
             :result_ref,
             :exact_snippet,
@@ -1875,54 +1897,39 @@ def _validate_context_visibility(db: Session, viewer_id: UUID, ctx: ContextItem)
         return
 
     if ctx.type == "highlight":
-        highlight = db.get(Highlight, ctx.id)
-        if highlight is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        media_id = _get_highlight_anchor_media_id(highlight)
-        if media_id is None or not can_read_media(db, viewer_id, media_id):
+        if not can_read_highlight(db, viewer_id, ctx.id):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
         return
 
-    if ctx.type == "annotation":
-        annotation = db.get(Annotation, ctx.id)
-        if annotation is None or annotation.highlight is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        media_id = _get_highlight_anchor_media_id(annotation.highlight)
-        if media_id is None or not can_read_media(db, viewer_id, media_id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
+    hydrate_object_ref(db, viewer_id, ObjectRef(object_type=ctx.type, object_id=ctx.id))
+    if ctx.type == "content_chunk" and ctx.evidence_span_ids:
+        _validate_context_chunk_evidence_spans(db, ctx.id, ctx.evidence_span_ids)
 
 
-def _get_highlight_anchor_media_id(highlight: Highlight) -> UUID | None:
-    media_id = highlight.anchor_media_id
-    if media_id is None:
-        logger.warning("chat_run.highlight_missing_anchor_media", highlight_id=str(highlight.id))
-        return None
-    if highlight.anchor_kind == "fragment_offsets":
-        fragment_anchor = highlight.fragment_anchor
-        if fragment_anchor is None:
-            logger.warning(
-                "chat_run.highlight_missing_fragment_anchor", highlight_id=str(highlight.id)
-            )
-            return None
-        fragment = fragment_anchor.fragment
-        if fragment is not None and fragment.media_id != media_id:
-            logger.warning(
-                "chat_run.highlight_fragment_media_mismatch", highlight_id=str(highlight.id)
-            )
-            return None
-        return media_id
-    if highlight.anchor_kind == "pdf_page_geometry":
-        pdf_anchor = highlight.pdf_anchor
-        if pdf_anchor is None or pdf_anchor.media_id != media_id:
-            logger.warning("chat_run.highlight_pdf_anchor_invalid", highlight_id=str(highlight.id))
-            return None
-        return media_id
-    logger.warning(
-        "chat_run.highlight_unknown_anchor_kind",
-        highlight_id=str(highlight.id),
-        anchor_kind=highlight.anchor_kind,
+def _validate_context_chunk_evidence_spans(
+    db: Session,
+    chunk_id: UUID,
+    evidence_span_ids: Sequence[UUID],
+) -> None:
+    if not evidence_span_ids:
+        return
+    matched_ids = set(
+        db.execute(
+            text(
+                """
+                SELECT es.id
+                FROM content_chunks cc
+                JOIN evidence_spans es ON es.media_id = cc.media_id
+                    AND es.index_run_id = cc.index_run_id
+                WHERE cc.id = :chunk_id
+                  AND es.id = ANY(:evidence_span_ids)
+                """
+            ),
+            {"chunk_id": chunk_id, "evidence_span_ids": list(evidence_span_ids)},
+        ).scalars()
     )
-    return None
+    if matched_ids != set(evidence_span_ids):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Evidence span is not valid for context")
 
 
 def _check_conversation_not_busy(db: Session, viewer_id: UUID, conversation_id: UUID) -> None:

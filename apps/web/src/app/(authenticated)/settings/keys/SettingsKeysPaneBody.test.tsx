@@ -1,51 +1,51 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-import { ApiError, apiFetch } from "@/lib/api/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import SettingsKeysPaneBody from "./SettingsKeysPaneBody";
 
-vi.mock("@/lib/api/client", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/api/client")>("@/lib/api/client");
-
-  return {
-    ...actual,
-    apiFetch: vi.fn(),
-  };
-});
-
-const apiFetchMock = vi.mocked(apiFetch);
-
 describe("SettingsKeysPaneBody", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("shows the Nexus request id when an API key test fails with one", async () => {
-    apiFetchMock.mockImplementation(async (path) => {
-      if (path === "/api/keys") {
-        return {
-          data: [
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/keys") {
+          return jsonResponse({
+            data: [
+              {
+                id: "key_openai",
+                provider: "openai",
+                provider_display_name: "OpenAI",
+                fingerprint: "abc123",
+                key_fingerprint: "abc123",
+                status: "valid",
+                created_at: "2026-01-01T00:00:00Z",
+                last_tested_at: null,
+                last_used_at: null,
+              },
+            ],
+          });
+        }
+
+        if (path === "/api/keys/key_openai/test") {
+          return jsonResponse(
             {
-              id: "key_openai",
-              provider: "openai",
-              provider_display_name: "OpenAI",
-              fingerprint: "abc123",
-              key_fingerprint: "abc123",
-              status: "valid",
-              created_at: "2026-01-01T00:00:00Z",
-              last_tested_at: null,
-              last_used_at: null,
+              error: {
+                code: "E_KEY_TEST_FAILED",
+                message: "Provider test failed",
+                request_id: "nexus-req-123",
+              },
             },
-          ],
-        };
-      }
+            502
+          );
+        }
 
-      if (path === "/api/keys/key_openai/test") {
-        throw new ApiError(
-          502,
-          "E_KEY_TEST_FAILED",
-          "Provider test failed",
-          "nexus-req-123"
-        );
-      }
-
-      throw new Error(`Unexpected request path: ${path}`);
-    });
+        throw new Error(`Unexpected request path: ${path}`);
+      })
+    );
 
     render(<SettingsKeysPaneBody />);
 
@@ -56,3 +56,10 @@ describe("SettingsKeysPaneBody", () => {
     expect(alert).toHaveTextContent("Nexus request ID: nexus-req-123");
   });
 });
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}

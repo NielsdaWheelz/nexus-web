@@ -1,0 +1,18 @@
+.shell {
+  display: grid;
+  gap: 4px;
+}
+
+.shell :global(.ProseMirror) {
+  min-height: 76px;
+}
+
+.shell[data-editable="false"] {
+  color: var(--color-text-secondary);
+}
+
+.status {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  min-height: 14px;
+}

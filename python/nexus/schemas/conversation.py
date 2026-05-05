@@ -10,9 +10,10 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from nexus.schemas.context_memory import ConversationMemoryInspectionOut
+from nexus.schemas.contributors import ContributorCreditOut
 
 # Valid sharing modes - must match DB constraint
 SHARING_MODES = Literal["private", "library", "public"]
@@ -23,8 +24,18 @@ MESSAGE_ROLES = Literal["user", "assistant", "system"]
 # Valid message statuses - must match DB constraint
 MESSAGE_STATUSES = Literal["pending", "complete", "error"]
 
-# Valid context target types - must match message_contexts.target_type
-MESSAGE_CONTEXT_TYPES = Literal["media", "highlight", "annotation"]
+# Valid context object types - must match message_context_items.object_type
+MESSAGE_CONTEXT_TYPES = Literal[
+    "page",
+    "note_block",
+    "media",
+    "highlight",
+    "conversation",
+    "message",
+    "podcast",
+    "content_chunk",
+    "contributor",
+]
 
 # Valid conversation scopes - must match conversations.scope_type
 CONVERSATION_SCOPE_TYPES = Literal["general", "media", "library"]
@@ -34,12 +45,13 @@ HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
 
 # Valid assistant app-search result types - must match message_retrievals.result_type
 APP_SEARCH_RESULT_TYPES = Literal[
+    "page",
+    "note_block",
     "media",
     "podcast",
-    "fragment",
-    "annotation",
+    "content_chunk",
     "message",
-    "transcript_chunk",
+    "contributor",
     "web_result",
 ]
 
@@ -105,7 +117,7 @@ class ConversationScopeOut(BaseModel):
     title: str | None = None
     media_kind: str | None = None
     library_name: str | None = None
-    authors: list[str] = Field(default_factory=list)
+    contributors: list[ContributorCreditOut] = Field(default_factory=list)
     published_date: str | None = None
     publisher: str | None = None
     canonical_source_url: str | None = None
@@ -174,6 +186,7 @@ class MessageRetrievalOut(BaseModel):
     result_type: APP_SEARCH_RESULT_TYPES
     source_id: str
     media_id: UUID | None = None
+    evidence_span_id: UUID | None = None
     scope: str
     context_ref: dict[str, Any]
     result_ref: dict[str, Any]
@@ -241,6 +254,7 @@ class MessageClaimEvidenceOut(BaseModel):
     evidence_role: CLAIM_EVIDENCE_ROLES
     source_ref: dict[str, Any]
     retrieval_id: UUID | None = None
+    evidence_span_id: UUID | None = None
     context_ref: dict[str, Any] | None = None
     result_ref: dict[str, Any] | None = None
     exact_snippet: str | None = None
@@ -340,14 +354,11 @@ MAX_CONTEXTS = 10
 
 
 class MessageContextRef(BaseModel):
-    """Canonical typed context reference for chat-run inputs.
-
-    Context references point at objects (media, highlights, annotations) whose
-    content will be included in the LLM prompt.
-    """
+    """Canonical typed object reference for chat-run inputs."""
 
     type: MESSAGE_CONTEXT_TYPES
     id: UUID
+    evidence_span_ids: list[UUID] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="ignore")
 
@@ -363,10 +374,21 @@ class MessageContextSnapshot(MessageContextRef):
     exact: str | None = None
     prefix: str | None = None
     suffix: str | None = None
-    annotation_body: str | None = None
     media_id: UUID | None = None
     media_title: str | None = None
     media_kind: str | None = None
+    title: str | None = None
+    route: str | None = None
+
+    @field_serializer("id", when_used="json")
+    def serialize_context_id(self, value: UUID) -> str:
+        if self.type == "contributor" and self.route:
+            prefix = "/authors/"
+            if self.route.startswith(prefix):
+                handle = self.route[len(prefix) :].split("/", 1)[0].strip()
+                if handle:
+                    return handle
+        return str(value)
 
 
 class ChatRunCreateRequest(BaseModel):

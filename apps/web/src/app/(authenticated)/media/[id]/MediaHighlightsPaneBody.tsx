@@ -32,8 +32,13 @@ interface MediaHighlightsPaneBodyProps {
   onStartEditBounds: () => void;
   onCancelEditBounds: () => void;
   isEditingBounds: boolean;
-  onAnnotationSave: (id: string, body: string) => Promise<void>;
-  onAnnotationDelete: (id: string) => Promise<void>;
+  onNoteSave: (
+    highlightId: string,
+    noteBlockId: string | null,
+    createBlockId: string,
+    bodyPmJson: Record<string, unknown>
+  ) => Promise<void>;
+  onNoteDelete: (noteBlockId: string) => Promise<void>;
   onOpenConversation: (conversationId: string, title: string) => void;
 }
 
@@ -57,8 +62,8 @@ export default function MediaHighlightsPaneBody({
   onStartEditBounds,
   onCancelEditBounds,
   isEditingBounds,
-  onAnnotationSave,
-  onAnnotationDelete,
+  onNoteSave,
+  onNoteDelete,
   onOpenConversation,
 }: MediaHighlightsPaneBodyProps) {
   const shouldAutoSelectFirstContextualHighlight = isEpub && !isMobile;
@@ -83,7 +88,7 @@ export default function MediaHighlightsPaneBody({
           id: pdfHighlight.id,
           exact: pdfHighlight.exact,
           color: pdfHighlight.color,
-          annotation: pdfHighlight.annotation,
+          linked_note_blocks: pdfHighlight.linked_note_blocks,
           created_at: pdfHighlight.created_at,
           updated_at: pdfHighlight.updated_at,
           prefix: pdfHighlight.prefix,
@@ -107,11 +112,12 @@ export default function MediaHighlightsPaneBody({
       id: highlight.id,
       exact: highlight.exact,
       color: highlight.color,
-      annotation: highlight.annotation,
+      linked_note_blocks: highlight.linked_note_blocks,
       created_at: highlight.created_at,
       updated_at: highlight.updated_at,
       prefix: highlight.prefix,
       suffix: highlight.suffix,
+      is_owner: highlight.is_owner,
       anchor: {
         start_offset: highlight.anchor.start_offset,
         end_offset: highlight.anchor.end_offset,
@@ -223,8 +229,8 @@ export default function MediaHighlightsPaneBody({
           onDelete={onDelete}
           onStartEditBounds={onStartEditBounds}
           onCancelEditBounds={onCancelEditBounds}
-          onAnnotationSave={onAnnotationSave}
-          onAnnotationDelete={onAnnotationDelete}
+          onNoteSave={onNoteSave}
+          onNoteDelete={onNoteDelete}
           onOpenConversation={onOpenConversation}
         />
       </div>
