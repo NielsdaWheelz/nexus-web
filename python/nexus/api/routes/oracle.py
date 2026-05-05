@@ -52,8 +52,20 @@ def list_oracle_readings(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    rows = oracle_service.list_recent_readings(db, viewer_id=viewer.user_id)
+    rows = oracle_service.list_all_readings(db, viewer_id=viewer.user_id)
     return success_response([row.model_dump(mode="json") for row in rows])
+
+
+@router.get("/oracle/readings/{reading_id}/concordance")
+def get_oracle_reading_concordance(
+    reading_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    entries = oracle_service.compute_concordance(
+        db, viewer_id=viewer.user_id, reading_id=reading_id
+    )
+    return success_response([e.model_dump(mode="json") for e in entries])
 
 
 @router.get("/oracle/readings/{reading_id}")

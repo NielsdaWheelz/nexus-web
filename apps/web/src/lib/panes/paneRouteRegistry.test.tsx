@@ -51,23 +51,8 @@ describe("pane route registry", () => {
     expect(getParentHref(noteRoute)).toBe("/notes");
   });
 
-  it("resolves the Oracle landing route for workspace panes", () => {
-    const route = resolvePaneRoute("/oracle");
-
-    expect(route.id).toBe("oracle");
-    expect(route.pathname).toBe("/oracle");
-    expect(route.resourceRef).toBeNull();
-    expect(route.render).toEqual(expect.any(Function));
-    expect(route.definition?.bodyMode).toBe("standard");
-  });
-
-  it("resolves Oracle reading routes with a stable resource ref", () => {
-    const route = resolvePaneRoute("/oracle/reading-1");
-
-    expect(route.id).toBe("oracleReading");
-    expect(route.params).toEqual({ readingId: "reading-1" });
-    expect(route.resourceRef).toBe("oracle_reading:reading-1");
-    expect(route.render).toEqual(expect.any(Function));
-    expect(getParentHref(route)).toBe("/oracle");
+  it("returns the unsupported placeholder for full-screen Oracle routes", () => {
+    expect(resolvePaneRoute("/oracle").id).toBe("unsupported");
+    expect(resolvePaneRoute("/oracle/reading-1").id).toBe("unsupported");
   });
 });

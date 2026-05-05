@@ -6062,7 +6062,9 @@ class OracleReading(Base):
         nullable=False,
     )
     folio_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    folio_title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    folio_motto: Mapped[str | None] = mapped_column(Text, nullable=True)
+    folio_motto_gloss: Mapped[str | None] = mapped_column(Text, nullable=True)
+    folio_theme: Mapped[str | None] = mapped_column(Text, nullable=True)
     argument_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     question_text: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
@@ -6118,8 +6120,27 @@ class OracleReading(Base):
             "OR status != 'failed'",
             name="ck_oracle_readings_failed_has_error",
         ),
+        CheckConstraint(
+            "folio_motto IS NULL OR char_length(folio_motto) BETWEEN 1 AND 80",
+            name="ck_oracle_readings_motto_length",
+        ),
+        CheckConstraint(
+            "folio_motto_gloss IS NULL OR char_length(folio_motto_gloss) BETWEEN 1 AND 120",
+            name="ck_oracle_readings_motto_gloss_length",
+        ),
+        CheckConstraint(
+            "folio_theme IS NULL OR folio_theme IN ("
+            "'Of Time','Of Death','Of the Threshold','Of Vanity','Of Solitude','Of Love',"
+            "'Of Fortune','Of Memory','Of the Self','Of the Other','Of Fear','Of Courage',"
+            "'Of Faith','Of Doubt','Of Power','Of Wisdom','Of the Body','Of the Soul',"
+            "'Of Origins','Of Endings','Of Silence','Of the Word','Of Justice','Of Mercy'"
+            ")",
+            name="ck_oracle_readings_theme",
+        ),
         UniqueConstraint("user_id", "folio_number", name="uix_oracle_readings_user_folio"),
         Index("idx_oracle_readings_user_created", "user_id", text("created_at DESC")),
+        Index("idx_oracle_readings_user_image", "user_id", "image_id"),
+        Index("idx_oracle_readings_user_theme", "user_id", "folio_theme"),
     )
 
 

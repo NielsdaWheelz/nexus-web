@@ -33,6 +33,8 @@ from nexus.services.oracle import (
     ORACLE_REQUIRED_PUBLIC_DOMAIN_IMAGES,
     ORACLE_REQUIRED_PUBLIC_DOMAIN_PASSAGES,
     ORACLE_REQUIRED_PUBLIC_DOMAIN_WORKS,
+    ORACLE_THEMES,
+    compute_concordance,
     create_reading,
     execute_reading,
 )
@@ -252,7 +254,7 @@ def _insert_pending_reading(
         folio_number=folio_number,
         question_text=question,
         status="pending",
-        prompt_version="oracle-v2",
+        prompt_version="oracle-v3",
     )
     db.add(reading)
     db.commit()
@@ -281,6 +283,9 @@ def _reading_json(
     ordeal: int,
     ascent: int,
     omens: list[object] | None = None,
+    folio_motto: str = "Audentes Fortuna Iuvat",
+    folio_motto_gloss: str | None = "Fortune favors the bold.",
+    folio_theme: str = "Of Courage",
 ) -> str:
     return json.dumps(
         {
@@ -288,7 +293,9 @@ def _reading_json(
                 "Of the lamp kept burning through the closed forest, and the road "
                 "that answers after dread."
             ),
-            "folio_title": "The Test Lamp",
+            "folio_motto": folio_motto,
+            "folio_motto_gloss": folio_motto_gloss,
+            "folio_theme": folio_theme,
             "passages": [
                 {
                     "phase": "descent",
@@ -306,7 +313,7 @@ def _reading_json(
                     "marginalia": "The ascent opens the image toward morning.",
                 },
             ],
-            "interpretation": "The reading turns on a held light and a narrowing wood.",
+            "interpretation": "I saw a road bending into shadow, and the lamp's small flame thrown forward.",
             "omens": omens
             if omens is not None
             else ["a lamp in rain", "a door unlatched", "dawn under branches"],
@@ -575,8 +582,8 @@ class _InvalidJsonShapeRouter:
         elif self.variant == "short_argument":
             payload["argument"] = "Of the lamp."
             text_value = json.dumps(payload)
-        elif self.variant == "bad_title":
-            payload["folio_title"] = "the lamp"
+        elif self.variant == "bad_theme":
+            payload["folio_theme"] = "Of Mischief"
             text_value = json.dumps(payload)
         else:
             raise AssertionError(f"unknown invalid JSON shape variant: {self.variant}")
@@ -1405,7 +1412,7 @@ def test_execute_reading_rejects_omens_unless_exactly_three_nonblank_lines(
 
 @pytest.mark.parametrize(
     "variant",
-    ["fenced", "extra_root_key", "extra_passage_key", "short_argument", "bad_title"],
+    ["fenced", "extra_root_key", "extra_passage_key", "short_argument", "bad_theme"],
 )
 def test_execute_reading_rejects_non_strict_provider_json(
     db_session: Session,
@@ -1739,7 +1746,7 @@ def test_execute_reading_emits_events_in_eternal_order(
                 folio_number=1,
                 question_text="What does the lamp reveal?",
                 status="pending",
-                prompt_version="oracle-v2",
+                prompt_version="oracle-v3",
             )
         )
         db.commit()
@@ -1858,3 +1865,319 @@ def test_oracle_task_unexpected_failure_marks_reading_failed_and_emits_single_er
         "message": "The reading could not be completed. Please try again.",
     }
     assert "raw worker stack detail" not in json.dumps([dict(event) for event in events])
+
+
+def test_execute_reading_rejects_out_of_list_theme(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    user_id = uuid4()
+    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    reading_id = _insert_pending_reading(
+        db_session,
+        user_id=user_id,
+        corpus_set_version_id=corpus_set_version_id,
+        question="What does the lamp reveal?",
+    )
+
+    class _BadThemeRouter:
+        async def generate(self, _provider, request, _api_key, *, timeout_s):
+            indices = _candidate_indices(request)
+            public_indices = [
+                idx for idx, source_kind in indices.items() if source_kind == "public_domain"
+            ]
+            payload = json.loads(
+                _reading_json(
+                    descent=public_indices[0],
+                    ordeal=public_indices[1],
+                    ascent=public_indices[2],
+                    folio_theme="Of Mischief",
+                )
+            )
+            from llm_calling.types import LLMResponse
+
+            return LLMResponse(
+                text=json.dumps(payload),
+                usage=None,
+                provider_request_id=None,
+                status=None,
+                incomplete_details=None,
+            )
+
+    result = asyncio.run(
+        execute_reading(db_session, reading_id=reading_id, llm_router=_BadThemeRouter())
+    )
+
+    assert result == {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
+
+
+def test_execute_reading_sortes_attribution_format(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    user_id = uuid4()
+    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db_session)
+    reading_id = _insert_pending_reading(
+        db_session,
+        user_id=user_id,
+        corpus_set_version_id=corpus_set_version_id,
+        question="What does the lamp reveal?",
+    )
+
+    result = asyncio.run(
+        execute_reading(db_session, reading_id=reading_id, llm_router=_PublicOnlyRouter())
+    )
+
+    assert result["status"] == "complete", f"expected reading to complete, got {result}"
+
+    attribution_texts = list(
+        db_session.execute(
+            text(
+                """
+                SELECT attribution_text
+                FROM oracle_reading_passages
+                WHERE reading_id = :reading_id
+                  AND source_kind = 'public_domain'
+                """
+            ),
+            {"reading_id": reading_id},
+        ).scalars()
+    )
+
+    assert attribution_texts, "expected at least one public-domain passage"
+    for attribution_text in attribution_texts:
+        assert "opened to" in attribution_text, (
+            f"expected sortes attribution format, got: {attribution_text!r}"
+        )
+        assert not attribution_text.rstrip().endswith(". ."), (
+            f"attribution should not duplicate period from edition_label: {attribution_text!r}"
+        )
+
+
+def test_concordance_ordering_by_score(
+    db_session: Session,
+    oracle_schema,
+) -> None:
+    """Folios sharing plate+theme rank above theme-only, which ranks above passage-only."""
+    user_id = uuid4()
+    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+    corpus_set_version_id, _work_ids, image_id = _seed_oracle_corpus(db_session)
+
+    # Reference reading — folio 1
+    ref_reading_id = _insert_pending_reading(
+        db_session,
+        user_id=user_id,
+        corpus_set_version_id=corpus_set_version_id,
+        question="Reference question for concordance test.",
+        folio_number=1,
+    )
+    asyncio.run(
+        execute_reading(db_session, reading_id=ref_reading_id, llm_router=_PublicOnlyRouter())
+    )
+
+    # Fetch the image_id and citation key used by the reference reading
+    ref_row = (
+        db_session.execute(
+            text("SELECT image_id FROM oracle_readings WHERE id = :id"),
+            {"id": ref_reading_id},
+        )
+        .mappings()
+        .one()
+    )
+    ref_image_id = ref_row["image_id"]
+
+    ref_citation_key = db_session.execute(
+        text(
+            """
+            SELECT source_ref->>'citation_key'
+            FROM oracle_reading_passages
+            WHERE reading_id = :reading_id
+            ORDER BY phase
+            LIMIT 1
+            """
+        ),
+        {"reading_id": ref_reading_id},
+    ).scalar_one()
+
+    # folio 2: shares plate + theme (score >= 4)
+    folio2_id = _insert_pending_reading(
+        db_session,
+        user_id=user_id,
+        corpus_set_version_id=corpus_set_version_id,
+        question="Second folio for concordance test.",
+        folio_number=2,
+    )
+    asyncio.run(execute_reading(db_session, reading_id=folio2_id, llm_router=_PublicOnlyRouter()))
+    # Force same image and theme as reference
+    db_session.execute(
+        text(
+            "UPDATE oracle_readings SET image_id = :image_id, folio_theme = :theme WHERE id = :id"
+        ),
+        {"image_id": ref_image_id, "theme": "Of Courage", "id": folio2_id},
+    )
+    db_session.execute(
+        text("UPDATE oracle_readings SET folio_theme = :theme WHERE id = :ref_id"),
+        {"theme": "Of Courage", "ref_id": ref_reading_id},
+    )
+    db_session.commit()
+
+    # folio 3: shares only a passage citation key (score = N passages)
+    folio3_id = _insert_pending_reading(
+        db_session,
+        user_id=user_id,
+        corpus_set_version_id=corpus_set_version_id,
+        question="Third folio for concordance test.",
+        folio_number=3,
+    )
+    asyncio.run(execute_reading(db_session, reading_id=folio3_id, llm_router=_PublicOnlyRouter()))
+    # Ensure folio3 shares a passage citation key with reference but not same image/theme
+    db_session.execute(
+        text("UPDATE oracle_readings SET folio_theme = 'Of Solitude' WHERE id = :id"),
+        {"id": folio3_id},
+    )
+    # Overwrite one passage citation_key to match the reference
+    db_session.execute(
+        text(
+            """
+            UPDATE oracle_reading_passages
+            SET source_ref = jsonb_set(source_ref, '{citation_key}', CAST(:ck AS jsonb))
+            WHERE reading_id = :reading_id
+              AND phase = 'descent'
+            """
+        ),
+        {"reading_id": folio3_id, "ck": json.dumps(ref_citation_key)},
+    )
+    db_session.commit()
+
+    entries = compute_concordance(db_session, viewer_id=user_id, reading_id=ref_reading_id)
+
+    assert len(entries) >= 1
+    # folio2 (plate+theme match) should rank above folio3 (passage-only)
+    entry_ids = [str(e.id) for e in entries]
+    assert str(folio2_id) in entry_ids
+    idx2 = entry_ids.index(str(folio2_id))
+    if str(folio3_id) in entry_ids:
+        idx3 = entry_ids.index(str(folio3_id))
+        assert idx2 < idx3, (
+            f"folio2 (plate+theme) should rank above folio3 (passage-only), got order {entry_ids}"
+        )
+    folio2_entry = entries[idx2]
+    assert folio2_entry.shared_plate is True
+    assert folio2_entry.shared_theme is True
+
+
+def test_list_oracle_readings_returns_all_readings(
+    auth_client,
+    direct_db: DirectSessionManager,
+    oracle_schema,
+    monkeypatch,
+) -> None:
+    user_id = uuid4()
+    with direct_db.session() as db:
+        corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        db.commit()
+
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+    direct_db.register_cleanup("memberships", "user_id", user_id)
+    _register_oracle_corpus_cleanup(direct_db, corpus_set_version_id)
+    direct_db.register_cleanup("oracle_readings", "user_id", user_id)
+    monkeypatch.setattr("nexus.services.oracle.enqueue_job", lambda *args, **kwargs: None)
+
+    # Create more than 5 readings to verify no limit is applied
+    for i in range(7):
+        auth_client.post(
+            "/oracle/readings",
+            json={"question": f"Question {i} to test the Aleph?"},
+            headers=auth_headers(user_id),
+        )
+
+    response = auth_client.get("/oracle/readings", headers=auth_headers(user_id))
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert len(data) == 7, f"expected all 7 readings returned, got {len(data)}"
+    # Verify v2 field shape
+    first = data[0]
+    assert "folio_motto" in first
+    assert "folio_motto_gloss" in first
+    assert "folio_theme" in first
+    assert "plate_thumbnail_url" in first
+    assert "plate_alt_text" in first
+    assert "folio_title" not in first
+
+
+def test_concordance_endpoint_returns_empty_list_when_reading_not_complete(
+    auth_client,
+    direct_db: DirectSessionManager,
+    oracle_schema,
+    monkeypatch,
+) -> None:
+    user_id = uuid4()
+    with direct_db.session() as db:
+        corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        db.commit()
+
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+    direct_db.register_cleanup("memberships", "user_id", user_id)
+    _register_oracle_corpus_cleanup(direct_db, corpus_set_version_id)
+    direct_db.register_cleanup("oracle_readings", "user_id", user_id)
+    monkeypatch.setattr("nexus.services.oracle.enqueue_job", lambda *args, **kwargs: None)
+
+    create_resp = auth_client.post(
+        "/oracle/readings",
+        json={"question": "Where does the path open?"},
+        headers=auth_headers(user_id),
+    )
+    reading_id = create_resp.json()["data"]["reading_id"]
+
+    response = auth_client.get(
+        f"/oracle/readings/{reading_id}/concordance",
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == []
+
+
+def test_concordance_endpoint_returns_404_for_another_users_reading(
+    auth_client,
+    direct_db: DirectSessionManager,
+    oracle_schema,
+    monkeypatch,
+) -> None:
+    owner_id = uuid4()
+    other_id = uuid4()
+    with direct_db.session() as db:
+        corpus_set_version_id, _work_ids, _image_id = _seed_oracle_corpus(db)
+        db.commit()
+
+    direct_db.register_cleanup("users", "id", owner_id)
+    direct_db.register_cleanup("users", "id", other_id)
+    direct_db.register_cleanup("libraries", "owner_user_id", owner_id)
+    direct_db.register_cleanup("memberships", "user_id", owner_id)
+    _register_oracle_corpus_cleanup(direct_db, corpus_set_version_id)
+    direct_db.register_cleanup("oracle_readings", "user_id", owner_id)
+    monkeypatch.setattr("nexus.services.oracle.enqueue_job", lambda *args, **kwargs: None)
+
+    create_resp = auth_client.post(
+        "/oracle/readings",
+        json={"question": "Where does the path open?"},
+        headers=auth_headers(owner_id),
+    )
+    reading_id = create_resp.json()["data"]["reading_id"]
+
+    response = auth_client.get(
+        f"/oracle/readings/{reading_id}/concordance",
+        headers=auth_headers(other_id),
+    )
+
+    assert response.status_code == 404
+
+
+def test_all_oracle_themes_are_valid(db_session: Session, oracle_schema) -> None:
+    assert len(ORACLE_THEMES) == 24
+    assert len(set(ORACLE_THEMES)) == 24  # no duplicates

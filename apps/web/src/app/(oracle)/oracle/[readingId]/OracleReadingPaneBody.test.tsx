@@ -2,6 +2,13 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import OracleReadingPaneBody, { type ReadingDetail } from "./OracleReadingPaneBody";
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+  }),
+}));
+
 describe("OracleReadingPaneBody", () => {
   it("clears stale reading state when the reading id changes", async () => {
     const secondDetail = deferred<Response>();
@@ -135,7 +142,9 @@ function readingDetail(input: {
   return {
     id: input.id,
     folio_number: input.folioNumber,
-    folio_title: "The Solitary Lamp",
+    folio_motto: "Audentes Fortuna Iuvat",
+    folio_motto_gloss: "Fortune favors the bold.",
+    folio_theme: "Of Courage",
     argument_text: "Of a path through shadow.",
     question_text: input.question,
     status: input.status ?? "complete",

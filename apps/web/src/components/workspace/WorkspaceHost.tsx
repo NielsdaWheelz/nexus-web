@@ -132,6 +132,9 @@ function PaneRouteBoundary({ children }: { children: React.ReactNode }) {
       if (!normalizedHref) {
         return;
       }
+      if (resolvePaneRoute(normalizedHref).id === "unsupported") {
+        return;
+      }
 
       event.preventDefault();
       if (event.shiftKey) {

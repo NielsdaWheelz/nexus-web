@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
   FeedbackNotice,
@@ -10,9 +11,9 @@ import {
 import { ApiError, apiFetch } from "@/lib/api/client";
 import { parseSSEJsonStream, type SSEJsonEvent } from "@/lib/api/sse";
 import { fetchStreamToken } from "@/lib/api/streamToken";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import BorderFrame from "../BorderFrame";
 import IlluminatedCapital from "../IlluminatedCapital";
+import OracleConcordance from "../OracleConcordance";
 import styles from "../oracle.module.css";
 
 type Phase = "descent" | "ordeal" | "ascent";
@@ -48,7 +49,9 @@ interface PassagePayload {
 export interface ReadingDetail {
   id: string;
   folio_number: number;
-  folio_title: string | null;
+  folio_motto: string | null;
+  folio_motto_gloss: string | null;
+  folio_theme: string | null;
   argument_text: string | null;
   question_text: string;
   status: "pending" | "streaming" | "complete" | "failed";
@@ -63,7 +66,9 @@ export interface ReadingDetail {
 interface ReadingState {
   question: string;
   folioNumber: number | null;
-  folioTitle: string | null;
+  folioMotto: string | null;
+  folioMottoGloss: string | null;
+  folioTheme: string | null;
   argument: string | null;
   createdAt: string | null;
   status: "pending" | "streaming" | "complete" | "failed";
@@ -102,7 +107,9 @@ const STREAM_ERROR_MESSAGE =
 const initialState = (): ReadingState => ({
   question: "",
   folioNumber: null,
-  folioTitle: null,
+  folioMotto: null,
+  folioMottoGloss: null,
+  folioTheme: null,
   argument: null,
   createdAt: null,
   status: "pending",
@@ -119,7 +126,9 @@ function stateFromDetail(detail: ReadingDetail): ReadingState {
     ...initialState(),
     question: detail.question_text,
     folioNumber: detail.folio_number,
-    folioTitle: detail.folio_title,
+    folioMotto: detail.folio_motto,
+    folioMottoGloss: detail.folio_motto_gloss,
+    folioTheme: detail.folio_theme,
     argument: detail.argument_text,
     createdAt: detail.created_at,
     status: detail.status,
@@ -155,7 +164,13 @@ function applyEvent(
       return { ...state, cursor, question, folioNumber, status: "streaming" };
     }
     case "bind":
-      return { ...state, cursor, folioTitle: String(event.payload.folio_title ?? "") };
+      return {
+        ...state,
+        cursor,
+        folioMotto: typeof event.payload.folio_motto === "string" ? event.payload.folio_motto : state.folioMotto,
+        folioMottoGloss: typeof event.payload.folio_motto_gloss === "string" ? event.payload.folio_motto_gloss : null,
+        folioTheme: typeof event.payload.folio_theme === "string" ? event.payload.folio_theme : state.folioTheme,
+      };
     case "argument":
       return { ...state, cursor, argument: String(event.payload.text ?? "") };
     case "plate":
@@ -428,11 +443,10 @@ export default function OracleReadingPaneBody({
   readingId,
   initialDetail = null,
 }: {
-  readingId?: string;
+  readingId: string;
   initialDetail?: ReadingDetail | null;
 }) {
-  const paneRuntime = usePaneRuntime();
-  const resolvedReadingId = readingId ?? paneRuntime?.pathParams.readingId ?? "";
+  const router = useRouter();
   const [state, setState] = useState<ReadingState>(() =>
     initialDetail !== null ? stateFromDetail(initialDetail) : initialState(),
   );
@@ -446,14 +460,6 @@ export default function OracleReadingPaneBody({
     setRetryNonce((current) => current + 1);
   }, []);
 
-  const navigateTo = useCallback((href: string) => {
-    if (paneRuntime) {
-      paneRuntime.router.push(href);
-    } else {
-      window.location.assign(href);
-    }
-  }, [paneRuntime]);
-
   const retryFailedReading = useCallback(async () => {
     const question = state.question.trim();
     if (!question || retryingReading) return;
@@ -464,19 +470,16 @@ export default function OracleReadingPaneBody({
         method: "POST",
         body: JSON.stringify({ question }),
       });
-      navigateTo(`/oracle/${body.data.reading_id}`);
+      router.push(`/oracle/${body.data.reading_id}`);
     } catch (error) {
       setRetryError(
         toFeedback(error, { fallback: "The retry could not begin. Please try again." }),
       );
       setRetryingReading(false);
     }
-  }, [navigateTo, retryingReading, state.question]);
+  }, [retryingReading, router, state.question]);
 
   useEffect(() => {
-    if (!resolvedReadingId) {
-      throw new Error("oracle reading route requires readingId");
-    }
     setState(initialDetail !== null ? stateFromDetail(initialDetail) : initialState());
     setLoadError(null);
     setRetryError(null);
@@ -494,7 +497,7 @@ export default function OracleReadingPaneBody({
           if (!cancelled) setState(next);
         } else {
           const detail = await apiFetch<{ data: ReadingDetail }>(
-            `/api/oracle/readings/${resolvedReadingId}`,
+            `/api/oracle/readings/${readingId}`,
           );
           if (cancelled) return;
           loadedDetail = true;
@@ -505,7 +508,7 @@ export default function OracleReadingPaneBody({
         if (next.status !== "pending" && next.status !== "streaming") return;
 
         await streamEventsWithReconnect(
-          resolvedReadingId,
+          readingId,
           next.cursor,
           (event) => {
             if (cancelled) return;
@@ -529,7 +532,7 @@ export default function OracleReadingPaneBody({
       cancelled = true;
       controller.abort();
     };
-  }, [initialDetail, resolvedReadingId, retryNonce]);
+  }, [initialDetail, readingId, retryNonce]);
 
   const showSkeletons =
     state.status === "pending" ||
@@ -555,12 +558,14 @@ export default function OracleReadingPaneBody({
               {state.folioNumber !== null ? `Folio ${toRoman(state.folioNumber)}` : "Folio"}
             </span>
             <span className={styles.foliumDot}>·</span>
-            {state.folioTitle !== null && state.folioTitle.length > 0 ? (
-              <span className={styles.foliumTitle}>{state.folioTitle}</span>
-            ) : (
-              <span className={styles.foliumTitlePending}>……</span>
-            )}
+            <span className={styles.foliumTheme}>{state.folioTheme ?? ""}</span>
           </div>
+          {state.folioMotto !== null && (
+            <div className={styles.foliumMotto}>{state.folioMotto}</div>
+          )}
+          {state.folioMottoGloss !== null && (
+            <div className={styles.foliumGloss}>{state.folioMottoGloss}</div>
+          )}
           <h1 className={styles.readingQuestion}>
             {state.question || "…"}
           </h1>
@@ -649,6 +654,10 @@ export default function OracleReadingPaneBody({
               </ul>
             </section>
           </>
+        )}
+
+        {state.status === "complete" && (
+          <OracleConcordance readingId={readingId} status={state.status} />
         )}
 
         {colophonDate !== null && state.status === "complete" && (

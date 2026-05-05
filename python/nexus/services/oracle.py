@@ -40,6 +40,7 @@ from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas.oracle import (
+    ConcordanceEntryOut,
     OracleReadingDetailOut,
     OracleReadingEventOut,
     OracleReadingImageOut,
@@ -57,7 +58,7 @@ from nexus.services.semantic_chunks import (
 
 logger = get_logger(__name__)
 
-ORACLE_PROMPT_VERSION = "oracle-v2"
+ORACLE_PROMPT_VERSION = "oracle-v3"
 ORACLE_MODEL_NAME = "claude-haiku-4-5-20251001"
 ORACLE_PROVIDER = "anthropic"
 ORACLE_MAX_OUTPUT_TOKENS = 2000
@@ -65,8 +66,33 @@ ORACLE_LLM_TIMEOUT_SECONDS = 45
 ORACLE_PUBLIC_DOMAIN_CANDIDATES = 6
 ORACLE_USER_LIBRARY_CANDIDATES = 4
 ORACLE_USER_CONTENT_CHUNK_CANDIDATES = 4
-ORACLE_RECENT_READINGS_LIMIT = 5
 ORACLE_FOLIO_ALLOCATE_ATTEMPTS = 8
+ORACLE_THEMES: tuple[str, ...] = (
+    "Of Time",
+    "Of Death",
+    "Of the Threshold",
+    "Of Vanity",
+    "Of Solitude",
+    "Of Love",
+    "Of Fortune",
+    "Of Memory",
+    "Of the Self",
+    "Of the Other",
+    "Of Fear",
+    "Of Courage",
+    "Of Faith",
+    "Of Doubt",
+    "Of Power",
+    "Of Wisdom",
+    "Of the Body",
+    "Of the Soul",
+    "Of Origins",
+    "Of Endings",
+    "Of Silence",
+    "Of the Word",
+    "Of Justice",
+    "Of Mercy",
+)  # 24 entries; mirrors the DB CHECK
 ORACLE_IMAGE_PROXY_PATH = "/api/media/image"
 ORACLE_UNEXPECTED_FAILURE_MESSAGE = "The reading could not be completed. Please try again."
 ORACLE_MODEL_UNAVAILABLE_MESSAGE = "The Oracle model is temporarily unavailable."
@@ -350,7 +376,9 @@ def get_reading_detail(
     return OracleReadingDetailOut(
         id=reading.id,
         folio_number=reading.folio_number,
-        folio_title=reading.folio_title,
+        folio_motto=reading.folio_motto,
+        folio_motto_gloss=reading.folio_motto_gloss,
+        folio_theme=reading.folio_theme,
         argument_text=reading.argument_text,
         question_text=reading.question_text,
         status=reading.status,
@@ -380,19 +408,144 @@ def get_reading_detail(
     )
 
 
-def list_recent_readings(db: Session, *, viewer_id: UUID) -> list[OracleReadingSummaryOut]:
-    """Return the viewer's most recent readings."""
+def list_all_readings(db: Session, *, viewer_id: UUID) -> list[OracleReadingSummaryOut]:
+    """Return all of the viewer's readings with plate thumbnail data."""
     rows = (
         db.execute(
-            select(OracleReading)
-            .where(OracleReading.user_id == viewer_id)
-            .order_by(desc(OracleReading.created_at))
-            .limit(ORACLE_RECENT_READINGS_LIMIT)
+            text(
+                """
+                SELECT
+                    r.id,
+                    r.folio_number,
+                    r.folio_motto,
+                    r.folio_motto_gloss,
+                    r.folio_theme,
+                    r.question_text,
+                    r.status,
+                    r.created_at,
+                    r.completed_at,
+                    r.failed_at,
+                    r.image_id,
+                    img.source_url AS image_source_url,
+                    img.work_title AS image_work_title,
+                    img.attribution_text AS image_attribution_text
+                FROM oracle_readings r
+                LEFT JOIN oracle_corpus_images img ON img.id = r.image_id
+                WHERE r.user_id = :viewer_id
+                ORDER BY r.created_at DESC
+                """
+            ),
+            {"viewer_id": viewer_id},
         )
-        .scalars()
+        .mappings()
         .all()
     )
-    return [OracleReadingSummaryOut.model_validate(row) for row in rows]
+    out: list[OracleReadingSummaryOut] = []
+    for row in rows:
+        plate_thumbnail_url: str | None = None
+        plate_alt_text: str | None = None
+        if row["image_id"] is not None and row["image_source_url"] is not None:
+            plate_thumbnail_url = _oracle_image_proxy_url(str(row["image_source_url"]))
+            plate_alt_text = (
+                f"{row['image_work_title']} — {row['image_attribution_text']}"
+                if row["image_work_title"] and row["image_attribution_text"]
+                else None
+            )
+        out.append(
+            OracleReadingSummaryOut(
+                id=row["id"],
+                folio_number=row["folio_number"],
+                folio_motto=row["folio_motto"],
+                folio_motto_gloss=row["folio_motto_gloss"],
+                folio_theme=row["folio_theme"],
+                plate_thumbnail_url=plate_thumbnail_url,
+                plate_alt_text=plate_alt_text,
+                question_text=row["question_text"],
+                status=row["status"],
+                created_at=row["created_at"],
+                completed_at=row["completed_at"],
+                failed_at=row["failed_at"],
+            )
+        )
+    return out
+
+
+def compute_concordance(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    reading_id: UUID,
+) -> list[ConcordanceEntryOut]:
+    """Return up to 5 prior folios that echo this reading (same plate, theme, or passage)."""
+    reference = _get_reading_owned_by(db, viewer_id=viewer_id, reading_id=reading_id)
+    if reference.status != "complete":
+        return []
+
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT *
+                FROM (
+                    SELECT
+                        r.id,
+                        r.folio_number,
+                        r.folio_motto,
+                        r.folio_theme,
+                        r.created_at,
+                        (r.image_id IS NOT NULL AND r.image_id = :image_id) AS shared_plate,
+                        (r.folio_theme IS NOT NULL AND r.folio_theme = :folio_theme) AS shared_theme,
+                        (
+                            SELECT COUNT(*)
+                            FROM oracle_reading_passages p1
+                            JOIN oracle_reading_passages p2
+                                ON p1.source_ref->>'citation_key' = p2.source_ref->>'citation_key'
+                            WHERE p1.reading_id = r.id
+                              AND p2.reading_id = :reading_id
+                        ) AS shared_passage_count,
+                        2 * (r.image_id IS NOT NULL AND r.image_id = :image_id)::int
+                        + 2 * (r.folio_theme IS NOT NULL AND r.folio_theme = :folio_theme)::int
+                        + (
+                            SELECT COUNT(*)
+                            FROM oracle_reading_passages p1
+                            JOIN oracle_reading_passages p2
+                                ON p1.source_ref->>'citation_key' = p2.source_ref->>'citation_key'
+                            WHERE p1.reading_id = r.id
+                              AND p2.reading_id = :reading_id
+                        ) AS score
+                    FROM oracle_readings r
+                    WHERE r.user_id = :viewer_id
+                      AND r.status = 'complete'
+                      AND r.id != :reading_id
+                      AND r.folio_motto IS NOT NULL
+                ) candidates
+                WHERE score > 0
+                ORDER BY score DESC, created_at DESC
+                LIMIT 5
+                """
+            ),
+            {
+                "viewer_id": viewer_id,
+                "reading_id": reading_id,
+                "image_id": reference.image_id,
+                "folio_theme": reference.folio_theme,
+            },
+        )
+        .mappings()
+        .all()
+    )
+    return [
+        ConcordanceEntryOut(
+            id=row["id"],
+            folio_number=row["folio_number"],
+            folio_motto=row["folio_motto"],
+            folio_theme=row["folio_theme"],
+            shared_plate=bool(row["shared_plate"]),
+            shared_theme=bool(row["shared_theme"]),
+            shared_passage_count=int(row["shared_passage_count"]),
+        )
+        for row in rows
+    ]
 
 
 def _validate_oracle_pre_enqueue_controls(*, viewer_id: UUID) -> None:
@@ -647,7 +800,7 @@ async def execute_reading(
             )
             return {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
 
-        argument, folio_title, by_phase, interpretation, omens = parsed
+        argument, motto, gloss, theme, by_phase, interpretation, omens = parsed
         if requires_user_media and not _selected_user_media(candidates, by_phase):
             logger.warning("oracle.llm_missing_user_media", reading_id=str(reading_id))
             reading = _get_reading(db, reading_id)
@@ -667,12 +820,23 @@ async def execute_reading(
             status = reading.status
             db.commit()
             return {"status": status, "noop": True}
-        reading.folio_title = folio_title
+        reading.folio_motto = motto
+        reading.folio_motto_gloss = gloss
+        reading.folio_theme = theme
         reading.argument_text = argument
         reading.image_id = plate.id
         db.flush()
 
-        _append_event(db, reading_id, "bind", {"folio_title": folio_title})
+        _append_event(
+            db,
+            reading_id,
+            "bind",
+            {
+                "folio_motto": motto,
+                "folio_motto_gloss": gloss,
+                "folio_theme": theme,
+            },
+        )
         _append_event(db, reading_id, "argument", {"text": argument})
         _append_event(
             db,
@@ -1102,7 +1266,7 @@ def _retrieve_corpus_passages(
                 exact_snippet=str(row["canonical_text"]),
                 locator_label=str(row["locator_label"]),
                 attribution_text=(
-                    f"{row['work_author']}, *{row['work_title']}*. {row['edition_label']}."
+                    f"{row['work_author']} opened to *{row['work_title']}* {row['locator_label']}."
                 ),
                 deep_link=str(row["source_url"]),
                 source_ref=_public_domain_source_ref_from_row(
@@ -1497,17 +1661,30 @@ _ORACLE_SYSTEM_PROMPT = (
     'between 80 and 180 characters, beginning with the word "Of". It names what '
     'the reading is about. Example: "Of the longing for unbroken light, and the '
     'lamp the soul keeps lit when the wood grows close."\n'
-    "8. Compose ONE folio title: two to four words, evocative, no leading article "
-    'constraint relaxed ("The Solitary Lamp" is fine; so is "Shoreline of '
-    'Sleep"). Capitalize like a book title.\n'
-    "9. Compose one continuous interpretation of three to five paragraphs. Do not "
-    "address the reader as 'you'. Do not give advice or instructions. Refuse to "
-    "predict the future. Refuse to make medical, legal, or financial claims.\n"
+    "8. Compose ONE folio motto: a Latin maxim of two to six words (e.g. "
+    "*Audentes Fortuna Iuvat*, *Memento Mori*, *Nosce Te Ipsum*), ideally a "
+    "canonical sententia or a clear paraphrase of one. If no Latin phrasing fits, "
+    "an English maxim is allowed. The motto is imperative or declarative, never a "
+    "name. Maximum 80 characters.\n"
+    "8b. Compose a gloss: a single English sentence (≤120 chars) translating or "
+    "paraphrasing the motto, *only* if the motto is not in English. If the motto "
+    "is English, set folio_motto_gloss to null.\n"
+    "8c. Pick ONE folio theme from this exact list: "
+    + ", ".join(f'"{t}"' for t in ORACLE_THEMES)
+    + ". "
+    "The theme classifies what this reading is *about*. Match by primary subject, "
+    "not by mood.\n"
+    "9. Compose one continuous interpretation of three to five paragraphs in "
+    "**first-person visionary register**: *I saw…*, *I heard…*, *I stood at…*. "
+    "The voice belongs to the oracle as witness. Use *you* sparingly and only in "
+    "the closing turn, addressing the seeker. No hedging ('perhaps', 'may', "
+    "'might'). Declarative, brief, certain.\n"
     "10. Compose exactly three omen lines. Each is one short clause naming a "
     "recurring image, motif, or correspondence across the selected passages. No "
     "imperative mood.\n"
     "11. Output strict JSON of the form: "
-    '{"argument": string, "folio_title": string, "passages": '
+    '{"argument": string, "folio_motto": string, "folio_motto_gloss": string|null, '
+    '"folio_theme": string, "passages": '
     '[{"phase": "descent"|"ordeal"|"ascent", "candidate_index": int, '
     '"marginalia": string}], "interpretation": string, "omens": '
     "[string, string, string]}. No markdown fences, no extra keys, no commentary "
@@ -1570,10 +1747,10 @@ def _parse_llm_output(
     raw: str,
     *,
     candidates: Sequence[_Candidate],
-) -> tuple[str, str, dict[str, tuple[int, str]], str, list[str]] | None:
+) -> tuple[str, str, str | None, str, dict[str, tuple[int, str]], str, list[str]] | None:
     """Validate and unpack the LLM JSON.
 
-    Returns (argument, folio_title, by_phase, interpretation, omens) where
+    Returns (argument, motto, gloss, theme, by_phase, interpretation, omens) where
     by_phase maps each phase to (candidate_index, marginalia). Returns None
     on any shape failure — caller fails the reading with E_LLM_BAD_REQUEST.
     """
@@ -1586,18 +1763,39 @@ def _parse_llm_output(
         return None
     if not isinstance(parsed, dict):
         return None
-    if set(parsed.keys()) != {"argument", "folio_title", "passages", "interpretation", "omens"}:
+    if set(parsed.keys()) != {
+        "argument",
+        "folio_motto",
+        "folio_motto_gloss",
+        "folio_theme",
+        "passages",
+        "interpretation",
+        "omens",
+    }:
         return None
 
     argument = parsed.get("argument")
-    folio_title = parsed.get("folio_title")
+    motto = parsed.get("folio_motto")
+    gloss = parsed.get("folio_motto_gloss")
+    theme = parsed.get("folio_theme")
     interpretation = parsed.get("interpretation")
     passages = parsed.get("passages")
     omens = parsed.get("omens")
 
     if not isinstance(argument, str) or not _valid_argument(argument):
         return None
-    if not isinstance(folio_title, str) or not _valid_folio_title(folio_title):
+    if not isinstance(motto, str):
+        return None
+    motto = motto.strip()
+    if not (1 <= len(motto) <= 80) or "\n" in motto:
+        return None
+    if gloss is not None:
+        if not isinstance(gloss, str):
+            return None
+        gloss = gloss.strip()
+        if not (1 <= len(gloss) <= 120) or "\n" in gloss:
+            return None
+    if not isinstance(theme, str) or theme not in ORACLE_THEMES:
         return None
     if not isinstance(interpretation, str) or not interpretation.strip():
         return None
@@ -1634,14 +1832,18 @@ def _parse_llm_output(
     if set(by_phase.keys()) != set(ORACLE_PHASES):
         return None
 
-    generated_blocks = [argument, folio_title, interpretation, *omen_lines]
+    generated_blocks = [argument, motto, interpretation, *omen_lines]
+    if gloss is not None:
+        generated_blocks.append(gloss)
     generated_blocks.extend(marginalia for _idx, marginalia in by_phase.values())
     if any(_contains_forbidden_citation_output(block, candidates) for block in generated_blocks):
         return None
 
     return (
         argument.strip(),
-        folio_title.strip(),
+        motto,
+        gloss,
+        theme,
         by_phase,
         interpretation,
         omen_lines,
@@ -1655,18 +1857,6 @@ def _valid_argument(value: str) -> bool:
         and 80 <= len(stripped) <= 180
         and stripped.startswith("Of ")
         and "\n" not in stripped
-    )
-
-
-def _valid_folio_title(value: str) -> bool:
-    stripped = value.strip()
-    words = stripped.split()
-    return (
-        value == stripped
-        and 2 <= len(words) <= 4
-        and len(stripped) <= 80
-        and "\n" not in stripped
-        and all(word[:1].isupper() for word in words if word[:1].isalpha())
     )
 
 

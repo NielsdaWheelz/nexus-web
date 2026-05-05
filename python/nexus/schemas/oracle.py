@@ -35,11 +35,15 @@ class OracleReadingCreateResponse(BaseModel):
 
 
 class OracleReadingSummaryOut(BaseModel):
-    """Recent-readings list row."""
+    """All-readings list row (the Aleph)."""
 
     id: UUID
     folio_number: int
-    folio_title: str | None = None
+    folio_motto: str | None = None
+    folio_motto_gloss: str | None = None
+    folio_theme: str | None = None
+    plate_thumbnail_url: str | None = None
+    plate_alt_text: str | None = None
     question_text: str
     status: str
     created_at: datetime
@@ -87,7 +91,9 @@ class OracleReadingDetailOut(BaseModel):
 
     id: UUID
     folio_number: int
-    folio_title: str | None = None
+    folio_motto: str | None = None
+    folio_motto_gloss: str | None = None
+    folio_theme: str | None = None
     argument_text: str | None = None
     question_text: str
     status: str
@@ -100,3 +106,15 @@ class OracleReadingDetailOut(BaseModel):
     failed_at: datetime | None = None
     error_code: str | None = None
     error_message: str | None = None
+
+
+class ConcordanceEntryOut(BaseModel):
+    """One prior folio that echoes the current reading."""
+
+    id: UUID
+    folio_number: int
+    folio_motto: str
+    folio_theme: str | None
+    shared_plate: bool
+    shared_theme: bool
+    shared_passage_count: int

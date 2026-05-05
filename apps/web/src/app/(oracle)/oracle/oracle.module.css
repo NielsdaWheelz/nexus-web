@@ -113,61 +113,88 @@
   font-style: italic;
 }
 
-.recent {
-  display: flex;
-  flex-direction: column;
+/* ---- aleph grid ----------------------------------------------------------- */
+
+.alephGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 0.75rem;
 }
 
-.recentTitle {
-  font-family: var(--font-oracle-display);
-  font-size: 1rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--oracle-fg-muted);
-}
-
-.recentList {
-  list-style: none;
+.alephCell {
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--oracle-bg-elevated);
+  border: 1px solid var(--oracle-rule);
   padding: 0;
   display: flex;
   flex-direction: column;
+  justify-content: space-between;
+  transition: transform 150ms ease, border-color 150ms ease;
+}
+
+.alephCell:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: var(--oracle-gold);
+}
+
+.alephCellFailed {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.alephCellPending {
+  justify-content: center;
+  align-items: center;
   gap: 0.5rem;
 }
 
-.recentItem {
+.alephThumbnail {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  text-align: left;
-  background: transparent;
-  border: none;
-  color: var(--oracle-fg);
-  padding: 0.6rem 0;
-  font-family: var(--font-oracle-body);
-  font-size: 1rem;
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  align-items: flex-start;
+  height: 100%;
+  object-fit: cover;
+  filter: sepia(0.2) brightness(0.75);
 }
 
-.recentItem:hover {
+.alephCellNumber {
+  position: absolute;
+  bottom: 0.35rem;
+  left: 0.4rem;
+  font-family: var(--font-oracle-display);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  font-size: 0.65rem;
+  color: var(--oracle-gold);
+  z-index: 1;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.alephCellMotto {
+  position: absolute;
+  top: 0.3rem;
+  left: 0.4rem;
+  right: 0.4rem;
+  font-family: var(--font-oracle-display);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.6rem;
   color: var(--oracle-cream);
+  z-index: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
-.recentStatus {
-  font-family: var(--font-oracle-display);
-  font-size: 0.85rem;
-  color: var(--oracle-marginalia-fg);
-  text-transform: lowercase;
-  flex-shrink: 0;
-  margin-top: 0.2rem;
-}
-
-.recentEmpty {
-  color: var(--oracle-fg-muted);
-  font-style: italic;
-  font-family: var(--font-oracle-display);
+.alephCellPendingGlyph {
+  font-size: 1.75rem;
+  color: var(--oracle-gold);
+  opacity: 0.6;
 }
 
 /* ---- reading ------------------------------------------------------------- */
@@ -213,18 +240,30 @@
   color: var(--oracle-gold);
 }
 
-.foliumTitle {
-  font-family: var(--font-oracle-fraktur);
-  font-size: 1.35rem;
-  color: var(--oracle-cream);
-  letter-spacing: 0.01em;
-}
-
-.foliumTitlePending {
+.foliumTheme {
   font-family: var(--font-oracle-display);
   font-style: italic;
-  color: var(--oracle-marginalia-fg);
-  letter-spacing: 0.05em;
+  font-size: 0.8rem;
+  color: var(--oracle-fg-muted);
+  letter-spacing: 0.06em;
+}
+
+.foliumMotto {
+  font-family: var(--font-oracle-display);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--oracle-gold);
+  font-size: 1.1rem;
+  text-align: center;
+  font-feature-settings: "smcp";
+}
+
+.foliumGloss {
+  font-style: italic;
+  color: var(--oracle-fg-muted);
+  text-align: center;
+  font-size: 0.92rem;
+  font-family: var(--font-oracle-display);
 }
 
 .argument {
@@ -638,53 +677,48 @@
   margin: 0 auto;
 }
 
-.recentMain {
+/* ---- concordance ---------------------------------------------------------- */
+
+.concordance {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  animation: oracle-fade-in 900ms ease forwards;
+}
+
+.concordanceList {
+  list-style: none;
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  flex: 1 1 auto;
-  overflow: hidden;
 }
 
-.recentFolio {
-  display: flex;
-  gap: 0.5rem;
-  align-items: baseline;
-  flex-wrap: wrap;
-}
-
-.recentFolioNumber {
+.concordanceItem {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--oracle-fg);
+  padding: 0.35rem 0;
   font-family: var(--font-oracle-display);
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  font-size: 0.78rem;
-  color: var(--oracle-marginalia-fg);
-}
-
-.recentFolioDot {
-  color: var(--oracle-gold);
-}
-
-.recentFolioTitle {
-  font-family: var(--font-oracle-fraktur);
-  font-size: 1.15rem;
-  color: var(--oracle-cream);
-}
-
-.recentFolioTitlePending {
-  font-family: var(--font-oracle-display);
-  font-style: italic;
-  color: var(--oracle-marginalia-fg);
-}
-
-.recentQuestionLine {
-  font-family: var(--font-oracle-body);
-  font-style: italic;
-  color: var(--oracle-fg-muted);
   font-size: 0.95rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.concordanceItem:hover {
+  color: var(--oracle-gold);
+  text-decoration: underline;
+  text-decoration-color: var(--oracle-gold);
+}
+
+.concordanceShareReason {
+  font-style: italic;
+  font-size: 0.82rem;
+  color: var(--oracle-marginalia-fg);
 }
 
 @media (prefers-reduced-motion: reduce) {

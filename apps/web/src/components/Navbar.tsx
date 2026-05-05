@@ -15,6 +15,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import Link from "next/link";
+import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import styles from "./Navbar.module.css";
@@ -75,6 +76,9 @@ export default function Navbar({ onToggle }: NavbarProps) {
 
   const handleNavClick = useCallback(
     (event: MouseEvent<HTMLAnchorElement>, href: string) => {
+      if (resolvePaneRoute(href).id === "unsupported") {
+        return;
+      }
       event.preventDefault();
       navigateToHref(href);
     },
