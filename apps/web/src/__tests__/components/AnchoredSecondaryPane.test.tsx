@@ -7,11 +7,12 @@ import {
   within,
 } from "@testing-library/react";
 import type { ComponentProps, RefObject } from "react";
-import LinkedItemsPane from "@/components/LinkedItemsPane";
+import AnchoredSecondaryPane from "@/components/AnchoredSecondaryPane";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 
 const scrollHosts: HTMLDivElement[] = [];
-const linkedItemsPaneBaseProps = {
+const scrollHostByContentRoot = new WeakMap<HTMLElement, HTMLDivElement>();
+const anchoredSecondaryPaneBaseProps = {
   isEditingBounds: false,
   canSendToChat: true,
   onSendToChat: vi.fn(),
@@ -26,7 +27,7 @@ const linkedItemsPaneBaseProps = {
 
 function getRowButtons(): HTMLButtonElement[] {
   return screen
-    .getAllByRole("button")
+    .queryAllByRole("button")
     .filter(
       (el) => el.getAttribute("aria-pressed") !== null,
     ) as HTMLButtonElement[];
@@ -56,15 +57,16 @@ function createScrollableContent(innerHtml: string): {
   host.appendChild(contentRoot);
   document.body.appendChild(host);
   scrollHosts.push(host);
+  scrollHostByContentRoot.set(contentRoot, host);
 
   const contentRef = { current: contentRoot } as RefObject<HTMLElement | null>;
   return { host, contentRoot, contentRef };
 }
 
-function mockViewportAnchors(
+function mockViewportTargets(
   host: HTMLDivElement,
   contentRoot: HTMLDivElement,
-  anchors: Record<string, { absoluteTop: number; height?: number }>,
+  targets: Record<string, { absoluteTop: number; height?: number }>,
   viewportTop = 100,
   viewportHeight = 320,
 ) {
@@ -73,20 +75,42 @@ function mockViewportAnchors(
   );
 
   for (const [testId, { absoluteTop, height = 16 }] of Object.entries(
-    anchors,
+    targets,
   )) {
-    const anchor = within(contentRoot).getByTestId(testId);
-    vi.spyOn(anchor, "getBoundingClientRect").mockImplementation(
+    const target = within(contentRoot).getByTestId(testId);
+    vi.spyOn(target, "getBoundingClientRect").mockImplementation(
       () =>
         new DOMRect(0, viewportTop + absoluteTop - host.scrollTop, 80, height),
     );
   }
 }
 
-function renderLinkedItemsPane(props: ComponentProps<typeof LinkedItemsPane>) {
+function renderAnchoredSecondaryPane(
+  props: ComponentProps<typeof AnchoredSecondaryPane>,
+) {
+  const contentRoot = props.contentRef.current;
+  const host = contentRoot ? scrollHostByContentRoot.get(contentRoot) : null;
+  if (contentRoot && host) {
+    if (!vi.isMockFunction(host.getBoundingClientRect)) {
+      vi.spyOn(host, "getBoundingClientRect").mockImplementation(
+        () => new DOMRect(0, 100, 400, host.clientHeight),
+      );
+    }
+
+    for (const target of contentRoot.querySelectorAll<HTMLElement>(
+      "[data-active-highlight-ids]",
+    )) {
+      if (!vi.isMockFunction(target.getBoundingClientRect)) {
+        vi.spyOn(target, "getBoundingClientRect").mockImplementation(
+          () => new DOMRect(0, 140 - host.scrollTop, 80, 16),
+        );
+      }
+    }
+  }
+
   return render(
     <FeedbackProvider>
-      <LinkedItemsPane {...props} />
+      <AnchoredSecondaryPane {...props} />
     </FeedbackProvider>,
   );
 }
@@ -98,12 +122,12 @@ afterEach(() => {
   }
 });
 
-describe("LinkedItemsPane", () => {
+describe("AnchoredSecondaryPane", () => {
   it("orders same-line rows by canonical offsets, not random id fallback", async () => {
     const { host, contentRef } = createScrollableContent(
       [
-        '<p><span data-highlight-anchor="a-late"></span>late token ',
-        '<span data-highlight-anchor="z-early"></span>early token</p>',
+        '<p><span data-active-highlight-ids="a-late"></span>late token ',
+        '<span data-active-highlight-ids="z-early"></span>early token</p>',
       ].join(""),
     );
     host.setAttribute("data-test-scroll-host", "true");
@@ -133,8 +157,8 @@ describe("LinkedItemsPane", () => {
       },
     ] as const;
 
-    renderLinkedItemsPane({
-      ...linkedItemsPaneBaseProps,
+    renderAnchoredSecondaryPane({
+      ...anchoredSecondaryPaneBaseProps,
       highlights: highlights as never,
       contentRef,
       focusedId: null,
@@ -157,12 +181,18 @@ describe("LinkedItemsPane", () => {
     );
     host.setAttribute("data-test-scroll-host", "true");
     const segment = within(contentRoot).getByTestId("active-highlight-segment");
+    mockViewportTargets(host, contentRoot, {
+      "active-highlight-segment": { absoluteTop: 40 },
+    });
+    vi.spyOn(segment, "getClientRects").mockImplementation(
+      () => [] as unknown as DOMRectList,
+    );
     const scrollIntoViewSpy = vi
       .spyOn(segment, "scrollIntoView")
       .mockImplementation(() => undefined);
 
-    renderLinkedItemsPane({
-      ...linkedItemsPaneBaseProps,
+    renderAnchoredSecondaryPane({
+      ...anchoredSecondaryPaneBaseProps,
       highlights: [
         {
           id: "pdf-h1",
@@ -194,20 +224,20 @@ describe("LinkedItemsPane", () => {
     const onHighlightClick = vi.fn();
     const { host, contentRef, contentRoot } = createScrollableContent(
       [
-        '<p><span data-highlight-anchor="above-h" data-testid="anchor-above"></span>above excerpt</p>',
-        '<p><span data-highlight-anchor="in-view-h" data-testid="anchor-in-view"></span>current excerpt</p>',
-        '<p><span data-highlight-anchor="below-h" data-testid="anchor-below"></span>below excerpt</p>',
+        '<p><span data-active-highlight-ids="above-h" data-testid="anchor-above"></span>above excerpt</p>',
+        '<p><span data-active-highlight-ids="in-view-h" data-testid="anchor-in-view"></span>current excerpt</p>',
+        '<p><span data-active-highlight-ids="below-h" data-testid="anchor-below"></span>below excerpt</p>',
       ].join(""),
     );
     host.scrollTop = 200;
-    mockViewportAnchors(host, contentRoot, {
+    mockViewportTargets(host, contentRoot, {
       "anchor-above": { absoluteTop: 120 },
       "anchor-in-view": { absoluteTop: 260 },
       "anchor-below": { absoluteTop: 580 },
     });
 
-    renderLinkedItemsPane({
-      ...linkedItemsPaneBaseProps,
+    renderAnchoredSecondaryPane({
+      ...anchoredSecondaryPaneBaseProps,
       highlights: [
         {
           id: "above-h",
@@ -270,14 +300,221 @@ describe("LinkedItemsPane", () => {
     expect(onHighlightClick).toHaveBeenCalledWith("in-view-h");
   });
 
+  it("on desktop, renders only rows whose targets intersect the reader viewport", async () => {
+    const { host, contentRef, contentRoot } = createScrollableContent(
+      [
+        '<p><span data-active-highlight-ids="above-h" data-testid="desktop-above"></span>above excerpt</p>',
+        '<p><span data-active-highlight-ids="mid-h" data-testid="desktop-mid"></span>mid excerpt</p>',
+        '<p><span data-active-highlight-ids="lower-h" data-testid="desktop-lower"></span>lower excerpt</p>',
+      ].join(""),
+    );
+    host.scrollTop = 200;
+    mockViewportTargets(host, contentRoot, {
+      "desktop-above": { absoluteTop: 120 },
+      "desktop-mid": { absoluteTop: 260 },
+      "desktop-lower": { absoluteTop: 580 },
+    });
+
+    renderAnchoredSecondaryPane({
+      ...anchoredSecondaryPaneBaseProps,
+      highlights: [
+        {
+          id: "above-h",
+          exact: "above excerpt",
+          color: "yellow",
+          linked_note_blocks: [],
+          anchor: { start_offset: 0, end_offset: 12 },
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        {
+          id: "mid-h",
+          exact: "mid excerpt",
+          color: "green",
+          linked_note_blocks: [],
+          anchor: { start_offset: 20, end_offset: 31 },
+          created_at: "2026-01-02T00:00:00Z",
+        },
+        {
+          id: "lower-h",
+          exact: "lower excerpt",
+          color: "blue",
+          linked_note_blocks: [],
+          anchor: { start_offset: 40, end_offset: 53 },
+          created_at: "2026-01-03T00:00:00Z",
+        },
+      ] as never,
+      contentRef,
+      focusedId: null,
+      isMobile: false,
+      onHighlightClick: vi.fn(),
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("linked-item-row-mid-h")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("linked-item-row-above-h"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("linked-item-row-lower-h"),
+      ).not.toBeInTheDocument();
+    });
+
+    host.scrollTop = 540;
+    fireEvent.scroll(host);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("linked-item-row-lower-h")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("linked-item-row-mid-h"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("does not project a text highlight from its zero-width anchor alone", async () => {
+    const { host, contentRef, contentRoot } = createScrollableContent(
+      '<p><span data-highlight-anchor="anchor-only-h" data-testid="anchor-only"></span>anchor only excerpt</p>',
+    );
+    mockViewportTargets(host, contentRoot, {});
+
+    const anchor = within(contentRoot).getByTestId("anchor-only");
+    vi.spyOn(anchor, "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(0, 140, 0, 16),
+    );
+
+    renderAnchoredSecondaryPane({
+      ...anchoredSecondaryPaneBaseProps,
+      highlights: [
+        {
+          id: "anchor-only-h",
+          exact: "anchor only excerpt",
+          color: "yellow",
+          linked_note_blocks: [],
+          anchor: { start_offset: 0, end_offset: 19 },
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ] as never,
+      contentRef,
+      focusedId: null,
+      isMobile: false,
+      onHighlightClick: vi.fn(),
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("No highlights in view.")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByTestId("linked-item-row-anchor-only-h"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("on desktop, projects PDF quads and omits offscreen page targets", async () => {
+    const { host, contentRef, contentRoot } = createScrollableContent(
+      [
+        '<div class="page" data-page-number="2" data-testid="pdf-page"',
+        ' data-nexus-page-scale="1" data-nexus-page-rotation="0"',
+        ' data-nexus-page-viewport-width="600" data-nexus-page-viewport-height="800"',
+        ' data-nexus-page-dpi-scale="1"></div>',
+      ].join(""),
+    );
+    host.scrollTop = 200;
+    mockViewportTargets(host, contentRoot, {});
+
+    const page = within(contentRoot).getByTestId("pdf-page");
+    vi.spyOn(page, "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(0, 100 - host.scrollTop, 600, 800),
+    );
+
+    renderAnchoredSecondaryPane({
+      ...anchoredSecondaryPaneBaseProps,
+      highlights: [
+        {
+          id: "pdf-above",
+          exact: "above pdf excerpt",
+          color: "yellow",
+          linked_note_blocks: [],
+          page_number: 2,
+          quads: [
+            {
+              x1: 10,
+              y1: 120,
+              x2: 110,
+              y2: 120,
+              x3: 110,
+              y3: 136,
+              x4: 10,
+              y4: 136,
+            },
+          ],
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        {
+          id: "pdf-visible",
+          exact: "visible pdf excerpt",
+          color: "green",
+          linked_note_blocks: [],
+          page_number: 2,
+          quads: [
+            {
+              x1: 10,
+              y1: 260,
+              x2: 110,
+              y2: 260,
+              x3: 110,
+              y3: 276,
+              x4: 10,
+              y4: 276,
+            },
+          ],
+          created_at: "2026-01-02T00:00:00Z",
+        },
+        {
+          id: "pdf-below",
+          exact: "below pdf excerpt",
+          color: "blue",
+          linked_note_blocks: [],
+          page_number: 2,
+          quads: [
+            {
+              x1: 10,
+              y1: 580,
+              x2: 110,
+              y2: 580,
+              x3: 110,
+              y3: 596,
+              x4: 10,
+              y4: 596,
+            },
+          ],
+          created_at: "2026-01-03T00:00:00Z",
+        },
+      ] as never,
+      contentRef,
+      focusedId: null,
+      isMobile: false,
+      onHighlightClick: vi.fn(),
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("linked-item-row-pdf-visible"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("linked-item-row-pdf-above"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("linked-item-row-pdf-below"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("keeps collapsed rows compact without inline note, chat, or conversation chrome", async () => {
     const { host, contentRef } = createScrollableContent(
-      '<p><span data-highlight-anchor="compact-h1"></span>compact row preview</p>',
+      '<p><span data-active-highlight-ids="compact-h1"></span>compact row preview</p>',
     );
     host.setAttribute("data-test-scroll-host", "true");
 
-    renderLinkedItemsPane({
-      ...linkedItemsPaneBaseProps,
+    renderAnchoredSecondaryPane({
+      ...anchoredSecondaryPaneBaseProps,
       highlights: [
         {
           id: "compact-h1",
@@ -332,12 +569,12 @@ describe("LinkedItemsPane", () => {
 
   it("hides the expanded ask-in-chat action when quote chat is unavailable", async () => {
     const { host, contentRef } = createScrollableContent(
-      '<p><span data-highlight-anchor="chat-disabled-h"></span>chat gated preview</p>',
+      '<p><span data-active-highlight-ids="chat-disabled-h"></span>chat gated preview</p>',
     );
     host.setAttribute("data-test-scroll-host", "true");
 
-    renderLinkedItemsPane({
-      ...linkedItemsPaneBaseProps,
+    renderAnchoredSecondaryPane({
+      ...anchoredSecondaryPaneBaseProps,
       canSendToChat: false,
       highlights: [
         {
@@ -370,12 +607,12 @@ describe("LinkedItemsPane", () => {
 
   it("renders all linked notes on the focused highlight", async () => {
     const { host, contentRef } = createScrollableContent(
-      '<p><span data-highlight-anchor="multi-note-h"></span>linked note preview</p>',
+      '<p><span data-active-highlight-ids="multi-note-h"></span>linked note preview</p>',
     );
     host.setAttribute("data-test-scroll-host", "true");
 
-    renderLinkedItemsPane({
-      ...linkedItemsPaneBaseProps,
+    renderAnchoredSecondaryPane({
+      ...anchoredSecondaryPaneBaseProps,
       highlights: [
         {
           id: "multi-note-h",
@@ -406,12 +643,12 @@ describe("LinkedItemsPane", () => {
 
   it("lets shared readers edit their own empty linked notes without highlight actions", async () => {
     const { host, contentRef } = createScrollableContent(
-      '<p><span data-highlight-anchor="empty-note-h"></span>empty note preview</p>',
+      '<p><span data-active-highlight-ids="empty-note-h"></span>empty note preview</p>',
     );
     host.setAttribute("data-test-scroll-host", "true");
 
-    renderLinkedItemsPane({
-      ...linkedItemsPaneBaseProps,
+    renderAnchoredSecondaryPane({
+      ...anchoredSecondaryPaneBaseProps,
       highlights: [
         {
           id: "empty-note-h",
@@ -451,12 +688,12 @@ describe("LinkedItemsPane", () => {
 
   it("lets shared readers create their own linked note without highlight actions", async () => {
     const { host, contentRef } = createScrollableContent(
-      '<p><span data-highlight-anchor="shared-new-note-h"></span>shared note preview</p>',
+      '<p><span data-active-highlight-ids="shared-new-note-h"></span>shared note preview</p>',
     );
     host.setAttribute("data-test-scroll-host", "true");
 
-    renderLinkedItemsPane({
-      ...linkedItemsPaneBaseProps,
+    renderAnchoredSecondaryPane({
+      ...anchoredSecondaryPaneBaseProps,
       highlights: [
         {
           id: "shared-new-note-h",
@@ -489,20 +726,20 @@ describe("LinkedItemsPane", () => {
   it("on mobile, swaps rows as highlights move into and out of the reader viewport", async () => {
     const { host, contentRef, contentRoot } = createScrollableContent(
       [
-        '<p><span data-highlight-anchor="above-h" data-testid="scroll-anchor-above"></span>above excerpt</p>',
-        '<p><span data-highlight-anchor="mid-h" data-testid="scroll-anchor-mid"></span>mid excerpt</p>',
-        '<p><span data-highlight-anchor="lower-h" data-testid="scroll-anchor-lower"></span>lower excerpt</p>',
+        '<p><span data-active-highlight-ids="above-h" data-testid="scroll-anchor-above"></span>above excerpt</p>',
+        '<p><span data-active-highlight-ids="mid-h" data-testid="scroll-anchor-mid"></span>mid excerpt</p>',
+        '<p><span data-active-highlight-ids="lower-h" data-testid="scroll-anchor-lower"></span>lower excerpt</p>',
       ].join(""),
     );
     host.scrollTop = 200;
-    mockViewportAnchors(host, contentRoot, {
+    mockViewportTargets(host, contentRoot, {
       "scroll-anchor-above": { absoluteTop: 120 },
       "scroll-anchor-mid": { absoluteTop: 260 },
       "scroll-anchor-lower": { absoluteTop: 580 },
     });
 
-    renderLinkedItemsPane({
-      ...linkedItemsPaneBaseProps,
+    renderAnchoredSecondaryPane({
+      ...anchoredSecondaryPaneBaseProps,
       highlights: [
         {
           id: "above-h",
@@ -582,20 +819,20 @@ describe("LinkedItemsPane", () => {
   it("on mobile, shows No highlights in view when the contextual set is entirely offscreen", async () => {
     const { host, contentRef, contentRoot } = createScrollableContent(
       [
-        '<p><span data-highlight-anchor="far-above-h" data-testid="empty-anchor-above"></span>far above excerpt</p>',
-        '<p><span data-highlight-anchor="far-below-h1" data-testid="empty-anchor-below-1"></span>far below excerpt 1</p>',
-        '<p><span data-highlight-anchor="far-below-h2" data-testid="empty-anchor-below-2"></span>far below excerpt 2</p>',
+        '<p><span data-active-highlight-ids="far-above-h" data-testid="empty-anchor-above"></span>far above excerpt</p>',
+        '<p><span data-active-highlight-ids="far-below-h1" data-testid="empty-anchor-below-1"></span>far below excerpt 1</p>',
+        '<p><span data-active-highlight-ids="far-below-h2" data-testid="empty-anchor-below-2"></span>far below excerpt 2</p>',
       ].join(""),
     );
     host.scrollTop = 300;
-    mockViewportAnchors(host, contentRoot, {
+    mockViewportTargets(host, contentRoot, {
       "empty-anchor-above": { absoluteTop: 120 },
       "empty-anchor-below-1": { absoluteTop: 700 },
       "empty-anchor-below-2": { absoluteTop: 860 },
     });
 
-    renderLinkedItemsPane({
-      ...linkedItemsPaneBaseProps,
+    renderAnchoredSecondaryPane({
+      ...anchoredSecondaryPaneBaseProps,
       highlights: [
         {
           id: "far-above-h",
@@ -658,18 +895,18 @@ describe("LinkedItemsPane", () => {
   it("uses stable_order_key for deterministic mobile row ordering", async () => {
     const { host, contentRef, contentRoot } = createScrollableContent(
       [
-        '<p><span data-highlight-anchor="h-b" data-testid="stable-anchor-b"></span>row b ',
-        '<span data-highlight-anchor="h-a" data-testid="stable-anchor-a"></span>row a</p>',
+        '<p><span data-active-highlight-ids="h-b" data-testid="stable-anchor-b"></span>row b ',
+        '<span data-active-highlight-ids="h-a" data-testid="stable-anchor-a"></span>row a</p>',
       ].join(""),
     );
     host.scrollTop = 0;
-    mockViewportAnchors(host, contentRoot, {
+    mockViewportTargets(host, contentRoot, {
       "stable-anchor-b": { absoluteTop: 40 },
       "stable-anchor-a": { absoluteTop: 40 },
     });
 
-    renderLinkedItemsPane({
-      ...linkedItemsPaneBaseProps,
+    renderAnchoredSecondaryPane({
+      ...anchoredSecondaryPaneBaseProps,
       highlights: [
         {
           id: "h-b",

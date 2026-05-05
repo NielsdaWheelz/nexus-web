@@ -92,6 +92,7 @@ make test-real
 - `docs/feedback-layer-hard-cutover.md` -> unified frontend feedback layer hard-cutover plan
 - `docs/evidence-layer-hard-cutover.md` -> unified evidence indexing and citation hard-cutover plan
 - `docs/notes-layer-hard-cutover.md` -> ProseMirror notes, object links, and annotation hard-cutover plan
+- `docs/anchored-projection-hard-cutover.md` -> visible reader highlight projection and secondary-pane hard-cutover plan
 - `docs/authors-layer-hard-cutover.md` -> contributor identity and author surface hard-cutover plan
 - `docs/reader-implementation.md` -> current reader behavior contract
 - `docs/black-forest-oracle-hard-cutover.md` -> hybrid public-domain + library divination feature hard-cutover plan

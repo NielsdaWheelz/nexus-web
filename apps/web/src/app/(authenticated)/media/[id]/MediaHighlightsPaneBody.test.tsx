@@ -6,10 +6,35 @@ import MediaHighlightsPaneBody from "./MediaHighlightsPaneBody";
 
 describe("MediaHighlightsPaneBody", () => {
   it("does not show edit actions for shared non-PDF highlights", async () => {
+    const scrollHost = document.createElement("div");
+    scrollHost.style.height = "320px";
+    scrollHost.style.overflowY = "auto";
+    Object.defineProperty(scrollHost, "clientHeight", {
+      configurable: true,
+      value: 320,
+    });
+    Object.defineProperty(scrollHost, "scrollTop", {
+      configurable: true,
+      writable: true,
+      value: 0,
+    });
+    vi.spyOn(scrollHost, "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(0, 100, 400, 320),
+    );
+
     const content = document.createElement("div");
-    const anchor = document.createElement("span");
-    anchor.dataset.highlightAnchor = "shared-highlight";
-    content.append(anchor);
+    const segment = document.createElement("span");
+    segment.dataset.activeHighlightIds = "shared-highlight";
+    segment.textContent = "Shared quote";
+    vi.spyOn(segment, "getClientRects").mockImplementation(
+      () => [] as unknown as DOMRectList,
+    );
+    vi.spyOn(segment, "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(0, 140, 100, 16),
+    );
+    content.append(segment);
+    scrollHost.append(content);
+    document.body.append(scrollHost);
 
     render(
       <FeedbackProvider>
@@ -44,6 +69,7 @@ describe("MediaHighlightsPaneBody", () => {
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Actions" })).not.toBeInTheDocument();
     });
+    scrollHost.remove();
   });
 });
 

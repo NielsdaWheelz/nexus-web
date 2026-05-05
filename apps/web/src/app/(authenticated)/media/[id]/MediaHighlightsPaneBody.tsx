@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, type RefObject } from "react";
+import AnchoredSecondaryPane from "@/components/AnchoredSecondaryPane";
 import type { PdfHighlightOut } from "@/components/PdfReader";
-import LinkedItemsPane from "@/components/LinkedItemsPane";
 import type { Highlight } from "./mediaHighlights";
 import {
   sortContextualFragmentHighlights,
@@ -187,18 +187,12 @@ export default function MediaHighlightsPaneBody({
     [onFocusHighlight]
   );
 
-  const paneTitle = isPdf ? "Page highlights" : isEpub ? "Section highlights" : "Highlights";
-  const paneDescription = isMobile
-    ? isPdf
-      ? "Showing visible highlights on the active page."
-      : isEpub
-        ? "Showing visible highlights in the active section."
-        : "Showing visible highlights in the current content."
-    : isPdf
-      ? "Showing highlights for the active page."
-      : isEpub
-        ? "Showing highlights in the active section."
-        : "Showing highlights in the current content.";
+  const paneTitle = "Visible highlights";
+  const paneDescription = isPdf
+    ? "Showing highlights visible in the active page viewport."
+    : isEpub
+      ? "Showing highlights visible in the active section viewport."
+      : "Showing highlights visible in the reader viewport.";
 
   return (
     <div className={styles.highlightsPaneRoot}>
@@ -215,7 +209,7 @@ export default function MediaHighlightsPaneBody({
       </header>
 
       <div className={styles.highlightsPaneBody}>
-        <LinkedItemsPane
+        <AnchoredSecondaryPane
           highlights={paneHighlights}
           contentRef={contentRef}
           focusedId={selectedHighlight?.id ?? null}

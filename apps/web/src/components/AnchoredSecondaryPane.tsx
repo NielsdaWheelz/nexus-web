@@ -32,12 +32,11 @@ import {
   projectPdfQuadToViewportRect,
   type PdfPageViewportTransform,
 } from "@/lib/highlights/coordinateTransforms";
-import styles from "./LinkedItemsPane.module.css";
+import styles from "./AnchoredSecondaryPane.module.css";
 
 const COLLAPSED_ROW_HEIGHT = 44;
 const ROW_GAP = 4;
 const MEASURE_DEBOUNCE_MS = 75;
-const VIEWPORT_BUFFER_PX = 24;
 
 function escapeAttrValue(value: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
@@ -123,7 +122,27 @@ function linkedNoteHasContent(note: {
   });
 }
 
-interface LinkedItemsPaneProps {
+function pickVisibleRect(
+  rects: Array<{ top: number; bottom: number }>,
+  viewportTop: number,
+  viewportBottom: number,
+) {
+  let visibleRect: { top: number; bottom: number } | null = null;
+  let visiblePixels = 0;
+
+  for (const rect of rects) {
+    const pixels =
+      Math.min(rect.bottom, viewportBottom) - Math.max(rect.top, viewportTop);
+    if (pixels > visiblePixels) {
+      visiblePixels = pixels;
+      visibleRect = rect;
+    }
+  }
+
+  return visibleRect;
+}
+
+interface AnchoredSecondaryPaneProps {
   highlights: Array<{
     id: string;
     exact: string;
@@ -170,7 +189,7 @@ interface LinkedItemsPaneProps {
   onOpenConversation: (conversationId: string, title: string) => void;
 }
 
-export default function LinkedItemsPane({
+export default function AnchoredSecondaryPane({
   highlights,
   contentRef,
   focusedId,
@@ -187,22 +206,22 @@ export default function LinkedItemsPane({
   onNoteSave,
   onNoteDelete,
   onOpenConversation,
-}: LinkedItemsPaneProps) {
+}: AnchoredSecondaryPaneProps) {
   const feedback = useFeedback();
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollParentRef = useRef<HTMLElement | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const measureTimerRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
-  const [anchorBounds, setAnchorBounds] = useState(
-    new Map<string, { top: number; bottom: number }>(),
+  const [targetRects, setTargetRects] = useState(
+    new Map<string, Array<{ top: number; bottom: number }>>(),
   );
   const [alignedRows, setAlignedRows] = useState<
     Array<{ id: string; top: number }>
   >([]);
   const [rowHeights, setRowHeights] = useState(new Map<string, number>());
   const [overflowCount, setOverflowCount] = useState(0);
-  const [missingAnchors, setMissingAnchors] = useState<string[]>([]);
+  const [missingTargets, setMissingTargets] = useState<string[]>([]);
   const [viewportState, setViewportState] = useState({
     scrollTop: 0,
     clientHeight: 0,
@@ -270,10 +289,10 @@ export default function LinkedItemsPane({
       const escapedId = escapeAttrValue(highlightId);
       return (
         contentRef.current.querySelector<HTMLElement>(
-          `[data-highlight-anchor="${escapedId}"]`,
+          `[data-active-highlight-ids~="${escapedId}"]`,
         ) ??
         contentRef.current.querySelector<HTMLElement>(
-          `[data-active-highlight-ids~="${escapedId}"]`,
+          `[data-highlight-anchor="${escapedId}"]`,
         )
       );
     },
@@ -296,7 +315,7 @@ export default function LinkedItemsPane({
     });
   }, []);
 
-  const measureAnchors = useCallback(() => {
+  const measureTargets = useCallback(() => {
     if (!contentRef.current) {
       return;
     }
@@ -308,10 +327,15 @@ export default function LinkedItemsPane({
     const viewerRect = scrollParent.getBoundingClientRect();
     const viewerScrollTop = scrollParent.scrollTop;
     const pageElements = new Map<number, HTMLElement | null>();
-    const positions = new Map<string, { top: number; bottom: number }>();
-    const nextMissingAnchors: string[] = [];
+    const nextTargetRects = new Map<
+      string,
+      Array<{ top: number; bottom: number }>
+    >();
+    const nextMissingTargets: string[] = [];
 
     for (const highlight of orderedHighlights) {
+      const rects: Array<{ top: number; bottom: number }> = [];
+
       if (highlight.page_number && highlight.quads?.length) {
         let pageElement = pageElements.get(highlight.page_number);
         if (pageElement === undefined) {
@@ -327,45 +351,64 @@ export default function LinkedItemsPane({
         }
 
         if (!pageElement) {
-          nextMissingAnchors.push(highlight.id);
+          nextMissingTargets.push(highlight.id);
           continue;
         }
 
         const transform = readPdfPageViewportTransform(pageElement);
         if (!transform) {
-          nextMissingAnchors.push(highlight.id);
+          nextMissingTargets.push(highlight.id);
           continue;
         }
 
-        const rect = projectPdfQuadToViewportRect(
-          highlight.quads[0],
-          transform,
-        );
         const pageRect = pageElement.getBoundingClientRect();
-        const top = pageRect.top - viewerRect.top + viewerScrollTop + rect.top;
-        positions.set(highlight.id, { top, bottom: top + rect.height });
+        for (const quad of highlight.quads) {
+          const rect = projectPdfQuadToViewportRect(quad, transform);
+          const top =
+            pageRect.top - viewerRect.top + viewerScrollTop + rect.top;
+          rects.push({ top, bottom: top + rect.height });
+        }
+      } else {
+        const escapedId = escapeAttrValue(highlight.id);
+        const segments = contentRef.current.querySelectorAll<HTMLElement>(
+          `[data-active-highlight-ids~="${escapedId}"]`,
+        );
+
+        for (const segment of segments) {
+          const clientRects = Array.from(segment.getClientRects()).filter(
+            (rect) => rect.width > 0 && rect.height > 0,
+          );
+          if (clientRects.length === 0) {
+            clientRects.push(segment.getBoundingClientRect());
+          }
+
+          for (const rect of clientRects) {
+            if (rect.width <= 0 || rect.height <= 0) {
+              continue;
+            }
+            const top = rect.top - viewerRect.top + viewerScrollTop;
+            rects.push({ top, bottom: top + rect.height });
+          }
+        }
+      }
+
+      if (rects.length === 0) {
+        nextMissingTargets.push(highlight.id);
         continue;
       }
 
-      const anchor = findHighlightAnchorElement(highlight.id);
-      if (!anchor) {
-        nextMissingAnchors.push(highlight.id);
-        continue;
-      }
-
-      const anchorRect = anchor.getBoundingClientRect();
-      const top = anchorRect.top - viewerRect.top + viewerScrollTop;
-      positions.set(highlight.id, { top, bottom: top + anchorRect.height });
+      rects.sort((left, right) => {
+        if (left.top !== right.top) {
+          return left.top - right.top;
+        }
+        return left.bottom - right.bottom;
+      });
+      nextTargetRects.set(highlight.id, rects);
     }
 
-    setAnchorBounds(positions);
-    setMissingAnchors(nextMissingAnchors);
-  }, [
-    contentRef,
-    findHighlightAnchorElement,
-    orderedHighlights,
-    syncViewportState,
-  ]);
+    setTargetRects(nextTargetRects);
+    setMissingTargets(nextMissingTargets);
+  }, [contentRef, orderedHighlights, syncViewportState]);
 
   const scheduleMeasure = useCallback(() => {
     if (measureTimerRef.current != null) {
@@ -373,9 +416,9 @@ export default function LinkedItemsPane({
     }
     measureTimerRef.current = window.setTimeout(() => {
       measureTimerRef.current = null;
-      measureAnchors();
+      measureTargets();
     }, MEASURE_DEBOUNCE_MS);
-  }, [measureAnchors]);
+  }, [measureTargets]);
 
   const alignRows = useCallback(() => {
     if (isMobile || !containerRef.current) {
@@ -394,20 +437,27 @@ export default function LinkedItemsPane({
     const baseline =
       scrollParent.getBoundingClientRect().top -
       containerRef.current.getBoundingClientRect().top;
-    const scrollTop = scrollParent.scrollTop;
+    const viewportTop = scrollParent.scrollTop;
+    const viewportBottom = viewportTop + scrollParent.clientHeight;
     const rows: Array<{
       highlight: (typeof orderedHighlights)[number];
       desiredTop: number;
     }> = [];
 
     for (const highlight of orderedHighlights) {
-      const bounds = anchorBounds.get(highlight.id);
-      if (!bounds) {
+      const rects = targetRects.get(highlight.id);
+      if (!rects) {
         continue;
       }
+
+      const visibleRect = pickVisibleRect(rects, viewportTop, viewportBottom);
+      if (!visibleRect) {
+        continue;
+      }
+
       rows.push({
         highlight,
-        desiredTop: bounds.top - scrollTop + baseline,
+        desiredTop: visibleRect.top - viewportTop + baseline,
       });
     }
 
@@ -444,7 +494,7 @@ export default function LinkedItemsPane({
     let previousBottom = Number.NEGATIVE_INFINITY;
     const nextAlignedRows: Array<{ id: string; top: number }> = [];
     for (const row of rows) {
-      const top = Math.max(0, row.desiredTop, previousBottom + ROW_GAP);
+      const top = Math.max(row.desiredTop, previousBottom + ROW_GAP);
       nextAlignedRows.push({ id: row.highlight.id, top });
       previousBottom =
         top + (rowHeights.get(row.highlight.id) ?? COLLAPSED_ROW_HEIGHT);
@@ -462,7 +512,7 @@ export default function LinkedItemsPane({
       }
     }
     setOverflowCount(nextOverflowCount);
-  }, [anchorBounds, contentRef, isMobile, orderedHighlights, rowHeights]);
+  }, [contentRef, isMobile, orderedHighlights, rowHeights, targetRects]);
 
   useEffect(() => {
     return () => {
@@ -508,6 +558,7 @@ export default function LinkedItemsPane({
       return nextHeights;
     });
   }, [
+    alignedRows,
     focusedId,
     isEditingBounds,
     isMobile,
@@ -525,25 +576,25 @@ export default function LinkedItemsPane({
   ]);
 
   useEffect(() => {
-    setAnchorBounds(new Map());
-    setMissingAnchors([]);
+    setTargetRects(new Map());
+    setMissingTargets([]);
     if (!isMobile) {
       setAlignedRows([]);
       setOverflowCount(0);
     }
 
     const frameId = window.requestAnimationFrame(() => {
-      measureAnchors();
+      measureTargets();
     });
     return () => window.cancelAnimationFrame(frameId);
-  }, [highlightsVersion, isMobile, measureAnchors]);
+  }, [highlightsVersion, isMobile, measureTargets]);
 
   useEffect(() => {
-    if (isMobile || anchorBounds.size === 0) {
+    if (isMobile) {
       return;
     }
     alignRows();
-  }, [alignRows, anchorBounds, isMobile]);
+  }, [alignRows, isMobile, targetRects]);
 
   useEffect(() => {
     if (!contentRef.current) {
@@ -560,8 +611,8 @@ export default function LinkedItemsPane({
       }
       scrollFrameRef.current = window.requestAnimationFrame(() => {
         scrollFrameRef.current = null;
+        syncViewportState(scrollParent);
         if (isMobile) {
-          syncViewportState(scrollParent);
           return;
         }
         alignRows();
@@ -586,10 +637,6 @@ export default function LinkedItemsPane({
   ]);
 
   useEffect(() => {
-    if (typeof ResizeObserver === "undefined") {
-      return;
-    }
-
     const contentElement = contentRef.current;
     const containerElement = containerRef.current;
     const scrollParent = scrollParentRef.current;
@@ -643,11 +690,11 @@ export default function LinkedItemsPane({
   }, [contentRef, highlightsVersion, scheduleMeasure]);
 
   useEffect(() => {
-    if (missingAnchors.length === 0) {
+    if (missingTargets.length === 0) {
       return;
     }
-    console.warn("highlight_anchor_missing", { highlightIds: missingAnchors });
-  }, [missingAnchors]);
+    console.warn("highlight_target_missing", { highlightIds: missingTargets });
+  }, [missingTargets]);
 
   const mobileHighlightsState = useMemo(() => {
     if (!isMobile) {
@@ -669,26 +716,39 @@ export default function LinkedItemsPane({
     const viewportBottom = viewportTop + viewportState.clientHeight;
 
     for (const highlight of orderedHighlights) {
-      const bounds = anchorBounds.get(highlight.id);
-      if (!bounds) {
+      const rects = targetRects.get(highlight.id);
+      if (!rects) {
         continue;
       }
 
-      if (bounds.bottom < viewportTop - VIEWPORT_BUFFER_PX) {
+      if (pickVisibleRect(rects, viewportTop, viewportBottom)) {
+        visibleHighlights.push(highlight);
+        continue;
+      }
+
+      let abovePixels = Number.POSITIVE_INFINITY;
+      let belowPixels = Number.POSITIVE_INFINITY;
+      for (const rect of rects) {
+        if (rect.bottom <= viewportTop) {
+          abovePixels = viewportTop - rect.bottom;
+        } else if (
+          rect.top >= viewportBottom &&
+          belowPixels === Number.POSITIVE_INFINITY
+        ) {
+          belowPixels = rect.top - viewportBottom;
+        }
+      }
+
+      if (abovePixels <= belowPixels) {
         aboveCount += 1;
         nearestAboveId = highlight.id;
         continue;
       }
 
-      if (bounds.top > viewportBottom + VIEWPORT_BUFFER_PX) {
-        belowCount += 1;
-        if (!nearestBelowId) {
-          nearestBelowId = highlight.id;
-        }
-        continue;
+      belowCount += 1;
+      if (!nearestBelowId) {
+        nearestBelowId = highlight.id;
       }
-
-      visibleHighlights.push(highlight);
     }
 
     return {
@@ -698,9 +758,9 @@ export default function LinkedItemsPane({
       nearestAboveId,
       nearestBelowId,
     };
-  }, [anchorBounds, isMobile, orderedHighlights, viewportState]);
+  }, [isMobile, orderedHighlights, targetRects, viewportState]);
 
-  const hasMeasuredAnchors = anchorBounds.size > 0 || missingAnchors.length > 0;
+  const hasMeasuredTargets = targetRects.size > 0 || missingTargets.length > 0;
 
   const focusAndScrollToHighlight = useCallback(
     (highlightId: string) => {
@@ -726,7 +786,7 @@ export default function LinkedItemsPane({
 
       const escapedId = escapeAttrValue(highlightId);
       const segments = contentRef.current.querySelectorAll(
-        `[data-active-highlight-ids~="${escapedId}"]`,
+        `[data-active-highlight-ids~="${escapedId}"], [data-highlight-anchor="${escapedId}"]`,
       );
       for (const segment of segments) {
         segment.classList.add("hl-hover-outline");
@@ -774,7 +834,7 @@ export default function LinkedItemsPane({
         feedback.show(
           toFeedback(error, { fallback: "Failed to delete highlight" }),
         );
-        console.error("linked_items_delete_failed", error);
+        console.error("anchored_secondary_delete_failed", error);
         setDeleting(false);
       }
     },
@@ -801,7 +861,7 @@ export default function LinkedItemsPane({
         feedback.show(
           toFeedback(error, { fallback: "Failed to change color" }),
         );
-        console.error("linked_items_color_change_failed", error);
+        console.error("anchored_secondary_color_change_failed", error);
       } finally {
         setChangingColor(false);
       }
@@ -1059,7 +1119,7 @@ export default function LinkedItemsPane({
         )}
 
         {mobileHighlightsState.visibleHighlights.length === 0 &&
-        hasMeasuredAnchors ? (
+        hasMeasuredTargets ? (
           <div className={styles.mobileFeedbackMessage}>
             <FeedbackNotice severity="neutral" title="No highlights in view." />
           </div>
@@ -1101,6 +1161,11 @@ export default function LinkedItemsPane({
           transform: `translateY(${row.top}px)`,
         });
       })}
+      {alignedRows.length === 0 && hasMeasuredTargets ? (
+        <div className={styles.emptyFeedbackMessage}>
+          <FeedbackNotice severity="neutral" title="No highlights in view." />
+        </div>
+      ) : null}
       {overflowCount > 0 ? (
         <div className={styles.overflowIndicator}>
           +{overflowCount} more below
