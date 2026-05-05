@@ -1,0 +1,367 @@
+1
+00:00:01,040 --> 00:00:05,920
+From their perch on the International SpaceÂ
+Station, astronauts have spent two decades sharingÂ Â
+
+2
+00:00:05,920 --> 00:00:12,480
+a story about Earth as they see it from above.Â
+Like the directors of any film those astronautÂ Â
+
+3
+00:00:12,480 --> 00:00:16,640
+storytellers have a cast and crew workingÂ
+behind the scenes to help them tell that story.Â Â
+
+4
+00:00:17,360 --> 00:00:23,440
+The Earth Science and Remote Sensing group (ESRS) here at Johnson Space Center is primarily designedÂ Â
+
+5
+00:00:23,440 --> 00:00:28,960
+to support the International Space StationÂ
+program. Our job there is twofold. One, it's toÂ Â
+
+6
+00:00:28,960 --> 00:00:35,760
+run, manage the Crew Earth Observations FacilityÂ
+on the ISS. That's the handheld crew imagery ofÂ
+
+7
+00:00:35,760 --> 00:00:42,160
+the Earth. The other is to serve as subject matterÂ
+experts to the ISS program for matters of remoteÂ sensing. Â
+
+8
+00:00:42,160 --> 00:00:47,680
+Though the photos shot from the spaceÂ
+station can be quite beautiful, they're mostlyÂ Â
+
+9
+00:00:47,680 --> 00:00:53,840
+shot for practical reasons. Astronaut photographyÂ
+is a science product designed to help everyoneÂ Â
+
+10
+00:00:53,840 --> 00:00:58,960
+from academic and government researchers toÂ
+resource managers and conservation groups toÂ Â
+
+11
+00:00:58,960 --> 00:01:05,120
+educators and students. The photographs documentÂ
+changes in our cities and remote ecosystems,Â Â
+
+12
+00:01:07,120 --> 00:01:14,720
+in polluted waters, and pristine landscapes. TheyÂ
+have been used to study everything from urbanÂ Â
+
+13
+00:01:14,720 --> 00:01:21,520
+development and economics to unusual electricalÂ
+discharges in the atmosphere. These snapshots haveÂ Â
+
+14
+00:01:21,520 --> 00:01:28,240
+been used to observe fishing boats and coralÂ
+reefs, calving icebergs, and vast inland deltas.Â Â
+
+15
+00:01:29,440 --> 00:01:34,400
+Though handheld cameras are not as precise asÂ
+robotic imagers they provide a nice complement.Â Â
+
+16
+00:01:35,760 --> 00:01:41,760
+Most satellites view the world at the same timeÂ
+and same resolution with each pass. But each SpaceÂ Station
+
+17
+00:01:41,760 --> 00:01:46,640
+orbit brings different viewing angles,Â
+different times of day, and different lighting.Â Â
+
+18
+00:01:48,160 --> 00:01:53,840
+We've had a number of external science requestsÂ
+for nighttime imagery of various cities forÂ Â
+
+19
+00:01:53,840 --> 00:02:00,813
+investigators who are looking at light pollutionÂ
+and seeing how that's affecting biodiversity in their cities. Â Â
+
+20
+00:02:01,251 --> 00:02:05,040
+The Earth Science and RemoteÂ
+Sensing team manages dozens of requests forÂ Â
+
+21
+00:02:05,040 --> 00:02:07,665
+images with new ones coming in weekly.
+
+22
+00:02:08,000 --> 00:02:12,392
+We'veÂ got this long list of maybe 50 to 100 on any given day that we will parse through,
+
+23
+00:02:12,392 --> 00:02:18,263
+and the way weÂ decide which target we will ask for the next day is,
+
+24
+00:02:18,263 --> 00:02:22,720
+we'll see where the ISS is. We'll take intoÂ
+account lighting conditions, whether it's lightÂ Â
+
+25
+00:02:22,720 --> 00:02:26,234
+enough for daytime targets or dark enough forÂ
+nighttime targets.
+
+26
+00:02:26,234 --> 00:02:32,508
+Once we have what they can see, then we'll filter that for predicted weather,Â cloud cover for that area.
+
+27
+00:02:32,508 --> 00:02:36,049
+There's no point inÂ Â asking them for a target if they're not going toÂ be able to see it.
+
+28
+00:02:36,049 --> 00:02:43,680
+With a new sunrise and sunset every 90 minutes, the astronauts have 16 chancesÂ to see what the planet and its people are doing.
+
+29
+00:02:45,760 --> 00:02:49,840
+But life on the Space Station bringsÂ
+its own sort of sunrise and sunset.
+
+30
+00:02:50,800 --> 00:02:55,680
+Flight surgeons say do not ask for anythingÂ
+during their sleep period which is a thirdÂ Â
+
+31
+00:02:55,680 --> 00:03:01,040
+of the day. That's a full eight hours. But youÂ
+may ask for everything between six o'clock andÂ Â
+
+32
+00:03:01,040 --> 00:03:08,028
+nine, 21:30, in the evening which includes theirÂ
+getting up time, breakfast time, and the workÂ day. Â
+
+33
+00:03:08,028 --> 00:03:12,433
+And bedtime, supper time, brush your teeth time.
+
+34
+00:03:12,433 --> 00:03:16,126
+Having considered astronauts schedules and the viability of each target,
+
+35
+00:03:16,126 --> 00:03:19,120
+the Earth ObservationsÂ team chooses a few targets for each day.
+
+36
+00:03:20,400 --> 00:03:25,312
+They assemble guides and maps so the astronautsÂ
+can quickly orient themselves.
+
+37
+00:03:25,312 --> 00:03:31,200
+They send the target plans to payload operations at MarshallÂ Space Flight Center where photo ops are reviewed,Â
+
+38
+00:03:31,200 --> 00:03:34,342
+approved, and added to the ISS workday.
+
+39
+00:03:34,342 --> 00:03:38,080
+They willÂ provide for us useful information to help give us
+
+40
+00:03:39,520 --> 00:03:45,840
+maybe cues off the surface of the Earth that willÂ
+help train our eye to go find a specific targetÂ Â
+
+41
+00:03:45,840 --> 00:03:51,520
+that otherwise would be very difficult to find inÂ
+there. They want that target for specific reasons.Â Â
+
+42
+00:03:51,520 --> 00:03:56,480
+Preflight they will have trained us in thatÂ
+and why those elements of that data are soÂ Â
+
+43
+00:03:56,480 --> 00:04:02,160
+important, which helps us in the technique thatÂ
+we might apply in getting the photograph. Â
+
+44
+00:04:03,360 --> 00:04:06,880
+Perhaps the hardest part of theÂ
+job for the Earth Observations teamÂ Â
+
+45
+00:04:06,880 --> 00:04:12,800
+comes after the astronauts put down theÂ
+camera. Anywhere from 100 to 10,000 imagesÂ Â
+
+46
+00:04:12,800 --> 00:04:16,563
+are sent down to ground control every day.
+
+47
+00:04:16,563 --> 00:04:19,960
+OnceÂ that gets downlinked, it gets ingested into our system
+
+48
+00:04:19,960 --> 00:04:23,680
+and I'll look through those and seeÂ
+if they're appropriate to send to the researchers.
+
+49
+00:04:25,200 --> 00:04:30,720
+Though computers are now part of the process, forÂ
+most of the past 20 years those photos have beenÂ Â
+
+50
+00:04:30,720 --> 00:04:32,917
+sorted by human hands and eyes.
+
+51
+00:04:32,917 --> 00:04:38,915
+That's the highestÂ priority for us, to catalog them.
+And by cataloging I mean adding descriptive metadata to the image.
+
+52
+00:04:38,915 --> 00:04:44,801
+Things like what geographic features can you seeÂ in this image. That helps then when it's fedÂ into our online database.
+
+53
+00:04:44,801 --> 00:04:50,031
+That's what enablesÂ Â people to search for those images.
+
+54
+00:04:50,031 --> 00:04:52,560
+Every photoÂ has some basic information about the location.
+
+55
+00:04:53,200 --> 00:04:57,280
+But since the ground team did not shoot the photosÂ
+they have to decipher what can be seen in them.Â Â
+
+56
+00:04:58,000 --> 00:05:03,520
+It is a monumentally important but monumentallyÂ
+time-consuming job. Because these images areÂ Â
+
+57
+00:05:03,520 --> 00:05:09,440
+taken by the astronauts, they're looking out of theÂ
+cupola with a with a handheld camera. They can lookÂ Â
+
+58
+00:05:09,440 --> 00:05:13,920
+in any direction they want. We know exactly whereÂ
+the space station was when they took the picture.Â Â
+
+59
+00:05:14,720 --> 00:05:18,000
+So we kind of have a general idea ofÂ
+where it could possibly be. We know whatÂ Â
+
+60
+00:05:18,000 --> 00:05:22,000
+hemisphere it is in for instance. But we don'tÂ
+necessarily know which way they were looking. Â
+
+61
+00:05:23,280 --> 00:05:28,160
+It is a rich decades-long catalog of theÂ
+dynamic changes, forces, and beauties ofÂ Â
+
+62
+00:05:28,160 --> 00:05:33,040
+our planet. It always struck me how littleÂ
+the remote sensing community used this data.Â Â
+
+63
+00:05:33,760 --> 00:05:37,901
+And primarily that was because it historicallyÂ
+has been a difficult data set to use.
+
+64
+00:05:37,901 --> 00:05:42,640
+One of the focuses that I've had leading this group has been,Â okay, we need we need to bring new tools to bear toÂ Â
+
+65
+00:05:42,640 --> 00:05:44,551
+make this dataset more useful.
+
+66
+00:05:44,551 --> 00:05:52,857
+Stefanov's teamÂ has been working to automate more of its tasks using new software and computing techniquesÂ like machine learning.
+
+67
+00:05:52,857 --> 00:05:58,160
+If we have machines thatÂ can identify these features automatically, thenÂ our database becomes that much more searchableÂ
+
+68
+00:05:58,160 --> 00:06:02,234
+and the public can use it more easily, scientistsÂ
+can find exactly what they're looking for.
+
+69
+00:06:03,182 --> 00:06:08,240
+Lambert and colleagues are now training computers toÂ
+detect and recognize certain features on the land,Â Â
+
+70
+00:06:09,040 --> 00:06:15,760
+in the sky, and on the ocean. They're using neuralÂ
+networks to help machines quickly identify photosÂ Â
+
+71
+00:06:15,760 --> 00:06:22,560
+with a lake or a sea, the limb of theÂ
+Earth or the Moon, a crater or a city.Â Â
+
+72
+00:06:23,600 --> 00:06:26,149
+They're particularly focused on clouds.
+
+73
+00:06:26,149 --> 00:06:33,826
+OneÂ problem that people have that are doing GIS is that you've got our imagery, and it's great, butÂ it's got clouds in it.
+
+74
+00:06:33,826 --> 00:06:40,080
+And those clouds obscure what you're interested in looking at. If we have anÂ algorithm that produces a mask where every pixelÂ Â
+
+75
+00:06:40,080 --> 00:06:45,840
+is labeled as either clouds or no clouds, that
+label can be applied to the whole image and theyÂ Â
+
+76
+00:06:45,840 --> 00:06:49,111
+can subtract the clouds from their analysis, soÂ
+that way they are ignored.
+
+77
+00:06:49,351 --> 00:06:55,360
+Astronaut photographs have been used for some scientific studies and forÂ inspiring people to better appreciate the planet.Â Â
+
+78
+00:06:56,640 --> 00:07:00,400
+But the Earth Observations team believesÂ
+those photos could have even wider use,Â Â
+
+79
+00:07:01,600 --> 00:07:04,847
+and they want to make sureÂ
+the world sees more of them.

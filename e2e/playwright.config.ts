@@ -58,7 +58,7 @@ export default defineConfig({
       timeout: 60_000,
       env: {
         ...process.env,
-        NEXUS_ENV: "test",
+        NEXUS_ENV: REAL_MEDIA_ENABLED ? "local" : "test",
         E2E_DISABLE_CSP: "1",
         PORT: WEB_PORT,
       },

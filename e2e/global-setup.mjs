@@ -17,8 +17,19 @@ const PDF_SEED = path.join(E2E_DIR, ".seed", "pdf-media.json");
 const NON_PDF_SEED = path.join(E2E_DIR, ".seed", "non-pdf-media.json");
 const EPUB_SEED = path.join(E2E_DIR, ".seed", "epub-media.json");
 const YOUTUBE_SEED = path.join(E2E_DIR, ".seed", "youtube-media.json");
-const READER_RESUME_SEED = path.join(E2E_DIR, ".seed", "reader-resume-media.json");
-const SEED_FILES = [PDF_SEED, NON_PDF_SEED, EPUB_SEED, YOUTUBE_SEED, READER_RESUME_SEED];
+const READER_RESUME_SEED = path.join(
+  E2E_DIR,
+  ".seed",
+  "reader-resume-media.json",
+);
+const REAL_MEDIA_SEED = path.join(E2E_DIR, ".seed", "real-media.json");
+const SEED_FILES = [
+  PDF_SEED,
+  NON_PDF_SEED,
+  EPUB_SEED,
+  YOUTUBE_SEED,
+  READER_RESUME_SEED,
+];
 const E2E_USER_EMAIL = process.env.E2E_USER_EMAIL ?? "e2e-test@nexus.local";
 
 function loadEnvFile(filePath) {
@@ -38,7 +49,7 @@ function loadEnvFile(filePath) {
     }
     let value = trimmed.slice(eqIdx + 1).trim();
     if (
-      (value.startsWith("\"") && value.endsWith("\"")) ||
+      (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
     ) {
       value = value.slice(1, -1);
@@ -102,7 +113,10 @@ function databaseHasSeededMedia(dbUrl) {
     return false;
   }
 
-  const probeDatabaseUrl = dbUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://");
+  const probeDatabaseUrl = dbUrl.replace(
+    /^postgresql\+psycopg:\/\//,
+    "postgresql://",
+  );
   const mediaIds = readSeededMediaIds();
   if (mediaIds.length === 0) {
     return false;
@@ -151,7 +165,10 @@ function databaseHasReadyEvidenceIndexes(dbUrl) {
     return false;
   }
 
-  const probeDatabaseUrl = dbUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://");
+  const probeDatabaseUrl = dbUrl.replace(
+    /^postgresql\+psycopg:\/\//,
+    "postgresql://",
+  );
   const pdf = readJson(PDF_SEED);
   const nonPdf = readJson(NON_PDF_SEED);
   const epub = readJson(EPUB_SEED);
@@ -183,7 +200,7 @@ function databaseHasReadyEvidenceIndexes(dbUrl) {
         "cur=conn.cursor();" +
         "cur.execute(" +
         JSON.stringify(
-          "select count(*) from media_content_index_states where media_id = any(%s::uuid[]) and status = 'ready'"
+          "select count(*) from media_content_index_states where media_id = any(%s::uuid[]) and status = 'ready'",
         ) +
         ", (ids,));" +
         "row=cur.fetchone();" +
@@ -217,7 +234,10 @@ function databaseHasReadyEvidenceIndexes(dbUrl) {
 }
 
 function databaseHasSeededBilling(dbUrl) {
-  const probeDatabaseUrl = dbUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://");
+  const probeDatabaseUrl = dbUrl.replace(
+    /^postgresql\+psycopg:\/\//,
+    "postgresql://",
+  );
   const command =
     "uv run --project python python -c " +
     JSON.stringify(
@@ -226,7 +246,7 @@ function databaseHasSeededBilling(dbUrl) {
         "cur=conn.cursor();" +
         "cur.execute(" +
         JSON.stringify(
-          "select ba.plan_tier from billing_accounts ba join users u on u.id = ba.user_id where u.email = %s"
+          "select ba.plan_tier from billing_accounts ba join users u on u.id = ba.user_id where u.email = %s",
         ) +
         ", (os.environ['E2E_USER_EMAIL'],));" +
         "row=cur.fetchone();" +
@@ -263,7 +283,10 @@ function databaseHasSeededYoutubeTranscriptStates(dbUrl) {
     return false;
   }
 
-  const probeDatabaseUrl = dbUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://");
+  const probeDatabaseUrl = dbUrl.replace(
+    /^postgresql\+psycopg:\/\//,
+    "postgresql://",
+  );
   const youtube = readJson(YOUTUBE_SEED);
   const command =
     "uv run --project python python -c " +
@@ -274,7 +297,7 @@ function databaseHasSeededYoutubeTranscriptStates(dbUrl) {
         "cur=conn.cursor();" +
         "cur.execute(" +
         JSON.stringify(
-          "select mts.media_id::text, mts.transcript_state, mts.transcript_coverage, mts.semantic_status, mcis.status from media_transcript_states mts left join media_content_index_states mcis on mcis.media_id = mts.media_id where mts.media_id = any(%s::uuid[])"
+          "select mts.media_id::text, mts.transcript_state, mts.transcript_coverage, mts.semantic_status, mcis.status from media_transcript_states mts left join media_content_index_states mcis on mcis.media_id = mts.media_id where mts.media_id = any(%s::uuid[])",
         ) +
         ", ([seed['media_id'], seed['playback_only_media_id']],));" +
         "rows={media_id:(state, coverage, semantic, index_status) for media_id, state, coverage, semantic, index_status in cur.fetchall()};" +
@@ -313,7 +336,10 @@ function databaseHasCleanSeededHighlightFixtures(dbUrl) {
     return false;
   }
 
-  const probeDatabaseUrl = dbUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://");
+  const probeDatabaseUrl = dbUrl.replace(
+    /^postgresql\+psycopg:\/\//,
+    "postgresql://",
+  );
   const nonPdf = readJson(NON_PDF_SEED);
   const epub = readJson(EPUB_SEED);
   const command =
@@ -325,13 +351,13 @@ function databaseHasCleanSeededHighlightFixtures(dbUrl) {
         "cur=conn.cursor();" +
         "cur.execute(" +
         JSON.stringify(
-          "select count(*), bool_and(id::text = any(%s::text[])) from highlights where id in (select h.id from highlights h join highlight_fragment_anchors hfa on hfa.highlight_id = h.id join fragments f on f.id = hfa.fragment_id where f.media_id = %s::uuid)"
+          "select count(*), bool_and(id::text = any(%s::text[])) from highlights where id in (select h.id from highlights h join highlight_fragment_anchors hfa on hfa.highlight_id = h.id join fragments f on f.id = hfa.fragment_id where f.media_id = %s::uuid)",
         ) +
         ", (seed['non_pdf_highlight_ids'], seed['non_pdf_media_id']));" +
         "non_pdf_count, non_pdf_only_seed = cur.fetchone();" +
         "cur.execute(" +
         JSON.stringify(
-          "select count(*) from highlights where id in (select h.id from highlights h join highlight_fragment_anchors hfa on hfa.highlight_id = h.id join fragments f on f.id = hfa.fragment_id where f.media_id = %s::uuid)"
+          "select count(*) from highlights where id in (select h.id from highlights h join highlight_fragment_anchors hfa on hfa.highlight_id = h.id join fragments f on f.id = hfa.fragment_id where f.media_id = %s::uuid)",
         ) +
         ", (seed['epub_media_id'],));" +
         "epub_count = cur.fetchone()[0];" +
@@ -349,7 +375,10 @@ function databaseHasCleanSeededHighlightFixtures(dbUrl) {
         DATABASE_URL: probeDatabaseUrl,
         NEXUS_E2E_HIGHLIGHT_SEED: JSON.stringify({
           non_pdf_media_id: nonPdf.media_id,
-          non_pdf_highlight_ids: [nonPdf.quote_highlight_id, nonPdf.focus_highlight_id],
+          non_pdf_highlight_ids: [
+            nonPdf.quote_highlight_id,
+            nonPdf.focus_highlight_id,
+          ],
           epub_media_id: epub.media_id,
         }),
       },
@@ -360,6 +389,79 @@ function databaseHasCleanSeededHighlightFixtures(dbUrl) {
   } catch (error) {
     throw new Error(
       "[global-setup] Highlight-fixture readiness probe failed.\n" +
+        `  Command: ${command}\n` +
+        `  CWD:     ${ROOT}\n` +
+        `  Cause:   ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function databaseHasReadyRealMediaSeed(dbUrl) {
+  if (!existsSync(REAL_MEDIA_SEED)) {
+    return false;
+  }
+
+  const probeDatabaseUrl = dbUrl.replace(
+    /^postgresql\+psycopg:\/\//,
+    "postgresql://",
+  );
+  const seed = readJson(REAL_MEDIA_SEED);
+  const mediaIds = ["pdf", "epub", "web", "video", "podcast"].map(
+    (name) => seed.fixtures?.[name]?.media_id,
+  );
+  const scannedPdfMediaId = seed.fixtures?.scanned_pdf?.media_id;
+  if (
+    mediaIds.some(
+      (mediaId) => typeof mediaId !== "string" || mediaId.length === 0,
+    ) ||
+    typeof scannedPdfMediaId !== "string" ||
+    scannedPdfMediaId.length === 0
+  ) {
+    return false;
+  }
+
+  const command =
+    "uv run --project python python -c " +
+    JSON.stringify(
+      "import json, os, psycopg;" +
+        "ids=json.loads(os.environ['NEXUS_REAL_MEDIA_IDS']);" +
+        "conn=psycopg.connect(os.environ['DATABASE_URL']);" +
+        "cur=conn.cursor();" +
+        "cur.execute(" +
+        JSON.stringify(
+          "select count(*) from media m join media_content_index_states mcis on mcis.media_id = m.id where m.id = any(%s::uuid[]) and m.processing_status = 'ready_for_reading' and mcis.status = 'ready'",
+        ) +
+        ", (ids,));" +
+        "row=cur.fetchone();" +
+        "ready_count=row[0] if row else 0;" +
+        "cur.execute(" +
+        JSON.stringify(
+          "select m.processing_status, mcis.status from media m join media_content_index_states mcis on mcis.media_id = m.id where m.id = %s::uuid",
+        ) +
+        ", (os.environ['NEXUS_SCANNED_PDF_MEDIA_ID'],));" +
+        "scanned=cur.fetchone();" +
+        "print('1' if ready_count == len(ids) and scanned == ('ready_for_reading', 'ocr_required') else '0');" +
+        "cur.close();" +
+        "conn.close()",
+    );
+
+  try {
+    const raw = execSync(command, {
+      cwd: ROOT,
+      stdio: ["ignore", "pipe", "inherit"],
+      env: {
+        ...process.env,
+        DATABASE_URL: probeDatabaseUrl,
+        NEXUS_REAL_MEDIA_IDS: JSON.stringify(mediaIds),
+        NEXUS_SCANNED_PDF_MEDIA_ID: scannedPdfMediaId,
+      },
+    })
+      .toString()
+      .trim();
+    return raw === "1";
+  } catch (error) {
+    throw new Error(
+      "[global-setup] Real-media seed readiness probe failed.\n" +
         `  Command: ${command}\n` +
         `  CWD:     ${ROOT}\n` +
         `  Cause:   ${error instanceof Error ? error.message : String(error)}`,
@@ -394,6 +496,24 @@ export default function globalSetup() {
     },
   );
 
+  if (process.env.E2E_REAL_MEDIA === "1") {
+    if (!databaseHasReadyRealMediaSeed(dbUrl)) {
+      run(
+        "Seed real-media E2E data",
+        "uv run python scripts/seed_real_media_e2e.py",
+        path.join(ROOT, "python"),
+        {
+          DATABASE_URL: dbUrl,
+          NEXUS_ENV: "local",
+        },
+      );
+    }
+    console.log(
+      "[global-setup] Real-media E2E enabled - using .seed/real-media.json.",
+    );
+    return;
+  }
+
   if (
     databaseHasSeededMedia(dbUrl) &&
     databaseHasReadyEvidenceIndexes(dbUrl) &&
@@ -401,7 +521,9 @@ export default function globalSetup() {
     databaseHasSeededYoutubeTranscriptStates(dbUrl) &&
     databaseHasCleanSeededHighlightFixtures(dbUrl)
   ) {
-    console.log("[global-setup] Seed data already matches the database — skipping reseed.");
+    console.log(
+      "[global-setup] Seed data already matches the database — skipping reseed.",
+    );
     return;
   }
 

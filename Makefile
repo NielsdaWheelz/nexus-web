@@ -1,15 +1,15 @@
 # Nexus Development Makefile
 # Run `make help` for available commands.
 
-.PHONY: help setup dev down logs clean api web worker migrate migrate-test migrate-down seed \
+.PHONY: help setup dev down logs clean api web worker migrate migrate-test migrate-down seed seed-real-media-e2e \
 	check check-back type-back check-front check-workflows format format-back fix-front build audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
-	test-migrations test-supabase test-network test-real test-real-media test-e2e test-e2e-real-media test-e2e-ui \
-	verify verify-full \
+	test-migrations test-supabase test-network test-real test-real-media test-live-providers test-e2e test-e2e-real-media test-e2e-ui \
+	verify verify-real-media verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw \
-	_test-supabase-raw _test-network-raw _test-real-raw _test-real-media-raw \
-	_test-e2e-raw _test-e2e-real-media-raw _test-e2e-ui-raw
+	_test-supabase-raw _test-network-raw _test-real-raw _test-real-media-raw _test-live-providers-raw \
+	_seed-real-media-e2e-raw _test-e2e-raw _test-e2e-real-media-raw _test-e2e-ui-raw
 
 -include .env
 -include .dev-ports
@@ -48,7 +48,8 @@ help:
 	@echo "  make test-unit          - Fast backend and frontend unit tests"
 	@echo "  make test               - All non-E2E automated tests"
 	@echo "  make verify             - check + build + test"
-	@echo "  make verify-full        - verify + real-media backend + real-stack Playwright E2E"
+	@echo "  make verify-real-media  - Strict real-media backend + Playwright gates"
+	@echo "  make verify-full        - verify + strict real-media, live-provider, and real-stack E2E gates"
 	@echo ""
 	@echo "Narrow test tiers:"
 	@echo "  make test-back-unit        - Backend unit tests only"
@@ -57,9 +58,10 @@ help:
 	@echo "  make test-front-browser    - Frontend browser component tests"
 	@echo "  make test-migrations       - Alembic migration tests"
 	@echo "  make test-supabase         - Supabase auth/storage integration tests"
-	@echo "  make test-network          - Backend tests requiring internet"
-	@echo "  make test-real             - Slow real-content backend tests"
+	@echo "  make test-network          - Strict live-provider backend tests"
+	@echo "  make test-real             - Strict real-media evidence backend tests"
 	@echo "  make test-real-media       - Strict real-media evidence backend tests"
+	@echo "  make test-live-providers   - Strict live-provider backend tests"
 	@echo "  make test-e2e              - Playwright E2E tests"
 	@echo "  make test-e2e-real-media   - Playwright real-media acceptance tests"
 	@echo "  make test-e2e-ui           - Playwright E2E in UI mode"
@@ -74,6 +76,7 @@ help:
 	@echo "  make migrate-test       - Run migrations on the test database"
 	@echo "  make migrate-down       - Roll back one dev migration"
 	@echo "  make seed               - Seed development data"
+	@echo "  make seed-real-media-e2e - Seed real-media E2E corpus through product paths"
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  make logs               - Show Supabase logs"
@@ -135,6 +138,16 @@ seed:
 		SUPABASE_URL=$(SUPABASE_URL) \
 		SUPABASE_SERVICE_KEY=$(SUPABASE_SERVICE_KEY) \
 		uv run python ../scripts/seed_dev.py
+
+seed-real-media-e2e: _ensure-e2e-deps
+	./scripts/with_supabase_services.sh make _seed-real-media-e2e-raw
+
+_seed-real-media-e2e-raw:
+	cd e2e && bunx tsx seed-e2e-user.ts
+	cd migrations && DATABASE_URL=$(DATABASE_URL) NEXUS_ENV=local \
+		uv run --project ../python alembic upgrade head
+	cd python && DATABASE_URL=$(DATABASE_URL) NEXUS_ENV=local \
+		uv run python scripts/seed_real_media_e2e.py
 
 check:
 	make check-back
@@ -230,14 +243,14 @@ _test-supabase-raw:
 	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m supabase
 
 test-network:
-	./scripts/with_test_services.sh make _test-back-db-ready _test-network-raw
+	make test-live-providers
 
 _test-network-raw:
 	make _ensure-node-ingest
 	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m network
 
 test-real:
-	./scripts/with_test_services.sh make _test-back-db-ready _test-real-raw
+	make test-real-media
 
 _test-real-raw:
 	make _ensure-node-ingest
@@ -249,7 +262,20 @@ test-real-media:
 
 _test-real-media-raw:
 	make _ensure-node-ingest
-	cd python && NEXUS_ENV=local uv run pytest -v --tb=short -m real_media
+	mkdir -p test-results
+	cd python && NEXUS_ENV=local uv run pytest -v --tb=short \
+		--basetemp=../test-results/real-media-backend \
+		-m real_media
+
+test-live-providers:
+	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-back-db-ready _test-live-providers-raw
+
+_test-live-providers-raw:
+	make _ensure-node-ingest
+	mkdir -p test-results
+	cd python && NEXUS_ENV=local PODCAST_INITIAL_EPISODE_WINDOW=1 uv run pytest -v --tb=short \
+		--basetemp=../test-results/live-providers \
+		-m live_provider
 
 test-e2e: _ensure-e2e-deps
 	./scripts/with_supabase_services.sh make _test-e2e-raw
@@ -270,8 +296,8 @@ _test-e2e-real-media-raw:
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
 	echo "Running real-media e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
 	cd e2e && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT E2E_REAL_MEDIA=1 bunx playwright install --with-deps chromium && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT E2E_REAL_MEDIA=1 bun run test:e2e -- --project=real-media $(PLAYWRIGHT_ARGS)
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=local E2E_REAL_MEDIA=1 bunx playwright install --with-deps chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=local E2E_REAL_MEDIA=1 bun run test:e2e -- --project=real-media $(PLAYWRIGHT_ARGS)
 
 test-e2e-ui: _ensure-e2e-deps
 	./scripts/with_supabase_services.sh make _test-e2e-ui-raw
@@ -290,9 +316,15 @@ verify:
 	make test
 	@echo "=== verification passed ==="
 
+verify-real-media:
+	make test-real-media
+	make test-e2e-real-media
+	@echo "=== real-media verification passed ==="
+
 verify-full:
 	make verify
-	make test-real-media
+	make verify-real-media
+	make test-live-providers
 	make test-e2e
 	@echo "=== full verification passed ==="
 

@@ -59,7 +59,9 @@ make audit
 make test-unit
 make test
 make verify
+make verify-real-media
 make verify-full
+make seed-real-media-e2e
 make test-e2e
 make test-e2e-real-media
 make test-e2e-ui
@@ -77,12 +79,18 @@ make test-supabase
 make test-network
 make test-real
 make test-real-media
+make test-live-providers
 ```
 
 ## Environment
 
 - `.env.example` is the source of truth for environment variables and defaults.
 - `make setup` generates local `.env` and `apps/web/.env.local`.
+
+Real-media gates are strict. `make test-real-media` requires Supabase local plus
+real OpenAI embeddings. `make test-live-providers` additionally requires real
+Podcast Index and Deepgram credentials. `make test-e2e-real-media` seeds the
+real corpus through `make seed-real-media-e2e`.
 
 ## Repository Map
 

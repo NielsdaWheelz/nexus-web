@@ -1919,6 +1919,8 @@ def _validate_context_chunk_evidence_spans(
                 """
                 SELECT es.id
                 FROM content_chunks cc
+                JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
+                    AND mcis.active_run_id = cc.index_run_id
                 JOIN evidence_spans es ON es.media_id = cc.media_id
                     AND es.index_run_id = cc.index_run_id
                 WHERE cc.id = :chunk_id
