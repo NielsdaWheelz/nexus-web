@@ -40,7 +40,6 @@ import {
   type PaneChromeDescriptor,
   type ResolvedPaneRoute,
 } from "@/lib/panes/paneRouteRegistry";
-import { apiFetch } from "@/lib/api/client";
 
 type HistoryMode = "replace" | "push";
 
@@ -320,8 +319,6 @@ interface WorkspaceStoreValue {
 }
 
 const WorkspaceStoreContext = createContext<WorkspaceStoreValue | null>(null);
-const COMMAND_PALETTE_RECENTS_PATH = "/api/me/command-palette-recents";
-
 function getWindowLocationState(): WorkspaceDecodeResult {
   if (typeof window === "undefined") {
     return {
@@ -363,7 +360,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
   const lastDecodeTelemetryRef = useRef("");
   const lastEncodeTelemetryRef = useRef("");
   const paneHrefByIdRef = useRef<Map<string, string>>(new Map());
-  const pendingRecentHrefByPaneIdRef = useRef<Map<string, string>>(new Map());
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -387,26 +383,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       errorCode: decoded.errorCode,
     });
   }, []);
-
-  const postCommandPaletteRecent = useCallback(
-    (href: string, titleSnapshot?: string | null) => {
-      const title = normalizePaneTitle(titleSnapshot);
-      const body = title ? { href, title_snapshot: title } : { href };
-      void apiFetch(COMMAND_PALETTE_RECENTS_PATH, {
-        method: "POST",
-        body: JSON.stringify(body),
-      }).catch(() => {});
-    },
-    []
-  );
-
-  const recordUserDrivenRecent = useCallback(
-    (paneId: string, href: string, titleSnapshot?: string | null) => {
-      pendingRecentHrefByPaneIdRef.current.set(paneId, href);
-      postCommandPaletteRecent(href, titleSnapshot);
-    },
-    [postCommandPaletteRecent]
-  );
 
   // --- Hydrate from URL on mount ---
   useEffect(() => {
@@ -435,9 +411,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       const href = normalizeWorkspaceHref(detail.href);
       if (!href) return;
       const panes = buildPanesForOpen(href);
-      const targetPaneId = panes[0]!.id;
-      const titleHint = normalizePaneTitle(detail.titleHint) ?? undefined;
-      recordUserDrivenRecent(targetPaneId, href, titleHint);
       historyModeRef.current = "push";
       dispatch({ type: "open_pane", panes, afterPaneId: null, activate: true });
     };
@@ -471,7 +444,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       window.removeEventListener("message", handleWindowMessage);
       setPaneGraphReady(false);
     };
-  }, [publishDecodeTelemetry, recordUserDrivenRecent]);
+  }, [publishDecodeTelemetry]);
 
   // --- Prune stale title caches when panes change ---
   useEffect(() => {
@@ -497,12 +470,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       return changed || next.size !== prev.size ? next : prev;
     });
 
-    pendingRecentHrefByPaneIdRef.current = new Map(
-      Array.from(pendingRecentHrefByPaneIdRef.current.entries()).filter(
-        ([paneId, href]) =>
-          livePaneIds.has(paneId) && nextHrefById.get(paneId) === href
-      )
-    );
   }, [state.panes]);
 
   // --- Sync state → URL ---
@@ -546,20 +513,18 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       const href = normalizeWorkspaceHref(input.href);
       if (!href) return;
       const panes = buildPanesForOpen(href);
-      recordUserDrivenRecent(panes[0]!.id, href);
       dispatchAndSync(
         { type: "open_pane", panes, afterPaneId: input.openerPaneId ?? null, activate: input.activate ?? true },
         "push"
       );
     },
-    [dispatchAndSync, recordUserDrivenRecent]
+    [dispatchAndSync]
   );
 
   const navigatePane = useCallback(
     (paneId: string, href: string, options?: { replace?: boolean; activate?: boolean }) => {
       const normalized = normalizeWorkspaceHref(href);
       if (!normalized) return;
-      recordUserDrivenRecent(paneId, normalized);
       dispatchAndSync(
         {
           type: "navigate_pane",
@@ -570,7 +535,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
         options?.replace ? "replace" : "push"
       );
     },
-    [dispatchAndSync, recordUserDrivenRecent]
+    [dispatchAndSync]
   );
 
   const closePane = useCallback(
@@ -608,14 +573,8 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
         return next;
       });
 
-      if (!normalized) return;
-      const pendingHref = pendingRecentHrefByPaneIdRef.current.get(paneId);
-      if (pendingHref && pendingHref === pane.href) {
-        pendingRecentHrefByPaneIdRef.current.delete(paneId);
-        postCommandPaletteRecent(pane.href, normalized);
-      }
     },
-    [postCommandPaletteRecent]
+    []
   );
 
   const value = useMemo<WorkspaceStoreValue>(

@@ -139,6 +139,7 @@ interface FetchSearchResultPageInput {
   contentKinds?: readonly string[];
   limit: number;
   cursor?: string | null;
+  signal?: AbortSignal;
 }
 
 export interface SearchResultPage {
@@ -706,6 +707,7 @@ export async function fetchSearchResultPage({
   contentKinds = [],
   limit,
   cursor = null,
+  signal,
 }: FetchSearchResultPageInput): Promise<SearchResultPage> {
   const response = await apiFetch<SearchResponseShape>(
     `/api/search?${buildSearchQueryParams({
@@ -717,6 +719,7 @@ export async function fetchSearchResultPage({
       limit,
       cursor,
     }).toString()}`,
+    { signal },
   );
 
   return {
