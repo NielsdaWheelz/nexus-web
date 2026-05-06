@@ -4,13 +4,24 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
+from datetime import date, datetime
 from typing import Any, cast
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import case, delete, func, select
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Highlight, MessageContextItem, NoteBlock, ObjectLink, Page
+from nexus.db.models import (
+    DailyNotePage,
+    Highlight,
+    MessageContextItem,
+    NoteBlock,
+    ObjectLink,
+    Page,
+    PinnedObjectRef,
+)
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.notes import (
     NOTE_BLOCK_KINDS,
@@ -18,16 +29,19 @@ from nexus.schemas.notes import (
     OBJECT_TYPES,
     CreateNoteBlockRequest,
     CreatePageRequest,
+    DailyNotePageOut,
     LinkedObjectRequest,
     MoveNoteBlockRequest,
     NoteBlockOut,
     NotePageOut,
     NotePageSummaryOut,
     ObjectRef,
+    QuickCaptureRequest,
     SplitNoteBlockRequest,
     UpdateNoteBlockRequest,
     UpdatePageRequest,
 )
+from nexus.services import object_search
 from nexus.services.object_refs import hydrate_object_ref
 
 _OBJECT_REF_MARKDOWN_RE = re.compile(
@@ -88,7 +102,9 @@ def text_from_pm_json(value: object) -> str:
             return
         if node.get("type") == "text" and isinstance(node.get("text"), str):
             parts.append(str(node["text"]))
-        if node.get("type") == "object_ref" and isinstance(node.get("attrs"), dict):
+        if node.get("type") in {"object_ref", "object_embed"} and isinstance(
+            node.get("attrs"), dict
+        ):
             attrs = node["attrs"]
             label = attrs.get("label") or f"{attrs.get('objectType')}:{attrs.get('objectId')}"
             if isinstance(label, str):
@@ -146,14 +162,15 @@ def markdown_from_pm_json(value: object) -> str:
         if node_type == "text" and isinstance(node.get("text"), str):
             parts.append(marked(escape(node["text"]), node.get("marks")))
             return
-        if node_type == "object_ref" and isinstance(node.get("attrs"), dict):
+        if node_type in {"object_ref", "object_embed"} and isinstance(node.get("attrs"), dict):
             attrs = node["attrs"]
             object_type = attrs.get("objectType")
             object_id = attrs.get("objectId")
             label = attrs.get("label")
             if isinstance(object_type, str) and isinstance(object_id, str):
                 suffix = f"|{label}" if isinstance(label, str) and label else ""
-                parts.append(f"[[{object_type}:{object_id}{suffix}]]")
+                prefix = "!" if node_type == "object_embed" else ""
+                parts.append(f"{prefix}[[{object_type}:{object_id}{suffix}]]")
             return
         if node_type == "image" and isinstance(node.get("attrs"), dict):
             src = node["attrs"].get("src")
@@ -186,6 +203,8 @@ def list_pages(db: Session, viewer_id: UUID) -> list[NotePageSummaryOut]:
 def create_page(db: Session, viewer_id: UUID, request: CreatePageRequest) -> NotePageOut:
     page = Page(user_id=viewer_id, title=request.title, description=request.description)
     db.add(page)
+    db.flush()
+    object_search.project_page(db, viewer_id, page)
     db.commit()
     db.refresh(page)
     return _page_out(db, page)
@@ -214,6 +233,7 @@ def update_page(
     if "description" in request.model_fields_set:
         page.description = request.description
     page.updated_at = func.now()
+    object_search.project_page(db, viewer_id, page)
     db.commit()
     db.refresh(page)
     return _page_out(db, page)
@@ -226,10 +246,91 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
     ]
     for block_id in block_ids:
         _delete_object_edges(db, "note_block", block_id)
+        db.execute(
+            delete(PinnedObjectRef).where(
+                PinnedObjectRef.user_id == viewer_id,
+                PinnedObjectRef.object_type == "note_block",
+                PinnedObjectRef.object_id == block_id,
+            )
+        )
+        object_search.delete_document(db, viewer_id, object_type="note_block", object_id=block_id)
     db.execute(delete(NoteBlock).where(NoteBlock.page_id == page.id))
     _delete_object_edges(db, "page", page.id)
+    db.execute(
+        delete(PinnedObjectRef).where(
+            PinnedObjectRef.user_id == viewer_id,
+            PinnedObjectRef.object_type == "page",
+            PinnedObjectRef.object_id == page.id,
+        )
+    )
+    db.execute(
+        delete(DailyNotePage).where(
+            DailyNotePage.user_id == viewer_id,
+            DailyNotePage.page_id == page.id,
+        )
+    )
+    object_search.delete_document(db, viewer_id, object_type="page", object_id=page.id)
     db.delete(page)
     db.commit()
+
+
+def get_daily_note_for_today(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    time_zone: str,
+) -> DailyNotePageOut:
+    return get_daily_note(db, viewer_id, _today_in_time_zone(time_zone), time_zone=time_zone)
+
+
+def get_daily_note(
+    db: Session,
+    viewer_id: UUID,
+    local_date: date,
+    *,
+    time_zone: str = "UTC",
+) -> DailyNotePageOut:
+    page, stored_time_zone = _resolve_daily_page_with_retry(
+        db,
+        viewer_id,
+        local_date,
+        time_zone=time_zone,
+    )
+    return DailyNotePageOut(
+        local_date=local_date,
+        time_zone=stored_time_zone,
+        page=_page_out(db, page),
+    )
+
+
+def quick_capture_to_daily(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    local_date: date,
+    request: QuickCaptureRequest,
+    time_zone: str = "UTC",
+) -> NoteBlockOut:
+    page, _stored_time_zone = _resolve_daily_page_with_retry(
+        db,
+        viewer_id,
+        local_date,
+        time_zone=time_zone,
+    )
+    block = _create_note_block_without_commit(
+        db,
+        viewer_id,
+        CreateNoteBlockRequest(
+            page_id=page.id,
+            body_pm_json=request.body_pm_json,
+            body_markdown=request.body_markdown,
+        ),
+    )
+    page.updated_at = func.now()
+    object_search.project_page(db, viewer_id, page)
+    db.commit()
+    db.refresh(block)
+    return _block_out(block, [])
 
 
 def create_note_block(
@@ -304,8 +405,10 @@ def create_note_block(
             )
         )
     _sync_inline_reference_links(db, viewer_id, block)
+    object_search.project_note_block(db, viewer_id, block)
 
     page.updated_at = func.now()
+    object_search.project_page(db, viewer_id, page)
     db.commit()
     db.refresh(block)
     return _block_out(block, [])
@@ -347,6 +450,8 @@ def update_note_block(
     page = db.get(Page, page_id)
     if page is not None:
         page.updated_at = func.now()
+        object_search.project_page(db, viewer_id, page)
+    object_search.project_note_block(db, viewer_id, block)
     db.commit()
     db.refresh(block)
     return _block_out(block, _child_tree(db, page_id, block.id))
@@ -363,6 +468,7 @@ def set_note_block_plain_text_body_without_commit(
     _set_block_body_pm_json(block, pm_doc_from_text(body))
     block.updated_at = func.now()
     _sync_inline_reference_links(db, viewer_id, block)
+    object_search.project_note_block(db, viewer_id, block)
 
 
 def set_note_block_markdown_body_without_commit(
@@ -379,6 +485,7 @@ def set_note_block_markdown_body_without_commit(
     block.body_text = text_from_pm_json(body_pm_json)
     block.updated_at = func.now()
     _sync_inline_reference_links(db, viewer_id, block)
+    object_search.project_note_block(db, viewer_id, block)
 
 
 def move_note_block(
@@ -418,6 +525,8 @@ def move_note_block(
     page = db.get(Page, page_id)
     if page is not None:
         page.updated_at = func.now()
+        object_search.project_page(db, viewer_id, page)
+    object_search.project_note_block(db, viewer_id, block)
     db.commit()
     db.refresh(block)
     return _block_out(block, _child_tree(db, page_id, block.id))
@@ -454,6 +563,12 @@ def split_note_block(
     )
     _sync_inline_reference_links(db, viewer_id, block)
     _sync_inline_reference_links(db, viewer_id, new_block)
+    page = db.get(Page, page_id)
+    if page is not None:
+        page.updated_at = func.now()
+        object_search.project_page(db, viewer_id, page)
+    object_search.project_note_block(db, viewer_id, block)
+    object_search.project_note_block(db, viewer_id, new_block)
     db.commit()
     db.refresh(new_block)
     return _block_out(new_block, [])
@@ -482,10 +597,16 @@ def merge_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockO
         target_block_id=previous.id,
     )
     _sync_inline_reference_links(db, viewer_id, previous)
+    object_search.delete_document(db, viewer_id, object_type="note_block", object_id=block.id)
     db.delete(block)
     previous_page_id = previous.page_id
     assert previous_page_id is not None
     _renumber_siblings(db, previous_page_id, previous.parent_block_id)
+    page = db.get(Page, previous_page_id)
+    if page is not None:
+        page.updated_at = func.now()
+        object_search.project_page(db, viewer_id, page)
+    object_search.project_note_block(db, viewer_id, previous)
     db.commit()
     db.refresh(previous)
     return _block_out(previous, _child_tree(db, previous_page_id, previous.id))
@@ -498,9 +619,31 @@ def delete_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> None:
     descendant_ids = _descendant_ids(db, block.id)
     for descendant_id in descendant_ids:
         _delete_object_edges(db, "note_block", descendant_id)
+        db.execute(
+            delete(PinnedObjectRef).where(
+                PinnedObjectRef.user_id == viewer_id,
+                PinnedObjectRef.object_type == "note_block",
+                PinnedObjectRef.object_id == descendant_id,
+            )
+        )
+        object_search.delete_document(
+            db, viewer_id, object_type="note_block", object_id=descendant_id
+        )
     _delete_object_edges(db, "note_block", block.id)
+    db.execute(
+        delete(PinnedObjectRef).where(
+            PinnedObjectRef.user_id == viewer_id,
+            PinnedObjectRef.object_type == "note_block",
+            PinnedObjectRef.object_id == block.id,
+        )
+    )
+    object_search.delete_document(db, viewer_id, object_type="note_block", object_id=block.id)
     db.execute(delete(NoteBlock).where(NoteBlock.id.in_([block.id, *descendant_ids])))
     _renumber_siblings(db, page_id, block.parent_block_id)
+    page = db.get(Page, page_id)
+    if page is not None:
+        page.updated_at = func.now()
+        object_search.project_page(db, viewer_id, page)
     db.commit()
 
 
@@ -576,6 +719,9 @@ def set_highlight_note_body(
     if not normalized:
         if existing is not None:
             _delete_object_edges(db, "note_block", existing.id)
+            object_search.delete_document(
+                db, viewer_id, object_type="note_block", object_id=existing.id
+            )
             db.delete(existing)
             if commit:
                 db.commit()
@@ -601,6 +747,7 @@ def set_highlight_note_body(
     existing.body_text = normalized
     existing.updated_at = func.now()
     _sync_inline_reference_links(db, viewer_id, existing)
+    object_search.project_note_block(db, viewer_id, existing)
     if commit:
         db.commit()
         db.refresh(existing)
@@ -666,6 +813,9 @@ def _create_note_block_without_commit(
             )
         )
     _sync_inline_reference_links(db, viewer_id, block)
+    object_search.project_note_block(db, viewer_id, block)
+    page.updated_at = func.now()
+    object_search.project_page(db, viewer_id, page)
     return block
 
 
@@ -678,7 +828,103 @@ def _default_page(db: Session, viewer_id: UUID) -> Page:
     page = Page(user_id=viewer_id, title="Notes", description=None)
     db.add(page)
     db.flush()
+    object_search.project_page(db, viewer_id, page)
     return page
+
+
+def _today_in_time_zone(time_zone: str) -> date:
+    try:
+        tz = ZoneInfo(time_zone)
+    except ZoneInfoNotFoundError as exc:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "time_zone is invalid") from exc
+    return datetime.now(tz).date()
+
+
+def _resolve_daily_page_with_retry(
+    db: Session,
+    viewer_id: UUID,
+    local_date: date,
+    *,
+    time_zone: str,
+    commit: bool = True,
+) -> tuple[Page, str]:
+    for attempt in range(3):
+        _use_serializable_if_available(db)
+        try:
+            page, stored_time_zone = _resolve_daily_page_once(
+                db,
+                viewer_id,
+                local_date,
+                time_zone=time_zone,
+            )
+            if commit:
+                db.commit()
+                db.refresh(page)
+            return page, stored_time_zone
+        except OperationalError as exc:
+            db.rollback()
+            if not _is_serialization_failure(exc) or attempt == 2:
+                raise
+        except IntegrityError as exc:
+            db.rollback()
+            if not _is_daily_unique_conflict(exc) or attempt == 2:
+                raise
+    raise AssertionError("Daily note retry loop exhausted")
+
+
+def _use_serializable_if_available(db: Session) -> None:
+    bind = db.get_bind()
+    in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
+    if not db.in_transaction() and not in_outer_transaction:
+        db.connection(execution_options={"isolation_level": "SERIALIZABLE"})
+
+
+def _is_serialization_failure(exc: OperationalError) -> bool:
+    sqlstate = getattr(exc.orig, "sqlstate", None)
+    return sqlstate == "40001" or "could not serialize access" in str(exc.orig).lower()
+
+
+def _is_daily_unique_conflict(exc: IntegrityError) -> bool:
+    constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+    return constraint_name in {
+        "uix_daily_note_pages_user_date",
+        "uix_daily_note_pages_user_page",
+    }
+
+
+def _resolve_daily_page_once(
+    db: Session,
+    viewer_id: UUID,
+    local_date: date,
+    *,
+    time_zone: str,
+) -> tuple[Page, str]:
+    daily = db.scalar(
+        select(DailyNotePage).where(
+            DailyNotePage.user_id == viewer_id,
+            DailyNotePage.local_date == local_date,
+        )
+    )
+    if daily is not None:
+        return get_page_for_owner_or_404(db, viewer_id, daily.page_id), daily.time_zone
+
+    page = Page(
+        user_id=viewer_id,
+        title=f"{local_date.strftime('%B')} {local_date.day}, {local_date.year}",
+        description=None,
+    )
+    db.add(page)
+    db.flush()
+    db.add(
+        DailyNotePage(
+            user_id=viewer_id,
+            local_date=local_date,
+            time_zone=time_zone,
+            page_id=page.id,
+        )
+    )
+    object_search.project_page(db, viewer_id, page)
+    return page, time_zone
 
 
 def _set_block_body_pm_json(block: NoteBlock, body_pm_json: dict[str, Any]) -> None:
@@ -772,7 +1018,7 @@ def _pm_split_text(node: object) -> str:
         return str(node["text"])
     if node.get("type") == "hard_break":
         return "\n"
-    if node.get("type") == "object_ref" and isinstance(node.get("attrs"), dict):
+    if node.get("type") in {"object_ref", "object_embed"} and isinstance(node.get("attrs"), dict):
         attrs = node["attrs"]
         label = attrs.get("label") or f"{attrs.get('objectType')}:{attrs.get('objectId')}"
         return label if isinstance(label, str) else ""
@@ -782,8 +1028,10 @@ def _pm_split_text(node: object) -> str:
     return _pm_split_text(node.get("content"))
 
 
-def _inline_object_refs_from_pm_json(value: object) -> list[tuple[ObjectRef, dict[str, Any]]]:
-    refs: list[tuple[ObjectRef, dict[str, Any]]] = []
+def _inline_object_refs_from_pm_json(
+    value: object,
+) -> list[tuple[str, ObjectRef, dict[str, Any]]]:
+    refs: list[tuple[str, ObjectRef, dict[str, Any]]] = []
     target_counts: dict[tuple[str, UUID], int] = {}
 
     def visit(node: object, path: list[int]) -> None:
@@ -793,7 +1041,8 @@ def _inline_object_refs_from_pm_json(value: object) -> list[tuple[ObjectRef, dic
             return
         if not isinstance(node, dict):
             return
-        if node.get("type") == "object_ref" and isinstance(node.get("attrs"), dict):
+        node_type = node.get("type")
+        if node_type in {"object_ref", "object_embed"} and isinstance(node.get("attrs"), dict):
             attrs = node["attrs"]
             object_type = attrs.get("objectType")
             object_id = attrs.get("objectId")
@@ -805,11 +1054,17 @@ def _inline_object_refs_from_pm_json(value: object) -> list[tuple[ObjectRef, dic
                 key = (ref.object_type, ref.object_id)
                 target_occurrence = target_counts.get(key, 0)
                 target_counts[key] = target_occurrence + 1
+                relation_type = "embeds" if node_type == "object_embed" else "references"
                 refs.append(
                     (
+                        relation_type,
                         ref,
                         {
-                            "kind": "note_inline_object_ref",
+                            "kind": (
+                                "note_object_embed"
+                                if node_type == "object_embed"
+                                else "note_inline_object_ref"
+                            ),
                             "path": path,
                             "occurrence": len(refs),
                             "target_occurrence": target_occurrence,
@@ -828,7 +1083,7 @@ def _sync_inline_reference_links(db: Session, viewer_id: UUID, block: NoteBlock)
         db.scalars(
             select(ObjectLink).where(
                 ObjectLink.user_id == viewer_id,
-                ObjectLink.relation_type == "references",
+                ObjectLink.relation_type.in_(["references", "embeds"]),
                 (
                     ((ObjectLink.a_type == "note_block") & (ObjectLink.a_id == block.id))
                     | ((ObjectLink.b_type == "note_block") & (ObjectLink.b_id == block.id))
@@ -837,9 +1092,9 @@ def _sync_inline_reference_links(db: Session, viewer_id: UUID, block: NoteBlock)
         )
     )
     unlocated_targets = {
-        (link.b_type, link.b_id)
+        (link.relation_type, link.b_type, link.b_id)
         if link.a_type == "note_block" and link.a_id == block.id
-        else (link.a_type, link.a_id)
+        else (link.relation_type, link.a_type, link.a_id)
         for link in existing_links
         if link.a_locator_json is None and link.b_locator_json is None
     }
@@ -847,13 +1102,17 @@ def _sync_inline_reference_links(db: Session, viewer_id: UUID, block: NoteBlock)
     for link in existing_links:
         if link.a_type != "note_block" or link.a_id != block.id:
             continue
-        if not _is_managed_inline_reference_link(link):
+        if not _is_managed_note_body_link(link):
             continue
         matched_index = None
-        for index, (ref, locator) in enumerate(next_refs):
+        for index, (relation_type, ref, locator) in enumerate(next_refs):
             if index in kept_indexes:
                 continue
-            if link.b_type != ref.object_type or link.b_id != ref.object_id:
+            if (
+                link.relation_type != relation_type
+                or link.b_type != ref.object_type
+                or link.b_id != ref.object_id
+            ):
                 continue
             if link.a_locator_json is None or link.a_locator_json == locator:
                 matched_index = index
@@ -865,17 +1124,17 @@ def _sync_inline_reference_links(db: Session, viewer_id: UUID, block: NoteBlock)
         link.a_order_key = f"{matched_index + 1:010d}"
 
     hydrated_refs: set[tuple[str, UUID]] = set()
-    for index, (ref, locator) in enumerate(next_refs):
+    for index, (relation_type, ref, locator) in enumerate(next_refs):
         ref_key = (ref.object_type, ref.object_id)
         if ref_key not in hydrated_refs:
             hydrate_object_ref(db, viewer_id, ref)
             hydrated_refs.add(ref_key)
-        if index in kept_indexes or ref_key in unlocated_targets:
+        if index in kept_indexes or (relation_type, *ref_key) in unlocated_targets:
             continue
         db.add(
             ObjectLink(
                 user_id=viewer_id,
-                relation_type="references",
+                relation_type=relation_type,
                 a_type="note_block",
                 a_id=block.id,
                 b_type=ref.object_type,
@@ -889,15 +1148,15 @@ def _sync_inline_reference_links(db: Session, viewer_id: UUID, block: NoteBlock)
         )
 
 
-def _is_managed_inline_reference_link(link: ObjectLink) -> bool:
+def _is_managed_note_body_link(link: ObjectLink) -> bool:
     if link.b_locator_json is not None:
         return False
     if link.a_locator_json is None:
         return True
-    return (
-        isinstance(link.a_locator_json, dict)
-        and link.a_locator_json.get("kind") == "note_inline_object_ref"
-    )
+    return isinstance(link.a_locator_json, dict) and link.a_locator_json.get("kind") in {
+        "note_inline_object_ref",
+        "note_object_embed",
+    }
 
 
 def _copy_split_note_about_links(

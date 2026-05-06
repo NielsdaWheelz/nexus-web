@@ -37,6 +37,7 @@ from nexus.db.models import (
     PdfPageTextSpan,
     ProcessingStatus,
 )
+from nexus.services import object_search
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 
@@ -493,6 +494,7 @@ def create_test_highlight_note(
             metadata_json={},
         )
     )
+    object_search.project_page(session, user_id, page)
     session.commit()
     return highlight.id, note_block.id
 

@@ -756,6 +756,7 @@ class TestListMessages:
         )
         context = response.json()["data"][0]["contexts"][0]
         assert context == {
+            "kind": "object_ref",
             "type": "content_chunk",
             "id": str(chunk_id),
             "evidence_span_ids": [str(first_span_id), str(second_span_id)],
@@ -768,6 +769,102 @@ class TestListMessages:
             "media_title": "Snapshot Source",
             "media_kind": "web_article",
             "title": "Saved Context Title",
+            "route": f"/media/{media_id}",
+        }
+
+    def test_list_messages_returns_reader_selection_snapshot(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        context_id = uuid4()
+        client_context_id = uuid4()
+        media_id = uuid4()
+        conversation_id = uuid4()
+
+        locator = {
+            "kind": "fragment_offsets",
+            "fragment_id": str(uuid4()),
+            "start_offset": 4,
+            "end_offset": 18,
+        }
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=1,
+                content="Message with reader selection",
+            )
+            session.execute(
+                text("""
+                    INSERT INTO message_context_items (
+                        id,
+                        message_id,
+                        user_id,
+                        context_kind,
+                        source_media_id,
+                        locator_json,
+                        ordinal,
+                        context_snapshot
+                    )
+                    VALUES (
+                        :id,
+                        :message_id,
+                        :user_id,
+                        'reader_selection',
+                        :media_id,
+                        CAST(:locator AS jsonb),
+                        0,
+                        CAST(:context_snapshot AS jsonb)
+                    )
+                """),
+                {
+                    "id": context_id,
+                    "message_id": message_id,
+                    "user_id": user_id,
+                    "media_id": media_id,
+                    "locator": json.dumps(locator),
+                    "context_snapshot": json.dumps(
+                        {
+                            "kind": "reader_selection",
+                            "client_context_id": str(client_context_id),
+                            "media_id": str(media_id),
+                            "source_media_id": str(media_id),
+                            "media_title": "Reader Source",
+                            "media_kind": "web_article",
+                            "exact": "selected quote",
+                            "prefix": "before ",
+                            "suffix": " after",
+                            "locator": locator,
+                            "route": f"/media/{media_id}",
+                        }
+                    ),
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("message_context_items", "id", context_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        response = auth_client.get(
+            f"/conversations/{conversation_id}/messages", headers=auth_headers(user_id)
+        )
+
+        assert response.status_code == 200, response.text
+        context = response.json()["data"][0]["contexts"][0]
+        assert context == {
+            "kind": "reader_selection",
+            "client_context_id": str(client_context_id),
+            "exact": "selected quote",
+            "prefix": "before ",
+            "suffix": " after",
+            "media_id": str(media_id),
+            "source_media_id": str(media_id),
+            "media_title": "Reader Source",
+            "media_kind": "web_article",
+            "locator": locator,
             "route": f"/media/{media_id}",
         }
 

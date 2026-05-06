@@ -271,8 +271,6 @@ def execute_app_search(
     )
     if planned_types is not None:
         requested_types = list(planned_types)
-    elif scope != "all":
-        requested_types = ["content_chunk"]
     else:
         requested_types = list(ALL_RESULT_TYPES)
     filters = _normalize_app_search_filters(planned_filters)

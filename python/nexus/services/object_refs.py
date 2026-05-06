@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
-from sqlalchemy import select, text
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
@@ -14,9 +16,24 @@ from nexus.auth.permissions import (
     can_read_media,
     visible_media_ids_cte_sql,
 )
-from nexus.db.models import Conversation, Highlight, Media, Message, NoteBlock, Page
-from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.notes import HydratedObjectRef, ObjectRef
+from nexus.db.models import (
+    Conversation,
+    Highlight,
+    Media,
+    Message,
+    NoteBlock,
+    Page,
+    PinnedObjectRef,
+)
+from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.schemas.notes import (
+    OBJECT_TYPES,
+    CreatePinnedObjectRefRequest,
+    HydratedObjectRef,
+    ObjectRef,
+    PinnedObjectRefOut,
+    UpdatePinnedObjectRefRequest,
+)
 from nexus.services.contributors import hydrate_contributor_object_ref
 
 
@@ -463,6 +480,141 @@ def search_object_refs(
             return results
 
     return results
+
+
+def list_pinned_object_refs(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    surface_key: str = "navbar",
+) -> list[PinnedObjectRefOut]:
+    pins = db.scalars(
+        select(PinnedObjectRef)
+        .where(
+            PinnedObjectRef.user_id == viewer_id,
+            PinnedObjectRef.surface_key == surface_key,
+            PinnedObjectRef.deleted_at.is_(None),
+        )
+        .order_by(
+            PinnedObjectRef.order_key.asc(),
+            PinnedObjectRef.created_at.asc(),
+            PinnedObjectRef.id.asc(),
+        )
+    ).all()
+    return [_pinned_out(db, viewer_id, pin) for pin in pins]
+
+
+def pin_object_ref(
+    db: Session,
+    viewer_id: UUID,
+    request: CreatePinnedObjectRefRequest,
+) -> PinnedObjectRefOut:
+    hydrate_object_ref(
+        db,
+        viewer_id,
+        ObjectRef(object_type=request.object_type, object_id=request.object_id),
+    )
+    existing = db.scalar(
+        select(PinnedObjectRef).where(
+            PinnedObjectRef.user_id == viewer_id,
+            PinnedObjectRef.surface_key == request.surface_key,
+            PinnedObjectRef.object_type == request.object_type,
+            PinnedObjectRef.object_id == request.object_id,
+            PinnedObjectRef.deleted_at.is_(None),
+        )
+    )
+    if existing is not None:
+        if request.order_key is not None:
+            existing.order_key = request.order_key
+            existing.updated_at = func.now()
+            db.commit()
+            db.refresh(existing)
+        return _pinned_out(db, viewer_id, existing)
+
+    pin = PinnedObjectRef(
+        user_id=viewer_id,
+        object_type=request.object_type,
+        object_id=request.object_id,
+        surface_key=request.surface_key,
+        order_key=request.order_key or _next_pin_order_key(db, viewer_id, request.surface_key),
+    )
+    db.add(pin)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+        if constraint_name == "uix_user_pinned_objects_surface_ref" or (
+            constraint_name is None and "uix_user_pinned_objects_surface_ref" in str(exc.orig)
+        ):
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Object ref is already pinned") from exc
+        raise
+    db.refresh(pin)
+    return _pinned_out(db, viewer_id, pin)
+
+
+def update_pinned_object_ref(
+    db: Session,
+    viewer_id: UUID,
+    pin_id: UUID,
+    request: UpdatePinnedObjectRefRequest,
+) -> PinnedObjectRefOut:
+    pin = db.get(PinnedObjectRef, pin_id)
+    if pin is None or pin.user_id != viewer_id or pin.deleted_at is not None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Pinned object ref not found")
+    if request.surface_key is not None:
+        pin.surface_key = request.surface_key
+    if request.order_key is not None:
+        pin.order_key = request.order_key
+    pin.updated_at = func.now()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+        if constraint_name == "uix_user_pinned_objects_surface_ref" or (
+            constraint_name is None and "uix_user_pinned_objects_surface_ref" in str(exc.orig)
+        ):
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Object ref is already pinned") from exc
+        raise
+    db.refresh(pin)
+    return _pinned_out(db, viewer_id, pin)
+
+
+def unpin_object_ref(db: Session, viewer_id: UUID, pin_id: UUID) -> None:
+    pin = db.get(PinnedObjectRef, pin_id)
+    if pin is None or pin.user_id != viewer_id or pin.deleted_at is not None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Pinned object ref not found")
+    db.execute(delete(PinnedObjectRef).where(PinnedObjectRef.id == pin.id))
+    db.commit()
+
+
+def _next_pin_order_key(db: Session, viewer_id: UUID, surface_key: str) -> str:
+    count = db.scalar(
+        select(func.count())
+        .select_from(PinnedObjectRef)
+        .where(
+            PinnedObjectRef.user_id == viewer_id,
+            PinnedObjectRef.surface_key == surface_key,
+            PinnedObjectRef.deleted_at.is_(None),
+        )
+    )
+    return f"{int(count or 0) + 1:010d}"
+
+
+def _pinned_out(db: Session, viewer_id: UUID, pin: PinnedObjectRef) -> PinnedObjectRefOut:
+    return PinnedObjectRefOut(
+        id=pin.id,
+        object_ref=hydrate_object_ref(
+            db,
+            viewer_id,
+            ObjectRef(object_type=cast(OBJECT_TYPES, pin.object_type), object_id=pin.object_id),
+        ),
+        surface_key=pin.surface_key,
+        order_key=pin.order_key,
+        created_at=pin.created_at,
+        updated_at=pin.updated_at,
+    )
 
 
 def render_object_context(db: Session, viewer_id: UUID, ref: ObjectRef) -> str:

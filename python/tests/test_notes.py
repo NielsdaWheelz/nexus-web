@@ -1,21 +1,34 @@
+from datetime import date
 from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import select, text
 
-from nexus.db.models import Conversation, MessageContextItem, NoteBlock, ObjectLink, Page
+from nexus.db.models import (
+    Conversation,
+    DailyNotePage,
+    MessageContextItem,
+    NoteBlock,
+    ObjectLink,
+    ObjectSearchDocument,
+    Page,
+    PinnedObjectRef,
+)
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.notes import (
     CreateNoteBlockRequest,
     CreateObjectLinkRequest,
     CreatePageRequest,
+    CreatePinnedObjectRefRequest,
     LinkedObjectRequest,
     MoveNoteBlockRequest,
     ObjectRef,
+    QuickCaptureRequest,
     SplitNoteBlockRequest,
     UpdateNoteBlockRequest,
     UpdateObjectLinkRequest,
+    UpdatePageRequest,
 )
 from nexus.services import notes, object_links, object_refs, vault
 from nexus.services.bootstrap import ensure_user_and_default_library
@@ -304,6 +317,197 @@ def test_object_ref_search_returns_visible_note_editor_targets(db_session, boots
     assert ("conversation", conversation_id) in ref_keys
     assert ("message", message_id) in ref_keys
     assert ("page", other_page.id) not in ref_keys
+
+
+@pytest.mark.integration
+def test_daily_note_resolution_uses_durable_date_identity(db_session, bootstrapped_user):
+    local_date = date(2026, 5, 6)
+    same_title = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title="May 6, 2026"),
+    )
+
+    daily = notes.get_daily_note(db_session, bootstrapped_user, local_date)
+    assert daily.local_date == local_date
+    assert daily.page.id != same_title.id
+    assert daily.page.title == "May 6, 2026"
+
+    notes.update_page(
+        db_session,
+        bootstrapped_user,
+        daily.page.id,
+        UpdatePageRequest(title="Renamed daily page"),
+    )
+    resolved_again = notes.get_daily_note(db_session, bootstrapped_user, local_date)
+
+    daily_rows = db_session.scalars(
+        select(DailyNotePage).where(DailyNotePage.user_id == bootstrapped_user)
+    ).all()
+    assert len(daily_rows) == 1
+    assert resolved_again.page.id == daily.page.id
+    assert resolved_again.page.title == "Renamed daily page"
+
+
+@pytest.mark.integration
+def test_quick_capture_appends_to_daily_page_and_projects_search_docs(
+    db_session,
+    bootstrapped_user,
+):
+    local_date = date(2026, 5, 7)
+
+    block = notes.quick_capture_to_daily(
+        db_session,
+        bootstrapped_user,
+        local_date=local_date,
+        request=QuickCaptureRequest(body_markdown="Daily capture projection needle"),
+    )
+    daily = notes.get_daily_note(db_session, bootstrapped_user, local_date)
+    docs = db_session.scalars(
+        select(ObjectSearchDocument).where(
+            ObjectSearchDocument.user_id == bootstrapped_user,
+            ObjectSearchDocument.object_type.in_(["page", "note_block"]),
+        )
+    ).all()
+
+    assert block.page_id == daily.page.id
+    assert [item.body_text for item in daily.page.blocks] == ["Daily capture projection needle"]
+    doc_keys = {(doc.object_type, doc.object_id) for doc in docs}
+    assert ("page", daily.page.id) in doc_keys
+    assert ("note_block", block.id) in doc_keys
+
+
+@pytest.mark.integration
+def test_pinned_object_refs_hydrate_and_order_navigation_items(db_session, bootstrapped_user):
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"Pinned page {uuid4()}"),
+    )
+    block = notes.create_note_block(
+        db_session,
+        bootstrapped_user,
+        CreateNoteBlockRequest(page_id=page.id, body_markdown="Pinned block"),
+    )
+
+    page_pin = object_refs.pin_object_ref(
+        db_session,
+        bootstrapped_user,
+        CreatePinnedObjectRefRequest(object_type="page", object_id=page.id, order_key="0000000002"),
+    )
+    block_pin = object_refs.pin_object_ref(
+        db_session,
+        bootstrapped_user,
+        CreatePinnedObjectRefRequest(
+            object_type="note_block",
+            object_id=block.id,
+            order_key="0000000001",
+        ),
+    )
+    pins = object_refs.list_pinned_object_refs(db_session, bootstrapped_user)
+
+    assert [pin.id for pin in pins] == [block_pin.id, page_pin.id]
+    assert [pin.surface_key for pin in pins] == ["navbar", "navbar"]
+    assert pins[0].object_ref.route == f"/notes/{block.id}"
+    assert pins[1].object_ref.label == page.title
+
+    object_refs.unpin_object_ref(db_session, bootstrapped_user, block_pin.id)
+    assert db_session.get(PinnedObjectRef, block_pin.id) is None
+
+
+@pytest.mark.integration
+def test_deleting_pinned_page_removes_page_and_note_block_pins(db_session, bootstrapped_user):
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"Pinned deletion page {uuid4()}"),
+    )
+    block = notes.create_note_block(
+        db_session,
+        bootstrapped_user,
+        CreateNoteBlockRequest(page_id=page.id, body_markdown="Pinned child block"),
+    )
+    page_pin = object_refs.pin_object_ref(
+        db_session,
+        bootstrapped_user,
+        CreatePinnedObjectRefRequest(object_type="page", object_id=page.id),
+    )
+    block_pin = object_refs.pin_object_ref(
+        db_session,
+        bootstrapped_user,
+        CreatePinnedObjectRefRequest(object_type="note_block", object_id=block.id),
+    )
+
+    notes.delete_page(db_session, bootstrapped_user, page.id)
+
+    assert db_session.get(PinnedObjectRef, page_pin.id) is None
+    assert db_session.get(PinnedObjectRef, block_pin.id) is None
+    assert object_refs.list_pinned_object_refs(db_session, bootstrapped_user) == []
+
+
+@pytest.mark.integration
+def test_pinned_objects_api_filters_and_reorders_by_surface(
+    auth_client, direct_db: DirectSessionManager
+):
+    user_id = create_test_user_id()
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+    direct_db.register_cleanup("memberships", "user_id", user_id)
+    direct_db.register_cleanup("pages", "user_id", user_id)
+
+    headers = auth_headers(user_id)
+    assert auth_client.get("/me", headers=headers).status_code == 200
+    page_response = auth_client.post(
+        "/notes/pages",
+        headers=headers,
+        json={"title": f"Pinned API page {uuid4()}"},
+    )
+    assert page_response.status_code == 201, page_response.text
+    page_id = page_response.json()["data"]["id"]
+
+    navbar_pin = auth_client.post(
+        "/pinned-objects",
+        headers=headers,
+        json={
+            "objectType": "page",
+            "objectId": page_id,
+            "surfaceKey": "navbar",
+            "orderKey": "0000000002",
+        },
+    )
+    assert navbar_pin.status_code == 201, navbar_pin.text
+    notes_pin = auth_client.post(
+        "/pinned-objects",
+        headers=headers,
+        json={
+            "objectType": "page",
+            "objectId": page_id,
+            "surfaceKey": "notes_home",
+            "orderKey": "0000000001",
+        },
+    )
+    assert notes_pin.status_code == 201, notes_pin.text
+
+    navbar_list = auth_client.get("/pinned-objects?surface_key=navbar", headers=headers)
+    assert navbar_list.status_code == 200, navbar_list.text
+    assert [pin["id"] for pin in navbar_list.json()["data"]["pins"]] == [
+        navbar_pin.json()["data"]["id"]
+    ]
+
+    patch_response = auth_client.patch(
+        f"/pinned-objects/{navbar_pin.json()['data']['id']}",
+        headers=headers,
+        json={"orderKey": "0000000000"},
+    )
+    assert patch_response.status_code == 200, patch_response.text
+    assert patch_response.json()["data"]["orderKey"] == "0000000000"
+    assert patch_response.json()["data"]["surfaceKey"] == "navbar"
+
+    delete_response = auth_client.delete(
+        f"/pinned-objects/{notes_pin.json()['data']['id']}",
+        headers=headers,
+    )
+    assert delete_response.status_code == 204, delete_response.text
 
 
 @pytest.mark.integration
@@ -906,6 +1110,59 @@ def test_inline_reference_sync_preserves_duplicate_occurrences(db_session, boots
         },
     ]
     assert [link.b_locator for link in links] == [None, None]
+
+
+@pytest.mark.integration
+def test_object_embed_block_syncs_embed_link(db_session, bootstrapped_user):
+    page = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"Embed source {uuid4()}"),
+    )
+    target = notes.create_page(
+        db_session,
+        bootstrapped_user,
+        CreatePageRequest(title=f"Embed target {uuid4()}"),
+    )
+
+    block = notes.create_note_block(
+        db_session,
+        bootstrapped_user,
+        CreateNoteBlockRequest(
+            page_id=page.id,
+            block_kind="embed",
+            body_pm_json={
+                "type": "object_embed",
+                "attrs": {
+                    "objectType": "page",
+                    "objectId": str(target.id),
+                    "label": "Embedded target",
+                    "relationType": "embeds",
+                    "displayMode": "compact",
+                },
+            },
+        ),
+    )
+
+    link = db_session.scalar(
+        select(ObjectLink).where(
+            ObjectLink.relation_type == "embeds",
+            ObjectLink.a_type == "note_block",
+            ObjectLink.a_id == block.id,
+            ObjectLink.b_type == "page",
+            ObjectLink.b_id == target.id,
+        )
+    )
+
+    assert block.body_text == "Embedded target"
+    assert block.body_markdown == f"![[page:{target.id}|Embedded target]]"
+    assert link is not None
+    assert link.a_locator_json == {
+        "kind": "note_object_embed",
+        "path": [],
+        "occurrence": 0,
+        "target_occurrence": 0,
+    }
 
 
 @pytest.mark.integration

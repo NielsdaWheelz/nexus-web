@@ -55,6 +55,7 @@ from nexus.schemas.search import (
     SearchResultResolverOut,
     SearchResultSourceOut,
 )
+from nexus.services import object_search
 from nexus.services.contributor_credits import normalize_contributor_role
 from nexus.services.locator_resolver import resolve_evidence_span
 from nexus.services.semantic_chunks import (
@@ -595,7 +596,7 @@ def search(
     contributor_handles: list[str] | None = None,
     roles: list[str] | None = None,
     content_kinds: list[str] | None = None,
-    semantic: bool = False,
+    semantic: bool = True,
     cursor: str | None = None,
     limit: int = DEFAULT_LIMIT,
 ) -> SearchResponse:
@@ -783,11 +784,11 @@ def _search_type(
     if result_type == "page":
         if contributor_handles or roles or content_kinds:
             return []
-        return _search_pages(db, viewer_id, q, scope_type, scope_id, limit)
+        return _search_pages(db, viewer_id, q, semantic, scope_type, scope_id, limit)
     if result_type == "note_block":
         if contributor_handles or roles or content_kinds:
             return []
-        return _search_note_blocks(db, viewer_id, q, scope_type, scope_id, limit)
+        return _search_note_blocks(db, viewer_id, q, semantic, scope_type, scope_id, limit)
     if result_type == "message":
         if contributor_handles or roles or content_kinds:
             return []
@@ -1571,123 +1572,28 @@ def _search_pages(
     db: Session,
     viewer_id: UUID,
     q: str,
+    semantic: bool,
     scope_type: str,
     scope_id: UUID | None,
     limit: int,
 ) -> list[InternalSearchResult]:
-    scope_filter = ""
-    params: dict[str, Any] = {"viewer_id": viewer_id, "query": q, "limit": limit}
-
-    if scope_type == "all":
-        pass
-    elif scope_type == "media":
-        scope_filter = """
-            AND EXISTS (
-                SELECT 1
-                FROM object_links ol
-                LEFT JOIN highlights h
-                  ON (
-                        (ol.a_type = 'highlight' AND h.id = ol.a_id)
-                     OR (ol.b_type = 'highlight' AND h.id = ol.b_id)
-                  )
-                WHERE (
-                        (ol.a_type = 'page' AND ol.a_id = p.id)
-                     OR (ol.b_type = 'page' AND ol.b_id = p.id)
-                )
-                  AND (
-                        (ol.a_type = 'media' AND ol.a_id = :scope_id)
-                     OR (ol.b_type = 'media' AND ol.b_id = :scope_id)
-                     OR h.anchor_media_id = :scope_id
-                  )
-            )
-        """
-        params["scope_id"] = scope_id
-    elif scope_type == "library":
-        scope_filter = """
-            AND EXISTS (
-                SELECT 1
-                FROM object_links ol
-                LEFT JOIN highlights h
-                  ON (
-                        (ol.a_type = 'highlight' AND h.id = ol.a_id)
-                     OR (ol.b_type = 'highlight' AND h.id = ol.b_id)
-                  )
-                JOIN library_entries le
-                  ON le.library_id = :scope_id
-                 AND le.media_id IS NOT NULL
-                 AND (
-                        (ol.a_type = 'media' AND le.media_id = ol.a_id)
-                     OR (ol.b_type = 'media' AND le.media_id = ol.b_id)
-                     OR le.media_id = h.anchor_media_id
-                 )
-                WHERE (ol.a_type = 'page' AND ol.a_id = p.id)
-                   OR (ol.b_type = 'page' AND ol.b_id = p.id)
-            )
-        """
-        params["scope_id"] = scope_id
-    elif scope_type == "conversation":
-        scope_filter = """
-            AND (
-                EXISTS (
-                    SELECT 1
-                    FROM message_context_items mci
-                    JOIN messages msg ON msg.id = mci.message_id
-                    WHERE mci.object_type = 'page'
-                      AND mci.object_id = p.id
-                      AND msg.conversation_id = :scope_id
-                )
-                OR EXISTS (
-                    SELECT 1
-                    FROM object_links ol
-                    JOIN messages msg
-                      ON (
-                            (ol.a_type = 'message' AND msg.id = ol.a_id)
-                         OR (ol.b_type = 'message' AND msg.id = ol.b_id)
-                      )
-                    WHERE ol.relation_type = 'used_as_context'
-                      AND (
-                            (ol.a_type = 'page' AND ol.a_id = p.id)
-                         OR (ol.b_type = 'page' AND ol.b_id = p.id)
-                      )
-                      AND msg.conversation_id = :scope_id
-                )
-            )
-        """
-        params["scope_id"] = scope_id
-    else:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
-
-    query = f"""
-        SELECT
-            p.id,
-            p.title,
-            p.description,
-            ts_rank_cd(
-                to_tsvector('english', concat_ws(' ', p.title, COALESCE(p.description, ''))),
-                websearch_to_tsquery('english', :query)
-            ) AS score,
-            ts_headline(
-                'english',
-                concat_ws(' ', p.title, COALESCE(p.description, '')),
-                websearch_to_tsquery('english', :query),
-                'MaxWords=50, MinWords=5, MaxFragments=1'
-            ) AS snippet
-        FROM pages p
-        WHERE p.user_id = :viewer_id
-          AND to_tsvector('english', concat_ws(' ', p.title, COALESCE(p.description, '')))
-              @@ websearch_to_tsquery('english', :query)
-        {scope_filter}
-        ORDER BY score DESC, p.id ASC
-        LIMIT :limit
-    """
-    rows = db.execute(text(query), params).fetchall()
+    rows = object_search.search_objects(
+        db,
+        viewer_id=viewer_id,
+        object_type="page",
+        query_text=q,
+        semantic=semantic,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        limit=limit,
+    )
     return [
         _RankedPageResult(
-            id=row[0],
-            title=row[1],
-            description=row[2],
-            snippet=_truncate_snippet(str(row[4] or row[1])),
-            score=_build_search_score(row[3]),
+            id=row["object_id"],
+            title=row["title_text"],
+            description=row["body_text"] or None,
+            snippet=_truncate_snippet(str(row["snippet"] or row["title_text"])),
+            score=_build_search_score(row["score"]),
         )
         for row in rows
     ]
@@ -1697,139 +1603,29 @@ def _search_note_blocks(
     db: Session,
     viewer_id: UUID,
     q: str,
+    semantic: bool,
     scope_type: str,
     scope_id: UUID | None,
     limit: int,
 ) -> list[InternalSearchResult]:
-    """Search user-owned note blocks."""
-    scope_filter = ""
-    params: dict = {"viewer_id": viewer_id, "query": q, "limit": limit}
-
-    if scope_type == "all":
-        pass
-    elif scope_type == "media":
-        scope_filter = """
-            AND EXISTS (
-                SELECT 1
-                FROM object_links ol
-                LEFT JOIN highlights h
-                  ON (
-                        (ol.a_type = 'highlight' AND h.id = ol.a_id)
-                     OR (ol.b_type = 'highlight' AND h.id = ol.b_id)
-                  )
-                WHERE (
-                        (ol.a_type = 'note_block' AND ol.a_id = nb.id)
-                     OR (ol.b_type = 'note_block' AND ol.b_id = nb.id)
-                  )
-                  AND (
-                        (ol.a_type = 'media' AND ol.a_id = :scope_id)
-                        OR (ol.b_type = 'media' AND ol.b_id = :scope_id)
-                        OR h.anchor_media_id = :scope_id
-                  )
-            )
-        """
-        params["scope_id"] = scope_id
-    elif scope_type == "library":
-        scope_filter = """
-            AND EXISTS (
-                SELECT 1
-                FROM object_links ol
-                LEFT JOIN highlights h
-                  ON (
-                        (ol.a_type = 'highlight' AND h.id = ol.a_id)
-                     OR (ol.b_type = 'highlight' AND h.id = ol.b_id)
-                  )
-                JOIN library_entries le ON le.library_id = :scope_id
-                                       AND le.media_id IS NOT NULL
-                                       AND (
-                                            (ol.a_type = 'media' AND le.media_id = ol.a_id)
-                                            OR (ol.b_type = 'media' AND le.media_id = ol.b_id)
-                                            OR le.media_id = h.anchor_media_id
-                                       )
-                WHERE (ol.a_type = 'note_block' AND ol.a_id = nb.id)
-                   OR (ol.b_type = 'note_block' AND ol.b_id = nb.id)
-            )
-        """
-        params["scope_id"] = scope_id
-    elif scope_type == "conversation":
-        scope_filter = """
-            AND (
-                EXISTS (
-                    SELECT 1
-                    FROM message_context_items mci
-                    JOIN messages msg ON msg.id = mci.message_id
-                    WHERE mci.object_type = 'note_block'
-                      AND mci.object_id = nb.id
-                      AND msg.conversation_id = :scope_id
-                )
-                OR EXISTS (
-                    SELECT 1
-                    FROM object_links ol
-                    JOIN messages msg
-                      ON (
-                            (ol.a_type = 'message' AND msg.id = ol.a_id)
-                         OR (ol.b_type = 'message' AND msg.id = ol.b_id)
-                      )
-                    WHERE ol.relation_type = 'used_as_context'
-                      AND (
-                            (ol.a_type = 'note_block' AND ol.a_id = nb.id)
-                         OR (ol.b_type = 'note_block' AND ol.b_id = nb.id)
-                      )
-                      AND msg.conversation_id = :scope_id
-                )
-            )
-        """
-        params["scope_id"] = scope_id
-    else:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
-
-    query = f"""
-        SELECT
-            nb.id,
-            nb.page_id,
-            p.title,
-            nb.body_text,
-            ts_rank_cd(to_tsvector('english', nb.body_text), websearch_to_tsquery('english', :query)) AS score,
-            COALESCE(
-                (
-                    SELECT NULLIF(h.exact, '')
-                    FROM object_links ol
-                    JOIN highlights h
-                      ON (
-                            (ol.a_type = 'highlight' AND h.id = ol.a_id)
-                         OR (ol.b_type = 'highlight' AND h.id = ol.b_id)
-                      )
-                    WHERE (
-                            (ol.a_type = 'note_block' AND ol.a_id = nb.id)
-                         OR (ol.b_type = 'note_block' AND ol.b_id = nb.id)
-                    )
-                      AND ol.relation_type = 'note_about'
-                    ORDER BY ol.created_at ASC, ol.id ASC
-                    LIMIT 1
-                ),
-                ts_headline('english', nb.body_text, websearch_to_tsquery('english', :query),
-                            'MaxWords=50, MinWords=10, MaxFragments=1')
-            ) AS snippet
-        FROM note_blocks nb
-        JOIN pages p ON p.id = nb.page_id
-        WHERE nb.user_id = :viewer_id
-          AND to_tsvector('english', nb.body_text) @@ websearch_to_tsquery('english', :query)
-        {scope_filter}
-        ORDER BY score DESC, nb.id ASC
-        LIMIT :limit
-    """
-
-    result = db.execute(text(query), params)
-    rows = result.fetchall()
-
+    rows = object_search.search_objects(
+        db,
+        viewer_id=viewer_id,
+        object_type="note_block",
+        query_text=q,
+        semantic=semantic,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        limit=limit,
+    )
     return [
         _RankedNoteBlockResult(
-            id=row[0],
-            snippet=_truncate_snippet(str(row[5] or "")),
-            page_id=row[1],
-            page_title=row[2],
-            body_text=row[3],
-            score=_build_search_score(row[4]),
+            id=row["object_id"],
+            snippet=_truncate_snippet(str(row["snippet"] or "")),
+            page_id=row["parent_object_id"],
+            page_title=row["title_text"],
+            body_text=row["body_text"],
+            score=_build_search_score(row["score"]),
         )
         for row in rows
     ]

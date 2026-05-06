@@ -104,6 +104,79 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
                 "content_chunk_id": content_chunk_id,
             },
         )
+        reader_context_id = UUID(
+            str(
+                session.execute(
+                    text("""
+                        INSERT INTO message_context_items (
+                            message_id,
+                            user_id,
+                            context_kind,
+                            source_media_id,
+                            locator_json,
+                            ordinal,
+                            context_snapshot
+                        )
+                        VALUES (
+                            :message_id,
+                            :user_id,
+                            'reader_selection',
+                            :media_id,
+                            '{"kind":"fragment_offsets"}'::jsonb,
+                            1,
+                            jsonb_build_object(
+                                'kind', 'reader_selection',
+                                'media_id', CAST(:media_id_text AS text),
+                                'media_title', 'Shared chunk',
+                                'media_kind', 'web_article',
+                                'exact', 'Shared chunk text',
+                                'locator', '{"kind":"fragment_offsets"}'::jsonb
+                            )
+                        )
+                        RETURNING id
+                    """),
+                    {
+                        "message_id": message_id,
+                        "user_id": member_id,
+                        "media_id": media_id,
+                        "media_id_text": str(media_id),
+                    },
+                ).scalar_one()
+            )
+        )
+        session.execute(
+            text("""
+                INSERT INTO object_links (
+                    user_id,
+                    relation_type,
+                    a_type,
+                    a_id,
+                    b_type,
+                    b_id,
+                    b_locator,
+                    metadata
+                )
+                VALUES (
+                    :user_id,
+                    'used_as_context',
+                    'message',
+                    :message_id,
+                    'media',
+                    :media_id,
+                    '{"kind":"fragment_offsets"}'::jsonb,
+                    jsonb_build_object(
+                        'context_kind', 'reader_selection',
+                        'context_item_id', CAST(:context_item_id AS text)
+                    )
+                )
+            """),
+            {
+                "user_id": member_id,
+                "message_id": message_id,
+                "media_id": media_id,
+                "context_item_id": str(reader_context_id),
+            },
+        )
         session.execute(
             text("""
                 INSERT INTO memberships (library_id, user_id, role)
@@ -117,7 +190,9 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("message_context_items", "object_id", content_chunk_id)
+    direct_db.register_cleanup("message_context_items", "source_media_id", media_id)
     direct_db.register_cleanup("object_links", "b_id", content_chunk_id)
+    direct_db.register_cleanup("object_links", "b_id", media_id)
     direct_db.register_cleanup("content_chunks", "media_id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -154,11 +229,20 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
                        AND (
                             (a_type = 'content_chunk' AND a_id = :content_chunk_id)
                          OR (b_type = 'content_chunk' AND b_id = :content_chunk_id)
-                       ))
+                       )),
+                    (SELECT count(*) FROM message_context_items
+                     WHERE user_id = :member_id
+                       AND context_kind = 'reader_selection'
+                       AND source_media_id = :media_id),
+                    (SELECT count(*) FROM object_links
+                     WHERE user_id = :member_id
+                       AND b_type = 'media'
+                       AND b_id = :media_id
+                       AND metadata->>'context_kind' = 'reader_selection')
             """),
-            {"member_id": member_id, "content_chunk_id": content_chunk_id},
+            {"member_id": member_id, "content_chunk_id": content_chunk_id, "media_id": media_id},
         ).one()
-    assert counts == (0, 0)
+    assert counts == (0, 0, 0, 0)
 
     save_response = auth_client.post(
         f"/libraries/{member_default_id}/media",
@@ -324,6 +408,79 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
                 "media_id": media_id,
             },
         )
+        reader_context_id = UUID(
+            str(
+                session.execute(
+                    text("""
+                        INSERT INTO message_context_items (
+                            message_id,
+                            user_id,
+                            context_kind,
+                            source_media_id,
+                            locator_json,
+                            ordinal,
+                            context_snapshot
+                        )
+                        VALUES (
+                            :message_id,
+                            :user_id,
+                            'reader_selection',
+                            :media_id,
+                            '{"kind":"fragment_offsets"}'::jsonb,
+                            1,
+                            jsonb_build_object(
+                                'kind', 'reader_selection',
+                                'media_id', CAST(:media_id_text AS text),
+                                'media_title', 'Hello',
+                                'media_kind', 'web_article',
+                                'exact', 'Hello world',
+                                'locator', '{"kind":"fragment_offsets"}'::jsonb
+                            )
+                        )
+                        RETURNING id
+                    """),
+                    {
+                        "message_id": message_id,
+                        "user_id": user_id,
+                        "media_id": media_id,
+                        "media_id_text": str(media_id),
+                    },
+                ).scalar_one()
+            )
+        )
+        session.execute(
+            text("""
+                INSERT INTO object_links (
+                    user_id,
+                    relation_type,
+                    a_type,
+                    a_id,
+                    b_type,
+                    b_id,
+                    b_locator,
+                    metadata
+                )
+                VALUES (
+                    :user_id,
+                    'used_as_context',
+                    'message',
+                    :message_id,
+                    'media',
+                    :media_id,
+                    '{"kind":"fragment_offsets"}'::jsonb,
+                    jsonb_build_object(
+                        'context_kind', 'reader_selection',
+                        'context_item_id', CAST(:context_item_id AS text)
+                    )
+                )
+            """),
+            {
+                "user_id": user_id,
+                "message_id": message_id,
+                "media_id": media_id,
+                "context_item_id": str(reader_context_id),
+            },
+        )
         session.commit()
 
     direct_db.register_cleanup("media", "id", media_id)
@@ -331,7 +488,9 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("object_links", "b_id", content_chunk_id)
     direct_db.register_cleanup("object_links", "a_id", content_chunk_id)
+    direct_db.register_cleanup("object_links", "b_id", media_id)
     direct_db.register_cleanup("message_context_items", "object_id", content_chunk_id)
+    direct_db.register_cleanup("message_context_items", "source_media_id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("content_chunks", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -359,10 +518,17 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
                     (SELECT count(*) FROM message_context_items
                      WHERE object_type = 'content_chunk'
                        AND object_id = :content_chunk_id),
+                    (SELECT count(*) FROM message_context_items
+                     WHERE context_kind = 'reader_selection'
+                       AND source_media_id = :media_id),
                     (SELECT count(*) FROM object_links
                      WHERE (a_type = 'content_chunk' AND a_id = :content_chunk_id)
-                        OR (b_type = 'content_chunk' AND b_id = :content_chunk_id))
+                        OR (b_type = 'content_chunk' AND b_id = :content_chunk_id)),
+                    (SELECT count(*) FROM object_links
+                     WHERE b_type = 'media'
+                       AND b_id = :media_id
+                       AND metadata->>'context_kind' = 'reader_selection')
             """),
             {"media_id": media_id, "content_chunk_id": content_chunk_id},
         ).one()
-    assert counts == (0, 0, 0, 0, 0)
+    assert counts == (0, 0, 0, 0, 0, 0, 0)

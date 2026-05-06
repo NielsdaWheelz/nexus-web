@@ -1,10 +1,10 @@
 """Schemas for notes, universal object refs, and object links."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 OBJECT_TYPES = Literal[
     "page",
@@ -39,7 +39,7 @@ OBJECT_TYPE_VALUES = {
     "contributor",
 }
 NOTE_BLOCK_KIND_VALUES = {"bullet", "heading", "todo", "quote", "code", "image", "embed"}
-NOTE_PM_BODY_NODE_TYPES = {"paragraph", "code_block"}
+NOTE_PM_BODY_NODE_TYPES = {"paragraph", "code_block", "object_embed"}
 NOTE_PM_NODE_TYPES = {
     "outline_doc",
     "outline_block",
@@ -47,6 +47,7 @@ NOTE_PM_NODE_TYPES = {
     "text",
     "hard_break",
     "object_ref",
+    "object_embed",
     "code_block",
     "image",
 }
@@ -104,6 +105,14 @@ class NotePageOut(NotePageSummaryOut):
     blocks: list[NoteBlockOut] = Field(default_factory=list)
 
 
+class DailyNotePageOut(BaseModel):
+    local_date: date = Field(serialization_alias="localDate")
+    time_zone: str = Field(serialization_alias="timeZone")
+    page: NotePageOut
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class CreatePageRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
@@ -141,7 +150,7 @@ def _validate_pm_node(node: object, *, path: str, top_level: bool = False) -> st
     if not isinstance(node_type, str) or node_type not in NOTE_PM_NODE_TYPES:
         raise ValueError(f"{path}.type must be a known notes ProseMirror node type")
     if top_level and node_type not in NOTE_PM_BODY_NODE_TYPES:
-        raise ValueError(f"{path}.type must be paragraph or code_block")
+        raise ValueError(f"{path}.type must be paragraph, code_block, or object_embed")
 
     unknown_keys = set(node) - {"type", "attrs", "content", "marks", "text"}
     if unknown_keys:
@@ -170,7 +179,7 @@ def _validate_pm_node(node: object, *, path: str, top_level: bool = False) -> st
         if node_type == "outline_block":
             raise ValueError(f"{path}.content must include a paragraph")
         return node_type
-    if node_type in {"hard_break", "object_ref", "image"}:
+    if node_type in {"hard_break", "object_ref", "object_embed", "image"}:
         raise ValueError(f"{path}.content is not valid on atom nodes")
     if not isinstance(content, list):
         raise ValueError(f"{path}.content must be a list")
@@ -208,7 +217,7 @@ def _validate_pm_marks(marks: object, *, path: str) -> None:
 
 
 def _validate_pm_attrs(node_type: str, attrs: dict[str, Any] | None, *, path: str) -> None:
-    if node_type == "object_ref":
+    if node_type in {"object_ref", "object_embed"}:
         if not isinstance(attrs, dict):
             raise ValueError(f"{path} must be an object")
         object_type = attrs.get("objectType")
@@ -224,6 +233,12 @@ def _validate_pm_attrs(node_type: str, attrs: dict[str, Any] | None, *, path: st
         label = attrs.get("label")
         if label is not None and not isinstance(label, str):
             raise ValueError(f"{path}.label must be a string")
+        relation_type = attrs.get("relationType")
+        if relation_type is not None and relation_type != "embeds":
+            raise ValueError(f"{path}.relationType must be embeds")
+        display_mode = attrs.get("displayMode")
+        if display_mode is not None and not isinstance(display_mode, str):
+            raise ValueError(f"{path}.displayMode must be a string")
         return
 
     if node_type == "image":
@@ -262,8 +277,8 @@ def _validate_pm_child_types(node_type: str, child_types: list[str], *, path: st
         if any(child_type != "outline_block" for child_type in child_types):
             raise ValueError(f"{path} must contain only outline_block nodes")
     elif node_type == "outline_block":
-        if not child_types or child_types[0] != "paragraph":
-            raise ValueError(f"{path} must start with a paragraph node")
+        if not child_types or child_types[0] not in NOTE_PM_BODY_NODE_TYPES:
+            raise ValueError(f"{path} must start with a note body node")
         if any(child_type != "outline_block" for child_type in child_types[1:]):
             raise ValueError(f"{path} may contain only nested outline_block nodes after paragraph")
 
@@ -314,6 +329,24 @@ class SplitNoteBlockRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class QuickCaptureRequest(BaseModel):
+    body_pm_json: dict[str, Any] | None = None
+    body_markdown: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("body_pm_json")
+    @classmethod
+    def validate_body_pm_json(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return validate_note_body_pm_json(value)
+
+    @model_validator(mode="after")
+    def require_body(self) -> "QuickCaptureRequest":
+        if self.body_pm_json is None and not (self.body_markdown or "").strip():
+            raise ValueError("body_pm_json or body_markdown is required")
+        return self
+
+
 class ObjectLinkOut(BaseModel):
     id: UUID
     relation_type: OBJECT_LINK_RELATIONS = Field(serialization_alias="relationType")
@@ -350,6 +383,53 @@ class UpdateObjectLinkRequest(BaseModel):
     metadata: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+
+class PinnedObjectRefOut(BaseModel):
+    id: UUID
+    object_ref: HydratedObjectRef = Field(serialization_alias="objectRef")
+    surface_key: str = Field(serialization_alias="surfaceKey")
+    order_key: str = Field(serialization_alias="orderKey")
+    created_at: datetime = Field(serialization_alias="createdAt")
+    updated_at: datetime = Field(serialization_alias="updatedAt")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class CreatePinnedObjectRefRequest(ObjectRef):
+    surface_key: str = Field(
+        "navbar",
+        min_length=1,
+        max_length=64,
+        validation_alias=AliasChoices("surface_key", "surfaceKey"),
+        serialization_alias="surfaceKey",
+    )
+    order_key: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        validation_alias=AliasChoices("order_key", "orderKey"),
+        serialization_alias="orderKey",
+    )
+
+
+class UpdatePinnedObjectRefRequest(BaseModel):
+    surface_key: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        validation_alias=AliasChoices("surface_key", "surfaceKey"),
+        serialization_alias="surfaceKey",
+    )
+    order_key: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        validation_alias=AliasChoices("order_key", "orderKey"),
+        serialization_alias="orderKey",
+    )
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
 class CreateMessageContextItemRequest(BaseModel):

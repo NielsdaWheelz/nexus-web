@@ -120,6 +120,24 @@ class DirectSessionManager:
                     session.execute(text(f"DELETE FROM {table} WHERE {column} IS NULL"))
                     continue
 
+                if table == "users" and column == "id":
+                    session.execute(
+                        text("DELETE FROM object_search_embeddings WHERE user_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM object_search_documents WHERE user_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM user_pinned_objects WHERE user_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM daily_note_pages WHERE user_id = :value"),
+                        {"value": value},
+                    )
+
                 if table == "media" and column == "id":
                     session.execute(
                         text("DELETE FROM media_content_index_states WHERE media_id = :value"),
@@ -223,6 +241,50 @@ class DirectSessionManager:
 
                 if table == "pages" and column == "id":
                     session.execute(
+                        text("DELETE FROM daily_note_pages WHERE page_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM user_pinned_objects
+                            WHERE (object_type = 'page' AND object_id = :value)
+                               OR (object_type = 'note_block' AND object_id IN (
+                                    SELECT id FROM note_blocks WHERE page_id = :value
+                                  ))
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM object_search_embeddings
+                            WHERE search_document_id IN (
+                                SELECT id
+                                FROM object_search_documents
+                                WHERE (object_type = 'page' AND object_id = :value)
+                                   OR (object_type = 'note_block' AND object_id IN (
+                                        SELECT id FROM note_blocks WHERE page_id = :value
+                                      ))
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM object_search_documents
+                            WHERE (object_type = 'page' AND object_id = :value)
+                               OR (object_type = 'note_block' AND object_id IN (
+                                    SELECT id FROM note_blocks WHERE page_id = :value
+                                  ))
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
                         text(
                             """
                             DELETE FROM object_links
@@ -243,6 +305,39 @@ class DirectSessionManager:
 
                 if table == "pages" and column == "user_id":
                     session.execute(
+                        text("DELETE FROM daily_note_pages WHERE user_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM user_pinned_objects
+                            WHERE user_id = :value
+                              AND object_type IN ('page', 'note_block')
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM object_search_embeddings
+                            WHERE user_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM object_search_documents
+                            WHERE user_id = :value
+                              AND object_type IN ('page', 'note_block')
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
                         text(
                             """
                             DELETE FROM object_links
@@ -257,6 +352,73 @@ class DirectSessionManager:
                     )
                     session.execute(
                         text("DELETE FROM note_blocks WHERE user_id = :value"),
+                        {"value": value},
+                    )
+
+                if table == "note_blocks" and column == "id":
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM object_search_embeddings
+                            WHERE search_document_id IN (
+                                SELECT id
+                                FROM object_search_documents
+                                WHERE object_type = 'note_block'
+                                  AND object_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM object_search_documents
+                            WHERE object_type = 'note_block'
+                              AND object_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM user_pinned_objects
+                            WHERE object_type = 'note_block'
+                              AND object_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+
+                if table == "note_blocks" and column == "user_id":
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM object_search_embeddings
+                            WHERE user_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM object_search_documents
+                            WHERE user_id = :value
+                              AND object_type = 'note_block'
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM user_pinned_objects
+                            WHERE user_id = :value
+                              AND object_type = 'note_block'
+                            """
+                        ),
                         {"value": value},
                     )
 

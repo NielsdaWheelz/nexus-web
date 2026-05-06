@@ -71,6 +71,7 @@ async def test_real_web_article_context_chat_persists_retrievals_prompt_and_cita
             "conversation_scope": {"type": "media", "media_id": str(media_id)},
             "contexts": [
                 {
+                    "kind": "object_ref",
                     "type": "content_chunk",
                     "id": str(chunk_id),
                     "evidence_span_ids": [str(evidence_span_id)],

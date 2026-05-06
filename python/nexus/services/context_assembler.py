@@ -25,7 +25,7 @@ from nexus.db.models import (
     Model,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.conversation import MessageContextRef
+from nexus.schemas.conversation import ContextItem, MessageContextRef, ReaderSelectionContext
 from nexus.services.chat_prompt import (
     SYSTEM_PROMPT_VERSION,
     PromptPlan,
@@ -41,7 +41,11 @@ from nexus.services.context_lookup import (
     hydrate_context_ref,
     hydrate_source_ref,
 )
-from nexus.services.context_rendering import PROMPT_VERSION, render_conversation_scope_block
+from nexus.services.context_rendering import (
+    PROMPT_VERSION,
+    render_context_blocks,
+    render_conversation_scope_block,
+)
 from nexus.services.conversation_memory import (
     ConversationMemoryItem,
     ConversationStateSnapshot,
@@ -167,7 +171,7 @@ def assemble_chat_context(
     )
 
     lookup_results: list[ContextLookupResult] = []
-    context_types = {ref.type for ref in attached_context_refs}
+    context_types = {_context_type_name(ref) for ref in attached_context_refs}
     system_block = make_prompt_block(
         block_id=f"system:{SYSTEM_PROMPT_VERSION}",
         role="system",
@@ -233,20 +237,38 @@ def assemble_chat_context(
         attached_context_ref_payloads,
         strict=True,
     ):
+        if ref.kind == "reader_selection":
+            rendered_context, _ = render_context_blocks(db, [ref])
+            mandatory_blocks.append(
+                (
+                    _context_block_key(ref),
+                    make_prompt_block(
+                        block_id=_context_block_key(ref),
+                        role="system",
+                        lane="attached_context",
+                        text=rendered_context,
+                        source_refs=[context_ref],
+                        source_version=_context_source_version(ref),
+                    ),
+                    context_ref,
+                )
+            )
+            continue
+
         result = hydrate_context_ref(db, viewer_id=run.owner_user_id, context_ref=context_ref)
         lookup_results.append(result)
         if not result.resolved:
             raise ContextLookupError(result)
         mandatory_blocks.append(
             (
-                f"attached_context:{ref.type}:{ref.id}",
+                _context_block_key(ref),
                 make_prompt_block(
-                    block_id=f"attached_context:{ref.type}:{ref.id}",
+                    block_id=_context_block_key(ref),
                     role="system",
                     lane="attached_context",
                     text=result.evidence_text,
                     source_refs=[context_ref],
-                    source_version=f"{ref.type}:{ref.id}",
+                    source_version=_context_source_version(ref),
                 ),
                 context_ref,
             )
@@ -698,12 +720,33 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
 
 def message_context_ref_payloads(
     db: Session,
-    refs: Sequence[MessageContextRef],
+    refs: Sequence[ContextItem],
 ) -> list[dict[str, object]]:
     return [_context_ref_payload(db, ref) for ref in refs]
 
 
-def _context_ref_payload(db: Session, ref: MessageContextRef) -> dict[str, object]:
+def _context_type_name(ref: ContextItem) -> str:
+    if ref.kind == "reader_selection":
+        return "reader_selection"
+    return ref.type
+
+
+def _context_block_key(ref: ContextItem) -> str:
+    if ref.kind == "reader_selection":
+        return f"attached_context:reader_selection:{ref.client_context_id}"
+    return f"attached_context:{ref.type}:{ref.id}"
+
+
+def _context_source_version(ref: ContextItem) -> str:
+    if ref.kind == "reader_selection":
+        return f"reader_selection:{ref.client_context_id}"
+    return f"{ref.type}:{ref.id}"
+
+
+def _context_ref_payload(db: Session, ref: ContextItem) -> dict[str, object]:
+    if ref.kind == "reader_selection":
+        return ref.model_dump(mode="json")
+
     if ref.type == "contributor":
         contributor_handle = db.scalar(
             select(Contributor.handle).where(
@@ -755,7 +798,7 @@ def _context_snapshot_evidence_span_ids(snapshot: Mapping[str, Any] | None) -> l
     return evidence_span_ids
 
 
-def load_message_context_refs(db: Session, user_message_id: UUID) -> list[MessageContextRef]:
+def load_message_context_refs(db: Session, user_message_id: UUID) -> list[ContextItem]:
     rows = (
         db.execute(
             select(MessageContextItem)
@@ -765,14 +808,68 @@ def load_message_context_refs(db: Session, user_message_id: UUID) -> list[Messag
         .scalars()
         .all()
     )
-    return [
-        MessageContextRef(
-            type=row.object_type,
-            id=row.object_id,
-            evidence_span_ids=_context_snapshot_evidence_span_ids(row.context_snapshot_json),
+    refs: list[ContextItem] = []
+    for row in rows:
+        if row.context_kind == "reader_selection":
+            snapshot = (
+                row.context_snapshot_json if isinstance(row.context_snapshot_json, Mapping) else {}
+            )
+            refs.append(
+                ReaderSelectionContext(
+                    kind="reader_selection",
+                    client_context_id=_context_snapshot_uuid(
+                        snapshot.get("client_context_id") or snapshot.get("clientContextId"),
+                        fallback=row.id,
+                    ),
+                    media_id=row.source_media_id,
+                    media_kind=_context_snapshot_string(
+                        snapshot.get("media_kind") or snapshot.get("mediaKind"),
+                        fallback="media",
+                    ),
+                    media_title=_context_snapshot_string(
+                        snapshot.get("media_title") or snapshot.get("mediaTitle"),
+                        fallback="Selected source",
+                    ),
+                    exact=_context_snapshot_string(snapshot.get("exact"), fallback=""),
+                    prefix=_context_snapshot_optional_string(snapshot.get("prefix")),
+                    suffix=_context_snapshot_optional_string(snapshot.get("suffix")),
+                    locator=(
+                        row.locator_json
+                        if isinstance(row.locator_json, dict) and row.locator_json
+                        else dict(snapshot.get("locator"))
+                        if isinstance(snapshot.get("locator"), Mapping)
+                        else {"type": "unknown"}
+                    ),
+                )
+            )
+            continue
+
+        refs.append(
+            MessageContextRef(
+                kind="object_ref",
+                type=row.object_type,
+                id=row.object_id,
+                evidence_span_ids=_context_snapshot_evidence_span_ids(row.context_snapshot_json),
+            )
         )
-        for row in rows
-    ]
+    return refs
+
+
+def _context_snapshot_uuid(value: object, *, fallback: UUID) -> UUID:
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _context_snapshot_string(value: object, *, fallback: str) -> str:
+    if isinstance(value, str) and value:
+        return value
+    return fallback
+
+
+def _context_snapshot_optional_string(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def load_recent_history_units(

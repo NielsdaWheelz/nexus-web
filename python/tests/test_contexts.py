@@ -12,13 +12,15 @@ NO PUBLIC ROUTES use these in PR-02. These are service-layer tests only.
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.conversation import MessageContextRef
+from nexus.schemas.conversation import ChatContextInput, MessageContextRef, ReaderSelectionContext
 from nexus.services import contexts as contexts_service
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.conversations import load_message_context_snapshots_for_message_ids
 
 pytestmark = pytest.mark.integration
 
@@ -322,7 +324,51 @@ def _create_pdf_media_with_highlight(db_session: Session, user_id: UUID) -> tupl
 
 
 def _context_ref(target_type: str, target_id: UUID) -> MessageContextRef:
-    return MessageContextRef(type=target_type, id=target_id)
+    return MessageContextRef(kind="object_ref", type=target_type, id=target_id)
+
+
+def _reader_selection(media_id: UUID) -> ReaderSelectionContext:
+    return ReaderSelectionContext(
+        kind="reader_selection",
+        client_context_id=uuid4(),
+        media_id=media_id,
+        media_kind="web_article",
+        media_title="Test Article",
+        exact="selected quote",
+        prefix="before ",
+        suffix=" after",
+        locator={
+            "kind": "fragment_offsets",
+            "fragment_id": str(uuid4()),
+            "start_offset": 10,
+            "end_offset": 24,
+        },
+    )
+
+
+class TestContextSchema:
+    def test_chat_context_input_requires_kind(self):
+        adapter = TypeAdapter(ChatContextInput)
+
+        with pytest.raises(ValidationError):
+            adapter.validate_python({"type": "media", "id": str(uuid4())})
+
+        parsed = adapter.validate_python(
+            {"kind": "object_ref", "type": "media", "id": str(uuid4())}
+        )
+        assert parsed.kind == "object_ref"
+
+    def test_reader_selection_requires_quote_and_locator(self):
+        with pytest.raises(ValidationError):
+            ReaderSelectionContext(
+                kind="reader_selection",
+                client_context_id=uuid4(),
+                media_id=uuid4(),
+                media_kind="web_article",
+                media_title="Article",
+                exact=" ",
+                locator={},
+            )
 
 
 # =============================================================================
@@ -505,6 +551,93 @@ class TestContextInsertion:
         assert context.ordinal == 0
         assert context.object_type == "media"
         assert context.object_id == media_id
+        assert context.context_kind == "object_ref"
+        assert context.source_media_id is None
+        assert context.locator_json is None
+        assert context.context_snapshot_json["kind"] == "object_ref"
+
+    def test_insert_reader_selection_context(
+        self,
+        db_session: Session,
+        conversation_with_message: tuple,
+        media_with_highlight: tuple,
+    ):
+        """Insert an unsaved reader selection without creating a fake object ref."""
+        conversation_id, message_id, user_id, default_library_id = conversation_with_message
+        media_id, fragment_id, highlight_id, note_block_id = media_with_highlight
+        selection = _reader_selection(media_id)
+
+        context = contexts_service.insert_context(
+            db=db_session,
+            message_id=message_id,
+            ordinal=0,
+            context=selection,
+        )
+
+        assert context.context_kind == "reader_selection"
+        assert context.object_type is None
+        assert context.object_id is None
+        assert context.source_media_id == media_id
+        assert context.locator_json == selection.locator
+        assert context.context_snapshot_json["kind"] == "reader_selection"
+        assert context.context_snapshot_json["exact"] == "selected quote"
+        assert context.context_snapshot_json["locator"] == selection.locator
+
+        link = (
+            db_session.execute(
+                text("""
+                SELECT b_type, b_id, b_locator, metadata
+                FROM object_links
+                WHERE user_id = :user_id
+                  AND relation_type = 'used_as_context'
+                  AND a_type = 'message'
+                  AND a_id = :message_id
+                  AND b_type = 'media'
+                  AND b_id = :media_id
+            """),
+                {"user_id": user_id, "message_id": message_id, "media_id": media_id},
+            )
+            .mappings()
+            .one()
+        )
+        assert link["b_locator"] == selection.locator
+        assert link["metadata"]["context_kind"] == "reader_selection"
+        assert link["metadata"]["context_item_id"] == str(context.id)
+
+        snapshots = load_message_context_snapshots_for_message_ids(db_session, [message_id])
+        snapshot = snapshots[message_id][0].model_dump(mode="json")
+        assert snapshot["kind"] == "reader_selection"
+        assert snapshot["client_context_id"] == str(selection.client_context_id)
+        assert snapshot["media_id"] == str(media_id)
+        assert snapshot["source_media_id"] == str(media_id)
+        assert snapshot["exact"] == "selected quote"
+        assert snapshot["locator"] == selection.locator
+
+    def test_insert_reader_selection_context_requires_media_visibility(
+        self,
+        db_session: Session,
+        conversation_with_message: tuple,
+    ):
+        """Reader selections are media-backed and require readable source media."""
+        conversation_id, message_id, user_id, default_library_id = conversation_with_message
+        media_id = uuid4()
+        db_session.execute(
+            text("""
+                INSERT INTO media (id, kind, title, processing_status)
+                VALUES (:id, 'web_article', 'Invisible Article', 'ready_for_reading')
+            """),
+            {"id": media_id},
+        )
+
+        with pytest.raises(NotFoundError) as exc_info:
+            contexts_service.insert_context(
+                db=db_session,
+                message_id=message_id,
+                ordinal=0,
+                context=_reader_selection(media_id),
+            )
+
+        assert exc_info.value.code == ApiErrorCode.E_MEDIA_NOT_FOUND
 
     def test_insert_context_creates_conversation_media(
         self,

@@ -149,6 +149,7 @@ def build_retrieval_plan(
             user_content,
             history=history,
             scope_metadata=scope_metadata,
+            attached_context_refs=attached_context_refs,
             memory_source_refs=memory_source_refs,
         )
         if app_enabled
@@ -244,6 +245,7 @@ def build_app_search_query(
     *,
     history: Sequence[Turn],
     scope_metadata: Mapping[str, object],
+    attached_context_refs: Sequence[Mapping[str, object]] = (),
     memory_source_refs: Sequence[Mapping[str, object]] = (),
 ) -> str:
     """Rewrite the current user turn into a bounded standalone retrieval query."""
@@ -296,7 +298,34 @@ def build_app_search_query(
     if source_labels:
         query = f"{query} {' '.join(source_labels)}".strip()
 
+    reader_selection_terms = _reader_selection_query_terms(attached_context_refs)
+    if reader_selection_terms:
+        query = f"{' '.join(reader_selection_terms)} {query}".strip()
+
     return (query or content).strip()[:APP_SEARCH_QUERY_MAX_CHARS]
+
+
+def _reader_selection_query_terms(refs: Sequence[Mapping[str, object]]) -> list[str]:
+    terms: list[str] = []
+    for ref in refs:
+        if ref.get("kind") != "reader_selection":
+            continue
+        media_title = _compact_text(ref.get("media_title") or ref.get("mediaTitle"))
+        exact = _compact_text(ref.get("exact"))
+        if media_title:
+            terms.append(media_title[:120])
+        if exact:
+            terms.append(exact[:240])
+        if len(terms) >= 4:
+            break
+    return terms
+
+
+def _compact_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split()).strip()
+    return text or None
 
 
 def _latest_prior_user_text(history: Sequence[Turn]) -> str | None:

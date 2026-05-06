@@ -361,6 +361,7 @@ class TestChatRunCreate:
             model_id,
             contexts=[
                 {
+                    "kind": "object_ref",
                     "type": "content_chunk",
                     "id": str(row[0]),
                     "evidence_span_ids": [str(row[4])],
@@ -371,6 +372,7 @@ class TestChatRunCreate:
             model_id,
             contexts=[
                 {
+                    "kind": "object_ref",
                     "type": "content_chunk",
                     "id": str(row[0]),
                     "evidence_span_ids": [str(second_span_id)],

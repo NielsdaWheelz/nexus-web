@@ -7,10 +7,17 @@ Message creation happens through durable chat runs.
 """
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    model_serializer,
+    model_validator,
+)
 
 from nexus.schemas.context_memory import ConversationMemoryInspectionOut
 from nexus.schemas.contributors import ContributorCreditOut
@@ -36,6 +43,8 @@ MESSAGE_CONTEXT_TYPES = Literal[
     "content_chunk",
     "contributor",
 ]
+
+MESSAGE_CONTEXT_KINDS = Literal["object_ref", "reader_selection"]
 
 # Valid conversation scopes - must match conversations.scope_type
 CONVERSATION_SCOPE_TYPES = Literal["general", "media", "library"]
@@ -356,6 +365,7 @@ MAX_CONTEXTS = 10
 class MessageContextRef(BaseModel):
     """Canonical typed object reference for chat-run inputs."""
 
+    kind: Literal["object_ref"] = "object_ref"
     type: MESSAGE_CONTEXT_TYPES
     id: UUID
     evidence_span_ids: list[UUID] = Field(default_factory=list)
@@ -363,25 +373,67 @@ class MessageContextRef(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-ContextItem = MessageContextRef
+class ReaderSelectionContext(BaseModel):
+    """Transient reader quote selection attached to a chat-run input."""
+
+    kind: Literal["reader_selection"]
+    client_context_id: UUID
+    media_id: UUID
+    media_kind: str = Field(..., min_length=1, max_length=80)
+    media_title: str = Field(..., min_length=1, max_length=500)
+    exact: str = Field(..., min_length=1, max_length=20000)
+    prefix: str | None = Field(default=None, max_length=1000)
+    suffix: str | None = Field(default=None, max_length=1000)
+    locator: dict[str, Any]
+
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="after")
+    def validate_reader_selection(self) -> "ReaderSelectionContext":
+        if not self.media_kind.strip():
+            raise ValueError("reader_selection media_kind cannot be blank")
+        if not self.media_title.strip():
+            raise ValueError("reader_selection media_title cannot be blank")
+        if not self.exact.strip():
+            raise ValueError("reader_selection exact quote cannot be blank")
+        if not self.locator:
+            raise ValueError("reader_selection locator must be a non-empty object")
+        return self
 
 
-class MessageContextSnapshot(MessageContextRef):
+ChatContextInput = Annotated[
+    MessageContextRef | ReaderSelectionContext,
+    Field(discriminator="kind"),
+]
+
+ContextItem = ChatContextInput
+
+
+class MessageContextSnapshot(BaseModel):
     """Hydrated message-context snapshot returned on message reads."""
 
+    kind: MESSAGE_CONTEXT_KINDS = "object_ref"
+    type: MESSAGE_CONTEXT_TYPES | None = None
+    id: UUID | None = None
+    evidence_span_ids: list[UUID] = Field(default_factory=list)
+    client_context_id: UUID | None = None
     color: HIGHLIGHT_COLORS | None = None
     preview: str | None = None
     exact: str | None = None
     prefix: str | None = None
     suffix: str | None = None
     media_id: UUID | None = None
+    source_media_id: UUID | None = None
     media_title: str | None = None
     media_kind: str | None = None
+    locator: dict[str, Any] | None = None
     title: str | None = None
     route: str | None = None
 
     @field_serializer("id", when_used="json")
-    def serialize_context_id(self, value: UUID) -> str:
+    def serialize_context_id(self, value: UUID | None) -> str | None:
+        if value is None:
+            return None
         if self.type == "contributor" and self.route:
             prefix = "/authors/"
             if self.route.startswith(prefix):
@@ -389,6 +441,17 @@ class MessageContextSnapshot(MessageContextRef):
                 if handle:
                     return handle
         return str(value)
+
+    @model_serializer(mode="wrap")
+    def serialize_snapshot(self, handler: Any) -> dict[str, Any]:
+        data = handler(self)
+        serialized = {key: value for key, value in data.items() if value is not None}
+        if (
+            serialized.get("kind") == "reader_selection"
+            and serialized.get("evidence_span_ids") == []
+        ):
+            serialized.pop("evidence_span_ids")
+        return serialized
 
 
 class ChatRunCreateRequest(BaseModel):
@@ -400,7 +463,7 @@ class ChatRunCreateRequest(BaseModel):
     model_id: UUID
     reasoning: REASONING_MODES = "default"
     key_mode: KEY_MODES = "auto"
-    contexts: list[MessageContextRef] = Field(default_factory=list)
+    contexts: list[ChatContextInput] = Field(default_factory=list)
     web_search: WebSearchOptions
 
     model_config = ConfigDict(str_strip_whitespace=True)

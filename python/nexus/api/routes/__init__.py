@@ -28,6 +28,7 @@ from nexus.api.routes.notes import router as notes_router
 from nexus.api.routes.object_links import router as object_links_router
 from nexus.api.routes.object_refs import router as object_refs_router
 from nexus.api.routes.oracle import router as oracle_router
+from nexus.api.routes.pinned_objects import router as pinned_objects_router
 from nexus.api.routes.playback import router as playback_router
 from nexus.api.routes.podcasts import router as podcasts_router
 from nexus.api.routes.search import router as search_router
@@ -54,6 +55,7 @@ def create_api_router(include_test_routes: bool = False) -> APIRouter:
     api_router.include_router(media_router, tags=["media"])
     api_router.include_router(notes_router, tags=["notes"])
     api_router.include_router(object_refs_router, tags=["object-refs"])
+    api_router.include_router(pinned_objects_router, tags=["pinned-objects"])
     api_router.include_router(object_links_router, tags=["object-links"])
     api_router.include_router(message_context_items_router, tags=["message-context-items"])
     api_router.include_router(highlights_router, tags=["highlights"])

@@ -22,7 +22,7 @@ from nexus.db.models import (
     Podcast,
 )
 from nexus.errors import ApiErrorCode
-from nexus.schemas.conversation import MessageContextRef
+from nexus.schemas.conversation import MessageContextRef, ReaderSelectionContext
 from nexus.schemas.notes import ObjectRef
 from nexus.services import context_rendering, object_refs
 from nexus.services.pdf_quote_match import (
@@ -382,6 +382,37 @@ class TestTypedAnchorRendering:
         assert "<podcast>" in rendered
         assert "<content_chunk>" in rendered
         assert "<contributor>" in rendered
+
+    def test_render_reader_selection_context_includes_quote_surrounding_and_locator(self):
+        media_id = uuid4()
+        rendered, total_chars = context_rendering.render_context_blocks(
+            MagicMock(),
+            [
+                ReaderSelectionContext(
+                    kind="reader_selection",
+                    client_context_id=uuid4(),
+                    media_id=media_id,
+                    media_kind="web_article",
+                    media_title="Reader Source",
+                    exact="selected quote",
+                    prefix="before ",
+                    suffix=" after",
+                    locator={
+                        "kind": "fragment_offsets",
+                        "fragment_id": str(uuid4()),
+                        "start_offset": 7,
+                        "end_offset": 21,
+                    },
+                )
+            ],
+        )
+
+        assert total_chars > 0
+        assert "<reader_selection>" in rendered
+        assert "<source>Reader Source</source>" in rendered
+        assert "<quote>selected quote</quote>" in rendered
+        assert "<surrounding>before selected quote after</surrounding>" in rendered
+        assert "<source_locator>" in rendered
 
 
 class TestResolvePdfNearbyContext:

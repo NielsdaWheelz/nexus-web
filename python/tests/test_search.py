@@ -21,9 +21,11 @@ Tests cover:
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 
-from nexus.db.models import Fragment
+from nexus.db.models import Fragment, ObjectSearchDocument, Page
+from nexus.schemas.notes import CreatePageRequest
+from nexus.services import notes, object_search
 from nexus.services.content_indexing import (
     mark_content_index_failed,
     rebuild_fragment_content_index,
@@ -31,6 +33,7 @@ from nexus.services.content_indexing import (
 )
 from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.semantic_chunks import build_text_embedding, to_pgvector_literal
 from tests.factories import (
     add_library_member,
     create_searchable_media,
@@ -1382,6 +1385,9 @@ class TestSearchResultFormat:
                 """),
                 {"page_id": page_id, "user_id": user_id},
             )
+            page = session.get(Page, page_id)
+            assert page is not None
+            object_search.project_page(session, user_id, page)
             session.commit()
 
         direct_db.register_cleanup("pages", "id", page_id)
@@ -1403,6 +1409,73 @@ class TestSearchResultFormat:
         assert result["deep_link"] == f"/pages/{page_id}"
         assert result["context_ref"] == {"type": "page", "id": str(page_id)}
         assert "body_text" not in result
+
+    def test_page_semantic_search_uses_object_search_embeddings(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+        direct_db.register_cleanup("memberships", "user_id", user_id)
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            page = notes.create_page(
+                session,
+                user_id,
+                CreatePageRequest(title="Vector Only Page", description="ordinary garden notes"),
+            )
+            assert object_search.rebuild_missing_embeddings(session, user_id) == 1
+            assert object_search.rebuild_missing_embeddings(session, user_id) == 0
+            document_id = session.scalar(
+                select(ObjectSearchDocument.id).where(
+                    ObjectSearchDocument.user_id == user_id,
+                    ObjectSearchDocument.object_type == "page",
+                    ObjectSearchDocument.object_id == page.id,
+                )
+            )
+            assert document_id is not None
+            _model, vector = build_text_embedding("semanticneedle")
+            session.execute(
+                text(
+                    """
+                    UPDATE object_search_embeddings
+                    SET embedding = CAST(:embedding AS vector(256))
+                    WHERE search_document_id = :document_id
+                    """
+                ),
+                {
+                    "document_id": document_id,
+                    "embedding": to_pgvector_literal(vector),
+                },
+            )
+            session.commit()
+
+        lexical_response = auth_client.get(
+            "/search?q=semanticneedle&types=page&semantic=false",
+            headers=auth_headers(user_id),
+        )
+        assert lexical_response.status_code == 200, lexical_response.text
+        assert lexical_response.json()["results"] == []
+
+        semantic_response = auth_client.get(
+            "/search?q=semanticneedle&types=page&semantic=true",
+            headers=auth_headers(user_id),
+        )
+        assert semantic_response.status_code == 200, semantic_response.text
+        result_ids = {row["id"] for row in semantic_response.json()["results"]}
+        assert str(page.id) in result_ids
+
+        default_response = auth_client.get(
+            "/search?q=semanticneedle&types=page",
+            headers=auth_headers(user_id),
+        )
+        assert default_response.status_code == 200, default_response.text
+        default_result_ids = {row["id"] for row in default_response.json()["results"]}
+        assert str(page.id) in default_result_ids
 
 
 # =============================================================================
@@ -1597,6 +1670,9 @@ class TestSearchS4ConversationScope:
                     "note_block_id": link_note_id,
                 },
             )
+            page = session.get(Page, page_id)
+            assert page is not None
+            object_search.project_page(session, user_id, page)
             session.commit()
 
         direct_db.register_cleanup("message_context_items", "message_id", message_id)
@@ -2739,6 +2815,9 @@ class TestSearchTranscriptVersionNavigation:
                     "now_ts": now_ts,
                 },
             )
+            page = session.get(Page, page_id)
+            assert page is not None
+            object_search.project_page(session, user_id, page)
             session.commit()
 
         direct_db.register_cleanup("pages", "id", page_id)

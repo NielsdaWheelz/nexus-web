@@ -113,6 +113,7 @@ def test_real_web_article_reingest_replaces_active_index_and_hides_stale_evidenc
             "conversation_scope": {"type": "media", "media_id": str(media_id)},
             "contexts": [
                 {
+                    "kind": "object_ref",
                     "type": "content_chunk",
                     "id": first_search_trace["result_id"],
                     "evidence_span_ids": [first_search_trace["evidence_span_id"]],

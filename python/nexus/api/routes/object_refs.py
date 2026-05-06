@@ -11,7 +11,10 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.notes import OBJECT_TYPE_VALUES, ObjectRef
-from nexus.services.object_refs import hydrate_object_ref, search_object_refs
+from nexus.services.object_refs import (
+    hydrate_object_ref,
+    search_object_refs,
+)
 
 router = APIRouter(prefix="/object-refs", tags=["object-refs"])
 

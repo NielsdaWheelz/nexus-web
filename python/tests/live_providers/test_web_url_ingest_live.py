@@ -108,6 +108,7 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
             "conversation_scope": {"type": "media", "media_id": str(media_id)},
             "contexts": [
                 {
+                    "kind": "object_ref",
                     "type": "content_chunk",
                     "id": initial_search_trace["result_id"],
                     "evidence_span_ids": [initial_search_trace["evidence_span_id"]],

@@ -3416,7 +3416,7 @@ class TestS3SchemaConstraints:
             assert "uix_messages_conversation_seq" in str(exc_info.value)
 
     def test_message_context_item_object_type_constraint(self, migrated_engine):
-        """CHECK constraint: context item object types are known object refs."""
+        """CHECK constraint: object-ref context item object types are known object refs."""
         with Session(migrated_engine) as session:
             user_id = uuid4()
             conversation_id = uuid4()
@@ -3467,6 +3467,100 @@ class TestS3SchemaConstraints:
 
             session.rollback()
             assert "ck_message_context_items_object_type" in str(exc_info.value)
+
+    def test_message_context_item_reader_selection_constraints(self, migrated_engine):
+        """Reader selections persist without fake object ids and require media locator state."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            conversation_id = uuid4()
+            message_id = uuid4()
+            media_id = uuid4()
+
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                    VALUES (:id, :user_id, 'private', 2)
+                """),
+                {"id": conversation_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                    VALUES (:id, :conv_id, 1, 'user', 'test', 'complete')
+                """),
+                {"id": message_id, "conv_id": conversation_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO message_context_items (
+                        id,
+                        message_id,
+                        user_id,
+                        context_kind,
+                        source_media_id,
+                        locator_json,
+                        ordinal,
+                        context_snapshot
+                    )
+                    VALUES (
+                        :id,
+                        :message_id,
+                        :user_id,
+                        'reader_selection',
+                        :media_id,
+                        '{"kind":"fragment_offsets"}'::jsonb,
+                        0,
+                        '{"kind":"reader_selection"}'::jsonb
+                    )
+                """),
+                {
+                    "id": uuid4(),
+                    "message_id": message_id,
+                    "user_id": user_id,
+                    "media_id": media_id,
+                },
+            )
+            session.commit()
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO message_context_items (
+                            id,
+                            message_id,
+                            user_id,
+                            context_kind,
+                            object_type,
+                            object_id,
+                            source_media_id,
+                            ordinal,
+                            context_snapshot
+                        )
+                        VALUES (
+                            :id,
+                            :message_id,
+                            :user_id,
+                            'reader_selection',
+                            'highlight',
+                            :object_id,
+                            :media_id,
+                            1,
+                            '{"kind":"reader_selection"}'::jsonb
+                        )
+                    """),
+                    {
+                        "id": uuid4(),
+                        "message_id": message_id,
+                        "user_id": user_id,
+                        "object_id": uuid4(),
+                        "media_id": media_id,
+                    },
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_message_context_items_kind_shape" in str(exc_info.value)
 
     def test_user_api_key_nonce_length_constraint(self, migrated_engine):
         """CHECK constraint: nonce must be exactly 24 bytes."""

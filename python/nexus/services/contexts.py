@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import delete, or_, select, text
@@ -19,10 +20,11 @@ from nexus.db.models import (
     NoteBlock,
     ObjectLink,
 )
-from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.conversation import MessageContextRef
+from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.schemas.conversation import ContextItem, MessageContextRef, ReaderSelectionContext
 from nexus.schemas.notes import ObjectRef
 from nexus.services.object_refs import hydrate_object_ref
+from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 
 
 def _highlight_media_id(highlight: Highlight) -> UUID | None:
@@ -40,7 +42,13 @@ def _highlight_media_id(highlight: Highlight) -> UUID | None:
     return None
 
 
-def resolve_media_id_for_context(db: Session, context: MessageContextRef) -> UUID | None:
+def resolve_media_id_for_context(db: Session, context: ContextItem) -> UUID | None:
+    if context.kind == "reader_selection":
+        media = db.get(Media, context.media_id)
+        if media is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        return media.id
+
     if context.type == "media":
         media = db.get(Media, context.id)
         if media is None:
@@ -123,12 +131,38 @@ def insert_context(
     *,
     message_id: UUID,
     ordinal: int,
-    context: MessageContextRef,
+    context: ContextItem,
 ) -> MessageContextItem:
     message = db.get(Message, message_id)
     if message is None:
         raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
 
+    if context.kind == "reader_selection":
+        return _insert_reader_selection_context(
+            db=db,
+            message=message,
+            message_id=message_id,
+            ordinal=ordinal,
+            context=context,
+        )
+
+    return _insert_object_ref_context(
+        db=db,
+        message=message,
+        message_id=message_id,
+        ordinal=ordinal,
+        context=context,
+    )
+
+
+def _insert_object_ref_context(
+    db: Session,
+    *,
+    message: Message,
+    message_id: UUID,
+    ordinal: int,
+    context: MessageContextRef,
+) -> MessageContextItem:
     hydrated = hydrate_object_ref(
         db,
         message.conversation.owner_user_id,
@@ -141,6 +175,7 @@ def insert_context(
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Context not found")
 
     context_snapshot = hydrated.model_dump(mode="json", by_alias=True)
+    context_snapshot["kind"] = "object_ref"
     if context.type == "content_chunk" and context.evidence_span_ids:
         context_snapshot["evidence_span_ids"] = [
             str(span_id) for span_id in context.evidence_span_ids
@@ -150,8 +185,11 @@ def insert_context(
         message_id=message_id,
         user_id=message.conversation.owner_user_id,
         ordinal=ordinal,
+        context_kind="object_ref",
         object_type=context.type,
         object_id=context.id,
+        source_media_id=None,
+        locator_json=None,
         context_snapshot_json=context_snapshot,
     )
     db.add(row)
@@ -207,11 +245,87 @@ def insert_context(
     return row
 
 
+def _insert_reader_selection_context(
+    db: Session,
+    *,
+    message: Message,
+    message_id: UUID,
+    ordinal: int,
+    context: ReaderSelectionContext,
+) -> MessageContextItem:
+    media = db.get(Media, context.media_id)
+    if media is None or not can_read_media(
+        db, message.conversation.owner_user_id, context.media_id
+    ):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Context not found")
+    if media.kind == "pdf" and not is_pdf_quote_text_ready(db, media.id):
+        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "PDF quote text is not ready")
+
+    locator_json = _json_object(context.locator, "reader_selection locator")
+    context_snapshot = {
+        "kind": "reader_selection",
+        "client_context_id": str(context.client_context_id),
+        "media_id": str(media.id),
+        "source_media_id": str(media.id),
+        "media_kind": context.media_kind,
+        "media_title": context.media_title,
+        "title": context.media_title,
+        "route": f"/media/{media.id}",
+        "exact": context.exact,
+        "prefix": context.prefix,
+        "suffix": context.suffix,
+        "locator": locator_json,
+    }
+
+    row = MessageContextItem(
+        message_id=message_id,
+        user_id=message.conversation.owner_user_id,
+        ordinal=ordinal,
+        context_kind="reader_selection",
+        object_type=None,
+        object_id=None,
+        source_media_id=media.id,
+        locator_json=locator_json,
+        context_snapshot_json=context_snapshot,
+    )
+    db.add(row)
+    db.flush()
+
+    context_order_key = f"{ordinal + 1:010d}"
+    db.add(
+        ObjectLink(
+            user_id=message.conversation.owner_user_id,
+            relation_type="used_as_context",
+            a_type="message",
+            a_id=message_id,
+            b_type="media",
+            b_id=media.id,
+            a_order_key=context_order_key,
+            b_order_key=None,
+            a_locator_json=None,
+            b_locator_json=locator_json,
+            metadata_json={
+                "context_kind": "reader_selection",
+                "context_item_id": str(row.id),
+                "client_context_id": str(context.client_context_id),
+            },
+        )
+    )
+    upsert_conversation_media(db, message.conversation_id, media.id)
+    return row
+
+
+def _json_object(value: Mapping[str, Any], label: str) -> dict[str, object]:
+    if not value:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, f"{label} must be a non-empty object")
+    return dict(value)
+
+
 def insert_contexts_batch(
     db: Session,
     *,
     message_id: UUID,
-    contexts: Sequence[MessageContextRef],
+    contexts: Sequence[ContextItem],
 ) -> list[MessageContextItem]:
     return [
         insert_context(db=db, message_id=message_id, ordinal=ordinal, context=context)
@@ -268,10 +382,15 @@ def recompute_conversation_media(db: Session, conversation_id: UUID) -> None:
 
     expected_media_ids: set[UUID] = set()
     for row in context_rows:
-        media_id = resolve_media_id_for_context(
-            db,
-            MessageContextRef.model_validate({"type": row.object_type, "id": row.object_id}),
-        )
+        if row.context_kind == "reader_selection":
+            media_id = row.source_media_id
+        else:
+            media_id = resolve_media_id_for_context(
+                db,
+                MessageContextRef.model_validate(
+                    {"kind": "object_ref", "type": row.object_type, "id": row.object_id}
+                ),
+            )
         if media_id is not None:
             expected_media_ids.add(media_id)
 

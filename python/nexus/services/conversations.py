@@ -463,8 +463,38 @@ def load_message_context_snapshots_for_message_ids(
     ).all()
     for row in context_rows:
         stored = row.context_snapshot_json if isinstance(row.context_snapshot_json, Mapping) else {}
+        if row.context_kind == "reader_selection":
+            snapshots_by_message_id.setdefault(row.message_id, []).append(
+                MessageContextSnapshot(
+                    kind="reader_selection",
+                    client_context_id=_optional_uuid(
+                        stored.get("client_context_id") or stored.get("clientContextId")
+                    ),
+                    exact=_optional_string(stored.get("exact")),
+                    prefix=_optional_string(stored.get("prefix")),
+                    suffix=_optional_string(stored.get("suffix")),
+                    media_id=_optional_uuid(stored.get("media_id") or stored.get("mediaId"))
+                    or row.source_media_id,
+                    source_media_id=_optional_uuid(
+                        stored.get("source_media_id") or stored.get("sourceMediaId")
+                    )
+                    or row.source_media_id,
+                    media_title=_optional_string(
+                        stored.get("media_title") or stored.get("mediaTitle")
+                    ),
+                    media_kind=_optional_string(
+                        stored.get("media_kind") or stored.get("mediaKind")
+                    ),
+                    locator=_optional_mapping(stored.get("locator")) or row.locator_json,
+                    title=_optional_string(stored.get("title")),
+                    route=_optional_string(stored.get("route")),
+                )
+            )
+            continue
+
         snapshots_by_message_id.setdefault(row.message_id, []).append(
             MessageContextSnapshot(
+                kind="object_ref",
                 type=row.object_type,
                 id=row.object_id,
                 evidence_span_ids=_snapshot_evidence_span_ids(stored),
@@ -493,6 +523,12 @@ def _optional_uuid(value: object) -> UUID | None:
         return UUID(str(value))
     except (TypeError, ValueError):
         return None
+
+
+def _optional_mapping(value: object) -> dict[str, object] | None:
+    if isinstance(value, Mapping):
+        return dict(value)
+    return None
 
 
 def _optional_highlight_color(value: object) -> str | None:

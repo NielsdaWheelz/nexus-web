@@ -8,6 +8,7 @@ events.
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -173,25 +174,13 @@ def compute_payload_hash(
     conversation_scope: ConversationScopeRequest | None,
 ) -> str:
     sorted_contexts = sorted(
-        contexts,
-        key=lambda item: (
-            item.type,
-            str(item.id),
-            tuple(sorted(str(span_id) for span_id in item.evidence_span_ids)),
-        ),
+        (ctx.model_dump(mode="json") for ctx in contexts),
+        key=lambda payload: json.dumps(payload, sort_keys=True, separators=(",", ":")),
     )
-    payload_contexts = [
-        (
-            ctx.type,
-            str(ctx.id),
-            sorted(str(span_id) for span_id in ctx.evidence_span_ids),
-        )
-        for ctx in sorted_contexts
-    ]
     payload_scope = conversation_scope.model_dump(mode="json") if conversation_scope else None
     payload = (
         f"{conversation_id}|{content}|{model_id}|{reasoning}|{key_mode}|"
-        f"{payload_scope}|{payload_contexts}|{web_search.model_dump(mode='json')}"
+        f"{payload_scope}|{sorted_contexts}|{web_search.model_dump(mode='json')}"
     )
     return hashlib.sha256(payload.encode()).hexdigest()
 
@@ -1892,6 +1881,12 @@ def _dummy_resolved_key(model: Model) -> ResolvedKey:
 
 
 def _validate_context_visibility(db: Session, viewer_id: UUID, ctx: ContextItem) -> None:
+    if ctx.kind == "reader_selection":
+        media = db.get(Media, ctx.media_id)
+        if media is None or not can_read_media(db, viewer_id, ctx.media_id):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
+        return
+
     if ctx.type == "media":
         media = db.get(Media, ctx.id)
         if media is None or not can_read_media(db, viewer_id, ctx.id):

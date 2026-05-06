@@ -36,7 +36,7 @@ def search(
         default=None,
         description=(
             "Comma-separated list of types to search "
-            "(media, podcast, content_chunk, contributor, note_block, message)"
+            "(media, podcast, content_chunk, contributor, page, note_block, message)"
         ),
     ),
     contributor_handles: str | None = Query(
@@ -52,8 +52,8 @@ def search(
         description="Comma-separated media/content kinds to filter credited content.",
     ),
     semantic: bool = Query(
-        default=False,
-        description="Enable semantic content chunk search when content_chunk type is requested.",
+        default=True,
+        description="Enable hybrid semantic ranking for searchable content.",
     ),
     cursor: str | None = Query(default=None, description="Pagination cursor"),
     limit: int = Query(
@@ -76,7 +76,8 @@ def search(
     - `media` - Search media titles
     - `podcast` - Search visible podcast metadata
     - `content_chunk` - Search indexed document and transcript chunks
-    - `note_block` - Search user notes
+    - `page` - Search note pages
+    - `note_block` - Search note blocks
     - `message` - Search conversation messages
 
     **Visibility:**

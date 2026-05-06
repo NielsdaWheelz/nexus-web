@@ -12,6 +12,7 @@ Note: This module has DB access and is intentionally kept outside the LLM
 adapter layer (which must be DB-free per PR-04 spec).
 """
 
+import json
 from collections.abc import Sequence
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
@@ -35,7 +36,7 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
-from nexus.schemas.conversation import MessageContextRef
+from nexus.schemas.conversation import ContextItem, MessageContextRef, ReaderSelectionContext
 from nexus.services.context_window import get_context_window
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 from nexus.services.pdf_quote_match import MatcherAnomaly, MatchStatus, compute_match
@@ -90,7 +91,7 @@ def _resolve_renderable_highlight_kind(highlight: Highlight) -> str | None:
 
 def render_context_blocks(
     db: Session,
-    contexts: Sequence[MessageContextRef],
+    contexts: Sequence[ContextItem],
 ) -> tuple[str, int]:
     """Render context items into XML-tagged blocks for the prompt.
 
@@ -144,8 +145,8 @@ def render_context_blocks(
         except Exception as e:
             logger.warning(
                 "context_render_failed",
-                context_type=ctx.type,
-                context_id=str(ctx.id),
+                context_type=_context_log_type(ctx),
+                context_id=_context_log_id(ctx),
                 error=str(e),
             )
             continue
@@ -221,8 +222,23 @@ def render_conversation_scope_block(scope_metadata: dict[str, object]) -> str:
     return ""
 
 
-def _render_single_context(db: Session, ctx: MessageContextRef) -> str | None:
+def _context_log_type(ctx: ContextItem) -> str:
+    if ctx.kind == "reader_selection":
+        return "reader_selection"
+    return ctx.type
+
+
+def _context_log_id(ctx: ContextItem) -> str:
+    if ctx.kind == "reader_selection":
+        return str(ctx.client_context_id)
+    return str(ctx.id)
+
+
+def _render_single_context(db: Session, ctx: ContextItem) -> str | None:
     """Render a single context item to an XML block."""
+    if ctx.kind == "reader_selection":
+        return _render_reader_selection_context(ctx)
+
     ctx_type = ctx.type
     ctx_id = ctx.id
 
@@ -244,6 +260,25 @@ def _render_single_context(db: Session, ctx: MessageContextRef) -> str | None:
         return _render_contributor_context(db, ctx_id)
     logger.warning("unknown_context_type", context_type=ctx_type)
     return None
+
+
+def _render_reader_selection_context(ctx: ReaderSelectionContext) -> str:
+    lines = [
+        "<reader_selection>",
+        f"<source>{xml_escape(ctx.media_title)}</source>",
+        f"<media_kind>{xml_escape(ctx.media_kind)}</media_kind>",
+        f"<quote>{xml_escape(ctx.exact)}</quote>",
+    ]
+    surrounding = f"{ctx.prefix or ''}{ctx.exact}{ctx.suffix or ''}"
+    if surrounding != ctx.exact:
+        lines.append(f"<surrounding>{xml_escape(surrounding)}</surrounding>")
+    lines.append(
+        "<source_locator>"
+        f"{xml_escape(json.dumps(ctx.locator, sort_keys=True, separators=(',', ':')))}"
+        "</source_locator>"
+    )
+    lines.append("</reader_selection>")
+    return "\n".join(lines)
 
 
 def _render_media_context(db: Session, media_id: UUID) -> str | None:

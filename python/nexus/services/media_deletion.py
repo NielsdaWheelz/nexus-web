@@ -331,6 +331,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("""
             DELETE FROM message_context_items
             WHERE (object_type = 'media' AND object_id = :media_id)
+               OR (context_kind = 'reader_selection' AND source_media_id = :media_id)
                OR (object_type = 'highlight' AND object_id IN (
                     SELECT id FROM highlights WHERE anchor_media_id = :media_id
                ))
@@ -507,6 +508,10 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
               AND c.owner_user_id = :viewer_id
               AND (
                     (mci.object_type = 'media' AND mci.object_id = :media_id)
+                 OR (
+                        mci.context_kind = 'reader_selection'
+                        AND mci.source_media_id = :media_id
+                    )
                  OR (mci.object_type = 'highlight' AND mci.object_id IN (
                         SELECT id
                         FROM highlights

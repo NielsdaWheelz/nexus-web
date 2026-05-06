@@ -1,9 +1,10 @@
 """Notes API routes."""
 
+from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
@@ -13,6 +14,7 @@ from nexus.schemas.notes import (
     CreateNoteBlockRequest,
     CreatePageRequest,
     MoveNoteBlockRequest,
+    QuickCaptureRequest,
     SplitNoteBlockRequest,
     UpdateNoteBlockRequest,
     UpdatePageRequest,
@@ -72,6 +74,49 @@ def delete_page(
 ) -> Response:
     notes_service.delete_page(db, viewer.user_id, page_id)
     return Response(status_code=204)
+
+
+@router.get("/daily")
+def get_daily_note_for_today(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    time_zone: Annotated[str, Query(alias="time_zone", min_length=1, max_length=100)] = "UTC",
+) -> dict:
+    daily = notes_service.get_daily_note_for_today(
+        db,
+        viewer.user_id,
+        time_zone=time_zone,
+    )
+    return success_response(daily.model_dump(mode="json", by_alias=True))
+
+
+@router.post("/daily/{local_date}/quick-capture", status_code=201)
+def quick_capture_to_daily_date(
+    local_date: date,
+    request: QuickCaptureRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    time_zone: Annotated[str, Query(alias="time_zone", min_length=1, max_length=100)] = "UTC",
+) -> dict:
+    block = notes_service.quick_capture_to_daily(
+        db,
+        viewer.user_id,
+        local_date=local_date,
+        request=request,
+        time_zone=time_zone,
+    )
+    return success_response(block.model_dump(mode="json", by_alias=True))
+
+
+@router.get("/daily/{local_date}")
+def get_daily_note_by_date(
+    local_date: date,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    time_zone: Annotated[str, Query(alias="time_zone", min_length=1, max_length=100)] = "UTC",
+) -> dict:
+    daily = notes_service.get_daily_note(db, viewer.user_id, local_date, time_zone=time_zone)
+    return success_response(daily.model_dump(mode="json", by_alias=True))
 
 
 @router.post("/blocks", status_code=201)

@@ -218,7 +218,7 @@ class Page(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id"),
         nullable=False,
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
@@ -236,6 +236,50 @@ class Page(Base):
 
     __table_args__ = (
         CheckConstraint("char_length(title) BETWEEN 1 AND 200", name="ck_pages_title_length"),
+    )
+
+
+class DailyNotePage(Base):
+    """Durable daily-date identity for an ordinary note page."""
+
+    __tablename__ = "daily_note_pages"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    local_date: Mapped[date] = mapped_column(Date, nullable=False)
+    time_zone: Mapped[str] = mapped_column(Text, nullable=False, server_default="UTC")
+    page_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("pages.id"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(time_zone) BETWEEN 1 AND 100",
+            name="ck_daily_note_pages_time_zone_length",
+        ),
+        UniqueConstraint("user_id", "local_date", name="uix_daily_note_pages_user_date"),
+        UniqueConstraint("user_id", "page_id", name="uix_daily_note_pages_user_page"),
     )
 
 
@@ -383,6 +427,208 @@ class ObjectLink(Base):
             unique=True,
             postgresql_where=text("a_locator IS NULL AND b_locator IS NULL"),
         ),
+    )
+
+
+class PinnedObjectRef(Base):
+    """User-pinned navigation item backed by a hydrated ObjectRef."""
+
+    __tablename__ = "user_pinned_objects"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    object_type: Mapped[str] = mapped_column(Text, nullable=False)
+    object_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    surface_key: Mapped[str] = mapped_column(Text, nullable=False)
+    order_key: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "object_type IN ('page', 'note_block', 'media', 'highlight', 'conversation', "
+            "'message', 'podcast', 'content_chunk', 'contributor')",
+            name="ck_user_pinned_objects_type",
+        ),
+        CheckConstraint(
+            "char_length(surface_key) BETWEEN 1 AND 64",
+            name="ck_user_pinned_objects_surface_key_length",
+        ),
+        CheckConstraint(
+            "char_length(order_key) BETWEEN 1 AND 64",
+            name="ck_user_pinned_objects_order_key_length",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "surface_key",
+            "object_type",
+            "object_id",
+            name="uix_user_pinned_objects_surface_ref",
+        ),
+    )
+
+
+class ObjectSearchDocument(Base):
+    """Searchable projection for ObjectRef-backed knowledge objects."""
+
+    __tablename__ = "object_search_documents"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    object_type: Mapped[str] = mapped_column(Text, nullable=False)
+    object_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    parent_object_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parent_object_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    title_text: Mapped[str] = mapped_column(Text, nullable=False)
+    body_text: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    search_text: Mapped[str] = mapped_column(Text, nullable=False)
+    route_path: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    index_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    index_status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default="pending_embedding",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "object_type IN ('page', 'note_block')",
+            name="ck_object_search_documents_type",
+        ),
+        CheckConstraint(
+            "parent_object_type IS NULL OR parent_object_type IN ('page')",
+            name="ck_osd_parent_object_type",
+        ),
+        CheckConstraint(
+            "(parent_object_type IS NULL) = (parent_object_id IS NULL)",
+            name="ck_osd_parent_shape",
+        ),
+        CheckConstraint(
+            "char_length(title_text) BETWEEN 1 AND 300",
+            name="ck_osd_title_text_length",
+        ),
+        CheckConstraint("char_length(search_text) >= 1", name="ck_osd_search_text_length"),
+        CheckConstraint(
+            "char_length(route_path) BETWEEN 1 AND 500",
+            name="ck_osd_route_path_length",
+        ),
+        CheckConstraint(
+            "char_length(content_hash) BETWEEN 1 AND 128",
+            name="ck_osd_content_hash_length",
+        ),
+        CheckConstraint("index_version > 0", name="ck_osd_index_version"),
+        CheckConstraint(
+            "index_status IN ('pending_embedding', 'ready')",
+            name="ck_osd_index_status",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "object_type",
+            "object_id",
+            "index_version",
+            name="uix_osd_object_ref_version",
+        ),
+    )
+
+
+class ObjectSearchEmbedding(Base):
+    """Optional semantic embedding for an object-search document."""
+
+    __tablename__ = "object_search_embeddings"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    search_document_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("object_search_documents.id"),
+        nullable=False,
+    )
+    object_type: Mapped[str] = mapped_column(Text, nullable=False)
+    object_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    index_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(PGVector(256), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "object_type IN ('page', 'note_block')",
+            name="ck_ose_object_type",
+        ),
+        CheckConstraint(
+            "char_length(embedding_model) BETWEEN 1 AND 128",
+            name="ck_ose_model_length",
+        ),
+        CheckConstraint("embedding_dimensions > 0", name="ck_ose_dimensions"),
+        CheckConstraint(
+            "char_length(content_hash) BETWEEN 1 AND 128",
+            name="ck_ose_content_hash_length",
+        ),
+        CheckConstraint("index_version > 0", name="ck_ose_index_version"),
+        UniqueConstraint(
+            "search_document_id",
+            "embedding_model",
+            "index_version",
+            name="uix_ose_document_model_version",
+        ),
+        Index("ix_ose_model", "user_id", "embedding_model"),
     )
 
 
@@ -5163,8 +5409,17 @@ class MessageContextItem(Base):
         ForeignKey("users.id"),
         nullable=False,
     )
-    object_type: Mapped[str] = mapped_column(Text, nullable=False)
-    object_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    context_kind: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default="object_ref",
+    )
+    object_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    object_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    source_media_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    locator_json: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     context_snapshot_json: Mapped[dict[str, object]] = mapped_column(
         "context_snapshot",
@@ -5180,9 +5435,26 @@ class MessageContextItem(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "object_type IN ('page', 'note_block', 'media', 'highlight', 'conversation', "
-            "'message', 'podcast', 'content_chunk', 'contributor')",
+            "context_kind IN ('object_ref', 'reader_selection')",
+            name="ck_message_context_items_context_kind",
+        ),
+        CheckConstraint(
+            "object_type IS NULL OR object_type IN ('page', 'note_block', 'media', "
+            "'highlight', 'conversation', 'message', 'podcast', 'content_chunk', "
+            "'contributor')",
             name="ck_message_context_items_object_type",
+        ),
+        CheckConstraint(
+            "((context_kind = 'object_ref' AND object_type IS NOT NULL "
+            "AND object_id IS NOT NULL AND locator_json IS NULL) OR "
+            "(context_kind = 'reader_selection' AND object_type IS NULL "
+            "AND object_id IS NULL AND source_media_id IS NOT NULL "
+            "AND locator_json IS NOT NULL))",
+            name="ck_message_context_items_kind_shape",
+        ),
+        CheckConstraint(
+            "locator_json IS NULL OR jsonb_typeof(locator_json) = 'object'",
+            name="ck_message_context_items_locator_json",
         ),
         CheckConstraint(
             "ordinal >= 0",
