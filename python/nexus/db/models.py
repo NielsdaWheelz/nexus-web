@@ -3434,6 +3434,15 @@ class MessageStatus(str, PyEnum):
     error = "error"
 
 
+class BranchAnchorKind(str, PyEnum):
+    """Anchor kinds for a user message's branch edge."""
+
+    none = "none"
+    assistant_message = "assistant_message"
+    assistant_selection = "assistant_selection"
+    reader_context = "reader_context"
+
+
 class LLMProvider(str, PyEnum):
     """Supported LLM providers."""
 
@@ -3827,6 +3836,26 @@ class Message(Base):
         ForeignKey("models.id", ondelete="SET NULL"),
         nullable=True,
     )
+    parent_message_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id"),
+        nullable=True,
+    )
+    branch_root_message_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id"),
+        nullable=True,
+    )
+    branch_anchor_kind: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default="none",
+    )
+    branch_anchor: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -3852,12 +3881,37 @@ class Message(Base):
             "(status != 'pending' OR role = 'assistant')",
             name="ck_messages_pending_only_assistant",
         ),
+        CheckConstraint(
+            "branch_anchor_kind IN ('none', 'assistant_message', 'assistant_selection', 'reader_context')",
+            name="ck_messages_branch_anchor_kind",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(branch_anchor) = 'object'",
+            name="ck_messages_branch_anchor_object",
+        ),
+        CheckConstraint(
+            "(role = 'user' AND parent_message_id IS NULL) "
+            "OR (role IN ('user', 'assistant') AND parent_message_id IS NOT NULL) "
+            "OR (role = 'system')",
+            name="ck_messages_parent_role_shape",
+        ),
         UniqueConstraint("conversation_id", "seq", name="uix_messages_conversation_seq"),
+        Index("idx_messages_parent_message_id", "parent_message_id"),
     )
 
     # Relationships
     conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="messages")
     model: Mapped["Model | None"] = relationship("Model")
+    parent_message: Mapped["Message | None"] = relationship(
+        "Message",
+        foreign_keys=[parent_message_id],
+        remote_side=[id],
+    )
+    branch_root_message: Mapped["Message | None"] = relationship(
+        "Message",
+        foreign_keys=[branch_root_message_id],
+        remote_side=[id],
+    )
     llm_metadata: Mapped["MessageLLM | None"] = relationship(
         "MessageLLM",
         back_populates="message",
@@ -3882,6 +3936,103 @@ class Message(Base):
         cascade="all, delete-orphan",
         order_by="AssistantMessageClaim.ordinal",
     )
+
+
+class ConversationActivePath(Base):
+    """Viewer-local selected branch leaf for a conversation."""
+
+    __tablename__ = "conversation_active_paths"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id"),
+        nullable=False,
+    )
+    viewer_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    active_leaf_message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id",
+            "viewer_user_id",
+            name="uix_conversation_active_paths_conversation_viewer",
+        ),
+    )
+
+    conversation: Mapped["Conversation"] = relationship("Conversation")
+    viewer: Mapped["User"] = relationship("User")
+    active_leaf_message: Mapped["Message"] = relationship("Message")
+
+
+class ConversationBranch(Base):
+    """Metadata for a user child that starts a branch option."""
+
+    __tablename__ = "conversation_branches"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id"),
+        nullable=False,
+    )
+    branch_user_message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id"),
+        nullable=False,
+    )
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "branch_user_message_id",
+            name="uix_conversation_branches_user_message",
+        ),
+        CheckConstraint(
+            "title IS NULL OR char_length(btrim(title)) BETWEEN 1 AND 120",
+            name="ck_conversation_branches_title_length",
+        ),
+        Index("idx_conversation_branches_conversation", "conversation_id"),
+    )
+
+    conversation: Mapped["Conversation"] = relationship("Conversation")
+    branch_user_message: Mapped["Message"] = relationship("Message")
 
 
 class MessageLLM(Base):

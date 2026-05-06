@@ -19,7 +19,7 @@ from uuid import UUID
 from llm_calling.errors import LLMError, LLMErrorCode
 from llm_calling.router import LLMRouter
 from llm_calling.types import LLMUsage
-from sqlalchemy import bindparam, select, text
+from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
@@ -41,6 +41,7 @@ from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.conversation import (
     MAX_CONTEXTS,
     MAX_MESSAGE_CONTENT_LENGTH,
+    BranchAnchorRequest,
     ChatRunEventOut,
     ChatRunOut,
     ChatRunResponse,
@@ -72,10 +73,15 @@ from nexus.services.context_assembler import (
 from nexus.services.context_lookup import ContextLookupError
 from nexus.services.context_rendering import PROMPT_VERSION
 from nexus.services.contexts import insert_contexts_batch
+from nexus.services.conversation_branches import (
+    branch_anchor_for_message,
+    ensure_branch_metadata,
+    load_message_path,
+    persist_active_leaf,
+)
 from nexus.services.conversation_memory import (
     collect_memory_source_refs,
     load_active_memory_items,
-    load_active_state_snapshot,
     refresh_conversation_memory,
 )
 from nexus.services.conversations import (
@@ -172,14 +178,17 @@ def compute_payload_hash(
     web_search: WebSearchOptions,
     conversation_id: UUID | None,
     conversation_scope: ConversationScopeRequest | None,
+    parent_message_id: UUID | None,
+    branch_anchor: BranchAnchorRequest,
 ) -> str:
     sorted_contexts = sorted(
         (ctx.model_dump(mode="json") for ctx in contexts),
         key=lambda payload: json.dumps(payload, sort_keys=True, separators=(",", ":")),
     )
     payload_scope = conversation_scope.model_dump(mode="json") if conversation_scope else None
+    payload_anchor = branch_anchor.model_dump(mode="json")
     payload = (
-        f"{conversation_id}|{content}|{model_id}|{reasoning}|{key_mode}|"
+        f"{conversation_id}|{parent_message_id}|{payload_anchor}|{content}|{model_id}|{reasoning}|{key_mode}|"
         f"{payload_scope}|{sorted_contexts}|{web_search.model_dump(mode='json')}"
     )
     return hashlib.sha256(payload.encode()).hexdigest()
@@ -191,6 +200,8 @@ def create_chat_run(
     viewer_id: UUID,
     conversation_id: UUID | None,
     conversation_scope: ConversationScopeRequest | None,
+    parent_message_id: UUID | None,
+    branch_anchor: BranchAnchorRequest,
     content: str,
     model_id: UUID,
     reasoning: str,
@@ -220,6 +231,8 @@ def create_chat_run(
         web_search,
         conversation_id,
         conversation_scope,
+        parent_message_id,
+        branch_anchor,
     )
 
     existing = _get_run_by_idempotency_key(db, viewer_id, normalized_key)
@@ -246,6 +259,8 @@ def create_chat_run(
         viewer_id,
         conversation_id,
         conversation_scope,
+        parent_message_id,
+        branch_anchor,
         content,
         model_id,
         reasoning,
@@ -267,6 +282,8 @@ def create_chat_run(
             viewer_id,
             conversation_id,
             conversation_scope,
+            parent_message_id,
+            branch_anchor,
             content,
             model_id,
             contexts,
@@ -556,23 +573,29 @@ async def _execute_chat_run(
 
         scope_metadata = conversation_scope_metadata(db, conversation)
         attached_context_refs = load_message_context_refs(db, run.user_message_id)
-        snapshot = load_active_state_snapshot(
+        path_messages = load_message_path(
             db,
             conversation_id=conversation.id,
-            prompt_version=PROMPT_VERSION,
+            leaf_message_id=user_message.id,
         )
-        after_seq = snapshot.covered_through_seq if snapshot is not None else None
+        path_message_ids = [
+            message.id for message in path_messages if message.id != user_message.id
+        ]
+        snapshot = None
+        after_seq = None
         memory_items = load_active_memory_items(
             db,
             conversation_id=conversation.id,
             after_seq=after_seq,
             prompt_version=PROMPT_VERSION,
+            allowed_message_ids=set(path_message_ids),
         )
         history_units = load_recent_history_units(
             db,
             conversation_id=conversation.id,
             before_seq=user_message.seq,
             after_seq=after_seq,
+            path_message_ids=path_message_ids,
         )
         planner_history = [
             turn for history_unit in history_units[-4:] for turn in history_unit.turns
@@ -1016,6 +1039,8 @@ def validate_pre_phase(
     viewer_id: UUID,
     conversation_id: UUID | None,
     conversation_scope: ConversationScopeRequest | None,
+    parent_message_id: UUID | None,
+    branch_anchor: BranchAnchorRequest,
     content: str,
     model_id: UUID,
     reasoning: str,
@@ -1063,8 +1088,19 @@ def validate_pre_phase(
     if use_platform_key:
         rate_limiter.check_token_budget(viewer_id)
     if conversation_id is not None:
-        _check_conversation_not_busy(db, viewer_id, conversation_id)
+        _validate_parent_anchor_for_existing_conversation(
+            db,
+            viewer_id,
+            conversation_id,
+            parent_message_id,
+            branch_anchor,
+        )
     elif conversation_scope is not None:
+        if parent_message_id is not None or branch_anchor.kind != "none":
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "New root conversations cannot include a branch parent",
+            )
         authorize_conversation_scope(db, viewer_id, conversation_scope)
         if conversation_scope.type == "media":
             existing_conversation = (
@@ -1079,7 +1115,16 @@ def validate_pre_phase(
                 .first()
             )
             if existing_conversation is not None:
-                _check_conversation_not_busy(db, viewer_id, existing_conversation.id)
+                existing_message_count = db.scalar(
+                    select(func.count())
+                    .select_from(Message)
+                    .where(Message.conversation_id == existing_conversation.id)
+                )
+                if existing_message_count:
+                    raise ApiError(
+                        ApiErrorCode.E_INVALID_REQUEST,
+                        "Existing scoped conversations require conversation_id and parent_message_id",
+                    )
         elif conversation_scope.type == "library":
             existing_conversation = (
                 db.execute(
@@ -1093,7 +1138,16 @@ def validate_pre_phase(
                 .first()
             )
             if existing_conversation is not None:
-                _check_conversation_not_busy(db, viewer_id, existing_conversation.id)
+                existing_message_count = db.scalar(
+                    select(func.count())
+                    .select_from(Message)
+                    .where(Message.conversation_id == existing_conversation.id)
+                )
+                if existing_message_count:
+                    raise ApiError(
+                        ApiErrorCode.E_INVALID_REQUEST,
+                        "Existing scoped conversations require conversation_id and parent_message_id",
+                    )
         elif conversation_scope.type == "general":
             pass
         else:
@@ -1107,16 +1161,34 @@ def prepare_messages(
     viewer_id: UUID,
     conversation_id: UUID | None,
     conversation_scope: ConversationScopeRequest | None,
+    parent_message_id: UUID | None,
+    branch_anchor: BranchAnchorRequest,
     content: str,
     model_id: UUID,
     contexts: Sequence[ContextItem],
 ) -> PreparedMessages:
     if conversation_id is None and conversation_scope is not None:
         conversation = resolve_conversation_for_scope(db, viewer_id, conversation_scope, content)
+        existing_message_count = db.scalar(
+            select(func.count())
+            .select_from(Message)
+            .where(Message.conversation_id == conversation.id)
+        )
+        if existing_message_count:
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Existing scoped conversations require conversation_id and parent_message_id",
+            )
+        parent_message = None
     elif conversation_id is not None and conversation_scope is None:
         conversation = db.get(Conversation, conversation_id)
         if conversation is None or conversation.owner_user_id != viewer_id:
             raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
+        parent_message = _load_valid_parent_for_send(
+            db,
+            conversation_id=conversation.id,
+            parent_message_id=parent_message_id,
+        )
     else:
         raise ApiError(
             ApiErrorCode.E_INVALID_REQUEST,
@@ -1126,6 +1198,11 @@ def prepare_messages(
     user_seq = assign_next_message_seq(db, conversation.id)
     if user_seq == 1 and conversation.title == DEFAULT_CONVERSATION_TITLE:
         conversation.title = derive_conversation_title(content)
+    branch_anchor_kind, branch_anchor_payload = branch_anchor_for_message(
+        parent_message,
+        branch_anchor,
+    )
+    branch_root_message_id = parent_message.id if parent_message is not None else None
 
     user_message = Message(
         conversation_id=conversation.id,
@@ -1134,12 +1211,22 @@ def prepare_messages(
         content=content,
         status="complete",
         model_id=None,
+        parent_message_id=parent_message.id if parent_message is not None else None,
+        branch_root_message_id=branch_root_message_id,
+        branch_anchor_kind=branch_anchor_kind,
+        branch_anchor=branch_anchor_payload,
     )
     db.add(user_message)
     db.flush()
 
     insert_contexts_batch(db=db, message_id=user_message.id, contexts=contexts)
     db.flush()
+    if parent_message is not None:
+        ensure_branch_metadata(
+            db,
+            conversation_id=conversation.id,
+            branch_user_message_id=user_message.id,
+        )
 
     assistant_message = Message(
         conversation_id=conversation.id,
@@ -1148,9 +1235,19 @@ def prepare_messages(
         content="",
         status="pending",
         model_id=model_id,
+        parent_message_id=user_message.id,
+        branch_root_message_id=branch_root_message_id,
+        branch_anchor_kind="none",
+        branch_anchor={},
     )
     db.add(assistant_message)
     db.flush()
+    persist_active_leaf(
+        db,
+        viewer_id=viewer_id,
+        conversation_id=conversation.id,
+        active_leaf_message_id=assistant_message.id,
+    )
 
     return PreparedMessages(
         conversation=conversation,
@@ -1931,24 +2028,41 @@ def _validate_context_chunk_evidence_spans(
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Evidence span is not valid for context")
 
 
-def _check_conversation_not_busy(db: Session, viewer_id: UUID, conversation_id: UUID) -> None:
+def _validate_parent_anchor_for_existing_conversation(
+    db: Session,
+    viewer_id: UUID,
+    conversation_id: UUID,
+    parent_message_id: UUID | None,
+    branch_anchor: BranchAnchorRequest,
+) -> None:
     conversation = db.get(Conversation, conversation_id)
     if conversation is None or conversation.owner_user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
-
-    pending = (
-        db.execute(
-            select(Message).where(
-                Message.conversation_id == conversation_id,
-                Message.role == "assistant",
-                Message.status == "pending",
-            )
-        )
-        .scalars()
-        .first()
+    parent = _load_valid_parent_for_send(
+        db,
+        conversation_id=conversation_id,
+        parent_message_id=parent_message_id,
     )
-    if pending is not None:
+    branch_anchor_for_message(parent, branch_anchor)
+
+
+def _load_valid_parent_for_send(
+    db: Session,
+    *,
+    conversation_id: UUID,
+    parent_message_id: UUID | None,
+) -> Message | None:
+    if parent_message_id is None:
         raise ApiError(
-            ApiErrorCode.E_CONVERSATION_BUSY,
-            "Conversation has a pending assistant message",
+            ApiErrorCode.E_BRANCH_PATH_INVALID,
+            "Existing conversations require parent_message_id",
         )
+    parent = db.get(Message, parent_message_id)
+    if parent is None or parent.conversation_id != conversation_id:
+        raise ApiError(ApiErrorCode.E_BRANCH_PATH_INVALID, "Parent message not found")
+    if parent.role != "assistant" or parent.status != "complete":
+        raise ApiError(
+            ApiErrorCode.E_BRANCH_PATH_INVALID,
+            "parent_message_id must point to a complete assistant message",
+        )
+    return parent

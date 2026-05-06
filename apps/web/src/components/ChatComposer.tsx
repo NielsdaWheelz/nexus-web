@@ -24,10 +24,12 @@ import Textarea from "@/components/ui/Textarea";
 import Toggle from "@/components/ui/Toggle";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type {
+  BranchDraft,
   ChatRunResponse,
   ConversationScope,
   ConversationModel,
 } from "@/lib/conversations/types";
+import BranchAnchorPreview from "@/components/chat/BranchAnchorPreview";
 import styles from "./ChatComposer.module.css";
 
 // ============================================================================
@@ -55,6 +57,12 @@ export interface ChatComposerProps {
   focusKey?: string;
   /** Draft text inserted by an explicit user action before the user sends. */
   initialContent?: string;
+  /** Assistant answer anchor for branch-reply mode. */
+  branchDraft?: BranchDraft | null;
+  /** Active-path assistant message used for ordinary continuation replies. */
+  parentMessageId?: string | null;
+  /** Clears branch-reply mode. */
+  onClearBranchDraft?: () => void;
 }
 
 type ComposerModel = ConversationModel;
@@ -151,6 +159,9 @@ export default function ChatComposer({
   autoFocus = false,
   focusKey,
   initialContent = "",
+  branchDraft = null,
+  parentMessageId = null,
+  onClearBranchDraft,
 }: ChatComposerProps) {
   const [content, setContent] = useState(initialContent);
   const [sending, setSending] = useState(false);
@@ -299,11 +310,24 @@ export default function ChatComposer({
     onSendStarted?.();
 
     const idempotencyKey = crypto.randomUUID();
+    const replyParentMessageId = branchDraft?.parentMessageId ?? parentMessageId;
+    const branchAnchor = branchDraft
+      ? branchDraft.anchor
+      : conversationId && replyParentMessageId
+        ? {
+            kind: "assistant_message" as const,
+            message_id: replyParentMessageId,
+          }
+        : { kind: "none" as const };
     const body: ChatRunCreateRequest = {
       content: trimmed,
       model_id: selectedModelId,
       reasoning: selectedReasoning,
       key_mode: onlyUseMyKeys ? "byok_only" : "auto",
+      ...(conversationId && replyParentMessageId
+        ? { parent_message_id: replyParentMessageId }
+        : {}),
+      branch_anchor: branchAnchor,
       web_search: {
         mode: webSearchMode,
         freshness_days: null,
@@ -338,6 +362,7 @@ export default function ChatComposer({
 
     if (sent) {
       setContent("");
+      onClearBranchDraft?.();
       onMessageSent?.();
     }
   }, [
@@ -351,6 +376,9 @@ export default function ChatComposer({
     conversationId,
     conversationScope,
     sendChatRun,
+    branchDraft,
+    parentMessageId,
+    onClearBranchDraft,
     onMessageSent,
     onSendStarted,
   ]);
@@ -412,6 +440,13 @@ export default function ChatComposer({
           <div className={styles.scopeRow}>
             <ConversationScopeChip scope={conversationScope} compact />
           </div>
+        ) : null}
+
+        {branchDraft ? (
+          <BranchAnchorPreview
+            draft={branchDraft}
+            onRemove={() => onClearBranchDraft?.()}
+          />
         ) : null}
 
         <ContextChips

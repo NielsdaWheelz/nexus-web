@@ -8,6 +8,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 from nexus.config import clear_settings_cache
+from nexus.db.models import ChatRun
 from tests.factories import (
     create_searchable_media,
     create_test_conversation,
@@ -53,6 +54,10 @@ def _create_run_payload(model_id: UUID, **overrides) -> dict:
         payload["conversation_scope"] = {"type": "general"}
     payload.update(overrides)
     return payload
+
+
+def _assistant_message_anchor(message_id: UUID) -> dict:
+    return {"kind": "assistant_message", "message_id": str(message_id)}
 
 
 def _post_chat_run(auth_client, user_id: UUID, payload: dict, idempotency_key: str):
@@ -198,7 +203,7 @@ class TestChatRunCreate:
         assert event_rows[0].payload["conversation_id"] == str(conversation_id)
         assert job_count == 1, f"Expected one chat_run background job for run {run_id}"
 
-    def test_create_run_for_existing_conversation(
+    def test_create_run_for_existing_conversation_requires_parent(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         user_id = create_test_user_id()
@@ -215,16 +220,361 @@ class TestChatRunCreate:
             idempotency_key="chat-run-existing-conversation",
         )
 
-        assert response.status_code == 200, (
-            f"Expected existing-conversation run to succeed, got "
+        assert response.status_code == 400, (
+            f"Expected existing-conversation run without parent to fail, got "
             f"{response.status_code}: {response.text}"
         )
-        data = response.json()["data"]
-        _assert_create_shape(data)
-        assert data["conversation"]["id"] == str(conversation_id)
+        assert response.json()["error"]["code"] == "E_BRANCH_PATH_INVALID"
+        direct_db.register_cleanup("conversations", "id", conversation_id)
 
+    def test_create_run_for_existing_non_empty_conversation_requires_parent(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            create_test_message(session, conversation_id, 1, "user", "Root")
+
+        response = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(model_id, conversation_id=str(conversation_id)),
+            idempotency_key="chat-run-existing-requires-parent",
+        )
+
+        assert response.status_code == 400, (
+            f"Expected missing parent to fail, got {response.status_code}: {response.text}"
+        )
+        assert response.json()["error"]["code"] == "E_BRANCH_PATH_INVALID"
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+
+    def test_create_run_for_existing_conversation_rejects_none_anchor_with_parent(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
+            parent_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "Complete answer",
+                parent_message_id=root_user_id,
+            )
+
+        omitted_anchor = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                conversation_id=str(conversation_id),
+                parent_message_id=str(parent_assistant_id),
+            ),
+            idempotency_key="chat-run-parent-omitted-anchor",
+        )
+        explicit_none_anchor = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                conversation_id=str(conversation_id),
+                parent_message_id=str(parent_assistant_id),
+                branch_anchor={"kind": "none"},
+            ),
+            idempotency_key="chat-run-parent-none-anchor",
+        )
+
+        assert omitted_anchor.status_code == 400, (
+            f"Expected omitted branch anchor to fail, got {omitted_anchor.status_code}: "
+            f"{omitted_anchor.text}"
+        )
+        assert explicit_none_anchor.status_code == 400, (
+            f"Expected explicit none branch anchor to fail, got "
+            f"{explicit_none_anchor.status_code}: {explicit_none_anchor.text}"
+        )
+        assert omitted_anchor.json()["error"]["code"] == "E_BRANCH_ANCHOR_INVALID"
+        assert explicit_none_anchor.json()["error"]["code"] == "E_BRANCH_ANCHOR_INVALID"
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+
+    def test_create_run_anchored_to_complete_assistant_persists_branch_path(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
+            parent_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "Complete answer",
+                parent_message_id=root_user_id,
+            )
+
+        response = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                conversation_id=str(conversation_id),
+                parent_message_id=str(parent_assistant_id),
+                branch_anchor={
+                    "kind": "assistant_selection",
+                    "message_id": str(parent_assistant_id),
+                    "exact": "Complete",
+                    "prefix": None,
+                    "suffix": " answer",
+                    "offset_status": "mapped",
+                    "start_offset": 0,
+                    "end_offset": 8,
+                    "client_selection_id": "selection-test-anchor",
+                },
+            ),
+            idempotency_key="chat-run-anchored-branch",
+        )
+
+        assert response.status_code == 200, (
+            f"Expected anchored create to succeed, got {response.status_code}: {response.text}"
+        )
+        data = response.json()["data"]
+        user_message_id = UUID(data["user_message"]["id"])
+        assistant_message_id = UUID(data["assistant_message"]["id"])
         run_id = UUID(data["run"]["id"])
+        assert data["user_message"]["parent_message_id"] == str(parent_assistant_id)
+        assert data["assistant_message"]["parent_message_id"] == str(user_message_id)
+        assert data["user_message"]["branch_anchor_kind"] == "assistant_selection"
+
+        with direct_db.session() as session:
+            branch_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM conversation_branches
+                    WHERE branch_user_message_id = :user_message_id
+                    """
+                ),
+                {"user_message_id": user_message_id},
+            ).scalar_one()
+            active_leaf_id = session.execute(
+                text(
+                    """
+                    SELECT active_leaf_message_id
+                    FROM conversation_active_paths
+                    WHERE conversation_id = :conversation_id
+                      AND viewer_user_id = :viewer_user_id
+                    """
+                ),
+                {"conversation_id": conversation_id, "viewer_user_id": user_id},
+            ).scalar_one()
+        assert branch_count == 1
+        assert active_leaf_id == assistant_message_id
         _register_run_cleanup(direct_db, run_id, conversation_id)
+
+    @pytest.mark.parametrize(
+        "case",
+        [
+            "wrong_message_id",
+            "missing_offsets",
+            "wrong_offsets_exact_mismatch",
+            "prefix_mismatch",
+            "suffix_mismatch",
+            "unmapped_with_offsets",
+        ],
+    )
+    def test_create_run_rejects_invalid_assistant_selection_anchor(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        chat_runs_schema,
+        case: str,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
+            parent_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "Alpha beta gamma beta.",
+                parent_message_id=root_user_id,
+            )
+
+        branch_anchor = {
+            "kind": "assistant_selection",
+            "message_id": str(parent_assistant_id),
+            "exact": "beta",
+            "prefix": "Alpha ",
+            "suffix": " gamma",
+            "offset_status": "mapped",
+            "start_offset": 6,
+            "end_offset": 10,
+            "client_selection_id": f"invalid-{case}",
+        }
+        if case == "wrong_message_id":
+            branch_anchor["message_id"] = str(uuid4())
+        elif case == "missing_offsets":
+            branch_anchor.pop("start_offset")
+            branch_anchor.pop("end_offset")
+        elif case == "wrong_offsets_exact_mismatch":
+            branch_anchor["start_offset"] = 0
+            branch_anchor["end_offset"] = 5
+        elif case == "prefix_mismatch":
+            branch_anchor["prefix"] = "Wrong "
+        elif case == "suffix_mismatch":
+            branch_anchor["suffix"] = " wrong"
+        elif case == "unmapped_with_offsets":
+            branch_anchor["offset_status"] = "unmapped"
+
+        response = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                conversation_id=str(conversation_id),
+                parent_message_id=str(parent_assistant_id),
+                branch_anchor=branch_anchor,
+            ),
+            idempotency_key=f"chat-run-invalid-anchor-{case}",
+        )
+
+        assert response.status_code == 400, (
+            f"Expected invalid assistant selection anchor {case} to fail, got "
+            f"{response.status_code}: {response.text}"
+        )
+        assert response.json()["error"]["code"] == "E_BRANCH_ANCHOR_INVALID"
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+
+    def test_create_run_rejects_assistant_message_anchor_with_wrong_message_id(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
+            parent_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "Complete answer",
+                parent_message_id=root_user_id,
+            )
+
+        response = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                conversation_id=str(conversation_id),
+                parent_message_id=str(parent_assistant_id),
+                branch_anchor=_assistant_message_anchor(uuid4()),
+            ),
+            idempotency_key="chat-run-assistant-message-wrong-anchor",
+        )
+
+        assert response.status_code == 400, (
+            f"Expected wrong assistant_message anchor to fail, got {response.status_code}: "
+            f"{response.text}"
+        )
+        assert response.json()["error"]["code"] == "E_BRANCH_ANCHOR_INVALID"
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+
+    def test_create_run_allows_sibling_branch_while_another_branch_runs(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
+            parent_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "Complete answer",
+                parent_message_id=root_user_id,
+            )
+            running_user_id = create_test_message(
+                session,
+                conversation_id,
+                3,
+                "user",
+                "Existing running branch",
+                parent_message_id=parent_assistant_id,
+            )
+            running_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                4,
+                "assistant",
+                "",
+                status="pending",
+                model_id=model_id,
+                parent_message_id=running_user_id,
+            )
+            session.add(
+                ChatRun(
+                    owner_user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_message_id=running_user_id,
+                    assistant_message_id=running_assistant_id,
+                    idempotency_key="sibling-running-branch",
+                    payload_hash="sibling-running-branch",
+                    status="running",
+                    model_id=model_id,
+                    reasoning="none",
+                    key_mode="auto",
+                    web_search={"mode": "off"},
+                )
+            )
+            session.commit()
+
+        response = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                conversation_id=str(conversation_id),
+                parent_message_id=str(parent_assistant_id),
+                branch_anchor=_assistant_message_anchor(parent_assistant_id),
+            ),
+            idempotency_key="chat-run-sibling-while-active",
+        )
+
+        assert response.status_code == 200, (
+            f"Expected sibling branch create to succeed, got {response.status_code}: "
+            f"{response.text}"
+        )
+        data = response.json()["data"]
+        assert data["user_message"]["parent_message_id"] == str(parent_assistant_id)
+        _register_run_cleanup(direct_db, UUID(data["run"]["id"]), conversation_id)
 
     def test_idempotency_replay_returns_same_run(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
@@ -413,7 +763,7 @@ class TestChatRunCreate:
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-    def test_conversation_busy_returns_409(
+    def test_active_sibling_run_does_not_block_anchored_send(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
         user_id = create_test_user_id()
@@ -423,17 +773,34 @@ class TestChatRunCreate:
         with direct_db.session() as session:
             model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
-            user_message_id = create_test_message(
-                session, conversation_id=conversation_id, seq=1, role="user", content="Busy"
+            root_user_id = create_test_message(
+                session, conversation_id=conversation_id, seq=1, role="user", content="Root"
             )
-            assistant_message_id = create_test_message(
+            parent_assistant_id = create_test_message(
                 session,
                 conversation_id=conversation_id,
                 seq=2,
                 role="assistant",
+                content="Complete parent",
+                parent_message_id=root_user_id,
+            )
+            sibling_user_id = create_test_message(
+                session,
+                conversation_id=conversation_id,
+                seq=3,
+                role="user",
+                content="Busy sibling",
+                parent_message_id=parent_assistant_id,
+            )
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id=conversation_id,
+                seq=4,
+                role="assistant",
                 content="",
                 status="pending",
                 model_id=model_id,
+                parent_message_id=sibling_user_id,
             )
             session.execute(
                 text(
@@ -454,7 +821,7 @@ class TestChatRunCreate:
                     "id": run_id,
                     "owner_user_id": user_id,
                     "conversation_id": conversation_id,
-                    "user_message_id": user_message_id,
+                    "user_message_id": sibling_user_id,
                     "assistant_message_id": assistant_message_id,
                     "idempotency_key": "existing-busy-run",
                     "payload_hash": "existing-busy-payload",
@@ -466,14 +833,20 @@ class TestChatRunCreate:
         response = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id, conversation_id=str(conversation_id)),
+            _create_run_payload(
+                model_id,
+                conversation_id=str(conversation_id),
+                parent_message_id=str(parent_assistant_id),
+                branch_anchor=_assistant_message_anchor(parent_assistant_id),
+            ),
             idempotency_key="chat-run-busy",
         )
 
-        assert response.status_code == 409, (
-            f"Expected E_CONVERSATION_BUSY, got {response.status_code}: {response.text}"
+        assert response.status_code == 200, (
+            f"Expected sibling active run not to block, got {response.status_code}: {response.text}"
         )
-        assert response.json()["error"]["code"] == "E_CONVERSATION_BUSY"
+        created = response.json()["data"]
+        _register_run_cleanup(direct_db, UUID(created["run"]["id"]), conversation_id)
 
         direct_db.register_cleanup("conversations", "id", conversation_id)
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
@@ -487,18 +860,18 @@ class TestChatRunCreate:
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
             model_id = create_test_model(session)
-            conversation_id = create_test_conversation(session, user_id)
 
         response = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id, conversation_id=str(conversation_id)),
+            _create_run_payload(model_id),
             idempotency_key="chat-run-list-active",
         )
 
         assert response.status_code == 200, f"Create failed: {response.text}"
         created = response.json()["data"]
         run_id = UUID(created["run"]["id"])
+        conversation_id = UUID(created["conversation"]["id"])
         _register_run_cleanup(direct_db, run_id, conversation_id)
 
         listed = auth_client.get(
@@ -519,17 +892,17 @@ class TestChatRunCreate:
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
             model_id = create_test_model(session)
-            conversation_id = create_test_conversation(session, user_id)
 
         response = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id, conversation_id=str(conversation_id)),
+            _create_run_payload(model_id),
             idempotency_key="chat-run-delete-conversation",
         )
 
         assert response.status_code == 200, f"Create failed: {response.text}"
         run_id = UUID(response.json()["data"]["run"]["id"])
+        conversation_id = UUID(response.json()["data"]["conversation"]["id"])
         _register_run_cleanup(direct_db, run_id, conversation_id)
 
         deleted = auth_client.delete(

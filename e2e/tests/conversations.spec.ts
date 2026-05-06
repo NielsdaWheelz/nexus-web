@@ -1,8 +1,8 @@
-import { test, expect, type Page } from "@playwright/test";
-import { execFileSync } from "node:child_process";
-import path from "node:path";
-
-const ROOT_DIR = path.resolve(__dirname, "..", "..");
+import { test, expect, type Locator, type Page } from "@playwright/test";
+import {
+  seedBranchingConversation,
+  seedScrollConversation,
+} from "./conversation-tree-seed";
 
 async function ensureAppContext(page: Page) {
   if (page.url() === "about:blank") {
@@ -61,66 +61,6 @@ async function deleteConversationViaApi(
   }
 }
 
-function seedConversationMessages(conversationId: string, messageCount: number) {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required to seed conversation scroll fixtures.");
-  }
-
-  execFileSync(
-    "uv",
-    [
-      "run",
-      "--project",
-      "python",
-      "python",
-      "-c",
-      `
-import os
-import psycopg
-
-conversation_id = os.environ["NEXUS_E2E_CONVERSATION_ID"]
-message_count = int(os.environ["NEXUS_E2E_MESSAGE_COUNT"])
-
-with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
-    with conn.cursor() as cur:
-        cur.executemany(
-            """
-            INSERT INTO messages (conversation_id, seq, role, content, status)
-            VALUES (%s::uuid, %s, %s, %s, 'complete')
-            """,
-            [
-                (
-                    conversation_id,
-                    seq,
-                    "user" if seq % 2 else "assistant",
-                    (
-                        f"Scroll fixture message {seq}: "
-                        + ("bounded chat scroll ownership " * 8)
-                    ),
-                )
-                for seq in range(1, message_count + 1)
-            ],
-        )
-        cur.execute(
-            "UPDATE conversations SET next_seq = %s, updated_at = now() WHERE id = %s::uuid",
-            (message_count + 1, conversation_id),
-        )
-`,
-    ],
-    {
-      cwd: ROOT_DIR,
-      env: {
-        ...process.env,
-        DATABASE_URL: databaseUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://"),
-        NEXUS_E2E_CONVERSATION_ID: conversationId,
-        NEXUS_E2E_MESSAGE_COUNT: String(messageCount),
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-}
-
 function readConversationIdFromUrl(url: string): string | null {
   const match = url.match(/\/conversations\/([0-9a-f-]+)$/i);
   return match?.[1] ?? null;
@@ -130,6 +70,50 @@ function workspacePaneButton(page: Page, name: RegExp | string) {
   return page
     .getByRole("toolbar", { name: "Workspace panes" })
     .getByRole("button", { name });
+}
+
+function messageRow(page: Page, messageId: string) {
+  return page.locator(`[data-message-id="${messageId}"]`);
+}
+
+async function selectTextInMessage(page: Page, messageId: string, exact: string) {
+  const row = messageRow(page, messageId);
+  await expect(row).toContainText(exact);
+  await row.evaluate((element, selectedText) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const text = node.textContent ?? "";
+      const index = text.indexOf(selectedText);
+      if (index >= 0) {
+        const range = document.createRange();
+        range.setStart(node, index);
+        range.setEnd(node, index + selectedText.length);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+        return;
+      }
+    }
+    throw new Error(`Could not find selected text: ${selectedText}`);
+  }, exact);
+}
+
+async function openForksPanel(page: Page) {
+  const panel = page.getByTestId("conversation-context-pane");
+  await panel.getByRole("tab", { name: /Forks/ }).click();
+  await expect(panel.getByRole("tree", { name: "Conversation forks" })).toBeVisible();
+  return panel;
+}
+
+async function confirmDeleteFork(panel: Locator, name: string) {
+  await panel.getByRole("button", { name: `Delete fork ${name}` }).click();
+  await panel
+    .getByRole("group")
+    .filter({ hasText: `Title: ${name}` })
+    .getByRole("button", { name: "Delete" })
+    .click();
 }
 
 test.describe("conversations", () => {
@@ -225,9 +209,9 @@ test.describe("conversations", () => {
   });
 
   test("main chat pane owns message and composer scrolling", async ({ page }) => {
-    const conversationId = await createConversationViaApi(page);
+    const seed = await seedScrollConversation(page, 50);
+    const conversationId = seed.conversation_id;
     try {
-      seedConversationMessages(conversationId, 50);
       await page.goto(`/conversations/${conversationId}`);
 
       const paneBody = page.getByTestId("pane-shell-body");
@@ -277,6 +261,136 @@ test.describe("conversations", () => {
       expect(
         await paneBody.evaluate((node) => getComputedStyle(node).overflowY),
       ).toBe("hidden");
+    } finally {
+      await deleteConversationViaApi(page, conversationId);
+    }
+  });
+
+  test("desktop branching covers fork preview, switching, graph, rename, and delete states", async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+    const seed = await seedBranchingConversation(page);
+    const conversationId = seed.conversation_id;
+    try {
+      await page.goto(`/conversations/${conversationId}`);
+
+      await expect(page.getByRole("log", { name: "Chat messages" })).toContainText(
+        "Linear branch answer keeps the original path active.",
+      );
+      await expect(messageRow(page, seed.root_assistant_id)).toContainText(
+        seed.root_assistant_content,
+      );
+
+      const rootAssistant = messageRow(page, seed.root_assistant_id);
+      await rootAssistant.getByRole("button", { name: "Reply / fork from here" }).click();
+      const branchPreview = page.locator('section[aria-label="Branch reply anchor"]');
+      await expect(branchPreview).toContainText("Replying from assistant message #2");
+      await expect(branchPreview).toContainText("selected source phrase");
+      await page.getByRole("button", { name: "Remove branch reply anchor" }).click();
+      await expect(branchPreview).toHaveCount(0);
+
+      await selectTextInMessage(page, seed.root_assistant_id, seed.quote_exact);
+      await page.getByRole("button", { name: "Branch from selection" }).click();
+      await expect(branchPreview).toContainText(seed.quote_exact);
+
+      const input = page.getByRole("textbox", { name: "Ask anything" });
+      await input.fill("E2E selected quote follow-up");
+      const sendButton = page.getByRole("button", { name: "Send message" });
+      await expect(sendButton).toBeEnabled({ timeout: 15_000 });
+      await sendButton.click();
+      await expect(
+        page.getByRole("button", {
+          name: /Current fork[\s\S]*E2E selected quote follow-up/i,
+        }),
+      ).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByRole("log", { name: "Chat messages" })).toContainText(
+        "E2E selected quote follow-up",
+      );
+
+      const quoteForkButton = rootAssistant
+        .getByRole("region", { name: "Forks from this answer" })
+        .getByRole("button")
+        .filter({ hasText: "Quote branch" });
+      await expect(quoteForkButton).toBeVisible();
+      const quoteSwitchResponsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes(`/api/conversations/${conversationId}/active-path`) &&
+          response.request().method() === "POST",
+      );
+      await quoteForkButton.evaluate((button) => {
+        button.click();
+      });
+      const quoteSwitchResponse = await quoteSwitchResponsePromise;
+      const quoteSwitchBody = await quoteSwitchResponse.text();
+      expect(
+        quoteSwitchResponse.ok(),
+        `POST /active-path failed: status=${quoteSwitchResponse.status()}; body=${quoteSwitchBody.slice(0, 500)}`,
+      ).toBeTruthy();
+      await expect(page.getByText("Quote branch answer highlights the selected source phrase.")).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: /Current fork[\s\S]*Quote branch/i }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", {
+          name: /Switch to fork[\s\S]*E2E selected quote follow-up/i,
+        }),
+      ).toBeVisible();
+
+      await page.reload();
+      await expect(page.getByText("Quote branch answer highlights the selected source phrase.")).toBeVisible();
+
+      const panel = await openForksPanel(page);
+      await panel.getByRole("textbox", { name: "Search forks" }).fill("summarize it");
+      await panel.getByRole("button", { name: "Search" }).click();
+      await expect(panel.getByText("1 fork found")).toBeVisible();
+      await panel.getByRole("button", { name: "Rename fork Quote branch" }).click();
+      await panel.getByRole("textbox", { name: "Rename fork Quote branch" }).fill(
+        "Renamed quote fork",
+      );
+      await panel.getByRole("button", { name: "Save fork Quote branch" }).click();
+      await expect(panel.getByRole("button", { name: "Switch to fork Renamed quote fork" })).toBeVisible();
+
+      await panel.getByRole("tab", { name: "Graph" }).click();
+      await panel
+        .getByRole("button", { name: /Switch to graph leaf[\s\S]*Disposable branch answer/i })
+        .click();
+      await expect(page.getByRole("log", { name: "Chat messages" })).toContainText(
+        "Disposable branch answer can be switched to from the graph.",
+      );
+
+      await panel.getByRole("tab", { name: "Tree" }).click();
+      await panel.getByRole("textbox", { name: "Search forks" }).fill("");
+      await panel.getByRole("button", { name: "Search" }).click();
+      await expect(panel.getByRole("button", { name: "Delete fork Running branch" })).toBeVisible();
+      await expect(panel.getByRole("button", { name: "Delete fork Disposable branch" })).toBeDisabled();
+
+      await confirmDeleteFork(panel, "Running branch");
+      await expect(panel.getByText("Fork delete failed.")).toBeVisible();
+
+      await confirmDeleteFork(panel, "Renamed quote fork");
+      await expect(panel.getByRole("button", { name: "Switch to fork Renamed quote fork" })).toHaveCount(0);
+    } finally {
+      await deleteConversationViaApi(page, conversationId);
+    }
+  });
+
+  test("mobile drawer exposes forks and switches branches", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const seed = await seedBranchingConversation(page);
+    const conversationId = seed.conversation_id;
+    try {
+      await page.goto(`/conversations/${conversationId}`);
+      await expect(page.getByTestId("conversation-context-pane")).toHaveCount(0);
+
+      await page.getByRole("button", { name: "Linked context" }).click();
+      const drawer = page.getByRole("dialog", { name: "Linked context" });
+      await expect(drawer).toBeVisible();
+      await drawer.getByRole("tab", { name: /Forks/ }).click();
+      await drawer.getByRole("button", { name: /Switch to fork[\s\S]*Quote branch/i }).click();
+
+      await expect(drawer).toHaveCount(0);
+      await expect(page.getByText("Quote branch answer highlights the selected source phrase.")).toBeVisible();
     } finally {
       await deleteConversationViaApi(page, conversationId);
     }

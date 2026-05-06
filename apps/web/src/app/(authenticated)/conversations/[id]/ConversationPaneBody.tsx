@@ -25,14 +25,22 @@ import ChatSurface from "@/components/chat/ChatSurface";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import type {
+  BranchDraft,
+  BranchGraph,
   ConversationMessage,
-  ConversationMessagesResponse,
+  ConversationTreeResponse,
   ChatRunListResponse,
   ChatRunResponse,
   ConversationSummary,
+  ForkOption,
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
 import { formatConversationScopeLabel } from "@/lib/conversations/display";
+import {
+  activeBranchGraphForPath,
+  activeForkOptionsForPath,
+  selectedPathMessageIds,
+} from "@/lib/conversations/branching";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   usePaneParam,
@@ -123,6 +131,20 @@ function ChatView({
   const router = usePaneRouter();
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [forkOptionsByParentId, setForkOptionsByParentId] = useState<
+    Record<string, ForkOption[]>
+  >({});
+  const [pathCacheByLeafId, setPathCacheByLeafId] = useState<
+    Record<string, ConversationMessage[]>
+  >({});
+  const [branchGraph, setBranchGraph] = useState<BranchGraph>({
+    nodes: [],
+    edges: [],
+    root_message_id: null,
+  });
+  const [activeLeafMessageId, setActiveLeafMessageId] = useState<string | null>(null);
+  const [branchDraft, setBranchDraft] = useState<BranchDraft | null>(null);
+  const [branchFocusKey, setBranchFocusKey] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
@@ -140,15 +162,74 @@ function ChatView({
 
   const scrollportRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
+  const selectedPathIdsRef = useRef<Set<string>>(new Set());
+  const activePathSwitchSeqRef = useRef(0);
+  const pendingPathSwitchScrollRef = useRef<{ messageId: string | null } | null>(null);
   const pendingScrollRestoreRef = useRef<{
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
+  const messageIdsForPath = useCallback(
+    (path: ConversationMessage[], leafMessageId: string | null = null) => {
+      const ids = selectedPathMessageIds(path);
+      if (leafMessageId) {
+        ids.add(leafMessageId);
+      }
+      return ids;
+    },
+    [],
+  );
+  const shouldApplyRunToSelectedPath = useCallback(
+    ({
+      userMessageId,
+      assistantMessageId,
+    }: {
+      userMessageId: string;
+      assistantMessageId: string;
+    }) =>
+      selectedPathIdsRef.current.has(userMessageId) ||
+      selectedPathIdsRef.current.has(assistantMessageId),
+    [],
+  );
   const { tailChatRun, abortAll } = useChatRunTail({
     setMessages,
+    setForkOptionsByParentId,
     shouldScrollRef,
     onRunFinished,
+    shouldApplyRun: shouldApplyRunToSelectedPath,
   });
+  const selectedPathIds = useMemo(() => {
+    const ids = selectedPathMessageIds(messages);
+    if (activeLeafMessageId) {
+      ids.add(activeLeafMessageId);
+    }
+    return ids;
+  }, [activeLeafMessageId, messages]);
+  const switchableLeafIds = useMemo(
+    () => new Set(Object.keys(pathCacheByLeafId)),
+    [pathCacheByLeafId],
+  );
+  const activeReplyParentMessageId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role === "assistant" && message.status === "complete") {
+        return message.id;
+      }
+    }
+    return null;
+  }, [messages]);
+
+  useEffect(() => {
+    selectedPathIdsRef.current = selectedPathIds;
+  }, [selectedPathIds]);
+
+  useEffect(() => {
+    if (!activeLeafMessageId || messages.length === 0) return;
+    setPathCacheByLeafId((prev) => {
+      if (prev[activeLeafMessageId] === messages) return prev;
+      return { ...prev, [activeLeafMessageId]: messages };
+    });
+  }, [activeLeafMessageId, messages]);
   const persistedRows = useMemo(() => {
     const rows: Array<{
       context: MessageContextSnapshot;
@@ -175,9 +256,64 @@ function ChatView({
   const handleChatRunCreated = useCallback(
     (runData: ChatRunData) => {
       shouldScrollRef.current = true;
+      setConversation(runData.conversation);
+      setActiveLeafMessageId(runData.assistant_message.id);
+      selectedPathIdsRef.current = new Set([
+        ...selectedPathIdsRef.current,
+        runData.user_message.id,
+        runData.assistant_message.id,
+      ]);
       void tailChatRun(runData);
     },
     [tailChatRun],
+  );
+
+  const applyConversationTree = useCallback((tree: ConversationTreeResponse) => {
+    setConversation(tree.conversation);
+    setMessages(tree.selected_path);
+    selectedPathIdsRef.current = messageIdsForPath(
+      tree.selected_path,
+      tree.active_leaf_message_id,
+    );
+    setForkOptionsByParentId(tree.fork_options_by_parent_id);
+    setPathCacheByLeafId(tree.path_cache_by_leaf_id);
+    setBranchGraph(tree.branch_graph);
+    setActiveLeafMessageId(tree.active_leaf_message_id);
+    setOlderCursor(tree.page.before_cursor);
+  }, [messageIdsForPath]);
+
+  const loadConversationTree = useCallback(async () => {
+    const response = await apiFetch<{ data: ConversationTreeResponse }>(
+      `/api/conversations/${id}/tree?limit=50`,
+    );
+    applyConversationTree(response.data);
+    return response.data;
+  }, [applyConversationTree, id]);
+
+  const tailVisibleActiveRuns = useCallback(
+    async (visibleMessageIds: Set<string>, skipRunId: string | null = null) => {
+      try {
+        const activeRuns = await apiFetch<ChatRunListResponse>(
+          `/api/chat-runs?${new URLSearchParams({
+            conversation_id: id,
+            status: "active",
+          })}`,
+        );
+        for (const runData of activeRuns.data) {
+          if (runData.run.id === skipRunId) continue;
+          if (
+            !visibleMessageIds.has(runData.user_message.id) &&
+            !visibleMessageIds.has(runData.assistant_message.id)
+          ) {
+            continue;
+          }
+          void tailChatRun(runData);
+        }
+      } catch (err) {
+        console.error("Failed to load active chat runs:", err);
+      }
+    },
+    [id, tailChatRun],
   );
 
   // --------------------------------------------------------------------------
@@ -187,13 +323,7 @@ function ChatView({
   useEffect(() => {
     const load = async () => {
       try {
-        const [convData, msgsData] = await Promise.all([
-          apiFetch<{ data: Conversation }>(`/api/conversations/${id}`),
-          apiFetch<ConversationMessagesResponse>(`/api/conversations/${id}/messages?limit=50`),
-        ]);
-        setConversation(convData.data);
-        setMessages(msgsData.data);
-        setOlderCursor(msgsData.page.next_cursor);
+        const tree = await loadConversationTree();
         setError(null);
         if (runIdFromUrl) {
           try {
@@ -207,20 +337,10 @@ function ChatView({
             console.error("Failed to load requested chat run:", err);
           }
         }
-        try {
-          const activeRuns = await apiFetch<ChatRunListResponse>(
-            `/api/chat-runs?${new URLSearchParams({
-              conversation_id: id,
-              status: "active",
-            })}`,
-          );
-          for (const runData of activeRuns.data) {
-            if (runData.run.id === runIdFromUrl) continue;
-            void tailChatRun(runData);
-          }
-        } catch (err) {
-          console.error("Failed to load active chat runs:", err);
-        }
+        await tailVisibleActiveRuns(
+          messageIdsForPath(tree.selected_path, tree.active_leaf_message_id),
+          runIdFromUrl,
+        );
       } catch (err) {
         setError(toFeedback(err, { fallback: "Failed to load conversation" }));
       } finally {
@@ -228,7 +348,14 @@ function ChatView({
       }
     };
     load();
-  }, [id, runIdFromUrl, tailChatRun]);
+  }, [
+    id,
+    loadConversationTree,
+    messageIdsForPath,
+    runIdFromUrl,
+    tailChatRun,
+    tailVisibleActiveRuns,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -237,17 +364,31 @@ function ChatView({
   }, [abortAll, id]);
 
   useLayoutEffect(() => {
-    if (!scrollportRef.current) return;
+    const scrollport = scrollportRef.current;
+    if (!scrollport) return;
+    if (pendingPathSwitchScrollRef.current) {
+      const targetMessageId = pendingPathSwitchScrollRef.current.messageId;
+      pendingPathSwitchScrollRef.current = null;
+      if (targetMessageId) {
+        const target = scrollport.querySelector<HTMLElement>(
+          `[data-message-id="${targetMessageId}"]`,
+        );
+        scrollport.scrollTop = target ? Math.max(0, target.offsetTop - 16) : 0;
+      } else {
+        scrollport.scrollTop = 0;
+      }
+      shouldScrollRef.current = false;
+      return;
+    }
     if (pendingScrollRestoreRef.current) {
       const restore = pendingScrollRestoreRef.current;
       pendingScrollRestoreRef.current = null;
-      scrollportRef.current.scrollTop =
-        scrollportRef.current.scrollHeight - restore.scrollHeight + restore.scrollTop;
+      scrollport.scrollTop = scrollport.scrollHeight - restore.scrollHeight + restore.scrollTop;
       shouldScrollRef.current = false;
       return;
     }
     if (shouldScrollRef.current) {
-      scrollportRef.current.scrollTop = scrollportRef.current.scrollHeight;
+      scrollport.scrollTop = scrollport.scrollHeight;
     }
   }, [messages]);
 
@@ -273,18 +414,25 @@ function ChatView({
       }
       const params = new URLSearchParams({
         limit: "50",
-        cursor: olderCursor,
+        before_cursor: olderCursor,
       });
-      const response = await apiFetch<ConversationMessagesResponse>(
-        `/api/conversations/${id}/messages?${params}`
+      const response = await apiFetch<{ data: ConversationTreeResponse }>(
+        `/api/conversations/${id}/tree?${params}`
       );
       // Prepend older messages, deduplicate by ID
       setMessages((prev) => {
         const existingIds = new Set(prev.map((m) => m.id));
-        const newMsgs = response.data.filter((m) => !existingIds.has(m.id));
+        const newMsgs = response.data.selected_path.filter((m) => !existingIds.has(m.id));
         return [...newMsgs, ...prev];
       });
-      setOlderCursor(response.page.next_cursor);
+      setForkOptionsByParentId(response.data.fork_options_by_parent_id);
+      setPathCacheByLeafId((prev) => ({
+        ...prev,
+        ...response.data.path_cache_by_leaf_id,
+      }));
+      setBranchGraph(response.data.branch_graph);
+      setActiveLeafMessageId(response.data.active_leaf_message_id);
+      setOlderCursor(response.data.page.before_cursor);
       shouldScrollRef.current = false;
     } catch (err) {
       pendingScrollRestoreRef.current = null;
@@ -305,6 +453,97 @@ function ChatView({
     }
   }, [id, router]);
 
+  const handleReplyToAssistant = useCallback((draft: BranchDraft) => {
+    setBranchDraft(draft);
+    setBranchFocusKey(`${draft.parentMessageId}:${draft.anchor.kind}:${Date.now()}`);
+    shouldScrollRef.current = true;
+  }, []);
+
+  const switchToLeaf = useCallback(
+    async (nextLeafId: string) => {
+      const nextPath = pathCacheByLeafId[nextLeafId];
+      if (!nextPath) {
+        setError({
+          severity: "error",
+          title: "This fork is not available yet.",
+        });
+        return;
+      }
+
+      const switchSeq = activePathSwitchSeqRef.current + 1;
+      activePathSwitchSeqRef.current = switchSeq;
+      const previous = {
+        messages,
+        activeLeafMessageId,
+        forkOptionsByParentId,
+        branchGraph,
+      };
+      const previousMessageIds = new Set(messages.map((message) => message.id));
+      let lastSharedMessageId: string | null = null;
+      for (const message of nextPath) {
+        if (previousMessageIds.has(message.id)) {
+          lastSharedMessageId = message.id;
+        }
+      }
+
+      pendingPathSwitchScrollRef.current = { messageId: lastSharedMessageId };
+      setMessages(nextPath);
+      selectedPathIdsRef.current = messageIdsForPath(nextPath, nextLeafId);
+      setActiveLeafMessageId(nextLeafId);
+      setForkOptionsByParentId((prev) => activeForkOptionsForPath(prev, nextPath));
+      setBranchGraph((prev) => activeBranchGraphForPath(prev, nextPath));
+      setError(null);
+      shouldScrollRef.current = false;
+      void tailVisibleActiveRuns(selectedPathIdsRef.current);
+      try {
+        const response = await apiFetch<{ data: ConversationTreeResponse }>(
+          `/api/conversations/${id}/active-path`,
+          {
+            method: "POST",
+            body: JSON.stringify({ active_leaf_message_id: nextLeafId }),
+          },
+        );
+        if (activePathSwitchSeqRef.current !== switchSeq) return;
+        applyConversationTree(response.data);
+        void tailVisibleActiveRuns(
+          messageIdsForPath(
+            response.data.selected_path,
+            response.data.active_leaf_message_id,
+          ),
+        );
+      } catch (err) {
+        if (activePathSwitchSeqRef.current !== switchSeq) return;
+        setError(toFeedback(err, { fallback: "Failed to switch fork" }));
+        setMessages(previous.messages);
+        selectedPathIdsRef.current = messageIdsForPath(
+          previous.messages,
+          previous.activeLeafMessageId,
+        );
+        setActiveLeafMessageId(previous.activeLeafMessageId);
+        setForkOptionsByParentId(previous.forkOptionsByParentId);
+        setBranchGraph(previous.branchGraph);
+      }
+    },
+    [
+      activeLeafMessageId,
+      applyConversationTree,
+      branchGraph,
+      forkOptionsByParentId,
+      id,
+      messageIdsForPath,
+      messages,
+      pathCacheByLeafId,
+      tailVisibleActiveRuns,
+    ],
+  );
+
+  const switchToFork = useCallback(
+    async (fork: ForkOption) => {
+      await switchToLeaf(fork.leaf_message_id);
+    },
+    [switchToLeaf],
+  );
+
   usePaneChromeOverride({
     options: conversationResourceOptions({
       deleting,
@@ -322,7 +561,7 @@ function ChatView({
     return <FeedbackNotice severity="info">Loading conversation...</FeedbackNotice>;
   }
 
-  if (error || !conversation) {
+  if (!conversation) {
     return error ? (
       <FeedbackNotice feedback={error} />
     ) : (
@@ -335,9 +574,16 @@ function ChatView({
       <div className={styles.chatSplitLayout}>
         <div className={styles.chatPrimaryColumn}>
           <div className={styles.paneContentChat}>
+            {error ? <FeedbackNotice feedback={error} /> : null}
             <ChatSurface
               messages={messages}
               scope={conversationScope}
+              forkOptionsByParentId={forkOptionsByParentId}
+              switchableLeafIds={switchableLeafIds}
+              onSelectFork={(fork) => {
+                void switchToFork(fork);
+              }}
+              onReplyToAssistant={handleReplyToAssistant}
               scrollportRef={scrollportRef}
               onScroll={handleChatScroll}
               olderCursor={olderCursor}
@@ -347,9 +593,14 @@ function ChatView({
                   conversationId={id}
                   conversationScope={conversationScope}
                   attachedContexts={attachedContexts}
+                  branchDraft={branchDraft}
+                  parentMessageId={activeReplyParentMessageId}
+                  onClearBranchDraft={() => setBranchDraft(null)}
                   onRemoveContext={onRemoveContext}
                   onChatRunCreated={handleChatRunCreated}
                   onMessageSent={onMessageSent}
+                  autoFocus={Boolean(branchDraft)}
+                  focusKey={branchFocusKey}
                 />
               }
             />
@@ -359,10 +610,24 @@ function ChatView({
         {!isMobileViewport ? (
           <aside className={styles.chatContextColumn}>
             <ConversationContextPane
+              conversationId={id}
               scope={conversationScope}
               memory={conversation?.memory}
               contexts={attachedContexts}
               persistedRows={persistedRows}
+              forkOptionsByParentId={forkOptionsByParentId}
+              branchGraph={branchGraph}
+              switchableLeafIds={switchableLeafIds}
+              selectedPathMessageIds={selectedPathIds}
+              onSelectFork={(fork) => {
+                void switchToFork(fork);
+              }}
+              onSelectGraphLeaf={(leafMessageId) => {
+                void switchToLeaf(leafMessageId);
+              }}
+              onForksChanged={() => {
+                void loadConversationTree();
+              }}
               onRemoveContext={onRemoveContext}
             />
           </aside>
@@ -371,10 +636,24 @@ function ChatView({
 
       {isMobileViewport ? (
         <ChatContextDrawer
+          conversationId={id}
           scope={conversationScope}
           memory={conversation?.memory}
           contexts={attachedContexts}
           persistedRows={persistedRows}
+          forkOptionsByParentId={forkOptionsByParentId}
+          branchGraph={branchGraph}
+          switchableLeafIds={switchableLeafIds}
+          selectedPathMessageIds={selectedPathIds}
+          onSelectFork={(fork) => {
+            void switchToFork(fork);
+          }}
+          onSelectGraphLeaf={(leafMessageId) => {
+            void switchToLeaf(leafMessageId);
+          }}
+          onForksChanged={() => {
+            void loadConversationTree();
+          }}
           onRemoveContext={onRemoveContext}
         />
       ) : null}

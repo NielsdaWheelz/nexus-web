@@ -22,7 +22,13 @@ from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.errors import ApiErrorCode
 from nexus.responses import success_response
-from nexus.schemas.conversation import ConversationScopeRequest, SetConversationSharesRequest
+from nexus.schemas.conversation import (
+    ConversationScopeRequest,
+    RenameBranchRequest,
+    SetActivePathRequest,
+    SetConversationSharesRequest,
+)
+from nexus.services import conversation_branches as conversation_branches_service
 from nexus.services import conversations as conversations_service
 from nexus.services import shares as shares_service
 
@@ -127,6 +133,86 @@ def get_conversation(
         conversation_id=conversation_id,
     )
     return success_response(result.model_dump(mode="json"))
+
+
+@router.get("/conversations/{conversation_id}/tree")
+def get_conversation_tree(
+    conversation_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    result = conversation_branches_service.get_conversation_tree(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.post("/conversations/{conversation_id}/active-path")
+def set_conversation_active_path(
+    conversation_id: UUID,
+    body: SetActivePathRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    result = conversation_branches_service.set_active_path(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        active_leaf_message_id=body.active_leaf_message_id,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.get("/conversations/{conversation_id}/forks")
+def list_conversation_forks(
+    conversation_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    search: str | None = Query(default=None, description="Fork search query"),
+) -> dict:
+    result = conversation_branches_service.list_forks(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        search=search,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.patch("/conversations/{conversation_id}/forks/{branch_id}")
+def rename_conversation_fork(
+    conversation_id: UUID,
+    branch_id: UUID,
+    body: RenameBranchRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    result = conversation_branches_service.rename_branch(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        branch_id=branch_id,
+        title=body.title,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.delete("/conversations/{conversation_id}/forks/{branch_id}", status_code=204)
+def delete_conversation_fork(
+    conversation_id: UUID,
+    branch_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    conversation_branches_service.delete_branch(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        branch_id=branch_id,
+    )
+    return Response(status_code=204)
 
 
 @router.delete("/conversations/{conversation_id}", status_code=204)

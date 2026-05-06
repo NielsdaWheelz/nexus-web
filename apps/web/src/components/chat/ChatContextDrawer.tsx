@@ -8,17 +8,28 @@ import type { ContextItem } from "@/lib/api/sse";
 import type {
   ConversationMemoryInspection,
   ConversationScope,
+  BranchGraph,
+  ForkOption,
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
 import styles from "./ChatContextDrawer.module.css";
 
 export default function ChatContextDrawer({
+  conversationId,
   contexts,
   scope,
   memory,
   persistedRows,
+  forkOptionsByParentId,
+  branchGraph,
+  switchableLeafIds,
+  selectedPathMessageIds,
+  onSelectFork,
+  onSelectGraphLeaf,
+  onForksChanged,
   onRemoveContext,
 }: {
+  conversationId?: string;
   contexts: ContextItem[];
   scope?: ConversationScope;
   memory?: ConversationMemoryInspection | null;
@@ -27,6 +38,13 @@ export default function ChatContextDrawer({
     messageId: string;
     messageSeq: number;
   }>;
+  forkOptionsByParentId?: Record<string, ForkOption[]>;
+  branchGraph?: BranchGraph;
+  switchableLeafIds?: Set<string>;
+  selectedPathMessageIds?: Set<string>;
+  onSelectFork?: (fork: ForkOption) => void;
+  onSelectGraphLeaf?: (leafMessageId: string) => void;
+  onForksChanged?: () => void;
   onRemoveContext?: (index: number) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -84,10 +102,24 @@ export default function ChatContextDrawer({
             </header>
             <div className={styles.body}>
               <ConversationContextPane
+                conversationId={conversationId}
                 scope={scope}
                 memory={memory}
                 contexts={contexts}
                 persistedRows={persistedRows}
+                forkOptionsByParentId={forkOptionsByParentId}
+                branchGraph={branchGraph}
+                switchableLeafIds={switchableLeafIds}
+                selectedPathMessageIds={selectedPathMessageIds}
+                onSelectFork={(fork) => {
+                  onSelectFork?.(fork);
+                  setOpen(false);
+                }}
+                onSelectGraphLeaf={(leafMessageId) => {
+                  onSelectGraphLeaf?.(leafMessageId);
+                  setOpen(false);
+                }}
+                onForksChanged={onForksChanged}
                 onRemoveContext={onRemoveContext}
               />
             </div>

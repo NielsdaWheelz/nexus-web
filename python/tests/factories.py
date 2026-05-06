@@ -145,8 +145,29 @@ def create_test_message(
     content: str = "Test message",
     status: str = "complete",
     model_id: UUID | None = None,
+    parent_message_id: UUID | None = None,
 ) -> UUID:
     """Create a test message and bump the conversation's next_seq."""
+    if parent_message_id is None and role in {"user", "assistant"}:
+        expected_parent_role = "assistant" if role == "user" else "user"
+        previous = (
+            session.query(Message)
+            .filter(
+                Message.conversation_id == conversation_id,
+                Message.seq < seq,
+                Message.role == expected_parent_role,
+            )
+            .order_by(Message.seq.desc(), Message.id.desc())
+            .first()
+        )
+        if previous is not None:
+            parent_message_id = previous.id
+    branch_root_message_id = None
+    if role == "user" and parent_message_id is not None:
+        branch_root_message_id = parent_message_id
+    elif role == "assistant" and parent_message_id is not None:
+        parent_message = session.get(Message, parent_message_id)
+        branch_root_message_id = parent_message.branch_root_message_id if parent_message else None
     msg = Message(
         id=uuid4(),
         conversation_id=conversation_id,
@@ -155,6 +176,8 @@ def create_test_message(
         content=content,
         status=status,
         model_id=model_id,
+        parent_message_id=parent_message_id,
+        branch_root_message_id=branch_root_message_id,
     )
     session.add(msg)
     conv = session.get(Conversation, conversation_id)
@@ -179,17 +202,33 @@ def create_test_conversation_with_message(
         id=uuid4(),
         owner_user_id=user_id,
         sharing="private",
-        next_seq=2,
+        next_seq=3 if role == "assistant" else 2,
     )
     session.add(conv)
     session.flush()
+    parent_message_id = None
+    seq = 1
+    if role == "assistant":
+        parent = Message(
+            id=uuid4(),
+            conversation_id=conv.id,
+            seq=1,
+            role="user",
+            content="Test setup message",
+            status="complete",
+        )
+        session.add(parent)
+        session.flush()
+        parent_message_id = parent.id
+        seq = 2
     msg = Message(
         id=uuid4(),
         conversation_id=conv.id,
-        seq=1,
+        seq=seq,
         role=role,
         content=content,
         status=status,
+        parent_message_id=parent_message_id,
     )
     session.add(msg)
     session.commit()

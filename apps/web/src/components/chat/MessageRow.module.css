@@ -32,6 +32,19 @@
   color: var(--ink);
 }
 
+.messageActions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-2);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-glide);
+}
+
+.message:hover .messageActions,
+.message:focus-within .messageActions {
+  opacity: 1;
+}
+
 .system {
   max-width: 60%;
   text-align: center;

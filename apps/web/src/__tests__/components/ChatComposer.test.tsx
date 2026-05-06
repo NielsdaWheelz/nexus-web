@@ -3,6 +3,7 @@ import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatComposer from "@/components/ChatComposer";
 import type { ChatRunCreateRequest, ContextItem } from "@/lib/api/sse";
+import type { BranchDraft } from "@/lib/conversations/types";
 
 const routerMocks = vi.hoisted(() => ({
   replace: vi.fn(),
@@ -206,6 +207,7 @@ describe("ChatComposer", () => {
     render(
       <ChatComposer
         conversationId="conversation-1"
+        parentMessageId="assistant-current"
         onChatRunCreated={onChatRunCreated}
       />,
     );
@@ -245,6 +247,11 @@ describe("ChatComposer", () => {
 
     expect(body).toMatchObject({
       conversation_id: "conversation-1",
+      parent_message_id: "assistant-current",
+      branch_anchor: {
+        kind: "assistant_message",
+        message_id: "assistant-current",
+      },
       content: "Explain this quote",
       model_id: "gpt-5.5",
       reasoning: "high",
@@ -291,6 +298,90 @@ describe("ChatComposer", () => {
     const [, init] = chatRunCalls(fetchMock)[0];
     const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
     expect(body.content).toBe("First line\nSecond line");
+  });
+
+  it("shows branch reply mode and sends the branch anchor payload", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installChatComposerFetchMock();
+    const onClearBranchDraft = vi.fn();
+    const branchDraft: BranchDraft = {
+      parentMessageId: "assistant-parent",
+      parentMessageSeq: 4,
+      parentMessagePreview: "The complete assistant answer.",
+      anchor: {
+        kind: "assistant_selection",
+        message_id: "assistant-parent",
+        exact: "assistant answer",
+        prefix: "The complete ",
+        suffix: ".",
+        offset_status: "mapped",
+        start_offset: 13,
+        end_offset: 29,
+        client_selection_id: "selection-1",
+      },
+    };
+
+    render(
+      <ChatComposer
+        conversationId="conversation-1"
+        branchDraft={branchDraft}
+        onClearBranchDraft={onClearBranchDraft}
+      />,
+    );
+
+    expect(await screen.findByText(/replying from assistant message #4/i))
+      .toBeInTheDocument();
+
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("Take this branch");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(chatRunCalls(fetchMock)).toHaveLength(1);
+    });
+
+    const [, init] = chatRunCalls(fetchMock)[0];
+    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest & {
+      conversation_id?: string;
+    };
+
+    expect(body).toMatchObject({
+      conversation_id: "conversation-1",
+      content: "Take this branch",
+      parent_message_id: "assistant-parent",
+      branch_anchor: branchDraft.anchor,
+    });
+    expect(onClearBranchDraft).toHaveBeenCalledOnce();
+  });
+
+  it("sends an explicit no-branch anchor for root new conversations", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installChatComposerFetchMock();
+
+    render(<ChatComposer conversationId={null} />);
+
+    expect(
+      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+    ).toBeInTheDocument();
+
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("Start a new root chat");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(chatRunCalls(fetchMock)).toHaveLength(1);
+    });
+
+    const [, init] = chatRunCalls(fetchMock)[0];
+    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest & {
+      conversation_id?: string;
+    };
+
+    expect(body.conversation_id).toBeUndefined();
+    expect(body.parent_message_id).toBeUndefined();
+    expect(body.branch_anchor).toEqual({ kind: "none" });
   });
 
   it("removes attached context chips from the composer surface", async () => {

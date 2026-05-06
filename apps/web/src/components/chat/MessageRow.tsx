@@ -1,6 +1,7 @@
 "use client";
 
-import { BookOpen, ExternalLink, Globe, Search } from "lucide-react";
+import { useCallback, useRef, useState, type Ref } from "react";
+import { BookOpen, ExternalLink, GitBranch, Globe, Search } from "lucide-react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import InlineCitations from "@/components/ui/InlineCitations";
 import {
@@ -9,8 +10,14 @@ import {
 } from "@/components/ui/MarkdownMessage";
 import Button from "@/components/ui/Button";
 import { truncateText } from "@/lib/conversations/display";
+import {
+  assistantSelectionAnchor,
+  mapAssistantSelectionToSource,
+} from "@/lib/conversations/assistantSelection";
 import type {
+  BranchDraft,
   ConversationMessage,
+  ForkOption,
   MessageClaim,
   MessageClaimEvidence,
   MessageClaimSupportStatus,
@@ -20,6 +27,10 @@ import type {
   MessageEvidenceSummary,
   MessageToolCall,
 } from "@/lib/conversations/types";
+import AssistantSelectionPopover, {
+  type AssistantSelectionDraft,
+} from "./AssistantSelectionPopover";
+import ForkStrip from "./ForkStrip";
 import styles from "./MessageRow.module.css";
 
 export type ReaderSourceTargetSource = "message_context" | "claim_evidence";
@@ -39,6 +50,10 @@ export interface ReaderSourceTarget {
 
 interface MessageRowProps {
   message: ConversationMessage;
+  forkOptions?: ForkOption[];
+  switchableLeafIds?: Set<string>;
+  onSelectFork?: (fork: ForkOption) => void;
+  onReplyToAssistant?: (draft: BranchDraft) => void;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
 }
 
@@ -53,7 +68,17 @@ function formatTime(iso: string): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-export function MessageRow({ message, onReaderSourceActivate }: MessageRowProps) {
+export function MessageRow({
+  message,
+  forkOptions = [],
+  switchableLeafIds,
+  onSelectFork,
+  onReplyToAssistant,
+  onReaderSourceActivate,
+}: MessageRowProps) {
+  const answerRef = useRef<HTMLDivElement>(null);
+  const [selectionDraft, setSelectionDraft] =
+    useState<AssistantSelectionDraft | null>(null);
   const roleClass = styles[message.role] ?? "";
   const statusClass =
     message.status !== "complete" ? (styles[message.status] ?? "") : "";
@@ -63,9 +88,107 @@ export function MessageRow({ message, onReaderSourceActivate }: MessageRowProps)
     message.error_code === "E_LLM_INCOMPLETE"
       ? "Response stopped before completion."
       : "The response failed.";
+  const canBranchFromAssistant =
+    message.role === "assistant" &&
+    message.status === "complete" &&
+    Boolean(onReplyToAssistant);
+
+  const createBranchDraft = useCallback(
+    (selection?: AssistantSelectionDraft): BranchDraft => ({
+      parentMessageId: message.id,
+      parentMessageSeq: message.seq,
+      parentMessagePreview: message.content,
+      anchor: selection
+        ? assistantSelectionAnchor({
+            messageId: message.id,
+            exact: selection.exact,
+            prefix: selection.prefix,
+            suffix: selection.suffix,
+            clientSelectionId: selection.client_selection_id,
+            mapping: selection,
+          })
+        : {
+            kind: "assistant_message",
+          },
+    }),
+    [message.content, message.id, message.seq],
+  );
+
+  const captureAssistantSelection = useCallback(() => {
+    if (!canBranchFromAssistant) return;
+    const selection = window.getSelection();
+    const container = answerRef.current;
+    if (!selection || !container || selection.rangeCount === 0) {
+      setSelectionDraft(null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (
+      !container.contains(range.startContainer) ||
+      !container.contains(range.endContainer) ||
+      selection.isCollapsed
+    ) {
+      setSelectionDraft(null);
+      return;
+    }
+
+    const exact = selection.toString().trim();
+    if (!exact) {
+      setSelectionDraft(null);
+      return;
+    }
+
+    const renderedContext = renderedSelectionContext(container, range);
+    const mapping = mapAssistantSelectionToSource(
+      message.content,
+      container.innerText.trim(),
+      exact,
+    );
+    let prefix = renderedContext.prefix;
+    let suffix = renderedContext.suffix;
+    if (
+      mapping.offset_status === "mapped" &&
+      typeof mapping.start_offset === "number" &&
+      typeof mapping.end_offset === "number"
+    ) {
+      prefix = message.content.slice(Math.max(0, mapping.start_offset - 80), mapping.start_offset) || null;
+      suffix = message.content.slice(mapping.end_offset, mapping.end_offset + 80) || null;
+    }
+    const rect = range.getBoundingClientRect();
+    const fallbackRect = container.getBoundingClientRect();
+    const top = rect.top || fallbackRect.top;
+    const left = rect.left || fallbackRect.left;
+    const width = rect.width || fallbackRect.width;
+
+    setSelectionDraft({
+      exact,
+      prefix,
+      suffix,
+      start_offset: mapping.start_offset,
+      end_offset: mapping.end_offset,
+      offset_status: mapping.offset_status,
+      client_selection_id: crypto.randomUUID(),
+      rect: {
+        top,
+        left: left + width / 2,
+      },
+    });
+  }, [canBranchFromAssistant, message.content]);
+
+  const branchFromSelection = useCallback(() => {
+    if (!selectionDraft) return;
+    onReplyToAssistant?.(createBranchDraft(selectionDraft));
+    setSelectionDraft(null);
+    window.getSelection()?.removeAllRanges();
+  }, [createBranchDraft, onReplyToAssistant, selectionDraft]);
 
   return (
-    <div className={`${styles.message} ${roleClass} ${statusClass}`}>
+    <div
+      className={`${styles.message} ${roleClass} ${statusClass}`}
+      data-message-id={message.id}
+      onMouseUp={captureAssistantSelection}
+      onKeyUp={captureAssistantSelection}
+    >
       {message.role === "user" && contexts.length === 1 ? (
         <ReplyBar context={contexts[0]} />
       ) : null}
@@ -78,21 +201,42 @@ export function MessageRow({ message, onReaderSourceActivate }: MessageRowProps)
 
       {message.role === "assistant" ? (
         <>
+          {canBranchFromAssistant ? (
+            <div className={styles.messageActions}>
+              <Button
+                variant="ghost"
+                size="sm"
+                leadingIcon={<GitBranch size={14} aria-hidden="true" />}
+                onClick={() => onReplyToAssistant?.(createBranchDraft())}
+              >
+                Reply / fork from here
+              </Button>
+            </div>
+          ) : null}
           <ToolActivity toolCalls={toolCalls} />
           {message.status === "pending" ? (
-            message.content ? (
-              <StreamingMarkdownMessage content={message.content} />
-            ) : (
-              <div className={styles.pendingStatus} role="status">
-                Generating response...
-              </div>
-            )
+            <div ref={answerRef}>
+              {message.content ? (
+                <StreamingMarkdownMessage content={message.content} />
+              ) : (
+                <div className={styles.pendingStatus} role="status">
+                  Generating response...
+                </div>
+              )}
+            </div>
           ) : (
             <ClaimEvidenceMessage
               message={message}
+              answerRef={answerRef}
               onReaderSourceActivate={onReaderSourceActivate}
             />
           )}
+          {selectionDraft ? (
+            <AssistantSelectionPopover
+              selection={selectionDraft}
+              onBranch={branchFromSelection}
+            />
+          ) : null}
         </>
       ) : (
         <span>{message.content || (message.status === "pending" ? "..." : "")}</span>
@@ -102,16 +246,42 @@ export function MessageRow({ message, onReaderSourceActivate }: MessageRowProps)
         <FeedbackNotice severity="error" title={errorLabel} className={styles.messageFeedback} />
       ) : null}
 
+      {message.role === "assistant" && onSelectFork ? (
+        <ForkStrip
+          forks={forkOptions}
+          switchableLeafIds={switchableLeafIds}
+          onSelectFork={onSelectFork}
+        />
+      ) : null}
+
       <span className={styles.timestamp}>{formatTime(message.created_at)}</span>
     </div>
   );
 }
 
+function renderedSelectionContext(container: HTMLElement, range: Range) {
+  const before = range.cloneRange();
+  before.selectNodeContents(container);
+  before.setEnd(range.startContainer, range.startOffset);
+
+  const after = range.cloneRange();
+  after.selectNodeContents(container);
+  after.setStart(range.endContainer, range.endOffset);
+
+  const prefix = before.toString().slice(-80) || null;
+  const suffix = after.toString().slice(0, 80) || null;
+  before.detach();
+  after.detach();
+  return { prefix, suffix };
+}
+
 function ClaimEvidenceMessage({
   message,
+  answerRef,
   onReaderSourceActivate,
 }: {
   message: ConversationMessage;
+  answerRef?: Ref<HTMLDivElement>;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
 }) {
   const claims = [...(message.claims ?? [])].sort(
@@ -131,12 +301,16 @@ function ClaimEvidenceMessage({
     claimEvidence.length > 0;
 
   if (!hasEvidence) {
-    return <MarkdownMessage content={message.content} />;
+    return (
+      <div ref={answerRef}>
+        <MarkdownMessage content={message.content} />
+      </div>
+    );
   }
 
   return (
     <>
-      <div className={styles.claimAnswer}>
+      <div ref={answerRef} className={styles.claimAnswer}>
         <MarkdownMessage
           content={contentWithClaimMarkers(message.content, visibleClaims, message.seq)}
         />

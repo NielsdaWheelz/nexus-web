@@ -33,6 +33,8 @@ def create_chat_run(
         viewer_id=viewer.user_id,
         conversation_id=body.conversation_id,
         conversation_scope=body.conversation_scope,
+        parent_message_id=body.parent_message_id,
+        branch_anchor=body.branch_anchor,
         content=body.content,
         model_id=body.model_id,
         reasoning=body.reasoning,

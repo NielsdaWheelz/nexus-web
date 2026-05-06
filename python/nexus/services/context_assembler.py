@@ -25,7 +25,12 @@ from nexus.db.models import (
     Model,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.conversation import ContextItem, MessageContextRef, ReaderSelectionContext
+from nexus.schemas.conversation import (
+    MESSAGE_CONTEXT_TYPES,
+    ContextItem,
+    MessageContextRef,
+    ReaderSelectionContext,
+)
 from nexus.services.chat_prompt import (
     SYSTEM_PROMPT_VERSION,
     PromptPlan,
@@ -46,12 +51,12 @@ from nexus.services.context_rendering import (
     render_context_blocks,
     render_conversation_scope_block,
 )
+from nexus.services.conversation_branches import load_message_path
 from nexus.services.conversation_memory import (
     ConversationMemoryItem,
     ConversationStateSnapshot,
     collect_memory_source_refs,
     load_active_memory_items,
-    load_active_state_snapshot,
 )
 from nexus.services.conversations import conversation_scope_metadata
 from nexus.services.library_intelligence import load_current_library_artifact_context
@@ -139,17 +144,20 @@ def assemble_chat_context(
 
     scope_metadata = conversation_scope_metadata(db, conversation)
     attached_context_refs = load_message_context_refs(db, run.user_message_id)
-    snapshot = load_active_state_snapshot(
+    path_messages = load_message_path(
         db,
         conversation_id=conversation.id,
-        prompt_version=PROMPT_VERSION,
+        leaf_message_id=user_message.id,
     )
-    after_seq = snapshot.covered_through_seq if snapshot is not None else None
+    path_message_ids = [message.id for message in path_messages if message.id != user_message.id]
+    snapshot = None
+    after_seq = None
     memory_items = load_active_memory_items(
         db,
         conversation_id=conversation.id,
         after_seq=after_seq,
         prompt_version=PROMPT_VERSION,
+        allowed_message_ids=set(path_message_ids),
     )
     memory_source_refs = collect_memory_source_refs(memory_items=memory_items, snapshot=snapshot)
 
@@ -158,6 +166,7 @@ def assemble_chat_context(
         conversation_id=conversation.id,
         before_seq=user_message.seq,
         after_seq=after_seq,
+        path_message_ids=path_message_ids,
     )
     planner_history = _history_turns_from_units(history_units[-4:])
     attached_context_ref_payloads = message_context_ref_payloads(db, attached_context_refs)
@@ -271,6 +280,28 @@ def assemble_chat_context(
                     source_version=_context_source_version(ref),
                 ),
                 context_ref,
+            )
+        )
+
+    if user_message.branch_anchor_kind == "assistant_selection":
+        branch_anchor_ref = {
+            "type": "assistant_selection_branch_anchor",
+            "message_id": str(user_message.branch_anchor.get("message_id") or ""),
+            "user_message_id": str(user_message.id),
+            "parent_message_id": str(user_message.parent_message_id),
+        }
+        mandatory_blocks.append(
+            (
+                "branch_anchor",
+                make_prompt_block(
+                    block_id=f"branch_anchor:{user_message.id}",
+                    role="system",
+                    lane="attached_context",
+                    text=_render_branch_anchor_block(user_message.branch_anchor),
+                    source_refs=[branch_anchor_ref],
+                    source_version=f"message_branch_anchor:{user_message.id}",
+                ),
+                branch_anchor_ref,
             )
         )
 
@@ -814,6 +845,15 @@ def load_message_context_refs(db: Session, user_message_id: UUID) -> list[Contex
             snapshot = (
                 row.context_snapshot_json if isinstance(row.context_snapshot_json, Mapping) else {}
             )
+            if row.source_media_id is None:
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found")
+            raw_locator = snapshot.get("locator")
+            if isinstance(row.locator_json, dict) and row.locator_json:
+                locator = cast(dict[str, Any], row.locator_json)
+            elif isinstance(raw_locator, Mapping):
+                locator = dict(cast(Mapping[str, Any], raw_locator))
+            else:
+                locator = {"type": "unknown"}
             refs.append(
                 ReaderSelectionContext(
                     kind="reader_selection",
@@ -833,21 +873,17 @@ def load_message_context_refs(db: Session, user_message_id: UUID) -> list[Contex
                     exact=_context_snapshot_string(snapshot.get("exact"), fallback=""),
                     prefix=_context_snapshot_optional_string(snapshot.get("prefix")),
                     suffix=_context_snapshot_optional_string(snapshot.get("suffix")),
-                    locator=(
-                        row.locator_json
-                        if isinstance(row.locator_json, dict) and row.locator_json
-                        else dict(snapshot.get("locator"))
-                        if isinstance(snapshot.get("locator"), Mapping)
-                        else {"type": "unknown"}
-                    ),
+                    locator=locator,
                 )
             )
             continue
 
+        if row.object_type is None or row.object_id is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found")
         refs.append(
             MessageContextRef(
                 kind="object_ref",
-                type=row.object_type,
+                type=cast(MESSAGE_CONTEXT_TYPES, row.object_type),
                 id=row.object_id,
                 evidence_span_ids=_context_snapshot_evidence_span_ids(row.context_snapshot_json),
             )
@@ -872,12 +908,33 @@ def _context_snapshot_optional_string(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _render_branch_anchor_block(anchor: Mapping[str, object]) -> str:
+    exact = anchor.get("exact")
+    prefix = anchor.get("prefix")
+    suffix = anchor.get("suffix")
+    offset_status = anchor.get("offset_status")
+    lines = [
+        "The user branched from this selected part of the previous assistant answer.",
+        "<assistant_selection>",
+    ]
+    if offset_status in {"mapped", "unmapped"}:
+        lines.append(f"<offset_status>{offset_status}</offset_status>")
+    if isinstance(prefix, str) and prefix:
+        lines.append(f"<prefix>{xml_escape(prefix)}</prefix>")
+    lines.append(f"<exact>{xml_escape(exact if isinstance(exact, str) else '')}</exact>")
+    if isinstance(suffix, str) and suffix:
+        lines.append(f"<suffix>{xml_escape(suffix)}</suffix>")
+    lines.append("</assistant_selection>")
+    return "\n".join(lines)
+
+
 def load_recent_history_units(
     db: Session,
     *,
     conversation_id: UUID,
     before_seq: int,
     after_seq: int | None = None,
+    path_message_ids: Sequence[UUID] | None = None,
 ) -> list[HistoryUnit]:
     """Load completed recent history as pair-aware units in chronological order."""
 
@@ -891,6 +948,11 @@ def load_recent_history_units(
     if after_seq is not None:
         filters.append("seq > :after_seq")
         params["after_seq"] = after_seq
+    if path_message_ids is not None:
+        if not path_message_ids:
+            return []
+        filters.append("id = ANY(:path_message_ids)")
+        params["path_message_ids"] = list(path_message_ids)
 
     rows = db.execute(
         text(

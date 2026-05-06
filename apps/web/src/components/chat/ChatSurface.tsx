@@ -3,8 +3,10 @@
 import type { RefObject, ReactNode, UIEventHandler } from "react";
 import Button from "@/components/ui/Button";
 import type {
+  BranchDraft,
   ConversationMessage,
   ConversationScope,
+  ForkOption,
 } from "@/lib/conversations/types";
 import ConversationScopeChip from "./ConversationScopeChip";
 import { MessageRow, type ReaderSourceTarget } from "./MessageRow";
@@ -19,6 +21,10 @@ export default function ChatSurface({
   emptyState,
   composer,
   scope,
+  forkOptionsByParentId = {},
+  switchableLeafIds,
+  onSelectFork,
+  onReplyToAssistant,
   onReaderSourceActivate,
 }: {
   messages: ConversationMessage[];
@@ -29,6 +35,10 @@ export default function ChatSurface({
   emptyState?: ReactNode;
   composer: ReactNode;
   scope?: ConversationScope;
+  forkOptionsByParentId?: Record<string, ForkOption[]>;
+  switchableLeafIds?: Set<string>;
+  onSelectFork?: (fork: ForkOption) => void;
+  onReplyToAssistant?: (draft: BranchDraft) => void;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
 }) {
   return (
@@ -71,6 +81,10 @@ export default function ChatSurface({
             <MessageRow
               key={msg.id}
               message={msg}
+              forkOptions={forkOptionsByParentId[msg.id] ?? []}
+              switchableLeafIds={switchableLeafIds}
+              onSelectFork={onSelectFork}
+              onReplyToAssistant={onReplyToAssistant}
               onReaderSourceActivate={onReaderSourceActivate}
             />
           ))}

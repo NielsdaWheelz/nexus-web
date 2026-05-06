@@ -113,6 +113,15 @@ export default function ReaderAssistantPane({
     dedupeContexts(contexts),
   );
   const openTelemetryBaseRef = useRef<Record<string, unknown> | null>(null);
+  const activeReplyParentMessageId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role === "assistant" && message.status === "complete") {
+        return message.id;
+      }
+    }
+    return null;
+  }, [messages]);
   if (openTelemetryBaseRef.current === null) {
     openTelemetryBaseRef.current = {
       surface,
@@ -577,6 +586,7 @@ export default function ReaderAssistantPane({
             conversationId={activeConversationId}
             conversationScope={conversationScope}
             attachedContexts={pendingContexts}
+            parentMessageId={activeReplyParentMessageId}
             onRemoveContext={(index) =>
               setPendingContexts((prev) => prev.filter((_, i) => i !== index))
             }

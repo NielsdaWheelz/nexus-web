@@ -223,6 +223,16 @@ class DirectSessionManager:
                 if table == "conversations" and column == "id":
                     session.execute(
                         text(
+                            "DELETE FROM conversation_active_paths WHERE conversation_id = :value"
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM conversation_branches WHERE conversation_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
                             """
                             DELETE FROM message_context_items
                             WHERE message_id IN (
@@ -236,6 +246,18 @@ class DirectSessionManager:
                 if table == "messages" and column == "id":
                     session.execute(
                         text("DELETE FROM message_context_items WHERE message_id = :value"),
+                        {"value": value},
+                    )
+
+                if table == "messages" and column == "conversation_id":
+                    session.execute(
+                        text(
+                            "DELETE FROM conversation_active_paths WHERE conversation_id = :value"
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM conversation_branches WHERE conversation_id = :value"),
                         {"value": value},
                     )
 

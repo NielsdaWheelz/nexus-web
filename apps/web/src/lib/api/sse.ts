@@ -10,6 +10,7 @@
  */
 
 import type { ObjectType } from "@/lib/objectRefs";
+import type { BranchAnchor } from "@/lib/conversations/types";
 
 /** Maximum single event payload size (256 KB). */
 const MAX_EVENT_SIZE_BYTES = 256 * 1024;
@@ -253,6 +254,8 @@ export interface ChatRunCreateRequest {
   model_id: string;
   reasoning: "default" | "none" | "minimal" | "low" | "medium" | "high" | "max";
   key_mode?: "auto" | "byok_only" | "platform_only";
+  parent_message_id?: string;
+  branch_anchor?: BranchAnchor;
   conversation_scope?: ConversationScopeInput;
   contexts?: ChatRunContext[];
   web_search: {

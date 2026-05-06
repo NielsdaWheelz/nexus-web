@@ -10,6 +10,8 @@ const API_PORT = process.env.API_PORT ?? "8000";
 const REAL_MEDIA_ENABLED = process.env.E2E_REAL_MEDIA === "1";
 const LEGACY_SYNTHETIC_ENABLED = process.env.E2E_LEGACY_SYNTHETIC === "1";
 
+process.env.NEXUS_KEY_ENCRYPTION_KEY ??= "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
 export default defineConfig({
   globalSetup: "./global-setup.mjs",
   testDir: "./tests",

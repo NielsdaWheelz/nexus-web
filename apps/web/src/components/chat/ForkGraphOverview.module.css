@@ -1,0 +1,97 @@
+.scroller {
+  overflow: auto;
+  max-width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.graph {
+  position: relative;
+  min-width: 100%;
+}
+
+.edges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.edge {
+  fill: none;
+  stroke: var(--edge);
+  stroke-width: 1.5;
+}
+
+.node {
+  position: absolute;
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  padding: var(--space-2);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--ink);
+  text-align: left;
+}
+
+button.node {
+  cursor: pointer;
+}
+
+button.node:hover,
+button.node:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.node[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent) 56%, var(--edge));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+}
+
+.node[data-match="true"] {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning, #f5a524) 36%, transparent);
+}
+
+.branchIcon {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  color: var(--ink-faint);
+}
+
+.title,
+.preview,
+.quote,
+.meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title {
+  padding-right: var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.preview,
+.quote,
+.meta,
+.empty {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.quote {
+  color: var(--ink-faint);
+}
+
+.meta,
+.empty {
+  color: var(--ink-faint);
+}

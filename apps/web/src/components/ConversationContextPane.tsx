@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import ContextRow from "@/components/ui/ContextRow";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ConversationMemoryPanel from "@/components/chat/ConversationMemoryPanel";
 import ConversationScopeChip from "@/components/chat/ConversationScopeChip";
+import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import type { ContextItem, ContextItemColor, ContextItemType } from "@/lib/api/sse";
 import {
@@ -15,6 +17,8 @@ import {
 import type {
   ConversationMemoryInspection,
   ConversationScope,
+  BranchGraph,
+  ForkOption,
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
 import type { ReactNode } from "react";
@@ -46,27 +50,115 @@ interface ContextRowViewModel {
 }
 
 interface ConversationContextPaneProps {
+  conversationId?: string;
   scope?: ConversationScope;
   memory?: ConversationMemoryInspection | null;
   contexts: ContextItem[];
   persistedRows?: PersistedContextRow[];
+  forkOptionsByParentId?: Record<string, ForkOption[]>;
+  branchGraph?: BranchGraph;
+  switchableLeafIds?: Set<string>;
+  selectedPathMessageIds?: Set<string>;
+  onSelectFork?: (fork: ForkOption) => void;
+  onSelectGraphLeaf?: (leafMessageId: string) => void;
+  onForksChanged?: () => void;
   onRemoveContext?: (index: number) => void;
   testId?: string;
 }
 
 export default function ConversationContextPane({
+  conversationId,
   scope,
   memory,
   contexts,
   persistedRows = [],
+  forkOptionsByParentId = {},
+  branchGraph = { nodes: [], edges: [], root_message_id: null },
+  switchableLeafIds,
+  selectedPathMessageIds = new Set(),
+  onSelectFork,
+  onSelectGraphLeaf,
+  onForksChanged,
   onRemoveContext,
   testId = "conversation-context-pane",
 }: ConversationContextPaneProps) {
+  const [mode, setMode] = useState<"context" | "forks">("context");
   const hasMemory =
     Boolean(memory?.state_snapshot) || (memory?.memory_items?.length ?? 0) > 0;
+  const forkCount = Object.values(forkOptionsByParentId).reduce(
+    (count, forks) => count + forks.length,
+    0,
+  );
 
   return (
-    <div className={styles.content} data-testid={testId}>
+    <div className={styles.shell} data-testid={testId}>
+      <div className={styles.toggle} role="tablist" aria-label="Chat side panel">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "context"}
+          onClick={() => setMode("context")}
+        >
+          Context
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "forks"}
+          onClick={() => setMode("forks")}
+        >
+          Forks{forkCount > 0 ? ` ${forkCount}` : ""}
+        </button>
+      </div>
+
+      <div className={styles.content}>
+        {mode === "forks" ? (
+          conversationId && onSelectFork ? (
+            <ConversationForksPanel
+              conversationId={conversationId}
+              forkOptionsByParentId={forkOptionsByParentId}
+              branchGraph={branchGraph}
+              switchableLeafIds={switchableLeafIds}
+              selectedPathMessageIds={selectedPathMessageIds}
+              onSelectFork={onSelectFork}
+              onSelectGraphLeaf={onSelectGraphLeaf ?? (() => undefined)}
+              onForksChanged={onForksChanged}
+            />
+          ) : (
+            <FeedbackNotice severity="neutral" title="No forks yet." />
+          )
+        ) : (
+          <ContextContent
+            scope={scope}
+            memory={memory}
+            contexts={contexts}
+            persistedRows={persistedRows}
+            hasMemory={hasMemory}
+            onRemoveContext={onRemoveContext}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ContextContent({
+  scope,
+  memory,
+  contexts,
+  persistedRows,
+  hasMemory,
+  onRemoveContext,
+}: {
+  scope?: ConversationScope;
+  memory?: ConversationMemoryInspection | null;
+  contexts: ContextItem[];
+  persistedRows: PersistedContextRow[];
+  hasMemory: boolean;
+  onRemoveContext?: (index: number) => void;
+}) {
+  return (
+    <>
       {(!scope || scope.type === "general") &&
       contexts.length === 0 &&
       persistedRows.length === 0 &&
@@ -146,7 +238,7 @@ export default function ConversationContextPane({
       ) : null}
 
       <ConversationMemoryPanel memory={memory} />
-    </div>
+    </>
   );
 }
 

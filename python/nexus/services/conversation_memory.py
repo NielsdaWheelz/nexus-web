@@ -74,6 +74,7 @@ class ConversationMemoryItem:
     source_required: bool
     valid_from_seq: int | None
     valid_through_seq: int | None
+    created_by_message_id: UUID | None
     sources: tuple[MemorySource, ...]
 
 
@@ -204,6 +205,7 @@ def load_active_memory_items(
     conversation_id: UUID,
     after_seq: int | None = None,
     prompt_version: str | None = None,
+    allowed_message_ids: set[UUID] | None = None,
 ) -> list[ConversationMemoryItem]:
     """Load active memory items."""
 
@@ -220,7 +222,7 @@ def load_active_memory_items(
         text(
             f"""
             SELECT id, conversation_id, kind, body, source_required, valid_from_seq,
-                   valid_through_seq
+                   valid_through_seq, created_by_message_id
             FROM conversation_memory_items
             WHERE {" AND ".join(filters)}
             ORDER BY valid_from_seq ASC NULLS LAST, created_at ASC, id ASC
@@ -238,6 +240,12 @@ def load_active_memory_items(
         if kind not in MEMORY_KINDS:
             continue
         sources = tuple(sources_by_item_id.get(row[0], []))
+        if allowed_message_ids is not None and not _memory_item_sources_are_on_path(
+            created_by_message_id=row[7],
+            sources=sources,
+            allowed_message_ids=allowed_message_ids,
+        ):
+            continue
         validate_memory_candidate(
             kind=kind,
             body=str(row[3] or ""),
@@ -253,10 +261,36 @@ def load_active_memory_items(
                 source_required=bool(row[4]),
                 valid_from_seq=row[5],
                 valid_through_seq=row[6],
+                created_by_message_id=row[7],
                 sources=sources,
             )
         )
     return items
+
+
+def _memory_item_sources_are_on_path(
+    *,
+    created_by_message_id: UUID | None,
+    sources: Sequence[MemorySource],
+    allowed_message_ids: set[UUID],
+) -> bool:
+    if created_by_message_id is not None and created_by_message_id not in allowed_message_ids:
+        return False
+    message_refs = [_message_id_from_source_ref(source.source_ref) for source in sources]
+    concrete_refs = [message_id for message_id in message_refs if message_id is not None]
+    if concrete_refs:
+        return all(message_id in allowed_message_ids for message_id in concrete_refs)
+    return created_by_message_id is None and not sources
+
+
+def _message_id_from_source_ref(source_ref: Mapping[str, object]) -> UUID | None:
+    if source_ref.get("type") != "message":
+        return None
+    raw_message_id = source_ref.get("message_id") or source_ref.get("id")
+    try:
+        return UUID(str(raw_message_id))
+    except (TypeError, ValueError):
+        return None
 
 
 def collect_memory_source_refs(

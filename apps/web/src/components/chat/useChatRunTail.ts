@@ -15,11 +15,22 @@ import { fetchStreamToken } from "@/lib/api/streamToken";
 import type {
   ChatRunResponse,
   ConversationMessage,
+  ForkOption,
 } from "@/lib/conversations/types";
 import { useChatMessageUpdates } from "@/components/chat/useChatMessageUpdates";
+import {
+  selectedPathAfterRun,
+  upsertForkOptionForRun,
+} from "@/lib/conversations/branching";
 
 type ChatRunData = ChatRunResponse["data"];
 type TerminalRunStatus = "complete" | "error" | "cancelled";
+type RunVisibilityTarget = {
+  runId: string;
+  conversationId: string;
+  userMessageId: string;
+  assistantMessageId: string;
+};
 
 const CHAT_STREAM_RETRY_BASE_MS = 1000;
 const CHAT_STREAM_RETRY_MAX_MS = 8000;
@@ -40,18 +51,22 @@ function chatStreamRetryDelayMs(attempt: number): number {
 
 export function useChatRunTail({
   setMessages,
+  setForkOptionsByParentId,
   shouldScrollRef,
   onRunFinished,
   onFirstDelta,
   onRunDone,
   onConversationAvailable,
+  shouldApplyRun,
 }: {
   setMessages: Dispatch<SetStateAction<ConversationMessage[]>>;
+  setForkOptionsByParentId?: Dispatch<SetStateAction<Record<string, ForkOption[]>>>;
   shouldScrollRef: MutableRefObject<boolean>;
   onRunFinished?: (runId: string) => void;
   onFirstDelta?: (runId: string) => void;
   onRunDone?: (runId: string, status: TerminalRunStatus, errorCode: string | null) => void;
   onConversationAvailable?: (conversationId: string, runId: string) => void;
+  shouldApplyRun?: (target: RunVisibilityTarget) => boolean;
 }) {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const activeStreamsRef = useRef<Map<string, () => void>>(new Map());
@@ -76,33 +91,11 @@ export function useChatRunTail({
       ],
     ) => {
       setMessages((prev) => {
-        const replaceIds = new Set([
-          ...idsToReplace,
-          runData.user_message.id,
-          runData.assistant_message.id,
-        ]);
-        const next: ConversationMessage[] = [];
-        let inserted = false;
-
-        for (const message of prev) {
-          if (!replaceIds.has(message.id)) {
-            next.push(message);
-            continue;
-          }
-          if (!inserted) {
-            next.push(runData.user_message, runData.assistant_message);
-            inserted = true;
-          }
-        }
-
-        if (!inserted) {
-          next.push(runData.user_message, runData.assistant_message);
-        }
-
-        return next.sort((a, b) => a.seq - b.seq);
+        return selectedPathAfterRun(prev, runData, idsToReplace);
       });
+      setForkOptionsByParentId?.((prev) => upsertForkOptionForRun(prev, runData));
     },
-    [setMessages],
+    [setForkOptionsByParentId, setMessages],
   );
 
   const abortAll = useCallback(() => {
@@ -119,7 +112,6 @@ export function useChatRunTail({
   const tailChatRun = useCallback(
     async (runData: ChatRunData) => {
       const runId = runData.run.id;
-      if (activeStreamsRef.current.has(runId)) return;
 
       const originalUserId = runData.user_message.id;
       const originalAssistantId = runData.assistant_message.id;
@@ -132,9 +124,40 @@ export function useChatRunTail({
       let doneNotified = false;
       let finished = false;
       const token = (runTokensRef.current.get(runId) ?? 0) + 1;
+
+      const runIsVisible = (
+        data: ChatRunData,
+        userMessageId: string,
+        assistantMessageId: string,
+      ) =>
+        shouldApplyRun?.({
+          runId,
+          conversationId: data.conversation.id,
+          userMessageId,
+          assistantMessageId,
+        }) ?? true;
+
+      const currentRunIsVisible = () =>
+        runIsVisible(runData, currentUserId, currentAssistantId);
+
+      const mergeRunMessagesIfVisible = (
+        data: ChatRunData,
+        idsToReplace?: string[],
+      ) => {
+        if (!runIsVisible(data, data.user_message.id, data.assistant_message.id)) {
+          return;
+        }
+        mergeRunMessages(data, idsToReplace);
+      };
+
+      if (activeStreamsRef.current.has(runId)) {
+        mergeRunMessagesIfVisible(runData);
+        return;
+      }
+
       runTokensRef.current.set(runId, token);
 
-      mergeRunMessages(runData);
+      mergeRunMessagesIfVisible(runData);
       onConversationAvailable?.(runData.conversation.id, runId);
 
       const clearRetryTimer = () => {
@@ -159,11 +182,13 @@ export function useChatRunTail({
       };
 
       if (isTerminalRunStatus(runData.run.status)) {
-        handleDone(
-          runData.assistant_message.id,
-          runData.run.status,
-          runData.run.error_code,
-        );
+        if (currentRunIsVisible()) {
+          handleDone(
+            runData.assistant_message.id,
+            runData.run.status,
+            runData.run.error_code,
+          );
+        }
         notifyDone(runData.run.status, runData.run.error_code);
         finishRun();
         return;
@@ -177,7 +202,7 @@ export function useChatRunTail({
           const response = await apiFetch<ChatRunResponse>(`/api/chat-runs/${runId}`);
           if (runTokensRef.current.get(runId) !== token) return null;
           flushDeltas();
-          mergeRunMessages(response.data, [
+          mergeRunMessagesIfVisible(response.data, [
             originalUserId,
             originalAssistantId,
             currentUserId,
@@ -190,11 +215,13 @@ export function useChatRunTail({
           currentAssistantId = response.data.assistant_message.id;
 
           if (isTerminalRunStatus(response.data.run.status)) {
-            handleDone(
-              currentAssistantId,
-              response.data.run.status,
-              response.data.run.error_code,
-            );
+            if (currentRunIsVisible()) {
+              handleDone(
+                currentAssistantId,
+                response.data.run.status,
+                response.data.run.error_code,
+              );
+            }
             notifyDone(response.data.run.status, response.data.run.error_code);
             finishRun();
           }
@@ -261,16 +288,18 @@ export function useChatRunTail({
                 case "meta":
                   currentUserId = event.data.user_message_id;
                   currentAssistantId = event.data.assistant_message_id;
-                  handleMetaReceived(
-                    originalUserId,
-                    currentUserId,
-                    originalAssistantId,
-                    currentAssistantId,
-                  );
+                  if (currentRunIsVisible()) {
+                    handleMetaReceived(
+                      originalUserId,
+                      currentUserId,
+                      originalAssistantId,
+                      currentAssistantId,
+                    );
+                  }
                   onConversationAvailable?.(event.data.conversation_id, runId);
                   break;
                 case "delta":
-                  if (!firstDeltaRunIdsRef.current.has(runId)) {
+                  if (currentRunIsVisible() && !firstDeltaRunIdsRef.current.has(runId)) {
                     firstDeltaRunIdsRef.current.add(runId);
                     onFirstDelta?.(runId);
                   }
@@ -279,30 +308,35 @@ export function useChatRunTail({
                       replayDeltaCharsToSkip -= event.data.delta.length;
                       break;
                     }
-                    handleDelta(
-                      currentAssistantId,
-                      event.data.delta.slice(replayDeltaCharsToSkip),
-                    );
+                    const remainingDelta = event.data.delta.slice(replayDeltaCharsToSkip);
                     replayDeltaCharsToSkip = 0;
+                    if (!currentRunIsVisible()) break;
+                    handleDelta(currentAssistantId, remainingDelta);
                     break;
                   }
+                  if (!currentRunIsVisible()) break;
                   handleDelta(currentAssistantId, event.data.delta);
                   break;
                 case "tool_call":
+                  if (!currentRunIsVisible()) break;
                   handleToolCall(currentAssistantId, event.data);
                   break;
                 case "tool_result":
+                  if (!currentRunIsVisible()) break;
                   handleToolResult(currentAssistantId, event.data);
                   break;
                 case "citation":
+                  if (!currentRunIsVisible()) break;
                   handleCitation(currentAssistantId, event.data);
                   break;
                 case "done":
-                  handleDone(
-                    currentAssistantId,
-                    event.data.status,
-                    event.data.error_code,
-                  );
+                  if (currentRunIsVisible()) {
+                    handleDone(
+                      currentAssistantId,
+                      event.data.status,
+                      event.data.error_code,
+                    );
+                  }
                   notifyDone(event.data.status, event.data.error_code);
                   break;
                 default: {
@@ -344,6 +378,7 @@ export function useChatRunTail({
       onConversationAvailable,
       onRunDone,
       onRunFinished,
+      shouldApplyRun,
     ],
   );
 

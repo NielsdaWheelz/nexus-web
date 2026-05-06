@@ -15,6 +15,135 @@ const baseMessage = {
 } as const;
 
 describe("MessageRow", () => {
+  it("exposes a reply fork action on complete assistant messages", () => {
+    const onReplyToAssistant = vi.fn();
+
+    render(
+      <MessageRow
+        message={baseMessage}
+        onReplyToAssistant={onReplyToAssistant}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reply / fork from here" }),
+    );
+
+    expect(onReplyToAssistant).toHaveBeenCalledWith({
+      parentMessageId: "assistant-1",
+      parentMessageSeq: 1,
+      parentMessagePreview: "Current answer.",
+      anchor: {
+        kind: "assistant_message",
+      },
+    });
+  });
+
+  it("branches from selected assistant answer text", () => {
+    const onReplyToAssistant = vi.fn();
+
+    render(
+      <MessageRow
+        message={baseMessage}
+        onReplyToAssistant={onReplyToAssistant}
+      />,
+    );
+
+    const answer = screen.getByText("Current answer.");
+    const removeAllRanges = vi.fn();
+    const cloneRange = () =>
+      ({
+        selectNodeContents: vi.fn(),
+        setEnd: vi.fn(),
+        setStart: vi.fn(),
+        toString: () => "",
+        detach: vi.fn(),
+      }) as unknown as Range;
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      rangeCount: 1,
+      isCollapsed: false,
+      toString: () => "answer",
+      getRangeAt: () =>
+        ({
+          startContainer: answer,
+          endContainer: answer,
+          commonAncestorContainer: answer,
+          getBoundingClientRect: () => new DOMRect(20, 20, 80, 20),
+          cloneRange,
+        }) as unknown as Range,
+      removeAllRanges,
+    } as unknown as Selection);
+
+    fireEvent.mouseUp(answer);
+    fireEvent.click(screen.getByRole("button", { name: "Branch from selection" }));
+
+    expect(onReplyToAssistant).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parentMessageId: "assistant-1",
+        anchor: expect.objectContaining({
+          kind: "assistant_selection",
+          message_id: "assistant-1",
+          exact: "answer",
+          offset_status: "mapped",
+          start_offset: 8,
+          end_offset: 14,
+        }),
+      }),
+    );
+  });
+
+  it("branches from repeated selected text as unmapped without offsets", () => {
+    const onReplyToAssistant = vi.fn();
+    const message: ConversationMessage = {
+      ...baseMessage,
+      content: "repeat then repeat.",
+    };
+
+    render(
+      <MessageRow
+        message={message}
+        onReplyToAssistant={onReplyToAssistant}
+      />,
+    );
+
+    const answer = screen.getByText("repeat then repeat.");
+    const cloneRange = () =>
+      ({
+        selectNodeContents: vi.fn(),
+        setEnd: vi.fn(),
+        setStart: vi.fn(),
+        toString: () => "",
+        detach: vi.fn(),
+      }) as unknown as Range;
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      rangeCount: 1,
+      isCollapsed: false,
+      toString: () => "repeat",
+      getRangeAt: () =>
+        ({
+          startContainer: answer,
+          endContainer: answer,
+          commonAncestorContainer: answer,
+          getBoundingClientRect: () => new DOMRect(20, 20, 80, 20),
+          cloneRange,
+        }) as unknown as Range,
+      removeAllRanges: vi.fn(),
+    } as unknown as Selection);
+
+    fireEvent.mouseUp(answer);
+    fireEvent.click(screen.getByRole("button", { name: "Branch from selection" }));
+
+    const draft = onReplyToAssistant.mock.calls[0][0];
+    expect(draft.anchor).toMatchObject({
+      kind: "assistant_selection",
+      message_id: "assistant-1",
+      exact: "repeat",
+      offset_status: "unmapped",
+    });
+    expect("start_offset" in draft.anchor).toBe(false);
+    expect("end_offset" in draft.anchor).toBe(false);
+  });
+
   it("renders persisted claim evidence with exact web snippets and statuses", () => {
     const content = "Nexus cites exact evidence.";
     const message: ConversationMessage = {

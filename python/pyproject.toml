@@ -100,6 +100,7 @@ include = [
     "nexus/services/capabilities.py",
     "nexus/services/canonicalize.py",
     "nexus/services/chat_runs.py",
+    "nexus/services/conversation_branches.py",
     "nexus/services/chat_prompt.py",
     "nexus/services/context_rendering.py",
     "nexus/services/context_window.py",

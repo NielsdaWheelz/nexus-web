@@ -19,6 +19,7 @@ import base64
 import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, text
@@ -38,6 +39,9 @@ from nexus.db.models import (
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.conversation import (
+    BRANCH_ANCHOR_KINDS,
+    HIGHLIGHT_COLORS,
+    MESSAGE_CONTEXT_TYPES,
     ConversationOut,
     ConversationScopeOut,
     ConversationScopeRequest,
@@ -427,11 +431,16 @@ def message_to_out(
     claim_evidence: list[MessageClaimEvidenceOut] | None = None,
 ) -> MessageOut:
     """Convert Message ORM model to MessageOut schema."""
+    branch_anchor = {"kind": message.branch_anchor_kind, **(message.branch_anchor or {})}
     return MessageOut(
         id=message.id,
         seq=message.seq,
         role=message.role,
         content=message.content,
+        parent_message_id=message.parent_message_id,
+        branch_root_message_id=message.branch_root_message_id,
+        branch_anchor_kind=cast(BRANCH_ANCHOR_KINDS, message.branch_anchor_kind),
+        branch_anchor=branch_anchor,
         contexts=contexts or [],
         tool_calls=tool_calls or [],
         evidence_summary=evidence_summary,
@@ -495,7 +504,7 @@ def load_message_context_snapshots_for_message_ids(
         snapshots_by_message_id.setdefault(row.message_id, []).append(
             MessageContextSnapshot(
                 kind="object_ref",
-                type=row.object_type,
+                type=cast(MESSAGE_CONTEXT_TYPES, row.object_type),
                 id=row.object_id,
                 evidence_span_ids=_snapshot_evidence_span_ids(stored),
                 color=_optional_highlight_color(stored.get("color")),
@@ -531,9 +540,9 @@ def _optional_mapping(value: object) -> dict[str, object] | None:
     return None
 
 
-def _optional_highlight_color(value: object) -> str | None:
+def _optional_highlight_color(value: object) -> HIGHLIGHT_COLORS | None:
     if value in {"yellow", "green", "blue", "pink", "purple"}:
-        return str(value)
+        return cast(HIGHLIGHT_COLORS, value)
     return None
 
 
@@ -968,45 +977,10 @@ def list_messages(
 
     limit = clamp_limit(limit)
 
-    # Build query with ASC ordering (oldest first, chat order)
+    rows = _selected_path_message_rows(db, viewer_id, conversation_id)
     if cursor:
         cursor_seq, cursor_id = decode_message_cursor(cursor)
-
-        # Tuple comparison for ASC ordering: (seq, id) > (cursor.seq, cursor.id)
-        result = db.execute(
-            text("""
-                SELECT m.id, m.seq, m.role, m.content, m.status, m.error_code,
-                       m.created_at, m.updated_at
-                FROM messages m
-                WHERE m.conversation_id = :conversation_id
-                  AND (m.seq, m.id) > (:cursor_seq, :cursor_id)
-                ORDER BY m.seq ASC, m.id ASC
-                LIMIT :limit
-            """),
-            {
-                "conversation_id": conversation_id,
-                "cursor_seq": cursor_seq,
-                "cursor_id": cursor_id,
-                "limit": limit + 1,
-            },
-        )
-    else:
-        result = db.execute(
-            text("""
-                SELECT m.id, m.seq, m.role, m.content, m.status, m.error_code,
-                       m.created_at, m.updated_at
-                FROM messages m
-                WHERE m.conversation_id = :conversation_id
-                ORDER BY m.seq ASC, m.id ASC
-                LIMIT :limit
-            """),
-            {
-                "conversation_id": conversation_id,
-                "limit": limit + 1,
-            },
-        )
-
-    rows = result.fetchall()
+        rows = [row for row in rows if (row[1], row[0]) > (cursor_seq, cursor_id)]
 
     # Check if there are more results
     has_more = len(rows) > limit
@@ -1027,6 +1001,10 @@ def list_messages(
             seq=row[1],
             role=row[2],
             content=row[3],
+            parent_message_id=row[8],
+            branch_root_message_id=row[9],
+            branch_anchor_kind=row[10],
+            branch_anchor={"kind": row[10], **(row[11] or {})},
             contexts=contexts_by_message_id.get(row[0], []),
             tool_calls=tool_calls_by_message_id.get(row[0], []),
             evidence_summary=evidence_summary_by_message_id.get(row[0]),
@@ -1047,6 +1025,58 @@ def list_messages(
         next_cursor = encode_message_cursor(last.seq, last.id)
 
     return messages, PageInfo(next_cursor=next_cursor)
+
+
+def _selected_path_message_rows(db: Session, viewer_id: UUID, conversation_id: UUID) -> list:
+    active_leaf_id = db.scalar(
+        text(
+            """
+            SELECT cap.active_leaf_message_id
+            FROM conversation_active_paths cap
+            JOIN messages active_message ON active_message.id = cap.active_leaf_message_id
+            WHERE cap.conversation_id = :conversation_id
+              AND cap.viewer_user_id = :viewer_id
+              AND active_message.conversation_id = :conversation_id
+            """
+        ),
+        {"conversation_id": conversation_id, "viewer_id": viewer_id},
+    )
+    if active_leaf_id is None:
+        active_leaf_id = db.scalar(
+            select(Message.id)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.seq.desc(), Message.id.desc())
+            .limit(1)
+        )
+    if active_leaf_id is None:
+        return []
+
+    return list(
+        db.execute(
+            text(
+                """
+                WITH RECURSIVE path AS (
+                    SELECT id, parent_message_id
+                    FROM messages
+                    WHERE conversation_id = :conversation_id
+                      AND id = :active_leaf_id
+                    UNION ALL
+                    SELECT parent.id, parent.parent_message_id
+                    FROM messages parent
+                    JOIN path child ON child.parent_message_id = parent.id
+                    WHERE parent.conversation_id = :conversation_id
+                )
+                SELECT m.id, m.seq, m.role, m.content, m.status, m.error_code,
+                       m.created_at, m.updated_at, m.parent_message_id,
+                       m.branch_root_message_id, m.branch_anchor_kind, m.branch_anchor
+                FROM messages m
+                JOIN path ON path.id = m.id
+                ORDER BY m.seq ASC, m.id ASC
+                """
+            ),
+            {"conversation_id": conversation_id, "active_leaf_id": active_leaf_id},
+        ).fetchall()
+    )
 
 
 def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> None:
@@ -1075,7 +1105,8 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> None:
 
     conversation_id = conversation.id
 
-    delete_message_rows_without_commit(db, [message_id])
+    message_ids = _message_subtree_ids(db, conversation_id, message_id)
+    delete_message_rows_without_commit(db, message_ids)
     db.flush()
 
     # Check remaining message count in same transaction
@@ -1122,6 +1153,14 @@ def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) 
         {"conversation_id": conversation_id},
     )
     db.execute(
+        text("DELETE FROM conversation_active_paths WHERE conversation_id = :conversation_id"),
+        {"conversation_id": conversation_id},
+    )
+    db.execute(
+        text("DELETE FROM conversation_branches WHERE conversation_id = :conversation_id"),
+        {"conversation_id": conversation_id},
+    )
+    db.execute(
         text("DELETE FROM conversation_media WHERE conversation_id = :conversation_id"),
         {"conversation_id": conversation_id},
     )
@@ -1136,6 +1175,21 @@ def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) 
 def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID]) -> None:
     if not message_ids:
         return
+
+    db.execute(
+        text("""
+            DELETE FROM conversation_active_paths
+            WHERE active_leaf_message_id = ANY(:message_ids)
+        """),
+        {"message_ids": list(message_ids)},
+    )
+    db.execute(
+        text("""
+            DELETE FROM conversation_branches
+            WHERE branch_user_message_id = ANY(:message_ids)
+        """),
+        {"message_ids": list(message_ids)},
+    )
 
     chat_run_ids = _chat_run_ids_for_messages(db, message_ids)
     if chat_run_ids:
@@ -1236,6 +1290,29 @@ def _message_ids_for_conversation(db: Session, conversation_id: UUID) -> list[UU
             .order_by(Message.seq.asc(), Message.id.asc())
         )
     )
+
+
+def _message_subtree_ids(db: Session, conversation_id: UUID, message_id: UUID) -> list[UUID]:
+    rows = db.execute(
+        text(
+            """
+            WITH RECURSIVE subtree AS (
+                SELECT id
+                FROM messages
+                WHERE conversation_id = :conversation_id
+                  AND id = :message_id
+                UNION ALL
+                SELECT child.id
+                FROM messages child
+                JOIN subtree parent ON parent.id = child.parent_message_id
+                WHERE child.conversation_id = :conversation_id
+            )
+            SELECT id FROM subtree
+            """
+        ),
+        {"conversation_id": conversation_id, "message_id": message_id},
+    )
+    return [row[0] for row in rows]
 
 
 def _conversation_memory_item_ids(db: Session, conversation_id: UUID) -> list[UUID]:

@@ -1,7 +1,42 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4) 0;
+}
+
+.toggle button {
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.toggle button[aria-selected="true"] {
+  border-color: var(--accent);
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+}
+
 .content {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  flex: 1;
+  min-height: 0;
   height: 100%;
   padding: var(--space-4);
   overflow: auto;

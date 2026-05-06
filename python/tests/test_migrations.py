@@ -3366,13 +3366,24 @@ class TestS3SchemaConstraints:
                 {"id": conversation_id, "user_id": user_id},
             )
 
-            # Assistant message with pending status should succeed
+            user_message_id = uuid4()
             session.execute(
                 text("""
                     INSERT INTO messages (id, conversation_id, seq, role, content, status)
-                    VALUES (:id, :conv_id, 1, 'assistant', '', 'pending')
+                    VALUES (:id, :conv_id, 1, 'user', 'test', 'complete')
                 """),
-                {"id": uuid4(), "conv_id": conversation_id},
+                {"id": user_message_id, "conv_id": conversation_id},
+            )
+
+            # Assistant message with pending status should succeed when parented to a user.
+            session.execute(
+                text("""
+                    INSERT INTO messages (
+                        id, conversation_id, seq, role, content, status, parent_message_id
+                    )
+                    VALUES (:id, :conv_id, 2, 'assistant', '', 'pending', :parent_message_id)
+                """),
+                {"id": uuid4(), "conv_id": conversation_id, "parent_message_id": user_message_id},
             )
             session.commit()
 
@@ -3662,10 +3673,12 @@ class TestS3SchemaConstraints:
             )
             session.execute(
                 text("""
-                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
-                    VALUES (:id, :conv_id, 2, 'assistant', 'response', 'complete')
+                    INSERT INTO messages (
+                        id, conversation_id, seq, role, content, status, parent_message_id
+                    )
+                    VALUES (:id, :conv_id, 2, 'assistant', 'response', 'complete', :parent_message_id)
                 """),
-                {"id": msg2_id, "conv_id": conversation_id},
+                {"id": msg2_id, "conv_id": conversation_id, "parent_message_id": msg1_id},
             )
             session.commit()
 
@@ -3713,6 +3726,61 @@ class TestS3SchemaConstraints:
 
             session.rollback()
             assert "ck_chat_runs_idempotency_key_length" in str(exc_info.value)
+
+    def test_chat_branching_foreign_keys_are_not_cascading(self, migrated_engine):
+        """Branch-path ownership cleanup is explicit in services, not FK cascades."""
+        with Session(migrated_engine) as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT
+                        kcu.table_name,
+                        kcu.column_name,
+                        rc.delete_rule
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.key_column_usage kcu
+                      ON kcu.constraint_catalog = tc.constraint_catalog
+                     AND kcu.constraint_schema = tc.constraint_schema
+                     AND kcu.constraint_name = tc.constraint_name
+                    JOIN information_schema.referential_constraints rc
+                      ON rc.constraint_catalog = tc.constraint_catalog
+                     AND rc.constraint_schema = tc.constraint_schema
+                     AND rc.constraint_name = tc.constraint_name
+                    WHERE tc.constraint_type = 'FOREIGN KEY'
+                      AND kcu.table_name IN (
+                          'messages',
+                          'conversation_active_paths',
+                          'conversation_branches'
+                      )
+                      AND kcu.column_name IN (
+                          'parent_message_id',
+                          'branch_root_message_id',
+                          'conversation_id',
+                          'viewer_user_id',
+                          'active_leaf_message_id',
+                          'branch_user_message_id'
+                      )
+                    ORDER BY kcu.table_name, kcu.column_name
+                    """
+                )
+            ).fetchall()
+
+        delete_rules = {(row[0], row[1]): row[2] for row in rows}
+        expected_columns = {
+            ("messages", "parent_message_id"),
+            ("messages", "branch_root_message_id"),
+            ("conversation_active_paths", "conversation_id"),
+            ("conversation_active_paths", "viewer_user_id"),
+            ("conversation_active_paths", "active_leaf_message_id"),
+            ("conversation_branches", "conversation_id"),
+            ("conversation_branches", "branch_user_message_id"),
+        }
+        assert expected_columns.issubset(delete_rules), (
+            f"Missing branch FK assertions. Got: {delete_rules}"
+        )
+        assert {delete_rules[column] for column in expected_columns} == {"NO ACTION"}, (
+            f"Branching FKs must be non-cascading; got {delete_rules}"
+        )
 
     def test_fragment_block_offsets_constraint(self, migrated_engine):
         """CHECK constraint: end_offset >= start_offset."""

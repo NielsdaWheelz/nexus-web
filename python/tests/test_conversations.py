@@ -17,6 +17,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
+from nexus.db.models import ConversationBranch, Message
 from nexus.services.conversations import (
     DEFAULT_CONVERSATION_TITLE,
     MAX_CONVERSATION_TITLE_LENGTH,
@@ -654,9 +655,34 @@ class TestListMessages:
 
         with direct_db.session() as session:
             conversation_id = create_test_conversation(session, user_id)
-            create_test_message(session, conversation_id, seq=1, content="First")
-            create_test_message(session, conversation_id, seq=2, content="Second")
-            create_test_message(session, conversation_id, seq=3, content="Third")
+            first_id = create_test_message(session, conversation_id, seq=1, content="First")
+            second_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Second",
+                parent_message_id=first_id,
+            )
+            third_id = create_test_message(
+                session,
+                conversation_id,
+                seq=3,
+                content="Third",
+                parent_message_id=second_id,
+            )
+            third = session.get(Message, third_id)
+            assert third is not None
+            third.branch_anchor_kind = "assistant_message"
+            third.branch_anchor = {"message_id": str(second_id)}
+            session.add(
+                ConversationBranch(
+                    id=third_id,
+                    conversation_id=conversation_id,
+                    branch_user_message_id=third_id,
+                )
+            )
+            session.commit()
 
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
@@ -876,12 +902,19 @@ class TestListMessages:
 
         with direct_db.session() as session:
             conversation_id = create_test_conversation(session, user_id)
-            assistant_message_id = create_test_message(
+            user_message_id = create_test_message(
                 session,
                 conversation_id,
                 seq=1,
+                content="What supports this?",
+            )
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
                 role="assistant",
                 content="The answer is supported.",
+                parent_message_id=user_message_id,
             )
             summary_id = uuid4()
             claim_id = uuid4()
@@ -904,7 +937,7 @@ class TestListMessages:
                     VALUES (
                         :tool_call_id,
                         :conversation_id,
-                        :assistant_message_id,
+                        :user_message_id,
                         :assistant_message_id,
                         'app_search',
                         0,
@@ -916,6 +949,7 @@ class TestListMessages:
                 {
                     "tool_call_id": tool_call_id,
                     "conversation_id": conversation_id,
+                    "user_message_id": user_message_id,
                     "assistant_message_id": assistant_message_id,
                 },
             )
@@ -1089,7 +1123,9 @@ class TestListMessages:
         )
 
         assert response.status_code == 200
-        message = response.json()["data"][0]
+        message = next(
+            item for item in response.json()["data"] if item["id"] == str(assistant_message_id)
+        )
         assert message["evidence_summary"]["support_status"] == "supported"
         assert message["claims"][0]["claim_text"] == "The answer is supported."
         assert message["claim_evidence"][0]["exact_snippet"] == "Exact source excerpt."
@@ -1102,8 +1138,60 @@ class TestListMessages:
 
         with direct_db.session() as session:
             conversation_id = create_test_conversation(session, user_id)
-            for i in range(1, 6):
-                create_test_message(session, conversation_id, seq=i, content=f"Msg {i}")
+            first_id = create_test_message(session, conversation_id, seq=1, content="Msg 1")
+            second_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Msg 2",
+                parent_message_id=first_id,
+            )
+            third_id = create_test_message(
+                session,
+                conversation_id,
+                seq=3,
+                content="Msg 3",
+                parent_message_id=second_id,
+            )
+            fourth_id = create_test_message(
+                session,
+                conversation_id,
+                seq=4,
+                role="assistant",
+                content="Msg 4",
+                parent_message_id=third_id,
+            )
+            fifth_id = create_test_message(
+                session,
+                conversation_id,
+                seq=5,
+                content="Msg 5",
+                parent_message_id=fourth_id,
+            )
+            third = session.get(Message, third_id)
+            fifth = session.get(Message, fifth_id)
+            assert third is not None
+            assert fifth is not None
+            third.branch_anchor_kind = "assistant_message"
+            third.branch_anchor = {"message_id": str(second_id)}
+            fifth.branch_anchor_kind = "assistant_message"
+            fifth.branch_anchor = {"message_id": str(fourth_id)}
+            session.add_all(
+                [
+                    ConversationBranch(
+                        id=third_id,
+                        conversation_id=conversation_id,
+                        branch_user_message_id=third_id,
+                    ),
+                    ConversationBranch(
+                        id=fifth_id,
+                        conversation_id=conversation_id,
+                        branch_user_message_id=fifth_id,
+                    ),
+                ]
+            )
+            session.commit()
 
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)

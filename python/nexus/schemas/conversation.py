@@ -69,6 +69,13 @@ MESSAGE_TOOL_STATUSES = Literal["pending", "complete", "error"]
 WEB_SEARCH_MODES = Literal["off", "auto", "required"]
 WEB_SEARCH_RESULT_TYPES = Literal["web", "news", "mixed"]
 CHAT_RUN_STATUSES = Literal["queued", "running", "complete", "error", "cancelled"]
+BRANCH_ANCHOR_KINDS = Literal[
+    "none",
+    "assistant_message",
+    "assistant_selection",
+    "reader_context",
+]
+BRANCH_ANCHOR_OFFSET_STATUSES = Literal["mapped", "unmapped"]
 CHAT_RUN_EVENT_TYPES = Literal["meta", "tool_call", "tool_result", "citation", "delta", "done"]
 EVIDENCE_RETRIEVAL_STATUSES = Literal[
     "attached_context",
@@ -173,6 +180,10 @@ class MessageOut(BaseModel):
     seq: int
     role: str  # "user" | "assistant" | "system"
     content: str
+    parent_message_id: UUID | None = None
+    branch_root_message_id: UUID | None = None
+    branch_anchor_kind: BRANCH_ANCHOR_KINDS = "none"
+    branch_anchor: dict[str, Any] = Field(default_factory=dict)
     contexts: list["MessageContextSnapshot"] = Field(default_factory=list)
     tool_calls: list["MessageToolCallOut"] = Field(default_factory=list)
     evidence_summary: "MessageEvidenceSummaryOut | None" = None
@@ -409,6 +420,140 @@ ChatContextInput = Annotated[
 ContextItem = ChatContextInput
 
 
+class NoBranchAnchorRequest(BaseModel):
+    kind: Literal["none"] = "none"
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AssistantMessageBranchAnchorRequest(BaseModel):
+    kind: Literal["assistant_message"]
+    message_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AssistantSelectionBranchAnchorRequest(BaseModel):
+    kind: Literal["assistant_selection"]
+    message_id: UUID
+    exact: str = Field(..., min_length=1, max_length=20000)
+    prefix: str | None = Field(default=None, max_length=1000)
+    suffix: str | None = Field(default=None, max_length=1000)
+    offset_status: BRANCH_ANCHOR_OFFSET_STATUSES
+    start_offset: int | None = None
+    end_offset: int | None = None
+    client_selection_id: str = Field(..., min_length=1, max_length=128)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_selection_anchor(self) -> "AssistantSelectionBranchAnchorRequest":
+        if not self.exact.strip():
+            raise ValueError("assistant_selection exact quote cannot be blank")
+        return self
+
+
+class ReaderContextBranchAnchorRequest(BaseModel):
+    kind: Literal["reader_context"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+BranchAnchorRequest = Annotated[
+    NoBranchAnchorRequest
+    | AssistantMessageBranchAnchorRequest
+    | AssistantSelectionBranchAnchorRequest
+    | ReaderContextBranchAnchorRequest,
+    Field(discriminator="kind"),
+]
+
+
+class BranchAnchorOut(BaseModel):
+    kind: BRANCH_ANCHOR_KINDS
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ForkOptionOut(BaseModel):
+    id: UUID
+    parent_message_id: UUID
+    user_message_id: UUID
+    assistant_message_id: UUID | None = None
+    leaf_message_id: UUID
+    title: str | None = None
+    preview: str
+    branch_anchor_kind: BRANCH_ANCHOR_KINDS
+    branch_anchor_preview: str | None = None
+    status: Literal["complete", "pending", "error", "cancelled"]
+    message_count: int
+    created_at: datetime
+    updated_at: datetime
+    active: bool
+
+
+class BranchGraphNodeOut(BaseModel):
+    id: UUID
+    message_id: UUID
+    parent_message_id: UUID | None = None
+    leaf_message_id: UUID
+    role: Literal["user", "assistant"]
+    depth: int
+    row: int
+    title: str | None = None
+    preview: str
+    branch_anchor_preview: str | None = None
+    status: Literal["complete", "pending", "error", "cancelled"]
+    message_count: int
+    child_count: int
+    active_path: bool
+    leaf: bool
+    created_at: datetime
+
+
+class BranchGraphEdgeOut(BaseModel):
+    from_message_id: UUID
+    to: UUID
+
+    @model_serializer(mode="plain")
+    def serialize_edge(self) -> dict[str, UUID]:
+        return {"from": self.from_message_id, "to": self.to}
+
+
+class BranchGraphOut(BaseModel):
+    nodes: list[BranchGraphNodeOut] = Field(default_factory=list)
+    edges: list[BranchGraphEdgeOut] = Field(default_factory=list)
+    root_message_id: UUID | None = None
+
+
+class ConversationTreeOut(BaseModel):
+    conversation: ConversationOut
+    selected_path: list[MessageOut]
+    active_leaf_message_id: UUID | None = None
+    fork_options_by_parent_id: dict[str, list[ForkOptionOut]] = Field(default_factory=dict)
+    path_cache_by_leaf_id: dict[str, list[MessageOut]] = Field(default_factory=dict)
+    branch_graph: BranchGraphOut = Field(default_factory=BranchGraphOut)
+    page: dict[str, str | None] = Field(default_factory=lambda: {"before_cursor": None})
+
+
+class ConversationForksOut(BaseModel):
+    forks: list[ForkOptionOut]
+
+
+class SetActivePathRequest(BaseModel):
+    active_leaf_message_id: UUID
+
+
+class RenameBranchRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=120)
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    @model_validator(mode="after")
+    def validate_title(self) -> "RenameBranchRequest":
+        if self.title is not None and not self.title.strip():
+            raise ValueError("title cannot be blank")
+        return self
+
+
 class MessageContextSnapshot(BaseModel):
     """Hydrated message-context snapshot returned on message reads."""
 
@@ -459,6 +604,8 @@ class ChatRunCreateRequest(BaseModel):
 
     conversation_id: UUID | None = None
     conversation_scope: ConversationScopeRequest | None = None
+    parent_message_id: UUID | None = None
+    branch_anchor: BranchAnchorRequest = Field(default_factory=NoBranchAnchorRequest)
     content: str
     model_id: UUID
     reasoning: REASONING_MODES = "default"
