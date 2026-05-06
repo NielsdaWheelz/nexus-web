@@ -2,18 +2,19 @@
  * New conversation page — fresh chat composer with optional attached context.
  *
  * Opened by quote-to-chat flows. Reads typed context ids from search params.
- * On first message send the backend creates the conversation and we navigate
- * to /conversations/:id.
+ * On first message send the backend creates the conversation, the pane streams
+ * locally immediately, then the URL is replaced with /conversations/:id.
  */
 
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
 import { parseConversationScopeFromUrl } from "@/lib/conversations/attachedContext";
 import ChatComposer from "@/components/ChatComposer";
 import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
+import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
@@ -21,7 +22,10 @@ import {
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
-import type { ChatRunResponse } from "@/lib/conversations/types";
+import type {
+  ChatRunResponse,
+  ConversationMessage,
+} from "@/lib/conversations/types";
 import styles from "../page.module.css";
 
 // ============================================================================
@@ -31,6 +35,10 @@ import styles from "../page.module.css";
 export default function ConversationNewPaneBody() {
   const router = usePaneRouter();
   const searchParams = usePaneSearchParams();
+  const draft = searchParams.get("draft") ?? "";
+  const scrollportRef = useRef<HTMLDivElement>(null);
+  const shouldScrollRef = useRef(true);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const conversationScope = parseConversationScopeFromUrl(searchParams);
   useSetPaneTitle(
     conversationScope.type === "media"
@@ -47,15 +55,31 @@ export default function ConversationNewPaneBody() {
     clearContexts,
     stripAttachState,
   } = useAttachedContextsFromUrl(searchParams);
+  const { tailChatRun } = useChatRunTail({ setMessages, shouldScrollRef });
+
+  useLayoutEffect(() => {
+    if (!scrollportRef.current || !shouldScrollRef.current) return;
+    scrollportRef.current.scrollTop = scrollportRef.current.scrollHeight;
+  }, [messages]);
+
+  const handleChatScroll = useCallback(() => {
+    const scrollport = scrollportRef.current;
+    if (!scrollport) return;
+    shouldScrollRef.current =
+      scrollport.scrollHeight - scrollport.scrollTop - scrollport.clientHeight <= 48;
+  }, []);
 
   const handleChatRunCreated = useCallback(
     (runData: ChatRunResponse["data"]) => {
+      shouldScrollRef.current = true;
+      void tailChatRun(runData);
       const cleaned = stripAttachState();
+      cleaned.delete("draft");
       cleaned.set("run", runData.run.id);
       const qs = cleaned.toString();
       router.replace(`/conversations/${runData.conversation.id}?${qs}`);
     },
-    [router, stripAttachState],
+    [router, stripAttachState, tailChatRun],
   );
 
   const clearAttachState = useCallback(() => {
@@ -68,8 +92,10 @@ export default function ConversationNewPaneBody() {
         <div className={styles.chatPrimaryColumn}>
           <div className={styles.paneContentChat}>
             <ChatSurface
-              messages={[]}
+              messages={messages}
               scope={conversationScope}
+              scrollportRef={scrollportRef}
+              onScroll={handleChatScroll}
               composer={
                 <ChatComposer
                   conversationId={null}
@@ -78,6 +104,7 @@ export default function ConversationNewPaneBody() {
                   onRemoveContext={removeContext}
                   onChatRunCreated={handleChatRunCreated}
                   onMessageSent={clearAttachState}
+                  initialContent={draft}
                 />
               }
             />

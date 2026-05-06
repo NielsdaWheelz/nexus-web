@@ -2,6 +2,7 @@
 
 import type { CSSProperties, MouseEvent, RefObject } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import Button from "@/components/ui/Button";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import {
   formatTranscriptTimestampMs,
@@ -143,9 +144,10 @@ export default function TranscriptContentPanel({
               const isActive = entry.fragment.id === activeFragment?.id;
 
               return (
-                <button
+                <Button
                   key={entry.fragment.id}
-                  type="button"
+                  variant="secondary"
+                  size="md"
                   className={`${styles.segmentButton} ${
                     isActive ? styles.segmentButtonActive : ""
                   }`}
@@ -164,7 +166,7 @@ export default function TranscriptContentPanel({
                   <span className={styles.segmentText}>
                     {entry.fragment.canonical_text}
                   </span>
-                </button>
+                </Button>
               );
             })}
           </div>

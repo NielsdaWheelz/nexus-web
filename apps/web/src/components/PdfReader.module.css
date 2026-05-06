@@ -18,8 +18,8 @@
 }
 
 .notice {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
 }
 
 .canvasWrap {
@@ -35,9 +35,9 @@
   min-height: 360px;
   height: min(78vh, 980px);
   height: min(78dvh, 980px);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 6px;
-  background: #fff;
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
   overflow: hidden;
 }
 
@@ -45,12 +45,12 @@
   position: absolute;
   top: var(--space-2);
   left: var(--space-2);
-  z-index: 8;
+  z-index: var(--z-raised);
   padding: var(--space-1) var(--space-2);
-  border-radius: 4px;
-  background: rgba(26, 27, 38, 0.92);
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
 }
 
 .viewerContainer {
@@ -88,16 +88,16 @@
 
 .highlightOverlayRect {
   position: absolute;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   pointer-events: none;
 }
 
 .highlightOverlayRectFocused {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--accent);
 }
 
 .temporaryHighlightOverlayRect {
-  outline: 1px solid var(--color-accent);
+  outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
 
@@ -115,11 +115,11 @@
 
 .error {
   padding: var(--space-3);
-  border: 1px solid var(--color-error);
-  border-radius: 6px;
-  color: var(--color-error);
-  background: rgba(247, 118, 142, 0.1);
-  font-size: var(--font-size-sm);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  font-size: var(--text-sm);
 }
 
 @media (max-width: 768px) {

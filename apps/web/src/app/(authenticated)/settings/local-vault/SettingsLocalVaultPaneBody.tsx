@@ -17,7 +17,9 @@ import {
   type VaultSyncPayload,
 } from "@/lib/vault/localVault";
 import SectionCard from "@/components/ui/SectionCard";
-import StatusPill from "@/components/ui/StatusPill";
+import Button from "@/components/ui/Button";
+import Pill from "@/components/ui/Pill";
+import Toggle from "@/components/ui/Toggle";
 import styles from "./page.module.css";
 
 type VaultStatus = "notConnected" | "needsPermission" | "synced" | "syncing" | "conflicts" | "error";
@@ -39,7 +41,7 @@ function statusVariant(status: VaultStatus) {
   if (status === "synced") return "success" as const;
   if (status === "syncing") return "info" as const;
   if (status === "conflicts" || status === "needsPermission") return "warning" as const;
-  if (status === "error") return "error" as const;
+  if (status === "error") return "danger" as const;
   return "neutral" as const;
 }
 
@@ -177,47 +179,52 @@ export default function SettingsLocalVaultPaneBody() {
     <SectionCard>
       <div className={styles.content}>
         <div className={styles.statusRow}>
-          <StatusPill variant={statusVariant(status)}>{statusLabel(status)}</StatusPill>
+          <Pill tone={statusVariant(status)}>{statusLabel(status)}</Pill>
           <span className={styles.statusText}>{message}</span>
         </div>
 
         <div className={styles.buttonRow}>
-          <button type="button" className={styles.button} onClick={connectFolder} disabled={busy}>
-            <FolderOpen size={16} />
+          <Button
+            variant="secondary"
+            leadingIcon={<FolderOpen size={16} />}
+            onClick={connectFolder}
+            disabled={busy}
+          >
             Connect folder
-          </button>
-          <a className={styles.button} href="/api/vault/download" download="nexus-vault.zip">
-            <Download size={16} />
-            Download export
-          </a>
-          <button
-            type="button"
-            className={styles.button}
+          </Button>
+          <Button asChild variant="secondary">
+            <a
+              href="/api/vault/download"
+              download="nexus-vault.zip"
+              className={styles.downloadLink}
+            >
+              <Download size={16} />
+              Download export
+            </a>
+          </Button>
+          <Button
+            variant="secondary"
+            leadingIcon={<UploadCloud size={16} />}
             onClick={exportVault}
             disabled={busy || !directoryHandle}
           >
-            <UploadCloud size={16} />
             Export vault
-          </button>
-          <button
-            type="button"
-            className={styles.primaryButton}
+          </Button>
+          <Button
+            variant="primary"
+            leadingIcon={<RefreshCcw size={16} />}
             onClick={syncVault}
             disabled={busy || !directoryHandle}
           >
-            <RefreshCcw size={16} />
             Sync now
-          </button>
+          </Button>
         </div>
 
-        <label className={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={autoSync}
-            onChange={(event) => toggleAutoSync(event.target.checked)}
-          />
-          Auto-sync on app load and when this tab becomes active again
-        </label>
+        <Toggle
+          checked={autoSync}
+          onCheckedChange={toggleAutoSync}
+          label="Auto-sync on app load and when this tab becomes active again"
+        />
       </div>
     </SectionCard>
   );

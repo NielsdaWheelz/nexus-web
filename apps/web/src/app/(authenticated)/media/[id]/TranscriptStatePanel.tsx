@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { useBillingAccount, type BillingPlanTier } from "@/lib/billing/useBillingAccount";
 import { toFeedback } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
 import {
   canRequestTranscript,
   shouldPollTranscriptProvisioning,
@@ -258,14 +259,14 @@ export default function TranscriptStatePanel({
             </p>
           </>
         ) : null}
-        <button
-          type="button"
-          className={styles.globalPlayerButton}
+        <Button
+          variant="secondary"
+          size="sm"
           disabled={requestDisabled}
           onClick={handleRequestTranscript}
         >
           {transcriptRequestInFlight ? "Requesting..." : "Transcribe this episode"}
-        </button>
+        </Button>
         {transcriptRequestForecast && !transcriptRequestForecast.fitsBudget ? (
           <p>Not enough monthly transcription quota for this request.</p>
         ) : null}

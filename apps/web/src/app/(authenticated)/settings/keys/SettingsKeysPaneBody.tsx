@@ -18,7 +18,9 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import StatusPill from "@/components/ui/StatusPill";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import Pill from "@/components/ui/Pill";
 import styles from "./page.module.css";
 
 type ApiKeyStatus = "missing" | "untested" | "valid" | "invalid" | "revoked";
@@ -50,10 +52,10 @@ type EditState = {
 } | null;
 
 function statusVariant(status: ApiKeyStatus) {
-  if (status === "valid") return "success";
-  if (status === "untested") return "warning";
-  if (status === "invalid") return "error";
-  return "neutral";
+  if (status === "valid") return "success" as const;
+  if (status === "untested") return "warning" as const;
+  if (status === "invalid") return "danger" as const;
+  return "neutral" as const;
 }
 
 function formatDate(value: string | null | undefined): string {
@@ -253,9 +255,9 @@ export default function SettingsKeysPaneBody() {
                   </h3>
                   <p className={styles.fingerprint}>{fingerprint}</p>
                 </div>
-                <StatusPill variant={statusVariant(key.status)}>
+                <Pill tone={statusVariant(key.status)}>
                   {statusLabel(key.status)}
-                </StatusPill>
+                </Pill>
               </div>
 
               <dl className={styles.metaGrid}>
@@ -283,7 +285,7 @@ export default function SettingsKeysPaneBody() {
                     API key
                   </label>
                   <div className={styles.inlineFormRow}>
-                    <input
+                    <Input
                       id={`apiKey-${key.provider}`}
                       type="password"
                       className={styles.keyInput}
@@ -293,61 +295,56 @@ export default function SettingsKeysPaneBody() {
                       autoComplete="off"
                       disabled={isBusy}
                     />
-                    <button
+                    <Button
                       type="submit"
-                      className={styles.primaryBtn}
+                      variant="primary"
                       disabled={isBusy || !apiKey.trim()}
                     >
                       {isBusy ? "Saving..." : editing.mode === "replace" ? "Replace" : "Connect"}
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.secondaryBtn}
+                    </Button>
+                    <Button
+                      variant="secondary"
                       onClick={closeEditor}
                       disabled={isBusy}
                     >
                       Cancel
-                    </button>
+                    </Button>
                   </div>
                 </form>
               ) : (
                 <div className={styles.actions}>
                   {hasSavedKey ? (
                     <>
-                      <button
-                        type="button"
-                        className={styles.secondaryBtn}
+                      <Button
+                        variant="secondary"
                         onClick={() => handleTest(key)}
                         disabled={isBusy}
                       >
                         {isBusy ? "Testing..." : "Test"}
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.secondaryBtn}
+                      </Button>
+                      <Button
+                        variant="secondary"
                         onClick={() => openEditor(key.provider, "replace")}
                         disabled={isBusy}
                       >
                         Replace
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.dangerBtn}
+                      </Button>
+                      <Button
+                        variant="danger"
                         onClick={() => handleRevoke(key)}
                         disabled={isBusy}
                       >
                         {isBusy ? "Revoking..." : "Revoke"}
-                      </button>
+                      </Button>
                     </>
                   ) : (
-                    <button
-                      type="button"
-                      className={styles.primaryBtn}
+                    <Button
+                      variant="primary"
                       onClick={() => openEditor(key.provider, "connect")}
                       disabled={isBusy}
                     >
                       Connect
-                    </button>
+                    </Button>
                   )}
                 </div>
               )}

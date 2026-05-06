@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import Image from "next/image";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import Button from "@/components/ui/Button";
 import { useGlobalPlayer, type GlobalPlayerChapter } from "@/lib/player/globalPlayer";
 import {
   formatTranscriptTimestampMs,
@@ -340,31 +341,31 @@ export default function TranscriptPlaybackPanel({
           <div className={styles.globalPlayerPrompt}>
             <p>Playback is controlled in the global player footer.</p>
             <div className={styles.podcastPlaybackActions}>
-              <button
-                type="button"
-                className={styles.globalPlayerButton}
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => play()}
               >
                 Play in footer
-              </button>
-              <button
-                type="button"
-                className={styles.globalPlayerButton}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => {
                   void addToQueue(mediaId, "next");
                 }}
               >
                 Play next
-              </button>
-              <button
-                type="button"
-                className={styles.globalPlayerButton}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => {
                   void addToQueue(mediaId, "last");
                 }}
               >
                 Add to queue
-              </button>
+              </Button>
               {isInQueue ? <span className={styles.queueBadge}>In Queue</span> : null}
             </div>
           </div>
@@ -428,8 +429,9 @@ export default function TranscriptPlaybackPanel({
                     />
                   ) : null}
                   <div className={styles.chapterBody}>
-                    <button
-                      type="button"
+                    <Button
+                      variant="secondary"
+                      size="md"
                       className={`${styles.chapterSeekButton} ${
                         isActiveChapter ? styles.chapterSeekButtonActive : ""
                       }`}
@@ -441,7 +443,7 @@ export default function TranscriptPlaybackPanel({
                         {timestamp ?? "00:00:00"}
                       </span>
                       <span className={styles.chapterTitle}>{chapter.title}</span>
-                    </button>
+                    </Button>
                     {chapter.url ? (
                       <a
                         href={chapter.url}

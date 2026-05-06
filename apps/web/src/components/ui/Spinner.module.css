@@ -1,0 +1,29 @@
+.spinner {
+  display: inline-block;
+  border-radius: var(--radius-full);
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  animation: spinner-rotate 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+.sizeSm {
+  width: 12px;
+  height: 12px;
+}
+
+.sizeMd {
+  width: 16px;
+  height: 16px;
+}
+
+.sizeLg {
+  width: 20px;
+  height: 20px;
+}
+
+@keyframes spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -101,8 +101,13 @@ describe("LibraryMembershipPanel", () => {
   it("disables membership changes while busy", async () => {
     render(<Harness busy />);
 
-    expect(await screen.findByRole("button", { name: "Personal Remove from this library" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Work Add to library" })).toBeDisabled();
+    expect(
+      await screen.findByRole("button", { name: "Personal Remove from this library" })
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Work Add to library" })).toHaveAttribute(
+      "aria-disabled",
+      "true"
+    );
   });
 
   it("restores focus to the anchor when it closes", async () => {

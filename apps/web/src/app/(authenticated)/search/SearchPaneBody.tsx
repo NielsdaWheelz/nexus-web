@@ -17,6 +17,8 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import SectionCard from "@/components/ui/SectionCard";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
 import ContributorFilter from "@/components/contributors/ContributorFilter";
 import SearchResultRow from "@/components/search/SearchResultRow";
 import {
@@ -329,18 +331,19 @@ export default function SearchPaneBody() {
       <div className={styles.content}>
         <form className={styles.searchForm} onSubmit={handleSubmit}>
           <div className={styles.searchRow}>
-            <input
+            <Input
               aria-label="Search content"
-              className={styles.searchInput}
-              type="text"
+              className={styles.searchInputField}
+              size="lg"
               value={draftQuery}
               onChange={(e) => setDraftQuery(e.target.value)}
               placeholder="Search your Nexus content..."
               autoFocus
             />
-            <button
+            <Button
               type="submit"
-              className={styles.searchBtn}
+              variant="primary"
+              size="lg"
               disabled={
                 searching ||
                 (!draftQuery.trim() &&
@@ -350,7 +353,7 @@ export default function SearchPaneBody() {
               }
             >
               {searching ? "..." : "Search"}
-            </button>
+            </Button>
           </div>
 
           <fieldset className={styles.filters}>
@@ -424,13 +427,15 @@ export default function SearchPaneBody() {
         )}
 
         {nextCursor && (
-          <button
+          <Button
+            variant="secondary"
+            size="md"
             className={styles.loadMore}
             onClick={() => search(nextCursor)}
             disabled={searching}
           >
             Load more
-          </button>
+          </Button>
         )}
       </div>
     </SectionCard>

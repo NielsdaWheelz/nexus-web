@@ -15,45 +15,8 @@
   gap: var(--space-2);
 }
 
-.searchInput {
+.searchInputField {
   flex: 1;
-  padding: var(--space-3);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: var(--font-size-base);
-}
-
-.searchInput:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
-.searchInput::placeholder {
-  color: var(--color-text-muted);
-}
-
-.searchBtn {
-  padding: var(--space-3) var(--space-5);
-  background: var(--color-accent);
-  color: var(--color-bg);
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: var(--font-size-base);
-  font-weight: 500;
-  transition: background var(--transition-fast);
-}
-
-.searchBtn:hover:not(:disabled) {
-  background: var(--color-accent-hover);
-}
-
-.searchBtn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* Type filters */
@@ -70,13 +33,13 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
   cursor: pointer;
 }
 
 .filterLabel input[type="checkbox"] {
-  accent-color: var(--color-accent);
+  accent-color: var(--accent);
 }
 
 .resultRows {
@@ -86,21 +49,7 @@
 }
 
 .loadMore {
-  display: block;
+  display: flex;
   width: 180px;
   margin: var(--space-3) auto 0;
-  padding: var(--space-2);
-  background: none;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-  margin-top: var(--space-3);
-}
-
-.loadMore:hover {
-  background: var(--color-surface);
-  color: var(--color-text);
 }

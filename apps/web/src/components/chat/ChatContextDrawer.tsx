@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { PanelRight, X } from "lucide-react";
 import ConversationContextPane from "@/components/ConversationContextPane";
+import Button from "@/components/ui/Button";
 import type { ContextItem } from "@/lib/api/sse";
 import type {
   ConversationMemoryInspection,
@@ -48,15 +49,17 @@ export default function ChatContextDrawer({
 
   return (
     <>
-      <button
-        type="button"
+      <Button
+        variant="secondary"
+        size="md"
+        iconOnly
         className={styles.fab}
         onClick={() => setOpen((value) => !value)}
         aria-label="Linked context"
         aria-expanded={open}
       >
         <PanelRight size={16} aria-hidden="true" />
-      </button>
+      </Button>
 
       {open ? (
         <div className={styles.backdrop} onClick={() => setOpen(false)}>
@@ -69,14 +72,15 @@ export default function ChatContextDrawer({
           >
             <header className={styles.header}>
               <h2>Linked context</h2>
-              <button
-                type="button"
-                className={styles.closeButton}
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
                 onClick={() => setOpen(false)}
                 aria-label="Close"
               >
                 <X size={16} aria-hidden="true" />
-              </button>
+              </Button>
             </header>
             <div className={styles.body}>
               <ConversationContextPane

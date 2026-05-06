@@ -21,6 +21,7 @@ import HighlightNoteEditor, {
 } from "@/components/notes/HighlightNoteEditor";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
+import Button from "@/components/ui/Button";
 import { COLOR_LABELS } from "@/lib/highlights/colors";
 import {
   HIGHLIGHT_COLORS,
@@ -934,8 +935,8 @@ export default function AnchoredSecondaryPane({
           onMouseLeave={handleRowMouseLeave}
         >
           <div className={styles.rowTop}>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
               className={styles.rowPreviewButton}
               onClick={() => handleRowClick(highlight.id)}
               aria-pressed={isFocused}
@@ -967,19 +968,21 @@ export default function AnchoredSecondaryPane({
                   </span>
                 ) : null}
               </span>
-            </button>
+            </Button>
 
             {isFocused ? (
               <div className={styles.rowActions}>
                 {canSendToChat ? (
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    iconOnly
                     className={styles.chatButton}
                     aria-label="Ask in chat"
                     onClick={() => onSendToChat(highlight.id)}
                   >
                     <MessageSquare size={14} aria-hidden="true" />
-                  </button>
+                  </Button>
                 ) : null}
                 {menuOptions.length > 0 ? (
                   <ActionMenu options={menuOptions} />
@@ -1034,9 +1037,10 @@ export default function AnchoredSecondaryPane({
               highlight.linked_conversations.length > 0 ? (
                 <div className={styles.conversationList}>
                   {highlight.linked_conversations.map((conversation) => (
-                    <button
+                    <Button
                       key={conversation.conversation_id}
-                      type="button"
+                      variant="secondary"
+                      size="md"
                       className={styles.conversationButton}
                       onClick={() =>
                         onOpenConversation(
@@ -1044,10 +1048,10 @@ export default function AnchoredSecondaryPane({
                           conversation.title,
                         )
                       }
+                      leadingIcon={<MessageSquare size={14} />}
                     >
-                      <MessageSquare size={14} />
                       <span>{conversation.title}</span>
-                    </button>
+                    </Button>
                   ))}
                 </div>
               ) : null}
@@ -1101,8 +1105,9 @@ export default function AnchoredSecondaryPane({
         data-testid="linked-items-container"
       >
         {mobileHighlightsState.aboveCount > 0 ? (
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="md"
             className={styles.mobileIndicator}
             onClick={() => {
               if (mobileHighlightsState.nearestAboveId) {
@@ -1111,7 +1116,7 @@ export default function AnchoredSecondaryPane({
             }}
           >
             {mobileHighlightsState.aboveCount} above
-          </button>
+          </Button>
         ) : null}
 
         {mobileHighlightsState.visibleHighlights.map((highlight) =>
@@ -1126,8 +1131,9 @@ export default function AnchoredSecondaryPane({
         ) : null}
 
         {mobileHighlightsState.belowCount > 0 ? (
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="md"
             className={styles.mobileIndicator}
             onClick={() => {
               if (mobileHighlightsState.nearestBelowId) {
@@ -1136,7 +1142,7 @@ export default function AnchoredSecondaryPane({
             }}
           >
             {mobileHighlightsState.belowCount} below
-          </button>
+          </Button>
         ) : null}
       </div>
     );

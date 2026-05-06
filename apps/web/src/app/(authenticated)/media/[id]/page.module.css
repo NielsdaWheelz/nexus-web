@@ -3,6 +3,13 @@
  *
  * Styling for the media content pane and highlights pane.
  * EPUB chapter navigation and TOC styles added in S5 PR-05.
+ *
+ * Reader scope (preserved verbatim per visual-foundation-1a-hard-cutover.md §5
+ * rule 14): the `.readerThemeLight` and `.readerThemeDark` blocks below define
+ * `--reader-*` overrides with literal hex values. They are independent of the
+ * app theme and must not be migrated to semantic tokens. Same applies to the
+ * `.readerThemeDark :global(.hl-*)` overrides which scope highlight colors to
+ * the dark reader theme.
  */
 
 .content {
@@ -22,17 +29,17 @@
 
 .kind {
   padding: var(--space-1) var(--space-2);
-  background-color: var(--color-surface);
-  border-radius: 4px;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
+  background-color: var(--surface-2);
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
   text-transform: uppercase;
 }
 
 .authorMeta {
   min-width: 0;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -40,8 +47,8 @@
 
 .sourceLink {
   flex: 0 0 auto;
-  font-size: var(--font-size-sm);
-  color: var(--color-accent);
+  font-size: var(--text-sm);
+  color: var(--accent);
   text-decoration: none;
   white-space: nowrap;
 }
@@ -66,57 +73,20 @@
   min-width: 0;
 }
 
-.mediaToolbarButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 28px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  padding: 0 var(--space-2);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.mediaToolbarButton:hover:not(:disabled) {
-  border-color: var(--color-border-subtle);
-  color: var(--color-text-primary);
-}
-
-.mediaToolbarButton:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .mediaToolbarStatus {
   flex: 1 1 auto;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mediaToolbarSelect {
-  width: 100%;
-  min-width: 0;
-  height: 28px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  padding: 0 var(--space-2);
-}
-
 .loading {
   padding: var(--space-4);
   text-align: center;
-  color: var(--reader-text-muted, var(--color-text-muted));
+  color: var(--reader-text-muted, var(--ink-faint));
 }
 
 .errorContainer {
@@ -127,20 +97,20 @@
 
 .error {
   padding: var(--space-3);
-  background-color: var(--reader-bg-secondary, var(--color-bg-secondary));
-  border: 1px solid var(--reader-border, var(--color-border));
-  border-radius: 6px;
-  color: var(--reader-text-secondary, var(--color-text-secondary));
-  font-size: var(--font-size-sm);
+  background-color: var(--reader-bg-secondary, var(--surface-2));
+  border: 1px solid var(--reader-border, var(--edge));
+  border-radius: var(--radius-md);
+  color: var(--reader-text-secondary, var(--ink-muted));
+  font-size: var(--text-sm);
 }
 
 .mismatchBanner {
   padding: var(--space-3);
-  background-color: rgba(255, 184, 108, 0.1);
-  border: 1px solid var(--color-warning, #ffb86c);
-  border-radius: 6px;
-  color: var(--color-warning, #ffb86c);
-  font-size: var(--font-size-sm);
+  background-color: color-mix(in srgb, var(--warning) 10%, transparent);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-md);
+  color: var(--warning);
+  font-size: var(--text-sm);
 }
 
 .focusModeBanner {
@@ -152,50 +122,24 @@
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-1);
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
 }
 
 .notReady {
   padding: var(--space-6);
   text-align: center;
-  color: var(--color-text-muted);
+  color: var(--ink-faint);
 }
 
 .notReady p {
   margin: 0 0 var(--space-2);
 }
 
-.retryProcessingButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  min-height: 32px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  padding: 0 var(--space-3);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.retryProcessingButton:hover:not(:disabled) {
-  border-color: var(--color-border-subtle);
-  background: var(--color-surface-hover, var(--color-surface));
-}
-
-.retryProcessingButton:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
 .empty {
   padding: var(--space-8);
   text-align: center;
-  color: var(--reader-text-muted, var(--color-text-muted));
+  color: var(--reader-text-muted, var(--ink-faint));
 }
 
 .fragments {
@@ -215,8 +159,8 @@
 
 .readerContentRoot {
   font-family: var(--reader-font-family, var(--font-mono));
-  font-size: var(--reader-font-size-px, 16px);
-  line-height: var(--reader-line-height, 1.5);
+  font-size: var(--reader-font-size-px, var(--text-md));
+  line-height: var(--reader-line-height, var(--leading-normal));
   width: 100%;
   min-height: 100%;
   padding: var(--space-4);
@@ -227,6 +171,7 @@
   margin: 0 auto;
 }
 
+/* === Reader scope (preserved literal hex per spec §5 rule 14) === */
 .readerThemeLight {
   --reader-bg: #f8fafc;
   --reader-bg-secondary: #f1f5f9;
@@ -257,6 +202,11 @@
   color: var(--reader-text);
 }
 
+/*
+ * Reader-dark highlight overrides (preserved literal rgba per spec §5 rule 14).
+ * These tune the highlight inks for the dark reader theme specifically;
+ * the global `--highlight-*` tokens are theme-invariant defaults.
+ */
 .readerThemeDark [data-active-highlight-ids],
 .readerThemeDark :global(.hl-yellow) {
   background: rgba(249, 226, 175, 0.4);
@@ -286,11 +236,11 @@
 
 .partialCoverageWarning {
   padding: var(--space-3);
-  border: 1px solid var(--color-warning, #ffb86c);
-  background: rgba(255, 184, 108, 0.1);
-  border-radius: 8px;
-  color: var(--color-warning, #ffb86c);
-  font-size: var(--font-size-sm);
+  border: 1px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  border-radius: var(--radius-lg);
+  color: var(--warning);
+  font-size: var(--text-sm);
 }
 
 .partialCoverageWarning p {
@@ -302,7 +252,7 @@
   flex-direction: column;
   gap: var(--space-2);
   padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--edge-subtle);
 }
 
 .playerFrame {
@@ -317,25 +267,15 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
   padding: var(--space-3);
 }
 
 .globalPlayerPrompt p {
   margin: 0;
-  color: var(--color-text-muted);
-}
-
-.globalPlayerButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
+  color: var(--ink-faint);
 }
 
 .podcastPlaybackActions {
@@ -349,20 +289,20 @@
 .queueBadge {
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--color-border-subtle);
-  background: var(--color-surface);
-  color: var(--color-text-muted);
-  border-radius: 999px;
-  padding: 4px 8px;
-  font-size: var(--font-size-xs);
+  border: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
+  color: var(--ink-faint);
+  border-radius: var(--radius-full);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
 }
 
 .playbackFallback {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  color: var(--ink-faint);
 }
 
 .playbackFallback p {
@@ -380,15 +320,15 @@
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 10px;
-  background: var(--color-surface);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
 }
 
 .chapterHeading {
   margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
 }
 
 .chapterList {
@@ -411,58 +351,51 @@
 .chapterThumbnail {
   width: 40px;
   height: 40px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   object-fit: cover;
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--edge-subtle);
   flex-shrink: 0;
 }
 
 .chapterBody {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
   flex: 1;
 }
 
 .chapterSeekButton {
-  display: flex;
   align-items: baseline;
-  gap: var(--space-2);
+  justify-content: flex-start;
   width: 100%;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-bg-panel);
-  color: var(--color-text-primary);
+  height: auto;
   padding: var(--space-2);
   text-align: left;
-  cursor: pointer;
-}
-
-.chapterSeekButton:hover {
-  border-color: var(--color-border);
+  white-space: normal;
+  border-color: var(--edge-subtle);
 }
 
 .chapterSeekButtonActive {
-  border-color: var(--color-accent);
+  border-color: var(--accent);
 }
 
 .chapterTimestamp {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
   white-space: nowrap;
 }
 
 .chapterTitle {
-  font-size: var(--font-size-sm);
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .chapterExternalLink {
-  font-size: var(--font-size-xs);
-  color: var(--color-accent);
+  font-size: var(--text-xs);
+  color: var(--accent);
   text-decoration: none;
 }
 
@@ -475,26 +408,26 @@
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 10px;
-  background: var(--color-surface);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
 }
 
 .showNotesHeading {
   margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
 }
 
 .showNotesBody {
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-bg-panel);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
   padding: var(--space-3);
 }
 
 .showNotesContent {
-  line-height: 1.5;
+  line-height: var(--leading-normal);
 }
 
 .showNotesContent :global(p) {
@@ -506,20 +439,20 @@
 }
 
 .showNotesContent :global(a) {
-  color: var(--color-accent);
+  color: var(--accent);
 }
 
 .showNotesContent :global(img) {
   max-width: 100%;
   height: auto;
-  border-radius: 6px;
-  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--edge-subtle);
 }
 
 .showNotesTimestampButton {
   border: none;
   background: none;
-  color: var(--color-accent);
+  color: var(--accent);
   text-decoration: underline;
   cursor: pointer;
   padding: 0;
@@ -536,36 +469,31 @@
 }
 
 .segmentButton {
-  display: flex;
   flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
   gap: var(--space-1);
-  text-align: left;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-surface);
-  color: var(--color-text-primary);
+  height: auto;
   padding: var(--space-3);
-  cursor: pointer;
-}
-
-.segmentButton:hover {
-  border-color: var(--color-border);
+  text-align: left;
+  white-space: normal;
+  border-color: var(--edge-subtle);
 }
 
 .segmentButtonActive {
-  border-color: var(--color-accent);
+  border-color: var(--accent);
 }
 
 .segmentMeta {
   display: flex;
   gap: var(--space-2);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
 }
 
 .segmentText {
-  font-size: var(--font-size-sm);
-  line-height: 1.45;
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
 }
 
 .inlineChapterDivider {
@@ -574,18 +502,18 @@
   justify-content: space-between;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-1);
-  border-top: 1px solid var(--color-border-subtle);
-  border-bottom: 1px solid var(--color-border-subtle);
-  color: var(--color-text-muted);
+  border-top: 1px solid var(--edge-subtle);
+  border-bottom: 1px solid var(--edge-subtle);
+  color: var(--ink-faint);
 }
 
 .inlineChapterTitle {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
 }
 
 .inlineChapterTimestamp {
-  font-size: var(--font-size-xs);
+  font-size: var(--text-xs);
 }
 
 /* =============================================================================
@@ -595,11 +523,11 @@
 .loadMoreBtn {
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
   padding: var(--space-1) var(--space-2);
   cursor: pointer;
 }
@@ -609,25 +537,10 @@
   cursor: not-allowed;
 }
 
-.paneActionButton {
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  padding: 6px 10px;
-  cursor: pointer;
-}
-
 .paneActionGroup {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-}
-
-.paneActionButton:hover {
-  border-color: var(--color-border-subtle);
-  color: var(--color-text-primary);
+  gap: var(--space-2);
 }
 
 .pdfPagePill {
@@ -651,14 +564,14 @@
 
 .highlightsPaneHeader h2 {
   margin: 0;
-  font-size: var(--font-size-lg);
-  color: var(--color-text);
+  font-size: var(--text-lg);
+  color: var(--ink);
 }
 
 .highlightsPaneHeader p {
   margin: var(--space-1) 0 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  color: var(--ink-faint);
 }
 
 .highlightsPaneBody {
@@ -681,7 +594,7 @@
    ============================================================================= */
 
 .tocSection {
-  border-bottom: 1px solid var(--reader-border-subtle, var(--color-border-subtle));
+  border-bottom: 1px solid var(--reader-border-subtle, var(--edge-subtle));
   padding-bottom: var(--space-3);
 }
 
@@ -692,18 +605,18 @@
   padding: var(--space-1) 0;
   border: none;
   background: none;
-  color: var(--reader-text-secondary, var(--color-text-secondary));
-  font-size: var(--font-size-sm);
+  color: var(--reader-text-secondary, var(--ink-muted));
+  font-size: var(--text-sm);
   cursor: pointer;
-  transition: color var(--transition-fast);
+  transition: color var(--duration-fast) var(--ease-glide);
 }
 
 .tocToggle:hover {
-  color: var(--reader-text, var(--color-text));
+  color: var(--reader-text, var(--ink));
 }
 
 .tocWarning {
-  color: var(--reader-text-muted, var(--color-text-muted));
+  color: var(--reader-text-muted, var(--ink-faint));
   font-style: italic;
 }
 
@@ -732,31 +645,31 @@
   display: block;
   padding: var(--space-1) var(--space-2);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: none;
-  color: var(--reader-accent, var(--color-accent));
-  font-size: var(--font-size-sm);
+  color: var(--reader-accent, var(--accent));
+  font-size: var(--text-sm);
   text-align: left;
   cursor: pointer;
   width: 100%;
-  transition: background var(--transition-fast);
+  transition: background var(--duration-fast) var(--ease-glide);
 }
 
 .tocLink:hover {
-  background: var(--reader-surface, var(--color-surface));
+  background: var(--reader-surface, var(--surface-2));
 }
 
 .tocLink.tocActive {
-  background: var(--reader-bg-secondary, var(--color-bg-secondary));
-  color: var(--reader-text, var(--color-text));
-  font-weight: 600;
+  background: var(--reader-bg-secondary, var(--surface-2));
+  color: var(--reader-text, var(--ink));
+  font-weight: var(--weight-semibold);
 }
 
 .tocLabel {
   display: block;
   padding: var(--space-1) var(--space-2);
-  color: var(--reader-text-muted, var(--color-text-muted));
-  font-size: var(--font-size-sm);
+  color: var(--reader-text-muted, var(--ink-faint));
+  font-size: var(--text-sm);
   cursor: default;
 }
 
@@ -803,14 +716,14 @@
 }
 
 .secondaryPaneColumn {
-  border-left: 1px solid var(--color-border-subtle);
+  border-left: 1px solid var(--edge-subtle);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg);
+  background: var(--surface-canvas);
 }
 
 .secondaryPaneTabs {
@@ -818,31 +731,19 @@
   display: flex;
   gap: var(--space-1);
   padding: var(--space-3);
-  border-bottom: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
 }
 
-.secondaryPaneTab {
+.secondaryPaneTab.secondaryPaneTab {
   flex: 1;
-  min-height: 32px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
+  color: var(--ink-muted);
 }
 
-.secondaryPaneTab[data-active="true"] {
-  border-color: var(--color-border);
-  background: var(--color-bg);
-  color: var(--color-text);
-}
-
-.secondaryPaneTab:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
+.secondaryPaneTab.secondaryPaneTab[data-active="true"] {
+  background: var(--surface-canvas);
+  color: var(--ink);
+  border: 1px solid var(--edge);
 }
 
 .secondaryPaneBody {
@@ -857,8 +758,8 @@
 
 .secondaryPaneEmpty {
   padding: var(--space-4);
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
 }
 
 /* --- Mobile highlights drawer --- */
@@ -866,7 +767,7 @@
 .highlightsBackdrop {
   position: fixed;
   inset: 0;
-  z-index: 200;
+  z-index: var(--z-modal);
   background: rgba(0, 0, 0, 0.4);
 }
 
@@ -876,10 +777,10 @@
   right: 0;
   bottom: 0;
   width: min(92vw, 440px);
-  background: var(--color-surface);
+  background: var(--surface-2);
   display: flex;
   flex-direction: column;
-  z-index: 201;
+  z-index: calc(var(--z-modal) + 1);
 }
 
 .highlightsDrawerHeader {
@@ -887,12 +788,12 @@
   align-items: center;
   justify-content: space-between;
   padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--edge-subtle);
 }
 
 .highlightsDrawerHeader h2 {
-  font-size: var(--font-size-base);
-  font-weight: 600;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
   margin: 0;
 }
 

@@ -19,6 +19,24 @@ import type {
 import { useChatMessageUpdates } from "@/components/chat/useChatMessageUpdates";
 
 type ChatRunData = ChatRunResponse["data"];
+type TerminalRunStatus = "complete" | "error" | "cancelled";
+
+const CHAT_STREAM_RETRY_BASE_MS = 1000;
+const CHAT_STREAM_RETRY_MAX_MS = 8000;
+const CHAT_STREAM_RETRY_JITTER_MS = 250;
+
+function isTerminalRunStatus(
+  status: ChatRunData["run"]["status"],
+): status is TerminalRunStatus {
+  return status === "complete" || status === "error" || status === "cancelled";
+}
+
+function chatStreamRetryDelayMs(attempt: number): number {
+  return (
+    Math.min(CHAT_STREAM_RETRY_BASE_MS * 2 ** attempt, CHAT_STREAM_RETRY_MAX_MS) +
+    Math.floor(Math.random() * CHAT_STREAM_RETRY_JITTER_MS)
+  );
+}
 
 export function useChatRunTail({
   setMessages,
@@ -32,7 +50,7 @@ export function useChatRunTail({
   shouldScrollRef: MutableRefObject<boolean>;
   onRunFinished?: (runId: string) => void;
   onFirstDelta?: (runId: string) => void;
-  onRunDone?: (runId: string, status: "complete" | "error" | "cancelled", errorCode: string | null) => void;
+  onRunDone?: (runId: string, status: TerminalRunStatus, errorCode: string | null) => void;
   onConversationAvailable?: (conversationId: string, runId: string) => void;
 }) {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -107,32 +125,52 @@ export function useChatRunTail({
       const originalAssistantId = runData.assistant_message.id;
       let currentUserId = originalUserId;
       let currentAssistantId = originalAssistantId;
+      let lastEventId = "";
       let replayDeltaCharsToSkip = 0;
+      let retryAttempt = 0;
+      let retryTimer: ReturnType<typeof setTimeout> | null = null;
+      let doneNotified = false;
+      let finished = false;
       const token = (runTokensRef.current.get(runId) ?? 0) + 1;
       runTokensRef.current.set(runId, token);
 
       mergeRunMessages(runData);
       onConversationAvailable?.(runData.conversation.id, runId);
 
-      if (
-        runData.run.status === "complete" ||
-        runData.run.status === "error" ||
-        runData.run.status === "cancelled"
-      ) {
+      const clearRetryTimer = () => {
+        if (retryTimer === null) return;
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      };
+
+      const notifyDone = (status: TerminalRunStatus, errorCode: string | null) => {
+        if (doneNotified) return;
+        doneNotified = true;
+        onRunDone?.(runId, status, errorCode);
+      };
+
+      const finishRun = () => {
+        if (finished) return;
+        finished = true;
+        clearRetryTimer();
+        activeStreamsRef.current.delete(runId);
+        setActiveRunId((current) => (current === runId ? null : current));
+        onRunFinished?.(runId);
+      };
+
+      if (isTerminalRunStatus(runData.run.status)) {
         handleDone(
           runData.assistant_message.id,
           runData.run.status,
           runData.run.error_code,
         );
-        onRunDone?.(runId, runData.run.status, runData.run.error_code);
-        onRunFinished?.(runId);
+        notifyDone(runData.run.status, runData.run.error_code);
+        finishRun();
         return;
       }
 
       setActiveRunId(runId);
-      activeStreamsRef.current.set(runId, () => {
-        runTokensRef.current.set(runId, (runTokensRef.current.get(runId) ?? 0) + 1);
-      });
+      activeStreamsRef.current.set(runId, clearRetryTimer);
 
       const reconcile = async () => {
         try {
@@ -147,40 +185,48 @@ export function useChatRunTail({
             response.data.user_message.id,
             response.data.assistant_message.id,
           ]);
-            onConversationAvailable?.(response.data.conversation.id, runId);
-            currentUserId = response.data.user_message.id;
-            currentAssistantId = response.data.assistant_message.id;
+          onConversationAvailable?.(response.data.conversation.id, runId);
+          currentUserId = response.data.user_message.id;
+          currentAssistantId = response.data.assistant_message.id;
 
-          if (
-            response.data.run.status === "complete" ||
-            response.data.run.status === "error" ||
-            response.data.run.status === "cancelled"
-          ) {
+          if (isTerminalRunStatus(response.data.run.status)) {
             handleDone(
               currentAssistantId,
               response.data.run.status,
               response.data.run.error_code,
             );
-            onRunDone?.(
-              runId,
-              response.data.run.status,
-              response.data.run.error_code,
-            );
-            activeStreamsRef.current.delete(runId);
-            setActiveRunId((current) => (current === runId ? null : current));
-            onRunFinished?.(runId);
+            notifyDone(response.data.run.status, response.data.run.error_code);
+            finishRun();
           }
           return response.data;
         } catch (err) {
           console.error("Failed to reconcile chat run:", err);
-          activeStreamsRef.current.delete(runId);
-          setActiveRunId((current) => (current === runId ? null : current));
           return null;
         }
       };
 
+      const continueAfterStreamBoundary = async (terminalEventSeen: boolean) => {
+        const persisted = await reconcile();
+        if (runTokensRef.current.get(runId) !== token || finished) return;
+        if (terminalEventSeen) {
+          finishRun();
+          return;
+        }
+        if (persisted) {
+          replayDeltaCharsToSkip = persisted.assistant_message.content.length;
+        }
+        const delayMs = chatStreamRetryDelayMs(retryAttempt);
+        retryAttempt += 1;
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          void startStream();
+        }, delayMs);
+        activeStreamsRef.current.set(runId, clearRetryTimer);
+      };
+
       const startStream = async (): Promise<void> => {
-        if (runTokensRef.current.get(runId) !== token) return;
+        if (runTokensRef.current.get(runId) !== token || finished) return;
+        clearRetryTimer();
         let streamBaseUrl: string;
         let firstStreamToken: string | null = null;
 
@@ -190,13 +236,11 @@ export function useChatRunTail({
           firstStreamToken = tokenResponse.token;
         } catch (err) {
           console.error("Failed to fetch chat stream token:", err);
-          await reconcile();
-          activeStreamsRef.current.delete(runId);
-          setActiveRunId((current) => (current === runId ? null : current));
+          await continueAfterStreamBoundary(false);
           return;
         }
 
-        if (runTokensRef.current.get(runId) !== token) return;
+        if (runTokensRef.current.get(runId) !== token || finished) return;
 
         const abort = sseClientDirect(
           streamBaseUrl,
@@ -212,6 +256,7 @@ export function useChatRunTail({
           {
             onEvent: (event: SSEEvent) => {
               if (runTokensRef.current.get(runId) !== token) return;
+              retryAttempt = 0;
               switch (event.type) {
                 case "meta":
                   currentUserId = event.data.user_message_id;
@@ -258,7 +303,7 @@ export function useChatRunTail({
                     event.data.status,
                     event.data.error_code,
                   );
-                  onRunDone?.(runId, event.data.status, event.data.error_code);
+                  notifyDone(event.data.status, event.data.error_code);
                   break;
                 default: {
                   const _exhaustive: never = event;
@@ -269,27 +314,17 @@ export function useChatRunTail({
             onError: (err) => {
               if (runTokensRef.current.get(runId) !== token) return;
               console.error("Chat run stream failed:", err);
-              activeStreamsRef.current.delete(runId);
-              void reconcile();
+              void continueAfterStreamBoundary(false);
             },
             onComplete: (terminalEventSeen) => {
               if (runTokensRef.current.get(runId) !== token) return;
-              activeStreamsRef.current.delete(runId);
-              void (async () => {
-                const persisted = await reconcile();
-                if (
-                  persisted &&
-                  !terminalEventSeen &&
-                  persisted.run.status !== "complete" &&
-                  persisted.run.status !== "error" &&
-                  persisted.run.status !== "cancelled"
-                ) {
-                  replayDeltaCharsToSkip = persisted.assistant_message.content.length;
-                  await startStream();
-                }
-              })();
+              void continueAfterStreamBoundary(terminalEventSeen);
+            },
+            onLastEventId: (id) => {
+              lastEventId = id;
             },
           },
+          lastEventId ? { lastEventId } : undefined,
         );
         activeStreamsRef.current.set(runId, abort);
       };

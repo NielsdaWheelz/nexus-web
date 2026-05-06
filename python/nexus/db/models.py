@@ -201,8 +201,8 @@ class User(Base):
     podcast_listening_states: Mapped[list["PodcastListeningState"]] = relationship(
         "PodcastListeningState", back_populates="user", cascade="all, delete-orphan"
     )
-    command_palette_recents: Mapped[list["CommandPaletteRecent"]] = relationship(
-        "CommandPaletteRecent", back_populates="user"
+    command_palette_usages: Mapped[list["CommandPaletteUsage"]] = relationship(
+        "CommandPaletteUsage", back_populates="user"
     )
 
 
@@ -218,7 +218,7 @@ class Page(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
@@ -6037,10 +6037,10 @@ class ReaderProfile(Base):
     user: Mapped["User"] = relationship("User")
 
 
-class CommandPaletteRecent(Base):
-    """Per-user command palette recent destinations."""
+class CommandPaletteUsage(Base):
+    """Per-user command palette usage history."""
 
-    __tablename__ = "command_palette_recents"
+    __tablename__ = "command_palette_usages"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -6049,33 +6049,69 @@ class CommandPaletteRecent(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id"),
         nullable=False,
     )
-    href: Mapped[str] = mapped_column(Text, nullable=False)
-    title_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    query_normalized: Mapped[str] = mapped_column(Text, nullable=False)
+    target_key: Mapped[str] = mapped_column(Text, nullable=False)
+    target_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    target_href: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    use_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    visit_timestamps: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    last_used_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
     )
-    last_used_at: Mapped[datetime] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
     )
 
     __table_args__ = (
-        UniqueConstraint("user_id", "href", name="uq_command_palette_recents_user_href"),
+        UniqueConstraint(
+            "user_id",
+            "query_normalized",
+            "target_key",
+            name="uq_command_palette_usages_user_query_target",
+        ),
+        CheckConstraint("use_count >= 1", name="ck_command_palette_usages_use_count"),
+        CheckConstraint(
+            "target_kind IN ('href', 'action', 'prefill')",
+            name="ck_command_palette_usages_target_kind",
+        ),
+        CheckConstraint(
+            "source IN ('static', 'workspace', 'recent', 'oracle', 'search', 'ai')",
+            name="ck_command_palette_usages_source",
+        ),
+        CheckConstraint(
+            "(target_kind = 'href' AND target_href IS NOT NULL) OR "
+            "(target_kind <> 'href' AND target_href IS NULL)",
+            name="ck_command_palette_usages_target_href",
+        ),
         Index(
-            "ix_command_palette_recents_user_last_used_at_id",
+            "ix_command_palette_usages_user_last_used_at_id",
             "user_id",
             text("last_used_at DESC"),
             text("id DESC"),
         ),
+        Index(
+            "ix_command_palette_usages_user_query_last_used_at",
+            "user_id",
+            "query_normalized",
+            text("last_used_at DESC"),
+        ),
     )
 
-    user: Mapped["User"] = relationship("User", back_populates="command_palette_recents")
+    user: Mapped["User"] = relationship("User", back_populates="command_palette_usages")
 
 
 class ReaderMediaState(Base):

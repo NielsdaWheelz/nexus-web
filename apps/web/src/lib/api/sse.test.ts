@@ -153,6 +153,7 @@ describe("sseClientDirect", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const events: Array<{ type: string; data: unknown }> = [];
+    const deliveredEventIds: string[] = [];
 
     await new Promise<void>((resolve, reject) => {
       sseClientDirect(
@@ -165,6 +166,9 @@ describe("sseClientDirect", () => {
           },
           onError: reject,
           onComplete: () => resolve(),
+          onLastEventId: (id) => {
+            deliveredEventIds.push(id);
+          },
         },
         { lastEventId: "7" },
       );
@@ -259,6 +263,7 @@ describe("sseClientDirect", () => {
         },
       },
     ]);
+    expect(deliveredEventIds).toEqual([]);
   });
 
   it("mints a fresh stream token when reconnecting", async () => {
@@ -313,6 +318,7 @@ describe("sseClientDirect", () => {
       .fn()
       .mockResolvedValueOnce("token-1")
       .mockResolvedValueOnce("token-2");
+    const deliveredEventIds: string[] = [];
 
     const complete = new Promise<void>((resolve, reject) => {
       sseClientDirect(
@@ -323,6 +329,9 @@ describe("sseClientDirect", () => {
           onEvent: () => {},
           onError: reject,
           onComplete: () => resolve(),
+          onLastEventId: (id) => {
+            deliveredEventIds.push(id);
+          },
         },
       );
     });
@@ -353,6 +362,7 @@ describe("sseClientDirect", () => {
         }),
       }),
     );
+    expect(deliveredEventIds).toEqual(["1", "2"]);
   });
 
   it("parses CRLF, CR, split line endings, comments, ids, and multi-line data", async () => {

@@ -13,6 +13,8 @@ import {
 } from "@/components/feedback/Feedback";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import SectionCard from "@/components/ui/SectionCard";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
 import { apiFetch } from "@/lib/api/client";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
@@ -661,21 +663,23 @@ export default function BrowsePaneBody() {
           }}
         >
           <div className={styles.searchRow}>
-            <input
-              className={styles.searchInput}
+            <Input
+              className={styles.searchInputField}
+              size="lg"
               type="search"
               value={draftQuery}
               onChange={(event) => setDraftQuery(event.target.value)}
               placeholder="Search for new podcasts, episodes, videos, or documents..."
               autoFocus
             />
-            <button
+            <Button
               type="submit"
-              className={styles.searchBtn}
+              variant="primary"
+              size="lg"
               disabled={searching || !draftQuery.trim()}
             >
               {searching ? "..." : "Search"}
-            </button>
+            </Button>
           </div>
 
           <div
@@ -744,10 +748,18 @@ export default function BrowsePaneBody() {
                   const sourceLabel = getDocumentSourceLabel(result);
                   return (
                     <div key={result.url} className={styles.row}>
-                      <button
-                        type="button"
+                      <div
+                        role="button"
+                        tabIndex={0}
                         className={styles.primary}
                         onClick={() => {
+                          void addAndOpenResult(result);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") {
+                            return;
+                          }
+                          event.preventDefault();
                           void addAndOpenResult(result);
                         }}
                       >
@@ -777,23 +789,23 @@ export default function BrowsePaneBody() {
                               getDocumentFallbackDescription(result)}
                           </div>
                         </div>
-                      </button>
+                      </div>
                       <ContributorCreditList
                         credits={result.contributors}
                         className={styles.rowContributors}
                         maxVisible={2}
                       />
                       <div className={styles.actions}>
-                        <button
-                          type="button"
-                          className={styles.primaryAction}
+                        <Button
+                          variant="primary"
+                          size="md"
                           disabled={busy}
                           onClick={() => {
                             void addAndOpenResult(result);
                           }}
                         >
                           {getDocumentActionLabel(result, busy)}
-                        </button>
+                        </Button>
                         {!result.media_id ? (
                           <LibraryTargetPicker
                             label={getDocumentLibraryActionLabel(result)}
@@ -820,10 +832,18 @@ export default function BrowsePaneBody() {
                   );
                   return (
                     <div key={result.provider_video_id} className={styles.row}>
-                      <button
-                        type="button"
+                      <div
+                        role="button"
+                        tabIndex={0}
                         className={styles.primary}
                         onClick={() => {
+                          void addAndOpenResult(result);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") {
+                            return;
+                          }
+                          event.preventDefault();
                           void addAndOpenResult(result);
                         }}
                       >
@@ -856,16 +876,16 @@ export default function BrowsePaneBody() {
                               "Add this video to open it in the media reader."}
                           </div>
                         </div>
-                      </button>
+                      </div>
                       <ContributorCreditList
                         credits={result.contributors}
                         className={styles.rowContributors}
                         maxVisible={2}
                       />
                       <div className={styles.actions}>
-                        <button
-                          type="button"
-                          className={styles.primaryAction}
+                        <Button
+                          variant="primary"
+                          size="md"
                           disabled={busy}
                           onClick={() => {
                             void addAndOpenResult(result);
@@ -878,7 +898,7 @@ export default function BrowsePaneBody() {
                             : busy
                               ? "Adding..."
                               : "Add"}
-                        </button>
+                        </Button>
                         {!result.media_id ? (
                           <LibraryTargetPicker
                             label="Add + library"
@@ -908,10 +928,18 @@ export default function BrowsePaneBody() {
                       key={result.provider_podcast_id}
                       className={styles.row}
                     >
-                      <button
-                        type="button"
+                      <div
+                        role="button"
+                        tabIndex={0}
                         className={styles.primary}
                         onClick={() => {
+                          void ensureAndOpenPodcast(result);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") {
+                            return;
+                          }
+                          event.preventDefault();
                           void ensureAndOpenPodcast(result);
                         }}
                       >
@@ -944,7 +972,7 @@ export default function BrowsePaneBody() {
                               "Open the show page or follow it from browse."}
                           </div>
                         </div>
-                      </button>
+                      </div>
                       <ContributorCreditList
                         credits={result.contributors}
                         className={styles.rowContributors}
@@ -952,28 +980,28 @@ export default function BrowsePaneBody() {
                       />
                       <div className={styles.actions}>
                         {result.podcast_id ? (
-                          <button
-                            type="button"
-                            className={styles.primaryAction}
+                          <Button
+                            variant="primary"
+                            size="md"
                             disabled={busy}
                             onClick={() => {
                               void ensureAndOpenPodcast(result);
                             }}
                           >
                             {busy ? "Opening..." : "Open"}
-                          </button>
+                          </Button>
                         ) : (
                           <>
-                            <button
-                              type="button"
-                              className={styles.primaryAction}
+                            <Button
+                              variant="primary"
+                              size="md"
                               disabled={busy}
                               onClick={() => {
                                 void followPodcast(result);
                               }}
                             >
                               {busy ? "Following..." : "Follow"}
-                            </button>
+                            </Button>
                             <LibraryTargetPicker
                               label="Follow + library"
                               libraries={libraries}
@@ -999,10 +1027,18 @@ export default function BrowsePaneBody() {
                 );
                 return (
                   <div key={result.provider_episode_id} className={styles.row}>
-                    <button
-                      type="button"
+                    <div
+                      role="button"
+                      tabIndex={0}
                       className={styles.primary}
                       onClick={() => {
+                        void ensureAndOpenPodcast(result);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") {
+                          return;
+                        }
+                        event.preventDefault();
                         void ensureAndOpenPodcast(result);
                       }}
                     >
@@ -1034,23 +1070,23 @@ export default function BrowsePaneBody() {
                           {formatEpisodeMeta(result)}
                         </div>
                       </div>
-                    </button>
+                    </div>
                     <ContributorCreditList
                       credits={result.podcast_contributors}
                       className={styles.rowContributors}
                       maxVisible={2}
                     />
                     <div className={styles.actions}>
-                      <button
-                        type="button"
-                        className={styles.primaryAction}
+                      <Button
+                        variant="primary"
+                        size="md"
                         disabled={busy}
                         onClick={() => {
                           void ensureAndOpenPodcast(result);
                         }}
                       >
                         {busy ? "Opening..." : "Open show"}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 );
@@ -1058,8 +1094,9 @@ export default function BrowsePaneBody() {
             </div>
 
             {getSectionPage(sections, sectionType).next_cursor ? (
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="md"
                 className={styles.loadMore}
                 onClick={() => {
                   void loadMore(sectionType);
@@ -1069,7 +1106,7 @@ export default function BrowsePaneBody() {
                 {loadingMoreTypes.has(sectionType)
                   ? "Loading..."
                   : `Load more ${TYPE_LABELS[sectionType].toLowerCase()}`}
-              </button>
+              </Button>
             ) : null}
           </section>
         ))}

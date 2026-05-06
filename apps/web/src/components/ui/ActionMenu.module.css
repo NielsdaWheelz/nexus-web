@@ -10,8 +10,8 @@
   justify-content: center;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -21,12 +21,12 @@
 }
 
 .trigger:hover {
-  background: var(--color-bg-hover);
-  color: var(--color-text);
+  background: var(--surface-hover);
+  color: var(--ink);
 }
 
 .trigger:focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 
@@ -35,11 +35,11 @@
   list-style: none;
   margin: 0;
   padding: var(--space-1);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-bg);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-canvas);
   min-width: 10rem;
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-3);
 }
 
 .menuItem {
@@ -47,18 +47,18 @@
   display: block;
   border: none;
   background: transparent;
-  color: var(--color-text);
+  color: var(--ink);
   text-align: left;
   text-decoration: none;
   padding: var(--space-2) var(--space-2);
-  border-radius: 6px;
-  font-size: var(--font-size-sm);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .menuItem:hover {
-  background: var(--color-surface);
+  background: var(--surface-2);
 }
 
 .menuItem:disabled,
@@ -73,11 +73,11 @@
 }
 
 .menuItemDanger {
-  color: var(--color-error);
+  color: var(--danger);
 }
 
 .separator {
   height: 1px;
   margin: var(--space-1) 0;
-  background: var(--color-border-subtle);
+  background: var(--edge-subtle);
 }

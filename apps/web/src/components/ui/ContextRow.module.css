@@ -27,21 +27,21 @@
 }
 
 .title {
-  font-size: var(--font-size-sm);
-  color: var(--color-text);
+  font-size: var(--text-sm);
+  color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .description {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
 }
 
 .meta {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
 }
 
 .trailing {

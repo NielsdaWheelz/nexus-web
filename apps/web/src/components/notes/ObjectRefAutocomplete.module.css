@@ -1,29 +1,37 @@
 .menu {
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  box-shadow: var(--shadow-md);
-  color: var(--color-text);
+  background: var(--surface-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+  color: var(--ink);
   display: grid;
   gap: 2px;
   max-width: 320px;
-  padding: 4px;
+  padding: var(--space-1);
 }
 
 .option {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: inherit;
-  display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  min-height: 32px;
-  padding: 6px 8px;
+  width: 100%;
+  justify-content: stretch;
   text-align: left;
 }
 
-.option:hover {
-  background: var(--color-surface);
+.optionRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  width: 100%;
+  align-items: center;
+}
+
+.optionLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.optionType {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
 }

@@ -14,6 +14,7 @@ import {
 } from "react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import SurfaceHeader, { type SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
+import Button from "@/components/ui/Button";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
 import styles from "./PaneShell.module.css";
 
@@ -442,8 +443,10 @@ export default function PaneShell({
             isMobile ? (
               <>
                 {effectiveActions}
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="md"
+                  iconOnly
                   className={styles.mobileSearchButton}
                   onClick={() =>
                     window.dispatchEvent(
@@ -454,7 +457,7 @@ export default function PaneShell({
                   aria-haspopup="dialog"
                 >
                   <Search size={16} aria-hidden="true" />
-                </button>
+                </Button>
               </>
             ) : (
               effectiveActions

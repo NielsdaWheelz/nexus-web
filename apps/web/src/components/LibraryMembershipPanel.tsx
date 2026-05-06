@@ -15,6 +15,8 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Dialog from "@/components/ui/Dialog";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
 import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./LibraryMembershipPanel.module.css";
@@ -151,11 +153,11 @@ export default function LibraryMembershipPanel({
   const content = (
     <div className={styles.content}>
       <div className={styles.searchRow}>
-        <input
+        <Input
           ref={inputRef}
           type="search"
           value={query}
-          className={styles.searchInput}
+          className={styles.searchInputField}
           placeholder="Search libraries..."
           aria-label="Search libraries"
           onChange={(event) => setQuery(event.target.value)}
@@ -177,12 +179,31 @@ export default function LibraryMembershipPanel({
           filteredLibraries.map((library) => {
             const rowDisabled = busy || (library.isInLibrary ? !library.canRemove : !library.canAdd);
             return (
-              <button
+              <div
                 key={library.id}
-                type="button"
+                role="button"
+                tabIndex={rowDisabled ? -1 : 0}
+                aria-disabled={rowDisabled || undefined}
                 className={styles.item}
-                disabled={rowDisabled}
-                onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
+                onClick={(event: ReactMouseEvent<HTMLDivElement>) => {
+                  if (rowDisabled) {
+                    return;
+                  }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (library.isInLibrary) {
+                    onRemoveFromLibrary(library.id);
+                    return;
+                  }
+                  onAddToLibrary(library.id);
+                }}
+                onKeyDown={(event) => {
+                  if (rowDisabled) {
+                    return;
+                  }
+                  if (event.key !== "Enter" && event.key !== " ") {
+                    return;
+                  }
                   event.preventDefault();
                   event.stopPropagation();
                   if (library.isInLibrary) {
@@ -208,7 +229,7 @@ export default function LibraryMembershipPanel({
                   </span>
                 </span>
                 {library.isInLibrary ? <Check size={16} aria-hidden="true" /> : null}
-              </button>
+              </div>
             );
           })
         )}
@@ -243,14 +264,15 @@ export default function LibraryMembershipPanel({
     >
       <div className={styles.header}>
         <h2 className={styles.title}>{title}</h2>
-        <button
-          type="button"
-          className={styles.closeButton}
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
           onClick={handleClose}
           aria-label="Close dialog"
         >
           <X size={16} />
-        </button>
+        </Button>
       </div>
       {content}
     </div>,

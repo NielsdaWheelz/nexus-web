@@ -2,6 +2,7 @@
 
 import { Maximize2, Minus, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import Button from "@/components/ui/Button";
 import styles from "./WorkspacePaneStrip.module.css";
 
 interface WorkspacePaneStripItem {
@@ -182,7 +183,7 @@ export default function WorkspacePaneStrip({
                 isMinimized ? styles.minimized : "",
               ].join(" ")}
             >
-              <button
+              <Button
                 ref={(element) => {
                   if (element) {
                     primaryButtonRefs.current.set(item.paneId, element);
@@ -190,7 +191,7 @@ export default function WorkspacePaneStrip({
                     primaryButtonRefs.current.delete(item.paneId);
                   }
                 }}
-                type="button"
+                variant="ghost"
                 tabIndex={item.paneId === focusablePaneId ? 0 : -1}
                 aria-current={item.isActive ? "true" : undefined}
                 className={styles.primary}
@@ -201,35 +202,41 @@ export default function WorkspacePaneStrip({
                 <span className={styles.title}>{title}</span>
                 {item.isActive && <span className={styles.sronly}> Active pane.</span>}
                 {isMinimized && <span className={styles.sronly}> Minimized. Restore.</span>}
-              </button>
+              </Button>
               {isMinimized ? (
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="md"
+                  iconOnly
                   className={styles.action}
                   aria-label={`Restore ${title}`}
                   onClick={() => handleRestorePane(item.paneId)}
                 >
                   <Maximize2 aria-hidden="true" size={16} strokeWidth={2} />
-                </button>
+                </Button>
               ) : (
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="md"
+                  iconOnly
                   className={styles.action}
                   aria-label={`Minimize ${title}`}
                   disabled={!item.canMinimize}
                   onClick={() => handleMinimizePane(item)}
                 >
                   <Minus aria-hidden="true" size={16} strokeWidth={2} />
-                </button>
+                </Button>
               )}
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="md"
+                iconOnly
                 className={styles.action}
                 aria-label={`Close ${title}`}
                 onClick={() => handleClosePane(item.paneId)}
               >
                 <X aria-hidden="true" size={16} strokeWidth={2} />
-              </button>
+              </Button>
             </div>
           );
         })}

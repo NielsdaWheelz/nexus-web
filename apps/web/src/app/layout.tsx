@@ -10,6 +10,7 @@ import "./globals.css";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "@/lib/highlights/highlights.css";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { readThemeCookie } from "@/lib/theme/cookie";
 
 export const metadata: Metadata = {
   title: "Nexus",
@@ -54,16 +55,23 @@ const unifrakturMaguntia = UnifrakturMaguntia({
   variable: "--font-unifraktur",
 });
 
-export default function RootLayout({
+const themeBootstrapScript = `(function(){try{var c=document.cookie.match(/(?:^|;\\s*)nx-theme=(light|dark)/);var t=c?c[1]:(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark");document.documentElement.setAttribute("data-theme",t);}catch(_){}})();`;
+
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const theme = await readThemeCookie();
   return (
     <html
       lang="en"
+      data-theme={theme ?? undefined}
       className={`${inter.variable} ${jetbrainsMono.variable} ${ebGaramond.variable} ${imFellEnglish.variable} ${unifrakturMaguntia.variable}`}
     >
+      <head>
+        <script>{themeBootstrapScript}</script>
+      </head>
       <body>
         <FeedbackProvider>{children}</FeedbackProvider>
       </body>

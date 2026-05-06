@@ -2,9 +2,9 @@
   display: flex;
   align-items: center;
   min-width: 0;
-  min-height: 40px;
-  border-bottom: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-secondary);
+  min-height: var(--tabsbar-height);
+  border-bottom: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
 }
 
 .switcher {
@@ -20,16 +20,16 @@
   align-items: stretch;
   min-width: 0;
   max-width: 260px;
-  border-right: 1px solid var(--color-border-subtle);
+  border-right: 1px solid var(--edge-subtle);
   background: transparent;
 }
 
 .active {
-  background: var(--color-bg);
+  background: var(--surface-canvas);
 }
 
 .minimized {
-  background: var(--color-bg-tertiary);
+  background: var(--surface-1);
 }
 
 .primary {
@@ -39,18 +39,18 @@
   max-width: 180px;
   border: 0;
   background: transparent;
-  color: var(--color-text-secondary);
+  color: var(--ink-muted);
   padding: 0 var(--space-3);
   font: inherit;
   cursor: pointer;
 }
 
 .active .primary {
-  color: var(--color-text);
+  color: var(--ink);
 }
 
 .minimized .primary {
-  color: var(--color-text-muted);
+  color: var(--ink-faint);
   font-style: italic;
 }
 
@@ -58,8 +58,8 @@
 .primary:focus-visible,
 .action:hover,
 .action:focus-visible {
-  color: var(--color-text);
-  background: var(--color-surface);
+  color: var(--ink);
+  background: var(--surface-2);
 }
 
 .primary:focus-visible,
@@ -79,19 +79,19 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  min-width: 32px;
+  width: var(--size-md);
+  min-width: var(--size-md);
   border: 0;
-  border-left: 1px solid var(--color-border-subtle);
+  border-left: 1px solid var(--edge-subtle);
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--ink-faint);
   padding: 0;
   font: inherit;
   cursor: pointer;
 }
 
 .action:disabled {
-  color: var(--color-text-muted);
+  color: var(--ink-faint);
   background: transparent;
   cursor: not-allowed;
   opacity: 0.45;

@@ -13,9 +13,9 @@
 }
 
 .editorView {
-  color: var(--color-text);
-  font-size: 16px;
-  line-height: 1.55;
+  color: var(--ink);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
   max-width: 76ch;
   outline: none;
 }
@@ -42,7 +42,7 @@
 .editorView :global(.note-block-handle) {
   background: currentColor;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   cursor: pointer;
   height: 6px;
   left: 6px;
@@ -75,7 +75,7 @@
 .editorView :global(.note-object-ref) {
   background: color-mix(in srgb, currentColor 10%, transparent);
   border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   padding: 0 4px;
 }
@@ -87,7 +87,7 @@
 
 .editorView :global(.note-object-embed) {
   border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   margin: 8px 0;
   padding: 8px 10px;
 }

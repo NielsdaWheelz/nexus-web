@@ -1,0 +1,153 @@
+.button {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-weight: var(--weight-semibold);
+  border-radius: var(--radius-lg);
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--duration-fast) var(--ease-glide),
+    border-color var(--duration-fast) var(--ease-glide),
+    color var(--duration-fast) var(--ease-glide);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Sizes */
+.sm {
+  height: var(--size-sm);
+  font-size: var(--text-sm);
+  padding: 0 var(--space-3);
+}
+
+.md {
+  height: var(--size-lg);
+  font-size: var(--text-base);
+  padding: 0 var(--space-4);
+}
+
+.lg {
+  height: var(--size-xl);
+  font-size: var(--text-base);
+  padding: 0 var(--space-5);
+}
+
+/* Icon-only sizing: square button, no padding/gap */
+.iconOnly {
+  padding: 0;
+  gap: 0;
+}
+
+.iconOnly.sm {
+  width: var(--size-sm);
+}
+
+.iconOnly.md {
+  width: var(--size-lg);
+}
+
+.iconOnly.lg {
+  width: var(--size-xl);
+}
+
+/* Variants */
+.primary {
+  background: var(--accent);
+  color: var(--ink-on-accent);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.primary:active:not(:disabled) {
+  background: var(--accent-active);
+}
+
+.secondary {
+  background: var(--surface-2);
+  color: var(--ink);
+  border-color: var(--edge);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--edge-strong);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--ink);
+}
+
+.ghost:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.danger {
+  background: var(--danger);
+  color: var(--ink-on-accent);
+}
+
+.danger:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.pill {
+  background: var(--surface-2);
+  color: var(--ink);
+  border-color: var(--edge);
+  border-radius: var(--radius-full);
+}
+
+.pill:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--edge-strong);
+}
+
+/* Icon slot wrapper */
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Loading state */
+.loading {
+  position: relative;
+}
+
+.hiddenLabel {
+  visibility: hidden;
+}
+
+.label {
+  display: inline-flex;
+  align-items: center;
+}
+
+.spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 1em;
+  height: 1em;
+  border-radius: var(--radius-full);
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  animation: spin var(--duration-deliberate) linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

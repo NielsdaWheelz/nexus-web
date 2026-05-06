@@ -35,6 +35,9 @@ import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { getFocusableElements } from "@/lib/ui/getFocusableElements";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import Button from "@/components/ui/Button";
+import Textarea from "@/components/ui/Textarea";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import styles from "./AddContentTray.module.css";
 
 type QueueItem = {
@@ -566,62 +569,63 @@ export default function AddContentTray() {
             <h2>Add content</h2>
             <p>{modeDescription}</p>
           </div>
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="md"
+            iconOnly
             className={styles.iconButton}
             onClick={() => setOpen(false)}
             aria-label="Close"
           >
             <X size={16} aria-hidden="true" />
-          </button>
+          </Button>
         </header>
 
-        <div className={styles.modeTabs} role="tablist" aria-label="Add content mode">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === "content"}
-            className={mode === "content" ? styles.modeTabActive : styles.modeTab}
-            onClick={() => setMode("content")}
-          >
-            Content
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === "quick-note"}
-            className={mode === "quick-note" ? styles.modeTabActive : styles.modeTab}
-            onClick={() => setMode("quick-note")}
-          >
-            Quick note
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === "opml"}
-            className={mode === "opml" ? styles.modeTabActive : styles.modeTab}
-            onClick={() => setMode("opml")}
-          >
-            OPML
-          </button>
-        </div>
+        <Tabs
+          variant="tabs"
+          value={mode}
+          onValueChange={(next) => setMode(next as AddContentMode)}
+          className={styles.modeTabs}
+        >
+          <TabsList aria-label="Add content mode">
+            <TabsTrigger value="content">Content</TabsTrigger>
+            <TabsTrigger value="quick-note">Quick note</TabsTrigger>
+            <TabsTrigger value="opml">OPML</TabsTrigger>
+          </TabsList>
+        </Tabs>
 
         <div className={styles.body}>
           {mode === "content" ? (
             <>
               <div className={styles.knowledgeActions} aria-label="Notes actions">
-                <button type="button" onClick={() => void createPage()} disabled={noteBusy}>
-                  <Plus size={16} aria-hidden="true" />
-                  <span>New page</span>
-                </button>
-                <button type="button" onClick={openToday}>
-                  <CalendarDays size={16} aria-hidden="true" />
-                  <span>Today</span>
-                </button>
-                <button type="button" onClick={() => setMode("quick-note")}>
-                  <FileText size={16} aria-hidden="true" />
-                  <span>Quick note to today</span>
-                </button>
+                <Button
+                  variant="secondary"
+                  size="md"
+                  className={styles.knowledgeAction}
+                  onClick={() => void createPage()}
+                  disabled={noteBusy}
+                  leadingIcon={<Plus size={16} aria-hidden="true" />}
+                >
+                  New page
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="md"
+                  className={styles.knowledgeAction}
+                  onClick={openToday}
+                  leadingIcon={<CalendarDays size={16} aria-hidden="true" />}
+                >
+                  Today
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="md"
+                  className={styles.knowledgeAction}
+                  onClick={() => setMode("quick-note")}
+                  leadingIcon={<FileText size={16} aria-hidden="true" />}
+                >
+                  Quick note to today
+                </Button>
               </div>
               {noteFeedback ? <FeedbackNotice feedback={noteFeedback} /> : null}
 
@@ -646,15 +650,17 @@ export default function AddContentTray() {
                 </small>
               </div>
 
-              <button
-                type="button"
+              <Button
+                variant="secondary"
                 className={styles.dropzone}
                 onClick={() => fileInputRef.current?.click()}
               >
-                <Upload size={22} aria-hidden="true" />
-                <span>Upload file</span>
-                <small>PDF up to 100 MB, EPUB up to 50 MB. Select or drop many at once.</small>
-              </button>
+                <span className={styles.dropzoneInner}>
+                  <Upload size={22} aria-hidden="true" />
+                  <span>Upload file</span>
+                  <small>PDF up to 100 MB, EPUB up to 50 MB. Select or drop many at once.</small>
+                </span>
+              </Button>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -670,8 +676,10 @@ export default function AddContentTray() {
 
               <form className={styles.urlForm} onSubmit={submitUrls}>
                 <label htmlFor="ingestion-url-input">URLs</label>
-                <textarea
+                <Textarea
                   id="ingestion-url-input"
+                  size="sm"
+                  className={styles.urlTextarea}
                   value={urlText}
                   onChange={(event) => {
                     setUrlText(event.target.value);
@@ -685,9 +693,9 @@ export default function AddContentTray() {
                     {urlError ??
                       "One per line, or paste a block of text containing PDF, EPUB, article, or video links."}
                   </span>
-                  <button type="submit" disabled={!urlText.trim()}>
+                  <Button type="submit" variant="primary" size="md" disabled={!urlText.trim()}>
                     Add
-                  </button>
+                  </Button>
                 </div>
               </form>
 
@@ -724,18 +732,24 @@ export default function AddContentTray() {
                         </div>
                         <div className={styles.itemActions}>
                           {item.status === "success" && href ? (
-                            <button type="button" onClick={() => requestOpenInAppPane(href)}>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => requestOpenInAppPane(href)}
+                            >
                               Open
-                            </button>
+                            </Button>
                           ) : null}
                           {item.status === "error" ? (
-                            <button
-                              type="button"
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              iconOnly
                               onClick={() => retryItem(item)}
                               aria-label={`Retry ${item.label}`}
                             >
                               <RotateCcw size={14} aria-hidden="true" />
-                            </button>
+                            </Button>
                           ) : null}
                           {item.status === "success" ? (
                             <CircleCheck
@@ -752,13 +766,15 @@ export default function AddContentTray() {
                             />
                           ) : null}
                           {item.status === "queued" ? (
-                            <button
-                              type="button"
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              iconOnly
                               onClick={() => removeItem(item.id)}
                               aria-label={`Remove ${item.label}`}
                             >
                               <X size={14} aria-hidden="true" />
-                            </button>
+                            </Button>
                           ) : null}
                         </div>
                       </div>
@@ -777,8 +793,10 @@ export default function AddContentTray() {
                 }}
               >
                 <label htmlFor="quick-note-input">Quick note to today</label>
-                <textarea
+                <Textarea
                   id="quick-note-input"
+                  size="sm"
+                  className={styles.quickNoteTextarea}
                   value={quickNoteText}
                   onChange={(event) => {
                     setQuickNoteText(event.currentTarget.value);
@@ -788,12 +806,17 @@ export default function AddContentTray() {
                   placeholder="Capture a thought..."
                 />
                 <div className={styles.quickNoteActions}>
-                  <button type="button" onClick={openToday}>
+                  <Button variant="secondary" size="md" onClick={openToday}>
                     Open today
-                  </button>
-                  <button type="submit" disabled={noteBusy || !quickNoteText.trim()}>
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="md"
+                    disabled={noteBusy || !quickNoteText.trim()}
+                  >
                     {noteBusy ? "Adding..." : "Add note"}
-                  </button>
+                  </Button>
                 </div>
               </form>
               {noteFeedback ? <FeedbackNotice feedback={noteFeedback} /> : null}
@@ -818,13 +841,13 @@ export default function AddContentTray() {
                       setImportResult(null);
                     }}
                   />
-                  <button
-                    type="button"
-                    className={styles.opmlBrowseButton}
+                  <Button
+                    variant="secondary"
+                    size="md"
                     onClick={() => opmlInputRef.current?.click()}
                   >
                     Choose file
-                  </button>
+                  </Button>
                   <span className={styles.opmlInputLabel}>
                     {importFile?.name ?? "No file selected"}
                   </span>
@@ -835,9 +858,14 @@ export default function AddContentTray() {
               </div>
 
               <div className={styles.importActions}>
-                <button type="button" onClick={handleImportOpml} disabled={importBusy}>
+                <Button
+                  variant="primary"
+                  size="md"
+                  onClick={handleImportOpml}
+                  disabled={importBusy}
+                >
                   {importBusy ? "Importing..." : "Import OPML"}
-                </button>
+                </Button>
               </div>
 
               {importError ? <FeedbackNotice feedback={importError} /> : null}

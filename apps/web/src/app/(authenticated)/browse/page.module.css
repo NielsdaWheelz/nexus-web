@@ -15,44 +15,8 @@
   gap: var(--space-2);
 }
 
-.searchInput {
+.searchInputField {
   flex: 1;
-  padding: var(--space-3);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: var(--font-size-base);
-}
-
-.searchInput:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
-.searchInput::placeholder {
-  color: var(--color-text-muted);
-}
-
-.searchBtn,
-.primaryAction,
-.loadMore {
-  padding: var(--space-3) var(--space-5);
-  background: var(--color-accent);
-  color: var(--color-bg);
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: var(--font-size-base);
-  font-weight: 500;
-}
-
-.searchBtn:disabled,
-.primaryAction:disabled,
-.loadMore:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .filters {
@@ -66,26 +30,25 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--ink-muted);
   cursor: pointer;
   font: inherit;
 }
 
 .filterOption input {
   margin: 0;
-  accent-color: var(--color-accent);
+  accent-color: var(--accent);
 }
 
 .filterOption:has(input:checked) {
-  border-color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
-  color: var(--color-text);
+  border-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--ink);
 }
 
-.sections,
 .section {
   display: flex;
   flex-direction: column;
@@ -101,19 +64,8 @@
 
 .sectionTitle {
   margin: 0;
-  color: var(--color-text);
-  font-size: var(--font-size-lg);
-}
-
-.sectionMeta,
-.sectionEmpty {
-  margin: var(--space-1) 0 0;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-}
-
-.sectionEmpty {
-  margin-top: 0;
+  color: var(--ink);
+  font-size: var(--text-lg);
 }
 
 .resultRows {
@@ -127,9 +79,9 @@
   gap: var(--space-3);
   align-items: stretch;
   padding: var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  background: var(--color-surface);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-xl);
+  background: var(--surface-2);
 }
 
 .primary {
@@ -137,12 +89,16 @@
   flex: 1;
   gap: var(--space-3);
   align-items: flex-start;
-  border: none;
   background: transparent;
   color: inherit;
   cursor: pointer;
-  padding: 0;
   text-align: left;
+}
+
+.primary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-lg);
 }
 
 .leading {
@@ -153,7 +109,7 @@
 .fallback {
   width: 56px;
   height: 56px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
 }
 
 .artwork {
@@ -164,8 +120,8 @@
 .fallback {
   display: grid;
   place-items: center;
-  background: var(--color-bg-muted);
-  color: var(--color-text-secondary);
+  background: var(--surface-2);
+  color: var(--ink-muted);
 }
 
 .copy {
@@ -186,18 +142,18 @@
 .typeBadge {
   display: inline-flex;
   align-items: center;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
+  border-radius: var(--radius-full);
+  background: var(--accent-muted);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
   line-height: 1;
   padding: 0.3rem 0.55rem;
 }
 
 .meta {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
 }
 
 .rowContributors {
@@ -207,15 +163,15 @@
 }
 
 .title {
-  color: var(--color-text);
-  font-size: var(--font-size-base);
-  font-weight: 600;
+  color: var(--ink);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
 }
 
 .description {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  line-height: 1.5;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
 }
 
 .actions {

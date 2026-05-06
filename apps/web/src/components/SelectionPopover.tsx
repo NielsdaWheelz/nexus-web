@@ -14,6 +14,7 @@ import { MessageSquare } from "lucide-react";
 import { COLOR_LABELS } from "@/lib/highlights/colors";
 import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights/segmenter";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import Button from "@/components/ui/Button";
 import styles from "./SelectionPopover.module.css";
 
 export interface SelectionPopoverProps {
@@ -312,6 +313,9 @@ export default function SelectionPopover({
     >
       <div className={styles.colorPicker}>
         {HIGHLIGHT_COLORS.map((color) => (
+          // Highlight color swatch — the entire visual is the bg color and a thin
+          // selected border. Migrating to Button primitive would lose the bespoke
+          // swatch geometry; documented exception per Foundation 1A §8 acceptance.
           <button
             key={color}
             type="button"
@@ -326,8 +330,10 @@ export default function SelectionPopover({
         ))}
       </div>
       {onAsk ? (
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
+          iconOnly
           className={styles.askButton}
           onClick={handleAsk}
           disabled={isCreating}
@@ -335,7 +341,7 @@ export default function SelectionPopover({
           title="Ask"
         >
           <MessageSquare size={14} aria-hidden="true" />
-        </button>
+        </Button>
       ) : null}
     </div>
   );

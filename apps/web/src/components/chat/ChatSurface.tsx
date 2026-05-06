@@ -1,6 +1,7 @@
 "use client";
 
 import type { RefObject, ReactNode, UIEventHandler } from "react";
+import Button from "@/components/ui/Button";
 import type {
   ConversationMessage,
   ConversationScope,
@@ -52,14 +53,14 @@ export default function ChatSurface({
           ) : null}
 
           {olderCursor && onLoadOlder ? (
-            <button
-              type="button"
-              className={styles.loadOlder}
+            <Button
+              variant="ghost"
+              size="sm"
               aria-label="Load older messages"
               onClick={onLoadOlder}
             >
               Load older messages
-            </button>
+            </Button>
           ) : null}
 
           {messages.length === 0 && emptyState ? (

@@ -1,53 +1,93 @@
-/* === CSS Reset + Variables === */
+/* === Scale tokens — theme-invariant === */
 :root {
-  /* Colors - Dark theme inspired by Dracula */
-  --color-bg: #1a1b26;
-  --color-bg-secondary: #24283b;
-  --color-bg-tertiary: #1f2335;
-  --color-surface: #292e42;
-  --color-border: #3b4261;
-  --color-border-subtle: #2f334d;
-
-  --color-text: #c0caf5;
-  --color-text-secondary: #9aa5ce;
-  --color-text-muted: #565f89;
-
-  --color-accent: #7aa2f7;
-  --color-accent-hover: #89b4fa;
-  --color-success: #9ece6a;
-  --color-warning: #e0af68;
-  --color-error: #f7768e;
-
-  /* Highlight colors */
-  --highlight-yellow: rgba(255, 235, 59, 0.8);
-  --highlight-green: rgba(76, 175, 80, 0.7);
-  --highlight-blue: rgba(33, 150, 243, 0.7);
-  --highlight-pink: rgba(233, 30, 99, 0.7);
-  --highlight-purple: rgba(156, 39, 176, 0.7);
-
-  /* Chat layout */
-  --content-max-width: 700px;
-
-  /* Typography */
+  /* Type families */
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
     "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-serif: ui-serif, Charter, Georgia, "Times New Roman", Times, serif;
   --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo,
     Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  --font-size-xs: 0.75rem;
-  --font-size-sm: 0.875rem;
-  --font-size-base: 1rem;
-  --font-size-lg: 1.125rem;
-  --font-size-xl: 1.25rem;
-  --font-size-2xl: 1.5rem;
+
+  /* Type size scale */
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --text-display-1: 2.5rem;
+  --text-display-2: 3.5rem;
+
+  /* Leading (line-height) */
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.6;
+  --leading-loose: 1.75;
+
+  /* Tracking (letter-spacing) */
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.02em;
+  --tracking-wider: 0.04em;
+  --tracking-widest: 0.08em;
+
+  /* Weight */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* Radius */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-full: 999px;
 
   /* Spacing */
+  --space-0: 0;
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
   --space-5: 1.25rem;
   --space-6: 1.5rem;
+  --space-7: 1.75rem;
   --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+
+  /* Motion */
+  --ease-snap: cubic-bezier(0.2, 0, 0, 1);
+  --ease-glide: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-bloom: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-instant: 80ms;
+  --duration-fast: 150ms;
+  --duration-base: 220ms;
+  --duration-slow: 360ms;
+  --duration-deliberate: 600ms;
+
+  /* Control sizing */
+  --size-xs: 24px;
+  --size-sm: 28px;
+  --size-md: 32px;
+  --size-lg: 36px;
+  --size-xl: 44px;
+  --size-2xl: 52px;
+
+  /* Z-index */
+  --z-base: 0;
+  --z-raised: 10;
+  --z-overlay: 100;
+  --z-modal: 1000;
+  --z-toast: 10000;
 
   /* Layout */
   --navbar-width: 240px;
@@ -58,18 +98,141 @@
   --pane-default-width: 480px;
   --pane-max-width: 1400px;
   --resize-handle-width: 8px;
+  --content-max-width: 700px;
 
-  /* Transitions */
-  --transition-fast: 150ms ease;
-  --transition-normal: 200ms ease;
+  /* Highlight inks — theme-invariant translucent fills */
+  --highlight-yellow: rgba(255, 235, 59, 0.4);
+  --highlight-green: rgba(76, 175, 80, 0.35);
+  --highlight-blue: rgba(33, 150, 243, 0.35);
+  --highlight-pink: rgba(233, 30, 99, 0.35);
+  --highlight-purple: rgba(156, 39, 176, 0.35);
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+  /* Default semantic colors = dark (overridden by [data-theme="light"] and
+     prefers-color-scheme: light below) */
+  --surface-canvas: #0e0e10;
+  --surface-1: #161618;
+  --surface-2: #1c1c1f;
+  --surface-3: #23232a;
+  --surface-hover: #1f1f23;
+  --surface-active: #2a2a2f;
+  --surface-sunken: #0a0a0c;
+  --ink: #ededef;
+  --ink-muted: #a3a3a8;
+  --ink-faint: #6f6f76;
+  --ink-on-accent: #0e0e10;
+  --edge: #2c2c30;
+  --edge-subtle: #1f1f23;
+  --edge-strong: #44444a;
+  --accent: #c4a472;
+  --accent-hover: #d4b687;
+  --accent-active: #b8965f;
+  --accent-muted: rgba(196, 164, 114, 0.16);
+  --ring: rgba(196, 164, 114, 0.55);
+  --success: #6ec07a;
+  --warning: #d4b066;
+  --danger: #d96a73;
+  --info: #7ea3c5;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 8px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 8px 18px rgba(0, 0, 0, 0.55);
+  --shadow-4: 0 18px 40px rgba(0, 0, 0, 0.6);
+  --shadow-5: 0 32px 80px rgba(0, 0, 0, 0.7);
 }
 
-/* === Base Styles === */
+/* === Light-mode override (explicit user choice) === */
+[data-theme="light"] {
+  --surface-canvas: #fafaf7;
+  --surface-1: #ffffff;
+  --surface-2: #f4f4f0;
+  --surface-3: #ededea;
+  --surface-hover: #f0f0ec;
+  --surface-active: #e6e6e1;
+  --surface-sunken: #f1f1ed;
+  --ink: #1a1a1c;
+  --ink-muted: #525258;
+  --ink-faint: #7a7a80;
+  --ink-on-accent: #fafaf7;
+  --edge: #d4d4cf;
+  --edge-subtle: #e8e8e3;
+  --edge-strong: #87878d;
+  --accent: #7d5e35;
+  --accent-hover: #634a29;
+  --accent-active: #4a371d;
+  --accent-muted: rgba(125, 94, 53, 0.12);
+  --ring: rgba(125, 94, 53, 0.45);
+  --success: #2f7a3e;
+  --warning: #8a6618;
+  --danger: #a83a44;
+  --info: #3b6b8f;
+  --shadow-1: 0 1px 2px rgba(20, 20, 30, 0.06);
+  --shadow-2: 0 4px 8px rgba(20, 20, 30, 0.1);
+  --shadow-3: 0 8px 18px rgba(20, 20, 30, 0.12);
+  --shadow-4: 0 18px 40px rgba(20, 20, 30, 0.16);
+  --shadow-5: 0 32px 80px rgba(20, 20, 30, 0.22);
+}
+
+/* === System-preference fallback when no explicit theme is set === */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --surface-canvas: #fafaf7;
+    --surface-1: #ffffff;
+    --surface-2: #f4f4f0;
+    --surface-3: #ededea;
+    --surface-hover: #f0f0ec;
+    --surface-active: #e6e6e1;
+    --surface-sunken: #f1f1ed;
+    --ink: #1a1a1c;
+    --ink-muted: #525258;
+    --ink-faint: #7a7a80;
+    --ink-on-accent: #fafaf7;
+    --edge: #d4d4cf;
+    --edge-subtle: #e8e8e3;
+    --edge-strong: #87878d;
+    --accent: #7d5e35;
+    --accent-hover: #634a29;
+    --accent-active: #4a371d;
+    --accent-muted: rgba(125, 94, 53, 0.12);
+    --ring: rgba(125, 94, 53, 0.45);
+    --success: #2f7a3e;
+    --warning: #8a6618;
+    --danger: #a83a44;
+    --info: #3b6b8f;
+    --shadow-1: 0 1px 2px rgba(20, 20, 30, 0.06);
+    --shadow-2: 0 4px 8px rgba(20, 20, 30, 0.1);
+    --shadow-3: 0 8px 18px rgba(20, 20, 30, 0.12);
+    --shadow-4: 0 18px 40px rgba(20, 20, 30, 0.16);
+    --shadow-5: 0 32px 80px rgba(20, 20, 30, 0.22);
+  }
+}
+
+/* === Reduced motion === */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-instant: 0ms;
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+    --duration-slow: 0ms;
+    --duration-deliberate: 0ms;
+  }
+}
+
+/* === Black Forest Oracle theme — scoped, route-local === */
+[data-theme="oracle"] {
+  --oracle-bg: #14110f;
+  --oracle-bg-elevated: #1c1814;
+  --oracle-fg: #ece1c8;
+  --oracle-fg-muted: #b6a482;
+  --oracle-rule: #4a3b2a;
+  --oracle-gold: #c39a4d;
+  --oracle-cream: #f3e9d0;
+  --oracle-maroon: #6b2a2a;
+  --oracle-marginalia-fg: #8e7848;
+  --font-oracle-body: var(--font-eb-garamond), Georgia, "Times New Roman", serif;
+  --font-oracle-display: var(--font-im-fell), "EB Garamond", Georgia, serif;
+  --font-oracle-fraktur: var(--font-unifraktur), serif;
+}
+
+/* === Reset === */
 *,
 *::before,
 *::after {
@@ -88,22 +251,22 @@ body {
   margin: 0;
   padding: 0;
   font-family: var(--font-sans);
-  font-size: var(--font-size-base);
-  line-height: 1.6;
-  color: var(--color-text);
-  background-color: var(--color-bg);
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+  color: var(--ink);
+  background-color: var(--surface-canvas);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 a {
-  color: var(--color-accent);
+  color: var(--accent);
   text-decoration: none;
-  transition: color var(--transition-fast);
+  transition: color var(--duration-fast) var(--ease-glide);
 }
 
 a:hover {
-  color: var(--color-accent-hover);
+  color: var(--accent-hover);
 }
 
 button {
@@ -118,7 +281,7 @@ textarea {
   font-size: inherit;
 }
 
-/* === Utility Classes === */
+/* === Utility === */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -132,41 +295,25 @@ textarea {
 }
 
 :where(button, a, input, textarea, select, [role="button"]):focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
-/* === Scrollbar Styling === */
+/* === Scrollbar === */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-bg-secondary);
+  background: var(--surface-2);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 4px;
+  background: var(--edge);
+  border-radius: var(--radius-sm);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
-}
-
-/* === Black Forest Oracle theme — scoped, route-local === */
-[data-theme="oracle"] {
-  --oracle-bg: #14110f;
-  --oracle-bg-elevated: #1c1814;
-  --oracle-fg: #ece1c8;
-  --oracle-fg-muted: #b6a482;
-  --oracle-rule: #4a3b2a;
-  --oracle-gold: #c39a4d;
-  --oracle-cream: #f3e9d0;
-  --oracle-maroon: #6b2a2a;
-  --oracle-marginalia-fg: #8e7848;
-  --font-oracle-body: var(--font-eb-garamond), Georgia, "Times New Roman", serif;
-  --font-oracle-display: var(--font-im-fell), "EB Garamond", Georgia, serif;
-  --font-oracle-fraktur: var(--font-unifraktur), serif;
+  background: var(--ink-faint);
 }

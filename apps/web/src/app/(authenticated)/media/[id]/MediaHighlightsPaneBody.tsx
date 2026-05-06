@@ -8,7 +8,7 @@ import {
   sortContextualFragmentHighlights,
   sortContextualPdfHighlights,
 } from "./mediaHighlightOrdering";
-import StatusPill from "@/components/ui/StatusPill";
+import Pill from "@/components/ui/Pill";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import styles from "./page.module.css";
 
@@ -203,7 +203,7 @@ export default function MediaHighlightsPaneBody({
         </div>
         {isPdf ? (
           <div className={styles.pdfPagePill}>
-            <StatusPill variant="info">Active page: {pdfActivePage}</StatusPill>
+            <Pill tone="info">Active page: {pdfActivePage}</Pill>
           </div>
         ) : null}
       </header>

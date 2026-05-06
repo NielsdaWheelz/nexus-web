@@ -7,6 +7,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import SectionCard from "@/components/ui/SectionCard";
+import Button from "@/components/ui/Button";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import {
   formatIdentityProvider,
@@ -176,14 +177,14 @@ export default function SettingsIdentitiesPaneBody() {
                   meta={linkedDate(identity)}
                   actions={
                     canUnlink ? (
-                      <button
-                        type="button"
-                        className={styles.unlinkButton}
+                      <Button
+                        variant="danger"
+                        size="sm"
                         disabled={pendingUnlink}
                         onClick={() => void handleUnlinkIdentity(identity)}
                       >
                         {pendingUnlink ? "Unlinking..." : "Unlink"}
-                      </button>
+                      </Button>
                     ) : (
                       <span className={styles.unlinkHint}>Keep at least two identities.</span>
                     )
@@ -203,17 +204,16 @@ export default function SettingsIdentitiesPaneBody() {
             {connectableProviders.map((provider) => {
               const pending = linkingProvider === provider;
               return (
-                <button
+                <Button
                   key={provider}
-                  type="button"
-                  className={styles.linkButton}
+                  variant="pill"
                   disabled={linkingProvider !== null || unlinkingIdentityId !== null}
                   onClick={() => void handleLinkProvider(provider)}
                 >
                   {pending
                     ? `Redirecting to ${formatIdentityProvider(provider)}...`
                     : `Connect ${formatIdentityProvider(provider)}`}
-                </button>
+                </Button>
               );
             })}
           </div>
