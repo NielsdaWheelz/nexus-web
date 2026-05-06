@@ -3,6 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
@@ -24,6 +25,22 @@ def export_vault(
         files=[VaultFile(path=file["path"], content=file["content"]) for file in files]
     )
     return success_response(response.model_dump(mode="json"))
+
+
+@router.get("/vault/download")
+def download_vault(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    return Response(
+        content=vault_service.export_vault_zip(db, viewer.user_id),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="nexus-vault.zip"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("/vault")

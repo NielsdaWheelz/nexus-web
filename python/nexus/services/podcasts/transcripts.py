@@ -6,6 +6,7 @@ import hashlib
 import math
 import threading
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -1472,6 +1473,7 @@ def run_podcast_transcription_now(
             "status": "completed",
             "segment_count": len(transcript_segments),
             "transcript_version_id": str(transcript_version_id),
+            "provider_fixture": transcription_result.get("provider_fixture"),
         }
 
     terminal_error_code = transcription_error_code or ApiErrorCode.E_TRANSCRIPTION_FAILED.value
@@ -2402,6 +2404,9 @@ def _transcribe_podcast_audio(audio_url: str | None) -> dict[str, Any]:
         )
 
     settings = get_settings()
+    if settings.real_media_provider_fixtures:
+        return _transcribe_real_media_fixture(normalized_audio_url, settings.real_media_fixture_dir)
+
     if not settings.deepgram_api_key:
         return _transcription_failure_result(
             ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
@@ -2419,6 +2424,57 @@ def _transcribe_podcast_audio(audio_url: str | None) -> dict[str, Any]:
         return fallback_result
 
     return fallback_result
+
+
+def _transcribe_real_media_fixture(audio_url: str, fixture_dir: str | None) -> dict[str, Any]:
+    expected_url = "https://www.nasa.gov/wp-content/uploads/2023/07/ep239_crew-4.mp3"
+    if audio_url != expected_url:
+        return _transcription_failure_result(
+            ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
+            f"No real-media podcast transcript fixture for {audio_url}",
+        )
+    if fixture_dir is None:
+        return _transcription_failure_result(
+            ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
+            "REAL_MEDIA_FIXTURE_DIR is required for podcast transcript fixtures",
+        )
+
+    path = Path(fixture_dir) / "nasa-hwhap-crew4-transcript.txt"
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return _transcription_failure_result(
+            ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
+            f"Podcast transcript fixture unavailable: {exc}",
+        )
+
+    payload = content.encode("utf-8")
+    if len(payload) != 753 or hashlib.sha256(payload).hexdigest() != (
+        "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953"
+    ):
+        return _transcription_failure_result(
+            ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
+            "Podcast transcript fixture hash mismatch",
+        )
+
+    from nexus.services.rss_transcript_fetch import _parse_plain_text_transcript
+
+    segments = _parse_plain_text_transcript(content, episode_duration_ms=753_000)
+    if not segments:
+        return _transcription_failure_result(
+            ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
+            "Podcast transcript fixture had no segments",
+        )
+    return {
+        "status": "completed",
+        "segments": segments,
+        "provider_fixture": {
+            "path": str(path),
+            "byte_length": len(payload),
+            "sha256": "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953",
+            "audio_url": audio_url,
+        },
+    }
 
 
 def _transcribe_with_deepgram(audio_url: str, *, diarize: bool) -> dict[str, Any]:

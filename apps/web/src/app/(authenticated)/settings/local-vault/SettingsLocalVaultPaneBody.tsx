@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { FolderOpen, RefreshCcw, UploadCloud } from "lucide-react";
+import { Download, FolderOpen, RefreshCcw, UploadCloud } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import {
@@ -186,6 +186,10 @@ export default function SettingsLocalVaultPaneBody() {
             <FolderOpen size={16} />
             Connect folder
           </button>
+          <a className={styles.button} href="/api/vault/download" download="nexus-vault.zip">
+            <Download size={16} />
+            Download export
+          </a>
           <button
             type="button"
             className={styles.button}

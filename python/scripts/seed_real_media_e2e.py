@@ -23,6 +23,7 @@ from sqlalchemy.engine import Engine
 from nexus.app import create_app
 from nexus.config import get_settings
 from nexus.storage import get_storage_client
+from nexus.tasks.ingest_web_article import run_ingest_sync as run_web_article_ingest_sync
 from tests.real_media.conftest import (
     FIXTURES_DIR,
     REAL_MEDIA_FIXTURES_DIR,
@@ -136,14 +137,38 @@ def main() -> None:
             assert web_sha256 == "cedefaeab3c7fb3fab6be4aba68a23db58280e65b71c3914af2c8023e30e4e7a"
             web_media_id = capture_nasa_water_article(client, direct_db, headers)
 
+            web_url_response = client.post(
+                "/media/from_url",
+                json={
+                    "url": ("https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/")
+                },
+                headers=headers,
+            )
+            if web_url_response.status_code != 202:
+                raise RuntimeError(f"URL article seed create failed: {web_url_response.text}")
+            web_url_media_id = UUID(web_url_response.json()["data"]["media_id"])
+
+            with direct_db.session() as session:
+                web_url_result = run_web_article_ingest_sync(
+                    session,
+                    web_url_media_id,
+                    user_id,
+                    "real-media-e2e-web-url",
+                )
+                session.commit()
+            if web_url_result.get("status") != "success":
+                raise RuntimeError(f"URL article seed ingest failed: {web_url_result}")
+
             caption_text = (
                 REAL_MEDIA_FIXTURES_DIR / "nasa-picturing-earth-behind-scenes-captions.srt"
             ).read_text(encoding="utf-8")
             caption_sha256 = hashlib.sha256(caption_text.encode()).hexdigest()
             assert (
-                caption_sha256 == "1dd90aed6b9b8278540247f6c1a4f10aff195f6b1f8895d6baf12701a721d889"
+                caption_sha256 == "f2be864a2e42f94e629245a4a46326258ecaaffa64868caf16b46e75b4f7d237"
             )
-            video_media_id = create_nasa_captioned_video(client, direct_db, headers, user_id)
+            video_media_id, video_result = create_nasa_captioned_video(
+                client, direct_db, headers, user_id
+            )
 
             podcast_text = (REAL_MEDIA_FIXTURES_DIR / "nasa-hwhap-crew4-transcript.txt").read_text(
                 encoding="utf-8"
@@ -152,7 +177,7 @@ def main() -> None:
             assert (
                 podcast_sha256 == "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953"
             )
-            podcast_media_id, podcast_id = create_nasa_podcast_episode(
+            podcast_media_id, podcast_id, podcast_result = create_nasa_podcast_episode(
                 client, direct_db, headers, user_id
             )
 
@@ -204,6 +229,17 @@ def main() -> None:
                             "query": "SOFIA",
                             "needle": "SOFIA mission",
                         },
+                        "web_url": {
+                            "media_id": str(web_url_media_id),
+                            "media_kind": "web_article",
+                            "source_url": "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/",
+                            "license": "NASA public web content",
+                            "artifact_sha256": web_sha256,
+                            "artifact_bytes": len(web_html.encode()),
+                            "query": "SOFIA",
+                            "needle": "SOFIA mission",
+                            "provider_fixture": web_url_result.get("provider_fixture"),
+                        },
                         "video": {
                             "media_id": str(video_media_id),
                             "media_kind": "video",
@@ -213,6 +249,7 @@ def main() -> None:
                             "artifact_bytes": len(caption_text.encode()),
                             "query": "International Space Station",
                             "needle": "International Space Station",
+                            "provider_fixture": video_result.get("provider_fixture"),
                         },
                         "podcast": {
                             "media_id": str(podcast_media_id),
@@ -224,6 +261,7 @@ def main() -> None:
                             "artifact_bytes": len(podcast_text.encode()),
                             "query": "International Space Station",
                             "needle": "International Space Station",
+                            "provider_fixture": podcast_result.get("provider_fixture"),
                         },
                     },
                 },
@@ -242,6 +280,14 @@ def _ensure_real_media_prerequisites() -> None:
     settings = get_settings()
     if settings.nexus_env.value == "test":
         raise RuntimeError("NEXUS_ENV must be local, staging, or prod for real-media seeding.")
+    if not settings.real_media_provider_fixtures:
+        raise RuntimeError("REAL_MEDIA_PROVIDER_FIXTURES must be enabled for real-media seeding.")
+    if not settings.real_media_fixture_dir:
+        raise RuntimeError("REAL_MEDIA_FIXTURE_DIR must be set for real-media seeding.")
+    if not Path(settings.real_media_fixture_dir).is_dir():
+        raise RuntimeError(
+            f"REAL_MEDIA_FIXTURE_DIR does not exist: {settings.real_media_fixture_dir}"
+        )
     if not settings.supabase_url or not settings.supabase_service_key:
         raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set.")
     if not settings.enable_openai:
@@ -284,7 +330,8 @@ def _existing_seed_ready(engine: Engine) -> bool:
         seed = json.loads(SEED_PATH.read_text(encoding="utf-8"))
         fixtures = seed["fixtures"]
         ready_media_ids = [
-            fixtures[name]["media_id"] for name in ("pdf", "epub", "web", "video", "podcast")
+            fixtures[name]["media_id"]
+            for name in ("pdf", "epub", "web", "web_url", "video", "podcast")
         ]
         scanned_pdf_media_id = fixtures["scanned_pdf"]["media_id"]
     except Exception:

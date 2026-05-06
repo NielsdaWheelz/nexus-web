@@ -144,6 +144,7 @@ interface Media {
     can_download_file: boolean;
     can_delete?: boolean;
     can_retry?: boolean;
+    can_refresh_source?: boolean;
   };
   playback_source?: TranscriptPlaybackSource | null;
   chapters?: TranscriptChapter[];
@@ -3316,6 +3317,7 @@ export default function MediaPaneBody() {
   const [libraryMembershipBusy, setLibraryMembershipBusy] = useState(false);
   const [documentDeleteBusy, setDocumentDeleteBusy] = useState(false);
   const [retryProcessingBusy, setRetryProcessingBusy] = useState(false);
+  const [refreshSourceBusy, setRefreshSourceBusy] = useState(false);
   const [videoSeekTargetMs, setVideoSeekTargetMs] = useState<number | null>(null);
   const resumeNoticeMediaIdRef = useRef<string | null>(null);
   const seededPodcastTrackRef = useRef<string | null>(null);
@@ -3519,6 +3521,55 @@ export default function MediaPaneBody() {
     }
   }, [feedback, media?.capabilities?.can_retry, media?.id, retryProcessingBusy]);
 
+  const handleRefreshSource = useCallback(async () => {
+    if (!media?.id || refreshSourceBusy || !media.capabilities?.can_refresh_source) {
+      return;
+    }
+
+    setRefreshSourceBusy(true);
+    try {
+      await apiFetch(`/api/media/${media.id}/refresh`, { method: "POST" });
+      setFragments([]);
+      setEpubSections(null);
+      setEpubToc(null);
+      setActiveSectionId(null);
+      setEpubError("processing");
+      setMedia((prev) =>
+        prev && prev.id === media.id
+          ? {
+              ...prev,
+              processing_status: "extracting",
+              failure_stage: null,
+              last_error_code: null,
+              capabilities: prev.capabilities
+                ? {
+                    ...prev.capabilities,
+                    can_read: false,
+                    can_highlight: false,
+                    can_quote: false,
+                    can_search: false,
+                    can_retry: false,
+                    can_refresh_source: false,
+                  }
+                : prev.capabilities,
+            }
+          : prev
+      );
+      feedback.show({ severity: "success", title: "Source refresh started." });
+    } catch (err) {
+      feedback.show({
+        ...toFeedback(err, { fallback: "Failed to refresh source" }),
+      });
+    } finally {
+      setRefreshSourceBusy(false);
+    }
+  }, [
+    feedback,
+    media?.capabilities?.can_refresh_source,
+    media?.id,
+    refreshSourceBusy,
+  ]);
+
   const handleContentClick = useCallback(
     (e: React.MouseEvent) => {
       const highlightId = handleMediaContentClick(e);
@@ -3631,10 +3682,16 @@ export default function MediaPaneBody() {
     media,
     canManageLibraries: Boolean(media),
     retryBusy: retryProcessingBusy,
+    refreshBusy: refreshSourceBusy,
     deleteBusy: documentDeleteBusy,
     onRetry: media?.capabilities?.can_retry
       ? () => {
           void handleRetryProcessing();
+      }
+      : undefined,
+    onRefreshSource: media?.capabilities?.can_refresh_source
+      ? () => {
+          void handleRefreshSource();
         }
       : undefined,
     onOpenChat: media

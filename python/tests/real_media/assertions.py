@@ -22,6 +22,38 @@ def assert_media_ready(auth_client, headers: dict[str, str], media_id: UUID) -> 
     return media
 
 
+def assert_fragment_content_contains(
+    direct_db: DirectSessionManager,
+    media_id: UUID,
+    expected_text: str,
+) -> dict:
+    with direct_db.session() as session:
+        row = (
+            session.execute(
+                text(
+                    """
+                    SELECT id, canonical_text
+                    FROM fragments
+                    WHERE media_id = :media_id
+                      AND canonical_text ILIKE :needle
+                    ORDER BY idx ASC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id, "needle": f"%{expected_text}%"},
+            )
+            .mappings()
+            .one_or_none()
+        )
+    assert row is not None, f"media {media_id} had no fragment containing {expected_text!r}"
+    return {
+        "media_id": str(media_id),
+        "fragment_id": str(row["id"]),
+        "expected_text": expected_text,
+        "canonical_text_sha256": hashlib.sha256(row["canonical_text"].encode()).hexdigest(),
+    }
+
+
 def assert_complete_evidence_trace(
     direct_db: DirectSessionManager,
     media_id: UUID,
@@ -727,6 +759,121 @@ def assert_context_chat_trace(
     }
 
 
+def assert_empty_chat_retrieval_status_trace(
+    direct_db: DirectSessionManager,
+    *,
+    run_id: UUID,
+    expected_scope: str,
+    expected_status: str,
+) -> dict:
+    with direct_db.session() as session:
+        row = (
+            session.execute(
+                text(
+                    """
+                    SELECT
+                        cr.status AS run_status,
+                        cr.conversation_id,
+                        cr.user_message_id,
+                        cr.assistant_message_id,
+                        um.status AS user_message_status,
+                        am.status AS assistant_message_status,
+                        mtc.id AS tool_call_id,
+                        mtc.tool_name,
+                        mtc.scope,
+                        mtc.requested_types,
+                        mtc.status AS tool_status,
+                        mtc.result_refs,
+                        mr.id AS retrieval_id,
+                        mr.result_type,
+                        mr.source_id,
+                        mr.media_id,
+                        mr.evidence_span_id,
+                        mr.context_ref,
+                        mr.result_ref,
+                        mr.exact_snippet,
+                        mr.selected,
+                        mr.included_in_prompt,
+                        mr.retrieval_status,
+                        cpa.id AS prompt_assembly_id,
+                        cpa.included_retrieval_ids,
+                        cpa.prompt_block_manifest,
+                        ames.retrieval_status AS evidence_summary_retrieval_status,
+                        ames.support_status AS evidence_summary_support_status,
+                        ames.claim_count,
+                        ames.not_enough_evidence_count,
+                        ac.claim_kind,
+                        ac.support_status AS claim_support_status,
+                        (
+                            SELECT count(*)
+                            FROM assistant_message_claim_evidence ace
+                            WHERE ace.claim_id = ac.id
+                        ) AS claim_evidence_count
+                    FROM chat_runs cr
+                    JOIN messages um ON um.id = cr.user_message_id
+                    JOIN messages am ON am.id = cr.assistant_message_id
+                    JOIN message_tool_calls mtc ON mtc.assistant_message_id = am.id
+                    JOIN message_retrievals mr ON mr.tool_call_id = mtc.id
+                    JOIN chat_prompt_assemblies cpa ON cpa.chat_run_id = cr.id
+                    JOIN assistant_message_evidence_summaries ames
+                      ON ames.message_id = am.id
+                    JOIN assistant_message_claims ac ON ac.message_id = am.id
+                    WHERE cr.id = :run_id
+                    ORDER BY mr.ordinal ASC, ac.ordinal ASC
+                    LIMIT 1
+                    """
+                ),
+                {"run_id": run_id},
+            )
+            .mappings()
+            .one()
+        )
+        assert row["run_status"] == "complete", row
+        assert row["user_message_status"] == "complete", row
+        assert row["assistant_message_status"] == "complete", row
+        assert row["tool_name"] == "app_search", row
+        assert row["scope"] == expected_scope, row
+        assert row["requested_types"] == ["content_chunk"], row
+        assert row["tool_status"] == "complete", row
+        assert row["result_refs"][0]["status"] == expected_status, row
+        assert row["result_refs"][0]["scope"] == expected_scope, row
+        assert row["result_type"] == "content_chunk", row
+        assert row["source_id"] == expected_status, row
+        assert row["media_id"] is None, row
+        assert row["evidence_span_id"] is None, row
+        assert row["context_ref"]["type"] == "content_chunk", row
+        assert row["result_ref"]["status"] == expected_status, row
+        assert row["result_ref"]["scope"] == expected_scope, row
+        assert f'status="{expected_status}"' in row["exact_snippet"], row
+        assert row["selected"] is True, row
+        assert row["included_in_prompt"] is True, row
+        assert row["retrieval_status"] == "included_in_prompt", row
+        assert str(row["retrieval_id"]) in row["included_retrieval_ids"], row
+        assert isinstance(row["prompt_block_manifest"], dict) and row["prompt_block_manifest"], row
+        assert row["evidence_summary_retrieval_status"] == "retrieved", row
+        assert row["evidence_summary_support_status"] == "not_enough_evidence", row
+        assert row["claim_count"] == 1, row
+        assert row["not_enough_evidence_count"] == 1, row
+        assert row["claim_kind"] == "insufficient_evidence", row
+        assert row["claim_support_status"] == "not_enough_evidence", row
+        assert row["claim_evidence_count"] == 0, row
+
+    return {
+        "run_id": str(run_id),
+        "conversation_id": str(row["conversation_id"]),
+        "user_message_id": str(row["user_message_id"]),
+        "assistant_message_id": str(row["assistant_message_id"]),
+        "tool_call_id": str(row["tool_call_id"]),
+        "retrieval_id": str(row["retrieval_id"]),
+        "prompt_assembly_id": str(row["prompt_assembly_id"]),
+        "scope": expected_scope,
+        "status": expected_status,
+        "retrieval_status": row["retrieval_status"],
+        "support_status": row["evidence_summary_support_status"],
+        "claim_kind": row["claim_kind"],
+    }
+
+
 def assert_saved_highlight_trace(
     direct_db: DirectSessionManager,
     *,
@@ -859,6 +1006,82 @@ def assert_export_trace(
     }
 
 
+def assert_library_removed_evidence_trace(
+    direct_db: DirectSessionManager,
+    *,
+    media_id: UUID,
+    library_id: UUID,
+) -> dict:
+    with direct_db.session() as session:
+        row = (
+            session.execute(
+                text(
+                    """
+                    SELECT
+                        (
+                            SELECT count(*)
+                            FROM library_entries
+                            WHERE library_id = :library_id
+                              AND media_id = :media_id
+                        ) AS removed_library_entry_count,
+                        (
+                            SELECT count(*)
+                            FROM default_library_intrinsics
+                            WHERE media_id = :media_id
+                        ) AS default_intrinsic_count,
+                        (
+                            SELECT count(*)
+                            FROM media
+                            WHERE id = :media_id
+                        ) AS media_count,
+                        (
+                            SELECT count(*)
+                            FROM content_index_runs
+                            WHERE media_id = :media_id
+                        ) AS index_run_count,
+                        (
+                            SELECT count(*)
+                            FROM content_chunks
+                            WHERE media_id = :media_id
+                        ) AS chunk_count,
+                        (
+                            SELECT count(*)
+                            FROM evidence_spans
+                            WHERE media_id = :media_id
+                        ) AS evidence_count,
+                        mcis.status,
+                        mcis.active_run_id
+                    FROM media_content_index_states mcis
+                    WHERE mcis.media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id, "library_id": library_id},
+            )
+            .mappings()
+            .one()
+        )
+    assert row["removed_library_entry_count"] == 0, row
+    assert row["default_intrinsic_count"] == 1, row
+    assert row["media_count"] == 1, row
+    assert row["index_run_count"] > 0, row
+    assert row["chunk_count"] > 0, row
+    assert row["evidence_count"] > 0, row
+    assert row["status"] == "ready", row
+
+    return {
+        "media_id": str(media_id),
+        "library_id": str(library_id),
+        "active_run_id": str(row["active_run_id"]),
+        "removed_library_entry_count": row["removed_library_entry_count"],
+        "default_intrinsic_count": row["default_intrinsic_count"],
+        "media_count": row["media_count"],
+        "index_run_count": row["index_run_count"],
+        "chunk_count": row["chunk_count"],
+        "evidence_count": row["evidence_count"],
+        "status": row["status"],
+    }
+
+
 def assert_no_search_results(
     auth_client,
     headers: dict[str, str],
@@ -878,3 +1101,34 @@ def assert_no_search_results(
     assert response.status_code == 200, response.text
     assert response.json()["results"] == [], response.json()
     return {"media_id": str(media_id), "query": query, "result_count": 0}
+
+
+def assert_media_deleted_evidence_trace(
+    direct_db: DirectSessionManager,
+    media_id: UUID,
+) -> dict:
+    with direct_db.session() as session:
+        counts = (
+            session.execute(
+                text(
+                    """
+                    SELECT
+                        (SELECT count(*) FROM media WHERE id = :media_id) AS media_count,
+                        (SELECT count(*) FROM content_index_runs WHERE media_id = :media_id)
+                            AS index_run_count,
+                        (SELECT count(*) FROM content_chunks WHERE media_id = :media_id)
+                            AS chunk_count,
+                        (SELECT count(*) FROM evidence_spans WHERE media_id = :media_id)
+                            AS evidence_count
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            .mappings()
+            .one()
+        )
+    assert counts["media_count"] == 0, counts
+    assert counts["index_run_count"] == 0, counts
+    assert counts["chunk_count"] == 0, counts
+    assert counts["evidence_count"] == 0, counts
+    return dict(counts)

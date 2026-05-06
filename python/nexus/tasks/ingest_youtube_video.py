@@ -260,7 +260,11 @@ def _do_ingest(
                 segment_count=len(transcript_segments),
             )
             _try_enrich_dispatch(str(media_id), request_id)
-            return {"status": "success", "segment_count": len(transcript_segments)}
+            return {
+                "status": "success",
+                "segment_count": len(transcript_segments),
+                "provider_fixture": transcript_result.get("provider_fixture"),
+            }
 
         if transcript_status == "completed" and not transcript_segments:
             error_code = ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value
@@ -333,6 +337,17 @@ def _normalize_terminal_error_code(raw_value: Any) -> str | None:
 
 def _fetch_youtube_metadata(provider_video_id: str) -> dict[str, str] | None:
     settings = get_settings()
+    if settings.real_media_provider_fixtures:
+        if provider_video_id == "drrP_Iss0gA":
+            return {
+                "title": "Picturing Earth: Behind the Scenes",
+                "description": "NASA Earth Observatory video transcript fixture.",
+                "author": "NASA Earth Observatory",
+                "published_date": "2020-04-22T00:00:00Z",
+                "language": "en",
+            }
+        return None
+
     if not settings.youtube_data_api_key:
         return None
 

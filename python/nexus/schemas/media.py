@@ -28,6 +28,7 @@ class CapabilitiesOut(BaseModel):
     can_download_file: bool
     can_delete: bool = False
     can_retry: bool = False
+    can_refresh_source: bool = False
 
 
 class PlaybackSourceOut(BaseModel):

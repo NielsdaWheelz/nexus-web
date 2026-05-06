@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import zipfile
 from uuid import UUID
 
 import pytest
@@ -68,9 +70,17 @@ def test_real_web_article_vault_export_uses_content_blocks_and_highlight_selecto
         expected_exact="SOFIA",
     )
 
-    export_response = auth_client.get("/vault", headers=headers)
+    export_response = auth_client.get("/vault/download", headers=headers)
     assert export_response.status_code == 200, export_response.text
-    files = export_response.json()["data"]["files"]
+    assert export_response.headers["content-type"] == "application/zip"
+    assert export_response.headers["content-disposition"] == (
+        'attachment; filename="nexus-vault.zip"'
+    )
+    with zipfile.ZipFile(io.BytesIO(export_response.content)) as archive:
+        files = [
+            {"path": name, "content": archive.read(name).decode("utf-8")}
+            for name in sorted(archive.namelist())
+        ]
     export_trace = assert_export_trace(
         direct_db,
         media_id=media_id,

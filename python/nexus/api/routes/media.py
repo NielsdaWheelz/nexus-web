@@ -450,6 +450,23 @@ def retry_ingest(
     return success_response(result)
 
 
+@router.post("/media/{media_id}/refresh", status_code=202)
+def refresh_media_source(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    request: Request,
+) -> dict:
+    """Refresh source-backed media by requeueing source acquisition."""
+    result = media_service.refresh_source_for_viewer(
+        db=db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return success_response(result)
+
+
 @router.post("/media/transcript/request/batch")
 def request_podcast_transcript_batch(
     body: TranscriptRequestBatchRequest,

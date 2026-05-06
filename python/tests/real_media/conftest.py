@@ -15,6 +15,7 @@ from sqlalchemy import text
 
 from nexus.config import get_settings
 from nexus.storage import get_storage_client
+from tests.real_media.assertions import assert_fragment_content_contains
 from tests.utils.db import DirectSessionManager
 
 REAL_MEDIA_FIXTURES_DIR = Path(__file__).parents[1] / "fixtures" / "real_media"
@@ -25,6 +26,15 @@ def ensure_real_media_prerequisites() -> None:
     settings = get_settings()
     if settings.nexus_env.value == "test":
         pytest.fail("real-media tests must run with NEXUS_ENV=local, staging, or prod")
+    if not settings.real_media_provider_fixtures:
+        pytest.fail(
+            "REAL_MEDIA_PROVIDER_FIXTURES must be enabled for deterministic real-media tests"
+        )
+    if not settings.real_media_fixture_dir:
+        pytest.fail("REAL_MEDIA_FIXTURE_DIR must be set for deterministic real-media tests")
+    fixture_dir = Path(settings.real_media_fixture_dir)
+    if not fixture_dir.is_dir():
+        pytest.fail(f"REAL_MEDIA_FIXTURE_DIR does not exist: {fixture_dir}")
     if not settings.supabase_url or not settings.supabase_service_key:
         pytest.fail("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set for real-media tests")
     if not settings.enable_openai:
@@ -149,14 +159,14 @@ def create_nasa_captioned_video(
     direct_db: DirectSessionManager,
     headers: dict[str, str],
     user_id: UUID,
-) -> UUID:
+) -> tuple[UUID, dict]:
     caption_text = (
         REAL_MEDIA_FIXTURES_DIR / "nasa-picturing-earth-behind-scenes-captions.srt"
     ).read_text(encoding="utf-8")
     caption_bytes = caption_text.encode("utf-8")
-    assert len(caption_bytes) == 9_910
+    assert len(caption_bytes) == 9_805
     assert hashlib.sha256(caption_bytes).hexdigest() == (
-        "1dd90aed6b9b8278540247f6c1a4f10aff195f6b1f8895d6baf12701a721d889"
+        "f2be864a2e42f94e629245a4a46326258ecaaffa64868caf16b46e75b4f7d237"
     )
 
     create_response = auth_client.post(
@@ -169,24 +179,19 @@ def create_nasa_captioned_video(
     register_media_cleanup(direct_db, media_id)
     register_background_job_cleanup(direct_db, media_id)
 
-    from nexus.services.rss_transcript_fetch import _parse_srt_transcript
+    from nexus.tasks.ingest_youtube_video import run_ingest_sync
 
-    segments = _parse_srt_transcript(caption_text)
-    assert len(segments) >= 20
-    assert any("International Space Station" in segment["text"] for segment in segments)
-    _persist_transcript_index(
-        direct_db,
-        media_id=media_id,
-        user_id=user_id,
-        title="Picturing Earth: Behind the Scenes",
-        canonical_source_url=(
-            "https://science.nasa.gov/earth/earth-observatory/picturing-earth-behind-the-scenes/"
-        ),
-        external_playback_url="https://www.youtube.com/watch?v=drrP_Iss0gA",
-        segments=segments,
-        reason="youtube_caption_fixture",
-    )
-    return media_id
+    with direct_db.session() as session:
+        result = run_ingest_sync(
+            session,
+            media_id,
+            user_id,
+            request_id="real-media-youtube-caption-fixture",
+        )
+        session.commit()
+    assert result["status"] == "success", result
+    assert result["segment_count"] >= 20, result
+    return media_id, result
 
 
 def create_nasa_podcast_episode(
@@ -194,7 +199,9 @@ def create_nasa_podcast_episode(
     direct_db: DirectSessionManager,
     headers: dict[str, str],
     user_id: UUID,
-) -> tuple[UUID, UUID]:
+) -> tuple[UUID, UUID, dict]:
+    grant_ai_plus(direct_db, user_id)
+
     transcript_text = (REAL_MEDIA_FIXTURES_DIR / "nasa-hwhap-crew4-transcript.txt").read_text(
         encoding="utf-8"
     )
@@ -204,33 +211,46 @@ def create_nasa_podcast_episode(
         "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953"
     )
 
-    from nexus.schemas.podcast import PodcastSubscribeRequest
-    from nexus.services.podcasts.subscriptions import subscribe_to_podcast
+    discover_response = auth_client.get(
+        "/podcasts/discover",
+        params={"q": "Houston We Have a Podcast", "limit": 5},
+        headers=headers,
+    )
+    assert discover_response.status_code == 200, discover_response.text
+    podcast = next(
+        (
+            row
+            for row in discover_response.json()["data"]
+            if row["provider_podcast_id"] == "nasa-hwhap-real-media"
+        ),
+        None,
+    )
+    assert podcast is not None, discover_response.json()
 
-    with direct_db.session() as session:
-        subscribe_out = subscribe_to_podcast(
-            session,
-            user_id,
-            PodcastSubscribeRequest(
-                provider_podcast_id="nasa-hwhap-real-media",
-                title="Houston We Have a Podcast",
-                contributors=[
-                    {
-                        "credited_name": "NASA Johnson Space Center",
-                        "role": "author",
-                        "source": "rss",
-                    }
-                ],
-                feed_url="https://www.nasa.gov/podcasts/houston-we-have-a-podcast/",
-                website_url="https://www.nasa.gov/podcasts/houston-we-have-a-podcast/",
-                image_url=None,
-                description="NASA Johnson Space Center podcast.",
-                auto_queue=False,
-            ),
-        )
-        session.commit()
-    podcast_id = subscribe_out.podcast_id
+    subscribe_response = auth_client.post(
+        "/podcasts/subscriptions",
+        headers=headers,
+        json={
+            "provider_podcast_id": podcast["provider_podcast_id"],
+            "title": podcast["title"],
+            "contributors": podcast["contributors"],
+            "feed_url": podcast["feed_url"],
+            "website_url": podcast["website_url"],
+            "image_url": podcast["image_url"],
+            "description": podcast["description"],
+            "auto_queue": False,
+        },
+    )
+    assert subscribe_response.status_code == 200, subscribe_response.text
+    podcast_id = UUID(subscribe_response.json()["data"]["podcast_id"])
     register_podcast_cleanup(direct_db, podcast_id)
+
+    sync_response = auth_client.post(
+        f"/podcasts/subscriptions/{podcast_id}/sync",
+        headers=headers,
+    )
+    assert sync_response.status_code == 202, sync_response.text
+
     with direct_db.session() as session:
         job_ids = (
             session.execute(
@@ -249,201 +269,55 @@ def create_nasa_podcast_episode(
     for job_id in job_ids:
         direct_db.register_cleanup("background_jobs", "id", job_id)
 
-    media_id = uuid4()
+    from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
+
+    with direct_db.session() as session:
+        sync_result = run_podcast_subscription_sync_now(
+            session,
+            user_id=user_id,
+            podcast_id=podcast_id,
+            request_id="real-media-podcast-sync-fixture",
+        )
+        session.commit()
+    assert sync_result["sync_status"] == "complete", sync_result
+
+    episodes_response = auth_client.get(f"/podcasts/{podcast_id}/episodes", headers=headers)
+    assert episodes_response.status_code == 200, episodes_response.text
+    episode = next(
+        (
+            row
+            for row in episodes_response.json()["data"]
+            if row["title"] == "The Crew-4 Astronauts"
+        ),
+        None,
+    )
+    assert episode is not None, episodes_response.json()
+    media_id = UUID(episode["id"])
+
+    transcript_request = auth_client.post(
+        f"/media/{media_id}/transcript/request",
+        json={"reason": "episode_open"},
+        headers=headers,
+    )
+    assert transcript_request.status_code in {200, 202}, transcript_request.text
+
+    from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+
+    with direct_db.session() as session:
+        transcription_result = run_podcast_transcribe_now(
+            session,
+            media_id=media_id,
+            requested_by_user_id=user_id,
+            request_id="real-media-podcast-transcript-fixture",
+        )
+        session.commit()
+    assert transcription_result["status"] == "completed", transcription_result
+    assert transcription_result["segment_count"] > 0, transcription_result
+
+    assert_fragment_content_contains(direct_db, media_id, "International Space Station")
     register_media_cleanup(direct_db, media_id)
     register_background_job_cleanup(direct_db, media_id)
-    with direct_db.session() as session:
-        from nexus.services.upload import _ensure_in_default_library
-
-        now = datetime.now(UTC)
-        session.execute(
-            text(
-                """
-                INSERT INTO media (
-                    id,
-                    kind,
-                    title,
-                    canonical_source_url,
-                    external_playback_url,
-                    provider,
-                    provider_id,
-                    processing_status,
-                    created_by_user_id,
-                    description,
-                    language,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    :id,
-                    'podcast_episode',
-                    'The Crew-4 Astronauts',
-                    'https://www.nasa.gov/podcasts/houston-we-have-a-podcast/the-crew-4-astronauts/',
-                    'https://www.nasa.gov/wp-content/uploads/2023/07/ep239_crew-4.mp3',
-                    'podcast_index',
-                    'nasa-hwhap-crew4',
-                    'pending',
-                    :user_id,
-                    'NASA Houston We Have a Podcast episode 239.',
-                    'en',
-                    :now,
-                    :now
-                )
-                """
-            ),
-            {"id": media_id, "user_id": user_id, "now": now},
-        )
-        session.execute(
-            text(
-                """
-                INSERT INTO podcast_episodes (
-                    media_id,
-                    podcast_id,
-                    provider_episode_id,
-                    guid,
-                    fallback_identity,
-                    published_at,
-                    duration_seconds,
-                    description_text,
-                    rss_transcript_url,
-                    created_at
-                )
-                VALUES (
-                    :media_id,
-                    :podcast_id,
-                    'nasa-hwhap-crew4',
-                    'nasa-hwhap-crew4',
-                    'nasa-hwhap-crew4',
-                    '2022-04-15T00:00:00Z',
-                    753,
-                    'The Crew-4 Astronauts.',
-                    'https://www.nasa.gov/podcasts/houston-we-have-a-podcast/the-crew-4-astronauts/',
-                    :now
-                )
-                """
-            ),
-            {"media_id": media_id, "podcast_id": podcast_id, "now": now},
-        )
-        _ensure_in_default_library(session, user_id, media_id)
-        session.commit()
-
-    paragraphs = [
-        paragraph.replace("\n", " ").strip()
-        for paragraph in transcript_text.split("\n\n")
-        if paragraph.strip()
-    ]
-    assert len(paragraphs) >= 4
-    segments = [
-        {
-            "text": paragraph,
-            "t_start_ms": idx * 30_000,
-            "t_end_ms": (idx + 1) * 30_000,
-            "speaker_label": None,
-        }
-        for idx, paragraph in enumerate(paragraphs)
-    ]
-    _persist_transcript_index(
-        direct_db,
-        media_id=media_id,
-        user_id=user_id,
-        title="The Crew-4 Astronauts",
-        canonical_source_url=(
-            "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/the-crew-4-astronauts/"
-        ),
-        external_playback_url="https://www.nasa.gov/wp-content/uploads/2023/07/ep239_crew-4.mp3",
-        segments=segments,
-        reason="podcast_transcript_fixture",
-    )
-    return media_id, podcast_id
-
-
-def _persist_transcript_index(
-    direct_db: DirectSessionManager,
-    *,
-    media_id: UUID,
-    user_id: UUID,
-    title: str,
-    canonical_source_url: str,
-    external_playback_url: str,
-    segments: list[dict],
-    reason: str,
-) -> None:
-    from nexus.services.podcasts.transcripts import (
-        _create_next_transcript_version,
-        _insert_transcript_fragments,
-        _insert_transcript_segments_for_version,
-        _rebuild_transcript_content_index_for_version,
-        _set_media_transcript_state,
-    )
-
-    with direct_db.session() as session:
-        now = datetime.now(UTC)
-        transcript_version_id = _create_next_transcript_version(
-            session,
-            media_id=media_id,
-            created_by_user_id=user_id,
-            request_reason="episode_open",
-            transcript_coverage="full",
-            now=now,
-        )
-        _insert_transcript_fragments(
-            session,
-            media_id,
-            segments,
-            now=now,
-            transcript_version_id=transcript_version_id,
-        )
-        _insert_transcript_segments_for_version(
-            session,
-            media_id=media_id,
-            transcript_version_id=transcript_version_id,
-            transcript_segments=segments,
-            now=now,
-        )
-        _rebuild_transcript_content_index_for_version(
-            session,
-            media_id=media_id,
-            transcript_version_id=transcript_version_id,
-            transcript_segments=segments,
-            reason=reason,
-        )
-        _set_media_transcript_state(
-            session,
-            media_id=media_id,
-            transcript_state="ready",
-            transcript_coverage="full",
-            semantic_status="ready",
-            active_transcript_version_id=transcript_version_id,
-            last_request_reason="episode_open",
-            last_error_code=None,
-            now=now,
-        )
-        session.execute(
-            text(
-                """
-                UPDATE media
-                SET title = :title,
-                    canonical_source_url = :canonical_source_url,
-                    external_playback_url = :external_playback_url,
-                    processing_status = 'ready_for_reading',
-                    failure_stage = NULL,
-                    last_error_code = NULL,
-                    last_error_message = NULL,
-                    processing_completed_at = :now,
-                    failed_at = NULL,
-                    updated_at = :now
-                WHERE id = :media_id
-                """
-            ),
-            {
-                "media_id": media_id,
-                "title": title,
-                "canonical_source_url": canonical_source_url,
-                "external_playback_url": external_playback_url,
-                "now": now,
-            },
-        )
-        session.commit()
+    return media_id, podcast_id, transcription_result
 
 
 def upload_file_media(

@@ -44,10 +44,25 @@
 
 .actions {
   padding-right: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .contributors {
   justify-content: flex-end;
+}
+
+.askLink {
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.askLink:hover {
+  text-decoration: underline;
 }
 
 .expanded {

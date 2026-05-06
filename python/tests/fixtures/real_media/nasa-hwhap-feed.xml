@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"
+  xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>Houston We Have a Podcast - NASA</title>
+    <link>https://www.nasa.gov/podcasts/houston-we-have-a-podcast/</link>
+    <description>Official National Aeronautics and Space Administration podcast feed.</description>
+    <language>en-US</language>
+    <item>
+      <title>The Crew-4 Astronauts</title>
+      <guid>nasa-hwhap-crew4</guid>
+      <link>https://www.nasa.gov/podcasts/houston-we-have-a-podcast/the-crew-4-astronauts/</link>
+      <pubDate>Fri, 15 Apr 2022 00:00:00 +0000</pubDate>
+      <itunes:duration>12:33</itunes:duration>
+      <itunes:author>NASA Johnson Space Center</itunes:author>
+      <enclosure url="https://www.nasa.gov/wp-content/uploads/2023/07/ep239_crew-4.mp3" type="audio/mpeg" length="0" />
+      <description><![CDATA[The astronauts of NASA's SpaceX Crew-4 mission describe their anticipation for the upcoming crew rotation mission to the International Space Station. HWHAP Episode 239.]]></description>
+      <content:encoded><![CDATA[<p>The astronauts of NASA's SpaceX Crew-4 mission describe their anticipation for the upcoming crew rotation mission to the International Space Station. HWHAP Episode 239.</p>]]></content:encoded>
+    </item>
+  </channel>
+</rss>

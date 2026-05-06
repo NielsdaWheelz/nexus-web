@@ -7,6 +7,7 @@ import math
 import re
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 from uuid import UUID, uuid4
@@ -17,7 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.config import get_settings
+from nexus.config import get_settings, real_media_provider_fixtures_requested
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiError,
@@ -1765,6 +1766,28 @@ def _fetch_feed_episodes_paginated(feed_url: str, limit: int) -> list[dict[str, 
 
 
 def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str | None]:
+    if real_media_provider_fixtures_requested():
+        settings = get_settings()
+        if not settings.real_media_provider_fixtures:
+            return [], None
+        if page_url != "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/feed/":
+            return [], None
+        if settings.real_media_fixture_dir is None:
+            logger.warning("podcast_feed_fixture_dir_missing", page_url=page_url)
+            return [], None
+        path = f"{settings.real_media_fixture_dir}/nasa-hwhap-feed.xml"
+        try:
+            content = Path(path).read_bytes()
+        except OSError as exc:
+            logger.warning("podcast_feed_fixture_unavailable", page_url=page_url, error=str(exc))
+            return [], None
+        if len(content) != 1_397 or hashlib.sha256(content).hexdigest() != (
+            "c59f38a211d707d8c2c218c3ce425f5d7c843ad0949309b14760263991e91043"
+        ):
+            logger.warning("podcast_feed_fixture_hash_mismatch", page_url=page_url)
+            return [], None
+        return _parse_feed_episode_page(content, page_url)
+
     try:
         response = None
         current_page_url = page_url
@@ -1800,9 +1823,15 @@ def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str |
     if response is None:
         return [], None
 
+    return _parse_feed_episode_page(response.content, str(response.url))
+
+
+def _parse_feed_episode_page(
+    content: bytes, page_url: str
+) -> tuple[list[dict[str, Any]], str | None]:
     try:
         parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=True)
-        root = etree.fromstring(response.content, parser=parser)
+        root = etree.fromstring(content, parser=parser)
     except Exception as exc:
         logger.warning("podcast_feed_page_parse_failed", page_url=page_url, error=str(exc))
         return [], None
@@ -1817,13 +1846,13 @@ def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str |
     for item in item_nodes:
         episode = _episode_from_feed_item(
             item,
-            base_url=str(response.url),
+            base_url=page_url,
             feed_language=feed_language,
         )
         if episode is not None:
             episodes.append(episode)
 
-    next_page_url = _extract_feed_next_page_url(root, str(response.url))
+    next_page_url = _extract_feed_next_page_url(root, page_url)
     return episodes, next_page_url
 
 

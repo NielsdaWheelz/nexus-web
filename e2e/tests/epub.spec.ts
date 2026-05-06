@@ -687,7 +687,7 @@ async function clickToolbarAction(
   throw new Error(`Toolbar action not found for ${String(name)}`);
 }
 
-test.describe("epub", () => {
+test.describe("epub @legacy-synthetic", () => {
   test.describe.configure({ mode: "serial" });
 
   test.beforeEach(async ({ page }) => {

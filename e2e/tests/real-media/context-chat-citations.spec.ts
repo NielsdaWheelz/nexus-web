@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { readRealMediaSeed, writeRealMediaTrace } from "./real-media-seed";
+import {
+  readRealMediaSeed,
+  searchRealMediaEvidenceThroughUi,
+  writeRealMediaTrace,
+} from "./real-media-seed";
 
 test("@real-media search evidence can be attached to scoped chat context", async ({
   page,
@@ -8,11 +12,11 @@ test("@real-media search evidence can be attached to scoped chat context", async
   const mediaId = seed.fixtures.web.media_id;
   const query = seed.fixtures.web.query;
 
-  const searchResponse = await page.request.get("/api/search", {
-    params: { q: query, scope: `media:${mediaId}`, types: "content_chunk" },
-  });
-  expect(searchResponse.ok()).toBeTruthy();
-  const search = await searchResponse.json();
+  const search = await searchRealMediaEvidenceThroughUi(
+    page,
+    query,
+    "web_article",
+  );
   const result = search.results.find(
     (item: { type: string; source: { media_id: string } }) =>
       item.type === "content_chunk" && item.source.media_id === mediaId,
@@ -21,17 +25,24 @@ test("@real-media search evidence can be attached to scoped chat context", async
     result,
     "captured article should return attachable evidence",
   ).toBeTruthy();
+  if (!result) {
+    throw new Error(`captured article visible search did not return ${mediaId}`);
+  }
   expect(result.context_ref.type).toBe("content_chunk");
   expect(result.context_ref.evidence_span_ids.length).toBeGreaterThan(0);
+  const resultLink = page.locator(`a[href*="/media/${mediaId}?"]`).first();
+  await expect(
+    resultLink,
+    "captured article should render an attachable visible search result",
+  ).toBeVisible();
+  const visibleHref = await resultLink.getAttribute("href");
 
-  const context = [
-    result.context_ref.type,
-    result.context_ref.id,
-    result.context_ref.evidence_span_ids.join(","),
-  ].join(":");
-  await page.goto(
-    `/conversations/new?scope=media:${mediaId}&context=${context}`,
-  );
+  const askWithEvidence = page
+    .locator(`a[href*="scope=media%3A${mediaId}"][href*="context="]`)
+    .filter({ hasText: "Ask with evidence" })
+    .first();
+  await expect(askWithEvidence).toBeVisible();
+  await askWithEvidence.click();
 
   await expect(page.getByLabel("Ask anything")).toBeVisible();
   await expect(page.locator("body")).toContainText(
@@ -84,8 +95,10 @@ test("@real-media search evidence can be attached to scoped chat context", async
     fixture_id: "web-nasa-water-on-moon",
     media_id: mediaId,
     query,
+    search_api_url: search.api_url,
     context_ref: result.context_ref,
     search_result: result,
+    visible_result_href: visibleHref,
     chat_run: chatRunCreated.data.run,
     conversation_id: chatRunCreated.data.conversation.id,
     assistant_message_id: fetchedRunBody.data.assistant_message.id,

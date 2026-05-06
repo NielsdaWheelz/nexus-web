@@ -1,3 +1,5 @@
+import io
+import zipfile
 from uuid import UUID, uuid4
 
 import pytest
@@ -51,6 +53,34 @@ def test_vault_api_exports_snapshot(
     assert f"Highlights/hl_{highlight_id.hex}.md" in paths
     assert data["delete_paths"] == []
     assert data["conflicts"] == []
+
+
+def test_vault_api_downloads_zip(auth_client: TestClient, direct_db: DirectSessionManager) -> None:
+    user_id = create_test_user_id()
+    bootstrap = auth_client.get("/me", headers=auth_headers(user_id))
+    library_id = UUID(bootstrap.json()["data"]["default_library_id"])
+    with direct_db.session() as session:
+        media_id, _fragment_id, highlight_id = _seed_article_highlight(session, user_id)
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    _register_seed_cleanup(direct_db, media_id, highlight_id, user_id)
+
+    response = auth_client.get("/vault/download", headers=auth_headers(user_id))
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"] == "application/zip"
+    assert response.headers["content-disposition"] == 'attachment; filename="nexus-vault.zip"'
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = set(archive.namelist())
+        assert "Library.md" in names
+        assert f"Sources/med_{media_id.hex}/article.md" in names
+        assert f"Highlights/hl_{highlight_id.hex}.md" in names
+        assert (
+            archive.read(f"Sources/med_{media_id.hex}/article.md")
+            .decode()
+            .startswith("# Local Article")
+        )
 
 
 def test_vault_api_syncs_highlight_file(

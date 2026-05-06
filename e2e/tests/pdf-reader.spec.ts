@@ -192,7 +192,7 @@ async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
   }
 }
 
-test.describe("pdf reader", () => {
+test.describe("pdf reader @legacy-synthetic", () => {
   test.describe.configure({ mode: "serial" });
 
   test.beforeEach(async ({ page }) => {

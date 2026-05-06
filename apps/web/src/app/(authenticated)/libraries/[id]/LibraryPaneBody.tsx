@@ -89,6 +89,7 @@ interface LibraryMediaEntry {
   capabilities?: {
     can_delete?: boolean;
     can_retry?: boolean;
+    can_refresh_source?: boolean;
   };
 }
 
@@ -253,6 +254,9 @@ export default function LibraryPaneBody() {
     new Set(),
   );
   const [retryingMediaIds, setRetryingMediaIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [refreshingMediaIds, setRefreshingMediaIds] = useState<Set<string>>(
     new Set(),
   );
   const [loading, setLoading] = useState(true);
@@ -674,6 +678,54 @@ export default function LibraryPaneBody() {
       }
     },
     [feedback, retryingMediaIds],
+  );
+
+  const handleRefreshSource = useCallback(
+    async (mediaId: string) => {
+      if (refreshingMediaIds.has(mediaId)) {
+        return;
+      }
+
+      setRefreshingMediaIds((current) => new Set(current).add(mediaId));
+      try {
+        await apiFetch(`/api/media/${mediaId}/refresh`, { method: "POST" });
+        setEntries((current) =>
+          current.map((entry) =>
+            entry.kind === "media" && entry.media.id === mediaId
+              ? {
+                  ...entry,
+                  media: {
+                    ...entry.media,
+                    processing_status: "extracting",
+                    capabilities: {
+                      ...(entry.media.capabilities ?? {}),
+                      can_refresh_source: false,
+                      can_retry: false,
+                    },
+                  },
+                }
+              : entry,
+          ),
+        );
+        feedback.show({
+          severity: "success",
+          title: "Source refresh started.",
+        });
+      } catch (err) {
+        feedback.show({
+          ...toFeedback(err, {
+            fallback: "Failed to refresh source",
+          }),
+        });
+      } finally {
+        setRefreshingMediaIds((current) => {
+          const next = new Set(current);
+          next.delete(mediaId);
+          return next;
+        });
+      }
+    },
+    [feedback, refreshingMediaIds],
   );
 
   const handleDeleteMedia = useCallback(
@@ -1331,13 +1383,20 @@ export default function LibraryPaneBody() {
 
                 const Icon = MEDIA_KIND_ICONS[item.media.kind] ?? Globe;
                 const retryProcessingBusy = retryingMediaIds.has(item.media.id);
+                const refreshSourceBusy = refreshingMediaIds.has(item.media.id);
                 const rowOptions = mediaResourceOptions({
                   media: item.media,
                   canManageLibraries: true,
                   retryBusy: retryProcessingBusy,
+                  refreshBusy: refreshSourceBusy,
                   onRetry: item.media.capabilities?.can_retry
                     ? () => {
                         void handleRetryProcessing(item.media.id);
+                      }
+                    : undefined,
+                  onRefreshSource: item.media.capabilities?.can_refresh_source
+                    ? () => {
+                        void handleRefreshSource(item.media.id);
                       }
                     : undefined,
                   onOpenChat: () => {

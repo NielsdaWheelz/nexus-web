@@ -144,7 +144,7 @@ async function switchBackToMediaPane(page: Page): Promise<void> {
   throw new Error("Expected a non-chat workspace pane to switch back to media");
 }
 
-test.describe("non-pdf linked-items", () => {
+test.describe("non-pdf linked-items @legacy-synthetic", () => {
   test("contextual highlights expand inline and keep row-local chat + source focus in sync", async ({
     page,
   }) => {

@@ -31,6 +31,7 @@ const SEED_FILES = [
   READER_RESUME_SEED,
 ];
 const E2E_USER_EMAIL = process.env.E2E_USER_EMAIL ?? "e2e-test@nexus.local";
+const LEGACY_SYNTHETIC_ENABLED = process.env.E2E_LEGACY_SYNTHETIC === "1";
 
 function loadEnvFile(filePath) {
   if (!existsSync(filePath)) {
@@ -505,11 +506,20 @@ export default function globalSetup() {
         {
           DATABASE_URL: dbUrl,
           NEXUS_ENV: "local",
+          REAL_MEDIA_PROVIDER_FIXTURES: "1",
+          REAL_MEDIA_FIXTURE_DIR: path.join(ROOT, "python/tests/fixtures/real_media"),
         },
       );
     }
     console.log(
       "[global-setup] Real-media E2E enabled - using .seed/real-media.json.",
+    );
+    return;
+  }
+
+  if (!LEGACY_SYNTHETIC_ENABLED) {
+    console.log(
+      "[global-setup] Legacy synthetic E2E seed disabled - default browser gate uses product-created data only.",
     );
     return;
   }

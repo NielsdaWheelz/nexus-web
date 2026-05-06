@@ -55,7 +55,7 @@ function parseCspDirectives(cspHeader: string): Map<string, string[]> {
   return directives;
 }
 
-test.describe("youtube transcript runtime csp", () => {
+test.describe("youtube transcript runtime csp @legacy-synthetic", () => {
   test("enforces exact frame-src allowlist at runtime and blocks disallowed embeds", async ({
     page,
   }) => {

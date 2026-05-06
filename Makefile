@@ -4,12 +4,12 @@
 .PHONY: help setup dev down logs clean api web worker migrate migrate-test migrate-down seed seed-real-media-e2e \
 	check check-back type-back check-front check-workflows format format-back fix-front build audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
-	test-migrations test-supabase test-network test-real test-real-media test-live-providers test-e2e test-e2e-real-media test-e2e-ui \
+	test-migrations test-supabase test-network test-real test-real-media test-live-providers test-e2e test-e2e-real-media test-e2e-legacy-synthetic test-e2e-ui \
 	verify verify-real-media verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw \
 	_test-supabase-raw _test-network-raw _test-real-raw _test-real-media-raw _test-live-providers-raw \
-	_seed-real-media-e2e-raw _test-e2e-raw _test-e2e-real-media-raw _test-e2e-ui-raw
+	_seed-real-media-e2e-raw _test-e2e-raw _test-e2e-real-media-raw _test-e2e-legacy-synthetic-raw _test-e2e-ui-raw
 
 -include .env
 -include .dev-ports
@@ -64,6 +64,7 @@ help:
 	@echo "  make test-live-providers   - Strict live-provider backend tests"
 	@echo "  make test-e2e              - Playwright E2E tests"
 	@echo "  make test-e2e-real-media   - Playwright real-media acceptance tests"
+	@echo "  make test-e2e-legacy-synthetic - Opt-in legacy synthetic media smoke tests"
 	@echo "  make test-e2e-ui           - Playwright E2E in UI mode"
 	@echo ""
 	@echo "Formatting:"
@@ -147,6 +148,8 @@ _seed-real-media-e2e-raw:
 	cd migrations && DATABASE_URL=$(DATABASE_URL) NEXUS_ENV=local \
 		uv run --project ../python alembic upgrade head
 	cd python && DATABASE_URL=$(DATABASE_URL) NEXUS_ENV=local \
+		REAL_MEDIA_PROVIDER_FIXTURES=1 \
+		REAL_MEDIA_FIXTURE_DIR=$$PWD/tests/fixtures/real_media \
 		uv run python scripts/seed_real_media_e2e.py
 
 check:
@@ -263,7 +266,10 @@ test-real-media:
 _test-real-media-raw:
 	make _ensure-node-ingest
 	mkdir -p test-results
-	cd python && NEXUS_ENV=local uv run pytest -v --tb=short \
+	cd python && NEXUS_ENV=local \
+		REAL_MEDIA_PROVIDER_FIXTURES=1 \
+		REAL_MEDIA_FIXTURE_DIR=$$PWD/tests/fixtures/real_media \
+		uv run pytest -v --tb=short \
 		--basetemp=../test-results/real-media-backend \
 		-m real_media
 
@@ -297,7 +303,22 @@ _test-e2e-real-media-raw:
 	echo "Running real-media e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
 	cd e2e && \
 	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=local E2E_REAL_MEDIA=1 bunx playwright install --with-deps chromium && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=local E2E_REAL_MEDIA=1 bun run test:e2e -- --project=real-media $(PLAYWRIGHT_ARGS)
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=local E2E_REAL_MEDIA=1 \
+	REAL_MEDIA_PROVIDER_FIXTURES=1 \
+	REAL_MEDIA_FIXTURE_DIR=$$PWD/../python/tests/fixtures/real_media \
+	bun run test:e2e -- --project=real-media $(PLAYWRIGHT_ARGS)
+
+test-e2e-legacy-synthetic: _ensure-e2e-deps
+	./scripts/with_supabase_services.sh make _test-e2e-legacy-synthetic-raw
+
+_test-e2e-legacy-synthetic-raw:
+	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
+	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
+	echo "Running opt-in legacy synthetic e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
+	cd e2e && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT E2E_LEGACY_SYNTHETIC=1 bunx playwright install --with-deps chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT E2E_LEGACY_SYNTHETIC=1 \
+	bun run test:e2e -- --project=legacy-synthetic $(PLAYWRIGHT_ARGS)
 
 test-e2e-ui: _ensure-e2e-deps
 	./scripts/with_supabase_services.sh make _test-e2e-ui-raw

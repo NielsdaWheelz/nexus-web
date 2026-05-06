@@ -95,6 +95,12 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
     podcast_id = UUID(subscribe_response.json()["data"]["podcast_id"])
     register_podcast_cleanup(direct_db, podcast_id)
 
+    sync_response = auth_client.post(
+        f"/podcasts/subscriptions/{podcast_id}/sync",
+        headers=headers,
+    )
+    assert sync_response.status_code == 202, sync_response.text
+
     from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
 
     with direct_db.session() as session:
@@ -108,26 +114,17 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
 
     assert sync_result["sync_status"] == "complete", sync_result
 
+    episodes_response = auth_client.get(
+        f"/podcasts/{podcast_id}/episodes",
+        params={"limit": 200, "sort": "duration_asc"},
+        headers=headers,
+    )
+    assert episodes_response.status_code == 200, episodes_response.text
+    episode_rows = [
+        episode for episode in episodes_response.json()["data"] if episode.get("playback_source")
+    ]
+    assert episode_rows, sync_result
     with direct_db.session() as session:
-        episode_rows = (
-            session.execute(
-                text(
-                    """
-                    SELECT pe.media_id, pe.duration_seconds
-                    FROM podcast_episodes pe
-                    JOIN media m ON m.id = pe.media_id
-                    WHERE pe.podcast_id = :podcast_id
-                      AND m.external_playback_url IS NOT NULL
-                    ORDER BY COALESCE(pe.duration_seconds, 999999) ASC,
-                             pe.published_at DESC NULLS LAST,
-                             pe.media_id ASC
-                    """
-                ),
-                {"podcast_id": podcast_id},
-            )
-            .mappings()
-            .all()
-        )
         job_ids = (
             session.execute(
                 text(
@@ -142,13 +139,12 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
             .scalars()
             .all()
         )
-    assert episode_rows, sync_result
     for episode in episode_rows:
-        register_media_cleanup(direct_db, episode["media_id"])
+        register_media_cleanup(direct_db, UUID(episode["id"]))
     for job_id in job_ids:
         direct_db.register_cleanup("background_jobs", "id", job_id)
 
-    media_id = episode_rows[0]["media_id"]
+    media_id = UUID(episode_rows[0]["id"])
     transcript_request = auth_client.post(
         f"/media/{media_id}/transcript/request",
         json={"reason": "episode_open"},

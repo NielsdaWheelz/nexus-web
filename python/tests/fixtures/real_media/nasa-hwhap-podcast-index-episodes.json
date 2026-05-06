@@ -1,0 +1,18 @@
+{
+  "source_url": "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/the-crew-4-astronauts/",
+  "captured_at": "2026-05-06T00:00:00Z",
+  "payload": {
+    "items": [
+      {
+        "id": "nasa-hwhap-crew4",
+        "guid": "nasa-hwhap-crew4",
+        "title": "The Crew-4 Astronauts",
+        "author": "NASA Johnson Space Center",
+        "enclosureUrl": "https://www.nasa.gov/wp-content/uploads/2023/07/ep239_crew-4.mp3",
+        "datePublished": 1649980800,
+        "duration": 753,
+        "description": "The astronauts of NASA's SpaceX Crew-4 mission describe their anticipation for the upcoming crew rotation mission to the International Space Station. HWHAP Episode 239."
+      }
+    ]
+  }
+}

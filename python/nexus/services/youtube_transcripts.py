@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
 from typing import Any
 
+from nexus.config import get_settings, real_media_provider_fixtures_requested
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
 
@@ -19,6 +22,11 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
     video_id = str(provider_video_id or "").strip()
     if not video_id:
         return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
+
+    if real_media_provider_fixtures_requested():
+        settings = get_settings()
+        if settings.real_media_provider_fixtures:
+            return _fetch_real_media_fixture(video_id, settings.real_media_fixture_dir)
 
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
@@ -85,6 +93,56 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
     return {
         "status": "completed",
         "segments": segments,
+    }
+
+
+def _fetch_real_media_fixture(video_id: str, fixture_dir: str | None) -> dict[str, Any]:
+    if video_id != "drrP_Iss0gA":
+        return _failure(
+            ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
+            f"No real-media YouTube transcript fixture for {video_id}",
+        )
+    if fixture_dir is None:
+        return _failure(
+            ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
+            "REAL_MEDIA_FIXTURE_DIR is required for transcript fixtures",
+        )
+
+    path = Path(fixture_dir) / "nasa-picturing-earth-behind-scenes-captions.srt"
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return _failure(
+            ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
+            f"YouTube transcript fixture unavailable: {exc}",
+        )
+
+    payload = content.encode("utf-8")
+    if len(payload) != 9_805 or hashlib.sha256(payload).hexdigest() != (
+        "f2be864a2e42f94e629245a4a46326258ecaaffa64868caf16b46e75b4f7d237"
+    ):
+        return _failure(
+            ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
+            "YouTube transcript fixture hash mismatch",
+        )
+
+    from nexus.services.rss_transcript_fetch import _parse_srt_transcript
+
+    segments = _parse_srt_transcript(content)
+    if not segments:
+        return _failure(
+            ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
+            "YouTube transcript fixture had no segments",
+        )
+    return {
+        "status": "completed",
+        "segments": segments,
+        "provider_fixture": {
+            "path": str(path),
+            "byte_length": len(payload),
+            "sha256": "f2be864a2e42f94e629245a4a46326258ecaaffa64868caf16b46e75b4f7d237",
+            "provider_video_id": video_id,
+        },
     }
 
 

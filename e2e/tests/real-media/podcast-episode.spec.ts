@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { readRealMediaSeed, writeRealMediaTrace } from "./real-media-seed";
+import {
+  createFragmentHighlightThroughVisibleSelection,
+  readRealMediaSeed,
+  searchRealMediaEvidenceThroughUi,
+  writeRealMediaTrace,
+} from "./real-media-seed";
 
 test("@real-media podcast episode transcript opens seekable evidence", async ({
   page,
@@ -17,15 +22,11 @@ test("@real-media podcast episode transcript opens seekable evidence", async ({
   expect(media.data.kind).toBe("podcast_episode");
   expect(media.data.retrieval_status).toBe("ready");
 
-  const searchResponse = await page.request.get("/api/search", {
-    params: {
-      q: query,
-      scope: `media:${mediaId}`,
-      types: "content_chunk",
-    },
-  });
-  expect(searchResponse.ok()).toBeTruthy();
-  const search = await searchResponse.json();
+  const search = await searchRealMediaEvidenceThroughUi(
+    page,
+    query,
+    "podcast_episode",
+  );
   const result = search.results.find(
     (item: { type: string; source: { media_id: string } }) =>
       item.type === "content_chunk" && item.source.media_id === mediaId,
@@ -34,14 +35,23 @@ test("@real-media podcast episode transcript opens seekable evidence", async ({
     result,
     "podcast transcript should return indexed evidence",
   ).toBeTruthy();
-  expect(result.deep_link).toContain("t_start_ms=");
+  if (!result) {
+    throw new Error(`podcast transcript visible search did not return ${mediaId}`);
+  }
   const resolverResponse = await page.request.get(
     `/api/media/${mediaId}/evidence/${result.evidence_span_ids[0]}`,
   );
   expect(resolverResponse.ok()).toBeTruthy();
   const resolver = await resolverResponse.json();
 
-  await page.goto(result.deep_link);
+  const resultLink = page.locator(`a[href*="/media/${mediaId}?"]`).first();
+  await expect(
+    resultLink,
+    "podcast transcript should render a visible search result",
+  ).toBeVisible();
+  const visibleHref = await resultLink.getAttribute("href");
+  expect(visibleHref ?? "").toContain("t_start_ms=");
+  await resultLink.click();
   await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
   await expect(page.locator("body")).not.toContainText(
     /not found|failed to load/i,
@@ -51,6 +61,11 @@ test("@real-media podcast episode transcript opens seekable evidence", async ({
   ).toBeVisible({
     timeout: 15_000,
   });
+  const savedHighlight = await createFragmentHighlightThroughVisibleSelection(
+    page,
+    mediaId,
+    '[data-testid="document-viewport"] [data-testid="html-renderer"]',
+  );
 
   writeRealMediaTrace(testInfo, "real-podcast-transcript-trace.json", {
     fixture_id: "podcast-nasa-hwhap-crew4-transcript",
@@ -59,8 +74,11 @@ test("@real-media podcast episode transcript opens seekable evidence", async ({
     media_id: mediaId,
     podcast_id: seed.fixtures.podcast.podcast_id,
     query,
+    search_api_url: search.api_url,
     search_result: result,
+    visible_result_href: visibleHref,
     resolver: resolver.data,
+    saved_highlight: savedHighlight,
     browser_url: page.url(),
   });
 });

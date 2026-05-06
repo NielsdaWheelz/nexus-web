@@ -1642,6 +1642,8 @@ def _finalize_message_evidence(db: Session, run: ChatRun, assistant_message: Mes
     evidence_rows = []
     for row in retrieval_rows:
         result_ref = row[5] if isinstance(row[5], dict) else {}
+        if result_ref.get("status") in {"no_indexed_evidence", "no_results"}:
+            continue
         snippet = row[10] or result_ref.get("snippet")
         if not isinstance(snippet, str) or not snippet.strip():
             continue

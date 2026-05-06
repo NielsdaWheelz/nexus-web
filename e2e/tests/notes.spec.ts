@@ -129,7 +129,7 @@ async function expectOk(response: APIResponse, label: string): Promise<void> {
   expect(response.status(), `${label}: ${await response.text()}`).toBe(200);
 }
 
-test.describe("notes cutover", () => {
+test.describe("notes cutover @legacy-synthetic", () => {
   test("creates a linked highlight note, persists object refs, opens note blocks, and accepts note context", async ({
     page,
   }) => {

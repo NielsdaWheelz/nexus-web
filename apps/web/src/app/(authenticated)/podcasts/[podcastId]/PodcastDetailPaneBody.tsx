@@ -89,6 +89,7 @@ interface MediaCapabilities {
   can_download_file: boolean;
   can_delete?: boolean;
   can_retry?: boolean;
+  can_refresh_source?: boolean;
 }
 
 interface PodcastEpisodeMedia {
@@ -1126,6 +1127,47 @@ export default function PodcastDetailPaneBody() {
     }
   }, []);
 
+  const handleRefreshEpisodeSource = useCallback(async (mediaId: string) => {
+    setBusyMediaIds((prev) => new Set(prev).add(mediaId));
+    setError(null);
+    try {
+      await apiFetch(`/api/media/${mediaId}/refresh`, { method: "POST" });
+      setEpisodes((prev) =>
+        prev.map((episode) =>
+          episode.id === mediaId
+            ? {
+                ...episode,
+                processing_status: "extracting",
+                transcript_state: "queued",
+                transcript_coverage: "none",
+                capabilities: {
+                  ...episode.capabilities,
+                  can_read: false,
+                  can_highlight: false,
+                  can_quote: false,
+                  can_search: false,
+                  can_retry: false,
+                  can_refresh_source: false,
+                },
+              }
+            : episode,
+        ),
+      );
+    } catch (refreshError) {
+      setError(
+        toFeedback(refreshError, {
+          fallback: "Failed to refresh episode source",
+        }),
+      );
+    } finally {
+      setBusyMediaIds((prev) => {
+        const next = new Set(prev);
+        next.delete(mediaId);
+        return next;
+      });
+    }
+  }, []);
+
   const handleDeleteEpisode = useCallback(
     async (episode: PodcastEpisodeMedia) => {
       if (
@@ -1848,6 +1890,7 @@ export default function PodcastDetailPaneBody() {
               media: episode,
               busy,
               retryBusy: busy,
+              refreshBusy: busy,
               deleteBusy: busy,
               played: episodeState === "played",
               markingBusy: markingEpisodeIds.has(episode.id),
@@ -1864,6 +1907,11 @@ export default function PodcastDetailPaneBody() {
               onRetry: episode.capabilities.can_retry
                 ? () => {
                     void handleRetryEpisodeProcessing(episode.id);
+                  }
+                : undefined,
+              onRefreshSource: episode.capabilities.can_refresh_source
+                ? () => {
+                    void handleRefreshEpisodeSource(episode.id);
                   }
                 : undefined,
               onDelete: episode.capabilities.can_delete

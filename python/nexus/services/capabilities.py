@@ -8,12 +8,23 @@ _READY_PROCESSING_STATUSES = {
     ProcessingStatus.embedding.value,
     ProcessingStatus.ready.value,
 }
+_REFRESHABLE_PROCESSING_STATUSES = {
+    ProcessingStatus.ready_for_reading.value,
+    ProcessingStatus.embedding.value,
+    ProcessingStatus.ready.value,
+    ProcessingStatus.failed.value,
+}
 _VALID_PROCESSING_STATUSES = {status.value for status in ProcessingStatus}
 _DOCUMENT_MEDIA_KINDS = {
     MediaKind.epub.value,
     MediaKind.web_article.value,
 }
 _TRANSCRIPT_MEDIA_KINDS = {
+    MediaKind.video.value,
+    MediaKind.podcast_episode.value,
+}
+_SOURCE_REFRESH_MEDIA_KINDS = {
+    MediaKind.web_article.value,
     MediaKind.video.value,
     MediaKind.podcast_episode.value,
 }
@@ -133,6 +144,15 @@ def derive_capabilities(
         and retry_source_available
         and not terminal_retry_error
     )
+    source_refresh_available = requested_url_exists or (
+        kind in _TRANSCRIPT_MEDIA_KINDS and external_playback_url_exists
+    )
+    can_refresh_source = (
+        is_creator
+        and kind in _SOURCE_REFRESH_MEDIA_KINDS
+        and source_refresh_available
+        and processing_status in _REFRESHABLE_PROCESSING_STATUSES
+    )
 
     return CapabilitiesOut(
         can_read=can_read,
@@ -143,4 +163,5 @@ def derive_capabilities(
         can_download_file=can_download_file,
         can_delete=can_delete,
         can_retry=can_retry,
+        can_refresh_source=can_refresh_source,
     )

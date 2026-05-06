@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
-test.describe("api keys", () => {
+test.describe("api keys @legacy-synthetic", () => {
   const settingsChrome = (page: Page) => page.getByTestId("pane-shell-chrome");
 
   test("provider cards visible", async ({ page }) => {

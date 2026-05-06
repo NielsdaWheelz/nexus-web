@@ -14,6 +14,7 @@ Note: All environments use Supabase JWKS for JWT verification.
 Local/test environments use Supabase local, staging/prod use cloud.
 """
 
+import os
 from enum import Enum
 from functools import lru_cache
 from typing import Annotated, Literal
@@ -75,6 +76,11 @@ class Settings(BaseSettings):
         default="https://api.podcastindex.org/api/1.0",
         alias="PODCAST_INDEX_BASE_URL",
     )
+    real_media_provider_fixtures: bool = Field(
+        default=False,
+        alias="REAL_MEDIA_PROVIDER_FIXTURES",
+    )
+    real_media_fixture_dir: str | None = Field(default=None, alias="REAL_MEDIA_FIXTURE_DIR")
     youtube_data_api_key: str | None = Field(default=None, alias="YOUTUBE_DATA_API_KEY")
     youtube_data_base_url: str = Field(
         default="https://www.googleapis.com/youtube/v3",
@@ -324,6 +330,11 @@ class Settings(BaseSettings):
             raise ValueError("PODCAST_SYNC_RUNNING_LEASE_SECONDS must be >= 1.")
         if self.podcast_transcription_timeout_seconds <= 0:
             raise ValueError("PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS must be > 0.")
+        if self.real_media_provider_fixtures:
+            if self.nexus_env in (Environment.STAGING, Environment.PROD):
+                raise ValueError("REAL_MEDIA_PROVIDER_FIXTURES is not allowed in staging or prod.")
+            if not self.real_media_fixture_dir:
+                raise ValueError("REAL_MEDIA_FIXTURE_DIR is required when fixtures are enabled.")
         if self.nexus_env in (Environment.STAGING, Environment.PROD) and self.billing_enabled:
             missing_billing: list[str] = []
             if not self.stripe_secret_key:
@@ -348,7 +359,9 @@ class Settings(BaseSettings):
             if not self.podcast_index_api_secret:
                 missing_podcast_provider_settings.append("PODCAST_INDEX_API_SECRET")
             if missing_podcast_provider_settings:
-                if self.nexus_env in (Environment.STAGING, Environment.PROD):
+                if self.real_media_provider_fixtures:
+                    pass
+                elif self.nexus_env in (Environment.STAGING, Environment.PROD):
                     raise ValueError(
                         "Podcast features are enabled but provider credentials are missing: "
                         f"{', '.join(missing_podcast_provider_settings)}"
@@ -436,6 +449,10 @@ def get_settings() -> Settings:
         ValidationError: If required settings are missing or invalid.
     """
     return Settings()
+
+
+def real_media_provider_fixtures_requested() -> bool:
+    return os.environ.get("REAL_MEDIA_PROVIDER_FIXTURES") in {"1", "true", "True"}
 
 
 def clear_settings_cache() -> None:

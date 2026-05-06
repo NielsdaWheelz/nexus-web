@@ -166,7 +166,7 @@ async function selectFreshVisibleTextSnippet(
   return selected;
 }
 
-test.describe("youtube transcript media", () => {
+test.describe("youtube transcript media @legacy-synthetic", () => {
   test("transcript-ready youtube flow renders embed, seeks by transcript click, and keeps fallback source action", async ({
     page,
   }) => {

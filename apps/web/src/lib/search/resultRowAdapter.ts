@@ -113,6 +113,12 @@ export interface SearchResultRowViewModel {
   key: string;
   href: string;
   type: SearchType;
+  mediaId: string | null;
+  contextRef: {
+    type: SearchType;
+    id: string;
+    evidenceSpanIds: string[];
+  } | null;
   typeLabel: string;
   primaryText: string;
   snippetSegments: Array<{
@@ -658,6 +664,15 @@ function adaptSearchResultRow(
     key: `${result.type}-${result.id}`,
     href: buildResultHref(result),
     type: result.type,
+    mediaId: result.media_id,
+    contextRef:
+      result.type === "content_chunk"
+        ? {
+            type: result.context_ref.type,
+            id: result.context_ref.id,
+            evidenceSpanIds: result.context_ref.evidence_span_ids ?? [],
+          }
+        : null,
     typeLabel:
       result.type === "content_chunk"
         ? result.citation_label

@@ -252,6 +252,36 @@ def _do_ingest(
 
     # Step 8: Persist fragment and update media
     now = datetime.now(UTC)
+    db.execute(
+        text(
+            """
+            DELETE FROM highlights AS h
+            USING highlight_fragment_anchors AS hfa
+            JOIN fragments AS f ON f.id = hfa.fragment_id
+            WHERE h.id = hfa.highlight_id
+              AND f.media_id = :media_id
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM fragment_blocks
+            WHERE fragment_id IN (
+                SELECT id
+                FROM fragments
+                WHERE media_id = :media_id
+            )
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(text("DELETE FROM fragments WHERE media_id = :media_id"), {"media_id": media_id})
+    db.execute(
+        text("DELETE FROM contributor_credits WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
 
     # Create fragment
     fragment = Fragment(
@@ -332,6 +362,7 @@ def _do_ingest(
         "status": "success",
         "canonical_url": canonical_url,
         "title": ingest_result.title,
+        "provider_fixture": ingest_result.provider_fixture,
     }
 
 

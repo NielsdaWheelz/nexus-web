@@ -7,10 +7,12 @@ from the server; highlight/page Markdown bodies are the local editing surface.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import re
 import time
+import zipfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict
@@ -149,6 +151,16 @@ def sync_vault(
 def export_vault_files(db: Session, viewer_id: UUID) -> list[VaultFile]:
     files = _vault_file_map(db, viewer_id)
     return [{"path": path, "content": files[path]} for path in sorted(files)]
+
+
+def export_vault_zip(db: Session, viewer_id: UUID) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for file in export_vault_files(db, viewer_id):
+            info = zipfile.ZipInfo(file["path"], date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, file["content"].encode("utf-8"))
+    return buffer.getvalue()
 
 
 def sync_vault_files(

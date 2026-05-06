@@ -22,7 +22,7 @@ import httpx
 if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -39,7 +39,14 @@ from nexus.db.models import (
     ProcessingStatus,
 )
 from nexus.db.session import get_session_factory
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import (
+    ApiError,
+    ApiErrorCode,
+    ConflictError,
+    ForbiddenError,
+    InvalidRequestError,
+    NotFoundError,
+)
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas.contributors import ContributorCreditOut
@@ -348,7 +355,10 @@ def _media_out_from_row(
         retrieval_status=row["retrieval_status"],
         can_delete=bool(row.get("can_delete")),
         is_creator=bool(row.get("is_creator")),
-        requested_url_exists=bool(row.get("has_requested_url")),
+        requested_url_exists=bool(row.get("has_requested_url"))
+        and not (
+            row["kind"] == MediaKind.web_article.value and row.get("provider") == "browser_capture"
+        ),
     )
     playback_source = derive_playback_source(
         kind=row["kind"],
@@ -421,6 +431,208 @@ def get_listening_state_for_viewer(
         playback_speed=float(state.playback_speed),
         is_completed=bool(state.is_completed),
     )
+
+
+def refresh_source_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    *,
+    request_id: str | None = None,
+) -> dict[str, object]:
+    """Requeue source acquisition for URL-backed media."""
+    if not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    if media.kind not in {
+        MediaKind.web_article.value,
+        MediaKind.video.value,
+        MediaKind.podcast_episode.value,
+    }:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_KIND,
+            "Source refresh is only supported for web articles, videos, and podcast episodes.",
+        )
+
+    if media.created_by_user_id != viewer_id:
+        raise ForbiddenError(
+            ApiErrorCode.E_FORBIDDEN,
+            "Only the creator can refresh source content.",
+        )
+
+    if media.processing_status not in {
+        ProcessingStatus.ready_for_reading,
+        ProcessingStatus.embedding,
+        ProcessingStatus.ready,
+        ProcessingStatus.failed,
+    }:
+        raise ConflictError(
+            ApiErrorCode.E_MEDIA_NOT_READY,
+            "Media source refresh is not available in the current processing state.",
+        )
+
+    if media.kind == MediaKind.web_article.value and (
+        not media.requested_url or media.provider == "browser_capture"
+    ):
+        raise ConflictError(
+            ApiErrorCode.E_RETRY_NOT_ALLOWED,
+            "Source refresh is not available because the original URL is missing.",
+        )
+
+    if media.kind == MediaKind.video.value and not (
+        media.requested_url or media.canonical_source_url or media.external_playback_url
+    ):
+        raise ConflictError(
+            ApiErrorCode.E_RETRY_NOT_ALLOWED,
+            "Source refresh is not available because the video source is missing.",
+        )
+
+    if media.kind == MediaKind.podcast_episode.value and not media.external_playback_url:
+        raise ConflictError(
+            ApiErrorCode.E_RETRY_NOT_ALLOWED,
+            "Source refresh is not available because the episode audio source is missing.",
+        )
+
+    if media.kind == MediaKind.web_article.value:
+        media.processing_status = ProcessingStatus.extracting
+        media.processing_started_at = datetime.now(UTC)
+        media.processing_completed_at = None
+        media.failure_stage = None
+        media.last_error_code = None
+        media.last_error_message = None
+        media.failed_at = None
+        media.updated_at = datetime.now(UTC)
+        _enqueue_ingest_task(db, media.id, viewer_id, request_id)
+    elif media.kind == MediaKind.video.value:
+        media.processing_status = ProcessingStatus.extracting
+        media.processing_started_at = datetime.now(UTC)
+        media.processing_completed_at = None
+        media.failure_stage = None
+        media.last_error_code = None
+        media.last_error_message = None
+        media.failed_at = None
+        media.updated_at = datetime.now(UTC)
+        _enqueue_youtube_ingest_task(db, media.id, viewer_id, request_id)
+    else:
+        now = datetime.now(UTC)
+        db.execute(
+            text(
+                """
+                INSERT INTO podcast_transcription_jobs (
+                    media_id,
+                    requested_by_user_id,
+                    request_reason,
+                    reserved_minutes,
+                    reservation_usage_date,
+                    status,
+                    error_code,
+                    attempts,
+                    started_at,
+                    completed_at,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :media_id,
+                    :viewer_id,
+                    'operator_requeue',
+                    0,
+                    NULL,
+                    'pending',
+                    NULL,
+                    0,
+                    NULL,
+                    NULL,
+                    :now,
+                    :now
+                )
+                ON CONFLICT (media_id) DO UPDATE
+                SET
+                    requested_by_user_id = EXCLUDED.requested_by_user_id,
+                    request_reason = EXCLUDED.request_reason,
+                    reserved_minutes = 0,
+                    reservation_usage_date = NULL,
+                    status = 'pending',
+                    error_code = NULL,
+                    started_at = NULL,
+                    completed_at = NULL,
+                    updated_at = EXCLUDED.updated_at
+                """
+            ),
+            {"media_id": media.id, "viewer_id": viewer_id, "now": now},
+        )
+        db.execute(
+            text(
+                """
+                UPDATE media
+                SET
+                    processing_status = 'extracting',
+                    failure_stage = NULL,
+                    last_error_code = NULL,
+                    last_error_message = NULL,
+                    processing_started_at = :now,
+                    processing_completed_at = NULL,
+                    failed_at = NULL,
+                    updated_at = :now
+                WHERE id = :media_id
+                """
+            ),
+            {"media_id": media.id, "now": now},
+        )
+        db.execute(
+            text(
+                """
+                INSERT INTO media_transcript_states (
+                    media_id,
+                    transcript_state,
+                    transcript_coverage,
+                    semantic_status,
+                    last_request_reason,
+                    last_error_code,
+                    updated_at
+                )
+                VALUES (
+                    :media_id,
+                    'queued',
+                    'none',
+                    'none',
+                    'operator_requeue',
+                    NULL,
+                    :now
+                )
+                ON CONFLICT (media_id) DO UPDATE
+                SET
+                    transcript_state = 'queued',
+                    transcript_coverage = 'none',
+                    semantic_status = 'none',
+                    active_transcript_version_id = NULL,
+                    last_request_reason = 'operator_requeue',
+                    last_error_code = NULL,
+                    updated_at = EXCLUDED.updated_at
+                """
+            ),
+            {"media_id": media.id, "now": now},
+        )
+        enqueue_job(
+            db,
+            kind="podcast_transcribe_episode_job",
+            payload={
+                "media_id": str(media.id),
+                "requested_by_user_id": str(viewer_id),
+                "request_id": request_id,
+            },
+        )
+
+    db.commit()
+    return {
+        "media_id": str(media.id),
+        "processing_status": "extracting",
+        "refresh_enqueued": True,
+    }
 
 
 def _position_meets_completion_threshold(position_ms: int, duration_ms: int | None) -> bool:
@@ -960,6 +1172,7 @@ def create_captured_web_article(
         requested_url=url,
         canonical_url=None,
         canonical_source_url=normalize_url_for_display(url),
+        provider="browser_capture",
         processing_status=ProcessingStatus.ready_for_reading,
         processing_completed_at=now,
         created_by_user_id=viewer_id,

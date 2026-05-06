@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { readRealMediaSeed, writeRealMediaTrace } from "./real-media-seed";
+import {
+  readRealMediaSeed,
+  searchRealMediaEvidenceThroughUi,
+  writeRealMediaTrace,
+} from "./real-media-seed";
 
 test("@real-media configured media are ready and open in the reader", async ({
   page,
@@ -31,16 +35,13 @@ test("@real-media configured media are ready and open in the reader", async ({
     );
   }
 
-  const scannedSearch = await page.request.get("/api/search", {
-    params: {
-      q: seed.fixtures.scanned_pdf.query,
-      scope: `media:${seed.fixtures.scanned_pdf.media_id}`,
-      types: "content_chunk",
-      limit: "5",
-    },
-  });
-  expect(scannedSearch.ok()).toBeTruthy();
-  expect((await scannedSearch.json()).results).toEqual([]);
+  const scannedSearch = await searchRealMediaEvidenceThroughUi(
+    page,
+    seed.fixtures.scanned_pdf.query,
+    "pdf",
+  );
+  expect(scannedSearch.results).toEqual([]);
+  await expect(page.getByText("No results found.")).toBeVisible();
 
   writeRealMediaTrace(testInfo, "real-media-readiness-trace.json", {
     media: media.map(([kind, mediaId, retrievalStatus]) => ({
@@ -48,6 +49,8 @@ test("@real-media configured media are ready and open in the reader", async ({
       media_id: mediaId,
       retrieval_status: retrievalStatus,
     })),
+    scanned_search_api_url: scannedSearch.api_url,
+    scanned_search_result_count: scannedSearch.results.length,
     final_browser_url: page.url(),
   });
 });

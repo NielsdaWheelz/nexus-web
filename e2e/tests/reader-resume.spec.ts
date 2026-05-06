@@ -216,7 +216,7 @@ async function readRenderedPageScale(page: Page, pageNumber: number): Promise<nu
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-test.describe("reader settings + resume", () => {
+test.describe("reader settings + resume @legacy-synthetic", () => {
   test.describe.configure({ mode: "serial" });
 
   test("reader settings persist and survive reload", async ({ page }) => {

@@ -13,10 +13,12 @@ export function mediaResourceOptions(input: {
   media: MediaActionSubject | null | undefined;
   canManageLibraries: boolean;
   retryBusy?: boolean;
+  refreshBusy?: boolean;
   deleteBusy?: boolean;
   onOpenChat?: () => void;
   onManageLibraries?: (detail: MenuSelectDetail) => void;
   onRetry?: () => void;
+  onRefreshSource?: () => void;
   onDelete?: () => void;
 }): ActionMenuOption[] {
   const media = input.media;
@@ -25,6 +27,7 @@ export function mediaResourceOptions(input: {
   const capabilities = media.capabilities as {
     can_delete?: unknown;
     can_retry?: unknown;
+    can_refresh_source?: unknown;
   } | null | undefined;
   const options: ActionMenuOption[] = [];
 
@@ -42,6 +45,15 @@ export function mediaResourceOptions(input: {
       label: input.retryBusy ? "Retrying..." : "Retry processing",
       disabled: input.retryBusy,
       onSelect: input.onRetry,
+    });
+  }
+
+  if (capabilities?.can_refresh_source === true && input.onRefreshSource) {
+    options.push({
+      id: "refresh-source",
+      label: input.refreshBusy ? "Refreshing..." : "Refresh source",
+      disabled: input.refreshBusy,
+      onSelect: input.onRefreshSource,
     });
   }
 
@@ -185,12 +197,14 @@ export function episodeResourceOptions(input: {
   media: MediaActionSubject;
   busy?: boolean;
   retryBusy?: boolean;
+  refreshBusy?: boolean;
   deleteBusy?: boolean;
   played: boolean;
   markingBusy?: boolean;
   onManageLibraries: (detail: MenuSelectDetail) => void;
   onOpenChat?: () => void;
   onRetry?: () => void;
+  onRefreshSource?: () => void;
   onDelete?: () => void;
   onTogglePlayed: () => void;
 }): ActionMenuOption[] {
@@ -198,10 +212,12 @@ export function episodeResourceOptions(input: {
     media: input.media,
     canManageLibraries: true,
     retryBusy: input.retryBusy,
+    refreshBusy: input.refreshBusy,
     deleteBusy: input.deleteBusy,
     onOpenChat: input.onOpenChat,
     onManageLibraries: input.onManageLibraries,
     onRetry: input.onRetry,
+    onRefreshSource: input.onRefreshSource,
     onDelete: input.onDelete,
   }).map((option) =>
     option.id === "manage-media-libraries"

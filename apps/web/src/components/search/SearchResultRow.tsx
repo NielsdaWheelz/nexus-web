@@ -25,7 +25,30 @@ function renderSnippetContent(row: SearchResultRowViewModel) {
   );
 }
 
+function buildAskHref(row: SearchResultRowViewModel): string | null {
+  if (
+    row.type !== "content_chunk" ||
+    !row.mediaId ||
+    !row.contextRef ||
+    row.contextRef.evidenceSpanIds.length === 0
+  ) {
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    scope: `media:${row.mediaId}`,
+    context: [
+      row.contextRef.type,
+      row.contextRef.id,
+      row.contextRef.evidenceSpanIds.join(","),
+    ].join(":"),
+  });
+  return `/conversations/new?${params.toString()}`;
+}
+
 export default function SearchResultRow({ row }: SearchResultRowProps) {
+  const askHref = buildAskHref(row);
+
   return (
     <ContextRow
       className={styles.row}
@@ -39,12 +62,21 @@ export default function SearchResultRow({ row }: SearchResultRowProps) {
       metaClassName={styles.meta}
       trailing={<span className={styles.score}>{row.scoreLabel}</span>}
       actions={
-        row.contributorCredits.length > 0 ? (
-          <ContributorCreditList
-            credits={row.contributorCredits}
-            className={styles.contributors}
-            showRole
-          />
+        row.contributorCredits.length > 0 || askHref ? (
+          <>
+            {askHref ? (
+              <a className={styles.askLink} href={askHref}>
+                Ask with evidence
+              </a>
+            ) : null}
+            {row.contributorCredits.length > 0 ? (
+              <ContributorCreditList
+                credits={row.contributorCredits}
+                className={styles.contributors}
+                showRole
+              />
+            ) : null}
+          </>
         ) : undefined
       }
       actionsClassName={styles.actions}

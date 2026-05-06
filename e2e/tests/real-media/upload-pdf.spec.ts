@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 import path from "node:path";
-import { readRealMediaSeed, writeRealMediaTrace } from "./real-media-seed";
+import {
+  createPdfHighlightThroughVisibleSelection,
+  readRealMediaSeed,
+  searchRealMediaEvidenceThroughUi,
+  writeRealMediaTrace,
+} from "./real-media-seed";
 
 test("@real-media real PDF opens from upload-backed media and projects evidence", async ({
   page,
@@ -45,27 +50,25 @@ test("@real-media real PDF opens from upload-backed media and projects evidence"
   ).toBeTruthy();
   expect((await fileResponse.json()).data.url).toBeTruthy();
 
-  const searchResponse = await page.request.get("/api/search", {
-    params: {
-      q: query,
-      scope: `media:${mediaId}`,
-      types: "content_chunk",
-    },
-  });
-  expect(searchResponse.ok()).toBeTruthy();
-  const search = await searchResponse.json();
+  const search = await searchRealMediaEvidenceThroughUi(page, query, "pdf");
   const result = search.results.find(
     (item: { type: string; source: { media_id: string } }) =>
       item.type === "content_chunk" && item.source.media_id === mediaId,
   );
   expect(result, "real PDF should return indexed evidence").toBeTruthy();
+  if (!result) {
+    throw new Error(`real PDF visible search did not return ${mediaId}`);
+  }
   const resolverResponse = await page.request.get(
     `/api/media/${mediaId}/evidence/${result.evidence_span_ids[0]}`,
   );
   expect(resolverResponse.ok()).toBeTruthy();
   const resolver = await resolverResponse.json();
 
-  await page.goto(result.deep_link);
+  const resultLink = page.locator(`a[href*="/media/${mediaId}?"]`).first();
+  await expect(resultLink, "real PDF should render a visible search result").toBeVisible();
+  const visibleHref = await resultLink.getAttribute("href");
+  await resultLink.click();
   await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
   await expect(page.locator("body")).not.toContainText(
     /not found|failed to load/i,
@@ -77,6 +80,10 @@ test("@real-media real PDF opens from upload-backed media and projects evidence"
       )
       .first(),
   ).toBeVisible({ timeout: 15_000 });
+  const savedHighlight = await createPdfHighlightThroughVisibleSelection(
+    page,
+    mediaId,
+  );
 
   writeRealMediaTrace(testInfo, "real-pdf-upload-trace.json", {
     fixture_id: "pdf-attention",
@@ -84,8 +91,11 @@ test("@real-media real PDF opens from upload-backed media and projects evidence"
     artifact_bytes: seed.fixtures.pdf.artifact_bytes,
     media_id: mediaId,
     query,
+    search_api_url: search.api_url,
     search_result: result,
+    visible_result_href: visibleHref,
     resolver: resolver.data,
+    saved_highlight: savedHighlight,
     browser_url: page.url(),
   });
 });

@@ -27,7 +27,7 @@ function workspacePaneButton(page: Page, name: RegExp | string) {
     .getByRole("button", { name });
 }
 
-test.describe("web articles", () => {
+test.describe("web articles @legacy-synthetic", () => {
   test("add article from URL", async ({ page }) => {
     await page.goto("/libraries");
     const addContentDialog = await openAddContentDialog(page);

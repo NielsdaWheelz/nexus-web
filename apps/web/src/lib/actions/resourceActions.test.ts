@@ -96,6 +96,28 @@ describe("mediaResourceOptions", () => {
       separatorBefore: true,
     });
   });
+
+  it("shows source refresh only when supported and wired by the surface", () => {
+    const options = mediaResourceOptions({
+      media: {
+        ...media,
+        capabilities: { can_refresh_source: true },
+      },
+      canManageLibraries: false,
+      refreshBusy: true,
+      onRefreshSource: () => {},
+    });
+
+    expect(options.map((option) => option.id)).toEqual([
+      "open-source",
+      "refresh-source",
+    ]);
+    expect(options[1]).toMatchObject({
+      id: "refresh-source",
+      label: "Refreshing...",
+      disabled: true,
+    });
+  });
 });
 
 describe("libraryResourceOptions", () => {

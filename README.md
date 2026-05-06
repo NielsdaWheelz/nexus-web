@@ -64,6 +64,7 @@ make verify-full
 make seed-real-media-e2e
 make test-e2e
 make test-e2e-real-media
+make test-e2e-legacy-synthetic
 make test-e2e-ui
 ```
 
@@ -90,7 +91,9 @@ make test-live-providers
 Real-media gates are strict. `make test-real-media` requires Supabase local plus
 real OpenAI embeddings. `make test-live-providers` additionally requires real
 Podcast Index and Deepgram credentials. `make test-e2e-real-media` seeds the
-real corpus through `make seed-real-media-e2e`.
+real corpus through `make seed-real-media-e2e`. Legacy generated-media E2E
+smoke tests are opt-in through `make test-e2e-legacy-synthetic` and are not part
+of the real-media acceptance gates.
 
 ## Repository Map
 

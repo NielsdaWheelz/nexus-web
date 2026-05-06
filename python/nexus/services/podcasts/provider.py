@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import httpx
 
-from nexus.config import get_settings
+from nexus.config import get_settings, real_media_provider_fixtures_requested
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
@@ -134,10 +136,27 @@ class PodcastIndexClient:
         ) from last_exc
 
     def search_podcasts(self, query: str, limit: int) -> list[dict[str, Any]]:
-        payload = self._get_json(
-            "/search/byterm",
-            params={"q": query, "max": max(1, min(limit, 100))},
-        )
+        if real_media_provider_fixtures_requested():
+            settings = get_settings()
+            if not settings.real_media_provider_fixtures:
+                payload = None
+            elif "houston we have a podcast" not in str(query or "").casefold():
+                return []
+            else:
+                payload = _read_real_media_json_fixture(
+                    settings.real_media_fixture_dir,
+                    "nasa-hwhap-podcast-index-search.json",
+                    548,
+                    "e305e72eac4aa73d6c002d703627316c64dd8140ee7627abaad29851e2771b29",
+                )
+        else:
+            payload = None
+
+        if payload is None:
+            payload = self._get_json(
+                "/search/byterm",
+                params={"q": query, "max": max(1, min(limit, 100))},
+            )
         feeds = payload.get("feeds", [])
         if not isinstance(feeds, list):
             return []
@@ -169,13 +188,32 @@ class PodcastIndexClient:
                     ),
                 }
             )
-        return results
+        return results[: max(1, min(limit, 100))]
 
     def lookup_podcast_by_feed_url(self, feed_url: str) -> dict[str, Any] | None:
-        payload = self._get_json(
-            "/podcasts/byfeedurl",
-            params={"url": feed_url},
-        )
+        if real_media_provider_fixtures_requested():
+            settings = get_settings()
+            if settings.real_media_provider_fixtures:
+                if str(feed_url or "").strip() != (
+                    "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/feed/"
+                ):
+                    return None
+                payload = _read_real_media_json_fixture(
+                    settings.real_media_fixture_dir,
+                    "nasa-hwhap-podcast-index-byfeedurl.json",
+                    522,
+                    "bd819ebd4fee93d475854727cba8c4a8e5415c1bf6a3c5c281dd5ed284538058",
+                )
+            else:
+                payload = None
+        else:
+            payload = None
+
+        if payload is None:
+            payload = self._get_json(
+                "/podcasts/byfeedurl",
+                params={"url": feed_url},
+            )
         candidate: dict[str, Any] | None = None
         if isinstance(payload.get("feed"), dict):
             candidate = payload["feed"]
@@ -213,13 +251,30 @@ class PodcastIndexClient:
         }
 
     def fetch_recent_episodes(self, provider_podcast_id: str, limit: int) -> list[dict[str, Any]]:
-        payload = self._get_json(
-            "/episodes/byfeedid",
-            params={
-                "id": provider_podcast_id,
-                "max": max(1, min(limit, PODCAST_INDEX_EPISODE_PAGE_SIZE)),
-            },
-        )
+        if real_media_provider_fixtures_requested():
+            settings = get_settings()
+            if settings.real_media_provider_fixtures:
+                if str(provider_podcast_id or "").strip() != "nasa-hwhap-real-media":
+                    return []
+                payload = _read_real_media_json_fixture(
+                    settings.real_media_fixture_dir,
+                    "nasa-hwhap-podcast-index-episodes.json",
+                    706,
+                    "3ef17f4c96f1c40dc3044092a25d7eb9ecef361d19e647caab558c1a2e0b926b",
+                )
+            else:
+                payload = None
+        else:
+            payload = None
+
+        if payload is None:
+            payload = self._get_json(
+                "/episodes/byfeedid",
+                params={
+                    "id": provider_podcast_id,
+                    "max": max(1, min(limit, PODCAST_INDEX_EPISODE_PAGE_SIZE)),
+                },
+            )
         items = payload.get("items", [])
         if not isinstance(items, list):
             return []
@@ -262,7 +317,7 @@ class PodcastIndexClient:
                     "feed_language": None,
                 }
             )
-        return episodes
+        return episodes[: max(1, min(limit, PODCAST_INDEX_EPISODE_PAGE_SIZE))]
 
 
 def get_podcast_index_client() -> PodcastIndexClient:
@@ -272,6 +327,49 @@ def get_podcast_index_client() -> PodcastIndexClient:
         api_secret=settings.podcast_index_api_secret,
         base_url=settings.podcast_index_base_url,
     )
+
+
+def _read_real_media_json_fixture(
+    fixture_dir: str | None,
+    filename: str,
+    expected_bytes: int,
+    expected_sha256: str,
+) -> dict[str, Any]:
+    if fixture_dir is None:
+        raise ApiError(
+            ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
+            "REAL_MEDIA_FIXTURE_DIR is required for podcast provider fixtures",
+        )
+
+    path = Path(fixture_dir) / filename
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        raise ApiError(
+            ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
+            f"Podcast provider fixture unavailable: {exc}",
+        ) from exc
+
+    if len(payload) != expected_bytes or hashlib.sha256(payload).hexdigest() != expected_sha256:
+        raise ApiError(
+            ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
+            f"Podcast provider fixture hash mismatch: {filename}",
+        )
+
+    try:
+        raw = json.loads(payload.decode("utf-8"))
+    except ValueError as exc:
+        raise ApiError(
+            ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
+            f"Podcast provider fixture is invalid JSON: {filename}",
+        ) from exc
+
+    if not isinstance(raw, dict) or not isinstance(raw.get("payload"), dict):
+        raise ApiError(
+            ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE,
+            f"Podcast provider fixture missing payload: {filename}",
+        )
+    return raw["payload"]
 
 
 def _normalize_provider_published_at(raw_value: Any) -> str | None:

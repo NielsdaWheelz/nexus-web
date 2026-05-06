@@ -87,7 +87,7 @@ async function expectToolbarToFitPaneChrome(
   expect(fits).toBe(true);
 }
 
-test.describe("pane chrome", () => {
+test.describe("pane chrome @legacy-synthetic", () => {
   test("mobile document panes keep scroll position stable while chrome hides and reveals deliberately", async ({
     page,
   }) => {

@@ -9,6 +9,8 @@ describe("SearchResultRow", () => {
       key: "note_block-note-1",
       href: "/notes/note-1",
       type: "note_block",
+      mediaId: null,
+      contextRef: null,
       typeLabel: "note_block",
       primaryText: "note body text",
       snippetSegments: [],
@@ -32,6 +34,12 @@ describe("SearchResultRow", () => {
       key: "content_chunk-chunk-1",
       href: "/media/media-1?evidence=span-1&page=12",
       type: "content_chunk",
+      mediaId: "media-1",
+      contextRef: {
+        type: "content_chunk",
+        id: "chunk-1",
+        evidenceSpanIds: ["span-1"],
+      },
       typeLabel: "p. 12",
       primaryText: "before match after",
       snippetSegments: [
@@ -50,6 +58,10 @@ describe("SearchResultRow", () => {
     const emphasized = screen.getByText("match");
     expect(emphasized.tagName).toBe("MARK");
     expect(screen.getByText("p. 12")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Ask with evidence" })).toHaveAttribute(
+      "href",
+      "/conversations/new?scope=media%3Amedia-1&context=content_chunk%3Achunk-1%3Aspan-1"
+    );
   });
 
   it("renders message metadata without duplicate score text", () => {
@@ -57,6 +69,8 @@ describe("SearchResultRow", () => {
       key: "message-msg-1",
       href: "/conversations/conv-1",
       type: "message",
+      mediaId: null,
+      contextRef: null,
       typeLabel: "message",
       primaryText: "Message #12",
       snippetSegments: [],

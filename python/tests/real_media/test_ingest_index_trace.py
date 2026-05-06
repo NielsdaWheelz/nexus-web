@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+from uuid import UUID
 
 import pytest
 
 from nexus.storage import get_storage_client
+from nexus.tasks.ingest_web_article import run_ingest_sync as run_web_article_ingest_sync
 from tests.helpers import auth_headers, create_test_user_id
 from tests.real_media.assertions import (
     assert_complete_evidence_trace,
@@ -23,6 +25,7 @@ from tests.real_media.conftest import (
     create_nasa_podcast_episode,
     ensure_real_media_prerequisites,
     register_background_job_cleanup,
+    register_media_cleanup,
     upload_file_media,
     write_trace,
 )
@@ -250,6 +253,56 @@ def test_real_browser_captured_article_indexes_searches_and_resolves_evidence(
     )
 
 
+def test_real_url_web_article_indexes_through_provider_boundary(
+    auth_client,
+    direct_db: DirectSessionManager,
+    tmp_path,
+):
+    ensure_real_media_prerequisites()
+    user_id = create_test_user_id()
+    headers = auth_headers(user_id)
+    auth_client.get("/me", headers=headers)
+    direct_db.register_cleanup("users", "id", user_id)
+
+    create_response = auth_client.post(
+        "/media/from_url",
+        json={"url": "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/"},
+        headers=headers,
+    )
+    assert create_response.status_code == 202, create_response.text
+    media_id = UUID(create_response.json()["data"]["media_id"])
+    register_media_cleanup(direct_db, media_id)
+    register_background_job_cleanup(direct_db, media_id)
+
+    with direct_db.session() as session:
+        result = run_web_article_ingest_sync(
+            session,
+            media_id,
+            user_id,
+            "real-media-web-url-fixture",
+        )
+        session.commit()
+    assert result["status"] == "success", result
+
+    media_trace = assert_media_ready(auth_client, headers, media_id)
+    evidence_trace = assert_complete_evidence_trace(direct_db, media_id, "web_article", "web")
+    search_trace = assert_search_and_resolver(auth_client, headers, media_id, "SOFIA", "web")
+    write_trace(
+        tmp_path,
+        "real-web-url-nasa-water-on-moon-trace.json",
+        {
+            "fixture_id": "web-url-nasa-water-on-moon",
+            "source_url": "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/",
+            "license": "NASA public web content",
+            "provider_boundary": "node_ingest",
+            "worker_result": result,
+            "media": media_trace,
+            "evidence": evidence_trace,
+            "search": search_trace,
+        },
+    )
+
+
 def test_real_video_caption_transcript_indexes_searches_and_resolves_evidence(
     auth_client,
     direct_db: DirectSessionManager,
@@ -261,7 +314,7 @@ def test_real_video_caption_transcript_indexes_searches_and_resolves_evidence(
     auth_client.get("/me", headers=headers)
     direct_db.register_cleanup("users", "id", user_id)
 
-    media_id = create_nasa_captioned_video(auth_client, direct_db, headers, user_id)
+    media_id, worker_result = create_nasa_captioned_video(auth_client, direct_db, headers, user_id)
 
     media_trace = assert_media_ready(auth_client, headers, media_id)
     evidence_trace = assert_complete_evidence_trace(direct_db, media_id, "transcript", "transcript")
@@ -285,6 +338,7 @@ def test_real_video_caption_transcript_indexes_searches_and_resolves_evidence(
                 "videos/transcripts/PicturingEarthBehindTheScenescaptions.srt"
             ),
             "license": "NASA public web content",
+            "worker_result": worker_result,
             "media": media_trace,
             "evidence": evidence_trace,
             "search": search_trace,
@@ -304,7 +358,9 @@ def test_real_podcast_episode_transcript_indexes_searches_and_resolves_evidence(
     auth_client.get("/me", headers=headers)
     direct_db.register_cleanup("users", "id", user_id)
 
-    media_id, podcast_id = create_nasa_podcast_episode(auth_client, direct_db, headers, user_id)
+    media_id, podcast_id, worker_result = create_nasa_podcast_episode(
+        auth_client, direct_db, headers, user_id
+    )
 
     media_trace = assert_media_ready(auth_client, headers, media_id)
     evidence_trace = assert_complete_evidence_trace(direct_db, media_id, "transcript", "transcript")
@@ -324,6 +380,29 @@ def test_real_podcast_episode_transcript_indexes_searches_and_resolves_evidence(
             ),
             "license": "NASA public web content",
             "podcast_id": str(podcast_id),
+            "provider_fixtures": [
+                {
+                    "path": "nasa-hwhap-podcast-index-search.json",
+                    "byte_length": 548,
+                    "sha256": "e305e72eac4aa73d6c002d703627316c64dd8140ee7627abaad29851e2771b29",
+                },
+                {
+                    "path": "nasa-hwhap-podcast-index-byfeedurl.json",
+                    "byte_length": 522,
+                    "sha256": "bd819ebd4fee93d475854727cba8c4a8e5415c1bf6a3c5c281dd5ed284538058",
+                },
+                {
+                    "path": "nasa-hwhap-podcast-index-episodes.json",
+                    "byte_length": 706,
+                    "sha256": "3ef17f4c96f1c40dc3044092a25d7eb9ecef361d19e647caab558c1a2e0b926b",
+                },
+                {
+                    "path": "nasa-hwhap-feed.xml",
+                    "byte_length": 1397,
+                    "sha256": "c59f38a211d707d8c2c218c3ce425f5d7c843ad0949309b14760263991e91043",
+                },
+            ],
+            "worker_result": worker_result,
             "media": media_trace,
             "evidence": evidence_trace,
             "search": search_trace,
