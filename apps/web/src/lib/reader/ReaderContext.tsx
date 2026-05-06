@@ -15,12 +15,12 @@ interface ReaderContextValue {
   loading: boolean;
   error: string | null;
   saving: boolean;
+  save: (updates: Partial<ReaderProfile>) => void;
   updateTheme: (theme: ReaderTheme) => void;
   updateFontFamily: (fontFamily: ReaderFontFamily) => void;
   updateFontSize: (fontSizePx: number) => void;
   updateLineHeight: (lineHeight: number) => void;
   updateColumnWidth: (columnWidthCh: number) => void;
-  updateFocusMode: (focusMode: boolean) => void;
 }
 
 const ReaderContext = createContext<ReaderContextValue | null>(null);
@@ -33,12 +33,12 @@ export function ReaderProvider({ children }: { children: ReactNode }) {
     loading,
     error,
     saving,
+    save,
     updateTheme,
     updateFontFamily,
     updateFontSize,
     updateLineHeight,
     updateColumnWidth,
-    updateFocusMode,
   } = useReaderProfile();
 
   const value = useMemo<ReaderContextValue>(
@@ -47,24 +47,24 @@ export function ReaderProvider({ children }: { children: ReactNode }) {
       loading,
       error,
       saving,
+      save,
       updateTheme,
       updateFontFamily,
       updateFontSize,
       updateLineHeight,
       updateColumnWidth,
-      updateFocusMode,
     }),
     [
       profile,
       loading,
       error,
       saving,
+      save,
       updateTheme,
       updateFontFamily,
       updateFontSize,
       updateLineHeight,
       updateColumnWidth,
-      updateFocusMode,
     ]
   );
 
@@ -81,12 +81,12 @@ export function useReaderContext(): ReaderContextValue {
       loading: false,
       error: null,
       saving: false,
+      save: NOOP,
       updateTheme: NOOP,
       updateFontFamily: NOOP,
       updateFontSize: NOOP,
       updateLineHeight: NOOP,
       updateColumnWidth: NOOP,
-      updateFocusMode: NOOP,
     };
   }
   return ctx;

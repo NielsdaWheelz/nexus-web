@@ -150,6 +150,7 @@
 
 .documentViewport {
   width: 100%;
+  height: 100%;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -173,33 +174,111 @@
 
 /* === Reader scope (preserved literal hex per spec §5 rule 14) === */
 .readerThemeLight {
-  --reader-bg: #f8fafc;
-  --reader-bg-secondary: #f1f5f9;
-  --reader-surface: #e2e8f0;
-  --reader-text: #1f2937;
-  --reader-text-secondary: #374151;
-  --reader-text-muted: #6b7280;
-  --reader-border: #d1d5db;
-  --reader-border-subtle: #e5e7eb;
-  --reader-accent: #2563eb;
-  --reader-accent-hover: #1d4ed8;
+  --reader-bg: #faf8f3;
+  --reader-bg-secondary: #f3efe6;
+  --reader-surface: #ece8df;
+  --reader-text: #1a1916;
+  --reader-text-secondary: #4a463e;
+  --reader-text-muted: #7a7468;
+  --reader-border: #d8d3c9;
+  --reader-border-subtle: #ece8df;
+  --reader-accent: #7d5e35;
+  --reader-accent-hover: #634a29;
   background-color: var(--reader-bg);
   color: var(--reader-text);
 }
 
 .readerThemeDark {
-  --reader-bg: #1e1e2e;
-  --reader-bg-secondary: #28283d;
-  --reader-surface: #313244;
-  --reader-text: #cdd6f4;
-  --reader-text-secondary: #bac2de;
-  --reader-text-muted: #a6adc8;
-  --reader-border: #45475a;
-  --reader-border-subtle: #363950;
-  --reader-accent: #89b4fa;
-  --reader-accent-hover: #74c7ec;
+  --reader-bg: #15140f;
+  --reader-bg-secondary: #1f1d18;
+  --reader-surface: #2e2c25;
+  --reader-text: #ebe5d6;
+  --reader-text-secondary: #c2baa7;
+  --reader-text-muted: #8a8270;
+  --reader-border: #2e2c25;
+  --reader-border-subtle: #1f1d18;
+  --reader-accent: #c4a472;
+  --reader-accent-hover: #d4b687;
   background-color: var(--reader-bg);
   color: var(--reader-text);
+}
+
+/* ===== Focus mode dimming =====
+ * Driven by data-focus-mode on the reader root. While text is selected
+ * (data-selection-active="true"), dimming auto-suspends so annotation flow
+ * is uninterrupted. */
+.readerContentRoot[data-focus-mode="paragraph"]:not([data-selection-active="true"])
+  [data-paragraph]:not([data-paragraph-current="true"]) {
+  opacity: 0.4;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+.readerContentRoot[data-focus-mode="sentence"]:not([data-selection-active="true"])
+  [data-paragraph]:not([data-paragraph-current="true"]) {
+  opacity: 0.3;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+.readerContentRoot[data-focus-mode="sentence"]:not([data-selection-active="true"])
+  [data-paragraph][data-paragraph-current="true"] {
+  opacity: 0.7;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+.readerContentRoot[data-focus-mode="sentence"]:not([data-selection-active="true"])
+  [data-paragraph][data-paragraph-current="true"] [data-sentence-current="true"] {
+  opacity: 1;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .readerContentRoot[data-focus-mode="paragraph"]
+    [data-paragraph],
+  .readerContentRoot[data-focus-mode="sentence"]
+    [data-paragraph],
+  .readerContentRoot[data-focus-mode="sentence"]
+    [data-paragraph]
+    [data-sentence-current] {
+    transition: none;
+  }
+}
+
+/* ===== Hyphenation =====
+ * Auto hyphenation only when opted-in AND viewport is narrow. Set on the
+ * reader root so HtmlRenderer descendants inherit the property. */
+@media (max-width: 600px) {
+  .readerContentRoot[data-hyphenation="auto"] {
+    hyphens: auto;
+    hyphenate-limit-chars: 6 3 3;
+    hyphenate-limit-lines: 2;
+  }
+}
+
+/* ===== Distraction-free chrome reveal =====
+ * Distraction-free fades pane chrome (mismatch banner, retrieval banner,
+ * focus-mode banner, secondary column). Pointer movement temporarily reveals
+ * chrome via data-chrome-revealed on the same shell node. The shell mirrors
+ * data-focus-mode from the reader root. */
+.splitLayout[data-focus-mode="distraction_free"]:not([data-chrome-revealed="true"]) .mismatchBanner,
+.splitLayout[data-focus-mode="distraction_free"]:not([data-chrome-revealed="true"]) .retrievalBanner,
+.splitLayout[data-focus-mode="distraction_free"]:not([data-chrome-revealed="true"]) .focusModeBanner {
+  opacity: 0;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+.splitLayout[data-focus-mode="distraction_free"][data-chrome-revealed="true"] .mismatchBanner,
+.splitLayout[data-focus-mode="distraction_free"][data-chrome-revealed="true"] .retrievalBanner,
+.splitLayout[data-focus-mode="distraction_free"][data-chrome-revealed="true"] .focusModeBanner {
+  opacity: 1;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splitLayout[data-focus-mode="distraction_free"] .mismatchBanner,
+  .splitLayout[data-focus-mode="distraction_free"] .retrievalBanner,
+  .splitLayout[data-focus-mode="distraction_free"] .focusModeBanner {
+    transition: none;
+  }
 }
 
 /*
@@ -517,69 +596,6 @@
 }
 
 /* =============================================================================
-   Highlights Pane
-   ============================================================================= */
-
-.loadMoreBtn {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  padding: var(--space-1) var(--space-2);
-  cursor: pointer;
-}
-
-.loadMoreBtn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.paneActionGroup {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.pdfPagePill {
-  flex: 0 0 auto;
-}
-
-.highlightsPaneRoot {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--space-4);
-  min-height: 0;
-}
-
-.highlightsPaneHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.highlightsPaneHeader h2 {
-  margin: 0;
-  font-size: var(--text-lg);
-  color: var(--ink);
-}
-
-.highlightsPaneHeader p {
-  margin: var(--space-1) 0 0;
-  font-size: var(--text-sm);
-  color: var(--ink-faint);
-}
-
-.highlightsPaneBody {
-  flex: 1;
-  min-height: 0;
-}
-
-/* =============================================================================
    EPUB Chapter Navigation (S5 PR-05)
    ============================================================================= */
 
@@ -691,15 +707,12 @@
     max-height: 50vh; /* fallback for browsers without dvh support */
     max-height: 50dvh; /* adapt to mobile screen size instead of hardcoded 320px */
   }
-
-  .secondaryPaneColumn {
-    display: none;
-  }
 }
 
-/* --- Split layout: reader + secondary rail side by side --- */
+/* --- Split layout: reader column hosts overlays as positioned children --- */
 
 .splitLayout {
+  position: relative;
   display: flex;
   flex-direction: row;
   min-height: 0;
@@ -715,89 +728,18 @@
   overflow: hidden;
 }
 
-.secondaryPaneColumn {
-  border-left: 1px solid var(--edge-subtle);
-  min-width: 0;
+/* --- Reader-with-gutter layout (Phase 1B P5) --- */
+
+.readerWithGutter {
+  flex: 1 1 0%;
   min-height: 0;
-  overflow: hidden;
-  overflow-x: hidden;
-  display: flex;
-  flex-direction: column;
-  background: var(--surface-canvas);
+  display: grid;
+  grid-template-columns: 1fr 36px;
+  position: relative;
 }
 
-.secondaryPaneTabs {
-  flex: 0 0 auto;
-  display: flex;
-  gap: var(--space-1);
-  padding: var(--space-3);
-  border-bottom: 1px solid var(--edge-subtle);
-  background: var(--surface-2);
-}
-
-.secondaryPaneTab.secondaryPaneTab {
-  flex: 1;
-  color: var(--ink-muted);
-}
-
-.secondaryPaneTab.secondaryPaneTab[data-active="true"] {
-  background: var(--surface-canvas);
-  color: var(--ink);
-  border: 1px solid var(--edge);
-}
-
-.secondaryPaneBody {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.secondaryPaneBody > .highlightsPaneRoot {
-  padding: var(--space-4);
-}
-
-.secondaryPaneEmpty {
-  padding: var(--space-4);
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
-}
-
-/* --- Mobile highlights drawer --- */
-
-.highlightsBackdrop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal);
-  background: rgba(0, 0, 0, 0.4);
-}
-
-.highlightsDrawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(92vw, 440px);
-  background: var(--surface-2);
-  display: flex;
-  flex-direction: column;
-  z-index: calc(var(--z-modal) + 1);
-}
-
-.highlightsDrawerHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--edge-subtle);
-}
-
-.highlightsDrawerHeader h2 {
-  font-size: var(--text-base);
-  font-weight: var(--weight-semibold);
-  margin: 0;
-}
-
-.highlightsDrawerBody {
-  flex: 1;
-  overflow-y: auto;
+@media (max-width: 600px) {
+  .readerWithGutter {
+    grid-template-columns: 1fr 24px;
+  }
 }

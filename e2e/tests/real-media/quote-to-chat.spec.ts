@@ -96,7 +96,7 @@ function workspacePaneButton(page: Page, name: RegExp | string) {
     .getByRole("button", { name });
 }
 
-test("@real-media desktop selected quote opens embedded reader assistant", async ({
+test("@real-media desktop selected quote opens reader chat overlay", async ({
   page,
 }, testInfo) => {
   const seed = readRealMediaSeed();
@@ -131,16 +131,14 @@ test("@real-media desktop selected quote opens embedded reader assistant", async
   });
   await actions.getByRole("button", { name: "Ask" }).click();
 
-  const assistant = page.getByRole("region", { name: "Reader assistant" });
+  const overlay = page.getByRole("dialog", { name: "Reader chat" });
+  await expect(overlay).toBeVisible({ timeout: 10_000 });
+  const assistant = overlay.getByRole("region", { name: "Reader assistant" });
   await expect(assistant).toBeVisible({ timeout: 10_000 });
   await expect(assistant.getByLabel("Attached context")).toContainText(selectedText);
   await expect
     .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
     .toBe(chatPaneCountBefore);
-
-  await page.getByRole("tab", { name: "Highlights" }).click();
-  await page.getByRole("tab", { name: "Ask" }).click();
-  await expect(assistant.getByLabel("Attached context")).toContainText(selectedText);
 
   const afterExacts = await existingHighlightExacts(page, fragmentId);
   expect(afterExacts).not.toContain(selectedText);

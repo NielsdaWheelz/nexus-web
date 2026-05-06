@@ -10,6 +10,8 @@
 
 export type ReaderTheme = "light" | "dark";
 export type ReaderFontFamily = "serif" | "sans";
+export type ReaderFocusMode = "off" | "distraction_free" | "paragraph" | "sentence";
+export type ReaderHyphenation = "auto" | "off";
 
 export interface ReaderProfile {
   theme: ReaderTheme;
@@ -17,7 +19,8 @@ export interface ReaderProfile {
   font_size_px: number;
   line_height: number;
   column_width_ch: number;
-  focus_mode: boolean;
+  focus_mode: ReaderFocusMode;
+  hyphenation: ReaderHyphenation;
 }
 
 export const DEFAULT_READER_PROFILE: ReaderProfile = {
@@ -26,7 +29,8 @@ export const DEFAULT_READER_PROFILE: ReaderProfile = {
   font_size_px: 16,
   line_height: 1.5,
   column_width_ch: 65,
-  focus_mode: false,
+  focus_mode: "off",
+  hyphenation: "auto",
 };
 
 export interface ReaderResumeLocations {

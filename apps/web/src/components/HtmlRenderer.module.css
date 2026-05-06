@@ -3,6 +3,7 @@
   line-height: var(--leading-loose);
   color: var(--reader-text, var(--ink));
   overflow-wrap: break-word;
+  text-align: left;
 }
 
 /* Typography */
@@ -32,7 +33,7 @@
 }
 
 .renderer p {
-  margin: 0 0 1em;
+  margin: 0 0 calc(var(--reader-line-height, 1.55) * 1em);
 }
 
 .renderer strong {
@@ -131,4 +132,24 @@
   margin: 2em 0;
   border: none;
   border-top: 1px solid var(--reader-border, var(--edge));
+}
+
+.pulsing {
+  animation: htmlHighlightPulse 1200ms var(--ease-glide) 0s 2;
+}
+
+@keyframes htmlHighlightPulse {
+  0%,
+  100% {
+    background-color: var(--highlight-yellow);
+  }
+  50% {
+    background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulsing {
+    animation: none;
+  }
 }

@@ -1,10 +1,12 @@
-.contextChips {
+.rail {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-1);
+  min-width: 0;
 }
 
-.chipSwatch {
+.swatch {
   display: inline-block;
   width: 8px;
   height: 8px;
@@ -12,22 +14,22 @@
   flex-shrink: 0;
 }
 
-.chipSwatchYellow {
+.swatchYellow {
   background: var(--highlight-yellow);
 }
 
-.chipSwatchGreen {
+.swatchGreen {
   background: var(--highlight-green);
 }
 
-.chipSwatchBlue {
+.swatchBlue {
   background: var(--highlight-blue);
 }
 
-.chipSwatchPink {
+.swatchPink {
   background: var(--highlight-pink);
 }
 
-.chipSwatchPurple {
+.swatchPurple {
   background: var(--highlight-purple);
 }

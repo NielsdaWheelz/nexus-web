@@ -64,8 +64,7 @@ export type PaneMobileChromeLockReason =
   | "pdf-selection"
   | "text-selection"
   | "highlight-navigation"
-  | "highlights-drawer"
-  | "reader-assistant"
+  | "highlights-inspector"
   | "library-picker"
   | "action-menu";
 

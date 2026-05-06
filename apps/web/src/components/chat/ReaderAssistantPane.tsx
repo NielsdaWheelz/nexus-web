@@ -67,7 +67,6 @@ export default function ReaderAssistantPane({
   onReaderSourceActivate,
   autoFocusComposer = true,
   resolveScopedConversation = true,
-  surface = "embedded",
   className,
 }: {
   contexts: ContextItem[];
@@ -83,7 +82,6 @@ export default function ReaderAssistantPane({
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
   autoFocusComposer?: boolean;
   resolveScopedConversation?: boolean;
-  surface?: "desktop" | "mobile" | "embedded";
   className?: string;
 }) {
   const scrollportRef = useRef<HTMLDivElement>(null);
@@ -124,7 +122,6 @@ export default function ReaderAssistantPane({
   }, [messages]);
   if (openTelemetryBaseRef.current === null) {
     openTelemetryBaseRef.current = {
-      surface,
       context_kinds: contextKinds(pendingContexts),
       media_kinds: mediaKinds(pendingContexts),
       scope_type: conversationScope.type,
@@ -154,12 +151,11 @@ export default function ReaderAssistantPane({
   const composerFocusKey = `${incomingContextKey}:${activeConversationId ?? "new"}`;
   const telemetryBase = useCallback(
     () => ({
-      surface,
       context_kinds: contextKinds(pendingContexts),
       media_kinds: mediaKinds(pendingContexts),
       scope_type: conversationScope.type,
     }),
-    [conversationScope.type, pendingContexts, surface],
+    [conversationScope.type, pendingContexts],
   );
   const telemetryBaseRef = useRef(telemetryBase());
 

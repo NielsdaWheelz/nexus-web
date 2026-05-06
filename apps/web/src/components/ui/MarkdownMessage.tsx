@@ -8,6 +8,7 @@
 "use client";
 
 import {
+  Fragment,
   memo,
   useState,
   useCallback,
@@ -18,11 +19,46 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import ReaderCitation, {
+  type ReaderCitationColor,
+  type ReaderCitationPreview,
+} from "@/components/ui/ReaderCitation";
+import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import "./hljs-theme.css";
 import styles from "./MarkdownMessage.module.css";
 
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeHighlight];
+
+export interface ReaderCitationData {
+  index: number;
+  color: ReaderCitationColor;
+  preview: ReaderCitationPreview;
+  target: ReaderSourceTarget | null;
+}
+
+const CITATION_PLACEHOLDER = /<<cite:(\d+)>>/g;
+
+function splitContentIntoSegments(
+  content: string,
+): Array<{ kind: "text"; value: string } | { kind: "citation"; index: number }> {
+  const segments: Array<
+    { kind: "text"; value: string } | { kind: "citation"; index: number }
+  > = [];
+  let cursor = 0;
+  for (const match of content.matchAll(CITATION_PLACEHOLDER)) {
+    const start = match.index ?? 0;
+    if (start > cursor) {
+      segments.push({ kind: "text", value: content.slice(cursor, start) });
+    }
+    segments.push({ kind: "citation", index: Number(match[1]) });
+    cursor = start + match[0].length;
+  }
+  if (cursor < content.length) {
+    segments.push({ kind: "text", value: content.slice(cursor) });
+  }
+  return segments;
+}
 
 // ---------------------------------------------------------------------------
 // Code block with language label + copy button
@@ -95,9 +131,13 @@ const components = { code: CodeBlock, pre: PreBlock };
 // Full render (completed messages)
 // ---------------------------------------------------------------------------
 
-function MarkdownMessageInner({ content }: { content: string }) {
-  return (
-    <div className={styles.markdown}>
+function renderWithCitations(
+  content: string,
+  citations: ReaderCitationData[] | undefined,
+  onActivate: ((target: ReaderSourceTarget) => void) | undefined,
+): ReactNode {
+  if (!citations || citations.length === 0 || !content.includes("<<cite:")) {
+    return (
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}
@@ -105,6 +145,50 @@ function MarkdownMessageInner({ content }: { content: string }) {
       >
         {content}
       </ReactMarkdown>
+    );
+  }
+  const byIndex = new Map(citations.map((entry) => [entry.index, entry]));
+  const segments = splitContentIntoSegments(content);
+  return segments.map((segment, position) => {
+    if (segment.kind === "text") {
+      return (
+        <ReactMarkdown
+          key={position}
+          remarkPlugins={remarkPlugins}
+          rehypePlugins={rehypePlugins}
+          components={components}
+        >
+          {segment.value}
+        </ReactMarkdown>
+      );
+    }
+    const data = byIndex.get(segment.index);
+    if (!data) return <Fragment key={position} />;
+    return (
+      <ReaderCitation
+        key={position}
+        index={data.index}
+        color={data.color}
+        preview={data.preview}
+        target={data.target}
+        onActivate={onActivate ?? (() => undefined)}
+      />
+    );
+  });
+}
+
+function MarkdownMessageInner({
+  content,
+  citations,
+  onCitationActivate,
+}: {
+  content: string;
+  citations?: ReaderCitationData[];
+  onCitationActivate?: (target: ReaderSourceTarget) => void;
+}) {
+  return (
+    <div className={styles.markdown}>
+      {renderWithCitations(content, citations, onCitationActivate)}
     </div>
   );
 }

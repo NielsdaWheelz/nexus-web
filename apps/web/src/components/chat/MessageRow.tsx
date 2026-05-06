@@ -3,13 +3,15 @@
 import { useCallback, useRef, useState, type Ref } from "react";
 import { BookOpen, ExternalLink, GitBranch, Globe, Search } from "lucide-react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import InlineCitations from "@/components/ui/InlineCitations";
 import {
   MarkdownMessage,
   StreamingMarkdownMessage,
 } from "@/components/ui/MarkdownMessage";
+import ReaderCitation, {
+  type ReaderCitationColor,
+} from "@/components/ui/ReaderCitation";
+import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 import Button from "@/components/ui/Button";
-import { truncateText } from "@/lib/conversations/display";
 import {
   assistantSelectionAnchor,
   mapAssistantSelectionToSource,
@@ -79,9 +81,6 @@ export function MessageRow({
   const answerRef = useRef<HTMLDivElement>(null);
   const [selectionDraft, setSelectionDraft] =
     useState<AssistantSelectionDraft | null>(null);
-  const roleClass = styles[message.role] ?? "";
-  const statusClass =
-    message.status !== "complete" ? (styles[message.status] ?? "") : "";
   const contexts = message.contexts ?? [];
   const toolCalls = message.tool_calls ?? [];
   const errorLabel =
@@ -92,6 +91,18 @@ export function MessageRow({
     message.role === "assistant" &&
     message.status === "complete" &&
     Boolean(onReplyToAssistant);
+
+  const activateTarget = useCallback(
+    (target: ReaderSourceTarget) => {
+      dispatchReaderPulse({
+        mediaId: target.media_id,
+        locator: target.locator,
+        snippet: target.snippet,
+      });
+      onReaderSourceActivate?.(target);
+    },
+    [onReaderSourceActivate],
+  );
 
   const createBranchDraft = useCallback(
     (selection?: AssistantSelectionDraft): BranchDraft => ({
@@ -182,78 +193,134 @@ export function MessageRow({
     window.getSelection()?.removeAllRanges();
   }, [createBranchDraft, onReplyToAssistant, selectionDraft]);
 
+  if (message.role === "user") {
+    return (
+      <div
+        className={styles.message}
+        data-message-id={message.id}
+        data-role="user"
+      >
+        <div className={styles.userAttribution}>You</div>
+        {contexts.length === 1 ? (
+          <ReaderCitation
+            index={1}
+            color={citationColorFromContext(contexts[0])}
+            preview={citationPreviewFromContext(contexts[0])}
+            target={readerTargetFromContext(contexts[0])}
+            onActivate={activateTarget}
+            ariaLabel="Open citation 1"
+          />
+        ) : null}
+        {contexts.length > 1 ? (
+          <span className={styles.citationRow}>
+            {contexts.map((context, index) => (
+              <ReaderCitation
+                key={contextKey(context, index)}
+                index={index + 1}
+                color={citationColorFromContext(context)}
+                preview={citationPreviewFromContext(context)}
+                target={readerTargetFromContext(context)}
+                onActivate={activateTarget}
+                ariaLabel={`Open citation ${index + 1}`}
+              />
+            ))}
+          </span>
+        ) : null}
+        <span className={styles.userBody}>
+          {message.content || (message.status === "pending" ? "..." : "")}
+        </span>
+        {message.status === "error" && errorLabel ? (
+          <FeedbackNotice
+            severity="error"
+            title={errorLabel}
+            className={styles.messageFeedback}
+          />
+        ) : null}
+        <span className={styles.timestamp}>{formatTime(message.created_at)}</span>
+      </div>
+    );
+  }
+
+  if (message.role === "assistant") {
+    return (
+      <div
+        className={styles.message}
+        data-message-id={message.id}
+        data-role="assistant"
+        onMouseUp={captureAssistantSelection}
+        onKeyUp={captureAssistantSelection}
+      >
+        {canBranchFromAssistant ? (
+          <div className={styles.messageActions}>
+            <Button
+              variant="ghost"
+              size="sm"
+              leadingIcon={<GitBranch size={14} aria-hidden="true" />}
+              onClick={() => onReplyToAssistant?.(createBranchDraft())}
+            >
+              Reply / fork from here
+            </Button>
+          </div>
+        ) : null}
+        <ToolActivity toolCalls={toolCalls} />
+        {message.status === "pending" ? (
+          <div ref={answerRef} className={styles.assistantBody}>
+            {message.content ? (
+              <StreamingMarkdownMessage content={message.content} />
+            ) : (
+              <div
+                className={styles.streamingCue}
+                data-testid="streaming-cue"
+                aria-hidden="true"
+              />
+            )}
+          </div>
+        ) : (
+          <ClaimEvidenceMessage
+            message={message}
+            answerRef={answerRef}
+            onActivateTarget={activateTarget}
+            hasReaderActivator={Boolean(onReaderSourceActivate)}
+          />
+        )}
+        {selectionDraft ? (
+          <AssistantSelectionPopover
+            selection={selectionDraft}
+            onBranch={branchFromSelection}
+          />
+        ) : null}
+        {message.status === "error" && errorLabel ? (
+          <FeedbackNotice
+            severity="error"
+            title={errorLabel}
+            className={styles.messageFeedback}
+          />
+        ) : null}
+        {onSelectFork ? (
+          <ForkStrip
+            forks={forkOptions}
+            switchableLeafIds={switchableLeafIds}
+            onSelectFork={onSelectFork}
+          />
+        ) : null}
+        <span className={styles.timestamp}>{formatTime(message.created_at)}</span>
+      </div>
+    );
+  }
+
+  // System
   return (
-    <div
-      className={`${styles.message} ${roleClass} ${statusClass}`}
-      data-message-id={message.id}
-      onMouseUp={captureAssistantSelection}
-      onKeyUp={captureAssistantSelection}
-    >
-      {message.role === "user" && contexts.length === 1 ? (
-        <ReplyBar context={contexts[0]} />
-      ) : null}
-      {message.role === "user" && contexts.length > 1 ? (
-        <InlineCitations
-          contexts={contexts}
-          onReaderSourceActivate={onReaderSourceActivate}
-        />
-      ) : null}
-
-      {message.role === "assistant" ? (
-        <>
-          {canBranchFromAssistant ? (
-            <div className={styles.messageActions}>
-              <Button
-                variant="ghost"
-                size="sm"
-                leadingIcon={<GitBranch size={14} aria-hidden="true" />}
-                onClick={() => onReplyToAssistant?.(createBranchDraft())}
-              >
-                Reply / fork from here
-              </Button>
-            </div>
-          ) : null}
-          <ToolActivity toolCalls={toolCalls} />
-          {message.status === "pending" ? (
-            <div ref={answerRef}>
-              {message.content ? (
-                <StreamingMarkdownMessage content={message.content} />
-              ) : (
-                <div className={styles.pendingStatus} role="status">
-                  Generating response...
-                </div>
-              )}
-            </div>
-          ) : (
-            <ClaimEvidenceMessage
-              message={message}
-              answerRef={answerRef}
-              onReaderSourceActivate={onReaderSourceActivate}
-            />
-          )}
-          {selectionDraft ? (
-            <AssistantSelectionPopover
-              selection={selectionDraft}
-              onBranch={branchFromSelection}
-            />
-          ) : null}
-        </>
-      ) : (
-        <span>{message.content || (message.status === "pending" ? "..." : "")}</span>
-      )}
-
+    <div className={styles.message} data-message-id={message.id} data-role="system">
+      <span className={styles.systemBody}>
+        {message.content || (message.status === "pending" ? "..." : "")}
+      </span>
       {message.status === "error" && errorLabel ? (
-        <FeedbackNotice severity="error" title={errorLabel} className={styles.messageFeedback} />
-      ) : null}
-
-      {message.role === "assistant" && onSelectFork ? (
-        <ForkStrip
-          forks={forkOptions}
-          switchableLeafIds={switchableLeafIds}
-          onSelectFork={onSelectFork}
+        <FeedbackNotice
+          severity="error"
+          title={errorLabel}
+          className={styles.messageFeedback}
         />
       ) : null}
-
       <span className={styles.timestamp}>{formatTime(message.created_at)}</span>
     </div>
   );
@@ -275,14 +342,74 @@ function renderedSelectionContext(container: HTMLElement, range: Range) {
   return { prefix, suffix };
 }
 
+function contextKey(context: MessageContextSnapshot, fallback: number): string {
+  if (context.kind === "reader_selection") {
+    return `reader-selection-${context.client_context_id ?? fallback}`;
+  }
+  return `${context.type ?? "ref"}-${context.id ?? fallback}`;
+}
+
+function citationColorFromContext(
+  context: MessageContextSnapshot,
+): ReaderCitationColor {
+  switch (context.color) {
+    case "yellow":
+    case "green":
+    case "blue":
+    case "pink":
+    case "purple":
+      return context.color;
+    case undefined:
+    case null:
+      return "neutral";
+  }
+  return "neutral";
+}
+
+function citationPreviewFromContext(context: MessageContextSnapshot) {
+  const title = context.title ?? context.media_title;
+  const excerpt = context.exact ?? context.preview;
+  const meta: string[] = [];
+  if (context.media_title && context.media_title !== title) {
+    meta.push(context.media_title);
+  }
+  if (context.route) meta.push(context.route);
+  return {
+    ...(title ? { title } : {}),
+    ...(excerpt ? { excerpt } : {}),
+    meta,
+  };
+}
+
+function readerTargetFromContext(
+  context: MessageContextSnapshot,
+): ReaderSourceTarget | null {
+  if (context.kind !== "reader_selection") return null;
+  const mediaId = context.source_media_id ?? context.media_id;
+  if (!mediaId || !context.locator || Object.keys(context.locator).length === 0) {
+    return null;
+  }
+  return {
+    source: "message_context",
+    media_id: mediaId,
+    locator: context.locator,
+    snippet: context.exact ?? context.preview ?? null,
+    status: "attached_context",
+    label: context.title ?? context.media_title,
+    context_id: context.client_context_id ?? null,
+  };
+}
+
 function ClaimEvidenceMessage({
   message,
   answerRef,
-  onReaderSourceActivate,
+  onActivateTarget,
+  hasReaderActivator,
 }: {
   message: ConversationMessage;
   answerRef?: Ref<HTMLDivElement>;
-  onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
+  onActivateTarget: (target: ReaderSourceTarget) => void;
+  hasReaderActivator: boolean;
 }) {
   const claims = [...(message.claims ?? [])].sort(
     (a, b) => a.ordinal - b.ordinal,
@@ -302,17 +429,31 @@ function ClaimEvidenceMessage({
 
   if (!hasEvidence) {
     return (
-      <div ref={answerRef}>
+      <div ref={answerRef} className={styles.assistantBody}>
         <MarkdownMessage content={message.content} />
       </div>
     );
   }
 
+  const citations = buildClaimCitations(visibleClaims, claimEvidence);
+  const placeholderContent = insertCitationPlaceholders(
+    message.content,
+    visibleClaims,
+    citations.byClaimId,
+  );
+
   return (
     <>
-      <div ref={answerRef} className={styles.claimAnswer}>
+      <div ref={answerRef} className={`${styles.assistantBody} ${styles.claimAnswer}`}>
         <MarkdownMessage
-          content={contentWithClaimMarkers(message.content, visibleClaims, message.seq)}
+          content={placeholderContent}
+          citations={citations.list.map((entry) => ({
+            index: entry.index,
+            color: entry.color,
+            preview: entry.preview,
+            target: entry.target,
+          }))}
+          onCitationActivate={onActivateTarget}
         />
       </div>
       <section className={styles.claimEvidencePanel} aria-label="Claim evidence">
@@ -324,9 +465,9 @@ function ClaimEvidenceMessage({
             key={claim.id}
             claim={claim}
             claimNumber={index + 1}
-            domId={claimDomId(message.seq, index)}
             evidence={claimEvidence.filter((item) => item.claim_id === claim.id)}
-            onReaderSourceActivate={onReaderSourceActivate}
+            onActivateTarget={onActivateTarget}
+            hasReaderActivator={hasReaderActivator}
           />
         ))}
       </section>
@@ -334,36 +475,76 @@ function ClaimEvidenceMessage({
   );
 }
 
-function contentWithClaimMarkers(
+interface ClaimCitationEntry {
+  index: number;
+  claimId: string;
+  color: ReaderCitationColor;
+  preview: { title?: string; excerpt?: string; meta?: string[] };
+  target: ReaderSourceTarget | null;
+}
+
+function buildClaimCitations(
+  claims: MessageClaim[],
+  evidence: MessageClaimEvidence[],
+): { list: ClaimCitationEntry[]; byClaimId: Map<string, number> } {
+  const list: ClaimCitationEntry[] = [];
+  const byClaimId = new Map<string, number>();
+  claims.forEach((claim, position) => {
+    const supporting = evidence.find(
+      (item) => item.claim_id === claim.id && item.evidence_role === "supports",
+    );
+    const primary = supporting ?? evidence.find((item) => item.claim_id === claim.id);
+    const isWeb = primary ? isWebEvidence(primary) : false;
+    const label = primary ? evidenceLabel(primary, isWeb) : claim.claim_text;
+    const target = primary ? readerTargetFromEvidence(primary, label) : null;
+    const meta: string[] = [];
+    if (primary?.locator?.type === "web_url" && primary.locator.display_url) {
+      meta.push(primary.locator.display_url);
+    } else if (primary?.locator) {
+      meta.push(locatorLabel(primary.locator));
+    }
+    list.push({
+      index: position + 1,
+      claimId: claim.id,
+      color: "neutral",
+      preview: {
+        title: label,
+        excerpt: primary?.exact_snippet ?? undefined,
+        meta,
+      },
+      target,
+    });
+    byClaimId.set(claim.id, position + 1);
+  });
+  return { list, byClaimId };
+}
+
+function insertCitationPlaceholders(
   content: string,
   claims: MessageClaim[],
-  messageSeq: number,
+  citationIndexByClaimId: Map<string, number>,
 ): string {
   let next = "";
   let cursor = 0;
-
-  claims.forEach((claim, index) => {
+  claims.forEach((claim) => {
     const start = claim.answer_start_offset;
     const end = claim.answer_end_offset;
+    const citationIndex = citationIndexByClaimId.get(claim.id);
     if (
       typeof start !== "number" ||
       typeof end !== "number" ||
       start < cursor ||
       end <= start ||
-      end > content.length
+      end > content.length ||
+      citationIndex === undefined
     ) {
       return;
     }
     next += content.slice(cursor, end);
-    next += ` [${index + 1}](#${claimDomId(messageSeq, index)})`;
+    next += `<<cite:${citationIndex}>>`;
     cursor = end;
   });
-
   return next + content.slice(cursor);
-}
-
-function claimDomId(messageSeq: number, claimIndex: number): string {
-  return `claim-evidence-${messageSeq}-${claimIndex + 1}`;
 }
 
 function EvidenceSummary({ summary }: { summary: MessageEvidenceSummary }) {
@@ -397,15 +578,15 @@ function EvidenceSummary({ summary }: { summary: MessageEvidenceSummary }) {
 function ClaimEvidenceCard({
   claim,
   claimNumber,
-  domId,
   evidence,
-  onReaderSourceActivate,
+  onActivateTarget,
+  hasReaderActivator,
 }: {
   claim: MessageClaim;
   claimNumber: number;
-  domId: string;
   evidence: MessageClaimEvidence[];
-  onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
+  onActivateTarget: (target: ReaderSourceTarget) => void;
+  hasReaderActivator: boolean;
 }) {
   const evidenceRoles: MessageEvidenceRole[] = [
     "supports",
@@ -415,7 +596,7 @@ function ClaimEvidenceCard({
   ];
 
   return (
-    <article id={domId} className={styles.claimEvidenceCard}>
+    <article className={styles.claimEvidenceCard}>
       <div className={styles.claimHeader}>
         <span className={styles.claimNumber}>{claimNumber}</span>
         <div>
@@ -441,7 +622,8 @@ function ClaimEvidenceCard({
               <EvidenceItem
                 key={item.id}
                 evidence={item}
-                onReaderSourceActivate={onReaderSourceActivate}
+                onActivateTarget={onActivateTarget}
+                hasReaderActivator={hasReaderActivator}
               />
             ))}
           </div>
@@ -453,20 +635,20 @@ function ClaimEvidenceCard({
 
 function EvidenceItem({
   evidence,
-  onReaderSourceActivate,
+  onActivateTarget,
+  hasReaderActivator,
 }: {
   evidence: MessageClaimEvidence;
-  onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
+  onActivateTarget: (target: ReaderSourceTarget) => void;
+  hasReaderActivator: boolean;
 }) {
   const isWeb = isWebEvidence(evidence);
   const href = evidenceHref(evidence);
   const label = evidenceLabel(evidence, isWeb);
   const readerTarget =
-    !isWeb && onReaderSourceActivate
-      ? readerTargetFromEvidence(evidence, label)
-      : null;
+    !isWeb && hasReaderActivator ? readerTargetFromEvidence(evidence, label) : null;
   const sourceUnavailable =
-    Boolean(onReaderSourceActivate) && !isWeb && readerTarget === null;
+    hasReaderActivator && !isWeb && readerTarget === null;
   const hasBackendLabel = Boolean(
     evidence.citation_label || textField(evidence.result_ref, "citation_label"),
   );
@@ -485,7 +667,7 @@ function EvidenceItem({
             variant="ghost"
             size="sm"
             className={styles.evidenceSourceButton}
-            onClick={() => onReaderSourceActivate?.(readerTarget)}
+            onClick={() => onActivateTarget(readerTarget)}
             aria-label={`Open source ${label}`}
           >
             <span>{label}</span>
@@ -537,8 +719,8 @@ function readerTargetFromEvidence(
   if (!isReaderMediaLocator(locator)) {
     return null;
   }
-  const resolverStatus = resolverStatusFromEvidence(evidence);
-  if (resolverStatus && resolverStatus !== "resolved") {
+  const status = resolverStatusFromEvidence(evidence);
+  if (status && status !== "resolved") {
     return null;
   }
   const mediaId = mediaIdFromLocator(locator);
@@ -550,7 +732,7 @@ function readerTargetFromEvidence(
     media_id: mediaId,
     locator,
     snippet: evidence.exact_snippet ?? null,
-    status: resolverStatus ?? evidence.retrieval_status,
+    status: status ?? evidence.retrieval_status,
     label,
     href: evidenceHref(evidence),
     evidence_span_id: evidenceSpanIdFromEvidence(evidence),
@@ -762,20 +944,6 @@ function ToolActivity({ toolCalls }: { toolCalls: MessageToolCall[] }) {
     <div className={styles.toolActivity}>
       <Search size={14} />
       <span>{label}</span>
-    </div>
-  );
-}
-
-export function ReplyBar({ context }: { context: MessageContextSnapshot }) {
-  const text = context.exact || context.preview || context.title;
-  const colorClass = styles[`replyBar-${context.color ?? ""}`] ?? "";
-
-  return (
-    <div className={`${styles.replyBar} ${colorClass}`}>
-      {text ? <div>{truncateText(text, 140)}</div> : null}
-      {!text && context.media_title ? (
-        <div>{context.media_title}</div>
-      ) : null}
     </div>
   );
 }

@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ThemeValue = Literal["light", "dark"]
 FontFamilyValue = Literal["serif", "sans"]
+FocusModeValue = Literal["off", "distraction_free", "paragraph", "sentence"]
+HyphenationValue = Literal["auto", "off"]
 
 
 class ReaderProfileOut(BaseModel):
@@ -17,7 +19,8 @@ class ReaderProfileOut(BaseModel):
     line_height: float = Field(ge=1.2, le=2.2)
     font_family: FontFamilyValue
     column_width_ch: int = Field(ge=40, le=120)
-    focus_mode: bool
+    focus_mode: FocusModeValue
+    hyphenation: HyphenationValue
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -31,7 +34,8 @@ class ReaderProfilePatch(BaseModel):
     line_height: float | None = Field(default=None, ge=1.2, le=2.2)
     font_family: FontFamilyValue | None = None
     column_width_ch: int | None = Field(default=None, ge=40, le=120)
-    focus_mode: bool | None = None
+    focus_mode: FocusModeValue | None = None
+    hyphenation: HyphenationValue | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -45,6 +49,7 @@ class ReaderProfilePatch(BaseModel):
             "font_family",
             "column_width_ch",
             "focus_mode",
+            "hyphenation",
         ):
             if field_name in self.model_fields_set and getattr(self, field_name) is None:
                 raise ValueError(f"{field_name} cannot be null")

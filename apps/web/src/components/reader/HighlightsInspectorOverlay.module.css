@@ -1,0 +1,85 @@
+/**
+ * Highlights inspector overlay (Phase 1B P5).
+ *
+ * Right-edge slide-over that hosts the existing highlights list. 440px wide
+ * on desktop, full width on mobile. Anchored to the host (the media pane
+ * shell), not the viewport.
+ */
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-modal);
+  background: rgba(0, 0, 0, 0.6);
+  animation: backdropIn var(--duration-base) var(--ease-glide);
+}
+
+.panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 440px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-canvas);
+  border-left: 1px solid var(--edge);
+  box-shadow: var(--shadow-3);
+  z-index: calc(var(--z-modal) + 1);
+  animation: slideIn var(--duration-base) var(--ease-glide);
+  outline: none;
+}
+
+@media (max-width: 600px) {
+  .panel {
+    width: 100%;
+  }
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes backdropIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel,
+  .backdrop {
+    animation: none;
+  }
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--edge-subtle);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--ink);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4);
+}

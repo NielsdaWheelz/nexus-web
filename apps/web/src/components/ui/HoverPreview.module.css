@@ -1,0 +1,48 @@
+.card {
+  position: fixed;
+  z-index: var(--z-raised, 100);
+  width: 240px;
+  max-width: 240px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--ink);
+  pointer-events: auto;
+}
+
+.lineClamp3 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.sheetBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal, 200);
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.sheet {
+  width: 80vw;
+  max-width: 480px;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: env(safe-area-inset-bottom);
+  background: var(--surface-2);
+  border: 1px solid var(--edge);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--ink);
+}

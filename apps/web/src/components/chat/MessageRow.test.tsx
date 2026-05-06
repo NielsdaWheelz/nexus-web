@@ -217,10 +217,8 @@ describe("MessageRow", () => {
 
     render(<MessageRow message={message} />);
 
-    expect(screen.getByRole("link", { name: "1" })).toHaveAttribute(
-      "href",
-      "#claim-evidence-1-1",
-    );
+    const citation = screen.getByLabelText(/^(Open citation 1|Citation 1)$/);
+    expect(citation.tagName).toBe("SUP");
     const link = screen.getByRole("link", { name: /example result/i });
     expect(link).toHaveAttribute("href", "https://example.com/story");
     expect(link).toHaveAttribute("target", "_blank");
@@ -618,7 +616,7 @@ describe("MessageRow", () => {
     expect(screen.queryByText("Legacy app snippet.")).toBeNull();
   });
 
-  it("shows title and route snapshots in inline citation hover cards", () => {
+  it("shows title and route snapshots in inline citation hover cards", async () => {
     const message: ConversationMessage = {
       ...baseMessage,
       role: "user",
@@ -643,7 +641,9 @@ describe("MessageRow", () => {
 
     render(<MessageRow message={message} />);
 
-    fireEvent.mouseEnter(screen.getByText("1"));
+    const citation = screen.getByLabelText("Open citation 1");
+    fireEvent.pointerEnter(citation);
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
     expect(screen.getByText("Project notes")).toBeInTheDocument();
     expect(screen.getByText("/notes/note-1")).toBeInTheDocument();

@@ -18,7 +18,8 @@ interface ReaderProfileResponse {
     font_size_px: number;
     line_height: number;
     column_width_ch: number;
-    focus_mode: boolean;
+    focus_mode: "off" | "distraction_free" | "paragraph" | "sentence";
+    hyphenation: "auto" | "off";
   };
 }
 

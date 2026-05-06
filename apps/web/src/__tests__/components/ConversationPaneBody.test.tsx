@@ -343,7 +343,7 @@ describe("ConversationPaneBody", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Generating response...")).toBeVisible();
+      expect(screen.getByTestId("streaming-cue")).toBeInTheDocument();
     });
     await waitFor(() => {
       expect(tailMocks.tailChatRun).toHaveBeenCalledWith(activeBranchBRun());

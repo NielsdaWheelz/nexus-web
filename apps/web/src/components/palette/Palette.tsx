@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -14,10 +14,12 @@ interface PaletteProps {
   commands: PaletteCommand[];
   activeCommandId: string | null;
   loadingSectionIds: string[];
+  searchPrefix?: ReactNode;
   onOpenChange(open: boolean): void;
   onQueryChange(query: string): void;
   onActiveCommandChange(commandId: string | null): void;
   onSelect(command: PaletteCommand): void;
+  onEscape?(): boolean;
 }
 
 function optionId(commandId: string): string {
@@ -31,10 +33,12 @@ export default function Palette({
   commands,
   activeCommandId,
   loadingSectionIds,
+  searchPrefix,
   onOpenChange,
   onQueryChange,
   onActiveCommandChange,
   onSelect,
+  onEscape,
 }: PaletteProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -90,6 +94,7 @@ export default function Palette({
       aria-labelledby="palette-title"
       onCancel={(event) => {
         event.preventDefault();
+        if (onEscape && onEscape()) return;
         onOpenChange(false);
       }}
       onClose={() => onOpenChange(false)}
@@ -114,51 +119,54 @@ export default function Palette({
           </Button>
         </header>
 
-        <Input
-          ref={inputRef}
-          role="combobox"
-          aria-label="Search commands"
-          aria-expanded="true"
-          aria-controls="palette-listbox"
-          aria-autocomplete="list"
-          aria-activedescendant={activeOptionId}
-          className={styles.input}
-          value={query}
-          placeholder="Search or run an action..."
-          onChange={(event) => onQueryChange(event.target.value)}
-          onCompositionStart={() => {
-            composingRef.current = true;
-          }}
-          onCompositionEnd={() => {
-            composingRef.current = false;
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowDown") {
-              event.preventDefault();
-              moveActive(1);
-              return;
-            }
-            if (event.key === "ArrowUp") {
-              event.preventDefault();
-              moveActive(-1);
-              return;
-            }
-            if (event.key === "Home") {
-              event.preventDefault();
-              onActiveCommandChange(commands[0]?.id ?? null);
-              return;
-            }
-            if (event.key === "End") {
-              event.preventDefault();
-              onActiveCommandChange(commands.at(-1)?.id ?? null);
-              return;
-            }
-            if (event.key === "Enter") {
-              event.preventDefault();
-              selectActive();
-            }
-          }}
-        />
+        <div className={styles.inputRow}>
+          {searchPrefix ? <div className={styles.inputPrefix}>{searchPrefix}</div> : null}
+          <Input
+            ref={inputRef}
+            role="combobox"
+            aria-label="Search commands"
+            aria-expanded="true"
+            aria-controls="palette-listbox"
+            aria-autocomplete="list"
+            aria-activedescendant={activeOptionId}
+            className={styles.input}
+            value={query}
+            placeholder="Search or run an action..."
+            onChange={(event) => onQueryChange(event.target.value)}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false;
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                moveActive(1);
+                return;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                moveActive(-1);
+                return;
+              }
+              if (event.key === "Home") {
+                event.preventDefault();
+                onActiveCommandChange(commands[0]?.id ?? null);
+                return;
+              }
+              if (event.key === "End") {
+                event.preventDefault();
+                onActiveCommandChange(commands.at(-1)?.id ?? null);
+                return;
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                selectActive();
+              }
+            }}
+          />
+        </div>
 
         <div
           id="palette-listbox"

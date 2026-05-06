@@ -1,0 +1,113 @@
+/**
+ * Reader gutter (Phase 1B P5).
+ *
+ * Right-edge ghost gutter that tick-marks every highlight in the active
+ * reader. 36px on desktop, 24px on mobile. Ticks are 24x3 (desktop) / 20x4
+ * (mobile) and positioned absolutely as a vertical-percent of the gutter.
+ */
+
+.gutter {
+  position: relative;
+  width: 36px;
+  height: 100%;
+  flex: 0 0 36px;
+  display: flex;
+  flex-direction: column;
+  background: var(--reader-bg-secondary, var(--surface-2));
+  border-left: 1px solid var(--reader-border-subtle, var(--edge-subtle));
+}
+
+@media (max-width: 600px) {
+  .gutter {
+    width: 24px;
+    flex-basis: 24px;
+  }
+}
+
+.expandSlot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--reader-border-subtle, var(--edge-subtle));
+}
+
+.tickColumn {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.tick {
+  position: absolute;
+  left: 50%;
+  width: 24px;
+  height: 3px;
+  margin-left: -12px;
+  padding: 6px 0;
+  background-clip: content-box;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: transform var(--duration-fast) var(--ease-glide);
+}
+
+@media (max-width: 600px) {
+  .tick {
+    width: 20px;
+    height: 4px;
+    margin-left: -10px;
+    padding: 6px 0;
+  }
+}
+
+.tick:hover,
+.tick:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  transform: translateY(-50%) scaleY(1.2);
+}
+
+.tickStacked {
+  height: 5px;
+}
+
+@media (max-width: 600px) {
+  .tickStacked {
+    height: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tick {
+    transition: none;
+  }
+}
+
+.previewExcerpt {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.previewList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.previewListItem {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}

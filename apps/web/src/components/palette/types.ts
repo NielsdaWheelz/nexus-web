@@ -30,4 +30,5 @@ export interface PaletteCommand {
   shortcutLabel?: string;
   disabled?: { reason: string };
   danger?: boolean;
+  scopeAffinity?: string[];
 }

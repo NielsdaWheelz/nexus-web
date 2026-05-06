@@ -146,7 +146,8 @@ class TestGetReaderProfile:
         assert data["font_family"] in ("serif", "sans")
         assert 12 <= data["font_size_px"] <= 28
         assert 1.2 <= data["line_height"] <= 2.2
-        assert data["focus_mode"] is False
+        assert data["focus_mode"] == "off"
+        assert data["hyphenation"] == "auto"
         assert "updated_at" in data
 
     def test_get_reader_profile_returns_persisted_values(self, auth_client):
@@ -155,7 +156,12 @@ class TestGetReaderProfile:
 
         auth_client.patch(
             "/me/reader-profile",
-            json={"theme": "dark", "font_size_px": 18, "focus_mode": True},
+            json={
+                "theme": "dark",
+                "font_size_px": 18,
+                "focus_mode": "paragraph",
+                "hyphenation": "off",
+            },
             headers=auth_headers(user_id),
         )
 
@@ -165,7 +171,8 @@ class TestGetReaderProfile:
         data = resp.json()["data"]
         assert data["theme"] == "dark"
         assert data["font_size_px"] == 18
-        assert data["focus_mode"] is True
+        assert data["focus_mode"] == "paragraph"
+        assert data["hyphenation"] == "off"
 
 
 class TestPatchReaderProfile:
@@ -183,7 +190,8 @@ class TestPatchReaderProfile:
                 "line_height": 1.5,
                 "font_family": "serif",
                 "column_width_ch": 65,
-                "focus_mode": True,
+                "focus_mode": "sentence",
+                "hyphenation": "off",
             },
             headers=auth_headers(user_id),
         )
@@ -195,7 +203,47 @@ class TestPatchReaderProfile:
         assert data["line_height"] == 1.5
         assert data["font_family"] == "serif"
         assert data["column_width_ch"] == 65
-        assert data["focus_mode"] is True
+        assert data["focus_mode"] == "sentence"
+        assert data["hyphenation"] == "off"
+
+    def test_patch_reader_profile_round_trips_hyphenation_only(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.patch(
+            "/me/reader-profile",
+            json={"hyphenation": "off"},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["hyphenation"] == "off"
+        assert data["focus_mode"] == "off"
+
+    def test_patch_reader_profile_rejects_invalid_focus_mode(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.patch(
+            "/me/reader-profile",
+            json={"focus_mode": "always"},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
+
+    def test_patch_reader_profile_rejects_invalid_hyphenation(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.patch(
+            "/me/reader-profile",
+            json={"hyphenation": "soft"},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
 
     def test_patch_reader_profile_rejects_invalid_theme(self, auth_client):
         user_id = create_test_user_id()

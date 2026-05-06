@@ -14,6 +14,12 @@ import ReaderAssistantPane, {
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import QuoteChatSheet from "@/components/chat/QuoteChatSheet";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import ReaderGutter, {
+  type ReaderGutterTranscriptHighlight,
+} from "@/components/reader/ReaderGutter";
+import HighlightsInspectorOverlay from "@/components/reader/HighlightsInspectorOverlay";
+import ReaderChatOverlay from "@/components/chat/ReaderChatOverlay";
+import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 import PdfReader, {
   type PdfHighlightOut,
   type PdfReaderSelectionQuote,
@@ -81,7 +87,7 @@ import {
 } from "@/lib/reader/types";
 import { useReaderResumeState } from "@/lib/reader/useReaderResumeState";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
-import type { ConversationScope, ConversationSummary } from "@/lib/conversations/types";
+import type { ConversationScope } from "@/lib/conversations/types";
 import {
   normalizeEpubNavigationToc,
   isReadableStatus,
@@ -120,7 +126,7 @@ import {
   buildEpubLocationHref,
   resolveSectionAnchorId,
 } from "./epubHelpers";
-import { ChevronLeft, ChevronRight, PanelRight, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import styles from "./page.module.css";
@@ -828,8 +834,6 @@ function isUserScrollKey(event: KeyboardEvent): boolean {
   );
 }
 
-const SECONDARY_PANE_WIDTH_PX = 420;
-
 export default function MediaPaneBody() {
   const id = usePaneParam("id");
   if (!id) {
@@ -850,6 +854,7 @@ export default function MediaPaneBody() {
   const {
     profile: readerProfile,
     loading: readerProfileLoading,
+    save: saveReaderProfile,
     updateTheme,
   } = useReaderContext();
   const {
@@ -939,6 +944,12 @@ export default function MediaPaneBody() {
   const [pdfHighlightsPaneState, setPdfHighlightsPaneState] = useState<PdfHighlightsPaneState>(
     createEmptyPdfHighlightsPaneState
   );
+  // Accumulated PDF highlights across every page seen so the right-edge
+  // gutter can heatmap the whole document (Phase 1B P5). The reader streams
+  // page highlights into us via `onPageHighlightsChange`; we union them here.
+  const [pdfDocumentHighlights, setPdfDocumentHighlights] = useState<
+    PdfHighlightOut[]
+  >([]);
   const [resolvedEvidence, setResolvedEvidence] = useState<
     EvidenceResolutionResponse["data"] | null
   >(null);
@@ -1015,7 +1026,6 @@ export default function MediaPaneBody() {
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
-  const [secondaryPaneMode, setSecondaryPaneMode] = useState<"highlights" | "ask">("highlights");
   const [readerAssistantState, setReaderAssistantState] = useState<{
     contexts: ContextItem[];
     conversationId: string | null;
@@ -1030,7 +1040,6 @@ export default function MediaPaneBody() {
   const contentRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef<CanonicalCursorResult | null>(null);
-  const [highlightsVersion, setHighlightsVersion] = useState(0);
 
   const beginRestoreSession = useCallback(
     (phase: Exclude<ReaderRestorePhase, "settled" | "cancelled">) => {
@@ -1124,7 +1133,7 @@ export default function MediaPaneBody() {
       : isReadableStatus(media.processing_status)
     : false;
   const readerLayoutKey = `${readerProfile.font_family}:${readerProfile.font_size_px}:${readerProfile.line_height}:${readerProfile.column_width_ch}`;
-  const focusModeEnabled = Boolean(readerProfile.focus_mode);
+  const focusModeEnabled = readerProfile.focus_mode !== "off";
   const showHighlightsPane = canRead && !focusModeEnabled;
   const playbackSource = media?.playback_source ?? null;
   const activeTranscriptFragment = useMemo(() => {
@@ -1311,6 +1320,7 @@ export default function MediaPaneBody() {
     // Reset PDF-specific pane state whenever media identity/type changes.
     // This prevents stale cross-document rows from flashing during navigation.
     setPdfHighlightsPaneState(createEmptyPdfHighlightsPaneState());
+    setPdfDocumentHighlights([]);
     setPdfRefreshToken(0);
     setReaderSourceTarget(null);
   }, [isPdf, id]);
@@ -1590,7 +1600,6 @@ export default function MediaPaneBody() {
     setActiveEpubSection(null);
     clearFocus();
     setHighlights([]);
-    setHighlightsVersion((v) => v + 1);
     clearRetainedSelection(false);
 
     const load = async () => {
@@ -2176,8 +2185,7 @@ export default function MediaPaneBody() {
           }
 
           setHighlights(data);
-          setHighlightsVersion((v) => v + 1);
-          return;
+              return;
         } catch (err) {
           if (cancelled || version !== highlightVersionRef.current) {
             return;
@@ -2811,8 +2819,7 @@ export default function MediaPaneBody() {
             return a.id.localeCompare(b.id);
           })
         );
-        setHighlightsVersion((v) => v + 1);
-        focusHighlight(createdHighlight.id);
+          focusHighlight(createdHighlight.id);
         clearRetainedSelection(true);
 
         void fetchHighlights(activeContent.fragmentId)
@@ -2821,8 +2828,7 @@ export default function MediaPaneBody() {
               return;
             }
             setHighlights(newHighlights);
-            setHighlightsVersion((v) => v + 1);
-          })
+                })
           .catch((err) => {
             console.error("Failed to refresh highlights after create:", err);
           });
@@ -2836,8 +2842,7 @@ export default function MediaPaneBody() {
               return null;
             }
             setHighlights(newHighlights);
-            setHighlightsVersion((v) => v + 1);
-
+      
             const existing = newHighlights.find(
               (h) =>
                 h.anchor.start_offset === activeSelection.startOffset &&
@@ -2889,7 +2894,6 @@ export default function MediaPaneBody() {
       setActiveTranscriptFragmentId(fragment.id);
       clearFocus();
       setHighlights([]);
-      setHighlightsVersion((v) => v + 1);
       clearRetainedSelection(false);
     },
     [cancelRestoreSession, clearFocus, clearRetainedSelection]
@@ -2959,8 +2963,7 @@ export default function MediaPaneBody() {
           return;
         }
         setHighlights(newHighlights);
-        setHighlightsVersion((v) => v + 1);
-
+  
         const newIds = new Set(newHighlights.map((h) => h.id));
         const reconciledFocus = reconcileFocusAfterRefetch(
           focusState.focusedId,
@@ -3012,7 +3015,6 @@ export default function MediaPaneBody() {
         return;
       }
       setHighlights(newHighlights);
-      setHighlightsVersion((v) => v + 1);
     },
     [activeContent, isPdf]
   );
@@ -3033,7 +3035,6 @@ export default function MediaPaneBody() {
         return;
       }
       setHighlights(newHighlights);
-      setHighlightsVersion((v) => v + 1);
       clearFocus();
     },
     [activeContent, clearFocus, isPdf]
@@ -3077,7 +3078,6 @@ export default function MediaPaneBody() {
         return;
       }
       setHighlights(newHighlights);
-      setHighlightsVersion((v) => v + 1);
     },
     [activeContent, isPdf]
   );
@@ -3097,7 +3097,6 @@ export default function MediaPaneBody() {
         return;
       }
       setHighlights(newHighlights);
-      setHighlightsVersion((v) => v + 1);
     },
     [activeContent, isPdf]
   );
@@ -3147,43 +3146,6 @@ export default function MediaPaneBody() {
     [media]
   );
 
-  const resolveConversationForScope = useCallback(
-    async (scope: ConversationScope): Promise<ConversationSummary> => {
-      let body:
-        | { type: "general" }
-        | { type: "media"; media_id: string }
-        | { type: "library"; library_id: string };
-      if (scope.type === "general") {
-        body = { type: "general" };
-      } else if (scope.type === "media") {
-        body = { type: "media", media_id: scope.media_id };
-      } else if (scope.type === "library") {
-        body = { type: "library", library_id: scope.library_id };
-      } else {
-        const exhaustive: never = scope;
-        return exhaustive;
-      }
-
-      const response = await apiFetch<{ data: ConversationSummary }>("/api/conversations/resolve", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-      return response.data;
-    },
-    []
-  );
-
-  const openResolvedConversation = useCallback(
-    async (scope: ConversationScope, titleHint: string) => {
-      const conversation = await resolveConversationForScope(scope);
-      const route = `/conversations/${conversation.id}`;
-      if (!requestOpenInAppPane(route, { titleHint: conversation.title || titleHint })) {
-        router.push(route);
-      }
-    },
-    [resolveConversationForScope, router]
-  );
-
   const openReaderAssistant = useCallback(
     (contexts: ContextItem[], conversationScope: ConversationScope = buildMediaConversationScope()) => {
       setReaderAssistantState((current) => {
@@ -3230,12 +3192,9 @@ export default function MediaPaneBody() {
           conversationScope,
         };
       });
-      setSecondaryPaneMode("ask");
-      if (isMobileViewport) {
-        setHighlightsDrawerOpen(false);
-      }
+      setHighlightsInspectorOpen(false);
     },
-    [buildMediaConversationScope, isMobileViewport],
+    [buildMediaConversationScope],
   );
 
   const handleOpenConversation = useCallback(
@@ -3293,6 +3252,12 @@ export default function MediaPaneBody() {
         highlights: nextHighlights,
         version: current.version + 1,
       }));
+      setPdfDocumentHighlights((current) => {
+        const filtered = current.filter(
+          (highlight) => highlight.anchor.page_number !== nextPage,
+        );
+        return [...filtered, ...nextHighlights];
+      });
 
       const focusedHighlightId = focusedHighlightIdRef.current;
       if (
@@ -3325,13 +3290,248 @@ export default function MediaPaneBody() {
   const readerSurfaceClassName = `${styles.readerContentRoot} ${
     readerProfile.theme === "dark" ? styles.readerThemeDark : styles.readerThemeLight
   }`;
+  const readerRootRef = useRef<HTMLDivElement | null>(null);
+  const [chromeRevealed, setChromeRevealed] = useState(false);
+  const focusModeForRoot = readerProfile.focus_mode;
+  const hyphenationForRoot = readerProfile.hyphenation;
+
+  // Cmd/Ctrl+Shift+F cycles focus mode; Esc returns to off.
+  // Suppress when typing in form fields or contenteditable surfaces.
+  useEffect(() => {
+    function handleKeydown(event: KeyboardEvent) {
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        if (
+          target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable
+        ) {
+          return;
+        }
+      }
+      const isCycle =
+        event.shiftKey &&
+        (event.metaKey || event.ctrlKey) &&
+        (event.key === "f" || event.key === "F");
+      if (isCycle) {
+        event.preventDefault();
+        const current = readerProfile.focus_mode;
+        const next: typeof current =
+          current === "off"
+            ? "distraction_free"
+            : current === "distraction_free"
+              ? "paragraph"
+              : current === "paragraph"
+                ? "sentence"
+                : "off";
+        saveReaderProfile({ focus_mode: next });
+        return;
+      }
+      if (event.key === "Escape" && readerProfile.focus_mode !== "off") {
+        saveReaderProfile({ focus_mode: "off" });
+      }
+    }
+    window.addEventListener("keydown", handleKeydown);
+    return () => {
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, [readerProfile.focus_mode, saveReaderProfile]);
+
+  // IntersectionObserver tracks the paragraph nearest viewport vertical center.
+  // For sentence mode, segment the active paragraph's text via Intl.Segmenter
+  // and mark the sentence containing the line nearest the center. Without
+  // Intl.Segmenter, sentence mode silently behaves like paragraph mode.
+  useEffect(() => {
+    if (focusModeForRoot !== "paragraph" && focusModeForRoot !== "sentence") {
+      return;
+    }
+    const root = readerRootRef.current;
+    if (!root) return;
+
+    function clearSentenceMarkers(paragraph: Element) {
+      for (const node of Array.from(
+        paragraph.querySelectorAll<HTMLElement>('[data-sentence-current="true"]')
+      )) {
+        node.removeAttribute("data-sentence-current");
+      }
+      const wrapped = paragraph.querySelector<HTMLElement>('[data-sentence-wrap="true"]');
+      if (wrapped) {
+        const original = wrapped.getAttribute("data-sentence-original");
+        if (original !== null) {
+          paragraph.textContent = original;
+        }
+      }
+    }
+
+    function markSentenceNearViewportCenter(paragraph: Element) {
+      const SegmenterCtor = (
+        globalThis as { Intl: typeof Intl & { Segmenter?: typeof Intl.Segmenter } }
+      ).Intl.Segmenter;
+      if (!SegmenterCtor) return;
+      // Only segment plain-text paragraphs. If the paragraph contains
+      // element children (highlights, links, code, etc.), rewriting the DOM
+      // would destroy that structure, so silently downgrade to paragraph-only
+      // emphasis.
+      if (paragraph.childElementCount !== 0) return;
+      const text = paragraph.textContent ?? "";
+      if (text.length === 0) return;
+
+      const segmenter = new SegmenterCtor(undefined, { granularity: "sentence" });
+      const segments = Array.from(segmenter.segment(text));
+      if (segments.length === 0) return;
+
+      const originalText = text;
+      const fragment = document.createDocumentFragment();
+      for (const segment of segments) {
+        const span = document.createElement("span");
+        span.setAttribute("data-sentence", "true");
+        span.textContent = segment.segment;
+        fragment.appendChild(span);
+      }
+      const sentinel = document.createElement("span");
+      sentinel.setAttribute("data-sentence-wrap", "true");
+      sentinel.setAttribute("data-sentence-original", originalText);
+      sentinel.style.display = "contents";
+      sentinel.appendChild(fragment);
+      paragraph.replaceChildren(sentinel);
+
+      const center = window.innerHeight / 2;
+      let bestEl: HTMLElement | null = null;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (const el of Array.from(
+        paragraph.querySelectorAll<HTMLElement>('[data-sentence="true"]')
+      )) {
+        const rect = el.getBoundingClientRect();
+        const sentenceCenter = rect.top + rect.height / 2;
+        const distance = Math.abs(sentenceCenter - center);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestEl = el;
+        }
+      }
+      if (bestEl) {
+        bestEl.setAttribute("data-sentence-current", "true");
+      }
+    }
+
+    function pickCenteredParagraph(scope: HTMLElement): Element | null {
+      const paragraphs = Array.from(
+        scope.querySelectorAll<HTMLElement>('[data-paragraph="true"]')
+      );
+      if (paragraphs.length === 0) return null;
+      const center = window.innerHeight / 2;
+      let bestEl: Element | null = null;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (const el of paragraphs) {
+        const rect = el.getBoundingClientRect();
+        if (rect.height === 0) continue;
+        const elementCenter = rect.top + rect.height / 2;
+        const distance = Math.abs(elementCenter - center);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestEl = el;
+        }
+      }
+      return bestEl;
+    }
+
+    let lastCurrent: Element | null = null;
+    const scopedRoot = root;
+
+    const applyCurrent = () => {
+      const next = pickCenteredParagraph(scopedRoot);
+      const previous = lastCurrent;
+      if (next === previous) return;
+      if (previous) {
+        previous.removeAttribute("data-paragraph-current");
+        clearSentenceMarkers(previous);
+      }
+      if (next) {
+        next.setAttribute("data-paragraph-current", "true");
+        if (focusModeForRoot === "sentence") {
+          markSentenceNearViewportCenter(next);
+        }
+      }
+      lastCurrent = next;
+    };
+
+    const observer = new IntersectionObserver(applyCurrent, {
+      rootMargin: "0px",
+      threshold: [0, 0.25, 0.5, 0.75, 1],
+    });
+    const paragraphs = Array.from(
+      root.querySelectorAll<HTMLElement>('[data-paragraph="true"]')
+    );
+    for (const paragraph of paragraphs) {
+      observer.observe(paragraph);
+    }
+    applyCurrent();
+    window.addEventListener("scroll", applyCurrent, { passive: true });
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("scroll", applyCurrent);
+      if (lastCurrent) {
+        lastCurrent.removeAttribute("data-paragraph-current");
+        clearSentenceMarkers(lastCurrent);
+      }
+    };
+  }, [focusModeForRoot, renderedHtml]);
+
+  // Distraction-free chrome reveal: pointer movement keeps chrome visible for
+  // ~3 seconds of idle time. Exits silently in the off case.
+  useEffect(() => {
+    if (focusModeForRoot === "off") {
+      setChromeRevealed(false);
+      return;
+    }
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    function handlePointerMove() {
+      setChromeRevealed(true);
+      if (timeoutId !== null) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        setChromeRevealed(false);
+      }, 3000);
+    }
+    window.addEventListener("pointermove", handlePointerMove);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      if (timeoutId !== null) clearTimeout(timeoutId);
+    };
+  }, [focusModeForRoot]);
+
+  // Selection-active mirror on the reader root so focus mode dimming auto-suspends.
+  useEffect(() => {
+    const root = readerRootRef.current;
+    if (!root) return;
+    function handleSelectionChange() {
+      const root = readerRootRef.current;
+      if (!root) return;
+      const selection = document.getSelection();
+      const isActive =
+        selection !== null &&
+        !selection.isCollapsed &&
+        selection.rangeCount > 0 &&
+        root.contains(selection.getRangeAt(0).commonAncestorContainer);
+      if (isActive) {
+        root.setAttribute("data-selection-active", "true");
+      } else {
+        root.removeAttribute("data-selection-active");
+      }
+    }
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, []);
 
   // ==========================================================================
   // Highlights pane state
   // ==========================================================================
 
-  const [highlightsDrawerOpen, setHighlightsDrawerOpen] = useState(false);
-  const lastMobileFocusedHighlightIdRef = useRef<string | null>(null);
+  const [isHighlightsInspectorOpen, setHighlightsInspectorOpen] = useState(false);
+  const [readerScrollContainer, setReaderScrollContainer] =
+    useState<HTMLElement | null>(null);
   const [libraryPanelOpen, setLibraryPanelOpen] = useState(false);
   const [libraryPanelAnchorEl, setLibraryPanelAnchorEl] =
     useState<HTMLElement | null>(null);
@@ -3605,22 +3805,16 @@ export default function MediaPaneBody() {
 
   const handleContentClick = useCallback(
     (e: React.MouseEvent) => {
-      const highlightId = handleMediaContentClick(e);
-      if (isMobileViewport && showHighlightsPane && highlightId) {
-        setHighlightsDrawerOpen(true);
-      }
+      handleMediaContentClick(e);
     },
-    [handleMediaContentClick, isMobileViewport, showHighlightsPane]
+    [handleMediaContentClick]
   );
 
   const handlePdfHighlightTap = useCallback(
     (highlightId: string, _anchorRect: DOMRect) => {
       focusHighlight(highlightId);
-      if (isMobileViewport && showHighlightsPane) {
-        setHighlightsDrawerOpen(true);
-      }
     },
-    [focusHighlight, isMobileViewport, showHighlightsPane]
+    [focusHighlight]
   );
 
   const handleDocumentScroll = useCallback(
@@ -3844,10 +4038,7 @@ export default function MediaPaneBody() {
       : undefined,
     onOpenChat: media
       ? () => {
-          void openResolvedConversation(
-            { type: "media", media_id: media.id },
-            media.title || "Document chat"
-          );
+          openReaderAssistant([]);
         }
       : undefined,
     onManageLibraries: ({ triggerEl }) => {
@@ -4037,58 +4228,16 @@ export default function MediaPaneBody() {
     toolbar: mediaToolbar,
     options: mediaHeaderOptions,
     meta: mediaHeaderMeta,
-    actions:
-      showHighlightsPane && isMobileViewport ? (
-        <div className={styles.paneActionGroup}>
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            onClick={() => setHighlightsDrawerOpen((v) => !v)}
-            aria-label="Highlights"
-            aria-expanded={highlightsDrawerOpen}
-          >
-            <PanelRight size={18} aria-hidden="true" />
-          </Button>
-        </div>
-      ) : undefined,
   });
 
+  // Close the highlights inspector when highlights become unavailable (focus
+  // mode flip, media swap, etc.). The gutter itself stays mounted but the
+  // overlay should not strand on top of an unrelated reader.
   useEffect(() => {
-    if (!highlightsDrawerOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setHighlightsDrawerOpen(false);
-    };
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.body.style.overflow = prev;
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [highlightsDrawerOpen]);
-
-  useEffect(() => {
-    if (highlightsDrawerOpen && (!isMobileViewport || !showHighlightsPane)) {
-      setHighlightsDrawerOpen(false);
+    if (isHighlightsInspectorOpen && !showHighlightsPane) {
+      setHighlightsInspectorOpen(false);
     }
-  }, [highlightsDrawerOpen, isMobileViewport, showHighlightsPane]);
-
-  useEffect(() => {
-    if (!isMobileViewport || !showHighlightsPane) {
-      lastMobileFocusedHighlightIdRef.current = focusState.focusedId;
-      return;
-    }
-
-    if (
-      focusState.focusedId !== null &&
-      focusState.focusedId !== lastMobileFocusedHighlightIdRef.current
-    ) {
-      setHighlightsDrawerOpen(true);
-    }
-
-    lastMobileFocusedHighlightIdRef.current = focusState.focusedId;
-  }, [focusState.focusedId, isMobileViewport, showHighlightsPane]);
+  }, [isHighlightsInspectorOpen, showHighlightsPane]);
 
   useEffect(() => {
     setVideoSeekTargetMs(null);
@@ -4208,11 +4357,8 @@ export default function MediaPaneBody() {
       return;
     }
     const releaseLocks: Array<() => void> = [];
-    if (highlightsDrawerOpen) {
-      releaseLocks.push(paneMobileChrome.acquireVisibleLock("highlights-drawer"));
-    }
-    if (readerAssistantState) {
-      releaseLocks.push(paneMobileChrome.acquireVisibleLock("reader-assistant"));
+    if (isHighlightsInspectorOpen) {
+      releaseLocks.push(paneMobileChrome.acquireVisibleLock("highlights-inspector"));
     }
     if (libraryPanelOpen) {
       releaseLocks.push(paneMobileChrome.acquireVisibleLock("library-picker"));
@@ -4226,12 +4372,11 @@ export default function MediaPaneBody() {
       }
     };
   }, [
-    highlightsDrawerOpen,
+    isHighlightsInspectorOpen,
     libraryPanelOpen,
     focusState.editingBounds,
     isMobileViewport,
     paneMobileChrome,
-    readerAssistantState,
     selection,
   ]);
 
@@ -4325,6 +4470,57 @@ export default function MediaPaneBody() {
     feedback,
   ]);
 
+  const handleJumpToHighlight = useCallback(
+    (highlightId: string) => {
+      const fragmentMatch = highlights.find((h) => h.id === highlightId);
+      if (fragmentMatch) {
+        dispatchReaderPulse({
+          mediaId: id,
+          locator: {
+            type: isEpub ? "epub_fragment_offsets" : "reader_text_offsets",
+            fragment_id: fragmentMatch.anchor.fragment_id,
+            start_offset: fragmentMatch.anchor.start_offset,
+            end_offset: fragmentMatch.anchor.end_offset,
+          },
+          snippet: fragmentMatch.exact,
+        });
+        return;
+      }
+      const pdfMatch = pdfDocumentHighlights.find((h) => h.id === highlightId);
+      if (pdfMatch) {
+        dispatchReaderPulse({
+          mediaId: id,
+          locator: {
+            type: "pdf_page_geometry",
+            page_number: pdfMatch.anchor.page_number,
+            quads: pdfMatch.anchor.quads,
+          },
+          snippet: pdfMatch.exact,
+        });
+      }
+    },
+    [highlights, id, isEpub, pdfDocumentHighlights],
+  );
+
+  const transcriptGutterHighlights = useMemo<
+    ReaderGutterTranscriptHighlight[]
+  >(() => {
+    if (!isTranscriptMedia) return [];
+    const fragmentStartByid = new Map<string, number>();
+    for (const fragment of fragments) {
+      if (fragment.t_start_ms != null && fragment.t_start_ms >= 0) {
+        fragmentStartByid.set(fragment.id, fragment.t_start_ms);
+      }
+    }
+    const out: ReaderGutterTranscriptHighlight[] = [];
+    for (const highlight of highlights) {
+      const startMs = fragmentStartByid.get(highlight.anchor.fragment_id);
+      if (startMs == null) continue;
+      out.push({ highlight, fragmentStartMs: startMs });
+    }
+    return out;
+  }, [fragments, highlights, isTranscriptMedia]);
+
   // ==========================================================================
   // Render
   // ==========================================================================
@@ -4379,20 +4575,17 @@ export default function MediaPaneBody() {
       })),
   ];
 
-  const highlightsContent = showHighlightsPane ? (
+  const transcriptDurationMs = media.listening_state?.duration_ms ?? 0;
+
+  const highlightsInspectorBody = (
     <MediaHighlightsPaneBody
       isPdf={isPdf}
       isEpub={isEpub}
-      isMobile={isMobileViewport}
       fragmentHighlights={highlights}
       pdfPageHighlights={pdfHighlightsPaneState.highlights}
-      highlightsVersion={highlightsVersion}
-      pdfHighlightsVersion={pdfHighlightsPaneState.version}
       pdfActivePage={pdfHighlightsPaneState.activePage}
-      contentRef={isPdf ? pdfContentRef : contentRef}
       focusedId={focusState.focusedId}
       onFocusHighlight={focusHighlight}
-      onClearFocus={clearFocus}
       canSendToChat={Boolean(media.capabilities?.can_quote)}
       onSendToChat={handleExistingHighlightSendToChat}
       onColorChange={handleColorChange}
@@ -4403,34 +4596,27 @@ export default function MediaPaneBody() {
       onNoteSave={handleNoteSave}
       onNoteDelete={handleNoteDelete}
       onOpenConversation={handleOpenConversation}
+      onJumpToHighlight={handleJumpToHighlight}
     />
-  ) : null;
-  const showDesktopSecondaryPane =
-    !isMobileViewport && (highlightsContent !== null || readerAssistantState !== null);
-  const desktopSecondaryContent =
-    secondaryPaneMode === "ask" ? (
-      readerAssistantState ? (
-        <ReaderAssistantPane
-          contexts={readerAssistantState.contexts}
-          conversationId={readerAssistantState.conversationId}
-          conversationScope={readerAssistantState.conversationScope}
-          targetLabel={readerAssistantState.targetLabel}
-          scopeOptions={readerAssistantScopeOptions}
-          onScopeChange={handleReaderAssistantScopeChange}
-          onBack={highlightsContent ? () => setSecondaryPaneMode("highlights") : undefined}
-          onConversationAvailable={handleReaderAssistantConversationAvailable}
-          onOpenFullChat={handleOpenReaderAssistantConversation}
-          onReaderSourceActivate={handleReaderSourceActivate}
-          surface="desktop"
-        />
-      ) : (
-        <div className={styles.secondaryPaneEmpty}>
-          Select text or choose Ask on a highlight.
-        </div>
-      )
-    ) : (
-      highlightsContent
-    );
+  );
+
+  const isReaderChatOverlayOpen =
+    !isMobileViewport && readerAssistantState !== null;
+  const readerChatOverlayContent =
+    readerAssistantState ? (
+      <ReaderAssistantPane
+        contexts={readerAssistantState.contexts}
+        conversationId={readerAssistantState.conversationId}
+        conversationScope={readerAssistantState.conversationScope}
+        targetLabel={readerAssistantState.targetLabel}
+        scopeOptions={readerAssistantScopeOptions}
+        onScopeChange={handleReaderAssistantScopeChange}
+        onConversationAvailable={handleReaderAssistantConversationAvailable}
+        onOpenFullChat={handleOpenReaderAssistantConversation}
+        onReaderSourceActivate={handleReaderSourceActivate}
+        onClose={() => setReaderAssistantState(null)}
+      />
+    ) : null;
   const transcriptPaneBody = !canRead ? (
     <TranscriptStatePanel
       mediaId={media.id}
@@ -4472,7 +4658,11 @@ export default function MediaPaneBody() {
           void handleRemoveFromLibrary(libraryId);
         }}
       />
-      <div className={styles.splitLayout}>
+      <div
+        className={styles.splitLayout}
+        data-focus-mode={focusModeForRoot}
+        data-chrome-revealed={chromeRevealed ? "true" : undefined}
+      >
         <div className={styles.readerColumn}>
           {!isPdf && isMismatchDisabled && (
             <div className={styles.mismatchBanner}>
@@ -4498,28 +4688,41 @@ export default function MediaPaneBody() {
           ) : null}
 
           {isTranscriptMedia ? (
-            <div
-              className={styles.documentViewport}
-              data-testid="document-viewport"
-              data-pane-content="true"
-              onScroll={handleDocumentScroll}
-            >
-              <div className={styles.transcriptPane}>
-                <TranscriptPlaybackPanel
-                  mediaId={media.id}
-                  mediaKind={media.kind === "video" ? "video" : "podcast_episode"}
-                  playbackSource={playbackSource}
-                  canonicalSourceUrl={media.canonical_source_url}
-                  chapters={media.chapters ?? []}
-                  descriptionHtml={media.description_html ?? null}
-                  descriptionText={media.description_text ?? null}
-                  videoSeekTargetMs={
-                    media.kind === "video" ? videoSeekTargetMs ?? activeRequestedStartMs : null
-                  }
-                  onSeek={handleTranscriptSeek}
-                />
-                {transcriptPaneBody}
+            <div className={styles.readerWithGutter}>
+              <div
+                ref={setReaderScrollContainer}
+                className={styles.documentViewport}
+                data-testid="document-viewport"
+                data-pane-content="true"
+                onScroll={handleDocumentScroll}
+              >
+                <div className={styles.transcriptPane}>
+                  <TranscriptPlaybackPanel
+                    mediaId={media.id}
+                    mediaKind={media.kind === "video" ? "video" : "podcast_episode"}
+                    playbackSource={playbackSource}
+                    canonicalSourceUrl={media.canonical_source_url}
+                    chapters={media.chapters ?? []}
+                    descriptionHtml={media.description_html ?? null}
+                    descriptionText={media.description_text ?? null}
+                    videoSeekTargetMs={
+                      media.kind === "video" ? videoSeekTargetMs ?? activeRequestedStartMs : null
+                    }
+                    onSeek={handleTranscriptSeek}
+                  />
+                  {transcriptPaneBody}
+                </div>
               </div>
+              {showHighlightsPane ? (
+                <ReaderGutter
+                  mediaId={id}
+                  mediaKind="transcript"
+                  transcriptHighlights={transcriptGutterHighlights}
+                  durationMs={transcriptDurationMs}
+                  scrollContainer={readerScrollContainer}
+                  onExpand={() => setHighlightsInspectorOpen(true)}
+                />
+              ) : null}
             </div>
           ) : !canRead ? (
             <div className={styles.notReady}>
@@ -4558,162 +4761,157 @@ export default function MediaPaneBody() {
                 <p>Loading reader state...</p>
               </div>
             ) : (
-              <PdfReader
-                key={`${id}:${activeRequestedPdfPageNumber ?? resolvedPdfPageNumber ?? "resume"}`}
-                mediaId={id}
-                contentRef={pdfContentRef}
-                focusedHighlightId={focusState.focusedId}
-                editingHighlightId={focusState.editingBounds ? focusState.focusedId : null}
-                highlightRefreshToken={pdfRefreshToken}
-                onPageHighlightsChange={handlePdfPageHighlightsChange}
-                onHighlightTap={handlePdfHighlightTap}
-                temporaryHighlight={temporaryPdfHighlight}
-                onAskSelection={media.capabilities?.can_quote ? handlePdfAskSelection : undefined}
-                onControlsStateChange={setPdfControlsState}
-                onControlsReady={(controls) => {
-                  pdfControlsRef.current = controls;
-                }}
-                startPageNumber={
-                  activeRequestedPdfPageNumber ??
-                  resolvedPdfPageNumber ??
-                  pdfReaderResumeState?.page ??
-                  undefined
-                }
-                startPageProgression={
-                  activeRequestedPdfPageNumber || resolvedPdfPageNumber
-                    ? undefined
-                    : pdfReaderResumeState?.page_progression ?? undefined
-                }
-                startZoom={pdfReaderResumeState?.zoom ?? undefined}
-                onResumeStateChange={saveReaderResumeState}
-              />
+              <div className={styles.readerWithGutter}>
+                <PdfReader
+                  key={`${id}:${activeRequestedPdfPageNumber ?? resolvedPdfPageNumber ?? "resume"}`}
+                  mediaId={id}
+                  contentRef={pdfContentRef}
+                  focusedHighlightId={focusState.focusedId}
+                  editingHighlightId={focusState.editingBounds ? focusState.focusedId : null}
+                  highlightRefreshToken={pdfRefreshToken}
+                  onPageHighlightsChange={handlePdfPageHighlightsChange}
+                  onHighlightTap={handlePdfHighlightTap}
+                  temporaryHighlight={temporaryPdfHighlight}
+                  onAskSelection={media.capabilities?.can_quote ? handlePdfAskSelection : undefined}
+                  onControlsStateChange={setPdfControlsState}
+                  onControlsReady={(controls) => {
+                    pdfControlsRef.current = controls;
+                  }}
+                  startPageNumber={
+                    activeRequestedPdfPageNumber ??
+                    resolvedPdfPageNumber ??
+                    pdfReaderResumeState?.page ??
+                    undefined
+                  }
+                  startPageProgression={
+                    activeRequestedPdfPageNumber || resolvedPdfPageNumber
+                      ? undefined
+                      : pdfReaderResumeState?.page_progression ?? undefined
+                  }
+                  startZoom={pdfReaderResumeState?.zoom ?? undefined}
+                  onResumeStateChange={saveReaderResumeState}
+                />
+                {showHighlightsPane ? (
+                  <ReaderGutter
+                    mediaId={id}
+                    mediaKind="pdf"
+                    pdfHighlights={pdfDocumentHighlights}
+                    totalPages={pdfControlsState?.numPages ?? 0}
+                    scrollContainer={null}
+                    onExpand={() => setHighlightsInspectorOpen(true)}
+                  />
+                ) : null}
+              </div>
             )
           ) : isEpub ? (
-            <div
-              className={styles.documentViewport}
-              data-testid="document-viewport"
-              data-pane-content="true"
-              onScroll={handleDocumentScroll}
-            >
-              <div className={readerSurfaceClassName} style={readerSurfaceStyle}>
-                <div className={styles.readerContentInner}>
-                  <EpubContentPane
-                    sections={epubSections}
-                    activeChapter={activeChapter}
-                    activeSectionId={activeSectionId}
-                    chapterLoading={chapterLoading}
-                    epubError={epubError}
-                    toc={epubToc}
-                    tocWarning={tocWarning}
-                    tocExpanded={epubTocExpanded}
-                    contentRef={contentRef}
-                    renderedHtml={renderedHtml}
-                    onContentClick={handleContentClick}
-                    onNavigate={navigateToSection}
-                  />
+            <div className={styles.readerWithGutter}>
+              <div
+                ref={setReaderScrollContainer}
+                className={styles.documentViewport}
+                data-testid="document-viewport"
+                data-pane-content="true"
+                onScroll={handleDocumentScroll}
+              >
+                <div
+                  ref={readerRootRef}
+                  className={readerSurfaceClassName}
+                  style={readerSurfaceStyle}
+                  data-focus-mode={focusModeForRoot}
+                  data-hyphenation={hyphenationForRoot}
+                >
+                  <div className={styles.readerContentInner}>
+                    <EpubContentPane
+                      mediaId={id}
+                      sections={epubSections}
+                      activeChapter={activeChapter}
+                      activeSectionId={activeSectionId}
+                      chapterLoading={chapterLoading}
+                      epubError={epubError}
+                      toc={epubToc}
+                      tocWarning={tocWarning}
+                      tocExpanded={epubTocExpanded}
+                      contentRef={contentRef}
+                      renderedHtml={renderedHtml}
+                      onContentClick={handleContentClick}
+                      onNavigate={navigateToSection}
+                    />
+                  </div>
                 </div>
               </div>
+              {showHighlightsPane ? (
+                <ReaderGutter
+                  mediaId={id}
+                  mediaKind="epub"
+                  highlights={highlights}
+                  scrollContainer={readerScrollContainer}
+                  onExpand={() => setHighlightsInspectorOpen(true)}
+                />
+              ) : null}
             </div>
           ) : fragments.length === 0 ? (
             <div className={styles.empty}>
               <p>No content available for this media.</p>
             </div>
           ) : (
-            <div
-              className={styles.documentViewport}
-              data-testid="document-viewport"
-              data-pane-content="true"
-              onScroll={handleDocumentScroll}
-            >
-              <div className={readerSurfaceClassName} style={readerSurfaceStyle}>
-                <div className={styles.readerContentInner}>
-                  <div
-                    ref={contentRef}
-                    className={styles.fragments}
-                    onClick={handleContentClick}
-                  >
-                    <HtmlRenderer
-                      htmlSanitized={renderedHtml}
-                      className={styles.fragment}
-                    />
+            <div className={styles.readerWithGutter}>
+              <div
+                ref={setReaderScrollContainer}
+                className={styles.documentViewport}
+                data-testid="document-viewport"
+                data-pane-content="true"
+                onScroll={handleDocumentScroll}
+              >
+                <div
+                  ref={readerRootRef}
+                  className={readerSurfaceClassName}
+                  style={readerSurfaceStyle}
+                  data-focus-mode={focusModeForRoot}
+                  data-hyphenation={hyphenationForRoot}
+                >
+                  <div className={styles.readerContentInner}>
+                    <div
+                      ref={contentRef}
+                      className={styles.fragments}
+                      onClick={handleContentClick}
+                    >
+                      <HtmlRenderer
+                        htmlSanitized={renderedHtml}
+                        className={styles.fragment}
+                        mediaId={id}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
+              {showHighlightsPane ? (
+                <ReaderGutter
+                  mediaId={id}
+                  mediaKind="web"
+                  highlights={highlights}
+                  scrollContainer={readerScrollContainer}
+                  onExpand={() => setHighlightsInspectorOpen(true)}
+                />
+              ) : null}
             </div>
           )}
         </div>
 
-        {showDesktopSecondaryPane && (
-          <div
-            className={styles.secondaryPaneColumn}
-            data-testid="desktop-reader-secondary-column"
-            style={{
-              width: SECONDARY_PANE_WIDTH_PX,
-              flex: `0 0 ${SECONDARY_PANE_WIDTH_PX}px`,
-            }}
-          >
-            <div className={styles.secondaryPaneTabs} role="tablist" aria-label="Reader tools">
-              <Button
-                variant="ghost"
-                size="sm"
-                role="tab"
-                aria-selected={secondaryPaneMode === "highlights"}
-                disabled={!highlightsContent}
-                onClick={() => setSecondaryPaneMode("highlights")}
-                className={styles.secondaryPaneTab}
-                data-active={secondaryPaneMode === "highlights" ? "true" : "false"}
-              >
-                Highlights
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                role="tab"
-                aria-selected={secondaryPaneMode === "ask"}
-                onClick={() => {
-                  if (!readerAssistantState) {
-                    openReaderAssistant([]);
-                    return;
-                  }
-                  setSecondaryPaneMode("ask");
-                }}
-                className={styles.secondaryPaneTab}
-                data-active={secondaryPaneMode === "ask" ? "true" : "false"}
-              >
-                Ask
-              </Button>
-            </div>
-            <div className={styles.secondaryPaneBody}>{desktopSecondaryContent}</div>
-          </div>
-        )}
-      </div>
-
-      {isMobileViewport && highlightsDrawerOpen && highlightsContent && (
-        <div
-          className={styles.highlightsBackdrop}
-          onClick={() => setHighlightsDrawerOpen(false)}
+        <ReaderChatOverlay
+          open={isReaderChatOverlayOpen}
+          onClose={() => setReaderAssistantState(null)}
         >
-          <aside
-            className={styles.highlightsDrawer}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Highlights"
-            onClick={(e) => e.stopPropagation()}
+          {readerChatOverlayContent}
+        </ReaderChatOverlay>
+
+        {showHighlightsPane ? (
+          <HighlightsInspectorOverlay
+            open={isHighlightsInspectorOpen}
+            onClose={() => setHighlightsInspectorOpen(false)}
           >
-            <header className={styles.highlightsDrawerHeader}>
-              <h2>Highlights</h2>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setHighlightsDrawerOpen(false)}
-              >
-                Close
-              </Button>
-            </header>
-            <div className={styles.highlightsDrawerBody}>{highlightsContent}</div>
-          </aside>
-        </div>
-      )}
+            {highlightsInspectorBody}
+          </HighlightsInspectorOverlay>
+        ) : null}
+      </div>
 
       {isMobileViewport && readerAssistantState ? (
         <QuoteChatSheet
@@ -4725,7 +4923,6 @@ export default function MediaPaneBody() {
           onConversationCreated={handleReaderAssistantConversationAvailable}
           onOpenFullChat={handleOpenReaderAssistantConversation}
           onReaderSourceActivate={handleReaderSourceActivate}
-          surface="mobile"
         />
       ) : null}
 

@@ -41,6 +41,7 @@ describe("rankPaletteCommands", () => {
       ],
       frecencyBoosts: new Map(),
       currentWorkspaceHref: "/libraries",
+      scopeFilter: null,
     });
 
     expect(result.topResult?.id).toBe("nav-library-exact");
@@ -80,6 +81,7 @@ describe("rankPaletteCommands", () => {
       ],
       frecencyBoosts: new Map([["settings-keybindings", 120]]),
       currentWorkspaceHref: "/libraries",
+      scopeFilter: null,
     });
 
     expect(result.topResult?.id).toBe("settings-keybindings");
@@ -104,8 +106,73 @@ describe("rankPaletteCommands", () => {
       ],
       frecencyBoosts: new Map(),
       currentWorkspaceHref: "/libraries",
+      scopeFilter: null,
     });
 
     expect(result.topResult?.id).toBe("open-delete-settings");
+  });
+
+  it("drops commands without scopeAffinity for the filter and boosts those that match", () => {
+    const result = rankPaletteCommands({
+      query: "",
+      commands: [
+        command({
+          id: "no-affinity",
+          title: "Open libraries",
+          sectionId: "navigate",
+        }),
+        command({
+          id: "wrong-affinity",
+          title: "Pin current note",
+          sectionId: "create",
+          scopeAffinity: ["note"],
+        }),
+        command({
+          id: "media-affinity",
+          title: "Open chat about this",
+          sectionId: "in-this-pane",
+          scopeAffinity: ["media"],
+        }),
+        command({
+          id: "media-and-other-affinity",
+          title: "Add content",
+          sectionId: "create",
+          scopeAffinity: ["media", "library"],
+        }),
+      ],
+      frecencyBoosts: new Map(),
+      currentWorkspaceHref: null,
+      scopeFilter: "media",
+    });
+
+    const ids = result.displayCommands.map((cmd) => cmd.id);
+    expect(ids).toContain("media-affinity");
+    expect(ids).toContain("media-and-other-affinity");
+    expect(ids).not.toContain("no-affinity");
+    expect(ids).not.toContain("wrong-affinity");
+  });
+
+  it("preserves existing scopeBoost when no scope filter is set", () => {
+    const result = rankPaletteCommands({
+      query: "",
+      commands: [
+        command({
+          id: "boosted",
+          title: "Boosted command",
+          sectionId: "navigate",
+          rank: { scopeBoost: 1000 } as PaletteCommand["rank"],
+        }),
+        command({
+          id: "plain",
+          title: "Plain command",
+          sectionId: "navigate",
+        }),
+      ],
+      frecencyBoosts: new Map(),
+      currentWorkspaceHref: null,
+      scopeFilter: null,
+    });
+
+    expect(result.displayCommands[0].id).toBe("boosted");
   });
 });

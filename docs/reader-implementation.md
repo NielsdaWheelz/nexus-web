@@ -4,10 +4,19 @@ this records the current reader model and the constraints we actively ship.
 
 ## constraints we enforce
 
-- line length target: 50-75 chars on desktop
+- line length target: 50-75 chars on desktop, 60ch on mobile
 - base font around 16px, with larger user-adjustable options
 - line height around 1.4-1.6
-- theme support: light and dark
+- theme support: light and dark, warm-neutral palette aligned with the
+  app shell; never pure black on pure white
+- text alignment: left-aligned only; no justify toggle
+- paragraph spacing: block style only; vertical gap equals one
+  line-height; no first-line indent
+- hyphenation: viewport-conditional and user-overridable via
+  `reader_profile.hyphenation`
+- focus mode: four states (`off`, `distraction_free`, `paragraph`,
+  `sentence`) driven by `reader_profile.focus_mode`; toggle at
+  Cmd/Ctrl+Shift+F; auto-suspends during active selection
 - mobile-safe reader layout and controls
 - mobile document-pane chrome policy lives in `docs/mobile-pane-chrome.md`
 - resume that survives reflow where possible
@@ -18,10 +27,64 @@ this records the current reader model and the constraints we actively ship.
 
 - `reader_profile` stores the global reader preferences for a user
 - shipped fields are `theme`, `font_family`, `font_size_px`,
-  `line_height`, `column_width_ch`, and `focus_mode`
+  `line_height`, `column_width_ch`, `focus_mode`, and `hyphenation`
+- `focus_mode` is `"off" | "distraction_free" | "paragraph" | "sentence"`
+- `hyphenation` is `"auto" | "off"`; `auto` enables `hyphens: auto`
+  with `hyphenate-limit-chars: 6 3 3` and `hyphenate-limit-lines: 2`
+  on viewports `<= 600px`; `off` disables on every viewport
 - the settings page and the media header quick-switch both write the same
   global reader profile
 - theme is global reader theme only; there are no per-media theme overrides
+
+### focus mode contract
+
+focus mode is driven entirely by `reader_profile.focus_mode`. levels are
+discrete and additive: each higher level inherits the chrome reduction of
+the lower one and adds dimming.
+
+- `off`: no chrome reduction, no dimming. default.
+- `distraction_free`: navbar collapses to icon-only; any sibling panes
+  in the workspace slide out of view; reader pane chrome (toolbar, tabs)
+  fades on idle and reappears on pointer move; reader column maximizes
+  to its configured `column_width_ch`. no paragraph dimming.
+- `paragraph`: distraction_free chrome reduction PLUS the paragraph
+  nearest the viewport vertical center is rendered at full opacity and
+  every other paragraph is rendered at `0.4` opacity.
+- `sentence`: distraction_free chrome reduction PLUS the sentence
+  nearest the viewport vertical center is at full opacity, the
+  containing paragraph at `0.7`, and all other paragraphs at `0.3`.
+
+bindings:
+
+- the keyboard binding `cmd/ctrl+shift+f` cycles `off -> distraction_free
+  -> paragraph -> sentence -> off`
+- pressing `escape` while a non-off focus mode is active returns to `off`
+- when an active text selection exists in the reader, focus mode
+  auto-suspends (renders as `distraction_free`) and resumes the user's
+  configured level when the selection clears
+- focus mode respects `prefers-reduced-motion`: dimming transitions snap
+  rather than fade
+- focus mode persists across reloads via `reader_profile.focus_mode`
+
+### color contrast
+
+reader uses warm-neutral colors that match the app palette and stay off
+pure black/white to reduce halation under long sessions.
+
+- light theme tokens (literal hex, independent of app theme):
+  `--reader-bg: #faf8f3`, `--reader-text: #1a1916`,
+  `--reader-text-secondary: #4a463e`, `--reader-text-muted: #7a7468`,
+  `--reader-border: #d8d3c9`, `--reader-border-subtle: #ece8df`,
+  `--reader-accent: #7d5e35`, `--reader-accent-hover: #634a29`
+- dark theme tokens (literal hex):
+  `--reader-bg: #15140f`, `--reader-text: #ebe5d6`,
+  `--reader-text-secondary: #c2baa7`, `--reader-text-muted: #8a8270`,
+  `--reader-border: #2e2c25`, `--reader-border-subtle: #1f1d18`,
+  `--reader-accent: #c4a472`, `--reader-accent-hover: #d4b687`
+- both themes meet WCAG AAA for body text (>= 7:1)
+- pdf viewport keeps a true-white canvas because the embedded pdf
+  content sets its own colors; only the chrome around the canvas adopts
+  reader theme tokens
 
 ### per-media resume
 

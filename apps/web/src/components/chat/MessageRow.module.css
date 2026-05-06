@@ -2,10 +2,15 @@
   position: relative;
   width: 100%;
   max-width: var(--content-max-width);
+  margin-bottom: calc(var(--leading-relaxed) * 1em);
   font-size: var(--text-sm);
   line-height: var(--leading-relaxed);
   overflow-wrap: anywhere;
   animation: messageIn var(--duration-fast) var(--ease-snap);
+}
+
+.message:last-child {
+  margin-bottom: 0;
 }
 
 @keyframes messageIn {
@@ -19,17 +24,35 @@
   }
 }
 
-.user {
-  align-self: flex-end;
-  max-width: min(85%, var(--content-max-width));
-  padding: var(--space-2) var(--space-4);
-  background: var(--surface-2);
-  border-radius: var(--radius-2xl);
+.userAttribution {
+  margin-bottom: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.userBody {
+  display: block;
   white-space: pre-wrap;
 }
 
-.assistant {
+.assistantBody {
   color: var(--ink);
+}
+
+.systemBody {
+  display: block;
+  text-align: center;
+  font-size: var(--text-xs);
+  font-style: italic;
+  color: var(--ink-faint);
+}
+
+.citationRow {
+  display: inline-flex;
+  gap: var(--space-1);
+  margin-right: var(--space-2);
+  vertical-align: baseline;
 }
 
 .messageActions {
@@ -45,24 +68,33 @@
   opacity: 1;
 }
 
-.system {
-  max-width: 60%;
-  text-align: center;
-  font-size: var(--text-xs);
-  font-style: italic;
-  color: var(--ink-faint);
+.streamingCue {
+  position: absolute;
+  top: 0;
+  left: -8px;
+  width: 2px;
+  height: 100%;
+  min-height: 1.4em;
+  background: var(--accent-muted);
+  border-radius: 1px;
+  animation: streamingCuePulse 1.4s var(--ease-glide) infinite;
 }
 
-.pendingStatus {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
+@keyframes streamingCuePulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
-.error {
-  color: var(--danger);
+@media (prefers-reduced-motion: reduce) {
+  .streamingCue {
+    animation: none;
+    opacity: 0.7;
+  }
 }
 
 .toolActivity {
@@ -78,59 +110,8 @@
   flex: 0 0 auto;
 }
 
-.replyBar {
-  margin-bottom: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  border-left: 3px solid var(--ink-faint);
-  font-size: var(--text-xs);
-  line-height: var(--leading-snug);
-  color: var(--ink-muted);
-  white-space: normal;
-}
-
-.replyBar-yellow {
-  border-left-color: var(--highlight-yellow);
-}
-
-.replyBar-green {
-  border-left-color: var(--highlight-green);
-}
-
-.replyBar-blue {
-  border-left-color: var(--highlight-blue);
-}
-
-.replyBar-pink {
-  border-left-color: var(--highlight-pink);
-}
-
-.replyBar-purple {
-  border-left-color: var(--highlight-purple);
-}
-
-.claimAnswer a[href^="#claim-evidence-"] {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  margin-left: 2px;
-  padding: 0 5px;
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--edge));
-  border-radius: var(--radius-full);
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
-  color: var(--accent);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  line-height: 1;
-  text-decoration: none;
-  vertical-align: baseline;
-}
-
-.claimAnswer a[href^="#claim-evidence-"]:hover,
-.claimAnswer a[href^="#claim-evidence-"]:focus-visible {
-  background: color-mix(in srgb, var(--accent) 14%, var(--surface-2));
-  border-color: color-mix(in srgb, var(--accent) 58%, var(--edge));
+.claimAnswer {
+  position: relative;
 }
 
 .claimEvidencePanel {
@@ -320,9 +301,5 @@
 @media (max-width: 640px) {
   .message {
     max-width: 100%;
-  }
-
-  .user {
-    max-width: 92%;
   }
 }

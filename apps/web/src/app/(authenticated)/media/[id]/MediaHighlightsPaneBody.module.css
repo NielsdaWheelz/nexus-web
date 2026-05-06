@@ -1,22 +1,58 @@
-.linkedItemsContainer {
-  position: relative;
-  height: 100%;
-  overflow: hidden;
+/**
+ * Highlights inspector body (Phase 1B P5).
+ *
+ * Rendered inside HighlightsInspectorOverlay. Simple list — no anchored row
+ * positioning, no mobile-drawer code, no pane-shell awareness. The overlay
+ * supplies the slide-over chrome.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
-.mobileVisibleContainer {
-  height: auto;
-  overflow: visible;
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.heading {
+  margin: 0;
+  font-size: var(--text-md);
+  color: var(--ink);
+}
+
+.description {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  color: var(--ink-faint);
+}
+
+.pdfPagePill {
+  flex: 0 0 auto;
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-4) 0;
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-3);
 }
 
-.linkedItemRow {
-  position: absolute;
-  left: 0;
-  right: 0;
+.row {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -24,19 +60,10 @@
   border: 1px solid transparent;
   border-radius: var(--radius-lg);
   background: var(--surface-canvas);
-  color: inherit;
-  overflow: visible;
-  text-align: left;
-  will-change: transform;
 }
 
-.linkedItemRow:hover {
+.row:hover {
   background: var(--surface-2);
-}
-
-.flowRow {
-  position: relative;
-  transform: none !important;
 }
 
 .rowFocused {
@@ -66,10 +93,7 @@
   text-align: left;
 }
 
-.rowPreviewButton:focus-visible,
-.chatButton:focus-visible,
-.conversationButton:focus-visible,
-.noteEditor:focus-visible {
+.rowPreviewButton:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -138,19 +162,6 @@
   flex: 0 0 auto;
 }
 
-.chatButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--size-sm);
-  height: var(--size-sm);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-lg);
-  background: var(--surface-2);
-  color: var(--ink);
-  cursor: pointer;
-}
-
 .rowExpanded {
   display: flex;
   flex-direction: column;
@@ -190,16 +201,6 @@
   padding: var(--space-3);
 }
 
-.noteReadOnly {
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--surface-2);
-  color: var(--ink-faint);
-  line-height: var(--leading-normal);
-  padding: var(--space-3);
-  white-space: pre-wrap;
-}
-
 .conversationList {
   display: flex;
   flex-direction: column;
@@ -226,54 +227,4 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.overflowIndicator {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: var(--size-sm);
-  background: linear-gradient(transparent, var(--surface-2));
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-  pointer-events: none;
-}
-
-.mobileIndicator {
-  width: 100%;
-  min-height: var(--size-md);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--surface-2);
-  color: var(--ink-faint);
-  font: inherit;
-  text-align: center;
-  cursor: pointer;
-  padding: 0 var(--space-3);
-}
-
-.mobileIndicator:hover {
-  background: var(--surface-2);
-  color: var(--ink);
-}
-
-.mobileIndicator:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.mobileFeedbackMessage {
-  padding: var(--space-3) 0;
-}
-
-.emptyFeedbackMessage {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  padding: var(--space-6);
 }

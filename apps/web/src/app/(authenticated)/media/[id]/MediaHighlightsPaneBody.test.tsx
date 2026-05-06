@@ -1,97 +1,109 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import type { PdfHighlightOut } from "@/components/PdfReader";
 import type { Highlight } from "./mediaHighlights";
 import MediaHighlightsPaneBody from "./MediaHighlightsPaneBody";
 
-describe("MediaHighlightsPaneBody", () => {
-  it("does not show edit actions for shared non-PDF highlights", async () => {
-    const scrollHost = document.createElement("div");
-    scrollHost.style.height = "320px";
-    scrollHost.style.overflowY = "auto";
-    Object.defineProperty(scrollHost, "clientHeight", {
-      configurable: true,
-      value: 320,
-    });
-    Object.defineProperty(scrollHost, "scrollTop", {
-      configurable: true,
-      writable: true,
-      value: 0,
-    });
-    vi.spyOn(scrollHost, "getBoundingClientRect").mockImplementation(
-      () => new DOMRect(0, 100, 400, 320),
-    );
-
-    const content = document.createElement("div");
-    const segment = document.createElement("span");
-    segment.dataset.activeHighlightIds = "shared-highlight";
-    segment.textContent = "Shared quote";
-    vi.spyOn(segment, "getClientRects").mockImplementation(
-      () => [] as unknown as DOMRectList,
-    );
-    vi.spyOn(segment, "getBoundingClientRect").mockImplementation(
-      () => new DOMRect(0, 140, 100, 16),
-    );
-    content.append(segment);
-    scrollHost.append(content);
-    document.body.append(scrollHost);
-
-    render(
-      <FeedbackProvider>
-        <MediaHighlightsPaneBody
-          isPdf={false}
-          isEpub={false}
-          isMobile={false}
-          fragmentHighlights={[highlight({ id: "shared-highlight", is_owner: false })]}
-          pdfPageHighlights={[]}
-          highlightsVersion={1}
-          pdfHighlightsVersion={0}
-          pdfActivePage={1}
-          contentRef={{ current: content }}
-          focusedId="shared-highlight"
-          onFocusHighlight={() => {}}
-          onClearFocus={() => {}}
-          canSendToChat={false}
-          onSendToChat={() => {}}
-          onColorChange={async () => {}}
-          onDelete={async () => {}}
-          onStartEditBounds={vi.fn()}
-          onCancelEditBounds={vi.fn()}
-          isEditingBounds={false}
-          onNoteSave={async () => {}}
-          onNoteDelete={async () => {}}
-          onOpenConversation={() => {}}
-        />
-      </FeedbackProvider>
-    );
-
-    await screen.findByRole("button", { name: /Shared quote/ });
-    await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "Actions" })).not.toBeInTheDocument();
-    });
-    scrollHost.remove();
-  });
-});
-
-function highlight(input: { id: string; is_owner: boolean }): Highlight {
+function buildHighlight(overrides: Partial<Highlight> & { id: string }): Highlight {
   return {
-    id: input.id,
+    id: overrides.id,
     anchor: {
       type: "fragment_offsets",
       media_id: "media-1",
       fragment_id: "fragment-1",
       start_offset: 10,
       end_offset: 22,
+      ...(overrides.anchor ?? {}),
     },
-    color: "yellow",
-    exact: "Shared quote",
-    prefix: "",
-    suffix: "",
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-    author_user_id: "user-2",
-    is_owner: input.is_owner,
-    linked_conversations: [],
-    linked_note_blocks: [],
+    color: overrides.color ?? "yellow",
+    exact: overrides.exact ?? "Quote text",
+    prefix: overrides.prefix ?? "",
+    suffix: overrides.suffix ?? "",
+    created_at: overrides.created_at ?? "2026-01-01T00:00:00Z",
+    updated_at: overrides.updated_at ?? "2026-01-01T00:00:00Z",
+    author_user_id: overrides.author_user_id ?? "user-1",
+    is_owner: overrides.is_owner ?? true,
+    linked_conversations: overrides.linked_conversations ?? [],
+    linked_note_blocks: overrides.linked_note_blocks ?? [],
   };
 }
+
+const baseProps = {
+  isPdf: false,
+  isEpub: false,
+  pdfPageHighlights: [] as PdfHighlightOut[],
+  pdfActivePage: 1,
+  canSendToChat: false,
+  onSendToChat: vi.fn(),
+  onColorChange: vi.fn(async () => undefined),
+  onDelete: vi.fn(async () => undefined),
+  onStartEditBounds: vi.fn(),
+  onCancelEditBounds: vi.fn(),
+  isEditingBounds: false,
+  onNoteSave: vi.fn(async () => undefined),
+  onNoteDelete: vi.fn(async () => undefined),
+  onOpenConversation: vi.fn(),
+} as const;
+
+describe("MediaHighlightsPaneBody", () => {
+  it("renders the highlights list as plain content (no anchored layout)", () => {
+    render(
+      <FeedbackProvider>
+        <MediaHighlightsPaneBody
+          {...baseProps}
+          fragmentHighlights={[
+            buildHighlight({ id: "h1", exact: "Hello world" }),
+          ]}
+          focusedId={null}
+          onFocusHighlight={() => {}}
+        />
+      </FeedbackProvider>,
+    );
+    const row = screen.getByTestId("highlights-inspector-row-h1");
+    expect(row).toBeTruthy();
+    // No reader scroll-anchored absolute positioning is applied at the row.
+    expect(row.style.transform).toBe("");
+  });
+
+  it("does not show edit actions for shared non-PDF highlights", async () => {
+    render(
+      <FeedbackProvider>
+        <MediaHighlightsPaneBody
+          {...baseProps}
+          fragmentHighlights={[
+            buildHighlight({ id: "h1", exact: "Shared quote", is_owner: false }),
+          ]}
+          focusedId="h1"
+          onFocusHighlight={() => {}}
+        />
+      </FeedbackProvider>,
+    );
+    await screen.findByRole("button", { name: /Shared quote/ });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Actions" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("invokes onJumpToHighlight when an item is clicked", async () => {
+    const onFocusHighlight = vi.fn();
+    const onJumpToHighlight = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <FeedbackProvider>
+        <MediaHighlightsPaneBody
+          {...baseProps}
+          fragmentHighlights={[buildHighlight({ id: "h1", exact: "Pulse me" })]}
+          focusedId={null}
+          onFocusHighlight={onFocusHighlight}
+          onJumpToHighlight={onJumpToHighlight}
+        />
+      </FeedbackProvider>,
+    );
+    const button = await screen.findByRole("button", { name: /Pulse me/ });
+    await user.click(button);
+    expect(onFocusHighlight).toHaveBeenCalledWith("h1");
+    expect(onJumpToHighlight).toHaveBeenCalledWith("h1");
+  });
+});

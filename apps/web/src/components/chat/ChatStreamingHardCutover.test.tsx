@@ -140,7 +140,7 @@ describe("chat streaming hard cutover", () => {
     });
 
     expect(screen.queryByText("No messages yet")).not.toBeInTheDocument();
-    expect(screen.getByText("Generating response...")).toBeVisible();
+    expect(screen.getByTestId("streaming-cue")).toBeInTheDocument();
     expect(streamMocks.fetchStreamToken).toHaveBeenCalledOnce();
     expect(streamMocks.sseClientDirect).not.toHaveBeenCalled();
   });
@@ -184,7 +184,7 @@ describe("chat streaming hard cutover", () => {
 
     expect(screen.getByText("Earlier question")).toBeVisible();
     expect(screen.getByText("Earlier answer")).toBeVisible();
-    expect(screen.getByText("Generating response...")).toBeVisible();
+    expect(screen.getByTestId("streaming-cue")).toBeInTheDocument();
     expect(streamMocks.fetchStreamToken).toHaveBeenCalledOnce();
     expect(streamMocks.sseClientDirect).not.toHaveBeenCalled();
   });

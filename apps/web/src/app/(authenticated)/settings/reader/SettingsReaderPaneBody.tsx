@@ -3,14 +3,23 @@
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import {
   DEFAULT_READER_PROFILE,
+  type ReaderFocusMode,
   type ReaderFontFamily,
   type ReaderTheme,
 } from "@/lib/reader/types";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import SectionCard from "@/components/ui/SectionCard";
 import Select from "@/components/ui/Select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import Toggle from "@/components/ui/Toggle";
 import styles from "./page.module.css";
+
+const FOCUS_MODE_OPTIONS: ReadonlyArray<{ value: ReaderFocusMode; label: string }> = [
+  { value: "off", label: "Off" },
+  { value: "distraction_free", label: "Distraction-free" },
+  { value: "paragraph", label: "Paragraph" },
+  { value: "sentence", label: "Sentence" },
+];
 
 export default function SettingsReaderPaneBody() {
   const {
@@ -18,12 +27,12 @@ export default function SettingsReaderPaneBody() {
     loading,
     error,
     saving,
+    save,
     updateTheme,
     updateFontFamily,
     updateFontSize,
     updateLineHeight,
     updateColumnWidth,
-    updateFocusMode,
   } = useReaderContext();
 
   const p = profile ?? DEFAULT_READER_PROFILE;
@@ -132,11 +141,38 @@ export default function SettingsReaderPaneBody() {
 
           <div className={styles.formRow}>
             <div className={styles.formField}>
+              <span className={styles.formLabel}>Focus mode</span>
+              <Tabs
+                value={p.focus_mode}
+                onValueChange={(next) =>
+                  save({ focus_mode: next as ReaderFocusMode })
+                }
+                variant="segmented"
+              >
+                <TabsList aria-label="Focus mode">
+                  {FOCUS_MODE_OPTIONS.map((option) => (
+                    <TabsTrigger
+                      key={option.value}
+                      value={option.value}
+                      disabled={saving}
+                    >
+                      {option.label}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            </div>
+          </div>
+
+          <div className={styles.formRow}>
+            <div className={styles.formField}>
               <Toggle
-                checked={p.focus_mode}
-                onCheckedChange={updateFocusMode}
+                checked={p.hyphenation === "auto"}
+                onCheckedChange={(checked) =>
+                  save({ hyphenation: checked ? "auto" : "off" })
+                }
                 disabled={saving}
-                label="Focus mode (hide distractions)"
+                label="Hyphenation on narrow screens"
               />
             </div>
           </div>

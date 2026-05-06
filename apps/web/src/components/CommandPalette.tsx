@@ -33,11 +33,12 @@ import { rankPaletteCommands, sectionFor } from "@/components/command-palette/co
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
+import Chip from "@/components/ui/Chip";
 import { apiFetch } from "@/lib/api/client";
 import { loadKeybindings, matchesKeyEvent, formatKeyCombo } from "@/lib/keybindings";
-import { createNotePage } from "@/lib/notes/api";
+import { createNotePage, todayLocalDate } from "@/lib/notes/api";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
-import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
+import { resolvePaneRoute, type PaneRouteId } from "@/lib/panes/paneRouteRegistry";
 import { pinObjectToNavbar } from "@/lib/pinnedObjects";
 import {
   ALL_SEARCH_TYPES,
@@ -200,6 +201,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     target: { kind: "action", actionId: "new-conversation" },
     source: "static",
     rank: {},
+    scopeAffinity: ["conversation", "conversations", "conversationNew", "media"],
   },
   {
     id: "create-page",
@@ -210,6 +212,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     target: { kind: "action", actionId: "create-page" },
     source: "static",
     rank: {},
+    scopeAffinity: ["note", "page", "notes"],
   },
   {
     id: "quick-note-today",
@@ -220,6 +223,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     target: { kind: "action", actionId: "quick-note" },
     source: "static",
     rank: {},
+    scopeAffinity: ["daily", "dailyDate", "note", "page", "notes"],
   },
   {
     id: "create-library",
@@ -230,6 +234,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     target: { kind: "href", href: "/libraries", externalShell: false },
     source: "static",
     rank: {},
+    scopeAffinity: ["library", "libraries"],
   },
   {
     id: "create-upload",
@@ -240,6 +245,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     target: { kind: "action", actionId: "add-content" },
     source: "static",
     rank: {},
+    scopeAffinity: ["library", "libraries", "media"],
   },
   {
     id: "create-url",
@@ -250,6 +256,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     target: { kind: "action", actionId: "add-content" },
     source: "static",
     rank: {},
+    scopeAffinity: ["library", "libraries", "media"],
   },
   {
     id: "create-opml",
@@ -260,6 +267,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     target: { kind: "action", actionId: "add-opml" },
     source: "static",
     rank: {},
+    scopeAffinity: ["library", "libraries", "podcasts", "podcastDetail"],
   },
 ];
 
@@ -272,6 +280,193 @@ const SEARCH_TYPE_ICON: Record<SearchType, PaletteCommand["icon"]> = {
   note_block: FileText,
   message: MessageSquare,
 };
+
+const PANE_TYPE_LABELS = {
+  libraries: "Libraries",
+  library: "Library",
+  media: "Media",
+  conversations: "Chats",
+  conversationNew: "New chat",
+  conversation: "Chat",
+  browse: "Browse",
+  podcasts: "Podcasts",
+  podcastDetail: "Podcast",
+  search: "Search",
+  author: "Author",
+  notes: "Notes",
+  page: "Page",
+  note: "Note",
+  daily: "Daily note",
+  dailyDate: "Daily note",
+  settings: "Settings",
+  settingsBilling: "Billing",
+  settingsReader: "Reader settings",
+  settingsAppearance: "Appearance",
+  settingsKeys: "API keys",
+  settingsLocalVault: "Local vault",
+  settingsIdentities: "Linked identities",
+  settingsKeybindings: "Keybindings",
+} as const satisfies Record<PaneRouteId, string>;
+
+function yesterdayLocalDate(): string {
+  const now = new Date();
+  now.setDate(now.getDate() - 1);
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function commandsForPaneType(
+  paneRouteId: PaneRouteId,
+  paneRouteParams: Record<string, string>,
+): PaletteCommand[] {
+  switch (paneRouteId) {
+    case "media": {
+      const mediaId = paneRouteParams.id;
+      if (!mediaId) return [];
+      return [
+        {
+          id: "pane-media-open-chat",
+          title: "Open chat about this",
+          keywords: ["chat", "ask", "discuss"],
+          sectionId: "in-this-pane",
+          icon: MessageSquarePlus,
+          target: {
+            kind: "href",
+            href: `/conversations/new?scope=media%3A${encodeURIComponent(mediaId)}`,
+            externalShell: false,
+          },
+          source: "static",
+          rank: {},
+          scopeAffinity: ["media"],
+        },
+        {
+          id: "pane-media-reader-settings",
+          title: "Reader settings",
+          keywords: ["typography", "font", "focus", "hyphenation"],
+          sectionId: "in-this-pane",
+          icon: Type,
+          target: { kind: "href", href: "/settings/reader", externalShell: false },
+          source: "static",
+          rank: {},
+          scopeAffinity: ["media"],
+        },
+      ];
+    }
+    case "library": {
+      return [
+        {
+          id: "pane-library-add-content",
+          title: "Add content",
+          keywords: ["upload", "import", "add"],
+          sectionId: "in-this-pane",
+          icon: Upload,
+          target: { kind: "action", actionId: "add-content" },
+          source: "static",
+          rank: {},
+          scopeAffinity: ["library"],
+        },
+      ];
+    }
+    case "daily":
+    case "dailyDate": {
+      return [
+        {
+          id: "pane-daily-open-today",
+          title: "Open today",
+          keywords: ["daily", "today"],
+          sectionId: "in-this-pane",
+          icon: CalendarDays,
+          target: { kind: "href", href: "/daily", externalShell: false },
+          source: "static",
+          rank: {},
+          scopeAffinity: ["daily", "dailyDate"],
+        },
+        {
+          id: "pane-daily-open-yesterday",
+          title: "Open yesterday",
+          keywords: ["daily", "yesterday"],
+          sectionId: "in-this-pane",
+          icon: CalendarDays,
+          target: {
+            kind: "href",
+            href: `/daily/${yesterdayLocalDate()}`,
+            externalShell: false,
+          },
+          source: "static",
+          rank: {},
+          scopeAffinity: ["daily", "dailyDate"],
+        },
+      ];
+    }
+    case "conversation":
+    case "conversationNew": {
+      const todayHref = `/daily/${todayLocalDate()}`;
+      return [
+        {
+          id: "pane-conversation-quick-note-today",
+          title: "Save snippet to today's note",
+          keywords: ["capture", "journal"],
+          sectionId: "in-this-pane",
+          icon: FileText,
+          target: { kind: "action", actionId: "quick-note" },
+          source: "static",
+          rank: {},
+          scopeAffinity: ["conversation", "conversationNew"],
+        },
+        {
+          id: "pane-conversation-open-today",
+          title: "Open today's note",
+          keywords: ["daily", "today"],
+          sectionId: "in-this-pane",
+          icon: CalendarDays,
+          target: { kind: "href", href: todayHref, externalShell: false },
+          source: "static",
+          rank: {},
+          scopeAffinity: ["conversation", "conversationNew"],
+        },
+      ];
+    }
+    case "page":
+    case "note": {
+      return [
+        {
+          id: "pane-note-open-today",
+          title: "Open today's note",
+          keywords: ["daily", "today"],
+          sectionId: "in-this-pane",
+          icon: CalendarDays,
+          target: {
+            kind: "href",
+            href: `/daily/${todayLocalDate()}`,
+            externalShell: false,
+          },
+          source: "static",
+          rank: {},
+          scopeAffinity: ["page", "note"],
+        },
+      ];
+    }
+    case "libraries":
+    case "conversations":
+    case "browse":
+    case "podcasts":
+    case "podcastDetail":
+    case "search":
+    case "author":
+    case "notes":
+    case "settings":
+    case "settingsBilling":
+    case "settingsReader":
+    case "settingsAppearance":
+    case "settingsKeys":
+    case "settingsLocalVault":
+    case "settingsIdentities":
+    case "settingsKeybindings":
+      return [];
+  }
+}
 
 interface PaletteHistoryResponse {
   data: {
@@ -377,10 +572,17 @@ function getDestinationIcon(href: string): PaletteCommand["icon"] {
   }
 }
 
+interface PaletteScope {
+  paneRouteId: PaneRouteId;
+  paneTitle: string;
+  paneRouteParams: Record<string, string>;
+}
+
 export default function CommandPalette() {
   const feedback = useFeedback();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [scope, setScope] = useState<PaletteScope | null>(null);
   const [activeCommandId, setActiveCommandId] = useState<string | null>(null);
   const [requestedCommandId, setRequestedCommandId] = useState<string | null>(null);
   const [keybindings, setKeybindings] = useState<Record<string, string>>({});
@@ -398,6 +600,17 @@ export default function CommandPalette() {
     restorePane,
   } = useWorkspaceStore();
 
+  const captureScope = useCallback((): PaletteScope | null => {
+    const activePane = workspaceState.panes.find(
+      (pane) => pane.id === workspaceState.activePaneId,
+    );
+    if (!activePane) return null;
+    const route = resolvePaneRoute(activePane.href);
+    if (route.id === "unsupported") return null;
+    const { title } = resolveWorkspacePaneTitle(activePane, runtimeTitleByPaneId);
+    return { paneRouteId: route.id, paneTitle: title, paneRouteParams: route.params };
+  }, [runtimeTitleByPaneId, workspaceState.activePaneId, workspaceState.panes]);
+
   useEffect(() => {
     setKeybindings(loadKeybindings());
   }, []);
@@ -411,6 +624,7 @@ export default function CommandPalette() {
     setQuery(params.get("q") ?? "");
     setRequestedCommandId(commandId);
     setActiveCommandId(commandId);
+    setScope(captureScope());
     setOpen(true);
 
     params.delete("palette");
@@ -419,18 +633,19 @@ export default function CommandPalette() {
     const nextQuery = params.toString();
     const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
     window.history.replaceState({}, "", nextUrl);
-  }, []);
+  }, [captureScope]);
 
   useEffect(() => {
     const handler = () => {
       setQuery("");
       setRequestedCommandId(null);
       setActiveCommandId(null);
+      setScope(captureScope());
       setOpen(true);
     };
     window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, handler);
     return () => window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, handler);
-  }, []);
+  }, [captureScope]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -549,6 +764,8 @@ export default function CommandPalette() {
 
     for (const row of historyRows) {
       if (openPaneHrefs.has(row.target_href)) continue;
+      const resolved = resolvePaneRoute(row.target_href);
+      const affinity = resolved.id === "unsupported" ? undefined : [resolved.id];
       commands.push({
         id: `recent-${row.target_key}`,
         title: row.title_snapshot,
@@ -559,6 +776,7 @@ export default function CommandPalette() {
         target: { kind: "href", href: row.target_href, externalShell: false },
         source: "recent",
         rank: { frecencyBoost: frecencyBoosts.get(row.target_key) ?? 0 },
+        scopeAffinity: affinity,
       });
     }
 
@@ -601,6 +819,7 @@ export default function CommandPalette() {
         target: { kind: "action", actionId: `pin-page:${route.params.pageId}` },
         source: "workspace",
         rank: {},
+        scopeAffinity: ["page"],
       });
     }
     if (route?.id === "note" && route.params.blockId) {
@@ -613,7 +832,14 @@ export default function CommandPalette() {
         target: { kind: "action", actionId: `pin-note:${route.params.blockId}` },
         source: "workspace",
         rank: {},
+        scopeAffinity: ["note"],
       });
+    }
+
+    if (scope) {
+      for (const command of commandsForPaneType(scope.paneRouteId, scope.paneRouteParams)) {
+        commands.push(command);
+      }
     }
 
     for (const result of searchResults) {
@@ -639,6 +865,7 @@ export default function CommandPalette() {
     oracleRows,
     query,
     runtimeTitleByPaneId,
+    scope,
     searchResults,
     workspaceState.activePaneId,
     workspaceState.panes,
@@ -656,6 +883,7 @@ export default function CommandPalette() {
     frecencyBoosts,
     currentWorkspaceHref:
       workspaceState.panes.find((pane) => pane.id === workspaceState.activePaneId)?.href ?? null,
+    scopeFilter: scope?.paneRouteId ?? null,
   });
 
   const loadingSectionIds = searchLoading ? ["search-results"] : [];
@@ -784,7 +1012,13 @@ export default function CommandPalette() {
         setQuery("");
         setRequestedCommandId(null);
         setActiveCommandId(null);
-        setOpen((value) => !value);
+        if (open) {
+          setScope(null);
+          setOpen(false);
+        } else {
+          setScope(captureScope());
+          setOpen(true);
+        }
         return;
       }
 
@@ -801,7 +1035,7 @@ export default function CommandPalette() {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [executeCommand, keybindings]);
+  }, [captureScope, executeCommand, keybindings, open]);
 
   return (
     <Palette
@@ -809,6 +1043,13 @@ export default function CommandPalette() {
       query={query}
       sections={[
         sectionFor("top-result"),
+        scope
+          ? {
+              id: "in-this-pane",
+              label: `In this ${PANE_TYPE_LABELS[scope.paneRouteId].toLowerCase()}`,
+              order: 5,
+            }
+          : sectionFor("in-this-pane"),
         sectionFor("search-results"),
         sectionFor("open-tabs"),
         sectionFor("recent"),
@@ -821,7 +1062,21 @@ export default function CommandPalette() {
       commands={ranked.displayCommands}
       activeCommandId={activeCommandId}
       loadingSectionIds={loadingSectionIds}
-      onOpenChange={setOpen}
+      searchPrefix={
+        scope ? (
+          <Chip
+            removable
+            onRemove={() => setScope(null)}
+            data-testid="palette-scope-chip"
+          >
+            {`In: ${PANE_TYPE_LABELS[scope.paneRouteId]} — ${scope.paneTitle}`}
+          </Chip>
+        ) : null
+      }
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) setScope(null);
+      }}
       onQueryChange={(nextQuery) => {
         setQuery(nextQuery);
         setRequestedCommandId(null);
@@ -829,6 +1084,13 @@ export default function CommandPalette() {
       onActiveCommandChange={setActiveCommandId}
       onSelect={(command) => {
         void executeCommand(command);
+      }}
+      onEscape={() => {
+        if (scope) {
+          setScope(null);
+          return true;
+        }
+        return false;
       }}
     />
   );

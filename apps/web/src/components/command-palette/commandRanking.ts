@@ -2,6 +2,7 @@ import type { PaletteCommand, PaletteSection } from "@/components/palette/types"
 
 const SECTION_ORDER: Record<string, number> = {
   "top-result": 0,
+  "in-this-pane": 5,
   "search-results": 10,
   "open-tabs": 20,
   recent: 30,
@@ -14,6 +15,7 @@ const SECTION_ORDER: Record<string, number> = {
 
 const SECTION_LABELS: Record<string, string> = {
   "top-result": "Top result",
+  "in-this-pane": "In this pane",
   "search-results": "Search results",
   "open-tabs": "Open tabs",
   recent: "Recent",
@@ -28,23 +30,31 @@ export function sectionFor(id: string): PaletteSection {
   return { id, label: SECTION_LABELS[id] ?? id, order: SECTION_ORDER[id] ?? 1000 };
 }
 
+const SCOPE_FILTER_AFFINITY_BOOST = 1500;
+
 export function rankPaletteCommands({
   query,
   commands,
   frecencyBoosts,
   currentWorkspaceHref,
+  scopeFilter,
 }: {
   query: string;
   commands: PaletteCommand[];
   frecencyBoosts: Map<string, number>;
   currentWorkspaceHref: string | null;
+  scopeFilter: string | null;
 }): {
   topResult: PaletteCommand | null;
   displaySections: PaletteSection[];
   displayCommands: PaletteCommand[];
 } {
   const normalizedQuery = query.trim().toLowerCase();
-  const scored = commands
+  const filteredCommands =
+    scopeFilter === null
+      ? commands
+      : commands.filter((command) => command.scopeAffinity?.includes(scopeFilter) ?? false);
+  const scored = filteredCommands
     .map((command, index) => {
       const title = command.title.toLowerCase();
       const words = title.split(/\s+/);
@@ -73,7 +83,11 @@ export function rankPaletteCommands({
       score += command.rank.searchScore ? command.rank.searchScore * 1000 : 0;
       score += frecencyBoosts.get(command.id) ?? command.rank.frecencyBoost ?? 0;
       score += command.rank.recencyBoost ?? 0;
-      score += command.rank.scopeBoost ?? 0;
+      if (scopeFilter === null) {
+        score += command.rank.scopeBoost ?? 0;
+      } else if (command.scopeAffinity?.includes(scopeFilter)) {
+        score += SCOPE_FILTER_AFFINITY_BOOST;
+      }
 
       if (currentWorkspaceHref && command.target.kind === "href" && command.target.href === currentWorkspaceHref) {
         score += 250;
@@ -89,9 +103,9 @@ export function rankPaletteCommands({
   const displayCommands = topResult
     ? [
         { ...topResult, sectionId: "top-result" },
-        ...commands.filter((command) => command.id !== topResult.id),
+        ...filteredCommands.filter((command) => command.id !== topResult.id),
       ]
-    : commands;
+    : filteredCommands;
 
   const usedSectionIds = new Set(displayCommands.map((command) => command.sectionId));
   const displaySections = Array.from(usedSectionIds)

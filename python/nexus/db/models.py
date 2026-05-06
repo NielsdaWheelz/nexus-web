@@ -6154,7 +6154,8 @@ class ReaderProfile(Base):
     line_height: Mapped[float] = mapped_column(Numeric(3, 2), nullable=False, server_default="1.5")
     font_family: Mapped[str] = mapped_column(Text, nullable=False, server_default="serif")
     column_width_ch: Mapped[int] = mapped_column(Integer, nullable=False, server_default="65")
-    focus_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    focus_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="off")
+    hyphenation: Mapped[str] = mapped_column(Text, nullable=False, server_default="auto")
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -6181,6 +6182,14 @@ class ReaderProfile(Base):
         CheckConstraint(
             "column_width_ch BETWEEN 40 AND 120",
             name="ck_reader_profiles_column_width_ch",
+        ),
+        CheckConstraint(
+            "focus_mode IN ('off', 'distraction_free', 'paragraph', 'sentence')",
+            name="ck_reader_profiles_focus_mode",
+        ),
+        CheckConstraint(
+            "hyphenation IN ('auto', 'off')",
+            name="ck_reader_profiles_hyphenation",
         ),
     )
 

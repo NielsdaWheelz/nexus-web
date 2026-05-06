@@ -12,6 +12,7 @@ import {
 import { apiFetch } from "@/lib/api/client";
 import { toFeedback } from "@/components/feedback/Feedback";
 import type { PdfReaderResumeState } from "@/lib/reader/types";
+import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
 import { usePaneMobileChromeController } from "@/components/workspace/PaneShell";
 import {
   PDF_WORKER_SRC,
@@ -240,6 +241,7 @@ const PDF_VIEWER_TEXT_LAYER_MODE_ENABLE = 1;
 const PDF_LINK_TARGET_BLANK = 2;
 const PDF_GEOMETRY_ALIGNMENT_DELTA_THRESHOLD = 0.02;
 const PDF_HIGHLIGHT_SCROLL_TARGET_FRACTION = 0.35;
+const PDF_PULSE_DURATION_MS = 1200;
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
 const PDF_QUOTE_CONTEXT_TEXT_RADIUS = 160;
 const OVERLAY_COLOR_MAP: Record<HighlightColor, string> = {
@@ -1917,6 +1919,48 @@ export default function PdfReader({
       cancelled = true;
     };
   }, [goToPage, scrollToProjectedHighlight, temporaryHighlight]);
+
+  useReaderPulseHighlight(
+    useCallback(
+      (target) => {
+        if (target.mediaId !== mediaId) return;
+        const locator = target.locator;
+        if (typeof locator !== "object" || locator === null) return;
+        const record = locator as Record<string, unknown>;
+        const pageNumberRaw = record.page_number;
+        if (typeof pageNumberRaw !== "number") return;
+        const quadsRaw = record.quads;
+        const quads: PdfHighlightQuad[] = Array.isArray(quadsRaw)
+          ? (quadsRaw as PdfHighlightQuad[])
+          : [];
+        const pageNumber = pageNumberRaw;
+        const pulseOverlaysOnPage = () => {
+          const pageEl = getPageElement(pageNumber);
+          if (!pageEl) return;
+          const overlays = pageEl.querySelectorAll<HTMLElement>(
+            "[data-highlight-anchor]",
+          );
+          overlays.forEach((overlay) => {
+            overlay.classList.add(styles.pulsing);
+            window.setTimeout(() => {
+              overlay.classList.remove(styles.pulsing);
+            }, PDF_PULSE_DURATION_MS);
+          });
+        };
+        const navigate = async () => {
+          if (pageNumber !== pageNumberRef.current) {
+            await goToPage(pageNumber);
+          }
+          if (quads.length > 0) {
+            scrollToProjectedHighlight(pageNumber, quads);
+          }
+          window.requestAnimationFrame(pulseOverlaysOnPage);
+        };
+        void navigate();
+      },
+      [getPageElement, goToPage, mediaId, scrollToProjectedHighlight],
+    ),
+  );
 
   useEffect(() => {
     zoomRef.current = zoom;

@@ -16,8 +16,7 @@ import {
   type ContextItem,
   type ChatRunCreateRequest,
 } from "@/lib/api/sse";
-import ContextChips from "@/components/chat/ContextChips";
-import ConversationScopeChip from "@/components/chat/ConversationScopeChip";
+import ComposerContextRail from "@/components/chat/ComposerContextRail";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import Textarea from "@/components/ui/Textarea";
@@ -29,7 +28,6 @@ import type {
   ConversationScope,
   ConversationModel,
 } from "@/lib/conversations/types";
-import BranchAnchorPreview from "@/components/chat/BranchAnchorPreview";
 import styles from "./ChatComposer.module.css";
 
 // ============================================================================
@@ -63,6 +61,12 @@ export interface ChatComposerProps {
   parentMessageId?: string | null;
   /** Clears branch-reply mode. */
   onClearBranchDraft?: () => void;
+  /**
+   * Clears the conversation scope (reverts to general). Omit when the scope
+   * is structural and cannot sensibly be removed (e.g., loaded scoped
+   * conversations); the rail then renders the scope chip without an X.
+   */
+  onClearScope?: () => void;
 }
 
 type ComposerModel = ConversationModel;
@@ -162,6 +166,7 @@ export default function ChatComposer({
   branchDraft = null,
   parentMessageId = null,
   onClearBranchDraft,
+  onClearScope,
 }: ChatComposerProps) {
   const [content, setContent] = useState(initialContent);
   const [sending, setSending] = useState(false);
@@ -436,23 +441,13 @@ export default function ChatComposer({
       <div className={styles.composerShell}>
         {error && <div className={styles.composerError}>{error}</div>}
 
-        {conversationScope.type !== "general" ? (
-          <div className={styles.scopeRow}>
-            <ConversationScopeChip scope={conversationScope} compact />
-          </div>
-        ) : null}
-
-        {branchDraft ? (
-          <BranchAnchorPreview
-            draft={branchDraft}
-            onRemove={() => onClearBranchDraft?.()}
-          />
-        ) : null}
-
-        <ContextChips
-          contexts={attachedContexts}
-          onRemoveContext={onRemoveContext}
-          maxContexts={MAX_CONTEXTS}
+        <ComposerContextRail
+          scope={conversationScope}
+          branchDraft={branchDraft}
+          attachedContexts={attachedContexts}
+          onClearScope={onClearScope}
+          onClearBranchDraft={() => onClearBranchDraft?.()}
+          onRemoveContext={(index) => onRemoveContext?.(index)}
         />
 
         <Textarea

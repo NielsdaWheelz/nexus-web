@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CommandPalette from "@/components/CommandPalette";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
@@ -87,6 +87,15 @@ function openPane(href: string, titleHint?: string) {
   });
 }
 
+async function clearPaletteScope() {
+  const chip = screen.queryByTestId("palette-scope-chip");
+  if (!chip) return;
+  fireEvent.click(within(chip).getByRole("button", { name: "Remove" }));
+  await waitFor(() => {
+    expect(screen.queryByTestId("palette-scope-chip")).not.toBeInTheDocument();
+  });
+}
+
 describe("CommandPalette", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -113,6 +122,9 @@ describe("CommandPalette", () => {
       "palette-listbox",
     );
     expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+    await clearPaletteScope();
+
     expect(screen.getByRole("group", { name: "Navigate" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Oracle/ })).toBeInTheDocument();
   });
@@ -183,6 +195,8 @@ describe("CommandPalette", () => {
     renderCommandPalette();
     openPalette();
 
+    await clearPaletteScope();
+
     expect(await screen.findByRole("option", { name: /Saved search/ })).toBeInTheDocument();
     expect(
       await screen.findByRole("option", {
@@ -207,6 +221,8 @@ describe("CommandPalette", () => {
     openPane("/media/media-1");
     openPalette();
 
+    await clearPaletteScope();
+
     expect(await screen.findByRole("option", { name: /Media.*Switch to open tab/ })).toBeInTheDocument();
     const closeCommand = screen.getByRole("option", { name: /Close Media/ });
 
@@ -222,6 +238,8 @@ describe("CommandPalette", () => {
     renderCommandPalette();
     openPalette();
 
+    await clearPaletteScope();
+
     fireEvent.click(await screen.findByRole("option", { name: /New page/ }));
 
     await waitFor(() => {
@@ -235,6 +253,85 @@ describe("CommandPalette", () => {
         "/api/notes/pages",
         expect.objectContaining({ method: "POST" }),
       );
+    });
+  });
+
+  it("shows the scope chip with the pane label and resolved title when opened from a pane", async () => {
+    renderCommandPalette();
+    expect(await screen.findByTestId("workspace-ready")).toBeInTheDocument();
+
+    openPane("/media/media-42");
+    openPalette();
+
+    const chip = await screen.findByTestId("palette-scope-chip");
+    expect(chip).toHaveTextContent("In: Media — Media");
+  });
+
+  it("hides the scope chip when opened from outside any pane", async () => {
+    window.history.replaceState({}, "", "/oracle");
+    renderCommandPalette();
+    expect(await screen.findByTestId("workspace-ready")).toBeInTheDocument();
+
+    openPalette();
+
+    await screen.findByRole("dialog", { name: "Command palette" });
+    expect(screen.queryByTestId("palette-scope-chip")).not.toBeInTheDocument();
+  });
+
+  it("surfaces per-pane commands under an 'In this' section when scope is set", async () => {
+    renderCommandPalette();
+    expect(await screen.findByTestId("workspace-ready")).toBeInTheDocument();
+
+    openPane("/media/media-7", "The Selected Title");
+    openPalette();
+
+    expect(await screen.findByRole("group", { name: "In this media" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Open chat about this/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Reader settings/ })).toBeInTheDocument();
+  });
+
+  it("clears scope when the chip remove button is clicked and reranks to global commands", async () => {
+    renderCommandPalette();
+    expect(await screen.findByTestId("workspace-ready")).toBeInTheDocument();
+
+    openPane("/media/media-7", "The Selected Title");
+    openPalette();
+
+    const chip = await screen.findByTestId("palette-scope-chip");
+    expect(screen.queryByRole("option", { name: /Oracle/ })).not.toBeInTheDocument();
+
+    fireEvent.click(within(chip).getByRole("button", { name: "Remove" }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("palette-scope-chip")).not.toBeInTheDocument();
+    });
+    expect(await screen.findByRole("option", { name: /Oracle/ })).toBeInTheDocument();
+  });
+
+  it("clears scope on Esc and only closes the palette on a second Esc", async () => {
+    renderCommandPalette();
+    expect(await screen.findByTestId("workspace-ready")).toBeInTheDocument();
+
+    openPane("/media/media-7");
+    openPalette();
+
+    const dialog = await screen.findByRole("dialog", { name: "Command palette" });
+    expect(screen.getByTestId("palette-scope-chip")).toBeInTheDocument();
+
+    fireEvent(dialog, new Event("cancel", { bubbles: false, cancelable: true }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("palette-scope-chip")).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
+
+    fireEvent(
+      screen.getByRole("dialog", { name: "Command palette" }),
+      new Event("cancel", { bubbles: false, cancelable: true }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
     });
   });
 });

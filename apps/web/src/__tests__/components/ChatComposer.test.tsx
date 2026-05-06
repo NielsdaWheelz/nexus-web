@@ -329,8 +329,7 @@ describe("ChatComposer", () => {
       />,
     );
 
-    expect(await screen.findByText(/replying from assistant message #4/i))
-      .toBeInTheDocument();
+    expect(await screen.findByText("assistant answer")).toBeInTheDocument();
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);

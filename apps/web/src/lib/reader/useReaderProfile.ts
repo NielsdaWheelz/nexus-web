@@ -104,10 +104,6 @@ export function useReaderProfile(options: UseReaderProfileOptions = {}) {
     (column_width_ch: number) => save({ column_width_ch }),
     [save]
   );
-  const updateFocusMode = useCallback(
-    (focus_mode: boolean) => save({ focus_mode }),
-    [save]
-  );
 
   useEffect(() => {
     return () => {
@@ -129,6 +125,5 @@ export function useReaderProfile(options: UseReaderProfileOptions = {}) {
     updateFontSize,
     updateLineHeight,
     updateColumnWidth,
-    updateFocusMode,
   };
 }

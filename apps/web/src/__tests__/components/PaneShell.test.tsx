@@ -543,7 +543,7 @@ function TwoLocksProbe() {
         onClick={() => {
           secondReleaseRef.current?.();
           secondReleaseRef.current =
-            paneMobileChrome?.acquireVisibleLock("reader-assistant") ?? null;
+            paneMobileChrome?.acquireVisibleLock("highlights-inspector") ?? null;
         }}
       >
         Lock second

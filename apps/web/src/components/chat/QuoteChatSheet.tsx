@@ -23,7 +23,6 @@ export default function QuoteChatSheet({
   onConversationCreated,
   onOpenFullChat,
   onReaderSourceActivate,
-  surface = "mobile",
 }: {
   contexts: ContextItem[];
   conversationId: string | null;
@@ -33,7 +32,6 @@ export default function QuoteChatSheet({
   onConversationCreated: (conversationId: string, runId?: string) => void;
   onOpenFullChat: (conversationId: string) => void;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
-  surface?: "mobile" | "embedded";
 }) {
   const sheetRef = useRef<HTMLElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -102,7 +100,6 @@ export default function QuoteChatSheet({
           onReaderSourceActivate={onReaderSourceActivate}
           autoFocusComposer
           resolveScopedConversation={false}
-          surface={surface}
         />
       </aside>
     </div>

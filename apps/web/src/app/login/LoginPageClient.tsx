@@ -23,7 +23,6 @@ function GitHubMark() {
   return (
     <svg
       aria-hidden="true"
-      className={styles.providerIcon}
       viewBox="0 0 24 24"
       fill="currentColor"
       focusable="false"
@@ -37,7 +36,6 @@ function GoogleMark() {
   return (
     <svg
       aria-hidden="true"
-      className={styles.providerIcon}
       viewBox="0 0 24 24"
       focusable="false"
     >
@@ -102,19 +100,26 @@ export default function LoginPageClient({
 
   return (
     <div className={styles.container}>
-      <div className={styles.shell}>
-        <div className={styles.card}>
-          <div className={styles.header}>
-            <p className={styles.eyebrow}>Nexus</p>
-            <h1 className={styles.title}>Sign in or create your account</h1>
-            <p className={styles.subtitle}>
-              Continue with Google or GitHub. Your first sign-in provisions your
-              workspace automatically.
-            </p>
-          </div>
+      <div className={styles.split}>
+        <section className={styles.editorial}>
+          <h1 className={styles.title}>Read like it matters.</h1>
+          <p className={styles.deck}>
+            A reading workspace for serious readers — annotate, ask, write back.
+          </p>
+          <p className={styles.body}>
+            Bring articles, PDFs, EPUBs, and podcasts into one library. Highlight
+            without breaking the page. Ask questions of any source and get answers
+            grounded in the text.
+          </p>
+          <p className={styles.body}>
+            Your notes link the things you read. Your reading shapes what you
+            remember.
+          </p>
+        </section>
 
-          <div className={styles.form} aria-live="polite">
-            {error ? <FeedbackNotice feedback={error} className={styles.error} /> : null}
+        <section className={styles.signin}>
+          <div className={styles.providers} aria-live="polite">
+            {error ? <FeedbackNotice feedback={error} /> : null}
 
             <Button
               variant="secondary"
@@ -141,20 +146,20 @@ export default function LoginPageClient({
                 ? "Connecting to GitHub..."
                 : "Continue with GitHub"}
             </Button>
-
-            <p className={styles.legalCopy}>
-              By continuing, you agree to the{" "}
-              <Link className={styles.legalLink} href="/terms">
-                Terms of Service
-              </Link>{" "}
-              and acknowledge the{" "}
-              <Link className={styles.legalLink} href="/privacy">
-                Privacy Policy
-              </Link>
-              .
-            </p>
           </div>
-        </div>
+
+          <p className={styles.legal}>
+            By continuing, you agree to the{" "}
+            <Link className={styles.legalLink} href="/terms">
+              Terms of Service
+            </Link>{" "}
+            and acknowledge the{" "}
+            <Link className={styles.legalLink} href="/privacy">
+              Privacy Policy
+            </Link>
+            .
+          </p>
+        </section>
       </div>
     </div>
   );

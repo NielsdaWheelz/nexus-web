@@ -149,7 +149,10 @@ test.describe("non-pdf linked-items @legacy-synthetic", () => {
     await expect
       .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
       .toBe(chatPaneCountBefore);
-    await page.getByRole("tab", { name: "Highlights" }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog", { name: "Reader chat" })).toBeHidden({
+      timeout: 10_000,
+    });
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
     const focusedSegment = contentPane

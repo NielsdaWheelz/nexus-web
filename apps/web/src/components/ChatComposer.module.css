@@ -30,11 +30,6 @@
   font-size: var(--text-xs);
 }
 
-.scopeRow {
-  display: flex;
-  min-width: 0;
-}
-
 .composerActionRow {
   display: flex;
   flex-wrap: wrap;

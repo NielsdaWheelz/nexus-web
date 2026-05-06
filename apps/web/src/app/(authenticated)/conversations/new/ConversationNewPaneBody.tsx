@@ -10,7 +10,10 @@
 
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
-import { parseConversationScopeFromUrl } from "@/lib/conversations/attachedContext";
+import {
+  parseConversationScopeFromUrl,
+  setConversationScopeParam,
+} from "@/lib/conversations/attachedContext";
 import ChatComposer from "@/components/ChatComposer";
 import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
@@ -86,6 +89,12 @@ export default function ConversationNewPaneBody() {
     clearContexts();
   }, [clearContexts]);
 
+  const clearConversationScope = useCallback(() => {
+    const cleaned = setConversationScopeParam(searchParams, { type: "general" });
+    const qs = cleaned.toString();
+    router.replace(qs ? `/conversations/new?${qs}` : `/conversations/new`);
+  }, [router, searchParams]);
+
   return (
     <>
       <div className={styles.chatSplitLayout}>
@@ -105,6 +114,11 @@ export default function ConversationNewPaneBody() {
                   onChatRunCreated={handleChatRunCreated}
                   onMessageSent={clearAttachState}
                   initialContent={draft}
+                  onClearScope={
+                    conversationScope.type === "general"
+                      ? undefined
+                      : clearConversationScope
+                  }
                 />
               }
             />

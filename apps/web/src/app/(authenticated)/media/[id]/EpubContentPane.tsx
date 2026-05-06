@@ -12,6 +12,7 @@ import {
 import styles from "./page.module.css";
 
 export default function EpubContentPane({
+  mediaId,
   sections,
   activeChapter,
   activeSectionId,
@@ -25,6 +26,7 @@ export default function EpubContentPane({
   onContentClick,
   onNavigate,
 }: {
+  mediaId: string;
   sections: EpubNavigationSection[] | null;
   activeChapter: EpubSectionContent | null;
   activeSectionId: string | null;
@@ -114,6 +116,7 @@ export default function EpubContentPane({
           <HtmlRenderer
             htmlSanitized={renderedHtml}
             className={styles.fragment}
+            mediaId={mediaId}
           />
         </div>
       ) : null}

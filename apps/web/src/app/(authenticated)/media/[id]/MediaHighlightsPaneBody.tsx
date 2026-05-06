@@ -1,7 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, type RefObject } from "react";
-import AnchoredSecondaryPane from "@/components/AnchoredSecondaryPane";
+import { useCallback, useMemo, useState } from "react";
+import { MessageSquare, NotebookPen } from "lucide-react";
+import {
+  toFeedback,
+  useFeedback,
+} from "@/components/feedback/Feedback";
+import HighlightNoteEditor, {
+  highlightNoteBodyHasContent,
+} from "@/components/notes/HighlightNoteEditor";
+import HighlightSnippet from "@/components/ui/HighlightSnippet";
+import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
+import Button from "@/components/ui/Button";
+import { COLOR_LABELS } from "@/lib/highlights/colors";
+import {
+  HIGHLIGHT_COLORS,
+  type HighlightColor,
+} from "@/lib/highlights/segmenter";
 import type { PdfHighlightOut } from "@/components/PdfReader";
 import type { Highlight } from "./mediaHighlights";
 import {
@@ -9,22 +24,16 @@ import {
   sortContextualPdfHighlights,
 } from "./mediaHighlightOrdering";
 import Pill from "@/components/ui/Pill";
-import type { HighlightColor } from "@/lib/highlights/segmenter";
-import styles from "./page.module.css";
+import styles from "./MediaHighlightsPaneBody.module.css";
 
 interface MediaHighlightsPaneBodyProps {
   isPdf: boolean;
   isEpub: boolean;
-  isMobile: boolean;
   fragmentHighlights: Highlight[];
   pdfPageHighlights: PdfHighlightOut[];
-  highlightsVersion: number;
-  pdfHighlightsVersion: number;
   pdfActivePage: number;
-  contentRef: RefObject<HTMLDivElement | null>;
   focusedId: string | null;
   onFocusHighlight: (id: string | null) => void;
-  onClearFocus: () => void;
   canSendToChat: boolean;
   onSendToChat: (id: string) => void;
   onColorChange: (id: string, color: HighlightColor) => Promise<void>;
@@ -36,25 +45,66 @@ interface MediaHighlightsPaneBodyProps {
     highlightId: string,
     noteBlockId: string | null,
     createBlockId: string,
-    bodyPmJson: Record<string, unknown>
+    bodyPmJson: Record<string, unknown>,
   ) => Promise<void>;
   onNoteDelete: (noteBlockId: string) => Promise<void>;
   onOpenConversation: (conversationId: string, title: string) => void;
+  onJumpToHighlight?: (highlightId: string) => void;
+}
+
+interface DisplayHighlight {
+  id: string;
+  exact: string;
+  prefix: string;
+  suffix: string;
+  color: HighlightColor;
+  is_owner: boolean;
+  linked_note_blocks?: {
+    note_block_id: string;
+    body_pm_json?: Record<string, unknown>;
+    body_markdown?: string;
+    body_text: string;
+  }[];
+  linked_conversations?: { conversation_id: string; title: string }[];
+}
+
+function linkedNoteHasContent(note: {
+  body_pm_json?: Record<string, unknown>;
+  body_markdown?: string;
+  body_text: string;
+}): boolean {
+  if (note.body_markdown?.trim()) {
+    return true;
+  }
+  return highlightNoteBodyHasContent({
+    bodyText: note.body_text,
+    bodyPmJson: note.body_pm_json ?? { type: "paragraph" },
+  });
+}
+
+function toDisplayHighlight(
+  source: Highlight | PdfHighlightOut,
+): DisplayHighlight {
+  return {
+    id: source.id,
+    exact: source.exact,
+    prefix: source.prefix,
+    suffix: source.suffix,
+    color: source.color,
+    is_owner: source.is_owner,
+    linked_note_blocks: source.linked_note_blocks,
+    linked_conversations: source.linked_conversations,
+  };
 }
 
 export default function MediaHighlightsPaneBody({
   isPdf,
   isEpub,
-  isMobile,
   fragmentHighlights,
   pdfPageHighlights,
-  highlightsVersion,
-  pdfHighlightsVersion,
   pdfActivePage,
-  contentRef,
   focusedId,
   onFocusHighlight,
-  onClearFocus,
   canSendToChat,
   onSendToChat,
   onColorChange,
@@ -65,169 +115,269 @@ export default function MediaHighlightsPaneBody({
   onNoteSave,
   onNoteDelete,
   onOpenConversation,
+  onJumpToHighlight,
 }: MediaHighlightsPaneBodyProps) {
-  const shouldAutoSelectFirstContextualHighlight = isEpub && !isMobile;
+  const feedback = useFeedback();
+  const [changingColor, setChangingColor] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
-  const contextualHighlights = useMemo(() => {
+  const orderedHighlights = useMemo<DisplayHighlight[]>(() => {
     if (isPdf) {
-      return sortContextualPdfHighlights(pdfPageHighlights);
+      return sortContextualPdfHighlights(pdfPageHighlights).map(
+        toDisplayHighlight,
+      );
     }
-
-    return sortContextualFragmentHighlights(fragmentHighlights);
+    return sortContextualFragmentHighlights(fragmentHighlights).map(
+      toDisplayHighlight,
+    );
   }, [fragmentHighlights, isPdf, pdfPageHighlights]);
 
-  const paneHighlights = useMemo(() => {
-    if (isPdf) {
-      return contextualHighlights.map((highlight) => {
-        const pdfHighlight = highlight as PdfHighlightOut;
-        const quad = pdfHighlight.anchor.quads[0];
-        const top = quad?.y1 ?? 0;
-        const left = quad?.x1 ?? 0;
-
-        return {
-          id: pdfHighlight.id,
-          exact: pdfHighlight.exact,
-          color: pdfHighlight.color,
-          linked_note_blocks: pdfHighlight.linked_note_blocks,
-          created_at: pdfHighlight.created_at,
-          updated_at: pdfHighlight.updated_at,
-          prefix: pdfHighlight.prefix,
-          suffix: pdfHighlight.suffix,
-          is_owner: pdfHighlight.is_owner,
-          linked_conversations: pdfHighlight.linked_conversations,
-          page_number: pdfHighlight.anchor.page_number,
-          quads: pdfHighlight.anchor.quads,
-          stable_order_key: [
-            String(pdfHighlight.anchor.page_number).padStart(8, "0"),
-            top.toFixed(3).padStart(16, "0"),
-            left.toFixed(3).padStart(16, "0"),
-            pdfHighlight.created_at,
-            pdfHighlight.id,
-          ].join(":"),
-        };
-      });
-    }
-
-    return (contextualHighlights as Highlight[]).map((highlight) => ({
-      id: highlight.id,
-      exact: highlight.exact,
-      color: highlight.color,
-      linked_note_blocks: highlight.linked_note_blocks,
-      created_at: highlight.created_at,
-      updated_at: highlight.updated_at,
-      prefix: highlight.prefix,
-      suffix: highlight.suffix,
-      is_owner: highlight.is_owner,
-      anchor: {
-        start_offset: highlight.anchor.start_offset,
-        end_offset: highlight.anchor.end_offset,
-      },
-      linked_conversations: highlight.linked_conversations,
-      stable_order_key: [
-        String(highlight.anchor.start_offset).padStart(12, "0"),
-        String(highlight.anchor.end_offset).padStart(12, "0"),
-        highlight.created_at,
-        highlight.id,
-      ].join(":"),
-    }));
-  }, [contextualHighlights, isPdf]);
-
-  const selectedHighlight = useMemo(() => {
-    if (contextualHighlights.length === 0) {
-      return null;
-    }
-    if (focusedId === null) {
-      if (!shouldAutoSelectFirstContextualHighlight) {
-        return null;
-      }
-      return contextualHighlights[0]!;
-    }
-
-    const focusedHighlight = contextualHighlights.find((highlight) => highlight.id === focusedId);
-    if (focusedHighlight) {
-      return focusedHighlight;
-    }
-
-    if (!shouldAutoSelectFirstContextualHighlight) {
-      return null;
-    }
-    return contextualHighlights[0]!;
-  }, [contextualHighlights, focusedId, shouldAutoSelectFirstContextualHighlight]);
-
-  useEffect(() => {
-    if (contextualHighlights.length === 0) {
-      if (focusedId !== null) {
-        onClearFocus();
-      }
-      return;
-    }
-
-    if (
-      !shouldAutoSelectFirstContextualHighlight ||
-      !selectedHighlight ||
-      focusedId === selectedHighlight.id
-    ) {
-      return;
-    }
-
-    onFocusHighlight(selectedHighlight.id);
-  }, [
-    contextualHighlights,
-    focusedId,
-    onClearFocus,
-    onFocusHighlight,
-    selectedHighlight,
-    shouldAutoSelectFirstContextualHighlight,
-  ]);
-
-  const handleHighlightClick = useCallback(
+  const handleRowClick = useCallback(
     (highlightId: string) => {
       onFocusHighlight(highlightId);
+      onJumpToHighlight?.(highlightId);
     },
-    [onFocusHighlight]
+    [onFocusHighlight, onJumpToHighlight],
   );
 
-  const paneTitle = "Visible highlights";
+  const handleDelete = useCallback(
+    async (highlight: DisplayHighlight) => {
+      if (highlight.is_owner === false || deleting) return;
+      if (!window.confirm("Delete this highlight?")) return;
+      setDeleting(true);
+      try {
+        await onDelete(highlight.id);
+      } catch (error) {
+        feedback.show(
+          toFeedback(error, { fallback: "Failed to delete highlight" }),
+        );
+        console.error("highlights_inspector_delete_failed", error);
+      } finally {
+        setDeleting(false);
+      }
+    },
+    [deleting, feedback, onDelete],
+  );
+
+  const handleColorChange = useCallback(
+    async (highlight: DisplayHighlight, color: HighlightColor) => {
+      if (
+        highlight.is_owner === false ||
+        changingColor ||
+        highlight.color === color
+      ) {
+        return;
+      }
+      setChangingColor(true);
+      try {
+        await onColorChange(highlight.id, color);
+      } catch (error) {
+        feedback.show(
+          toFeedback(error, { fallback: "Failed to change color" }),
+        );
+        console.error("highlights_inspector_color_change_failed", error);
+      } finally {
+        setChangingColor(false);
+      }
+    },
+    [changingColor, feedback, onColorChange],
+  );
+
+  const paneTitle = "Highlights";
   const paneDescription = isPdf
-    ? "Showing highlights visible in the active page viewport."
+    ? "Highlights for the active page."
     : isEpub
-      ? "Showing highlights visible in the active section viewport."
-      : "Showing highlights visible in the reader viewport.";
+      ? "Highlights in the active section."
+      : "Highlights in this document.";
 
   return (
-    <div className={styles.highlightsPaneRoot}>
-      <header className={styles.highlightsPaneHeader}>
+    <div className={styles.root}>
+      <header className={styles.header}>
         <div>
-          <h2>{paneTitle}</h2>
-          <p>{paneDescription}</p>
+          <h3 className={styles.heading}>{paneTitle}</h3>
+          <p className={styles.description}>{paneDescription}</p>
         </div>
         {isPdf ? (
           <div className={styles.pdfPagePill}>
-            <Pill tone="info">Active page: {pdfActivePage}</Pill>
+            <Pill tone="info">Page {pdfActivePage}</Pill>
           </div>
         ) : null}
       </header>
 
-      <div className={styles.highlightsPaneBody}>
-        <AnchoredSecondaryPane
-          highlights={paneHighlights}
-          contentRef={contentRef}
-          focusedId={selectedHighlight?.id ?? null}
-          onHighlightClick={handleHighlightClick}
-          highlightsVersion={isPdf ? pdfHighlightsVersion : highlightsVersion}
-          isMobile={isMobile}
-          isEditingBounds={isEditingBounds}
-          canSendToChat={canSendToChat}
-          onSendToChat={onSendToChat}
-          onColorChange={onColorChange}
-          onDelete={onDelete}
-          onStartEditBounds={onStartEditBounds}
-          onCancelEditBounds={onCancelEditBounds}
-          onNoteSave={onNoteSave}
-          onNoteDelete={onNoteDelete}
-          onOpenConversation={onOpenConversation}
-        />
-      </div>
+      {orderedHighlights.length === 0 ? (
+        <p className={styles.empty}>No highlights yet.</p>
+      ) : (
+        <ul className={styles.list}>
+          {orderedHighlights.map((highlight) => {
+            const isFocused = focusedId === highlight.id;
+            const canEdit = highlight.is_owner !== false;
+            const linkedNotes = highlight.linked_note_blocks ?? [];
+            const notesToRender = linkedNotes.length > 0 ? linkedNotes : [null];
+            const hasNote = linkedNotes.some(linkedNoteHasContent);
+            const linkedConversationCount =
+              highlight.linked_conversations?.length ?? 0;
+            const menuOptions: ActionMenuOption[] = [];
+            if (isFocused && canEdit) {
+              menuOptions.push({
+                id: isEditingBounds ? "cancel-edit-bounds" : "edit-bounds",
+                label: isEditingBounds ? "Cancel edit bounds" : "Edit bounds",
+                onSelect: () => {
+                  if (isEditingBounds) {
+                    onCancelEditBounds();
+                    return;
+                  }
+                  onStartEditBounds();
+                },
+              });
+              for (const color of HIGHLIGHT_COLORS) {
+                menuOptions.push({
+                  id: `color-${color}`,
+                  label:
+                    highlight.color === color
+                      ? `Color: ${COLOR_LABELS[color]} (current)`
+                      : `Color: ${COLOR_LABELS[color]}`,
+                  disabled: changingColor || highlight.color === color,
+                  onSelect: () => {
+                    void handleColorChange(highlight, color);
+                  },
+                });
+              }
+              menuOptions.push({
+                id: "delete-highlight",
+                label: deleting ? "Deleting..." : "Delete highlight",
+                tone: "danger",
+                disabled: deleting,
+                onSelect: () => {
+                  void handleDelete(highlight);
+                },
+              });
+            }
+            return (
+              <li
+                key={highlight.id}
+                className={`${styles.row} ${isFocused ? styles.rowFocused : ""}`.trim()}
+                data-highlight-id={highlight.id}
+                data-testid={`highlights-inspector-row-${highlight.id}`}
+              >
+                <div className={styles.rowTop}>
+                  <Button
+                    variant="ghost"
+                    className={styles.rowPreviewButton}
+                    onClick={() => handleRowClick(highlight.id)}
+                    aria-pressed={isFocused}
+                    aria-expanded={isFocused}
+                  >
+                    <span
+                      className={`${styles.colorSwatch} ${styles[`swatch-${highlight.color}`]}`}
+                      aria-hidden="true"
+                    />
+                    <HighlightSnippet
+                      exact={highlight.exact}
+                      color={highlight.color}
+                      compact
+                      className={styles.previewText}
+                    />
+                    <span className={styles.rowMeta} aria-hidden="true">
+                      {hasNote ? (
+                        <span className={styles.metaBadge} title="Has note">
+                          <NotebookPen size={12} />
+                        </span>
+                      ) : null}
+                      {linkedConversationCount > 0 ? (
+                        <span
+                          className={styles.metaBadge}
+                          title={`${linkedConversationCount} linked chats`}
+                        >
+                          <MessageSquare size={12} />
+                          <span>{linkedConversationCount}</span>
+                        </span>
+                      ) : null}
+                    </span>
+                  </Button>
+                  {isFocused ? (
+                    <div className={styles.rowActions}>
+                      {canSendToChat ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          iconOnly
+                          aria-label="Ask in chat"
+                          onClick={() => onSendToChat(highlight.id)}
+                        >
+                          <MessageSquare size={14} aria-hidden="true" />
+                        </Button>
+                      ) : null}
+                      {menuOptions.length > 0 ? (
+                        <ActionMenu options={menuOptions} />
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+                {isFocused ? (
+                  <div className={styles.rowExpanded}>
+                    <div className={styles.quoteCard}>
+                      <HighlightSnippet
+                        prefix={highlight.prefix}
+                        exact={highlight.exact}
+                        suffix={highlight.suffix}
+                        color={highlight.color}
+                      />
+                    </div>
+                    {isEditingBounds ? (
+                      <p className={styles.editHint}>
+                        Select new text in the reader to replace this highlight.
+                      </p>
+                    ) : null}
+                    {notesToRender.length > 0 ? (
+                      <div className={styles.noteEditorList}>
+                        {notesToRender.map((note, index) => (
+                          <div
+                            key={
+                              note?.note_block_id ??
+                              `new-note-${highlight.id}-${index}`
+                            }
+                            className={styles.noteEditor}
+                          >
+                            <HighlightNoteEditor
+                              highlightId={highlight.id}
+                              note={note}
+                              editable={true}
+                              onSave={onNoteSave}
+                              onDelete={onNoteDelete}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    {highlight.linked_conversations &&
+                    highlight.linked_conversations.length > 0 ? (
+                      <div className={styles.conversationList}>
+                        {highlight.linked_conversations.map((conversation) => (
+                          <Button
+                            key={conversation.conversation_id}
+                            variant="secondary"
+                            size="md"
+                            className={styles.conversationButton}
+                            onClick={() =>
+                              onOpenConversation(
+                                conversation.conversation_id,
+                                conversation.title,
+                              )
+                            }
+                            leadingIcon={<MessageSquare size={14} />}
+                          >
+                            <span>{conversation.title}</span>
+                          </Button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
