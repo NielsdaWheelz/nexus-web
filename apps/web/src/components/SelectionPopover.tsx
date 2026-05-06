@@ -1,16 +1,16 @@
 /**
- * SelectionPopover - Selection actions for highlight + chat.
+ * SelectionPopover - Selection actions for highlight + Ask.
  *
  * Appears when user selects text in the content area. Positioned relative
  * to the selection bounding box. Selecting a color creates the highlight
- * immediately, and the chat icon creates a highlight then opens quote-to-chat.
+ * immediately, and the Ask icon emits the active selection color.
  * Dismisses on Escape, click outside, or selection collapse.
  */
 
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, MessageSquare } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 import { COLOR_LABELS } from "@/lib/highlights/colors";
 import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights/segmenter";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -21,15 +21,7 @@ export interface SelectionPopoverProps {
   selectionLineRects?: DOMRect[];
   containerRef: React.RefObject<HTMLElement | null>;
   onCreateHighlight: (color: HighlightColor) => void | Promise<void | string | null>;
-  quoteDestinations?: Array<{
-    id: "new" | "media" | "library";
-    label: string;
-    disabled?: boolean;
-  }>;
-  onQuoteToChat?: (
-    color: HighlightColor,
-    destination: "new" | "media" | "library",
-  ) => void | Promise<void>;
+  onAsk?: (color: HighlightColor) => void | Promise<void>;
   onDismiss: () => void;
   isCreating?: boolean;
 }
@@ -84,14 +76,12 @@ export default function SelectionPopover({
   selectionLineRects,
   containerRef,
   onCreateHighlight,
-  quoteDestinations = [],
-  onQuoteToChat,
+  onAsk,
   onDismiss,
   isCreating = false,
 }: SelectionPopoverProps) {
   const isMobileViewport = useIsMobileViewport();
   const [selectedColor, setSelectedColor] = useState<HighlightColor>(DEFAULT_COLOR);
-  const [chatMenuOpen, setChatMenuOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{
     top: number;
@@ -294,33 +284,12 @@ export default function SelectionPopover({
     [isCreating, onCreateHighlight]
   );
 
-  const handleQuoteDestination = useCallback(
-    (destination: "new" | "media" | "library") => {
-      if (isCreating || !onQuoteToChat) {
-        return;
-      }
-      setChatMenuOpen(false);
-      void onQuoteToChat(selectedColor, destination);
-    },
-    [isCreating, onQuoteToChat, selectedColor],
-  );
-
-  const handleQuoteToChat = useCallback(() => {
-    if (quoteDestinations.length === 1) {
-      handleQuoteDestination(quoteDestinations[0]!.id);
+  const handleAsk = useCallback(() => {
+    if (isCreating || !onAsk) {
       return;
     }
-    setChatMenuOpen((open) => !open);
-  }, [handleQuoteDestination, quoteDestinations]);
-
-  const handleChatMenuKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "Escape") {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    setChatMenuOpen(false);
-  }, []);
+    void onAsk(selectedColor);
+  }, [isCreating, onAsk, selectedColor]);
 
   const handlePopoverPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -356,37 +325,17 @@ export default function SelectionPopover({
           />
         ))}
       </div>
-      {onQuoteToChat && quoteDestinations.length > 0 ? (
-        <div className={styles.chatMenuWrap} onKeyDown={handleChatMenuKeyDown}>
-          <button
-            type="button"
-            className={styles.chatButton}
-            onClick={handleQuoteToChat}
-            disabled={isCreating}
-            aria-label="Ask in chat"
-            aria-haspopup="menu"
-            aria-expanded={chatMenuOpen}
-          >
-            <MessageSquare size={14} aria-hidden="true" />
-            <ChevronDown size={12} aria-hidden="true" />
-          </button>
-          {chatMenuOpen ? (
-            <div className={styles.chatMenu} role="menu" aria-label="Ask in chat">
-              {quoteDestinations.map((destination) => (
-                <button
-                  key={destination.id}
-                  type="button"
-                  role="menuitem"
-                  className={styles.chatMenuItem}
-                  disabled={destination.disabled}
-                  onClick={() => handleQuoteDestination(destination.id)}
-                >
-                  {destination.label}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
+      {onAsk ? (
+        <button
+          type="button"
+          className={styles.askButton}
+          onClick={handleAsk}
+          disabled={isCreating}
+          aria-label="Ask"
+          title="Ask"
+        >
+          <MessageSquare size={14} aria-hidden="true" />
+        </button>
       ) : null}
     </div>
   );

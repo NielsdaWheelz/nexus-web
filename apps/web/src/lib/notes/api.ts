@@ -46,8 +46,43 @@ interface NotePageResponse {
   data: NotePage;
 }
 
+interface DailyNotePageResponse {
+  data: {
+    localDate?: string;
+    local_date?: string;
+    page: NotePage;
+  };
+}
+
 interface NoteBlockResponse {
   data: NoteBlock;
+}
+
+const LOCAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export function todayLocalDate(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function isLocalDate(value: string): boolean {
+  if (!LOCAL_DATE_RE.test(value)) {
+    return false;
+  }
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(year, month - 1, day);
+  return (
+    parsed.getFullYear() === year &&
+    parsed.getMonth() === month - 1 &&
+    parsed.getDate() === day
+  );
+}
+
+function browserTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
 function normalizeBlock(raw: Record<string, unknown>): NoteBlock {
@@ -128,6 +163,33 @@ export async function createNotePage(input: {
     }),
   });
   return normalizePage(response.data as unknown as Record<string, unknown>);
+}
+
+export async function fetchDailyNotePage(localDate = todayLocalDate()): Promise<NotePage> {
+  const params = new URLSearchParams({ time_zone: browserTimeZone() });
+  const response = await apiFetch<DailyNotePageResponse>(
+    `/api/notes/daily/${localDate}?${params.toString()}`,
+    { cache: "no-store" }
+  );
+  return normalizePage(response.data.page as unknown as Record<string, unknown>);
+}
+
+export async function quickCaptureDailyNote(input: {
+  bodyMarkdown: string;
+  localDate?: string;
+}): Promise<NoteBlock> {
+  const response = await apiFetch<NoteBlockResponse>(
+    `/api/notes/daily/${input.localDate ?? todayLocalDate()}/quick-capture?${new URLSearchParams({
+      time_zone: browserTimeZone(),
+    }).toString()}`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        body_markdown: input.bodyMarkdown,
+      }),
+    }
+  );
+  return normalizeBlock(response.data as unknown as Record<string, unknown>);
 }
 
 export async function fetchNotePage(pageId: string): Promise<NotePage> {

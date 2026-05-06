@@ -1,11 +1,11 @@
-import type { ContextItem } from "@/lib/api/sse";
+import type { ContextItem, ObjectRefContextItem } from "@/lib/api/sse";
 import type { ConversationScope } from "@/lib/conversations/types";
 import { isObjectType } from "@/lib/objectRefs";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const PENDING_CONTEXT_PARAM = "context";
+const PENDING_CONTEXT_PARAM = "attach_context";
 const PENDING_SCOPE_PARAM = "scope";
 
 function parseEvidenceSpanIds(value: string | undefined): string[] | null {
@@ -22,7 +22,7 @@ function parseEvidenceSpanIds(value: string | undefined): string[] | null {
   return Array.from(new Set(ids));
 }
 
-function parseTypedId(value: string): ContextItem | null {
+function parseTypedId(value: string): ObjectRefContextItem | null {
   const [type, id, evidenceSpanIds, extra] = value.split(":");
   if (extra !== undefined || !type || !id || !UUID_RE.test(id) || !isObjectType(type)) {
     return null;
@@ -32,6 +32,7 @@ function parseTypedId(value: string): ContextItem | null {
     return null;
   }
   return {
+    kind: "object_ref",
     type,
     id,
     ...(parsedEvidenceSpanIds.length > 0
@@ -40,8 +41,8 @@ function parseTypedId(value: string): ContextItem | null {
   };
 }
 
-export function parsePendingContexts(searchParams: URLSearchParams): ContextItem[] {
-  const contexts: ContextItem[] = [];
+export function parsePendingContexts(searchParams: URLSearchParams): ObjectRefContextItem[] {
+  const contexts: ObjectRefContextItem[] = [];
   for (const rawValue of searchParams.getAll(PENDING_CONTEXT_PARAM)) {
     const parsed = parseTypedId(rawValue);
     if (parsed) {
@@ -74,11 +75,14 @@ export function parseConversationScopeFromUrl(
 
 export function getPendingContextSignature(items: ContextItem[]): string {
   return items
-    .map((item) =>
-      item.evidence_span_ids?.length
+    .map((item) => {
+      if (item.kind === "reader_selection") {
+        return `reader_selection:${item.client_context_id}`;
+      }
+      return item.evidence_span_ids?.length
         ? `${item.type}:${item.id}:${item.evidence_span_ids.join(",")}`
-        : `${item.type}:${item.id}`
-    )
+        : `${item.type}:${item.id}`;
+    })
     .join("\u001e");
 }
 
@@ -107,7 +111,7 @@ export function stripPendingContextParams(
 
 export function setPendingContextParam(
   searchParams: URLSearchParams,
-  context: Pick<ContextItem, "type" | "id" | "evidence_span_ids">,
+  context: Pick<ObjectRefContextItem, "type" | "id" | "evidence_span_ids">,
 ): URLSearchParams {
   const next = new URLSearchParams(searchParams);
   next.delete(PENDING_CONTEXT_PARAM);

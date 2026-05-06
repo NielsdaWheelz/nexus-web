@@ -2,7 +2,7 @@
   background: var(--oracle-bg);
   color: var(--oracle-fg);
   min-height: 100%;
-  padding: 3rem 1.5rem;
+  padding: clamp(1.5rem, 4vw, 3rem) clamp(0.875rem, 3vw, 1.5rem);
   font-family: var(--font-oracle-body);
 }
 
@@ -31,6 +31,7 @@
   color: var(--oracle-cream);
   letter-spacing: 0.02em;
   line-height: 1.1;
+  text-wrap: balance;
 }
 
 .epigraphSub {
@@ -92,9 +93,11 @@
   transition: background-color 200ms ease, color 200ms ease;
 }
 
-.askSubmit:hover:not(:disabled) {
-  background: var(--oracle-gold);
-  color: var(--oracle-bg);
+@media (hover: hover) and (pointer: fine) {
+  .askSubmit:hover:not(:disabled) {
+    background: var(--oracle-gold);
+    color: var(--oracle-bg);
+  }
 }
 
 .askSubmit:disabled {
@@ -135,9 +138,11 @@
   transition: transform 150ms ease, border-color 150ms ease;
 }
 
-.alephCell:hover:not(:disabled) {
-  transform: translateY(-2px);
-  border-color: var(--oracle-gold);
+@media (hover: hover) and (pointer: fine) {
+  .alephCell:hover:not(:disabled) {
+    transform: translateY(-2px);
+    border-color: var(--oracle-gold);
+  }
 }
 
 .alephCellFailed {
@@ -189,6 +194,7 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  text-wrap: balance;
 }
 
 .alephCellPendingGlyph {
@@ -206,10 +212,12 @@
   display: flex;
   flex-direction: column;
   gap: 2rem;
-  padding: 2.5rem 2.25rem;
+  padding: clamp(1.25rem, 3vw, 2.5rem) clamp(0.875rem, 3vw, 2.25rem);
   border: 1px solid var(--oracle-rule);
   outline: 1px solid var(--oracle-rule);
   outline-offset: 4px;
+  container: oraclereading / inline-size;
+  font-optical-sizing: auto;
 }
 
 .readingHeader {
@@ -246,6 +254,7 @@
   font-size: 0.8rem;
   color: var(--oracle-fg-muted);
   letter-spacing: 0.06em;
+  text-wrap: balance;
 }
 
 .foliumMotto {
@@ -256,6 +265,7 @@
   font-size: 1.1rem;
   text-align: center;
   font-feature-settings: "smcp";
+  text-wrap: balance;
 }
 
 .foliumGloss {
@@ -264,6 +274,7 @@
   text-align: center;
   font-size: 0.92rem;
   font-family: var(--font-oracle-display);
+  text-wrap: balance;
 }
 
 .argument {
@@ -276,6 +287,7 @@
   max-width: 36rem;
   margin: 0 auto;
   line-height: 1.6;
+  text-wrap: pretty;
 }
 
 .argumentPending {
@@ -295,6 +307,7 @@
   font-size: clamp(1.75rem, 4vw, 2.5rem);
   color: var(--oracle-cream);
   line-height: 1.2;
+  text-wrap: balance;
 }
 
 .plate {
@@ -362,14 +375,15 @@
   padding-left: 1.25rem;
 }
 
+.quote p {
+  text-wrap: pretty;
+}
+
 .quote p::first-letter {
   font-family: var(--font-oracle-fraktur);
-  font-size: 2.5em;
-  float: left;
-  line-height: 0.85;
-  margin-right: 0.15em;
-  color: var(--oracle-gold);
   font-style: normal;
+  color: var(--oracle-gold);
+  initial-letter: 2;
 }
 
 .attribution {
@@ -400,7 +414,11 @@
   margin-left: 1.4rem;
 }
 
-@media (min-width: 1024px) {
+.marginalia[data-open="false"] {
+  display: none;
+}
+
+@container oraclereading (min-width: 56rem) {
   .passage {
     grid-template-columns: minmax(0, 1fr) 14rem;
     grid-template-areas:
@@ -420,6 +438,16 @@
     border-left: 1px dashed var(--oracle-rule);
     padding-left: 1.25rem;
     align-self: start;
+    display: block;
+  }
+  .marginalia[data-open="false"] {
+    display: block;
+  }
+  .sidenoteToggle {
+    display: none;
+  }
+  .quote p::first-letter {
+    initial-letter: 3;
   }
 }
 
@@ -432,6 +460,10 @@
   color: var(--oracle-fg);
   font-family: var(--font-oracle-body);
   animation: oracle-fade-in 1500ms ease forwards;
+}
+
+.interpretation p {
+  text-wrap: pretty;
 }
 
 .interpretation > p:first-child {
@@ -542,9 +574,11 @@
   cursor: pointer;
 }
 
-.errorAction:hover {
-  background: var(--oracle-gold);
-  color: var(--oracle-bg);
+@media (hover: hover) and (pointer: fine) {
+  .errorAction:hover {
+    background: var(--oracle-gold);
+    color: var(--oracle-bg);
+  }
 }
 
 .errorAction:disabled {
@@ -593,8 +627,8 @@
 
 .illuminatedCapital {
   float: left;
-  width: 4.5em;
-  height: 4.5em;
+  width: clamp(2.75em, 5vw + 1em, 4.5em);
+  height: clamp(2.75em, 5vw + 1em, 4.5em);
   margin: 0 0.5em 0 0;
   shape-outside: margin-box;
 }
@@ -677,6 +711,36 @@
   margin: 0 auto;
 }
 
+.sidenoteToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--oracle-gold);
+  font-size: 1.1rem;
+  padding: 0.5rem;
+  width: 2.75rem;
+  height: 2.75rem;
+  cursor: pointer;
+}
+
+@media (any-pointer: coarse) {
+  .alephCell {
+    min-height: 44px;
+  }
+  .concordanceItem {
+    min-height: 44px;
+  }
+  .sidenoteToggle {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .askSubmit {
+    min-height: 44px;
+  }
+}
+
 /* ---- concordance ---------------------------------------------------------- */
 
 .concordance {
@@ -709,10 +773,17 @@
   gap: 0.1rem;
 }
 
-.concordanceItem:hover {
-  color: var(--oracle-gold);
-  text-decoration: underline;
-  text-decoration-color: var(--oracle-gold);
+@media (hover: hover) and (pointer: fine) {
+  .concordanceItem:hover {
+    color: var(--oracle-gold);
+    text-decoration: underline;
+    text-decoration-color: var(--oracle-gold);
+  }
+}
+
+.concordanceMotto {
+  word-break: break-word;
+  text-wrap: pretty;
 }
 
 .concordanceShareReason {

@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 import {
   BookOpen,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
   Compass,
+  FileText,
   LogOut,
   MessageSquare,
   Mic,
@@ -18,6 +20,7 @@ import Link from "next/link";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
+import { fetchPinnedObjects, type PinnedObject } from "@/lib/pinnedObjects";
 import styles from "./Navbar.module.css";
 
 interface NavbarProps {
@@ -34,6 +37,7 @@ function pathnameFromHref(href: string): string {
 
 export default function Navbar({ onToggle }: NavbarProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const [pins, setPins] = useState<PinnedObject[]>([]);
   const { state, navigatePane } = useWorkspaceStore();
 
   const activePane = useMemo(
@@ -51,6 +55,12 @@ export default function Navbar({ onToggle }: NavbarProps) {
     currentPathname === "/podcasts" || currentPathname.startsWith("/podcasts/");
   const chatsActive =
     currentPathname === "/conversations" || currentPathname.startsWith("/conversations/");
+  const todayActive =
+    currentPathname === "/daily" || currentPathname.startsWith("/daily/");
+  const notesActive =
+    currentPathname === "/notes" ||
+    currentPathname.startsWith("/notes/") ||
+    currentPathname.startsWith("/pages/");
   const searchActive = currentPathname === "/search";
   const oracleActive =
     currentPathname === "/oracle" || currentPathname.startsWith("/oracle/");
@@ -89,6 +99,25 @@ export default function Navbar({ onToggle }: NavbarProps) {
 
   const handleAddContent = useCallback(() => {
     dispatchOpenAddContent("content");
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const loadedPins = await fetchPinnedObjects("navbar");
+        if (!cancelled) {
+          setPins(loadedPins.filter((pin) => pin.objectRef.route));
+        }
+      } catch {
+        if (!cancelled) {
+          setPins([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
@@ -141,6 +170,46 @@ export default function Navbar({ onToggle }: NavbarProps) {
           </span>
           {!collapsed && <span className={styles.label}>Podcasts</span>}
         </Link>
+        <Link
+          href="/daily"
+          className={`${styles.navItem} ${todayActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/daily")}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <CalendarDays size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Today</span>}
+        </Link>
+        <Link
+          href="/notes"
+          className={`${styles.navItem} ${notesActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/notes")}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <FileText size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Notes</span>}
+        </Link>
+        {pins.map((pin) => {
+          const href = pin.objectRef.route;
+          if (!href) {
+            return null;
+          }
+          const active = currentPathname === pathnameFromHref(href);
+          return (
+            <Link
+              key={pin.id}
+              href={href}
+              className={`${styles.navItem} ${active ? styles.active : ""}`}
+              onClick={(e) => handleNavClick(e, href)}
+            >
+              <span className={styles.icon} aria-hidden="true">
+                <FileText size={18} strokeWidth={2} />
+              </span>
+              {!collapsed && <span className={styles.label}>{pin.objectRef.label}</span>}
+            </Link>
+          );
+        })}
         <Link
           href="/conversations"
           className={`${styles.navItem} ${chatsActive ? styles.active : ""}`}

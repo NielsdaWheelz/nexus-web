@@ -5,6 +5,7 @@ import type { ContextItem } from "./sse";
 describe("toWireContextItem", () => {
   it("strips non-wire display detail from a context item", () => {
     const item: ContextItem = {
+      kind: "object_ref",
       type: "highlight",
       id: "abc-123",
       color: "blue",
@@ -20,6 +21,7 @@ describe("toWireContextItem", () => {
     const wire = toWireContextItem(item);
 
     expect(wire).toEqual({
+      kind: "object_ref",
       type: "highlight",
       id: "abc-123",
     });
@@ -36,6 +38,7 @@ describe("toWireContextItem", () => {
 
   it("preserves evidence span ids for content chunk context", () => {
     const wire = toWireContextItem({
+      kind: "object_ref",
       type: "content_chunk",
       id: "chunk-123",
       evidence_span_ids: ["span-1", "span-2"],
@@ -43,6 +46,7 @@ describe("toWireContextItem", () => {
     });
 
     expect(wire).toEqual({
+      kind: "object_ref",
       type: "content_chunk",
       id: "chunk-123",
       evidence_span_ids: ["span-1", "span-2"],
@@ -51,6 +55,7 @@ describe("toWireContextItem", () => {
 
   it("omits undefined optional display fields", () => {
     const item: ContextItem = {
+      kind: "object_ref",
       type: "media",
       id: "m2",
     };
@@ -58,6 +63,7 @@ describe("toWireContextItem", () => {
     const wire = toWireContextItem(item);
 
     expect(wire).toEqual({
+      kind: "object_ref",
       type: "media",
       id: "m2",
     });
@@ -67,6 +73,36 @@ describe("toWireContextItem", () => {
     expect("preview" in wire).toBe(false);
     expect("mediaId" in wire).toBe(false);
     expect("mediaTitle" in wire).toBe(false);
+  });
+
+  it("keeps reader selection wire fields", () => {
+    const wire = toWireContextItem({
+      kind: "reader_selection",
+      client_context_id: "selection-1",
+      media_id: "media-1",
+      media_kind: "article",
+      media_title: "Article",
+      exact: "Selected quote",
+      prefix: "Before ",
+      suffix: " after",
+      preview: "Selected quote",
+      color: "yellow",
+      locator: { type: "reader_text_offsets", start_offset: 10, end_offset: 24 },
+    });
+
+    expect(wire).toEqual({
+      kind: "reader_selection",
+      client_context_id: "selection-1",
+      media_id: "media-1",
+      media_kind: "article",
+      media_title: "Article",
+      exact: "Selected quote",
+      prefix: "Before ",
+      suffix: " after",
+      locator: { type: "reader_text_offsets", start_offset: 10, end_offset: 24 },
+    });
+    expect("color" in wire).toBe(false);
+    expect("preview" in wire).toBe(false);
   });
 });
 

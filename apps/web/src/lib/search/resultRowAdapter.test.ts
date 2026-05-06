@@ -152,6 +152,11 @@ describe("fetchSearchResultPage", () => {
     expect(page.rows[0]).toMatchObject({
       key: "note_block-note-1",
       href: "/notes/note-1",
+      contextRef: {
+        type: "note_block",
+        id: "note-1",
+        evidenceSpanIds: [],
+      },
       primaryText: "note body text",
       typeLabel: "note_block",
       noteBody: "note body text",
@@ -161,6 +166,11 @@ describe("fetchSearchResultPage", () => {
     expect(page.rows[1]).toMatchObject({
       key: "page-page-1",
       href: "/pages/page-1",
+      contextRef: {
+        type: "page",
+        id: "page-1",
+        evidenceSpanIds: [],
+      },
       primaryText: "Deep Work Notes",
       typeLabel: "page",
       noteBody: null,

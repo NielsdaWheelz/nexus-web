@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   FeedbackNotice,
   toFeedback,
@@ -11,9 +11,11 @@ import {
 import { ApiError, apiFetch } from "@/lib/api/client";
 import { parseSSEJsonStream, type SSEJsonEvent } from "@/lib/api/sse";
 import { fetchStreamToken } from "@/lib/api/streamToken";
+import { useStickyHeadline } from "../../OracleShell";
 import BorderFrame from "../BorderFrame";
 import IlluminatedCapital from "../IlluminatedCapital";
 import OracleConcordance from "../OracleConcordance";
+import Sidenote from "./Sidenote";
 import styles from "../oracle.module.css";
 
 type Phase = "descent" | "ordeal" | "ascent";
@@ -454,6 +456,7 @@ export default function OracleReadingPaneBody({
   const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
   const [retryingReading, setRetryingReading] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
+  const headlineRef = useStickyHeadline(state.folioMotto ?? null);
 
   const retryLoad = useCallback(() => {
     setLoadError(null);
@@ -561,7 +564,12 @@ export default function OracleReadingPaneBody({
             <span className={styles.foliumTheme}>{state.folioTheme ?? ""}</span>
           </div>
           {state.folioMotto !== null && (
-            <div className={styles.foliumMotto}>{state.folioMotto}</div>
+            <div
+              className={styles.foliumMotto}
+              ref={headlineRef as React.RefObject<HTMLDivElement>}
+            >
+              {state.folioMotto}
+            </div>
           )}
           {state.folioMottoGloss !== null && (
             <div className={styles.foliumGloss}>{state.folioMottoGloss}</div>
@@ -613,9 +621,9 @@ export default function OracleReadingPaneBody({
                   {passage.attribution_text}{" "}
                   <span className={styles.locator}>{passage.locator_label}</span>
                 </p>
-                <aside className={styles.marginalia}>
+                <Sidenote>
                   <p>{passage.marginalia_text}</p>
-                </aside>
+                </Sidenote>
               </div>
             </section>
           </div>

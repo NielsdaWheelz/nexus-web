@@ -10,7 +10,11 @@ describe("SearchResultRow", () => {
       href: "/notes/note-1",
       type: "note_block",
       mediaId: null,
-      contextRef: null,
+      contextRef: {
+        type: "note_block",
+        id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        evidenceSpanIds: [],
+      },
       typeLabel: "note_block",
       primaryText: "note body text",
       snippetSegments: [],
@@ -27,6 +31,10 @@ describe("SearchResultRow", () => {
     ).toHaveAttribute("href", "/notes/note-1");
     expect(screen.getByText("note_block")).toBeInTheDocument();
     expect(screen.getByText("Deep Work Notes")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Ask with context" })).toHaveAttribute(
+      "href",
+      "/conversations/new?attach_context=note_block%3Aa1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    );
   });
 
   it("renders emphasized snippet segments for non-highlight rows", () => {
@@ -60,7 +68,7 @@ describe("SearchResultRow", () => {
     expect(screen.getByText("p. 12")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Ask with evidence" })).toHaveAttribute(
       "href",
-      "/conversations/new?scope=media%3Amedia-1&context=content_chunk%3Achunk-1%3Aspan-1"
+      "/conversations/new?scope=media%3Amedia-1&attach_context=content_chunk%3Achunk-1%3Aspan-1"
     );
   });
 

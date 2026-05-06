@@ -38,7 +38,7 @@ test("@real-media search evidence can be attached to scoped chat context", async
   const visibleHref = await resultLink.getAttribute("href");
 
   const askWithEvidence = page
-    .locator(`a[href*="scope=media%3A${mediaId}"][href*="context="]`)
+    .locator(`a[href*="scope=media%3A${mediaId}"][href*="attach_context="]`)
     .filter({ hasText: "Ask with evidence" })
     .first();
   await expect(askWithEvidence).toBeVisible();

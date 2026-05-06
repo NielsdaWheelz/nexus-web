@@ -7,7 +7,7 @@ import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ConversationMemoryPanel from "@/components/chat/ConversationMemoryPanel";
 import ConversationScopeChip from "@/components/chat/ConversationScopeChip";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
-import type { ContextItem } from "@/lib/api/sse";
+import type { ContextItem, ContextItemColor, ContextItemType } from "@/lib/api/sse";
 import {
   formatContextMeta,
   formatSelectionContext,
@@ -28,9 +28,10 @@ interface PersistedContextRow {
 
 interface ContextRowViewModel {
   key: string;
-  type: ContextItem["type"];
-  id: string;
-  color?: ContextItem["color"];
+  kind: "object_ref" | "reader_selection";
+  type?: ContextItemType | null;
+  id?: string | null;
+  color?: ContextItemColor;
   exact?: string;
   preview?: string;
   prefix?: string;
@@ -86,17 +87,30 @@ export default function ConversationContextPane({
           <div className={styles.contextList}>
             {contexts.map((contextItem, index) =>
               renderContextRow({
-                key: `${contextItem.type}-${contextItem.id}-${index}`,
-                type: contextItem.type,
-                id: contextItem.id,
+                key:
+                  contextItem.kind === "reader_selection"
+                    ? `${contextItem.client_context_id}-${index}`
+                    : `${contextItem.type}-${contextItem.id}-${index}`,
+                kind: contextItem.kind,
+                type: contextItem.kind === "object_ref" ? contextItem.type : null,
+                id: contextItem.kind === "object_ref" ? contextItem.id : null,
                 color: contextItem.color,
                 exact: contextItem.exact,
                 preview: contextItem.preview,
                 prefix: contextItem.prefix,
                 suffix: contextItem.suffix,
-                mediaId: contextItem.mediaId,
-                mediaTitle: contextItem.mediaTitle,
-                mediaKind: contextItem.mediaKind,
+                mediaId:
+                  contextItem.kind === "reader_selection"
+                    ? contextItem.media_id
+                    : contextItem.mediaId,
+                mediaTitle:
+                  contextItem.kind === "reader_selection"
+                    ? contextItem.media_title
+                    : contextItem.mediaTitle,
+                mediaKind:
+                  contextItem.kind === "reader_selection"
+                    ? contextItem.media_kind
+                    : contextItem.mediaKind,
                 onRemove: onRemoveContext ? () => onRemoveContext(index) : undefined,
               }),
             )}
@@ -110,7 +124,8 @@ export default function ConversationContextPane({
           <div className={styles.contextList}>
             {persistedRows.map(({ context, messageId, messageSeq }, index) =>
               renderContextRow({
-                key: `${messageId}-${context.type}-${context.id}-${index}`,
+                key: `${messageId}-${context.kind}-${context.id ?? context.client_context_id ?? index}`,
+                kind: context.kind,
                 type: context.type,
                 id: context.id,
                 color: context.color,
@@ -175,7 +190,7 @@ function renderContextRow(row: ContextRowViewModel) {
           />
         ) : undefined
       }
-      title={formatContextTitle(row.type, row.exact, row.preview, row.title, row.color)}
+      title={formatContextTitle(row.kind, row.type, row.exact, row.preview, row.title, row.color)}
       titleClassName={styles.contextTitle}
       description={formatSelectionContext(row.prefix, row.suffix)}
       descriptionClassName={styles.contextDescription}
@@ -187,15 +202,19 @@ function renderContextRow(row: ContextRowViewModel) {
 }
 
 function formatContextTitle(
-  type: ContextItem["type"],
+  kind: "object_ref" | "reader_selection",
+  type?: ContextItemType | null,
   exact?: string,
   preview?: string,
   title?: string,
-  color?: "yellow" | "green" | "blue" | "pink" | "purple",
+  color?: ContextItemColor,
 ): ReactNode {
   const text = exact || preview || title;
   if (text) {
     return <HighlightSnippet exact={text} color={color ?? "neutral"} compact />;
+  }
+  if (kind === "reader_selection") {
+    return "Selected quote";
   }
   if (type === "highlight") {
     return "Highlight";

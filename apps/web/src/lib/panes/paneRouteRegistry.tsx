@@ -16,6 +16,7 @@ import AuthorPaneBody from "@/app/(authenticated)/authors/[handle]/AuthorPaneBod
 import NotesPaneBody from "@/app/(authenticated)/notes/NotesPaneBody";
 import PagePaneBody from "@/app/(authenticated)/pages/[pageId]/PagePaneBody";
 import NotePaneBody from "@/app/(authenticated)/notes/[blockId]/NotePaneBody";
+import DailyNotePaneBody from "@/app/(authenticated)/daily/DailyNotePaneBody";
 import SettingsPaneBody from "@/app/(authenticated)/settings/SettingsPaneBody";
 import SettingsBillingPaneBody from "@/app/(authenticated)/settings/billing/SettingsBillingPaneBody";
 import SettingsReaderPaneBody from "@/app/(authenticated)/settings/reader/SettingsReaderPaneBody";
@@ -56,6 +57,8 @@ export type PaneRouteId =
   | "notes"
   | "page"
   | "note"
+  | "daily"
+  | "dailyDate"
   | "settings"
   | "settingsBilling"
   | "settingsReader"
@@ -285,6 +288,29 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Note" }),
+  },
+  {
+    id: "daily",
+    pattern: ["daily"],
+    staticTitle: "Today",
+    render: () => <DailyNotePaneBody />,
+    bodyMode: "document",
+    defaultWidthPx: 760,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Today" }),
+  },
+  {
+    id: "dailyDate",
+    pattern: ["daily", ":localDate"],
+    staticTitle: "Daily note",
+    resourceRef: (params) => (params.localDate ? `daily:${params.localDate}` : null),
+    render: () => <DailyNotePaneBody />,
+    bodyMode: "document",
+    defaultWidthPx: 760,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Daily note" }),
   },
   {
     id: "settings",

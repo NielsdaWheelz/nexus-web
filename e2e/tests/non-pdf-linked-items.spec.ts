@@ -105,43 +105,16 @@ async function expectHighlightRowToBeExpanded(
   await expect(rowActionsButton(row)).toHaveCount(1);
 }
 
-async function readAttachedHighlightId(page: Page): Promise<string | null> {
-  const currentUrl = new URL(page.url());
-  if (
-    currentUrl.pathname !== "/conversations/new" &&
-    !/^\/conversations\/[^/]+$/.test(currentUrl.pathname)
-  ) {
-    return null;
-  }
-  const context = currentUrl.searchParams
-    .getAll("context")
-    .find((value) => value.startsWith("highlight:"));
-  return context ? context.slice("highlight:".length) : null;
-}
-
 function workspacePaneButton(page: Page, name: RegExp | string) {
   return page
     .getByRole("toolbar", { name: "Workspace panes" })
     .getByRole("button", { name });
 }
 
-async function switchBackToMediaPane(page: Page): Promise<void> {
-  const buttons = page
-    .getByRole("toolbar", { name: "Workspace panes" })
-    .getByRole("button");
-  const buttonCount = await buttons.count();
-  for (let idx = 0; idx < buttonCount; idx += 1) {
-    const button = buttons.nth(idx);
-    const label =
-      (await button.getAttribute("aria-label")) ??
-      ((await button.textContent()) ?? "").trim();
-    if (/^(minimize|restore|close)\b/i.test(label) || /chat/i.test(label)) {
-      continue;
-    }
-    await button.click();
-    return;
-  }
-  throw new Error("Expected a non-chat workspace pane to switch back to media");
+async function expectReaderAssistantContext(page: Page, exact: string): Promise<void> {
+  const assistant = page.getByRole("region", { name: "Reader assistant" });
+  await expect(assistant).toBeVisible({ timeout: 10_000 });
+  await expect(assistant.getByLabel("Attached context")).toContainText(exact);
 }
 
 test.describe("non-pdf linked-items @legacy-synthetic", () => {
@@ -170,25 +143,13 @@ test.describe("non-pdf linked-items @legacy-synthetic", () => {
     await expectHighlightRowToBeExpanded(focusRow, focusNote);
     await expectHighlightRowToStayCollapsed(quoteRow, quoteNote);
     const focusRowChatButton = rowAskInChatButton(focusRow);
-    const conversationPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
+    const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
     await focusRowChatButton.click();
-
+    await expectReaderAssistantContext(page, seeded.focus_exact);
     await expect
-      .poll(
-        async () => workspacePaneButton(page, /^chat\b/i).count(),
-        { timeout: 15_000 }
-      )
-      .toBe(conversationPaneCountBefore + 1);
-
-    await expect.poll(() => readAttachedHighlightId(page), { timeout: 15_000 }).toBe(
-      seeded.focus_highlight_id
-    );
-
-    const conversationPaneCountAfterFirstSend = await workspacePaneButton(
-      page,
-      /^chat\b/i
-    ).count();
-    await switchBackToMediaPane(page);
+      .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
+      .toBe(chatPaneCountBefore);
+    await page.getByRole("tab", { name: "Highlights" }).click();
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
     const focusedSegment = contentPane
@@ -251,14 +212,9 @@ test.describe("non-pdf linked-items @legacy-synthetic", () => {
     await expectHighlightRowToStayCollapsed(focusRow, focusNote);
 
     await rowAskInChatButton(quoteRow).click();
+    await expectReaderAssistantContext(page, seeded.quote_exact);
     await expect
-      .poll(
-        async () => workspacePaneButton(page, /^chat\b/i).count(),
-        { timeout: 15_000 }
-      )
-      .toBe(conversationPaneCountAfterFirstSend);
-    await expect.poll(() => readAttachedHighlightId(page), { timeout: 15_000 }).toBe(
-      seeded.quote_highlight_id
-    );
+      .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
+      .toBe(chatPaneCountBefore);
   });
 });

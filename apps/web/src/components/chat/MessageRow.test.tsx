@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MessageRow } from "./MessageRow";
 import type { ConversationMessage } from "@/lib/conversations/types";
 
@@ -194,6 +194,202 @@ describe("MessageRow", () => {
     expect(screen.queryByText("page: 12")).not.toBeInTheDocument();
   });
 
+  it("reports resolved app evidence source targets upward", () => {
+    const onReaderSourceActivate = vi.fn();
+    const message: ConversationMessage = {
+      ...baseMessage,
+      content: "The paper makes the claim.",
+      evidence_summary: {
+        id: "summary-1",
+        message_id: "assistant-1",
+        scope_type: "media",
+        scope_ref: { title: "Research paper" },
+        retrieval_status: "included_in_prompt",
+        support_status: "supported",
+        verifier_status: "verified",
+        claim_count: 1,
+        supported_claim_count: 1,
+        unsupported_claim_count: 0,
+        not_enough_evidence_count: 0,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+      claims: [
+        {
+          id: "claim-1",
+          message_id: "assistant-1",
+          ordinal: 0,
+          claim_text: "The paper makes the claim.",
+          answer_start_offset: 0,
+          answer_end_offset: "The paper makes the claim.".length,
+          claim_kind: "source_grounded",
+          support_status: "supported",
+          verifier_status: "verified",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+      claim_evidence: [
+        {
+          id: "evidence-1",
+          claim_id: "claim-1",
+          ordinal: 0,
+          evidence_role: "supports",
+          source_ref: {
+            type: "message_retrieval",
+            id: "retrieval-1",
+            label: "Research paper",
+            media_id: "media-1",
+          },
+          retrieval_id: "retrieval-1",
+          context_ref: { type: "media", id: "media-1" },
+          result_ref: {
+            title: "Research paper",
+            citation_label: "p. 12",
+            resolver: {
+              kind: "pdf",
+              route: "/media/media-1",
+              params: { evidence: "span-1", page: "12" },
+              status: "resolved",
+              selector: {},
+            },
+          },
+          exact_snippet: "The exact app-source excerpt.",
+          locator: {
+            type: "pdf_page_geometry",
+            media_id: "media-1",
+            page_number: 12,
+            quads: [{ x1: 1 }],
+            exact: "The exact app-source excerpt.",
+          },
+          deep_link: "/media/media-1?evidence=span-1&page=12",
+          score: 0.82,
+          retrieval_status: "included_in_prompt",
+          selected: true,
+          included_in_prompt: true,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+    };
+
+    render(
+      <MessageRow
+        message={message}
+        onReaderSourceActivate={onReaderSourceActivate}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /open source p\. 12/i }));
+
+    expect(onReaderSourceActivate).toHaveBeenCalledWith({
+      source: "claim_evidence",
+      media_id: "media-1",
+      locator: {
+        type: "pdf_page_geometry",
+        media_id: "media-1",
+        page_number: 12,
+        quads: [{ x1: 1 }],
+        exact: "The exact app-source excerpt.",
+      },
+      snippet: "The exact app-source excerpt.",
+      status: "resolved",
+      label: "p. 12",
+      href: "/media/media-1?evidence=span-1&page=12",
+      evidence_span_id: "span-1",
+      evidence_id: "evidence-1",
+      context_id: "media-1",
+    });
+  });
+
+  it("renders unresolved app evidence sources as non-clickable", () => {
+    const onReaderSourceActivate = vi.fn();
+    const message: ConversationMessage = {
+      ...baseMessage,
+      content: "The paper makes the claim.",
+      evidence_summary: {
+        id: "summary-1",
+        message_id: "assistant-1",
+        scope_type: "media",
+        scope_ref: { title: "Research paper" },
+        retrieval_status: "included_in_prompt",
+        support_status: "supported",
+        verifier_status: "verified",
+        claim_count: 1,
+        supported_claim_count: 1,
+        unsupported_claim_count: 0,
+        not_enough_evidence_count: 0,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+      claims: [
+        {
+          id: "claim-1",
+          message_id: "assistant-1",
+          ordinal: 0,
+          claim_text: "The paper makes the claim.",
+          answer_start_offset: 0,
+          answer_end_offset: "The paper makes the claim.".length,
+          claim_kind: "source_grounded",
+          support_status: "supported",
+          verifier_status: "verified",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+      claim_evidence: [
+        {
+          id: "evidence-1",
+          claim_id: "claim-1",
+          ordinal: 0,
+          evidence_role: "supports",
+          source_ref: {
+            type: "message_retrieval",
+            id: "retrieval-1",
+            label: "Research paper",
+            media_id: "media-1",
+          },
+          retrieval_id: "retrieval-1",
+          context_ref: { type: "media", id: "media-1" },
+          result_ref: {
+            citation_label: "p. 12",
+            resolver: {
+              kind: "pdf",
+              route: "/media/media-1",
+              params: { evidence: "span-1", page: "12" },
+              status: "unresolved",
+              selector: {},
+            },
+          },
+          exact_snippet: "The exact app-source excerpt.",
+          locator: {
+            type: "pdf_page_geometry",
+            media_id: "media-1",
+            page_number: 12,
+            quads: [],
+            exact: "The exact app-source excerpt.",
+          },
+          deep_link: "/media/media-1?evidence=span-1&page=12",
+          score: 0.82,
+          retrieval_status: "included_in_prompt",
+          selected: true,
+          included_in_prompt: true,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+    };
+
+    render(
+      <MessageRow
+        message={message}
+        onReaderSourceActivate={onReaderSourceActivate}
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: /open source p\. 12/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /p\. 12/i })).toBeNull();
+    expect(screen.getByText("p. 12")).toBeInTheDocument();
+    expect(screen.getByText("source_status: unavailable")).toBeInTheDocument();
+    expect(onReaderSourceActivate).not.toHaveBeenCalled();
+  });
+
   it("renders unsupported claims as evidence diagnostics", () => {
     const message: ConversationMessage = {
       ...baseMessage,
@@ -300,12 +496,14 @@ describe("MessageRow", () => {
       content: "Use these notes.",
       contexts: [
         {
+          kind: "object_ref",
           type: "note_block",
           id: "note-1",
           title: "Project notes",
           route: "/notes/note-1",
         },
         {
+          kind: "object_ref",
           type: "media",
           id: "media-1",
           title: "Source article",
@@ -320,6 +518,62 @@ describe("MessageRow", () => {
 
     expect(screen.getByText("Project notes")).toBeInTheDocument();
     expect(screen.getByText("/notes/note-1")).toBeInTheDocument();
+  });
+
+  it("reports reader-selection inline citation targets upward", () => {
+    const onReaderSourceActivate = vi.fn();
+    const message: ConversationMessage = {
+      ...baseMessage,
+      role: "user",
+      content: "Use these quotes.",
+      contexts: [
+        {
+          kind: "reader_selection",
+          client_context_id: "selection-1",
+          media_id: "media-1",
+          source_media_id: "media-1",
+          media_title: "Source PDF",
+          media_kind: "pdf",
+          exact: "Selected quote text.",
+          locator: {
+            type: "pdf_text_quote",
+            page_number: 4,
+            text_quote_selector: { exact: "Selected quote text." },
+          },
+          title: "Source PDF",
+        },
+        {
+          kind: "object_ref",
+          type: "note_block",
+          id: "note-1",
+          title: "Project notes",
+        },
+      ],
+    };
+
+    render(
+      <MessageRow
+        message={message}
+        onReaderSourceActivate={onReaderSourceActivate}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open citation 1" }));
+
+    expect(onReaderSourceActivate).toHaveBeenCalledWith({
+      source: "message_context",
+      media_id: "media-1",
+      locator: {
+        type: "pdf_text_quote",
+        page_number: 4,
+        text_quote_selector: { exact: "Selected quote text." },
+      },
+      snippet: "Selected quote text.",
+      status: "attached_context",
+      label: "Source PDF",
+      context_id: "selection-1",
+    });
+    expect(screen.queryByRole("button", { name: "Open citation 2" })).toBeNull();
   });
 
   it("labels active web-search tool activity", () => {

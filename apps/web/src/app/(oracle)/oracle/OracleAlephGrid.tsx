@@ -94,7 +94,7 @@ export default function OracleAlephGrid() {
                 src={row.plate_thumbnail_url}
                 alt={row.plate_alt_text ?? ""}
                 fill
-                sizes="140px"
+                sizes="(max-width: 768px) 50vw, 25vw"
                 className={styles.alephThumbnail}
               />
             )}

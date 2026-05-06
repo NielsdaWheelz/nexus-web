@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  CalendarDays,
   CircleCheck,
   CircleX,
   FileText,
   Link,
+  Plus,
   RotateCcw,
   Upload,
   X,
@@ -23,6 +25,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { apiFetch, apiPostFormData } from "@/lib/api/client";
+import { createNotePage, quickCaptureDailyNote } from "@/lib/notes/api";
 import {
   addMediaFromUrl,
   getFileUploadError,
@@ -116,6 +119,9 @@ export default function AddContentTray() {
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState<FeedbackContent | null>(null);
   const [importResult, setImportResult] = useState<PodcastOpmlImportResult | null>(null);
+  const [noteBusy, setNoteBusy] = useState(false);
+  const [noteFeedback, setNoteFeedback] = useState<FeedbackContent | null>(null);
+  const [quickNoteText, setQuickNoteText] = useState("");
   const nextIdRef = useRef(1);
   const activeIdsRef = useRef<Set<number>>(new Set());
   const dragDepthRef = useRef(0);
@@ -318,11 +324,15 @@ export default function AddContentTray() {
         event instanceof CustomEvent
           ? ((event as CustomEvent<{ mode?: AddContentMode }>).detail?.mode ?? "content")
           : "content";
-      setMode(requestedMode === "opml" ? "opml" : "content");
+      setMode(requestedMode === "opml" || requestedMode === "quick-note" ? requestedMode : "content");
       if (requestedMode === "opml") {
         setImportError(null);
         setImportResult(null);
         setImportFile(null);
+      }
+      if (requestedMode === "quick-note") {
+        setNoteFeedback(null);
+        setQuickNoteText("");
       }
       setOpen(true);
     };
@@ -480,9 +490,55 @@ export default function AddContentTray() {
     setQueue((current) => current.filter((row) => row.id !== id));
   }, []);
 
+  const createPage = useCallback(async () => {
+    setNoteBusy(true);
+    setNoteFeedback(null);
+    try {
+      const page = await createNotePage({ title: "Untitled" });
+      setOpen(false);
+      requestOpenInAppPane(`/pages/${page.id}`, { titleHint: page.title });
+    } catch (error: unknown) {
+      setNoteFeedback(toFeedback(error, { fallback: "Page could not be created." }));
+    } finally {
+      setNoteBusy(false);
+    }
+  }, []);
+
+  const openToday = useCallback(() => {
+    setOpen(false);
+    requestOpenInAppPane("/daily", { titleHint: "Today" });
+  }, []);
+
+  const quickCapture = useCallback(async () => {
+    const bodyMarkdown = quickNoteText.trim();
+    if (!bodyMarkdown) {
+      setNoteFeedback({
+        severity: "error",
+        title: "Write a quick note first.",
+      });
+      return;
+    }
+    setNoteBusy(true);
+    setNoteFeedback(null);
+    try {
+      await quickCaptureDailyNote({ bodyMarkdown });
+      setQuickNoteText("");
+      setNoteFeedback({
+        severity: "success",
+        title: "Added to today.",
+      });
+    } catch (error: unknown) {
+      setNoteFeedback(toFeedback(error, { fallback: "Quick note could not be added." }));
+    } finally {
+      setNoteBusy(false);
+    }
+  }, [quickNoteText]);
+
   const modeDescription =
     mode === "opml"
       ? "Import podcast subscriptions from an OPML file."
+      : mode === "quick-note"
+        ? "Capture a note on today's page."
       : "Upload files or paste links.";
 
   if (!open) {
@@ -533,6 +589,15 @@ export default function AddContentTray() {
           <button
             type="button"
             role="tab"
+            aria-selected={mode === "quick-note"}
+            className={mode === "quick-note" ? styles.modeTabActive : styles.modeTab}
+            onClick={() => setMode("quick-note")}
+          >
+            Quick note
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={mode === "opml"}
             className={mode === "opml" ? styles.modeTabActive : styles.modeTab}
             onClick={() => setMode("opml")}
@@ -544,6 +609,22 @@ export default function AddContentTray() {
         <div className={styles.body}>
           {mode === "content" ? (
             <>
+              <div className={styles.knowledgeActions} aria-label="Notes actions">
+                <button type="button" onClick={() => void createPage()} disabled={noteBusy}>
+                  <Plus size={16} aria-hidden="true" />
+                  <span>New page</span>
+                </button>
+                <button type="button" onClick={openToday}>
+                  <CalendarDays size={16} aria-hidden="true" />
+                  <span>Today</span>
+                </button>
+                <button type="button" onClick={() => setMode("quick-note")}>
+                  <FileText size={16} aria-hidden="true" />
+                  <span>Quick note to today</span>
+                </button>
+              </div>
+              {noteFeedback ? <FeedbackNotice feedback={noteFeedback} /> : null}
+
               <div className={styles.libraryField}>
                 <label className={styles.libraryLabel}>Library</label>
                 <LibraryTargetPicker
@@ -685,6 +766,37 @@ export default function AddContentTray() {
                   })}
                 </div>
               ) : null}
+            </>
+          ) : mode === "quick-note" ? (
+            <>
+              <form
+                className={styles.quickNoteForm}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void quickCapture();
+                }}
+              >
+                <label htmlFor="quick-note-input">Quick note to today</label>
+                <textarea
+                  id="quick-note-input"
+                  value={quickNoteText}
+                  onChange={(event) => {
+                    setQuickNoteText(event.currentTarget.value);
+                    setNoteFeedback(null);
+                  }}
+                  rows={5}
+                  placeholder="Capture a thought..."
+                />
+                <div className={styles.quickNoteActions}>
+                  <button type="button" onClick={openToday}>
+                    Open today
+                  </button>
+                  <button type="submit" disabled={noteBusy || !quickNoteText.trim()}>
+                    {noteBusy ? "Adding..." : "Add note"}
+                  </button>
+                </div>
+              </form>
+              {noteFeedback ? <FeedbackNotice feedback={noteFeedback} /> : null}
             </>
           ) : (
             <>

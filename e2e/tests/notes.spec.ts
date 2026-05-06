@@ -214,7 +214,7 @@ test.describe("notes cutover @legacy-synthetic", () => {
         page.locator(`section[aria-label="Backlinks"] a[href="/media/${seeded.media_id}"]`)
       ).toBeVisible({ timeout: 10_000 });
 
-      await page.goto(`/conversations/new?context=note_block:${noteBlockId}`);
+      await page.goto(`/conversations/new?attach_context=note_block:${noteBlockId}`);
       await expect(page.locator('section[aria-label="Pending contexts"]')).toContainText(
         "Note",
         { timeout: 10_000 }

@@ -49,14 +49,14 @@ describe("workspace reducer", () => {
     const chatId = createPaneId();
     const withChat = workspaceReducer(initial, {
       type: "open_pane",
-      panes: [makePane(chatId, "/conversations/conversation-1?context=highlight:old")],
+      panes: [makePane(chatId, "/conversations/conversation-1?attach_context=highlight:old")],
       afterPaneId: null,
       activate: true,
     });
     const duplicateId = createPaneId();
     const next = workspaceReducer(withChat, {
       type: "open_pane",
-      panes: [makePane(duplicateId, "/conversations/conversation-1?context=highlight:new")],
+      panes: [makePane(duplicateId, "/conversations/conversation-1?attach_context=highlight:new")],
       afterPaneId: null,
       activate: true,
     });
@@ -64,7 +64,7 @@ describe("workspace reducer", () => {
     expect(next.panes).toHaveLength(2);
     expect(next.activePaneId).toBe(chatId);
     expect(next.panes.find((pane) => pane.id === chatId)?.href).toBe(
-      "/conversations/conversation-1?context=highlight:new",
+      "/conversations/conversation-1?attach_context=highlight:new",
     );
     expect(next.panes.some((pane) => pane.id === duplicateId)).toBe(false);
   });

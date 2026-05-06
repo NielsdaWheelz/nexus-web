@@ -133,55 +133,53 @@ describe("SelectionPopover", () => {
     document.body.innerHTML = "";
   });
 
-  it("shows an icon-only ask-in-chat action when onQuoteToChat is provided", () => {
+  it("shows an icon-only Ask action when onAsk is provided", () => {
     const onCreateHighlight = vi.fn();
-    const onQuoteToChat = vi.fn();
+    const onAsk = vi.fn();
 
     render(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
         onCreateHighlight={onCreateHighlight}
-        quoteDestinations={[{ id: "new", label: "Ask in new chat" }]}
-        onQuoteToChat={onQuoteToChat}
+        onAsk={onAsk}
         onDismiss={vi.fn()}
       />
     );
 
-    const button = screen.getByRole("button", { name: "Ask in chat" });
+    const button = screen.getByRole("button", { name: "Ask" });
     expect(button).toBeInTheDocument();
-    expect(button).not.toHaveTextContent("Ask in chat");
+    expect(button).not.toHaveTextContent("Ask");
 
     fireEvent.click(button);
 
-    expect(onQuoteToChat).toHaveBeenCalledTimes(1);
-    expect(onQuoteToChat).toHaveBeenCalledWith("yellow", "new");
+    expect(onAsk).toHaveBeenCalledTimes(1);
+    expect(onAsk).toHaveBeenCalledWith("yellow");
     expect(onCreateHighlight).not.toHaveBeenCalled();
   });
 
-  it("passes the currently selected color to the ask-in-chat icon button", () => {
+  it("passes the currently selected color to the Ask icon button", () => {
     const onCreateHighlight = vi.fn();
-    const onQuoteToChat = vi.fn();
+    const onAsk = vi.fn();
 
     render(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
         onCreateHighlight={onCreateHighlight}
-        quoteDestinations={[{ id: "new", label: "Ask in new chat" }]}
-        onQuoteToChat={onQuoteToChat}
+        onAsk={onAsk}
         onDismiss={vi.fn()}
       />
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Blue" }));
-    fireEvent.click(screen.getByRole("button", { name: "Ask in chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
 
     expect(onCreateHighlight).toHaveBeenCalledWith("blue");
-    expect(onQuoteToChat).toHaveBeenCalledWith("blue", "new");
+    expect(onAsk).toHaveBeenCalledWith("blue");
   });
 
-  it("hides ask-in-chat when no quote callback is provided", () => {
+  it("hides Ask when no ask callback is provided", () => {
     render(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
@@ -191,7 +189,24 @@ describe("SelectionPopover", () => {
       />
     );
 
-    expect(screen.queryByRole("button", { name: "Ask in chat" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ask" })).not.toBeInTheDocument();
+  });
+
+  it("does not expose chat destination choices from the selection popover", () => {
+    render(
+      <SelectionPopover
+        selectionRect={new DOMRect(120, 120, 80, 24)}
+        containerRef={createContainerRef()}
+        onCreateHighlight={vi.fn()}
+        onAsk={vi.fn()}
+        onDismiss={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
+    expect(screen.queryByText("Ask in new chat")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ask in this document")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ask in library...")).not.toBeInTheDocument();
   });
 
   it("dismisses on pointerdown outside the popup", async () => {

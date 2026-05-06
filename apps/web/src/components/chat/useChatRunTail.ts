@@ -24,16 +24,21 @@ export function useChatRunTail({
   setMessages,
   shouldScrollRef,
   onRunFinished,
+  onFirstDelta,
+  onRunDone,
   onConversationAvailable,
 }: {
   setMessages: Dispatch<SetStateAction<ConversationMessage[]>>;
   shouldScrollRef: MutableRefObject<boolean>;
   onRunFinished?: (runId: string) => void;
+  onFirstDelta?: (runId: string) => void;
+  onRunDone?: (runId: string, status: "complete" | "error" | "cancelled", errorCode: string | null) => void;
   onConversationAvailable?: (conversationId: string, runId: string) => void;
 }) {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const activeStreamsRef = useRef<Map<string, () => void>>(new Map());
   const runTokensRef = useRef<Map<string, number>>(new Map());
+  const firstDeltaRunIdsRef = useRef<Set<string>>(new Set());
   const {
     handleMetaReceived,
     handleDelta,
@@ -119,6 +124,7 @@ export function useChatRunTail({
           runData.run.status,
           runData.run.error_code,
         );
+        onRunDone?.(runId, runData.run.status, runData.run.error_code);
         onRunFinished?.(runId);
         return;
       }
@@ -141,9 +147,9 @@ export function useChatRunTail({
             response.data.user_message.id,
             response.data.assistant_message.id,
           ]);
-          onConversationAvailable?.(response.data.conversation.id, runId);
-          currentUserId = response.data.user_message.id;
-          currentAssistantId = response.data.assistant_message.id;
+            onConversationAvailable?.(response.data.conversation.id, runId);
+            currentUserId = response.data.user_message.id;
+            currentAssistantId = response.data.assistant_message.id;
 
           if (
             response.data.run.status === "complete" ||
@@ -152,6 +158,11 @@ export function useChatRunTail({
           ) {
             handleDone(
               currentAssistantId,
+              response.data.run.status,
+              response.data.run.error_code,
+            );
+            onRunDone?.(
+              runId,
               response.data.run.status,
               response.data.run.error_code,
             );
@@ -214,6 +225,10 @@ export function useChatRunTail({
                   onConversationAvailable?.(event.data.conversation_id, runId);
                   break;
                 case "delta":
+                  if (!firstDeltaRunIdsRef.current.has(runId)) {
+                    firstDeltaRunIdsRef.current.add(runId);
+                    onFirstDelta?.(runId);
+                  }
                   if (replayDeltaCharsToSkip > 0) {
                     if (event.data.delta.length <= replayDeltaCharsToSkip) {
                       replayDeltaCharsToSkip -= event.data.delta.length;
@@ -243,6 +258,7 @@ export function useChatRunTail({
                     event.data.status,
                     event.data.error_code,
                   );
+                  onRunDone?.(runId, event.data.status, event.data.error_code);
                   break;
                 default: {
                   const _exhaustive: never = event;
@@ -289,7 +305,9 @@ export function useChatRunTail({
       handleToolResult,
       flushDeltas,
       mergeRunMessages,
+      onFirstDelta,
       onConversationAvailable,
+      onRunDone,
       onRunFinished,
     ],
   );

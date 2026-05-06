@@ -1,10 +1,10 @@
 "use client";
 
-import type { ContextItem } from "@/lib/api/sse";
+import type { ContextItem, ContextItemColor } from "@/lib/api/sse";
 import { getContextChipLabel } from "@/lib/conversations/display";
 import styles from "./ContextChips.module.css";
 
-const COLOR_CLASS: Record<NonNullable<ContextItem["color"]>, string> = {
+const COLOR_CLASS: Record<ContextItemColor, string> = {
   yellow: styles.chipSwatchYellow,
   green: styles.chipSwatchGreen,
   blue: styles.chipSwatchBlue,
@@ -28,7 +28,7 @@ export default function ContextChips({
   return (
     <div className={styles.contextChips}>
       {contexts.map((ctx, i) => (
-        <span key={`${ctx.type}-${ctx.id}-${i}`} className={styles.contextChip}>
+        <span key={`${contextKey(ctx)}-${i}`} className={styles.contextChip}>
           {ctx.color ? (
             <span
               className={`${styles.chipSwatch} ${COLOR_CLASS[ctx.color]}`}
@@ -53,4 +53,11 @@ export default function ContextChips({
       ) : null}
     </div>
   );
+}
+
+function contextKey(context: ContextItem): string {
+  if (context.kind === "reader_selection") {
+    return `reader_selection-${context.client_context_id}`;
+  }
+  return `${context.type}-${context.id}`;
 }

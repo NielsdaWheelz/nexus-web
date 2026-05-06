@@ -180,6 +180,24 @@ describe("ChatComposer", () => {
     setViewportWidth(originalInnerWidth);
   });
 
+  it("shares cached model loading across multiple composer mounts", async () => {
+    const fetchMock = installChatComposerFetchMock();
+
+    render(
+      <>
+        <ChatComposer conversationId="conversation-1" />
+        <ChatComposer conversationId="conversation-2" />
+      </>,
+    );
+
+    expect(
+      await screen.findAllByRole("button", { name: /gpt-5 mini.*default/i }),
+    ).toHaveLength(2);
+    expect(
+      fetchMock.mock.calls.filter(([input]) => pathOf(input) === "/api/models").length,
+    ).toBeLessThanOrEqual(1);
+  });
+
   it("changes model settings and sends the selected request payload", async () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
@@ -281,12 +299,14 @@ describe("ChatComposer", () => {
     const onRemoveContext = vi.fn();
     const attachedContexts: ContextItem[] = [
       {
+        kind: "object_ref",
         type: "highlight",
         id: "highlight-1",
         color: "yellow",
         exact: "A quoted passage",
       },
       {
+        kind: "object_ref",
         type: "media",
         id: "media-1",
         preview: "Source item",

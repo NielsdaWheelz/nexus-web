@@ -64,7 +64,7 @@ export type PaneMobileChromeLockReason =
   | "text-selection"
   | "highlight-navigation"
   | "highlights-drawer"
-  | "quote-chat-sheet"
+  | "reader-assistant"
   | "library-picker"
   | "action-menu";
 

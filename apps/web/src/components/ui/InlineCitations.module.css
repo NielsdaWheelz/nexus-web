@@ -23,6 +23,23 @@
   color: var(--color-bg);
 }
 
+.pillButton {
+  border: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pillButton:hover,
+.pillButton:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.pillUnavailable {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .pill-yellow { background: var(--highlight-yellow); }
 .pill-green { background: var(--highlight-green); }
 .pill-blue { background: var(--highlight-blue); }

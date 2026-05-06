@@ -95,9 +95,8 @@ export default function OracleConcordance({
               className={styles.concordanceItem}
               onClick={() => router.push(`/oracle/${entry.id}`)}
             >
-              <span>
-                Folio {toRoman(entry.folio_number)} · {entry.folio_theme ?? "—"} · {entry.folio_motto}
-              </span>
+              <span>Folio {toRoman(entry.folio_number)} · {entry.folio_theme ?? "—"}</span>
+              <span className={styles.concordanceMotto}>{entry.folio_motto}</span>
               <span className={styles.concordanceShareReason}>{shareReasonText(entry)}</span>
             </button>
           </li>

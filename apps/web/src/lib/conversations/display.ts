@@ -1,4 +1,4 @@
-import type { ContextItem } from "@/lib/api/sse";
+import type { ContextItem, ContextItemColor, ContextItemType } from "@/lib/api/sse";
 import type {
   ConversationScope,
   MessageContextSnapshot,
@@ -8,9 +8,10 @@ type DisplayContext =
   | ContextItem
   | MessageContextSnapshot
   | {
-      type: ContextItem["type"];
+      kind?: "object_ref";
+      type: ContextItemType;
       id: string;
-      color?: ContextItem["color"];
+      color?: ContextItemColor;
       exact?: string;
       preview?: string;
       mediaTitle?: string;
@@ -33,15 +34,31 @@ export function getContextChipLabel(context: DisplayContext, maxLength = 60): st
   if (text) {
     return truncateText(text, maxLength);
   }
+  if ("kind" in context && context.kind === "reader_selection") {
+    return "Selected quote";
+  }
+  if (!("type" in context) || !("id" in context) || !context.type || !context.id) {
+    return "Context";
+  }
   return `${context.type}: ${context.id.slice(0, 8)}...`;
 }
 
 export function getContextMediaTitle(context: DisplayContext): string | undefined {
+  if ("media_title" in context && context.media_title) {
+    return context.media_title;
+  }
   if ("mediaTitle" in context && context.mediaTitle) {
     return context.mediaTitle;
   }
-  if ("media_title" in context && context.media_title) {
-    return context.media_title;
+  return undefined;
+}
+
+export function getContextMediaKind(context: DisplayContext): string | undefined {
+  if ("media_kind" in context && context.media_kind) {
+    return context.media_kind;
+  }
+  if ("mediaKind" in context && context.mediaKind) {
+    return context.mediaKind;
   }
   return undefined;
 }

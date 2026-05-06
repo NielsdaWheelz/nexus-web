@@ -105,6 +105,12 @@ async function expectHighlightRowToBeExpanded(row: Locator): Promise<void> {
   await expect(rowActionsButton(row)).toHaveCount(1);
 }
 
+async function expectReaderAssistantContext(page: Page, exact: string): Promise<void> {
+  const assistant = page.getByRole("region", { name: "Reader assistant" });
+  await expect(assistant).toBeVisible({ timeout: 10_000 });
+  await expect(assistant.getByLabel("Attached context")).toContainText(exact);
+}
+
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
   return pdfControlsToolbar(page)
     .locator(`[aria-label="Page ${pageNumber} of ${pageCount}"]`)
@@ -238,10 +244,11 @@ test.describe("pdf reader @legacy-synthetic", () => {
 
       // Use the API to keep this focused on persistence and quote-to-chat behavior.
       const nonce = Date.now() % 100_000;
+      const exact = `e2e-persist-chat-${nonce}`;
       const createHighlight = await page.request.post(`/api/media/${expectedMediaId}/pdf-highlights`, {
         data: {
           page_number: 2,
-          exact: `e2e-persist-chat-${nonce}`,
+          exact,
           color: "yellow",
           quads: [
             {
@@ -274,31 +281,12 @@ test.describe("pdf reader @legacy-synthetic", () => {
       await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
       await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
       const chatButton = rowAskInChatButton(linkedRow);
-      const conversationPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
+      const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
       await chatButton.click();
-
+      await expectReaderAssistantContext(page, exact);
       await expect
-        .poll(
-          async () => workspacePaneButton(page, /^chat\b/i).count(),
-          { timeout: 15_000 }
-        )
-        .toBe(conversationPaneCountBefore + 1);
-
-      await expect
-        .poll(() => {
-          const currentUrl = new URL(page.url());
-          if (
-            currentUrl.pathname !== "/conversations/new" &&
-            !/^\/conversations\/[^/]+$/.test(currentUrl.pathname)
-          ) {
-            return null;
-          }
-          const context = currentUrl.searchParams
-            .getAll("context")
-            .find((value) => value.startsWith("highlight:"));
-          return context ? context.slice("highlight:".length) : null;
-        })
-        .toBe(createdHighlightId);
+        .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
+        .toBe(chatPaneCountBefore);
     } finally {
       if (createdHighlightId) {
         try {

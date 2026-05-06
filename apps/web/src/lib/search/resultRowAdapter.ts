@@ -665,14 +665,11 @@ function adaptSearchResultRow(
     href: buildResultHref(result),
     type: result.type,
     mediaId: result.media_id,
-    contextRef:
-      result.type === "content_chunk"
-        ? {
-            type: result.context_ref.type,
-            id: result.context_ref.id,
-            evidenceSpanIds: result.context_ref.evidence_span_ids ?? [],
-          }
-        : null,
+    contextRef: {
+      type: result.context_ref.type,
+      id: result.context_ref.id,
+      evidenceSpanIds: result.context_ref.evidence_span_ids ?? [],
+    },
     typeLabel:
       result.type === "content_chunk"
         ? result.citation_label

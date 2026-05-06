@@ -6,7 +6,7 @@ import type {
   ConversationScope,
 } from "@/lib/conversations/types";
 import ConversationScopeChip from "./ConversationScopeChip";
-import { MessageRow } from "./MessageRow";
+import { MessageRow, type ReaderSourceTarget } from "./MessageRow";
 import styles from "./ChatSurface.module.css";
 
 export default function ChatSurface({
@@ -18,6 +18,7 @@ export default function ChatSurface({
   emptyState,
   composer,
   scope,
+  onReaderSourceActivate,
 }: {
   messages: ConversationMessage[];
   scrollportRef?: RefObject<HTMLDivElement | null>;
@@ -27,6 +28,7 @@ export default function ChatSurface({
   emptyState?: ReactNode;
   composer: ReactNode;
   scope?: ConversationScope;
+  onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
 }) {
   return (
     <div className={styles.surface}>
@@ -65,7 +67,11 @@ export default function ChatSurface({
           ) : null}
 
           {messages.map((msg) => (
-            <MessageRow key={msg.id} message={msg} />
+            <MessageRow
+              key={msg.id}
+              message={msg}
+              onReaderSourceActivate={onReaderSourceActivate}
+            />
           ))}
         </div>
 

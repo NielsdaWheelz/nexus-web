@@ -50,6 +50,16 @@ function mockApi({
     if (url.pathname === "/api/search") {
       return jsonResponse({ results: searchResults, page: { has_more: false, next_cursor: null } });
     }
+    if (url.pathname === "/api/notes/pages" && init?.method === "POST") {
+      return jsonResponse({
+        data: {
+          id: "page-created",
+          title: "Untitled",
+          description: null,
+          blocks: [],
+        },
+      });
+    }
     throw new Error(`Unexpected fetch call: ${url.pathname}`);
   });
 }
@@ -301,5 +311,27 @@ describe("CommandPalette", () => {
     expect(sectionHeadings()).toEqual(["Open tabs", "Create", "Navigate", "Settings"]);
     expect(screen.getByText("Navigate")).toBeInTheDocument();
     expect(screen.getByText("Browse")).toBeInTheDocument();
+  });
+
+  it("exposes note creation and daily capture commands", async () => {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    renderCommandPalette();
+
+    expect(await screen.findByTestId("workspace-ready")).toBeInTheDocument();
+
+    openPalette();
+
+    expect(await screen.findByRole("button", { name: /New page/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Today's note/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Quick note to today/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /New page/ }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/notes/pages",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
   });
 });

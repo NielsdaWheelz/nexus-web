@@ -245,6 +245,36 @@
   color: var(--color-accent);
 }
 
+.evidenceSourceButton {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.evidenceSourceButton:hover,
+.evidenceSourceButton:focus-visible {
+  color: var(--color-accent);
+}
+
+.evidenceSourceButton:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.evidenceSourceUnavailable {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
 .evidenceSource span {
   overflow: hidden;
   text-overflow: ellipsis;

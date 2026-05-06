@@ -81,13 +81,16 @@ describe("QuoteChatSheet", () => {
 
     render(
       <QuoteChatSheet
-        context={{
-          type: "highlight",
-          id: "highlight-1",
-          color: "yellow",
-          exact: "A quote worth asking about.",
-          mediaTitle: "Source document",
-        }}
+        contexts={[
+          {
+            kind: "object_ref",
+            type: "highlight",
+            id: "highlight-1",
+            color: "yellow",
+            exact: "A quote worth asking about.",
+            mediaTitle: "Source document",
+          },
+        ]}
         conversationId={null}
         targetLabel="New chat"
         onClose={onClose}
@@ -100,8 +103,8 @@ describe("QuoteChatSheet", () => {
     expect(screen.getAllByText("A quote worth asking about.")).toHaveLength(2);
     expect(screen.getByText("Source document")).toBeInTheDocument();
     expect(screen.getByRole("log", { name: "Chat messages" })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Ask anything...")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /open chat/i })).toBeDisabled();
+    expect(screen.getByPlaceholderText("Ask anything...")).toHaveFocus();
+    expect(screen.getByRole("button", { name: /open full chat/i })).toBeDisabled();
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
@@ -116,17 +119,57 @@ describe("QuoteChatSheet", () => {
     });
   });
 
+  it("uses the shared assistant body for mobile reader-selection context", async () => {
+    stubModelsFetch();
+
+    render(
+      <QuoteChatSheet
+        contexts={[
+          {
+            kind: "reader_selection",
+            client_context_id: "selection-1",
+            media_id: "media-1",
+            media_kind: "article",
+            media_title: "Source article",
+            exact: "A selected passage from the reader.",
+            locator: { type: "web_fragment", fragment_id: "fragment-1" },
+          },
+        ]}
+        conversationId={null}
+        targetLabel="Document chat"
+        onClose={vi.fn()}
+        onConversationCreated={vi.fn()}
+        onOpenFullChat={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "Ask in chat" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Reader assistant" })).toBeInTheDocument();
+    expect(screen.getAllByText("A selected passage from the reader.")).toHaveLength(2);
+    expect(screen.getByText("Source article - article")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove quote context" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("A selected passage from the reader.")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Ask about this source")).toBeVisible();
+  });
+
   it("loads existing chat history and can promote to the full chat pane", async () => {
     stubModelsFetch();
     const onOpenFullChat = vi.fn();
 
     render(
       <QuoteChatSheet
-        context={{
-          type: "highlight",
-          id: "highlight-1",
-          exact: "Existing-context quote.",
-        }}
+        contexts={[
+          {
+            kind: "object_ref",
+            type: "highlight",
+            id: "highlight-1",
+            exact: "Existing-context quote.",
+          },
+        ]}
         conversationId="conversation-1"
         targetLabel="Existing chat"
         onClose={vi.fn()}
@@ -136,7 +179,7 @@ describe("QuoteChatSheet", () => {
     );
 
     expect(await screen.findByText("Earlier answer")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /open chat/i }));
+    fireEvent.click(screen.getByRole("button", { name: /open full chat/i }));
     expect(onOpenFullChat).toHaveBeenCalledWith("conversation-1");
   });
 
@@ -224,11 +267,14 @@ describe("QuoteChatSheet", () => {
 
     render(
       <QuoteChatSheet
-        context={{
-          type: "highlight",
-          id: "highlight-1",
-          exact: "A quote worth asking about.",
-        }}
+        contexts={[
+          {
+            kind: "object_ref",
+            type: "highlight",
+            id: "highlight-1",
+            exact: "A quote worth asking about.",
+          },
+        ]}
         conversationId={null}
         targetLabel="New chat"
         onClose={vi.fn()}
@@ -247,7 +293,7 @@ describe("QuoteChatSheet", () => {
     });
     expect(screen.getByText("What does this mean?")).toBeInTheDocument();
 
-    const openButton = screen.getByRole("button", { name: /open chat/i });
+    const openButton = screen.getByRole("button", { name: /open full chat/i });
     await waitFor(() => expect(openButton).not.toBeDisabled());
     fireEvent.click(openButton);
 

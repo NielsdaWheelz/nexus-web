@@ -543,7 +543,7 @@ function TwoLocksProbe() {
         onClick={() => {
           secondReleaseRef.current?.();
           secondReleaseRef.current =
-            paneMobileChrome?.acquireVisibleLock("quote-chat-sheet") ?? null;
+            paneMobileChrome?.acquireVisibleLock("reader-assistant") ?? null;
         }}
       >
         Lock second

@@ -1,6 +1,6 @@
 "use client";
 
-export type AddContentMode = "content" | "opml";
+export type AddContentMode = "content" | "quick-note" | "opml";
 
 export const OPEN_ADD_CONTENT_EVENT = "nexus:open-add-content";
 

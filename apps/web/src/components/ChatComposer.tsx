@@ -44,6 +44,12 @@ export interface ChatComposerProps {
   onChatRunCreated?: (data: ChatRunResponse["data"]) => void;
   /** Called after message sent (for refreshing lists). */
   onMessageSent?: () => void;
+  /** Called when a valid send begins. */
+  onSendStarted?: () => void;
+  /** Focus the composer textarea after mount or when focusKey changes. */
+  autoFocus?: boolean;
+  /** Stable key used to refocus the composer for a newly attached quote. */
+  focusKey?: string;
 }
 
 type ComposerModel = ConversationModel;
@@ -70,6 +76,27 @@ const REASONING_LABELS = {
   max: "Max",
 } satisfies Record<ReasoningMode, string>;
 const DEFAULT_CONVERSATION_SCOPE: ConversationScope = { type: "general" };
+
+let cachedModels: ComposerModel[] | null = null;
+let modelLoadPromise: Promise<ComposerModel[]> | null = null;
+
+function loadComposerModels(): Promise<ComposerModel[]> {
+  if (cachedModels) {
+    return Promise.resolve(cachedModels);
+  }
+  if (!modelLoadPromise) {
+    modelLoadPromise = apiFetch<{ data: ComposerModel[] }>("/api/models")
+      .then((response) => {
+        cachedModels = response.data;
+        return response.data;
+      })
+      .catch((err) => {
+        modelLoadPromise = null;
+        throw err;
+      });
+  }
+  return modelLoadPromise;
+}
 
 function getModelSourceLabel(model: ComposerModel): string {
   if (model.available_via === "byok") {
@@ -115,12 +142,15 @@ export default function ChatComposer({
   onRemoveContext,
   onChatRunCreated,
   onMessageSent,
+  onSendStarted,
+  autoFocus = false,
+  focusKey,
 }: ChatComposerProps) {
   const router = useRouter();
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [models, setModels] = useState<ComposerModel[]>([]);
+  const [models, setModels] = useState<ComposerModel[]>(() => cachedModels ?? []);
   const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [selectedModelId, setSelectedModelId] = useState<string>("");
   const [selectedReasoning, setSelectedReasoning] =
@@ -141,20 +171,32 @@ export default function ChatComposer({
     el.style.overflowY = el.scrollHeight > 160 ? "auto" : "hidden";
   }, [content]);
 
+  useEffect(() => {
+    if (!autoFocus) return;
+    textareaRef.current?.focus({ preventScroll: true });
+  }, [autoFocus, focusKey]);
+
   // --------------------------------------------------------------------------
   // Fetch available models
   // --------------------------------------------------------------------------
 
   useEffect(() => {
-    const loadModels = async () => {
-      try {
-        const response = await apiFetch<{ data: ComposerModel[] }>("/api/models");
-        setModels(response.data);
-      } catch (err) {
-        console.error("Failed to load models:", err);
-      }
+    let cancelled = false;
+    void loadComposerModels()
+      .then((nextModels) => {
+        if (!cancelled) {
+          setModels(nextModels);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error("Failed to load models:", err);
+        }
+      });
+
+    return () => {
+      cancelled = true;
     };
-    loadModels();
   }, []);
 
   const availableModels = useMemo(
@@ -261,6 +303,7 @@ export default function ChatComposer({
 
     setSending(true);
     setError(null);
+    onSendStarted?.();
 
     const idempotencyKey = crypto.randomUUID();
     const body: ChatRunCreateRequest = {
@@ -316,6 +359,7 @@ export default function ChatComposer({
     conversationScope,
     sendChatRun,
     onMessageSent,
+    onSendStarted,
   ]);
 
   const handleProviderChange = useCallback(

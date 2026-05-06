@@ -103,6 +103,52 @@ export const outlineSchema = new Schema({
         node.attrs.label || `${node.attrs.objectType}:${node.attrs.objectId}`,
       ],
     },
+    object_embed: {
+      group: "block_body block",
+      atom: true,
+      selectable: true,
+      attrs: {
+        objectType: {},
+        objectId: {},
+        label: { default: "" },
+        relationType: { default: "embeds" },
+        displayMode: { default: "compact" },
+      },
+      parseDOM: [
+        {
+          tag: "div[data-object-embed-type][data-object-embed-id]",
+          getAttrs: (dom) => {
+            if (!(dom instanceof HTMLElement)) return false;
+            return {
+              objectType: dom.getAttribute("data-object-embed-type"),
+              objectId: dom.getAttribute("data-object-embed-id"),
+              label: dom.textContent ?? "",
+              relationType: dom.getAttribute("data-relation-type") ?? "embeds",
+              displayMode: dom.getAttribute("data-display-mode") ?? "compact",
+            };
+          },
+        },
+      ],
+      toDOM: (node) => [
+        "div",
+        {
+          "data-object-type": node.attrs.objectType,
+          "data-object-id": node.attrs.objectId,
+          "data-object-embed-type": node.attrs.objectType,
+          "data-object-embed-id": node.attrs.objectId,
+          "data-relation-type": node.attrs.relationType,
+          "data-display-mode": node.attrs.displayMode,
+          contenteditable: "false",
+          class: "note-object-embed",
+          role: "link",
+          tabindex: "0",
+          "aria-label": `Open ${
+            node.attrs.label || `${node.attrs.objectType}:${node.attrs.objectId}`
+          }`,
+        },
+        node.attrs.label || `${node.attrs.objectType}:${node.attrs.objectId}`,
+      ],
+    },
     code_block: {
       content: "text*",
       marks: "",
@@ -194,7 +240,11 @@ function blockToNode(block: NoteBlock): ProseMirrorNode {
   let paragraph = paragraphFromText(block.bodyText);
   try {
     const parsed = outlineSchema.nodeFromJSON(block.bodyPmJson);
-    if (parsed.type === outlineSchema.nodes.paragraph || parsed.type === outlineSchema.nodes.code_block) {
+    if (
+      parsed.type === outlineSchema.nodes.paragraph ||
+      parsed.type === outlineSchema.nodes.code_block ||
+      parsed.type === outlineSchema.nodes.object_embed
+    ) {
       paragraph = parsed;
     }
   } catch {
@@ -239,7 +289,11 @@ export function createOutlineDocFromBlock(input: {
   if (input.bodyPmJson) {
     try {
       const parsed = outlineSchema.nodeFromJSON(input.bodyPmJson);
-      if (parsed.type === outlineSchema.nodes.paragraph || parsed.type === outlineSchema.nodes.code_block) {
+      if (
+        parsed.type === outlineSchema.nodes.paragraph ||
+        parsed.type === outlineSchema.nodes.code_block ||
+        parsed.type === outlineSchema.nodes.object_embed
+      ) {
         paragraph = parsed;
       }
     } catch {

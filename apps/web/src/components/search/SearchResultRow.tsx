@@ -26,23 +26,28 @@ function renderSnippetContent(row: SearchResultRowViewModel) {
 }
 
 function buildAskHref(row: SearchResultRowViewModel): string | null {
-  if (
-    row.type !== "content_chunk" ||
-    !row.mediaId ||
-    !row.contextRef ||
-    row.contextRef.evidenceSpanIds.length === 0
-  ) {
+  if (!row.contextRef) {
     return null;
   }
 
-  const params = new URLSearchParams({
-    scope: `media:${row.mediaId}`,
-    context: [
-      row.contextRef.type,
-      row.contextRef.id,
-      row.contextRef.evidenceSpanIds.join(","),
-    ].join(":"),
-  });
+  const params = new URLSearchParams();
+  if (
+    row.type === "content_chunk" &&
+    row.mediaId &&
+    row.contextRef.evidenceSpanIds.length > 0
+  ) {
+    params.set("scope", `media:${row.mediaId}`);
+  }
+  params.set(
+    "attach_context",
+    row.contextRef.evidenceSpanIds.length > 0
+      ? [
+          row.contextRef.type,
+          row.contextRef.id,
+          row.contextRef.evidenceSpanIds.join(","),
+        ].join(":")
+      : [row.contextRef.type, row.contextRef.id].join(":")
+  );
   return `/conversations/new?${params.toString()}`;
 }
 
@@ -66,7 +71,7 @@ export default function SearchResultRow({ row }: SearchResultRowProps) {
           <>
             {askHref ? (
               <a className={styles.askLink} href={askHref}>
-                Ask with evidence
+                {row.type === "content_chunk" ? "Ask with evidence" : "Ask with context"}
               </a>
             ) : null}
             {row.contributorCredits.length > 0 ? (

@@ -44,7 +44,8 @@ function readDraftBlocks(parent: ProseMirrorNode): DraftBlock[] {
     const paragraph =
       node.childCount > 0 &&
       (node.child(0).type === outlineSchema.nodes.paragraph ||
-        node.child(0).type === outlineSchema.nodes.code_block)
+        node.child(0).type === outlineSchema.nodes.code_block ||
+        node.child(0).type === outlineSchema.nodes.object_embed)
         ? node.child(0)
         : emptyParagraph();
     blocks.push({

@@ -1,6 +1,7 @@
 import type {
   CitationEventData,
-  ContextItem,
+  ContextItemColor,
+  ContextItemType,
   SearchCitationEventData,
 } from "@/lib/api/sse";
 import type { ContributorCredit } from "@/lib/contributors/types";
@@ -53,9 +54,12 @@ export interface ConversationModel {
 }
 
 export interface MessageContextSnapshot {
-  type: ContextItem["type"];
-  id: string;
-  color?: ContextItem["color"];
+  kind: "object_ref" | "reader_selection";
+  type?: ContextItemType | null;
+  id?: string | null;
+  evidence_span_ids?: string[];
+  client_context_id?: string | null;
+  color?: ContextItemColor;
   exact?: string;
   preview?: string;
   prefix?: string;
@@ -63,8 +67,10 @@ export interface MessageContextSnapshot {
   title?: string;
   route?: string;
   media_id?: string;
+  source_media_id?: string;
   media_title?: string;
   media_kind?: string;
+  locator?: Record<string, unknown> | null;
 }
 
 export interface MessageRetrieval {

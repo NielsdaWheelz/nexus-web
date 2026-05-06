@@ -10,7 +10,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function openTray(mode: "content" | "opml" = "content") {
+function openTray(mode: "content" | "quick-note" | "opml" = "content") {
   act(() => {
     window.dispatchEvent(
       new CustomEvent(OPEN_ADD_CONTENT_EVENT, {
@@ -52,6 +52,32 @@ describe("AddContentTray", () => {
           data: {
             media_id: body.url.includes("one.pdf") ? "media-one" : "media-two",
             idempotency_outcome: "created",
+          },
+        });
+      }
+      if (url.pathname === "/api/notes/pages" && init?.method === "POST") {
+        return jsonResponse({
+          data: {
+            id: "page-new",
+            title: "Untitled",
+            description: null,
+            blocks: [],
+          },
+        });
+      }
+      if (url.pathname.endsWith("/quick-capture") && init?.method === "POST") {
+        return jsonResponse({
+          data: {
+            id: "block-new",
+            page_id: "page-today",
+            parent_block_id: null,
+            order_key: "a",
+            block_kind: "bullet",
+            body_pm_json: { type: "paragraph" },
+            body_markdown: "captured text",
+            body_text: "captured text",
+            collapsed: false,
+            children: [],
           },
         });
       }
@@ -132,5 +158,26 @@ describe("AddContentTray", () => {
     expect(await screen.findByText("Import summary")).toBeInTheDocument();
     expect(screen.getByText("Imported: 1")).toBeInTheDocument();
     expect(screen.getByText("Already followed: 1")).toBeInTheDocument();
+  });
+
+  it("creates pages and quick-captures to today from the tray", async () => {
+    render(<AddContentTray />);
+
+    openTray();
+
+    expect(await screen.findByRole("dialog", { name: "Add content" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New page" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Add content" })).not.toBeInTheDocument();
+    });
+
+    openTray("quick-note");
+    fireEvent.change(await screen.findByLabelText("Quick note to today"), {
+      target: { value: "captured text" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+
+    expect(await screen.findByText("Added to today.")).toBeInTheDocument();
   });
 });

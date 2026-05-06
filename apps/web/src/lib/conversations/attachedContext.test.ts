@@ -12,13 +12,22 @@ import {
 describe("parsePendingContexts", () => {
   it("returns typed context ids for valid query values", () => {
     const params = new URLSearchParams(
-      "context=highlight:a1b2c3d4-e5f6-7890-abcd-ef1234567890&context=media:b1b2c3d4-e5f6-7890-abcd-ef1234567890&context=content_chunk:c1b2c3d4-e5f6-7890-abcd-ef1234567890:d1b2c3d4-e5f6-7890-abcd-ef1234567890,d2b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "attach_context=highlight:a1b2c3d4-e5f6-7890-abcd-ef1234567890&attach_context=media:b1b2c3d4-e5f6-7890-abcd-ef1234567890&attach_context=content_chunk:c1b2c3d4-e5f6-7890-abcd-ef1234567890:d1b2c3d4-e5f6-7890-abcd-ef1234567890,d2b2c3d4-e5f6-7890-abcd-ef1234567890",
     );
     const result = parsePendingContexts(params);
     expect(result).toEqual([
-      { type: "highlight", id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890" },
-      { type: "media", id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890" },
       {
+        kind: "object_ref",
+        type: "highlight",
+        id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      },
+      {
+        kind: "object_ref",
+        type: "media",
+        id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      },
+      {
+        kind: "object_ref",
         type: "content_chunk",
         id: "c1b2c3d4-e5f6-7890-abcd-ef1234567890",
         evidence_span_ids: [
@@ -43,7 +52,7 @@ describe("parsePendingContexts", () => {
         "content_chunk",
         "contributor",
       ]
-        .map((type) => `context=${type}:${id}`)
+        .map((type) => `attach_context=${type}:${id}`)
         .join("&"),
     );
 
@@ -62,7 +71,7 @@ describe("parsePendingContexts", () => {
 
   it("ignores invalid or unsupported values", () => {
     const params = new URLSearchParams(
-      "context=bookmark:a1b2c3d4-e5f6-7890-abcd-ef1234567890&context=highlight:not-a-uuid&context=highlight&context=content_chunk:a1b2c3d4-e5f6-7890-abcd-ef1234567890:not-a-uuid",
+      "attach_context=bookmark:a1b2c3d4-e5f6-7890-abcd-ef1234567890&attach_context=highlight:not-a-uuid&attach_context=highlight&attach_context=content_chunk:a1b2c3d4-e5f6-7890-abcd-ef1234567890:not-a-uuid",
     );
     expect(parsePendingContexts(params)).toEqual([]);
   });
@@ -93,12 +102,12 @@ describe("parseConversationScopeFromUrl", () => {
 describe("pending context params", () => {
   it("preserves unrelated query keys", () => {
     const params = new URLSearchParams(
-      "context=highlight:a1b2c3d4-e5f6-7890-abcd-ef1234567890&scope=media:b1b2c3d4-e5f6-7890-abcd-ef1234567890&foo=bar&baz=qux",
+      "attach_context=highlight:a1b2c3d4-e5f6-7890-abcd-ef1234567890&scope=media:b1b2c3d4-e5f6-7890-abcd-ef1234567890&foo=bar&baz=qux",
     );
     const result = stripPendingContextParams(params);
     expect(result.get("foo")).toBe("bar");
     expect(result.get("baz")).toBe("qux");
-    expect(result.has("context")).toBe(false);
+    expect(result.has("attach_context")).toBe(false);
     expect(result.has("scope")).toBe(false);
   });
 
@@ -112,7 +121,7 @@ describe("pending context params", () => {
       { type: "library", library_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890" },
     );
     expect(withScope.get("foo")).toBe("bar");
-    expect(withScope.get("context")).toBe(
+    expect(withScope.get("attach_context")).toBe(
       "highlight:a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     );
     expect(withScope.get("scope")).toBe(
@@ -127,7 +136,7 @@ describe("pending context params", () => {
       evidence_span_ids: ["b1b2c3d4-e5f6-7890-abcd-ef1234567890"],
     });
 
-    expect(params.get("context")).toBe(
+    expect(params.get("attach_context")).toBe(
       "content_chunk:a1b2c3d4-e5f6-7890-abcd-ef1234567890:b1b2c3d4-e5f6-7890-abcd-ef1234567890",
     );
   });
@@ -137,8 +146,13 @@ describe("signatures", () => {
   it("serializes pending contexts and conversation scopes", () => {
     expect(
       getPendingContextSignature([
-        { type: "highlight", id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890" },
         {
+          kind: "object_ref",
+          type: "highlight",
+          id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        },
+        {
+          kind: "object_ref",
           type: "media",
           id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
           evidence_span_ids: ["c1b2c3d4-e5f6-7890-abcd-ef1234567890"],

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   BookOpen,
+  CalendarDays,
   Compass,
   FileText,
   FolderPlus,
@@ -15,15 +16,19 @@ import {
   MessageSquare,
   MessageSquarePlus,
   Mic,
+  Plus,
   PanelLeft,
+  Pin,
   Search,
   Settings,
+  Sparkles,
   Type,
   Upload,
   UserRound,
   X,
 } from "lucide-react";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
 import {
   resolveWorkspacePaneTitle,
   useWorkspaceStore,
@@ -33,6 +38,8 @@ import {
 } from "@/components/addContentEvents";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { apiFetch } from "@/lib/api/client";
+import { createNotePage } from "@/lib/notes/api";
+import { pinObjectToNavbar } from "@/lib/pinnedObjects";
 import {
   type SearchResultRowViewModel,
   type SearchType,
@@ -48,7 +55,20 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import styles from "./CommandPalette.module.css";
 
-type Section = "Open tabs" | "Recent" | "Create" | "Navigate" | "Settings" | "Search results";
+type Section = "Open tabs" | "Recent" | "Recent folios" | "Create" | "Navigate" | "Settings" | "Search results";
+
+const ROMAN_VALS: [number, string][] = [
+  [1000, "M"], [900, "CM"], [500, "D"], [400, "CD"],
+  [100, "C"], [90, "XC"], [50, "L"], [40, "XL"],
+  [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"],
+];
+function roman(n: number): string {
+  let result = "";
+  for (const [value, numeral] of ROMAN_VALS) {
+    while (n >= value) { result += numeral; n -= value; }
+  }
+  return result;
+}
 
 interface Action {
   id: string;
@@ -70,10 +90,13 @@ interface CommandPaletteRecentRow {
 
 const ACTIONS: Action[] = [
   // Navigate
+  { id: "nav-oracle", label: "Oracle", keywords: ["oracle", "divination", "reading", "folio", "fortune", "sortes", "motto"], section: "Navigate", icon: Sparkles, execute: () => window.location.assign("/oracle") },
   { id: "nav-libraries", label: "Libraries", keywords: ["collections", "sources"], section: "Navigate", icon: BookOpen, execute: () => requestOpenInAppPane("/libraries") },
   { id: "nav-browse", label: "Browse", keywords: ["discover", "podcasts", "videos", "documents"], section: "Navigate", icon: Compass, execute: () => requestOpenInAppPane("/browse") },
   { id: "nav-podcasts", label: "Podcasts", keywords: ["audio", "feeds", "episodes"], section: "Navigate", icon: Mic, execute: () => requestOpenInAppPane("/podcasts") },
   { id: "nav-chats", label: "Chats", keywords: ["conversations", "messages"], section: "Navigate", icon: MessageSquare, execute: () => requestOpenInAppPane("/conversations") },
+  { id: "nav-today", label: "Today's note", keywords: ["daily", "journal", "notes"], section: "Navigate", icon: CalendarDays, execute: () => requestOpenInAppPane("/daily", { titleHint: "Today" }) },
+  { id: "nav-notes", label: "Notes", keywords: ["pages", "outline", "knowledge"], section: "Navigate", icon: FileText, execute: () => requestOpenInAppPane("/notes") },
   { id: "nav-search", label: "Search", keywords: ["find", "query"], section: "Navigate", icon: Search, execute: () => requestOpenInAppPane("/search") },
   { id: "nav-settings", label: "Settings", keywords: ["preferences", "account"], section: "Navigate", icon: Settings, execute: () => requestOpenInAppPane("/settings") },
   { id: "nav-reader-settings", label: "Reader Settings", keywords: ["typography", "font", "theme"], section: "Settings", icon: Type, execute: () => requestOpenInAppPane("/settings/reader") },
@@ -83,7 +106,8 @@ const ACTIONS: Action[] = [
 
   // Create
   { id: "create-conversation", label: "New conversation", keywords: ["chat", "message"], section: "Create", icon: MessageSquarePlus, execute: () => requestOpenInAppPane("/conversations/new") },
-  { id: "open-notes", label: "Open notes", keywords: ["notes", "page", "outline"], section: "Navigate", icon: FileText, execute: () => requestOpenInAppPane("/notes") },
+  { id: "create-page", label: "New page", keywords: ["note", "notes", "outline"], section: "Create", icon: Plus, execute: () => void createNotePage({ title: "Untitled" }).then((page) => requestOpenInAppPane(`/pages/${page.id}`, { titleHint: page.title })) },
+  { id: "quick-note-today", label: "Quick note to today", keywords: ["daily", "capture", "journal"], section: "Create", icon: FileText, execute: () => dispatchOpenAddContent("quick-note") },
   { id: "create-library", label: "New library", keywords: ["collection", "create"], section: "Create", icon: FolderPlus, execute: () => requestOpenInAppPane("/libraries") },
   { id: "create-upload", label: "Upload file", keywords: ["pdf", "epub", "import", "add"], section: "Create", icon: Upload, execute: () => dispatchOpenAddContent("content") },
   { id: "create-url", label: "Add from URL", keywords: ["link", "paste", "import"], section: "Create", icon: Link, execute: () => dispatchOpenAddContent("content") },
@@ -121,6 +145,13 @@ function getRecentDestinationIcon(routeId: string): LucideIcon {
       return Mic;
     case "author":
       return UserRound;
+    case "daily":
+    case "dailyDate":
+      return CalendarDays;
+    case "notes":
+    case "page":
+    case "note":
+      return FileText;
     case "search":
       return Search;
     case "settings":
@@ -140,6 +171,8 @@ export default function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [recentRows, setRecentRows] = useState<CommandPaletteRecentRow[]>([]);
+  const [recentOracleActions, setRecentOracleActions] = useState<Action[]>([]);
+  const oracleFetchedAt = useRef<number>(0);
   const [searchResults, setSearchResults] = useState<SearchResultRowViewModel[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [keybindings, setKeybindings] = useState<Record<string, string>>({});
@@ -184,6 +217,28 @@ export default function CommandPalette() {
     return () => {
       cancelled = true;
     };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (Date.now() - oracleFetchedAt.current < 5 * 60_000) return;
+    apiFetch<{ id: string; folio_number: number; folio_motto: string | null; folio_theme: string | null; status: string }[]>("/api/oracle/readings")
+      .then((rows) => {
+        oracleFetchedAt.current = Date.now();
+        const actions = rows
+          .filter((row) => row.status === "complete")
+          .slice(0, 5)
+          .map((row) => ({
+            id: `oracle-recent-${row.id}`,
+            label: `Folio ${roman(row.folio_number)} · ${row.folio_theme ?? "—"} · ${row.folio_motto ?? ""}`,
+            keywords: [row.folio_motto, row.folio_theme, `folio ${row.folio_number}`].filter(Boolean) as string[],
+            section: "Recent folios" as Section,
+            icon: Sparkles,
+            execute: () => window.location.assign(`/oracle/${row.id}`),
+          }));
+        setRecentOracleActions(actions);
+      })
+      .catch(() => { /* swallow — empty section is fine */ });
   }, [open]);
 
   // Global keyboard shortcut listener
@@ -294,13 +349,40 @@ export default function CommandPalette() {
 
   const createActions = useMemo(() => {
     const actions = ACTIONS.filter((action) => action.section === "Create");
+    const activePane =
+      workspaceState.panes.find((pane) => pane.id === workspaceState.activePaneId) ?? null;
+    const route = activePane ? resolvePaneRoute(activePane.href) : null;
+    if (route?.id === "page" && route.params.pageId) {
+      actions.push({
+        id: "pin-current-page",
+        label: "Pin current page",
+        keywords: ["pin", "navbar", "notes"],
+        section: "Create",
+        icon: Pin,
+        execute: () => {
+          void pinObjectToNavbar("page", route.params.pageId);
+        },
+      });
+    }
+    if (route?.id === "note" && route.params.blockId) {
+      actions.push({
+        id: "pin-current-note",
+        label: "Pin current note",
+        keywords: ["pin", "navbar", "notes"],
+        section: "Create",
+        icon: Pin,
+        execute: () => {
+          void pinObjectToNavbar("note_block", route.params.blockId);
+        },
+      });
+    }
     if (!normalizedQuery) return actions;
     return actions.filter(
       (action) =>
         action.label.toLowerCase().includes(normalizedQuery) ||
         action.keywords.some((keyword) => keyword.includes(normalizedQuery)),
     );
-  }, [normalizedQuery]);
+  }, [normalizedQuery, workspaceState.activePaneId, workspaceState.panes]);
 
   const navigateActions = useMemo(() => {
     const actions = ACTIONS.filter((action) => action.section === "Navigate");
@@ -394,6 +476,15 @@ export default function CommandPalette() {
     );
   }, [workspaceState.panes, runtimeTitleByPaneId, activatePane, restorePane, normalizedQuery]);
 
+  const recentFolioActions = useMemo(() => {
+    if (!normalizedQuery) return recentOracleActions;
+    return recentOracleActions.filter(
+      (action) =>
+        action.label.toLowerCase().includes(normalizedQuery) ||
+        action.keywords.some((kw) => kw.includes(normalizedQuery)),
+    );
+  }, [normalizedQuery, recentOracleActions]);
+
   // Build search result actions
   const searchActions: Action[] = useMemo(
     () =>
@@ -413,11 +504,13 @@ export default function CommandPalette() {
     ? paneActions[0] ??
       searchActions[0] ??
       recentActions[0] ??
+      recentFolioActions[0] ??
       createActions[0] ??
       navigateActions[0] ??
       settingsActions[0]
     : paneActions[0] ??
       recentActions[0] ??
+      recentFolioActions[0] ??
       createActions[0] ??
       navigateActions[0] ??
       settingsActions[0];
@@ -426,6 +519,7 @@ export default function CommandPalette() {
     paneActions.length > 0 ||
     searchActions.length > 0 ||
     recentActions.length > 0 ||
+    recentFolioActions.length > 0 ||
     createActions.length > 0 ||
     navigateActions.length > 0 ||
     settingsActions.length > 0;
@@ -572,6 +666,7 @@ export default function CommandPalette() {
       {renderSection("Open tabs", paneActions, false)}
       {normalizedQuery ? renderSection("Search results", searchActions, searchLoading) : null}
       {renderSection("Recent", recentActions, false)}
+      {renderSection("Recent folios", recentFolioActions, false)}
       {renderSection("Create", createActions, false)}
       {renderSection("Navigate", navigateActions, false)}
       {renderSection("Settings", settingsActions, false)}

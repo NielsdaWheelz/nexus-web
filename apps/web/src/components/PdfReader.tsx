@@ -113,10 +113,27 @@ export interface PdfReaderControlsState {
   isBusy: boolean;
 }
 
-export interface PdfQuoteContextSeed {
+export interface PdfReaderSelectionQuote {
+  kind: "reader_selection";
+  client_context_id: string;
+  media_id: string;
   color: HighlightColor;
-  exact?: string;
-  preview?: string;
+  exact: string;
+  prefix?: string;
+  suffix?: string;
+  preview: string;
+  locator: {
+    type: "pdf_text_quote";
+    page_number: number;
+    quads: PdfHighlightQuad[];
+    text_quote_selector: {
+      exact: string;
+      prefix?: string;
+      suffix?: string;
+    };
+    page_text_start_offset?: number;
+    page_text_end_offset?: number;
+  };
 }
 
 export interface PdfReaderControlActions {
@@ -158,16 +175,7 @@ interface PdfReaderProps {
   onHighlightsMutated?: () => void;
   onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
   temporaryHighlight?: PdfTemporaryHighlight | null;
-  quoteDestinations?: Array<{
-    id: "new" | "media" | "library";
-    label: string;
-    disabled?: boolean;
-  }>;
-  onQuoteToChat?: (
-    highlightId: string,
-    destination: "new" | "media" | "library",
-    contextSeed?: PdfQuoteContextSeed,
-  ) => void;
+  onAskSelection?: (selection: PdfReaderSelectionQuote) => void;
   /** Resume seed: page (1-based) to open when this media loads */
   startPageNumber?: number;
   /** Resume seed: intra-page scroll progression to apply after first render */
@@ -233,6 +241,7 @@ const PDF_LINK_TARGET_BLANK = 2;
 const PDF_GEOMETRY_ALIGNMENT_DELTA_THRESHOLD = 0.02;
 const PDF_HIGHLIGHT_SCROLL_TARGET_FRACTION = 0.35;
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
+const PDF_QUOTE_CONTEXT_TEXT_RADIUS = 160;
 const OVERLAY_COLOR_MAP: Record<HighlightColor, string> = {
   yellow: "rgba(255, 235, 59, 0.35)",
   green: "rgba(76, 175, 80, 0.3)",
@@ -390,6 +399,73 @@ function buildSelectionSnapshotKey(selection: SelectionState): string {
   ].join("::");
 }
 
+function compactPdfQuoteText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function clipQuotePrefix(value: string): string {
+  return compactPdfQuoteText(value).slice(-PDF_QUOTE_CONTEXT_TEXT_RADIUS);
+}
+
+function clipQuoteSuffix(value: string): string {
+  return compactPdfQuoteText(value).slice(0, PDF_QUOTE_CONTEXT_TEXT_RADIUS);
+}
+
+function createPdfSelectionContextId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `pdf-selection-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function readPdfQuoteTextWindow(
+  range: Range,
+  textLayerRoot: HTMLElement | null
+): {
+  exact: string;
+  prefix?: string;
+  suffix?: string;
+  pageTextStartOffset?: number;
+  pageTextEndOffset?: number;
+} {
+  const rawExact = range.toString();
+  const exact = compactPdfQuoteText(rawExact);
+  if (!textLayerRoot) {
+    return { exact };
+  }
+
+  const prefixRange = document.createRange();
+  const suffixRange = document.createRange();
+  try {
+    prefixRange.selectNodeContents(textLayerRoot);
+    prefixRange.setEnd(range.startContainer, range.startOffset);
+    suffixRange.selectNodeContents(textLayerRoot);
+    suffixRange.setStart(range.endContainer, range.endOffset);
+
+    const rawPrefix = prefixRange.toString();
+    const rawSuffix = suffixRange.toString();
+    const rawTrimmedExact = rawExact.trim();
+    const leadingTrimmedLength = rawExact.length - rawExact.trimStart().length;
+    const pageTextStartOffset = rawPrefix.length + leadingTrimmedLength;
+    const pageTextEndOffset = pageTextStartOffset + rawTrimmedExact.length;
+    const prefix = clipQuotePrefix(rawPrefix);
+    const suffix = clipQuoteSuffix(rawSuffix);
+
+    return {
+      exact,
+      ...(prefix ? { prefix } : {}),
+      ...(suffix ? { suffix } : {}),
+      pageTextStartOffset,
+      pageTextEndOffset,
+    };
+  } catch {
+    return { exact };
+  } finally {
+    prefixRange.detach();
+    suffixRange.detach();
+  }
+}
+
 function createInitialCreateTelemetry(): CreateTelemetryState {
   return {
     attempts: 0,
@@ -544,8 +620,7 @@ export default function PdfReader({
   onHighlightsMutated,
   onHighlightTap,
   temporaryHighlight = null,
-  quoteDestinations = [],
-  onQuoteToChat,
+  onAskSelection,
   startPageNumber,
   startPageProgression,
   startZoom,
@@ -2157,27 +2232,75 @@ export default function PdfReader({
     [handleCreateHighlight]
   );
 
-  const handleQuoteToChat = useCallback(
-    async (color: HighlightColor, destination: "new" | "media" | "library") => {
-      if (!onQuoteToChat) {
+  const handleAskSelection = useCallback(
+    (color: HighlightColor) => {
+      if (!onAskSelection) {
         return;
       }
-      const quoteSelection = selection ?? selectionSnapshotRef.current;
-      const exact = textGeometryReliable ? quoteSelection?.range.toString().trim() : "";
-      const highlightId = await handleCreateHighlight(color);
-      if (!highlightId) {
+      if (!textLayerUsable || !textGeometryReliable) {
+        setSelectionError("Ask requires a text-backed PDF selection.");
         return;
       }
-      onQuoteToChat(
-        highlightId,
-        destination,
-        {
-          color,
-          ...(exact ? { exact, preview: exact.slice(0, 120) } : {}),
+
+      const activeSelection = selection ?? selectionSnapshotRef.current;
+      if (!activeSelection) {
+        setSelectionError("Select text in the PDF before asking.");
+        return;
+      }
+
+      const textLayerRoot = getTextLayerRootForPage(activeSelection.pageNumber);
+      const quoteText = readPdfQuoteTextWindow(activeSelection.range, textLayerRoot);
+      if (quoteText.exact.length === 0) {
+        setSelectionError("Select text in the PDF before asking.");
+        return;
+      }
+
+      const quads = buildSelectionQuads(activeSelection.range, activeSelection.pageNumber);
+      if (quads.length === 0) {
+        setSelectionError("No selectable text geometry was found for this selection.");
+        return;
+      }
+
+      const textQuoteSelector = {
+        exact: quoteText.exact,
+        ...(quoteText.prefix ? { prefix: quoteText.prefix } : {}),
+        ...(quoteText.suffix ? { suffix: quoteText.suffix } : {}),
+      };
+
+      onAskSelection({
+        kind: "reader_selection",
+        client_context_id: createPdfSelectionContextId(),
+        media_id: mediaId,
+        color,
+        exact: quoteText.exact,
+        ...(quoteText.prefix ? { prefix: quoteText.prefix } : {}),
+        ...(quoteText.suffix ? { suffix: quoteText.suffix } : {}),
+        preview: quoteText.exact.slice(0, 120),
+        locator: {
+          type: "pdf_text_quote",
+          page_number: activeSelection.pageNumber,
+          quads,
+          text_quote_selector: textQuoteSelector,
+          ...(typeof quoteText.pageTextStartOffset === "number"
+            ? { page_text_start_offset: quoteText.pageTextStartOffset }
+            : {}),
+          ...(typeof quoteText.pageTextEndOffset === "number"
+            ? { page_text_end_offset: quoteText.pageTextEndOffset }
+            : {}),
         },
-      );
+      });
+      clearSelection();
     },
-    [handleCreateHighlight, onQuoteToChat, selection, textGeometryReliable]
+    [
+      buildSelectionQuads,
+      clearSelection,
+      getTextLayerRootForPage,
+      mediaId,
+      onAskSelection,
+      selection,
+      textGeometryReliable,
+      textLayerUsable,
+    ]
   );
 
   useEffect(() => {
@@ -2309,8 +2432,7 @@ export default function PdfReader({
           selectionLineRects={selection.lineRects}
           containerRef={viewerContainerRef}
           onCreateHighlight={handleCreateHighlight}
-          quoteDestinations={quoteDestinations}
-          onQuoteToChat={onQuoteToChat ? handleQuoteToChat : undefined}
+          onAsk={onAskSelection && textGeometryReliable ? handleAskSelection : undefined}
           onDismiss={clearSelection}
           isCreating={isCreating}
         />

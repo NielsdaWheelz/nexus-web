@@ -50,6 +50,7 @@ export interface SSEDoneEvent {
 }
 
 export type ContextItemType = ObjectType;
+export type ContextItemColor = "yellow" | "green" | "blue" | "pink" | "purple";
 
 export interface SearchCitationEventData {
   result_type:
@@ -164,12 +165,13 @@ type SSEJsonEventHandler = (event: SSEJsonEvent) => void;
 // Request payload types
 // ============================================================================
 
-export interface ContextItem {
+export interface ObjectRefContextItem {
+  kind: "object_ref";
   type: ContextItemType;
   id: string;
   evidence_span_ids?: string[];
   /** Display fields carried by the caller when available. */
-  color?: "yellow" | "green" | "blue" | "pink" | "purple";
+  color?: ContextItemColor;
   preview?: string;
   mediaId?: string;
   mediaTitle?: string;
@@ -179,21 +181,65 @@ export interface ContextItem {
   mediaKind?: string;
 }
 
+export interface ReaderSelectionContextItem {
+  kind: "reader_selection";
+  client_context_id: string;
+  media_id: string;
+  media_kind: string;
+  media_title: string;
+  exact: string;
+  prefix?: string;
+  suffix?: string;
+  preview?: string;
+  locator: Record<string, unknown>;
+  color?: ContextItemColor;
+}
+
+export type ContextItem = ObjectRefContextItem | ReaderSelectionContextItem;
+
 export type ConversationScopeInput =
   | { type: "general" }
   | { type: "media"; media_id: string }
   | { type: "library"; library_id: string };
 
-/**
- * Strip client-side enriched fields from a ContextItem before sending to the API.
- * Only keeps the wire-format fields that the backend expects.
- */
-export type ChatRunContext = Pick<ContextItem, "type" | "id" | "evidence_span_ids">;
+export type ChatRunContext =
+  | {
+      kind: "object_ref";
+      type: ContextItemType;
+      id: string;
+      evidence_span_ids?: string[];
+    }
+  | {
+      kind: "reader_selection";
+      client_context_id: string;
+      media_id: string;
+      media_kind: string;
+      media_title: string;
+      exact: string;
+      prefix?: string;
+      suffix?: string;
+      locator: Record<string, unknown>;
+    };
 
 export function toWireContextItem(
   item: ContextItem,
 ): ChatRunContext {
+  if (item.kind === "reader_selection") {
+    return {
+      kind: "reader_selection",
+      client_context_id: item.client_context_id,
+      media_id: item.media_id,
+      media_kind: item.media_kind,
+      media_title: item.media_title,
+      exact: item.exact,
+      ...(item.prefix ? { prefix: item.prefix } : {}),
+      ...(item.suffix ? { suffix: item.suffix } : {}),
+      locator: item.locator,
+    };
+  }
+
   return {
+    kind: "object_ref",
     type: item.type,
     id: item.id,
     ...(item.evidence_span_ids?.length

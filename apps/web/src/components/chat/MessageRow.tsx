@@ -21,6 +21,26 @@ import type {
 } from "@/lib/conversations/types";
 import styles from "./MessageRow.module.css";
 
+export type ReaderSourceTargetSource = "message_context" | "claim_evidence";
+
+export interface ReaderSourceTarget {
+  source: ReaderSourceTargetSource;
+  media_id: string;
+  locator: MessageEvidenceLocator | Record<string, unknown>;
+  snippet: string | null;
+  status: string;
+  label?: string;
+  href?: string | null;
+  evidence_span_id?: string | null;
+  evidence_id?: string;
+  context_id?: string | null;
+}
+
+interface MessageRowProps {
+  message: ConversationMessage;
+  onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
+}
+
 function formatTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -32,7 +52,7 @@ function formatTime(iso: string): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-export function MessageRow({ message }: { message: ConversationMessage }) {
+export function MessageRow({ message, onReaderSourceActivate }: MessageRowProps) {
   const roleClass = styles[message.role] ?? "";
   const statusClass =
     message.status !== "complete" ? (styles[message.status] ?? "") : "";
@@ -49,7 +69,10 @@ export function MessageRow({ message }: { message: ConversationMessage }) {
         <ReplyBar context={contexts[0]} />
       ) : null}
       {message.role === "user" && contexts.length > 1 ? (
-        <InlineCitations contexts={contexts} />
+        <InlineCitations
+          contexts={contexts}
+          onReaderSourceActivate={onReaderSourceActivate}
+        />
       ) : null}
 
       {message.role === "assistant" ? (
@@ -58,7 +81,10 @@ export function MessageRow({ message }: { message: ConversationMessage }) {
           {message.status === "pending" ? (
             <StreamingMarkdownMessage content={message.content} />
           ) : (
-            <ClaimEvidenceMessage message={message} />
+            <ClaimEvidenceMessage
+              message={message}
+              onReaderSourceActivate={onReaderSourceActivate}
+            />
           )}
         </>
       ) : (
@@ -74,7 +100,13 @@ export function MessageRow({ message }: { message: ConversationMessage }) {
   );
 }
 
-function ClaimEvidenceMessage({ message }: { message: ConversationMessage }) {
+function ClaimEvidenceMessage({
+  message,
+  onReaderSourceActivate,
+}: {
+  message: ConversationMessage;
+  onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
+}) {
   const claims = [...(message.claims ?? [])].sort(
     (a, b) => a.ordinal - b.ordinal,
   );
@@ -113,6 +145,7 @@ function ClaimEvidenceMessage({ message }: { message: ConversationMessage }) {
             claimNumber={index + 1}
             domId={claimDomId(message.seq, index)}
             evidence={claimEvidence.filter((item) => item.claim_id === claim.id)}
+            onReaderSourceActivate={onReaderSourceActivate}
           />
         ))}
       </section>
@@ -185,11 +218,13 @@ function ClaimEvidenceCard({
   claimNumber,
   domId,
   evidence,
+  onReaderSourceActivate,
 }: {
   claim: MessageClaim;
   claimNumber: number;
   domId: string;
   evidence: MessageClaimEvidence[];
+  onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
 }) {
   const evidenceRoles: MessageEvidenceRole[] = [
     "supports",
@@ -222,7 +257,11 @@ function ClaimEvidenceCard({
           <div key={role} className={styles.evidenceRoleGroup}>
             <div className={styles.evidenceRoleLabel}>evidence_role: {role}</div>
             {roleEvidence.map((item) => (
-              <EvidenceItem key={item.id} evidence={item} />
+              <EvidenceItem
+                key={item.id}
+                evidence={item}
+                onReaderSourceActivate={onReaderSourceActivate}
+              />
             ))}
           </div>
         );
@@ -231,10 +270,22 @@ function ClaimEvidenceCard({
   );
 }
 
-function EvidenceItem({ evidence }: { evidence: MessageClaimEvidence }) {
+function EvidenceItem({
+  evidence,
+  onReaderSourceActivate,
+}: {
+  evidence: MessageClaimEvidence;
+  onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
+}) {
   const isWeb = isWebEvidence(evidence);
   const href = evidenceHref(evidence);
   const label = evidenceLabel(evidence, isWeb);
+  const readerTarget =
+    !isWeb && onReaderSourceActivate
+      ? readerTargetFromEvidence(evidence, label)
+      : null;
+  const sourceUnavailable =
+    Boolean(onReaderSourceActivate) && !isWeb && readerTarget === null;
   const hasBackendLabel = Boolean(
     evidence.citation_label || textField(evidence.result_ref, "citation_label"),
   );
@@ -248,7 +299,16 @@ function EvidenceItem({ evidence }: { evidence: MessageClaimEvidence }) {
     >
       <div className={styles.evidenceSource}>
         {isWeb ? <Globe size={14} /> : <BookOpen size={14} />}
-        {href ? (
+        {readerTarget ? (
+          <button
+            type="button"
+            className={styles.evidenceSourceButton}
+            onClick={() => onReaderSourceActivate?.(readerTarget)}
+            aria-label={`Open source ${label}`}
+          >
+            <span>{label}</span>
+          </button>
+        ) : href && !sourceUnavailable ? (
           <a
             href={href}
             target={isWeb ? "_blank" : undefined}
@@ -258,7 +318,9 @@ function EvidenceItem({ evidence }: { evidence: MessageClaimEvidence }) {
             <ExternalLink size={12} />
           </a>
         ) : (
-          <span>{label}</span>
+          <span className={sourceUnavailable ? styles.evidenceSourceUnavailable : undefined}>
+            {label}
+          </span>
         )}
       </div>
 
@@ -275,10 +337,116 @@ function EvidenceItem({ evidence }: { evidence: MessageClaimEvidence }) {
         {evidence.score !== null && evidence.score !== undefined ? (
           <span>score: {evidence.score}</span>
         ) : null}
+        {sourceUnavailable ? <span>source_status: unavailable</span> : null}
         {location ? <span>{location}</span> : null}
       </div>
     </div>
   );
+}
+
+function readerTargetFromEvidence(
+  evidence: MessageClaimEvidence,
+  label: string,
+): ReaderSourceTarget | null {
+  const locator = evidence.locator;
+  if (!locator) {
+    return null;
+  }
+  if (!isReaderMediaLocator(locator)) {
+    return null;
+  }
+  const resolverStatus = resolverStatusFromEvidence(evidence);
+  if (resolverStatus && resolverStatus !== "resolved") {
+    return null;
+  }
+  const mediaId = mediaIdFromLocator(locator);
+  if (!mediaId) {
+    return null;
+  }
+  return {
+    source: "claim_evidence",
+    media_id: mediaId,
+    locator,
+    snippet: evidence.exact_snippet ?? null,
+    status: resolverStatus ?? evidence.retrieval_status,
+    label,
+    href: evidenceHref(evidence),
+    evidence_span_id: evidenceSpanIdFromEvidence(evidence),
+    evidence_id: evidence.id,
+    context_id: textField(evidence.context_ref, "id"),
+  };
+}
+
+function evidenceSpanIdFromEvidence(evidence: MessageClaimEvidence): string | null {
+  const sourceRefEvidenceSpanId = (evidence.source_ref as unknown as Record<string, unknown>)
+    .evidence_span_id;
+  if (typeof sourceRefEvidenceSpanId === "string" && sourceRefEvidenceSpanId) {
+    return sourceRefEvidenceSpanId;
+  }
+  return (
+    evidenceSpanIdFromResolver(evidence.resolver) ??
+    evidenceSpanIdFromResolver(evidence.result_ref?.resolver)
+  );
+}
+
+function evidenceSpanIdFromResolver(resolver: unknown): string | null {
+  if (typeof resolver !== "object" || resolver === null || Array.isArray(resolver)) {
+    return null;
+  }
+  const params = (resolver as { params?: unknown }).params;
+  if (typeof params !== "object" || params === null || Array.isArray(params)) {
+    return null;
+  }
+  const evidence = (params as { evidence?: unknown }).evidence;
+  return typeof evidence === "string" && evidence ? evidence : null;
+}
+
+function isReaderMediaLocator(
+  locator: MessageEvidenceLocator,
+): locator is Extract<
+  MessageEvidenceLocator,
+  { type: "epub_fragment_offsets" | "pdf_page_geometry" | "transcript_time_range" }
+> {
+  return (
+    locator.type === "epub_fragment_offsets" ||
+    locator.type === "pdf_page_geometry" ||
+    locator.type === "transcript_time_range"
+  );
+}
+
+function mediaIdFromLocator(locator: MessageEvidenceLocator): string | null {
+  if (
+    locator.type === "epub_fragment_offsets" ||
+    locator.type === "pdf_page_geometry" ||
+    locator.type === "transcript_time_range"
+  ) {
+    return locator.media_id;
+  }
+  return null;
+}
+
+function resolverStatusFromEvidence(evidence: MessageClaimEvidence): string | null {
+  const directStatus = resolverStatus(evidence.resolver);
+  if (directStatus) {
+    return directStatus;
+  }
+  const resultResolver = evidence.result_ref?.resolver;
+  if (
+    typeof resultResolver === "object" &&
+    resultResolver !== null &&
+    !Array.isArray(resultResolver)
+  ) {
+    return resolverStatus(resultResolver);
+  }
+  return null;
+}
+
+function resolverStatus(resolver: unknown): string | null {
+  if (typeof resolver !== "object" || resolver === null || Array.isArray(resolver)) {
+    return null;
+  }
+  const status = (resolver as { status?: unknown }).status;
+  return typeof status === "string" && status ? status : null;
 }
 
 function supportStatusLabel(status: MessageClaimSupportStatus): string {
