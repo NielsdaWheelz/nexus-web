@@ -4,12 +4,12 @@
 .PHONY: help setup dev down logs clean api web worker migrate migrate-test migrate-down seed seed-real-media-e2e \
 	check check-back type-back check-front check-workflows format format-back fix-front build audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
-	test-migrations test-supabase test-network test-real test-real-media test-live-providers test-e2e test-e2e-real-media test-e2e-legacy-synthetic test-e2e-ui \
-	verify verify-real-media verify-full \
+	test-migrations test-supabase test-real-media test-live-providers test-e2e test-e2e-ui \
+	verify verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw \
-	_test-supabase-raw _test-network-raw _test-real-raw _test-real-media-raw _test-live-providers-raw \
-	_seed-real-media-e2e-raw _test-e2e-raw _test-e2e-real-media-raw _test-e2e-legacy-synthetic-raw _test-e2e-ui-raw
+	_test-supabase-raw _test-real-media-backend-raw _test-live-providers-raw \
+	_seed-real-media-e2e-raw _test-e2e-raw _test-real-media-e2e-raw _test-e2e-ui-raw
 
 -include .env
 -include .dev-ports
@@ -40,31 +40,26 @@ help:
 	@echo "  make web                - Start Next.js on WEB_PORT (default 3000)"
 	@echo "  make worker             - Start the Postgres queue worker"
 	@echo ""
-	@echo "Core verification:"
+	@echo "Routine gates:"
 	@echo "  make check              - Static checks only"
-	@echo "  make type-back          - Backend type checking"
-	@echo "  make check-workflows    - GitHub Actions lint/security checks"
 	@echo "  make audit              - Dependency vulnerability audits"
 	@echo "  make test-unit          - Fast backend and frontend unit tests"
 	@echo "  make test               - All non-E2E automated tests"
+	@echo "  make test-e2e           - Default Playwright E2E tests"
+	@echo "  make test-real-media    - Strict deterministic real-media backend + Playwright gates"
+	@echo "  make test-live-providers  - Strict live-provider backend gate"
 	@echo "  make verify             - check + build + test"
-	@echo "  make verify-real-media  - Strict real-media backend + Playwright gates"
-	@echo "  make verify-full        - verify + strict real-media, live-provider, and real-stack E2E gates"
+	@echo "  make verify-full        - verify + real-media + live-provider + default E2E gates"
 	@echo ""
-	@echo "Narrow test tiers:"
+	@echo "Focused targets:"
+	@echo "  make type-back             - Backend type checking"
+	@echo "  make check-workflows       - GitHub Actions lint/security checks"
 	@echo "  make test-back-unit        - Backend unit tests only"
 	@echo "  make test-back-integration - Backend DB/API integration tests"
 	@echo "  make test-front-unit       - Frontend unit tests"
 	@echo "  make test-front-browser    - Frontend browser component tests"
 	@echo "  make test-migrations       - Alembic migration tests"
 	@echo "  make test-supabase         - Supabase auth/storage integration tests"
-	@echo "  make test-network          - Strict live-provider backend tests"
-	@echo "  make test-real             - Strict real-media evidence backend tests"
-	@echo "  make test-real-media       - Strict real-media evidence backend tests"
-	@echo "  make test-live-providers   - Strict live-provider backend tests"
-	@echo "  make test-e2e              - Playwright E2E tests"
-	@echo "  make test-e2e-real-media   - Playwright real-media acceptance tests"
-	@echo "  make test-e2e-legacy-synthetic - Opt-in legacy synthetic media smoke tests"
 	@echo "  make test-e2e-ui           - Playwright E2E in UI mode"
 	@echo ""
 	@echo "Formatting:"
@@ -245,25 +240,11 @@ test-supabase:
 _test-supabase-raw:
 	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m supabase
 
-test-network:
-	make test-live-providers
+test-real-media: _ensure-e2e-deps
+	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-back-db-ready _test-real-media-backend-raw
+	./scripts/with_supabase_services.sh make _test-real-media-e2e-raw
 
-_test-network-raw:
-	make _ensure-node-ingest
-	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m network
-
-test-real:
-	make test-real-media
-
-_test-real-raw:
-	make _ensure-node-ingest
-	cd python && NEXUS_ENV=test uv run pytest -v --tb=short \
-		-m "slow and not network and not supabase"
-
-test-real-media:
-	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-back-db-ready _test-real-media-raw
-
-_test-real-media-raw:
+_test-real-media-backend-raw:
 	make _ensure-node-ingest
 	mkdir -p test-results
 	cd python && NEXUS_ENV=local \
@@ -294,10 +275,7 @@ _test-e2e-raw:
 	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright install --with-deps chromium && \
 	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bun run test:e2e -- $(PLAYWRIGHT_ARGS)
 
-test-e2e-real-media: _ensure-e2e-deps
-	./scripts/with_supabase_services.sh make _test-e2e-real-media-raw
-
-_test-e2e-real-media-raw:
+_test-real-media-e2e-raw:
 	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
 	echo "Running real-media e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
@@ -307,18 +285,6 @@ _test-e2e-real-media-raw:
 	REAL_MEDIA_PROVIDER_FIXTURES=1 \
 	REAL_MEDIA_FIXTURE_DIR=$$PWD/../python/tests/fixtures/real_media \
 	bun run test:e2e -- --project=real-media $(PLAYWRIGHT_ARGS)
-
-test-e2e-legacy-synthetic: _ensure-e2e-deps
-	./scripts/with_supabase_services.sh make _test-e2e-legacy-synthetic-raw
-
-_test-e2e-legacy-synthetic-raw:
-	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
-	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
-	echo "Running opt-in legacy synthetic e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
-	cd e2e && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT E2E_LEGACY_SYNTHETIC=1 bunx playwright install --with-deps chromium && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT E2E_LEGACY_SYNTHETIC=1 \
-	bun run test:e2e -- --project=legacy-synthetic $(PLAYWRIGHT_ARGS)
 
 test-e2e-ui: _ensure-e2e-deps
 	./scripts/with_supabase_services.sh make _test-e2e-ui-raw
@@ -337,14 +303,9 @@ verify:
 	make test
 	@echo "=== verification passed ==="
 
-verify-real-media:
-	make test-real-media
-	make test-e2e-real-media
-	@echo "=== real-media verification passed ==="
-
 verify-full:
 	make verify
-	make verify-real-media
+	make test-real-media
 	make test-live-providers
 	make test-e2e
 	@echo "=== full verification passed ==="

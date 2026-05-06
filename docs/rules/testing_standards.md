@@ -33,7 +33,7 @@ Definitions used throughout this document:
 - `make type-back` is the backend type gate. Its Pyright include list is the enforced baseline; expand it when newly touched backend modules are clean.
 - `make check-workflows` validates GitHub Actions files.
 - `make audit` is the dependency/security gate.
-- `make test-unit`, `make test`, `make verify`, and `make verify-full` are the main local quality gates.
+- `make test-unit`, `make test`, `make test-e2e`, `make test-real-media`, `make test-live-providers`, `make verify`, and `make verify-full` are the main local quality gates.
 - `make test-back-unit` runs backend unit tests with `pytest-xdist`.
 - `make test-e2e` stays a single local command; CI shards Playwright across jobs.
 
@@ -434,18 +434,18 @@ Target local commands after migration:
 make check          # static analysis + format checks
 make test-unit      # backend unit tests + frontend unit tests
 make test           # full non-E2E verification
-make verify         # check + build + non-E2E tests
-make verify-full    # verify + E2E
-make test-e2e       # Playwright E2E
-make test-e2e-ui    # Playwright UI mode
+make test-e2e            # Playwright E2E
+make test-real-media     # deterministic real-media backend + Playwright acceptance
+make test-live-providers # live external-provider backend acceptance
+make verify              # check + build + non-E2E tests
+make verify-full         # verify + real-media + live-provider + E2E
 make test-back-unit      # backend unit tests only
 make test-back-integration # backend integration tests only
 make test-front-unit     # frontend unit tests only (Node)
 make test-front-browser   # frontend component tests (Vitest Browser Mode / Chromium)
 make test-migrations     # migration/schema tests only
 make test-supabase       # Supabase-local auth/storage tests only
-make test-network        # network-dependent backend tests only
-make test-real           # real-content backend tests only
+make test-e2e-ui    # Playwright UI mode
 cd e2e && bun run test:csp -- tests/youtube-transcript.csp.spec.ts --project=chromium-csp # strict CSP runtime assertions
 ```
 
@@ -454,9 +454,11 @@ Command semantics:
 - `make check`: static checks and format checks only
 - `make test-unit`: fast unit tests only (no DB, no browser-mode component tests, no E2E)
 - `make test`: non-E2E automated tests, including backend integration and frontend browser-mode component tests
+- `make test-e2e`: explicit default real-stack Playwright run (used before merge and in CI)
+- `make test-real-media`: deterministic real-media backend and Playwright acceptance gate
+- `make test-live-providers`: live external-provider backend gate
 - `make verify`: check + build + non-E2E tests for routine development
-- `make verify-full`: verify + E2E
-- `make test-e2e`: explicit real-stack Playwright run (used before merge and in CI)
+- `make verify-full`: verify + real-media + live-provider + E2E
 - `make test-e2e-ui`: interactive Playwright UI mode
 - `bun run test:csp` in `e2e/`: strict CSP profile for runtime policy assertions against production Next runtime
 

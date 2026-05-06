@@ -448,19 +448,17 @@ Final command surface:
 ```bash
 make test-real-media
 make test-live-providers
-make test-e2e-real-media
-make verify-real-media
 make verify-full
 ```
 
 Rules:
 
-- `make test-real` is either replaced by `make test-real-media` or becomes an
-  alias to it.
-- `make test-network` is either replaced by `make test-live-providers` or
-  becomes an alias to it.
-- `make verify-full` includes deterministic real-media backend and Playwright
-  gates.
+- `make test-real-media` includes deterministic real-media backend and
+  Playwright gates.
+- `make test-live-providers` remains separate because it requires live
+  third-party provider credentials.
+- `make verify-full` includes deterministic real-media, live-provider, and
+  default E2E gates.
 - Release verification includes `make test-live-providers`.
 - Provider prerequisite failures are visible failures, not skips.
 
@@ -680,7 +678,7 @@ claim media/evidence completeness.
       acceptance gates.
 - [ ] Old generated E2E seed media is removed from real-media paths.
 - [ ] `make verify-full` includes deterministic real-media backend and E2E
-      gates.
+      gates through `make test-real-media`.
 - [ ] Release verification includes the live-provider gate.
 - [ ] CI uploads real-media trace artifacts on failure.
 - [ ] Documentation and README command lists point to the new gates.

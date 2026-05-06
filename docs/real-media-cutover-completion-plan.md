@@ -544,9 +544,8 @@ Pure parser/unit tests may remain if they do not claim real-media acceptance.
 
 ### Commands and CI
 
-- [ ] `make test-real-media` passes with required real-media prerequisites.
-- [ ] `make test-e2e-real-media` passes with required real-media prerequisites.
-- [ ] `make verify-real-media` passes.
+- [ ] `make test-real-media` passes deterministic backend and Playwright gates
+      with required real-media prerequisites.
 - [ ] `make test-live-providers` passes in a credentialed provider
       environment.
 - [ ] `make verify-full` includes deterministic real-media and live-provider
@@ -570,8 +569,7 @@ Pure parser/unit tests may remain if they do not claim real-media acceptance.
    coverage.
 8. Expand no-internal-shortcut guard tests.
 9. Delete or demote remaining synthetic acceptance paths.
-10. Run and fix `make test-real-media`, `make test-e2e-real-media`,
-    `make verify-real-media`, `make test-live-providers`, and
+10. Run and fix `make test-real-media`, `make test-live-providers`, and
     `make verify-full` in a credentialed environment.
 
 The cutover is complete only when every acceptance criterion above is checked

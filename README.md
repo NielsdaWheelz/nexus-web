@@ -53,34 +53,29 @@ Core:
 
 ```bash
 make check
-make type-back
-make check-workflows
 make audit
 make test-unit
 make test
-make verify
-make verify-real-media
-make verify-full
-make seed-real-media-e2e
 make test-e2e
-make test-e2e-real-media
-make test-e2e-legacy-synthetic
-make test-e2e-ui
+make test-real-media
+make test-live-providers
+make verify
+make verify-full
 ```
 
-Narrow tiers:
+Focused targets:
 
 ```bash
+make type-back
+make check-workflows
 make test-back-unit
 make test-back-integration
 make test-front-unit
 make test-front-browser
 make test-migrations
 make test-supabase
-make test-network
-make test-real
-make test-real-media
-make test-live-providers
+make test-e2e-ui
+make seed-real-media-e2e
 ```
 
 ## Environment
@@ -88,12 +83,13 @@ make test-live-providers
 - `.env.example` is the source of truth for environment variables and defaults.
 - `make setup` generates local `.env` and `apps/web/.env.local`.
 
-Real-media gates are strict. `make test-real-media` requires Supabase local plus
-real OpenAI embeddings. `make test-live-providers` additionally requires real
-Podcast Index and Deepgram credentials. `make test-e2e-real-media` seeds the
-real corpus through `make seed-real-media-e2e`. Legacy generated-media E2E
-smoke tests are opt-in through `make test-e2e-legacy-synthetic` and are not part
-of the real-media acceptance gates.
+Real-media gates are strict. `make test-real-media` runs deterministic backend
+and Playwright acceptance coverage, requires Supabase local plus real OpenAI
+embeddings, and seeds the browser corpus through the product paths. `make
+test-live-providers` additionally requires real Podcast Index and Deepgram
+credentials. Legacy generated-media E2E smoke tests are opt-in through direct
+Playwright project selection with `E2E_LEGACY_SYNTHETIC=1`; they are not part of
+the real-media acceptance gates.
 
 ## Repository Map
 

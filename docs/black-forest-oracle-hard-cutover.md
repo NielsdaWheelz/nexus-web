@@ -715,7 +715,7 @@ The branch is unmerged until every step passes.
 
 - `make verify-full` passes.
 - `make audit` passes.
-- `make test-real` passes.
+- `make test-real-media` passes.
 - All zero-result checks pass.
 
 ### 9. Document
@@ -748,7 +748,7 @@ The branch is unmerged until every step passes.
 - `LibraryIntelligenceArtifact`, `LibraryIntelligenceVersion`,
   `LibraryIntelligenceSection`, `Conversation`, `Message`, `MessageClaim`,
   and `MessageClaimEvidence` schemas are not modified.
-- `make verify-full`, `make audit`, `make test-real`, and the E2E pass.
+- `make verify-full`, `make audit`, `make test-real-media`, and the E2E pass.
 
 ## Key Decisions
 

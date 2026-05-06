@@ -426,7 +426,7 @@ jobs:
         run: cd node/ingest && bun ci
 
       - name: Test real-media gates
-        run: make verify-real-media
+        run: make test-real-media
 
       - name: Upload backend real-media traces
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
