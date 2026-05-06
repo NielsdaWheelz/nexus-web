@@ -324,7 +324,7 @@ describe("ChatComposer", () => {
     expect(screen.getByText("A quoted passage")).toBeInTheDocument();
     expect(screen.getByText("Source item")).toBeInTheDocument();
 
-    await user.click(screen.getAllByRole("button", { name: /remove context/i })[0]);
+    await user.click(screen.getAllByRole("button", { name: /^remove$/i })[0]);
 
     expect(onRemoveContext).toHaveBeenCalledOnce();
     expect(onRemoveContext).toHaveBeenCalledWith(0);

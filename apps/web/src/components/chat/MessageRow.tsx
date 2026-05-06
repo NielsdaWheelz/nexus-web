@@ -7,6 +7,7 @@ import {
   MarkdownMessage,
   StreamingMarkdownMessage,
 } from "@/components/ui/MarkdownMessage";
+import Button from "@/components/ui/Button";
 import { truncateText } from "@/lib/conversations/display";
 import type {
   ConversationMessage,
@@ -79,7 +80,13 @@ export function MessageRow({ message, onReaderSourceActivate }: MessageRowProps)
         <>
           <ToolActivity toolCalls={toolCalls} />
           {message.status === "pending" ? (
-            <StreamingMarkdownMessage content={message.content} />
+            message.content ? (
+              <StreamingMarkdownMessage content={message.content} />
+            ) : (
+              <div className={styles.pendingStatus} role="status">
+                Generating response...
+              </div>
+            )
           ) : (
             <ClaimEvidenceMessage
               message={message}
@@ -300,14 +307,15 @@ function EvidenceItem({
       <div className={styles.evidenceSource}>
         {isWeb ? <Globe size={14} /> : <BookOpen size={14} />}
         {readerTarget ? (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             className={styles.evidenceSourceButton}
             onClick={() => onReaderSourceActivate?.(readerTarget)}
             aria-label={`Open source ${label}`}
           >
             <span>{label}</span>
-          </button>
+          </Button>
         ) : href && !sourceUnavailable ? (
           <a
             href={href}

@@ -2,9 +2,9 @@
 
 import type { ReactNode } from "react";
 import { BookOpen, FileText, MessageSquare } from "lucide-react";
+import Chip from "@/components/ui/Chip";
 import { formatConversationScopeLabel } from "@/lib/conversations/display";
 import type { ConversationScope } from "@/lib/conversations/types";
-import styles from "./ConversationScopeChip.module.css";
 
 export default function ConversationScopeChip({
   scope,
@@ -26,9 +26,8 @@ export default function ConversationScopeChip({
   }
 
   return (
-    <span className={styles.scopeChip} data-compact={compact ? "true" : "false"}>
-      {icon}
-      <span className={styles.scopeText}>{formatConversationScopeLabel(scope)}</span>
-    </span>
+    <Chip size={compact ? "sm" : "md"} leadingIcon={icon} truncate>
+      {formatConversationScopeLabel(scope)}
+    </Chip>
   );
 }

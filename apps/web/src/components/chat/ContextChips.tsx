@@ -1,5 +1,6 @@
 "use client";
 
+import Chip from "@/components/ui/Chip";
 import type { ContextItem, ContextItemColor } from "@/lib/api/sse";
 import { getContextChipLabel } from "@/lib/conversations/display";
 import styles from "./ContextChips.module.css";
@@ -28,28 +29,24 @@ export default function ContextChips({
   return (
     <div className={styles.contextChips}>
       {contexts.map((ctx, i) => (
-        <span key={`${contextKey(ctx)}-${i}`} className={styles.contextChip}>
-          {ctx.color ? (
-            <span
-              className={`${styles.chipSwatch} ${COLOR_CLASS[ctx.color]}`}
-              aria-hidden="true"
-            />
-          ) : null}
-          <span className={styles.chipText}>{getContextChipLabel(ctx)}</span>
-          {onRemoveContext ? (
-            <button
-              type="button"
-              className={styles.chipRemove}
-              onClick={() => onRemoveContext(i)}
-              aria-label="Remove context"
-            >
-              ×
-            </button>
-          ) : null}
-        </span>
+        <Chip
+          key={`${contextKey(ctx)}-${i}`}
+          truncate
+          removable={Boolean(onRemoveContext)}
+          onRemove={onRemoveContext ? () => onRemoveContext(i) : undefined}
+          leadingIcon={
+            ctx.color ? (
+              <span
+                className={`${styles.chipSwatch} ${COLOR_CLASS[ctx.color]}`}
+              />
+            ) : undefined
+          }
+        >
+          {getContextChipLabel(ctx)}
+        </Chip>
       ))}
       {contexts.length >= maxContexts ? (
-        <span className={styles.contextChip}>Max {maxContexts} reached</span>
+        <Chip>{`Max ${maxContexts} reached`}</Chip>
       ) : null}
     </div>
   );

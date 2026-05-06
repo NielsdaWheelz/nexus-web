@@ -18,6 +18,8 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
+import Select from "@/components/ui/Select";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { type ContextItem } from "@/lib/api/sse";
 import {
@@ -462,8 +464,8 @@ export default function ReaderAssistantPane({
           {scopeOptions.length > 1 && onScopeChange ? (
             <label className={styles.scopePicker}>
               <span className={styles.scopePickerLabel}>Scope</span>
-              <select
-                className={styles.scopeSelect}
+              <Select
+                size="sm"
                 value={activeScopeOptionId}
                 onChange={(event) => {
                   const option = scopeOptions.find(
@@ -483,7 +485,7 @@ export default function ReaderAssistantPane({
                     {option.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           ) : (
             <p className={styles.target}>
@@ -493,18 +495,20 @@ export default function ReaderAssistantPane({
         </div>
         <div className={styles.headerActions}>
           {onBack ? (
-            <button
-              type="button"
-              className={styles.iconButton}
+            <Button
+              variant="secondary"
+              size="sm"
+              iconOnly
               onClick={onBack}
               aria-label="Back to highlights"
             >
               <ArrowLeft size={16} aria-hidden="true" />
-            </button>
+            </Button>
           ) : null}
-          <button
-            type="button"
-            className={styles.openButton}
+          <Button
+            variant="secondary"
+            size="sm"
+            leadingIcon={<ExternalLink size={14} aria-hidden="true" />}
             disabled={!fullChatTarget}
             onClick={() => {
               if (fullChatTarget) {
@@ -516,18 +520,18 @@ export default function ReaderAssistantPane({
               }
             }}
           >
-            <ExternalLink size={14} aria-hidden="true" />
-            <span>Open full chat</span>
-          </button>
+            Open full chat
+          </Button>
           {onClose ? (
-            <button
-              type="button"
-              className={styles.iconButton}
+            <Button
+              variant="secondary"
+              size="sm"
+              iconOnly
               onClick={onClose}
               aria-label="Close"
             >
               <X size={16} aria-hidden="true" />
-            </button>
+            </Button>
           ) : null}
         </div>
       </header>
@@ -609,14 +613,15 @@ function PendingContextCard({
         </p>
         {meta ? <p className={styles.quoteMeta}>{meta}</p> : null}
       </div>
-      <button
-        type="button"
-        className={styles.removeContextButton}
+      <Button
+        variant="secondary"
+        size="sm"
+        iconOnly
         onClick={onRemove}
         aria-label="Remove quote context"
       >
         <X size={14} aria-hidden="true" />
-      </button>
+      </Button>
     </article>
   );
 }

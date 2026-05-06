@@ -4,8 +4,8 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg);
-  color: var(--color-text);
+  background: var(--surface-canvas);
+  color: var(--ink);
 }
 
 .header {
@@ -15,8 +15,8 @@
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--color-border-subtle);
-  background: color-mix(in srgb, var(--color-bg) 94%, transparent);
+  border-bottom: 1px solid var(--edge-subtle);
+  background: color-mix(in srgb, var(--surface-canvas) 94%, transparent);
 }
 
 .titleBlock {
@@ -25,16 +25,16 @@
 
 .title {
   margin: 0;
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  line-height: 1.3;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
 }
 
 .target {
   margin: 2px 0 0;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  line-height: 1.3;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -46,61 +46,19 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
 }
 
 .scopePickerLabel {
   flex: 0 0 auto;
-  color: var(--color-text-muted);
-}
-
-.scopeSelect {
-  min-width: 0;
-  width: 100%;
-  height: 28px;
-  padding: 0 var(--space-5) 0 var(--space-2);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-bg-secondary);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
+  color: var(--ink-faint);
 }
 
 .headerActions {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-}
-
-.openButton,
-.iconButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 34px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg-secondary);
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
-}
-
-.openButton {
-  gap: var(--space-1);
-  padding: 0 var(--space-3);
-}
-
-.iconButton {
-  width: 34px;
-  padding: 0;
-}
-
-.openButton:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 .contextStack {
@@ -118,10 +76,10 @@
   gap: var(--space-2);
   align-items: start;
   padding: var(--space-3);
-  border: 1px solid var(--color-border-subtle);
-  border-left: 3px solid var(--color-text-muted);
-  border-radius: 8px;
-  background: var(--color-bg-secondary);
+  border: 1px solid var(--edge-subtle);
+  border-left: 3px solid var(--ink-faint);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
 }
 
 .contextCard[data-color="yellow"] {
@@ -150,50 +108,20 @@
 
 .quoteText {
   margin: 0;
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-  line-height: 1.45;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
   overflow-wrap: anywhere;
 }
 
 .quoteMeta {
   margin: var(--space-1) 0 0;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  line-height: 1.3;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.removeContextButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-bg);
-  color: var(--color-text-secondary);
-}
-
-.removeContextButton:hover,
-.removeContextButton:focus-visible,
-.openButton:hover:not(:disabled),
-.openButton:focus-visible,
-.iconButton:hover,
-.iconButton:focus-visible {
-  border-color: var(--color-border);
-  color: var(--color-text);
-}
-
-.removeContextButton:focus-visible,
-.openButton:focus-visible,
-.iconButton:focus-visible,
-.scopeSelect:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
 }
 
 .status {
@@ -203,16 +131,16 @@
 
 .emptyTitle {
   margin: 0;
-  color: var(--color-text);
-  font-size: var(--font-size-lg);
-  font-weight: 600;
-  line-height: 1.25;
+  color: var(--ink);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
 }
 
 .emptyCopy {
   margin: var(--space-2) 0 0;
-  font-size: var(--font-size-sm);
-  line-height: 1.5;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
 }
 
 @media (max-width: 520px) {
@@ -224,9 +152,5 @@
 
   .headerActions {
     justify-content: flex-end;
-  }
-
-  .openButton {
-    flex: 1 1 auto;
   }
 }

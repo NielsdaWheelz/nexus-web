@@ -454,6 +454,7 @@ export function sseClientDirect(
     onEvent: SSEEventHandler;
     onError: SSEErrorHandler;
     onComplete?: SSECompleteHandler;
+    onLastEventId?: (id: string) => void;
   },
   options?: {
     signal?: AbortSignal;
@@ -521,7 +522,10 @@ export function sseClientDirect(
         await parseSSEJsonStream(
           response.body,
           (jsonEvent) => {
-            if (jsonEvent.id) lastEventId = jsonEvent.id;
+            if (jsonEvent.id) {
+              lastEventId = jsonEvent.id;
+              handlers.onLastEventId?.(lastEventId);
+            }
             const event = toChatSSEEvent(jsonEvent.type, jsonEvent.data);
             if (!event) return;
             handlers.onEvent(event);

@@ -9,7 +9,6 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { ArrowUp, ChevronDown, Search, X } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api/client";
 import { toFeedback } from "@/components/feedback/Feedback";
 import {
@@ -19,6 +18,10 @@ import {
 } from "@/lib/api/sse";
 import ContextChips from "@/components/chat/ContextChips";
 import ConversationScopeChip from "@/components/chat/ConversationScopeChip";
+import Button from "@/components/ui/Button";
+import Select from "@/components/ui/Select";
+import Textarea from "@/components/ui/Textarea";
+import Toggle from "@/components/ui/Toggle";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type {
   ChatRunResponse,
@@ -50,6 +53,8 @@ export interface ChatComposerProps {
   autoFocus?: boolean;
   /** Stable key used to refocus the composer for a newly attached quote. */
   focusKey?: string;
+  /** Draft text inserted by an explicit user action before the user sends. */
+  initialContent?: string;
 }
 
 type ComposerModel = ConversationModel;
@@ -145,9 +150,9 @@ export default function ChatComposer({
   onSendStarted,
   autoFocus = false,
   focusKey,
+  initialContent = "",
 }: ChatComposerProps) {
-  const router = useRouter();
-  const [content, setContent] = useState("");
+  const [content, setContent] = useState(initialContent);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<ComposerModel[]>(() => cachedModels ?? []);
@@ -162,14 +167,6 @@ export default function ChatComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const settingsPanelRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-    el.style.overflowY = el.scrollHeight > 160 ? "auto" : "hidden";
-  }, [content]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -284,13 +281,9 @@ export default function ChatComposer({
 
       onChatRunCreated?.(runResponse.data);
 
-      if (!conversationId && !onChatRunCreated) {
-        router.replace(`/conversations/${runResponse.data.conversation.id}`);
-      }
-
       return true;
     },
-    [conversationId, onChatRunCreated, router]
+    [conversationId, onChatRunCreated]
   );
 
   // --------------------------------------------------------------------------
@@ -427,38 +420,40 @@ export default function ChatComposer({
           maxContexts={MAX_CONTEXTS}
         />
 
-        <textarea
+        <Textarea
           ref={textareaRef}
-          className={styles.composerInput}
+          variant="bare"
+          autoGrow
+          minRows={1}
+          maxRows={8}
           value={content}
           onChange={(e) => setContent(e.target.value)}
           onKeyDown={handleKeyDown}
           aria-label="Ask anything"
           placeholder="Ask anything..."
           disabled={sending}
-          rows={1}
         />
 
         <div className={styles.composerActionRow}>
-          <button
+          <Button
             ref={settingsButtonRef}
-            type="button"
-            className={styles.modelSettingsButton}
+            variant="pill"
+            size="sm"
+            className={styles.modelSummaryButton}
             onClick={() => setSettingsOpen((open) => !open)}
             aria-haspopup="dialog"
             aria-expanded={settingsOpen}
             aria-label={`Model settings: ${modelSummary}`}
             title={modelSummary}
+            trailingIcon={<ChevronDown size={14} aria-hidden="true" />}
           >
             <span className={styles.modelSummary}>{modelSummary}</span>
-            <ChevronDown size={14} aria-hidden="true" />
-          </button>
+          </Button>
 
-          <label className={styles.webSearchControl}>
+          <span className={styles.webSearchSelect}>
             <Search size={13} aria-hidden="true" />
-            <span className={styles.visuallyHidden}>Web search</span>
-            <select
-              className={styles.webSearchSelect}
+            <Select
+              size="sm"
               value={webSearchMode}
               onChange={(e) => setWebSearchMode(e.target.value as WebSearchMode)}
               disabled={sending}
@@ -469,14 +464,16 @@ export default function ChatComposer({
                   {WEB_SEARCH_MODE_LABELS[mode]}
                 </option>
               ))}
-            </select>
-          </label>
+            </Select>
+          </span>
 
           {onlyUseMyKeys && <span className={styles.keyModeStatus}>Your key</span>}
 
-          <button
-            type="button"
-            className={styles.sendBtn}
+          <Button
+            variant="primary"
+            size="md"
+            iconOnly
+            className={styles.sendButton}
             onClick={handleSend}
             aria-label={sending ? "Sending message" : "Send message"}
             disabled={
@@ -487,7 +484,7 @@ export default function ChatComposer({
             }
           >
             <ArrowUp size={18} aria-hidden="true" />
-          </button>
+          </Button>
         </div>
 
         {settingsOpen && (
@@ -508,20 +505,20 @@ export default function ChatComposer({
             >
               <header className={styles.settingsHeader}>
                 <h2 className={styles.settingsTitle}>Model settings</h2>
-                <button
-                  type="button"
-                  className={styles.settingsClose}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
                   onClick={() => setSettingsOpen(false)}
                   aria-label="Close model settings"
                 >
                   <X size={16} aria-hidden="true" />
-                </button>
+                </Button>
               </header>
 
               <label className={styles.settingsField}>
                 <span className={styles.settingsLabel}>Provider</span>
-                <select
-                  className={styles.settingsSelect}
+                <Select
                   value={selectedProvider}
                   onChange={(e) => {
                     handleProviderChange(e.target.value);
@@ -540,13 +537,12 @@ export default function ChatComposer({
                       </option>
                     );
                   })}
-                </select>
+                </Select>
               </label>
 
               <label className={styles.settingsField}>
                 <span className={styles.settingsLabel}>Model</span>
-                <select
-                  className={styles.settingsSelect}
+                <Select
                   value={selectedModelId}
                   onChange={(e) => {
                     handleModelChange(e.target.value);
@@ -563,13 +559,12 @@ export default function ChatComposer({
                         {getModelSourceLabel(model)}
                       </option>
                     ))}
-                </select>
+                </Select>
               </label>
 
               <label className={styles.settingsField}>
                 <span className={styles.settingsLabel}>Reasoning</span>
-                <select
-                  className={styles.settingsSelect}
+                <Select
                   value={selectedReasoning}
                   onChange={(e) => {
                     setSelectedReasoning(e.target.value as ReasoningMode);
@@ -583,21 +578,18 @@ export default function ChatComposer({
                       {REASONING_LABELS[mode]}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
 
-              <label className={styles.keyModeToggle}>
-                <input
-                  type="checkbox"
-                  checked={onlyUseMyKeys}
-                  onChange={(e) => {
-                    setOnlyUseMyKeys(e.target.checked);
-                    if (!isMobile) setSettingsOpen(false);
-                  }}
-                  disabled={sending}
-                />
-                Use my keys only
-              </label>
+              <Toggle
+                checked={onlyUseMyKeys}
+                onCheckedChange={(next) => {
+                  setOnlyUseMyKeys(next);
+                  if (!isMobile) setSettingsOpen(false);
+                }}
+                disabled={sending}
+                label="Use my keys only"
+              />
             </div>
           </div>
         )}
