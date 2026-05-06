@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import Button from "@/components/ui/Button";
 import {
   FeedbackNotice,
   toFeedback,
@@ -115,33 +116,31 @@ export default function LoginPageClient({
           <div className={styles.form} aria-live="polite">
             {error ? <FeedbackNotice feedback={error} className={styles.error} /> : null}
 
-            <button
+            <Button
+              variant="secondary"
+              size="lg"
               type="button"
-              className={styles.providerButton}
+              leadingIcon={<GoogleMark />}
               onClick={() => void handleProviderSignIn("google")}
               disabled={activeProvider !== null}
             >
-              <GoogleMark />
-              <span>
-                {activeProvider === "google"
-                  ? "Connecting to Google..."
-                  : "Continue with Google"}
-              </span>
-            </button>
+              {activeProvider === "google"
+                ? "Connecting to Google..."
+                : "Continue with Google"}
+            </Button>
 
-            <button
+            <Button
+              variant="secondary"
+              size="lg"
               type="button"
-              className={styles.providerButton}
+              leadingIcon={<GitHubMark />}
               onClick={() => void handleProviderSignIn("github")}
               disabled={activeProvider !== null}
             >
-              <GitHubMark />
-              <span>
-                {activeProvider === "github"
-                  ? "Connecting to GitHub..."
-                  : "Continue with GitHub"}
-              </span>
-            </button>
+              {activeProvider === "github"
+                ? "Connecting to GitHub..."
+                : "Continue with GitHub"}
+            </Button>
 
             <p className={styles.legalCopy}>
               By continuing, you agree to the{" "}

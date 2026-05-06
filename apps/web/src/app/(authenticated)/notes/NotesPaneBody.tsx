@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import { Plus } from "lucide-react";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import { createNotePage, fetchNotePages, type NotePageSummary } from "@/lib/notes/api";
@@ -74,16 +76,16 @@ export default function NotesPaneBody() {
           void createPage();
         }}
       >
-        <input
-          className={styles.input}
+        <Input
           value={title}
           onChange={(event) => setTitle(event.currentTarget.value)}
           placeholder="New page"
           aria-label="New page title"
+          style={{ flex: 1 }}
         />
-        <button className={styles.button} type="submit" aria-label="Create page">
+        <Button iconOnly type="submit" aria-label="Create page">
           <Plus size={16} aria-hidden="true" />
-        </button>
+        </Button>
       </form>
 
       {feedback ? <FeedbackNotice {...feedback} /> : null}

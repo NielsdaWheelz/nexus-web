@@ -12,6 +12,9 @@ import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ActionMenu from "@/components/ui/ActionMenu";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 import SectionCard from "@/components/ui/SectionCard";
 import {
   FeedbackNotice,
@@ -433,22 +436,22 @@ export default function PodcastsPaneBody() {
                 setAppliedSearch(searchText.trim());
               }}
             >
-              <input
-                className={styles.searchInput}
+              <Input
+                className={styles.searchInputField}
                 type="search"
                 value={searchText}
                 placeholder="Search followed podcasts..."
                 onChange={(event) => setSearchText(event.target.value)}
               />
-              <button type="submit" className={styles.searchButton}>
+              <Button type="submit" variant="primary" size="md">
                 Search
-              </button>
+              </Button>
             </form>
 
             <div className={styles.toolbarControls}>
               <label className={styles.selectField}>
                 <span>Filter</span>
-                <select
+                <Select
                   value={subscriptionFilter}
                   onChange={(event) =>
                     setSubscriptionFilter(event.target.value as SubscriptionFilter)
@@ -457,12 +460,12 @@ export default function PodcastsPaneBody() {
                   <option value="all">All</option>
                   <option value="has_new">Has New</option>
                   <option value="not_in_library">Not In Library</option>
-                </select>
+                </Select>
               </label>
 
               <label className={styles.selectField}>
                 <span>Library</span>
-                <select
+                <Select
                   value={selectedLibraryId}
                   onChange={(event) => setSelectedLibraryId(event.target.value)}
                   disabled={librariesLoading}
@@ -473,12 +476,12 @@ export default function PodcastsPaneBody() {
                       {library.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
 
               <label className={styles.selectField}>
                 <span>Sort</span>
-                <select
+                <Select
                   value={subscriptionSort}
                   onChange={(event) =>
                     setSubscriptionSort(event.target.value as SubscriptionSort)
@@ -487,16 +490,16 @@ export default function PodcastsPaneBody() {
                   <option value="recent_episode">Recent Episode</option>
                   <option value="unplayed_count">Most Unplayed</option>
                   <option value="alpha">A-Z</option>
-                </select>
+                </Select>
               </label>
 
-              <button
-                type="button"
-                className={styles.primaryAction}
+              <Button
+                variant="primary"
+                size="md"
                 onClick={() => requestOpenInAppPane("/browse?types=podcasts")}
               >
                 Browse
-              </button>
+              </Button>
 
               <ActionMenu
                 label="Podcast page actions"
@@ -516,9 +519,9 @@ export default function PodcastsPaneBody() {
               {activeCount} followed show{activeCount === 1 ? "" : "s"}
             </span>
             {hasActiveFilters ? (
-              <button
-                type="button"
-                className={styles.secondaryAction}
+              <Button
+                variant="secondary"
+                size="md"
                 onClick={() => {
                   setSearchText("");
                   setAppliedSearch("");
@@ -527,7 +530,7 @@ export default function PodcastsPaneBody() {
                 }}
               >
                 Clear filters
-              </button>
+              </Button>
             ) : null}
           </div>
 
@@ -541,8 +544,9 @@ export default function PodcastsPaneBody() {
               {hasActiveFilters ? (
                 <>
                   No podcasts match the current filters.{" "}
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     className={styles.inlineButton}
                     onClick={() => {
                       setSearchText("");
@@ -552,18 +556,19 @@ export default function PodcastsPaneBody() {
                     }}
                   >
                     Clear filters
-                  </button>
+                  </Button>
                 </>
               ) : (
                 <>
                   No followed podcasts yet.{" "}
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     className={styles.inlineButton}
                     onClick={() => requestOpenInAppPane("/browse?types=podcasts")}
                   >
                     Browse podcasts
-                  </button>
+                  </Button>
                 </>
               )}
             </FeedbackNotice>
@@ -682,8 +687,9 @@ export default function PodcastsPaneBody() {
           ) : null}
 
           {hasMore ? (
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="md"
               className={styles.loadMoreButton}
               onClick={() => {
                 void loadSubscriptions(nextOffset, true);
@@ -691,7 +697,7 @@ export default function PodcastsPaneBody() {
               disabled={loadingMore}
             >
               {loadingMore ? "Loading..." : "Load more"}
-            </button>
+            </Button>
           ) : null}
         </div>
       </SectionCard>
@@ -738,10 +744,9 @@ export default function PodcastsPaneBody() {
             <p className={styles.modalDescription}>{settingsRow.podcast.title}</p>
             <label className={styles.settingsFieldLabel}>
               Default playback speed
-              <select
+              <Select
                 value={settingsDefaultSpeed}
                 onChange={(event) => setSettingsDefaultSpeed(event.target.value)}
-                className={styles.settingsSelect}
                 aria-label="Default playback speed"
               >
                 <option value="default">Use player default</option>
@@ -750,7 +755,7 @@ export default function PodcastsPaneBody() {
                     {formatPlaybackSpeedLabel(option)}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label className={styles.settingsToggleLabel}>
               <input
@@ -763,24 +768,24 @@ export default function PodcastsPaneBody() {
             </label>
             {settingsError ? <FeedbackNotice feedback={settingsError} /> : null}
             <div className={styles.modalActions}>
-              <button
-                type="button"
-                className={styles.primaryAction}
+              <Button
+                variant="primary"
+                size="md"
                 onClick={() => {
                   void handleSaveSettings();
                 }}
                 disabled={settingsBusy}
               >
                 {settingsBusy ? "Saving..." : "Save subscription settings"}
-              </button>
-              <button
-                type="button"
-                className={styles.secondaryAction}
+              </Button>
+              <Button
+                variant="secondary"
+                size="md"
                 onClick={closeSettingsModal}
                 disabled={settingsBusy}
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           </div>
         </div>

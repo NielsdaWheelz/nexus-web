@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Dialog from "@/components/ui/Dialog";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 import styles from "./LibraryEditDialog.module.css";
 
 /* ------------------------------------------------------------------ */
@@ -202,24 +205,23 @@ export default function LibraryEditDialog({
             Library name
           </label>
           <div className={styles.row}>
-            <input
+            <Input
               id="library-name"
-              type="text"
-              className={styles.input}
+              className={styles.inputField}
               value={draftName}
               onChange={(e) => setDraftName(e.target.value)}
               disabled={!isAdmin}
             />
             {isAdmin && (
-              <button
-                type="button"
-                className={styles.btn}
+              <Button
+                variant="secondary"
+                size="md"
                 onClick={handleSaveName}
                 disabled={!nameChanged || saving}
                 aria-label="Save name"
               >
                 {saving ? "Saving…" : "Save"}
-              </button>
+              </Button>
             )}
           </div>
         </section>
@@ -242,8 +244,8 @@ export default function LibraryEditDialog({
                   <span className={styles.ownerBadge}>owner</span>
                 ) : isAdmin ? (
                   <>
-                    <select
-                      className={styles.roleSelect}
+                    <Select
+                      size="sm"
                       value={m.role}
                       aria-label={`Role for ${memberDisplayLabel(m)}`}
                       onChange={(e) =>
@@ -252,15 +254,15 @@ export default function LibraryEditDialog({
                     >
                       <option value="admin">admin</option>
                       <option value="member">member</option>
-                    </select>
-                    <button
-                      type="button"
-                      className={styles.removeBtn}
+                    </Select>
+                    <Button
+                      variant="danger"
+                      size="sm"
                       aria-label={`Remove ${memberDisplayLabel(m)}`}
                       onClick={() => void onRemoveMember(m.user_id)}
                     >
                       Remove
-                    </button>
+                    </Button>
                   </>
                 ) : (
                   <span className={styles.roleBadge}>{m.role}</span>
@@ -281,9 +283,8 @@ export default function LibraryEditDialog({
 
             <div className={styles.inviteForm}>
               <div className={styles.searchWrapper}>
-                <input
-                  type="text"
-                  className={styles.input}
+                <Input
+                  className={styles.inputField}
                   value={inviteQuery}
                   onChange={(e) => handleInviteQueryChange(e.target.value)}
                   onFocus={() => {
@@ -333,8 +334,8 @@ export default function LibraryEditDialog({
                   </span>
                 )}
               </div>
-              <select
-                className={styles.roleSelect}
+              <Select
+                size="sm"
                 value={inviteRole}
                 aria-label="Invite role"
                 onChange={(e) =>
@@ -343,16 +344,16 @@ export default function LibraryEditDialog({
               >
                 <option value="member">member</option>
                 <option value="admin">admin</option>
-              </select>
-              <button
-                type="button"
-                className={styles.btn}
+              </Select>
+              <Button
+                variant="secondary"
+                size="md"
                 onClick={handleInvite}
                 disabled={!inviteQuery.trim() || inviting}
                 aria-label="Invite"
               >
                 {inviting ? "Inviting…" : "Invite"}
-              </button>
+              </Button>
             </div>
 
             {pendingInvites.length > 0 && (
@@ -363,13 +364,13 @@ export default function LibraryEditDialog({
                       {inviteeDisplayLabel(inv)}
                     </span>
                     <span className={styles.roleBadge}>{inv.role}</span>
-                    <button
-                      type="button"
-                      className={styles.removeBtn}
+                    <Button
+                      variant="danger"
+                      size="sm"
                       onClick={() => void onRevokeInvite(inv.id)}
                     >
                       Revoke
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>
@@ -380,14 +381,14 @@ export default function LibraryEditDialog({
         {/* ---- Danger zone (admin only) ---- */}
         {isAdmin && (
           <section className={styles.dangerZone}>
-            <button
-              type="button"
-              className={styles.deleteBtn}
+            <Button
+              variant="danger"
+              size="md"
               onClick={() => void onDelete()}
               aria-label="Delete library"
             >
               Delete library
-            </button>
+            </Button>
           </section>
         )}
       </div>

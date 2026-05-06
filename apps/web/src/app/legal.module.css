@@ -1,9 +1,6 @@
 .page {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at top left, rgba(122, 162, 247, 0.16), transparent 36%),
-    radial-gradient(circle at bottom right, rgba(158, 206, 106, 0.12), transparent 34%),
-    linear-gradient(160deg, var(--color-bg) 0%, color-mix(in srgb, var(--color-bg) 82%, #0f172a 18%) 100%);
+  background: var(--surface-canvas);
 }
 
 .shell {
@@ -17,48 +14,44 @@
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-6);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
   text-decoration: none;
 }
 
 .backLink:hover {
-  color: var(--color-text);
+  color: var(--ink);
 }
 
 .card {
   padding: clamp(1.5rem, 4vw, 3rem);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 1.5rem;
-  background:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.84), rgba(15, 23, 42, 0.74)),
-    var(--color-surface);
-  box-shadow:
-    0 28px 80px rgba(15, 23, 42, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(16px);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-2xl);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-3);
 }
 
 .eyebrow {
   margin: 0 0 var(--space-3);
-  color: var(--color-accent);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.24em;
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-widest);
   text-transform: uppercase;
 }
 
 .title {
   margin: 0 0 var(--space-3);
-  font-size: clamp(2rem, 4vw, 2.8rem);
-  line-height: 1.02;
-  letter-spacing: -0.04em;
+  font-size: var(--text-3xl);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+  color: var(--ink);
 }
 
 .meta {
   margin: 0 0 var(--space-7);
-  color: var(--color-text-secondary);
-  line-height: 1.6;
+  color: var(--ink-muted);
+  line-height: var(--leading-relaxed);
 }
 
 .section {
@@ -67,13 +60,14 @@
 
 .sectionTitle {
   margin: 0 0 var(--space-3);
-  font-size: 1.05rem;
+  font-size: var(--text-lg);
+  color: var(--ink);
 }
 
 .sectionBody {
   margin: 0;
-  color: var(--color-text-secondary);
-  line-height: 1.7;
+  color: var(--ink-muted);
+  line-height: var(--leading-loose);
 }
 
 .sectionBody + .sectionBody {
@@ -81,7 +75,7 @@
 }
 
 .inlineLink {
-  color: var(--color-accent);
+  color: var(--accent);
 }
 
 @media (max-width: 640px) {

@@ -1,0 +1,55 @@
+.wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+}
+
+.select {
+  appearance: none;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--surface-sunken);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-7) 0 var(--space-3);
+  width: 100%;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-glide),
+    box-shadow var(--duration-fast) var(--ease-glide);
+}
+
+.select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.select:focus,
+.select:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* Sizes (match Button font-size scale) */
+.sm {
+  height: var(--size-sm);
+  font-size: var(--text-sm);
+}
+
+.md {
+  height: var(--size-lg);
+  font-size: var(--text-base);
+}
+
+.lg {
+  height: var(--size-xl);
+  font-size: var(--text-base);
+}
+
+.chevron {
+  position: absolute;
+  right: var(--space-3);
+  color: var(--ink-muted);
+  pointer-events: none;
+}

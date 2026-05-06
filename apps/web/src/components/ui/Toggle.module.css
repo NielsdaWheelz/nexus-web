@@ -1,0 +1,82 @@
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  user-select: none;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.track {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  transition:
+    background-color var(--duration-fast) var(--ease-glide),
+    border-color var(--duration-fast) var(--ease-glide),
+    box-shadow var(--duration-fast) var(--ease-glide);
+}
+
+.thumb {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  background: var(--ink-muted);
+  border-radius: var(--radius-full);
+  transition:
+    transform var(--duration-fast) var(--ease-glide),
+    background-color var(--duration-fast) var(--ease-glide);
+}
+
+.md .track {
+  width: 32px;
+  height: 18px;
+}
+
+.md .thumb {
+  width: 14px;
+  height: 14px;
+}
+
+.md .input:checked ~ .track .thumb {
+  transform: translateX(14px);
+  background: var(--ink-on-accent);
+}
+
+.sm .track {
+  width: 24px;
+  height: 14px;
+}
+
+.sm .thumb {
+  width: 10px;
+  height: 10px;
+}
+
+.sm .input:checked ~ .track .thumb {
+  transform: translateX(10px);
+  background: var(--ink-on-accent);
+}
+
+.input:checked ~ .track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.input:focus-visible ~ .track {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.label {
+  color: inherit;
+}

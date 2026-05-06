@@ -8,7 +8,8 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import StatusPill from "@/components/ui/StatusPill";
+import Button from "@/components/ui/Button";
+import Pill from "@/components/ui/Pill";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import {
   formatConversationScopeBadge,
@@ -103,13 +104,14 @@ export default function ConversationsPaneBody() {
       )}
 
       {nextCursor && (
-        <button
+        <Button
+          variant="secondary"
           className={styles.loadMore}
           aria-label="Load more conversations"
           onClick={() => fetchConversations(nextCursor)}
         >
           Load more
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -136,9 +138,9 @@ function ConversationListItem({
       description={description}
       meta={new Date(conversation.updated_at).toLocaleDateString()}
       trailing={
-        <StatusPill variant={scope.type === "general" ? "neutral" : "info"}>
+        <Pill tone={scope.type === "general" ? "neutral" : "info"}>
           {formatConversationScopeBadge(scope)}
-        </StatusPill>
+        </Pill>
       }
       options={conversationResourceOptions({
         onDelete: () => void onDelete(conversation.id),

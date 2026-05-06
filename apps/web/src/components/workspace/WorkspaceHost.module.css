@@ -72,7 +72,7 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-4);
-  color: var(--color-text-secondary);
-  background: var(--color-bg);
+  color: var(--ink-muted);
+  background: var(--surface-canvas);
   text-align: center;
 }

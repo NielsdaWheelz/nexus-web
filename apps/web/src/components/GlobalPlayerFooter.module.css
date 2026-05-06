@@ -3,8 +3,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  border-top: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
+  border-top: 1px solid var(--edge);
+  background: var(--surface-2);
   padding: var(--space-2) var(--space-4) var(--space-3);
 }
 
@@ -22,16 +22,16 @@
 }
 
 .kicker {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: var(--tracking-wide);
 }
 
 .trackLink {
-  color: var(--color-text);
+  color: var(--ink);
   text-decoration: none;
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -42,9 +42,9 @@
 }
 
 .chapterLabel {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-  line-height: 1.4;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
 }
 
 .controlsRow {
@@ -54,18 +54,18 @@
 }
 
 .transportButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
+  border: 1px solid var(--edge);
+  background: var(--surface-canvas);
+  color: var(--ink);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .transportButton:hover {
-  border-color: var(--color-border-strong);
+  border-color: var(--edge-strong);
 }
 
 .transportButton:disabled {
@@ -86,14 +86,14 @@
   inset: 50% 0 auto 0;
   height: 4px;
   transform: translateY(-50%);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background:
     linear-gradient(
       to right,
-      var(--color-accent, #4f7cff) 0 var(--progress-percent),
-      color-mix(in srgb, var(--color-accent, #4f7cff) 35%, var(--color-bg-subtle, #d9dce5))
+      var(--accent) 0 var(--progress-percent),
+      color-mix(in srgb, var(--accent) 35%, var(--surface-sunken))
         var(--progress-percent) var(--buffered-percent),
-      var(--color-bg-subtle, #d9dce5) var(--buffered-percent) 100%
+      var(--surface-sunken) var(--buffered-percent) 100%
     );
   pointer-events: none;
 }
@@ -112,8 +112,8 @@
   width: 2px;
   height: 8px;
   margin-left: -1px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--color-text) 55%, transparent);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--ink) 55%, transparent);
   pointer-events: auto;
 }
 
@@ -124,7 +124,7 @@
   background: transparent;
   -webkit-appearance: none;
   appearance: none;
-  height: 24px;
+  height: var(--size-xs);
   margin: 0;
   cursor: pointer;
 }
@@ -139,9 +139,9 @@
   appearance: none;
   width: 12px;
   height: 12px;
-  border-radius: 50%;
-  border: 1px solid color-mix(in srgb, var(--color-border-strong) 70%, #000);
-  background: var(--color-bg);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--edge-strong);
+  background: var(--surface-canvas);
   margin-top: -4px;
 }
 
@@ -154,34 +154,34 @@
 .seekSlider::-moz-range-thumb {
   width: 12px;
   height: 12px;
-  border-radius: 50%;
-  border: 1px solid color-mix(in srgb, var(--color-border-strong) 70%, #000);
-  background: var(--color-bg);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--edge-strong);
+  background: var(--surface-canvas);
 }
 
 .timecode {
-  color: var(--color-text-muted);
+  color: var(--ink-faint);
   font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
+  font-size: var(--text-xs);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   white-space: nowrap;
 }
 
 .bufferingIndicator {
-  color: var(--color-text-muted);
+  color: var(--ink-faint);
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .bufferingDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--color-accent, #4f7cff);
-  animation: buffering-pulse 0.9s ease-in-out infinite;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  animation: buffering-pulse var(--duration-deliberate) var(--ease-glide) infinite;
 }
 
 @keyframes buffering-pulse {
@@ -197,68 +197,68 @@
 .playbackErrorArea {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
 .playbackErrorMessage {
-  color: var(--color-danger, #b42318);
-  font-size: var(--font-size-xs);
+  color: var(--danger);
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 
 .playbackErrorAction,
 .playbackErrorLink {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
-  color: var(--color-text);
-  border-radius: 6px;
-  padding: 4px 6px;
-  font-size: var(--font-size-xs);
-  line-height: 1;
+  border: 1px solid var(--edge);
+  background: var(--surface-canvas);
+  color: var(--ink);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
   text-decoration: none;
 }
 
 .controlLabel {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 
 .speedControl {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .volumeControl {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .effectsButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
+  border: 1px solid var(--edge);
+  background: var(--surface-canvas);
+  color: var(--ink);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .effectsIndicator {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
   background: transparent;
 }
 
 .effectsButton[data-active="true"] .effectsIndicator {
-  background: var(--color-accent, #4f7cff);
+  background: var(--accent);
 }
 
 .effectsPanel {
@@ -266,9 +266,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--color-bg-panel) 88%, transparent);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
   padding: var(--space-2);
 }
 
@@ -276,85 +276,87 @@
 .effectsSelectControl {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: var(--font-size-xs);
-  color: var(--color-text);
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--ink);
 }
 
 .effectsMeta {
   margin: 0;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
 }
 
 .trimmingBadge {
-  border: 1px solid color-mix(in srgb, var(--color-accent, #4f7cff) 50%, var(--color-border));
-  border-radius: 999px;
-  padding: 2px 8px;
-  font-size: var(--font-size-xs);
-  color: color-mix(in srgb, var(--color-accent, #4f7cff) 75%, var(--color-text));
-  background: color-mix(in srgb, var(--color-accent, #4f7cff) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--edge));
+  border-radius: var(--radius-full);
+  padding: 2px var(--space-2);
+  font-size: var(--text-xs);
+  color: color-mix(in srgb, var(--accent) 75%, var(--ink));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .effectsUnavailable {
   margin: 0;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
 }
 
 .select {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
-  color: var(--color-text);
-  border-radius: 6px;
-  padding: 4px 6px;
-  font-size: var(--font-size-xs);
+  border: 1px solid var(--edge);
+  background: var(--surface-canvas);
+  color: var(--ink);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
 }
 
 .volumeSlider {
   flex: 1;
   min-width: 96px;
-  accent-color: var(--color-accent, #4f7cff);
+  accent-color: var(--accent);
 }
 
 .queueButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
+  border: 1px solid var(--edge);
+  background: var(--surface-canvas);
+  color: var(--ink);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .queueBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 16px;
   height: 16px;
-  border-radius: 999px;
-  background: var(--color-accent, #4f7cff);
-  color: white;
-  font-size: 10px;
-  line-height: 16px;
-  text-align: center;
-  padding: 0 4px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--ink-on-accent);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  padding: 0 var(--space-1);
 }
 
 .moreButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
+  border: 1px solid var(--edge);
+  background: var(--surface-canvas);
+  color: var(--ink);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .moreButton:hover {
-  border-color: var(--color-border-strong);
+  border-color: var(--edge-strong);
 }
 
 .morePopover {
@@ -362,15 +364,15 @@
   right: var(--space-4);
   bottom: 100%;
   margin-bottom: var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-bg-panel);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
   padding: var(--space-3);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.2);
-  z-index: 50;
+  box-shadow: var(--shadow-3);
+  z-index: var(--z-overlay);
   min-width: 280px;
 }
 
@@ -392,9 +394,9 @@
 /* ---- Desktop artwork ---- */
 
 .desktopArtwork {
-  width: 32px;
-  height: 32px;
-  border-radius: 4px;
+  width: var(--size-md);
+  height: var(--size-md);
+  border-radius: var(--radius-sm);
   object-fit: cover;
   flex-shrink: 0;
 }
@@ -407,7 +409,7 @@
   left: 0;
   right: 0;
   height: 2px;
-  background: var(--color-bg-subtle, #d9dce5);
+  background: var(--surface-sunken);
 }
 
 .miniProgressBar::after {
@@ -417,8 +419,8 @@
   left: 0;
   height: 100%;
   width: var(--progress-percent, 0%);
-  background: var(--color-accent, #7aa2f7);
-  transition: width 300ms linear;
+  background: var(--accent);
+  transition: width var(--duration-slow) linear;
 }
 
 .miniBar {
@@ -445,7 +447,7 @@
 .miniArtwork {
   width: 40px;
   height: 40px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   object-fit: cover;
   flex-shrink: 0;
 }
@@ -453,14 +455,14 @@
 .miniArtworkFallback {
   width: 40px;
   height: 40px;
-  border-radius: 6px;
-  background: var(--color-surface, #292e42);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
   flex-shrink: 0;
 }
 
 .miniTitle {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -471,7 +473,7 @@
 .expandedBackdrop {
   position: fixed;
   inset: 0;
-  z-index: 70;
+  z-index: var(--z-overlay);
   background: rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(2px);
   display: flex;
@@ -485,11 +487,11 @@
   flex-direction: column;
   gap: var(--space-3);
   overflow-y: auto;
-  background: var(--color-bg);
-  border-top: 1px solid var(--color-border-subtle);
-  border-radius: 16px 16px 0 0;
+  background: var(--surface-canvas);
+  border-top: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
   padding: 0 var(--space-4) max(var(--space-4), env(safe-area-inset-bottom));
-  animation: expandedSheetSlideIn 180ms ease-out;
+  animation: expandedSheetSlideIn var(--duration-fast) var(--ease-snap);
 }
 
 @keyframes expandedSheetSlideIn {
@@ -506,20 +508,20 @@
 .expandedHandle {
   width: 44px;
   height: 4px;
-  border-radius: 999px;
-  background: var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--edge);
   margin: var(--space-2) auto var(--space-1);
   flex-shrink: 0;
 }
 
 .expandedClose {
   align-self: flex-end;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
+  border: 1px solid var(--edge);
+  background: var(--surface-canvas);
+  color: var(--ink);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -527,7 +529,7 @@
 .expandedArtwork {
   width: min(240px, 60vw);
   aspect-ratio: 1;
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   object-fit: cover;
   align-self: center;
 }
@@ -535,8 +537,8 @@
 .expandedArtworkFallback {
   width: min(240px, 60vw);
   aspect-ratio: 1;
-  border-radius: 12px;
-  background: var(--color-surface, #292e42);
+  border-radius: var(--radius-xl);
+  background: var(--surface-2);
   align-self: center;
 }
 
@@ -568,21 +570,21 @@
 .queueOverlay {
   position: fixed;
   inset: 0;
-  background: color-mix(in srgb, black 45%, transparent);
+  background: rgba(0, 0, 0, 0.45);
   display: flex;
   justify-content: flex-end;
-  z-index: 60;
+  z-index: var(--z-overlay);
 }
 
 .footer[data-mobile-view="expanded"] .queueOverlay {
-  z-index: 80;
+  z-index: var(--z-modal);
 }
 
 .queuePanel {
   width: min(460px, 92vw);
   height: 100%;
-  background: var(--color-bg-panel);
-  border-left: 1px solid var(--color-border);
+  background: var(--surface-2);
+  border-left: 1px solid var(--edge);
   display: flex;
   flex-direction: column;
   padding: var(--space-4);
@@ -598,22 +600,22 @@
 
 .queueTitle {
   margin: 0;
-  font-size: var(--font-size-md);
+  font-size: var(--text-md);
 }
 
 .queueCloseButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
+  border: 1px solid var(--edge);
+  background: var(--surface-canvas);
+  color: var(--ink);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
 .queueEmpty {
   margin: 0;
-  color: var(--color-text-muted);
+  color: var(--ink-faint);
 }
 
 .queueList {
@@ -635,28 +637,28 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
   padding: var(--space-2);
-  background: var(--color-bg);
+  background: var(--surface-canvas);
 }
 
 .queueListItemInner[data-current="true"] {
-  border-color: var(--color-accent, #4f7cff);
+  border-color: var(--accent);
 }
 
 .queueListItem[data-dragging="true"] .queueListItemInner {
-  box-shadow: 0 8px 22px color-mix(in srgb, #000 24%, transparent);
+  box-shadow: var(--shadow-3);
 }
 
 .queueDragHandle {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text-muted);
-  border-radius: 8px;
-  padding: 6px 8px;
-  font-size: 13px;
-  line-height: 1;
+  border: 1px solid var(--edge);
+  background: var(--surface-2);
+  color: var(--ink-faint);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
   cursor: grab;
   touch-action: none;
 }
@@ -680,25 +682,25 @@
 }
 
 .queueItemTitle {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .queueItemMeta {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
 }
 
 .queueItemRemoveButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
+  border: 1px solid var(--edge);
+  background: var(--surface-2);
+  color: var(--ink);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -709,12 +711,12 @@
 }
 
 .queueClearButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
+  border: 1px solid var(--edge);
+  background: var(--surface-2);
+  color: var(--ink);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -728,7 +730,7 @@
   }
 
   .transportButton {
-    padding: 6px 8px;
+    padding: var(--space-2);
   }
 
   .queuePanel {

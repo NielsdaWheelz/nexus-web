@@ -1,0 +1,34 @@
+.card {
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  border: 1px solid transparent;
+}
+
+.flat {
+  border-color: transparent;
+}
+
+.bordered {
+  border-color: var(--edge-subtle);
+}
+
+.elevated {
+  border-color: var(--edge-subtle);
+  box-shadow: var(--shadow-2);
+}
+
+.padNone {
+  padding: 0;
+}
+
+.padSm {
+  padding: var(--space-3);
+}
+
+.padMd {
+  padding: var(--space-4);
+}
+
+.padLg {
+  padding: var(--space-6);
+}

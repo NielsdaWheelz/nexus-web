@@ -18,6 +18,8 @@ import {
 import { type PlaybackQueueItem } from "@/lib/player/playbackQueueClient";
 import Image from "next/image";
 import SortableList from "@/components/sortable/SortableList";
+import Button from "@/components/ui/Button";
+import Select from "@/components/ui/Select";
 import styles from "./GlobalPlayerFooter.module.css";
 
 const VOLUME_BOOST_OPTIONS: Array<{ value: AudioEffectsVolumeBoost; label: string }> = [
@@ -77,7 +79,8 @@ function EffectsPanel({
 
       <label className={styles.effectsSelectControl}>
         <span className={styles.controlLabel}>Volume boost</span>
-        <select
+        <Select
+          size="sm"
           aria-label="Volume boost"
           value={audioEffects.volumeBoost}
           disabled={!audioEffectsAvailable}
@@ -93,7 +96,7 @@ function EffectsPanel({
               {option.label}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
 
       <label className={styles.effectsToggle}>
@@ -261,8 +264,8 @@ export default function GlobalPlayerFooter() {
 
           {/* Compact mini-bar */}
           <div className={styles.miniBar}>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
               className={styles.miniTapArea}
               onClick={() => setMobileExpanded(true)}
               aria-label="Expand player"
@@ -280,23 +283,25 @@ export default function GlobalPlayerFooter() {
                 <div className={styles.miniArtworkFallback} aria-hidden="true" />
               )}
               <span className={styles.miniTitle}>{track.title}</span>
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
               className={styles.transportButton}
               onClick={isPlaying ? pause : play}
               aria-label={isPlaying ? "Pause" : "Play"}
             >
               {isPlaying ? "Pause" : "Play"}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
               className={styles.transportButton}
               onClick={() => skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS)}
               aria-label="Forward 30 seconds"
             >
               30s ►►
-            </button>
+            </Button>
           </div>
 
           {/* Expanded bottom sheet */}
@@ -313,14 +318,15 @@ export default function GlobalPlayerFooter() {
                 }}
               >
                 <div className={styles.expandedHandle} aria-hidden="true" />
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   className={styles.expandedClose}
                   onClick={closeMobileExpanded}
                   aria-label="Collapse player"
                 >
                   Close
-                </button>
+                </Button>
 
                 {track.image_url ? (
                   <Image
@@ -376,14 +382,15 @@ export default function GlobalPlayerFooter() {
                 {playbackError ? (
                   <div className={styles.playbackErrorArea} role="status" aria-live="polite">
                     <span className={styles.playbackErrorMessage}>{playbackError.message}</span>
-                    <button
-                      type="button"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       className={styles.playbackErrorAction}
                       onClick={retryPlayback}
                       aria-label="Retry playback"
                     >
                       Retry
-                    </button>
+                    </Button>
                     <a
                       href={track.source_url}
                       target="_blank"
@@ -407,53 +414,59 @@ export default function GlobalPlayerFooter() {
                 )}
 
                 <div className={styles.expandedTransport}>
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     className={styles.transportButton}
                     onClick={() => void playPreviousInQueue()}
                     aria-label="Previous in queue"
                   >
                     ⏮
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     className={styles.transportButton}
                     onClick={() => skipBySeconds(-PLAYER_SKIP_BACK_SECONDS)}
                     aria-label="Back 15 seconds"
                   >
                     ◄◄ 15s
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     className={styles.transportButton}
                     onClick={isPlaying ? pause : play}
                     aria-label={isPlaying ? "Pause" : "Play"}
                   >
                     {isPlaying ? "Pause" : "Play"}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     className={styles.transportButton}
                     onClick={() => skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS)}
                     aria-label="Forward 30 seconds"
                   >
                     30s ►►
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     className={styles.transportButton}
                     onClick={() => void playNextInQueue()}
                     aria-label="Next in queue"
                     disabled={!hasNextInQueue}
                   >
                     ⏭
-                  </button>
+                  </Button>
                 </div>
 
                 <div className={styles.expandedSecondary}>
                   <label className={styles.speedControl}>
                     <span className={styles.controlLabel}>Speed</span>
-                    <select
+                    <Select
+                      size="sm"
                       aria-label="Playback speed"
                       value={selectedPlaybackRateOption.toString()}
                       onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
@@ -464,11 +477,12 @@ export default function GlobalPlayerFooter() {
                           {formatPlaybackSpeedLabel(option)}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
 
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     className={styles.effectsButton}
                     aria-label="Audio effects"
                     aria-expanded={effectsOpen}
@@ -477,17 +491,18 @@ export default function GlobalPlayerFooter() {
                   >
                     Effects
                     <span className={styles.effectsIndicator} aria-hidden="true" />
-                  </button>
+                  </Button>
 
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     className={styles.queueButton}
                     onClick={() => setQueueOpen(true)}
                     aria-label={`Open playback queue (${upcomingQueueCount} upcoming)`}
                   >
                     Queue
                     <span className={styles.queueBadge}>{upcomingQueueCount}</span>
-                  </button>
+                  </Button>
                 </div>
 
                 {effectsOpen && (
@@ -535,32 +550,35 @@ export default function GlobalPlayerFooter() {
             role="group"
             aria-label="Global player controls"
           >
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               className={styles.transportButton}
               onClick={() => skipBySeconds(-PLAYER_SKIP_BACK_SECONDS)}
               aria-label="Back 15 seconds"
             >
               ◄◄ 15s
-            </button>
+            </Button>
 
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               className={styles.transportButton}
               onClick={isPlaying ? pause : play}
               aria-label={isPlaying ? "Pause global player" : "Play global player"}
             >
               {isPlaying ? "Pause" : "Play"}
-            </button>
+            </Button>
 
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               className={styles.transportButton}
               onClick={() => skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS)}
               aria-label="Forward 30 seconds"
             >
               30s ►►
-            </button>
+            </Button>
 
             <div className={styles.seekArea}>
               <div className={styles.seekTrack} style={seekTrackStyle} aria-hidden="true" />
@@ -592,14 +610,15 @@ export default function GlobalPlayerFooter() {
             {playbackError ? (
               <div className={styles.playbackErrorArea} role="status" aria-live="polite">
                 <span className={styles.playbackErrorMessage}>{playbackError.message}</span>
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   className={styles.playbackErrorAction}
                   onClick={retryPlayback}
                   aria-label="Retry playback"
                 >
                   Retry
-                </button>
+                </Button>
                 <a
                   href={track.source_url}
                   target="_blank"
@@ -622,33 +641,36 @@ export default function GlobalPlayerFooter() {
               </span>
             )}
 
-            <button
+            <Button
               ref={moreButtonRef}
-              type="button"
+              variant="secondary"
+              size="sm"
               className={styles.moreButton}
               onClick={() => setMoreOpen((prev) => !prev)}
               aria-label="More controls"
               aria-expanded={moreOpen}
             >
               More ▾
-            </button>
+            </Button>
           </div>
 
           {moreOpen && (
             <div className={styles.morePopover} ref={morePopoverRef}>
               <div className={styles.morePopoverRow}>
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   className={styles.transportButton}
                   onClick={() => void playPreviousInQueue()}
                   aria-label="Previous in queue"
                 >
                   ⏮
-                </button>
+                </Button>
 
                 <label className={styles.speedControl}>
                   <span className={styles.controlLabel}>Speed</span>
-                  <select
+                  <Select
+                    size="sm"
                     aria-label="Playback speed"
                     value={selectedPlaybackRateOption.toString()}
                     onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
@@ -659,18 +681,19 @@ export default function GlobalPlayerFooter() {
                         {formatPlaybackSpeedLabel(option)}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
 
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   className={styles.transportButton}
                   onClick={() => void playNextInQueue()}
                   aria-label="Next in queue"
                   disabled={!hasNextInQueue}
                 >
                   ⏭
-                </button>
+                </Button>
               </div>
 
               <label className={styles.volumeControl}>
@@ -688,8 +711,9 @@ export default function GlobalPlayerFooter() {
               </label>
 
               <div className={styles.morePopoverRow}>
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   className={styles.effectsButton}
                   aria-label="Audio effects"
                   aria-expanded={effectsOpen}
@@ -698,10 +722,11 @@ export default function GlobalPlayerFooter() {
                 >
                   Effects
                   <span className={styles.effectsIndicator} aria-hidden="true" />
-                </button>
+                </Button>
 
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   className={styles.queueButton}
                   onClick={() => {
                     setQueueOpen(true);
@@ -711,7 +736,7 @@ export default function GlobalPlayerFooter() {
                 >
                   Queue
                   <span className={styles.queueBadge}>{upcomingQueueCount}</span>
-                </button>
+                </Button>
               </div>
 
               {effectsOpen && (
@@ -741,14 +766,15 @@ export default function GlobalPlayerFooter() {
           <section className={styles.queuePanel} role="dialog" aria-label="Playback queue panel">
             <header className={styles.queueHeader}>
               <h2 className={styles.queueTitle}>Playback queue</h2>
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 className={styles.queueCloseButton}
                 onClick={() => setQueueOpen(false)}
                 aria-label="Close playback queue"
               >
                 Close
-              </button>
+              </Button>
             </header>
 
             {queueItems.length === 0 ? (
@@ -764,17 +790,18 @@ export default function GlobalPlayerFooter() {
                   const isCurrent = item.item_id === currentQueueItemId;
                   return (
                     <div className={styles.queueListItemInner} data-current={isCurrent ? "true" : "false"}>
-                      <button
-                        type="button"
+                      <Button
+                        variant="secondary"
+                        size="sm"
                         className={styles.queueDragHandle}
                         aria-label={`Reorder ${item.title}`}
                         {...handleProps.attributes}
                         {...handleProps.listeners}
                       >
                         ⋮⋮
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        variant="ghost"
                         className={styles.queueItemMain}
                         onClick={() => handleQueueItemPlay(item)}
                         aria-label={`Play ${item.title} from queue`}
@@ -783,9 +810,10 @@ export default function GlobalPlayerFooter() {
                         <span className={styles.queueItemMeta}>
                           {item.podcast_title ?? "Unknown podcast"}
                         </span>
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
                         className={styles.queueItemRemoveButton}
                         aria-label={`Remove ${item.title} from queue`}
                         onClick={() => {
@@ -793,7 +821,7 @@ export default function GlobalPlayerFooter() {
                         }}
                       >
                         Remove
-                      </button>
+                      </Button>
                     </div>
                   );
                 }}
@@ -801,8 +829,9 @@ export default function GlobalPlayerFooter() {
             )}
 
             <footer className={styles.queueFooter}>
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 className={styles.queueClearButton}
                 aria-label="Clear queue"
                 onClick={() => {
@@ -810,7 +839,7 @@ export default function GlobalPlayerFooter() {
                 }}
               >
                 Clear queue
-              </button>
+              </Button>
             </footer>
           </section>
         </div>

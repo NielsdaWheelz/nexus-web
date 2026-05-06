@@ -35,6 +35,7 @@ import {
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ActionMenu from "@/components/ui/ActionMenu";
+import Button from "@/components/ui/Button";
 import SectionCard from "@/components/ui/SectionCard";
 import SortableList from "@/components/sortable/SortableList";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
@@ -1086,26 +1087,28 @@ export default function LibraryPaneBody() {
             role="tablist"
             aria-label="Library view"
           >
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               role="tab"
               aria-selected={activeView === "contents"}
               className={styles.viewButton}
               onClick={() => setActiveView("contents")}
+              leadingIcon={<List size={16} aria-hidden="true" />}
             >
-              <List size={16} aria-hidden="true" />
               Contents
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               role="tab"
               aria-selected={activeView === "intelligence"}
               className={styles.viewButton}
               onClick={() => setActiveView("intelligence")}
+              leadingIcon={<BarChart3 size={16} aria-hidden="true" />}
             >
-              <BarChart3 size={16} aria-hidden="true" />
               Intelligence
-            </button>
+            </Button>
           </div>
 
           {activeView === "intelligence" ? (
@@ -1120,15 +1123,15 @@ export default function LibraryPaneBody() {
                     {statusText}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  className={styles.refreshButton}
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => void handleRefreshIntelligence()}
                   disabled={intelligenceLoading || intelligenceRefreshing}
+                  leadingIcon={<RefreshCw size={16} aria-hidden="true" />}
                 >
-                  <RefreshCw size={16} aria-hidden="true" />
                   {intelligenceRefreshing ? "Refreshing" : "Refresh"}
-                </button>
+                </Button>
               </div>
 
               {intelligenceError ? (
@@ -1339,15 +1342,16 @@ export default function LibraryPaneBody() {
                     >
                       <div className={styles.mediaRowMain}>
                         {library.role === "admin" && (
-                          <button
-                            type="button"
+                          <Button
+                            variant="secondary"
+                            size="sm"
                             className={styles.dragHandle}
                             aria-label={`Reorder ${item.podcast.title}`}
                             disabled={reorderBusy}
                             {...dragHandleBindings}
                           >
                             ⋮⋮
-                          </button>
+                          </Button>
                         )}
                         <div className={styles.mediaLink}>
                           <span className={styles.mediaTitleRow}>
@@ -1459,15 +1463,16 @@ export default function LibraryPaneBody() {
                   >
                     <div className={styles.mediaRowMain}>
                       {library.role === "admin" && (
-                        <button
-                          type="button"
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           className={styles.dragHandle}
                           aria-label={`Reorder ${item.media.title}`}
                           disabled={reorderBusy}
                           {...dragHandleBindings}
                         >
                           ⋮⋮
-                        </button>
+                        </Button>
                       )}
                       <div className={styles.mediaLink}>
                         <span className={styles.mediaTitleRow}>

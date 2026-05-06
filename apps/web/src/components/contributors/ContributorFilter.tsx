@@ -1,7 +1,9 @@
 "use client";
 
-import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import Button from "@/components/ui/Button";
+import Chip from "@/components/ui/Chip";
+import Input from "@/components/ui/Input";
 import { fetchContributor, fetchContributors } from "@/lib/contributors/api";
 import type { ContributorSummary } from "@/lib/contributors/types";
 
@@ -9,75 +11,6 @@ interface ContributorFilterProps {
   selectedHandles: string[];
   onChange: (handles: string[]) => void;
 }
-
-const rootStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "0.5rem",
-};
-
-const selectedStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: "0.35rem",
-};
-
-const chipStyle: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: "0.35rem",
-  border: "1px solid var(--color-border)",
-  borderRadius: "999px",
-  padding: "2px 8px",
-  background: "var(--color-bg-secondary)",
-  color: "var(--color-text)",
-  fontSize: "var(--font-size-xs)",
-};
-
-const removeStyle: CSSProperties = {
-  border: "none",
-  padding: 0,
-  background: "transparent",
-  color: "var(--color-text-muted)",
-  cursor: "pointer",
-  font: "inherit",
-  lineHeight: 1,
-};
-
-const selectedLinkStyle: CSSProperties = {
-  color: "inherit",
-  textDecoration: "none",
-};
-
-const inputStyle: CSSProperties = {
-  width: "min(340px, 100%)",
-  padding: "8px 10px",
-  border: "1px solid var(--color-border)",
-  borderRadius: "8px",
-  background: "var(--color-bg)",
-  color: "var(--color-text)",
-  font: "inherit",
-  fontSize: "var(--font-size-sm)",
-};
-
-const suggestionListStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "0.25rem",
-  maxWidth: "360px",
-};
-
-const suggestionStyle: CSSProperties = {
-  border: "1px solid var(--color-border)",
-  borderRadius: "8px",
-  padding: "6px 8px",
-  background: "var(--color-bg-secondary)",
-  color: "var(--color-text)",
-  cursor: "pointer",
-  font: "inherit",
-  fontSize: "var(--font-size-sm)",
-  textAlign: "left",
-};
 
 function dedupeHandles(handles: string[]): string[] {
   const seen = new Set<string>();
@@ -173,28 +106,29 @@ export default function ContributorFilter({
   }
 
   return (
-    <div style={rootStyle}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
       {normalizedHandles.length > 0 ? (
-        <div style={selectedStyle} aria-label="Selected authors">
+        <div
+          style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-1)" }}
+          aria-label="Selected authors"
+        >
           {normalizedHandles.map((handle) => {
             const contributor = selectedByHandle[handle];
+            const label = contributor?.display_name ?? handle;
             return (
-              <span key={handle} style={chipStyle}>
+              <Chip
+                key={handle}
+                removable
+                onRemove={() => removeHandle(handle)}
+                aria-label={label}
+              >
                 <a
                   href={`/authors/${encodeURIComponent(handle)}`}
-                  style={selectedLinkStyle}
+                  style={{ color: "inherit", textDecoration: "none" }}
                 >
-                  {contributor?.display_name ?? handle}
+                  {label}
                 </a>
-                <button
-                  type="button"
-                  style={removeStyle}
-                  aria-label={`Remove ${contributor?.display_name ?? handle}`}
-                  onClick={() => removeHandle(handle)}
-                >
-                  ×
-                </button>
-              </span>
+              </Chip>
             );
           })}
         </div>
@@ -202,26 +136,34 @@ export default function ContributorFilter({
 
       <label>
         <span className="sr-only">Filter by author</span>
-        <input
+        <Input
           type="search"
           value={query}
-          style={inputStyle}
           placeholder="Filter authors..."
+          style={{ width: "min(340px, 100%)" }}
           onChange={(event) => setQuery(event.target.value)}
         />
       </label>
 
       {suggestions.length > 0 ? (
-        <div style={suggestionListStyle}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "var(--space-1)",
+            maxWidth: "360px",
+          }}
+        >
           {suggestions.map((contributor) => (
-            <button
+            <Button
               key={contributor.handle}
-              type="button"
-              style={suggestionStyle}
+              variant="secondary"
+              size="sm"
               onClick={() => addContributor(contributor)}
+              style={{ justifyContent: "flex-start" }}
             >
               {contributor.display_name}
-            </button>
+            </Button>
           ))}
         </div>
       ) : null}

@@ -10,7 +10,9 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import StatusPill from "@/components/ui/StatusPill";
+import Pill from "@/components/ui/Pill";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import SectionCard from "@/components/ui/SectionCard";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
@@ -272,21 +274,21 @@ export default function LibrariesPaneBody() {
       <SectionCard>
         <div className={styles.content}>
           <form className={styles.createForm} onSubmit={handleCreateLibrary}>
-            <input
-              type="text"
+            <Input
               value={newLibraryName}
               onChange={(e) => setNewLibraryName(e.target.value)}
               placeholder="New library name..."
-              className={styles.input}
+              className={styles.inputField}
               disabled={creating}
             />
-            <button
+            <Button
               type="submit"
-              className={styles.createBtn}
+              variant="primary"
+              size="md"
               disabled={creating || !newLibraryName.trim()}
             >
               {creating ? "Creating..." : "Create"}
-            </button>
+            </Button>
           </form>
 
           {error && <FeedbackNotice {...error} />}
@@ -321,7 +323,7 @@ export default function LibrariesPaneBody() {
                   }
                   trailing={
                     library.is_default ? (
-                      <StatusPill variant="info">default</StatusPill>
+                      <Pill tone="info">default</Pill>
                     ) : null
                   }
                   options={libraryResourceOptions({

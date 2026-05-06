@@ -1,5 +1,6 @@
 "use client";
 
+import Button from "@/components/ui/Button";
 import type { HydratedObjectRef } from "@/lib/objectRefs";
 import styles from "./ObjectRefAutocomplete.module.css";
 
@@ -16,9 +17,10 @@ export default function ObjectRefAutocomplete({
   return (
     <div className={styles.menu} role="listbox" aria-label="Object references">
       {objects.map((object) => (
-        <button
+        <Button
           key={`${object.objectType}:${object.objectId}`}
-          type="button"
+          variant="ghost"
+          size="sm"
           className={styles.option}
           onMouseDown={(event) => {
             event.preventDefault();
@@ -30,9 +32,11 @@ export default function ObjectRefAutocomplete({
             }
           }}
         >
-          <span>{object.label}</span>
-          <span>{object.objectType}</span>
-        </button>
+          <span className={styles.optionRow}>
+            <span className={styles.optionLabel}>{object.label}</span>
+            <span className={styles.optionType}>{object.objectType}</span>
+          </span>
+        </Button>
       ))}
     </div>
   );

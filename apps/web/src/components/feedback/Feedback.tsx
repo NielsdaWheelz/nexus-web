@@ -17,6 +17,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import Button from "@/components/ui/Button";
 import { isApiError, type ApiError } from "@/lib/api/client";
 import styles from "./Feedback.module.css";
 
@@ -259,8 +260,9 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
                 <div className={styles.meta}>Nexus request ID: {toast.requestId}</div>
               ) : null}
               {toast.action ? (
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   className={styles.action}
                   onClick={() => {
                     toast.action?.onClick();
@@ -268,17 +270,19 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
                   }}
                 >
                   {toast.action.label}
-                </button>
+                </Button>
               ) : null}
             </div>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
               className={styles.dismiss}
               onClick={() => dismiss(toast.id)}
               aria-label={`Dismiss ${toast.title}`}
             >
               <X size={16} aria-hidden="true" />
-            </button>
+            </Button>
           </div>
         ))}
       </div>

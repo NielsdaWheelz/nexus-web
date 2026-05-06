@@ -9,7 +9,9 @@ import {
 } from "@/components/feedback/Feedback";
 import SectionCard from "@/components/ui/SectionCard";
 import { AppList, AppListItem } from "@/components/ui/AppList";
-import StatusPill from "@/components/ui/StatusPill";
+import Pill from "@/components/ui/Pill";
+import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 import { fetchContributor, fetchContributorWorks } from "@/lib/contributors/api";
 import type {
   ContributorAlias,
@@ -216,7 +218,7 @@ export default function AuthorPaneBody() {
                     <span>{data.contributor.sort_name}</span>
                   ) : null}
                   {data.contributor.status ? (
-                    <StatusPill variant="neutral">{data.contributor.status}</StatusPill>
+                    <Pill tone="neutral">{data.contributor.status}</Pill>
                   ) : null}
                   {data.contributor.kind ? (
                     <span>{data.contributor.kind.replace(/_/g, " ")}</span>
@@ -279,16 +281,17 @@ export default function AuthorPaneBody() {
               <div className={styles.workToolbar}>
                 <label>
                   <span>Search works</span>
-                  <input
+                  <Input
                     type="search"
                     value={queryFilter}
                     onChange={(event) => setQueryFilter(event.target.value)}
                     placeholder="Filter credited works..."
+                    className={styles.workSearchInput}
                   />
                 </label>
                 <label>
                   <span>Role</span>
-                  <select
+                  <Select
                     value={roleFilter}
                     onChange={(event) => setRoleFilter(event.target.value)}
                   >
@@ -298,11 +301,11 @@ export default function AuthorPaneBody() {
                         {formatContributorRole(role)}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
                 <label>
                   <span>Kind</span>
-                  <select
+                  <Select
                     value={kindFilter}
                     onChange={(event) => setKindFilter(event.target.value)}
                   >
@@ -312,7 +315,7 @@ export default function AuthorPaneBody() {
                         {formatContentKind(kind)}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
               </div>
 

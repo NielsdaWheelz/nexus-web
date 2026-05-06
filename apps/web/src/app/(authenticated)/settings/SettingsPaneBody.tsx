@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentType } from "react";
-import { ArrowRight, BookOpen, CreditCard, FolderOpen, KeyRound, Link2 } from "lucide-react";
+import { ArrowRight, BookOpen, CreditCard, FolderOpen, KeyRound, Link2, Palette } from "lucide-react";
 import SectionCard from "@/components/ui/SectionCard";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import styles from "./page.module.css";
@@ -23,6 +23,12 @@ const SETTINGS_ITEMS: {
     title: "API Keys",
     description: "Configure OpenAI, Anthropic, Gemini, and DeepSeek keys.",
     Icon: KeyRound,
+  },
+  {
+    href: "/settings/appearance",
+    title: "Appearance",
+    description: "Light, dark, or follow your operating system.",
+    Icon: Palette,
   },
   {
     href: "/settings/reader",

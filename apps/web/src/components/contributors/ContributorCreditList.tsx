@@ -16,20 +16,20 @@ const listStyle: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   flexWrap: "wrap",
-  gap: "0.35rem",
+  gap: "var(--space-1)",
   minWidth: 0,
 };
 
 const overflowStyle: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
-  border: "1px solid var(--color-border)",
-  borderRadius: "999px",
-  padding: "2px 8px",
-  background: "var(--color-bg-secondary)",
-  color: "var(--color-text-muted)",
-  fontSize: "var(--font-size-xs)",
-  lineHeight: 1.4,
+  border: "1px solid var(--edge-subtle)",
+  borderRadius: "var(--radius-full)",
+  padding: "2px var(--space-2)",
+  background: "var(--surface-2)",
+  color: "var(--ink-muted)",
+  fontSize: "var(--text-xs)",
+  lineHeight: "var(--leading-snug)",
   whiteSpace: "nowrap",
 };
 

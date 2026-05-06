@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import SectionCard from "@/components/ui/SectionCard";
+import Button from "@/components/ui/Button";
 import {
   loadKeybindings,
   saveKeybindings,
@@ -100,9 +101,9 @@ export default function KeybindingsPaneBody() {
   return (
     <SectionCard
       actions={
-        <button type="button" className={styles.resetBtn} onClick={resetAll}>
+        <Button variant="ghost" size="sm" onClick={resetAll}>
           Reset to defaults
-        </button>
+        </Button>
       }
     >
       <div className={styles.list}>
@@ -129,21 +130,17 @@ export default function KeybindingsPaneBody() {
                     </span>
                   )}
                   <div className={styles.captureActions}>
-                    <button
-                      type="button"
-                      className={styles.saveBtn}
+                    <Button
+                      variant="primary"
+                      size="sm"
                       disabled={!capturedCombo}
                       onClick={saveCapture}
                     >
                       {conflict ? "Reassign" : "Save"}
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.cancelBtn}
-                      onClick={cancelCapture}
-                    >
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={cancelCapture}>
                       Cancel
-                    </button>
+                    </Button>
                   </div>
                 </div>
               ) : (
@@ -151,21 +148,17 @@ export default function KeybindingsPaneBody() {
                   <span className={styles.combo}>
                     {currentCombo ? formatKeyCombo(currentCombo) : "—"}
                   </span>
-                  <button
-                    type="button"
-                    className={styles.editBtn}
-                    onClick={() => startCapture(id)}
-                  >
+                  <Button variant="ghost" size="sm" onClick={() => startCapture(id)}>
                     Edit
-                  </button>
+                  </Button>
                   {currentCombo && currentCombo !== DEFAULT_KEYBINDINGS[id] && (
-                    <button
-                      type="button"
-                      className={styles.clearBtn}
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => clearBinding(id)}
                     >
                       Clear
-                    </button>
+                    </Button>
                   )}
                 </div>
               )}

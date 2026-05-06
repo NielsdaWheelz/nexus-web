@@ -8,6 +8,8 @@ import {
 } from "@/lib/reader/types";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import SectionCard from "@/components/ui/SectionCard";
+import Select from "@/components/ui/Select";
+import Toggle from "@/components/ui/Toggle";
 import styles from "./page.module.css";
 
 export default function SettingsReaderPaneBody() {
@@ -38,25 +40,23 @@ export default function SettingsReaderPaneBody() {
               <label className={styles.formLabel} htmlFor="theme">
                 Theme
               </label>
-              <select
+              <Select
                 id="theme"
-                className={styles.select}
                 value={p.theme}
                 onChange={(e) => updateTheme(e.target.value as ReaderTheme)}
                 disabled={saving}
               >
                 <option value="light">Light</option>
                 <option value="dark">Dark</option>
-              </select>
+              </Select>
             </div>
 
             <div className={styles.formField}>
               <label className={styles.formLabel} htmlFor="fontFamily">
                 Font
               </label>
-              <select
+              <Select
                 id="fontFamily"
-                className={styles.select}
                 value={p.font_family}
                 onChange={(e) =>
                   updateFontFamily(e.target.value as ReaderFontFamily)
@@ -65,7 +65,7 @@ export default function SettingsReaderPaneBody() {
               >
                 <option value="serif">Serif</option>
                 <option value="sans">Sans-serif</option>
-              </select>
+              </Select>
             </div>
           </div>
 
@@ -132,15 +132,12 @@ export default function SettingsReaderPaneBody() {
 
           <div className={styles.formRow}>
             <div className={styles.formField}>
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={p.focus_mode}
-                  onChange={(e) => updateFocusMode(e.target.checked)}
-                  disabled={saving}
-                />
-                Focus mode (hide distractions)
-              </label>
+              <Toggle
+                checked={p.focus_mode}
+                onCheckedChange={updateFocusMode}
+                disabled={saving}
+                label="Focus mode (hide distractions)"
+              />
             </div>
           </div>
 

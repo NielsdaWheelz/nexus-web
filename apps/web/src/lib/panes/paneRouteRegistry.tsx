@@ -20,6 +20,7 @@ import DailyNotePaneBody from "@/app/(authenticated)/daily/DailyNotePaneBody";
 import SettingsPaneBody from "@/app/(authenticated)/settings/SettingsPaneBody";
 import SettingsBillingPaneBody from "@/app/(authenticated)/settings/billing/SettingsBillingPaneBody";
 import SettingsReaderPaneBody from "@/app/(authenticated)/settings/reader/SettingsReaderPaneBody";
+import SettingsAppearancePaneBody from "@/app/(authenticated)/settings/appearance/SettingsAppearancePaneBody";
 import SettingsKeysPaneBody from "@/app/(authenticated)/settings/keys/SettingsKeysPaneBody";
 import SettingsLocalVaultPaneBody from "@/app/(authenticated)/settings/local-vault/SettingsLocalVaultPaneBody";
 import SettingsIdentitiesPaneBody from "@/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody";
@@ -62,6 +63,7 @@ export type PaneRouteId =
   | "settings"
   | "settingsBilling"
   | "settingsReader"
+  | "settingsAppearance"
   | "settingsKeys"
   | "settingsLocalVault"
   | "settingsIdentities"
@@ -352,6 +354,20 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     getChrome: () => ({
       title: "Reader",
       subtitle: "Typography, layout, and display preferences for reading.",
+    }),
+  },
+  {
+    id: "settingsAppearance",
+    pattern: ["settings", "appearance"],
+    staticTitle: "Appearance",
+    render: () => <SettingsAppearancePaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Appearance",
+      subtitle: "Light, dark, or follow your operating system.",
     }),
   },
   {

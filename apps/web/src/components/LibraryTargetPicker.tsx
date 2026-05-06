@@ -10,6 +10,8 @@ import {
 } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { createPortal } from "react-dom";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
 import styles from "./LibraryTargetPicker.module.css";
 
 export interface LibraryTargetPickerItem {
@@ -150,11 +152,11 @@ export default function LibraryTargetPicker({
             }}
           >
             <div className={styles.searchRow}>
-              <input
+              <Input
                 ref={inputRef}
                 type="search"
                 value={query}
-                className={styles.searchInput}
+                className={styles.searchInputField}
                 placeholder="Search libraries..."
                 aria-label="Search libraries"
                 onChange={(event) => setQuery(event.target.value)}
@@ -265,9 +267,10 @@ export default function LibraryTargetPicker({
 
   return (
     <>
-      <button
+      <Button
         ref={buttonRef}
-        type="button"
+        variant="secondary"
+        size="sm"
         className={styles.trigger}
         aria-haspopup="dialog"
         aria-controls={open ? panelId : undefined}
@@ -282,10 +285,10 @@ export default function LibraryTargetPicker({
           }
           setOpen((current) => !current);
         }}
+        trailingIcon={<ChevronDown size={14} aria-hidden="true" />}
       >
         <span className={styles.triggerLabel}>{triggerText}</span>
-        <ChevronDown size={14} aria-hidden="true" />
-      </button>
+      </Button>
       {panel}
     </>
   );

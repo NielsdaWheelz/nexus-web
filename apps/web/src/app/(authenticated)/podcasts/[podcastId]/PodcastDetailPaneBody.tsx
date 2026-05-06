@@ -37,6 +37,9 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import {
@@ -1744,15 +1747,16 @@ export default function PodcastDetailPaneBody() {
 
   usePaneChromeOverride({
     actions: isMobileViewport ? (
-      <button
-        type="button"
+      <Button
+        variant="secondary"
+        size="sm"
         className={styles.paneActionButton}
         onClick={() => setEpisodesDrawerOpen((open) => !open)}
         aria-label="Episodes"
         aria-expanded={episodesDrawerOpen}
       >
         Episodes
-      </button>
+      </Button>
     ) : undefined,
     options: paneOptions,
   });
@@ -1807,36 +1811,38 @@ export default function PodcastDetailPaneBody() {
               ["played", "Played"],
             ] as const
           ).map(([value, label]) => (
-            <button
+            <Button
               key={value}
-              type="button"
+              variant="pill"
+              size="sm"
               className={styles.episodeFilterPill}
               aria-pressed={episodeStateFilter === value}
               onClick={() => setEpisodeStateFilter(value)}
             >
               {label}
-            </button>
+            </Button>
           ))}
         </div>
         <label className={styles.episodeSortLabel}>
           Episode sort
-          <select
+          <Select
+            size="sm"
             aria-label="Episode sort"
             value={episodeSort}
             onChange={(event) =>
               setEpisodeSort(event.target.value as EpisodeSort)
             }
-            className={styles.episodeSortSelect}
           >
             <option value="newest">Newest</option>
             <option value="oldest">Oldest</option>
             <option value="duration_asc">Shortest</option>
             <option value="duration_desc">Longest</option>
-          </select>
+          </Select>
         </label>
         <label className={styles.episodeSearchLabel}>
           Search episodes
-          <input
+          <Input
+            size="sm"
             type="search"
             aria-label="Search episodes"
             className={styles.episodeSearchInput}
@@ -2007,8 +2013,9 @@ export default function PodcastDetailPaneBody() {
                       maxVisible={1}
                     />
                     {showNotesText ? (
-                      <button
-                        type="button"
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         className={styles.showNotesToggleButton}
                         aria-label={`${showNotesExpanded ? "Hide" : "Show"} notes for ${episode.title}`}
                         onClick={(event) => {
@@ -2018,36 +2025,36 @@ export default function PodcastDetailPaneBody() {
                         }}
                       >
                         {showNotesExpanded ? "Hide notes" : "Show notes"}
-                      </button>
+                      </Button>
                     ) : null}
-                    <button
-                      type="button"
-                      className={styles.queueButton}
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       aria-label={`Play next for ${episode.title}`}
                       onClick={() => {
                         void addToQueue(episode.id, "next");
                       }}
                     >
                       Play next
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.queueButton}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       aria-label={`Add ${episode.title} to queue`}
                       onClick={() => {
                         void addToQueue(episode.id, "last");
                       }}
                     >
                       Add to queue
-                    </button>
+                    </Button>
                     {inQueue && (
                       <span className={styles.queueBadge}>In Queue</span>
                     )}
                     {canRequestTranscript &&
                       !expandedTranscriptMediaIds.has(episode.id) && (
-                        <button
-                          type="button"
-                          className={styles.requestButton}
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           onClick={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
@@ -2058,14 +2065,15 @@ export default function PodcastDetailPaneBody() {
                           aria-label={`Request transcript for ${episode.title}`}
                         >
                           Request transcript...
-                        </button>
+                        </Button>
                       )}
                     {canRequestTranscript &&
                       expandedTranscriptMediaIds.has(episode.id) && (
                         <>
                           <label className={styles.reasonLabel}>
                             Transcript reason
-                            <select
+                            <Select
+                              size="sm"
                               value={transcriptReason}
                               onChange={(event) =>
                                 setTranscriptReasonByMediaId((prev) => ({
@@ -2075,16 +2083,15 @@ export default function PodcastDetailPaneBody() {
                                 }))
                               }
                               aria-label={`Transcript request reason for ${episode.title}`}
-                              className={styles.reasonSelect}
                             >
                               <option value="search">search</option>
                               <option value="highlight">highlight</option>
                               <option value="quote">quote</option>
-                            </select>
+                            </Select>
                           </label>
-                          <button
-                            type="button"
-                            className={styles.requestButton}
+                          <Button
+                            variant="secondary"
+                            size="sm"
                             aria-label={`Submit transcript request for ${episode.title}`}
                             disabled={transcriptRequestDisabled}
                             onClick={() =>
@@ -2094,7 +2101,7 @@ export default function PodcastDetailPaneBody() {
                             {requestingTranscriptMediaIds.has(episode.id)
                               ? "Requesting..."
                               : "Request transcript"}
-                          </button>
+                          </Button>
                           {forecastForSelectedReason && (
                             <span className={styles.transcriptRequestHint}>
                               {forecastForSelectedReason.source === "request"
@@ -2149,15 +2156,16 @@ export default function PodcastDetailPaneBody() {
       )}
 
       {!loading && hasMoreEpisodes && (
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="md"
           className={styles.loadMoreButton}
           onClick={() => void handleLoadMoreEpisodes()}
           disabled={loadingMoreEpisodes}
           aria-label="Load more episodes"
         >
           {loadingMoreEpisodes ? "Loading..." : "Load more episodes"}
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -2182,14 +2190,14 @@ export default function PodcastDetailPaneBody() {
               <div className={styles.headerButtons}>
                 {activeSubscription ? null : (
                   <div className={styles.subscriptionActions}>
-                    <button
-                      type="button"
-                      className={styles.syncButton}
+                    <Button
+                      variant="primary"
+                      size="sm"
                       onClick={() => void handleSubscribe()}
                       disabled={subscribeBusy || !detail}
                     >
                       {subscribeBusy ? "Subscribing..." : "Subscribe"}
-                    </button>
+                    </Button>
                     <LibraryTargetPicker
                       label="Subscribe + library"
                       libraries={availableLibraries}
@@ -2406,9 +2414,8 @@ export default function PodcastDetailPaneBody() {
             >
               Default playback speed
             </label>
-            <select
+            <Select
               id="detail-default-playback-speed"
-              className={styles.settingsSelect}
               value={settingsDefaultSpeed}
               onChange={(event) => setSettingsDefaultSpeed(event.target.value)}
               aria-label="Default playback speed"
@@ -2419,7 +2426,7 @@ export default function PodcastDetailPaneBody() {
                   {formatPlaybackSpeedLabel(speed)}
                 </option>
               ))}
-            </select>
+            </Select>
             <label className={styles.settingsToggleLabel}>
               <input
                 type="checkbox"
@@ -2435,24 +2442,24 @@ export default function PodcastDetailPaneBody() {
             </p>
             {settingsError && <FeedbackNotice feedback={settingsError} />}
             <div className={styles.modalActions}>
-              <button
-                type="button"
-                className={styles.syncButton}
+              <Button
+                variant="primary"
+                size="md"
                 onClick={() => void handleSaveSubscriptionSettings()}
                 disabled={settingsBusy}
                 aria-label="Save subscription settings"
               >
                 {settingsBusy ? "Saving..." : "Save"}
-              </button>
-              <button
-                type="button"
-                className={styles.unsubscribeButton}
+              </Button>
+              <Button
+                variant="secondary"
+                size="md"
                 onClick={closeSettingsModal}
                 disabled={settingsBusy}
                 aria-label="Close subscription settings"
               >
                 Close
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -2473,13 +2480,13 @@ export default function PodcastDetailPaneBody() {
           >
             <header className={styles.episodesDrawerHeader}>
               <h2>Episodes</h2>
-              <button
-                type="button"
-                className={styles.syncButton}
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => setEpisodesDrawerOpen(false)}
               >
                 Close
-              </button>
+              </Button>
             </header>
             <div className={styles.episodesDrawerBody}>
               {episodePaneContent}

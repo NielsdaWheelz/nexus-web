@@ -21,6 +21,7 @@ import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import { fetchPinnedObjects, type PinnedObject } from "@/lib/pinnedObjects";
+import Button from "@/components/ui/Button";
 import styles from "./Navbar.module.css";
 
 interface NavbarProps {
@@ -130,13 +131,15 @@ export default function Navbar({ onToggle }: NavbarProps) {
         >
           {collapsed ? "N" : "Nexus"}
         </Link>
-        <button
-          className={styles.toggleBtn}
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
           onClick={handleToggle}
           aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
         >
           <ToggleIcon size={14} aria-hidden="true" />
-        </button>
+        </Button>
       </div>
 
       <div className={styles.nav}>
@@ -253,8 +256,8 @@ export default function Navbar({ onToggle }: NavbarProps) {
       </div>
 
       <div className={styles.uploadSection}>
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           className={styles.navItem}
           aria-label="Add content"
           aria-haspopup="dialog"
@@ -264,17 +267,17 @@ export default function Navbar({ onToggle }: NavbarProps) {
             <Plus size={18} strokeWidth={2} />
           </span>
           {!collapsed && <span className={styles.label}>Add</span>}
-        </button>
+        </Button>
       </div>
 
       <div className={styles.footer}>
         <form action="/auth/signout" method="post">
-          <button type="submit" className={styles.navItem}>
+          <Button type="submit" variant="ghost" className={styles.navItem}>
             <span className={styles.icon} aria-hidden="true">
               <LogOut size={18} strokeWidth={2} />
             </span>
             {!collapsed && <span className={styles.label}>Sign Out</span>}
-          </button>
+          </Button>
         </form>
       </div>
     </nav>

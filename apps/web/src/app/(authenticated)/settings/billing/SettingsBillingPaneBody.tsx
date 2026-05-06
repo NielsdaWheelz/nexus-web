@@ -8,7 +8,8 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import SectionCard from "@/components/ui/SectionCard";
-import StatusPill from "@/components/ui/StatusPill";
+import Button from "@/components/ui/Button";
+import Pill from "@/components/ui/Pill";
 import { useBillingAccount, type BillingPlanTier } from "@/lib/billing/useBillingAccount";
 import styles from "./page.module.css";
 
@@ -202,7 +203,7 @@ export default function SettingsBillingPaneBody() {
               <div className={styles.summaryItem}>
                 <dt className={styles.summaryLabel}>Plan</dt>
                 <dd className={styles.summaryValue}>
-                  <StatusPill variant="info">{planLabel(account.plan_tier)}</StatusPill>
+                  <Pill tone="info">{planLabel(account.plan_tier)}</Pill>
                   <span className={styles.summaryMeta}>{planDescription(account.plan_tier)}</span>
                 </dd>
               </div>
@@ -210,9 +211,9 @@ export default function SettingsBillingPaneBody() {
               <div className={styles.summaryItem}>
                 <dt className={styles.summaryLabel}>Status</dt>
                 <dd className={styles.summaryValue}>
-                  <StatusPill variant={statusVariant(account.subscription_status, account.plan_tier)}>
+                  <Pill tone={statusVariant(account.subscription_status, account.plan_tier)}>
                     {statusLabel(account.subscription_status, account.plan_tier)}
-                  </StatusPill>
+                  </Pill>
                   <span className={styles.summaryMeta}>{statusSummary(account)}</span>
                 </dd>
               </div>
@@ -265,10 +266,9 @@ export default function SettingsBillingPaneBody() {
               <div className={styles.actionRow}>
                 {showUpgradeActions &&
                   upgradePlans.map((planTier) => (
-                    <button
+                    <Button
                       key={planTier}
-                      type="button"
-                      className={styles.upgradeButton}
+                      variant="primary"
                       disabled={checkoutBusy !== null || portalBusy}
                       onClick={() => {
                         void launchCheckout(planTier);
@@ -277,20 +277,19 @@ export default function SettingsBillingPaneBody() {
                       {checkoutBusy === planTier
                         ? `Opening ${planLabel(planTier)}...`
                         : `Upgrade to ${planLabel(planTier)}`}
-                    </button>
+                    </Button>
                   ))}
 
                 {showManageBillingAction && (
-                  <button
-                    type="button"
-                    className={styles.manageButton}
+                  <Button
+                    variant="secondary"
                     disabled={checkoutBusy !== null || portalBusy}
                     onClick={() => {
                       void launchBillingPortal();
                     }}
                   >
                     {portalBusy ? "Opening billing..." : "Manage billing"}
-                  </button>
+                  </Button>
                 )}
 
                 {actionHint && <span className={styles.actionHint}>{actionHint}</span>}

@@ -56,7 +56,7 @@ import {
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import MediaHighlightsPaneBody from "./MediaHighlightsPaneBody";
-import StatusPill from "@/components/ui/StatusPill";
+import Pill from "@/components/ui/Pill";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
@@ -120,7 +120,9 @@ import {
   buildEpubLocationHref,
   resolveSectionAnchorId,
 } from "./epubHelpers";
-import { PanelRight, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, PanelRight, RefreshCw } from "lucide-react";
+import Button from "@/components/ui/Button";
+import Select from "@/components/ui/Select";
 import styles from "./page.module.css";
 
 // =============================================================================
@@ -3898,33 +3900,35 @@ export default function MediaPaneBody() {
     isPdf && canRead && pdfControlsState ? (
       <div className={styles.mediaToolbar} role="toolbar" aria-label="PDF controls">
         <div className={styles.mediaToolbarRow}>
-          <button
-            type="button"
-            className={styles.mediaToolbarButton}
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
             onClick={() => pdfControlsRef.current?.goToPreviousPage()}
             disabled={!pdfControlsState.canGoPrev}
             aria-label="Previous page"
           >
-            Prev
-          </button>
+            <ChevronLeft size={16} aria-hidden="true" />
+          </Button>
           <span
             className={styles.mediaToolbarStatus}
             aria-label={`Page ${pdfControlsState.pageNumber} of ${pdfControlsState.numPages || 0}`}
           >
             {pdfControlsState.pageNumber} / {pdfControlsState.numPages || 0}
           </span>
-          <button
-            type="button"
-            className={styles.mediaToolbarButton}
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
             onClick={() => pdfControlsRef.current?.goToNextPage()}
             disabled={!pdfControlsState.canGoNext}
             aria-label="Next page"
           >
-            Next
-          </button>
-          <button
-            type="button"
-            className={styles.mediaToolbarButton}
+            <ChevronRight size={16} aria-hidden="true" />
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onMouseDown={(event) => {
               event.preventDefault();
               pdfControlsRef.current?.captureSelectionSnapshot();
@@ -3942,7 +3946,7 @@ export default function MediaPaneBody() {
             data-selection-popover-ignore-outside="true"
           >
             Highlight
-          </button>
+          </Button>
           <ActionMenu
             label="More actions"
             options={[
@@ -3965,9 +3969,10 @@ export default function MediaPaneBody() {
     ) : isEpub && canRead ? (
       <div className={styles.mediaToolbar} role="toolbar" aria-label="EPUB controls">
         <div className={styles.mediaToolbarRow}>
-          <button
-            type="button"
-            className={styles.mediaToolbarButton}
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
             onClick={() => {
               if (prevSection) {
                 navigateToSection(prevSection.section_id);
@@ -3976,8 +3981,8 @@ export default function MediaPaneBody() {
             disabled={!prevSection}
             aria-label="Previous section"
           >
-            Prev
-          </button>
+            <ChevronLeft size={16} aria-hidden="true" />
+          </Button>
           {activeSectionPosition >= 0 && epubSections ? (
             <span
               className={styles.mediaToolbarStatus}
@@ -3986,9 +3991,10 @@ export default function MediaPaneBody() {
               {activeSectionPosition + 1} / {epubSections.length}
             </span>
           ) : null}
-          <button
-            type="button"
-            className={styles.mediaToolbarButton}
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
             onClick={() => {
               if (nextSection) {
                 navigateToSection(nextSection.section_id);
@@ -3997,19 +4003,19 @@ export default function MediaPaneBody() {
             disabled={!nextSection}
             aria-label="Next section"
           >
-            Next
-          </button>
+            <ChevronRight size={16} aria-hidden="true" />
+          </Button>
         </div>
         {epubSections ? (
           <div className={styles.mediaToolbarRow}>
-            <select
+            <Select
+              size="sm"
               value={activeSectionId ?? ""}
               onChange={(event) => {
                 if (event.target.value) {
                   navigateToSection(event.target.value);
                 }
               }}
-              className={styles.mediaToolbarSelect}
               aria-label="Select section"
             >
               {epubSections.map((section) => (
@@ -4017,7 +4023,7 @@ export default function MediaPaneBody() {
                   {section.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         ) : null}
       </div>
@@ -4034,15 +4040,16 @@ export default function MediaPaneBody() {
     actions:
       showHighlightsPane && isMobileViewport ? (
         <div className={styles.paneActionGroup}>
-          <button
-            type="button"
-            className={styles.paneActionButton}
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
             onClick={() => setHighlightsDrawerOpen((v) => !v)}
             aria-label="Highlights"
             aria-expanded={highlightsDrawerOpen}
           >
-            <PanelRight size={18} />
-          </button>
+            <PanelRight size={18} aria-hidden="true" />
+          </Button>
         </div>
       ) : undefined,
   });
@@ -4474,16 +4481,16 @@ export default function MediaPaneBody() {
           )}
           {focusModeEnabled && (
             <div className={styles.focusModeBanner}>
-              <StatusPill variant="info">
+              <Pill tone="info">
                 Focus mode enabled: highlights pane hidden.
-              </StatusPill>
+              </Pill>
             </div>
           )}
           {media.retrieval_status && media.retrieval_status !== "ready" && canRead ? (
             <div className={styles.retrievalBanner} data-testid="retrieval-readiness">
-              <StatusPill variant={media.retrieval_status === "failed" ? "error" : "warning"}>
+              <Pill tone={media.retrieval_status === "failed" ? "danger" : "warning"}>
                 Search index: {media.retrieval_status.replaceAll("_", " ")}
-              </StatusPill>
+              </Pill>
               {media.retrieval_status_reason ? (
                 <span>{media.retrieval_status_reason}</span>
               ) : null}
@@ -4525,17 +4532,17 @@ export default function MediaPaneBody() {
                   )}
                   {media.last_error_code && <p>Error: {media.last_error_code}</p>}
                   {media.capabilities?.can_retry ? (
-                    <button
-                      type="button"
-                      className={styles.retryProcessingButton}
+                    <Button
+                      variant="primary"
+                      size="md"
+                      leadingIcon={<RefreshCw size={15} aria-hidden="true" />}
                       onClick={() => {
                         void handleRetryProcessing();
                       }}
                       disabled={retryProcessingBusy}
                     >
-                      <RefreshCw size={15} aria-hidden="true" />
-                      <span>{retryProcessingBusy ? "Retrying..." : "Retry processing"}</span>
-                    </button>
+                      {retryProcessingBusy ? "Retrying..." : "Retry processing"}
+                    </Button>
                   ) : null}
                 </>
               ) : (
@@ -4646,21 +4653,21 @@ export default function MediaPaneBody() {
             }}
           >
             <div className={styles.secondaryPaneTabs} role="tablist" aria-label="Reader tools">
-              <button
-                type="button"
-                className={styles.secondaryPaneTab}
-                data-active={secondaryPaneMode === "highlights" ? "true" : "false"}
+              <Button
+                variant="ghost"
+                size="sm"
                 role="tab"
                 aria-selected={secondaryPaneMode === "highlights"}
                 disabled={!highlightsContent}
                 onClick={() => setSecondaryPaneMode("highlights")}
+                className={styles.secondaryPaneTab}
+                data-active={secondaryPaneMode === "highlights" ? "true" : "false"}
               >
                 Highlights
-              </button>
-              <button
-                type="button"
-                className={styles.secondaryPaneTab}
-                data-active={secondaryPaneMode === "ask" ? "true" : "false"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 role="tab"
                 aria-selected={secondaryPaneMode === "ask"}
                 onClick={() => {
@@ -4670,9 +4677,11 @@ export default function MediaPaneBody() {
                   }
                   setSecondaryPaneMode("ask");
                 }}
+                className={styles.secondaryPaneTab}
+                data-active={secondaryPaneMode === "ask" ? "true" : "false"}
               >
                 Ask
-              </button>
+              </Button>
             </div>
             <div className={styles.secondaryPaneBody}>{desktopSecondaryContent}</div>
           </div>
@@ -4693,9 +4702,13 @@ export default function MediaPaneBody() {
           >
             <header className={styles.highlightsDrawerHeader}>
               <h2>Highlights</h2>
-              <button type="button" onClick={() => setHighlightsDrawerOpen(false)}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setHighlightsDrawerOpen(false)}
+              >
                 Close
-              </button>
+              </Button>
             </header>
             <div className={styles.highlightsDrawerBody}>{highlightsContent}</div>
           </aside>

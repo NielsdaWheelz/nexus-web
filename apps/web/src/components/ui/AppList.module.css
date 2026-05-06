@@ -2,10 +2,10 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 10px;
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  background: var(--color-bg-secondary);
+  background: var(--surface-2);
 }
 
 .item {
@@ -20,7 +20,7 @@
 }
 
 .item + .item {
-  border-top: 1px solid var(--color-border-subtle);
+  border-top: 1px solid var(--edge-subtle);
 }
 
 .primary {
@@ -31,24 +31,24 @@
   gap: var(--space-3);
   padding: var(--space-3);
   text-decoration: none;
-  color: var(--color-text);
-  transition: background-color var(--transition-fast);
+  color: var(--ink);
+  transition: background-color var(--duration-fast) var(--ease-glide);
 }
 
 .primary:hover {
-  background: var(--color-surface);
+  background: var(--surface-2);
 }
 
 .icon {
   flex-shrink: 0;
   width: 32px;
   height: 32px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--edge);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-accent);
+  color: var(--accent);
 }
 
 .content {
@@ -60,18 +60,18 @@
 }
 
 .title {
-  font-size: var(--font-size-sm);
-  color: var(--color-text);
-  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--ink);
+  font-weight: var(--weight-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .description {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  line-height: 1.4;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  line-height: var(--leading-snug);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -79,8 +79,8 @@
 }
 
 .meta {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -100,7 +100,7 @@
 
 .actionMenu {
   opacity: 0;
-  transition: opacity var(--transition-fast);
+  transition: opacity var(--duration-fast) var(--ease-glide);
 }
 
 .item:hover .actionMenu,
@@ -109,17 +109,17 @@
 }
 
 .item[data-status="info"] .icon {
-  color: var(--color-accent);
+  color: var(--accent);
 }
 
 .item[data-status="warning"] .icon {
-  color: var(--color-warning);
+  color: var(--warning);
 }
 
 .item[data-status="success"] .icon {
-  color: var(--color-success);
+  color: var(--success);
 }
 
 .item[data-status="error"] .icon {
-  color: var(--color-error);
+  color: var(--danger);
 }
