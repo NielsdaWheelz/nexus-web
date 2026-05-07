@@ -2,15 +2,21 @@
   position: relative;
   width: 100%;
   max-width: var(--content-max-width);
+  --chat-prose-measure: 66ch;
+  --chat-prose-font-size: var(--text-md);
+  --chat-prose-line-height: 1.58;
   margin-bottom: calc(var(--leading-relaxed) * 1em);
   font-size: var(--text-sm);
   line-height: var(--leading-relaxed);
-  overflow-wrap: anywhere;
   animation: messageIn var(--duration-fast) var(--ease-snap);
 }
 
 .message:last-child {
   margin-bottom: 0;
+}
+
+.message[data-role="user"] .timestamp {
+  text-align: right;
 }
 
 @keyframes messageIn {
@@ -24,22 +30,69 @@
   }
 }
 
-.userAttribution {
-  margin-bottom: var(--space-2);
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
+.userPrompt {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+  color: var(--ink);
+  text-align: left;
 }
 
-.userBody {
-  display: block;
+.userPromptCompact {
   width: fit-content;
-  max-width: min(100%, 760px);
-  padding: var(--space-3) var(--space-4);
+  max-width: min(72%, 46ch);
+  margin-inline-start: auto;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--edge-subtle);
   border-radius: var(--radius-md);
-  background: var(--surface-2);
+  background: color-mix(in srgb, var(--accent-muted) 20%, var(--surface-2));
+}
+
+.userPromptExpanded {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--edge-subtle);
+  border-inline-end: 3px solid var(--accent-muted);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-muted) 12%, var(--surface-1));
+}
+
+.userPromptHeader {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.userAttribution {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+}
+
+.userCitationRow {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.userPromptBody {
+  display: block;
+  min-width: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.userPromptExpanded .userPromptBody {
+  width: 100%;
+  max-width: var(--chat-prose-measure);
+  margin-inline-start: auto;
+  font-size: var(--chat-prose-font-size);
+  line-height: var(--chat-prose-line-height);
 }
 
 .assistantBody {
@@ -52,13 +105,6 @@
   font-size: var(--text-xs);
   font-style: italic;
   color: var(--ink-faint);
-}
-
-.citationRow {
-  display: inline-flex;
-  gap: var(--space-1);
-  margin-right: var(--space-2);
-  vertical-align: baseline;
 }
 
 .messageActions {
@@ -377,6 +423,10 @@
 @media (max-width: 640px) {
   .message {
     max-width: 100%;
+  }
+
+  .userPromptCompact {
+    max-width: min(88%, 46ch);
   }
 }
 

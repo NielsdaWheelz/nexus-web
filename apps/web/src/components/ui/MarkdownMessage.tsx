@@ -71,13 +71,24 @@ function CodeBlock({
   ...rest
 }: HTMLAttributes<HTMLElement> & { children?: ReactNode; node?: unknown }) {
   const match = /language-(\w+)/.exec(className ?? "");
+  const position = (
+    _node as
+      | { position?: { start?: { line?: number }; end?: { line?: number } } }
+      | undefined
+  )?.position;
+  const startLine = position?.start?.line;
+  const endLine = position?.end?.line;
+  const isBlock =
+    typeof startLine === "number" &&
+    typeof endLine === "number" &&
+    endLine > startLine;
 
-  if (!match) {
+  if (!match && !isBlock) {
     return <code className={styles.inlineCode} {...rest}>{children}</code>;
   }
 
   return (
-    <CodeBlockWrapper language={match[1]}>
+    <CodeBlockWrapper language={match?.[1] ?? "text"}>
       <code className={className} {...rest}>{children}</code>
     </CodeBlockWrapper>
   );
@@ -125,7 +136,19 @@ function PreBlock({ children }: { children?: ReactNode }) {
   return <>{children}</>;
 }
 
-const components = { code: CodeBlock, pre: PreBlock };
+function TableBlock({
+  children,
+  node: _node,
+  ...rest
+}: HTMLAttributes<HTMLTableElement> & { children?: ReactNode; node?: unknown }) {
+  return (
+    <div className={styles.tableScroll} data-testid="markdown-table-scroll">
+      <table {...rest}>{children}</table>
+    </div>
+  );
+}
+
+const components = { code: CodeBlock, pre: PreBlock, table: TableBlock };
 
 // ---------------------------------------------------------------------------
 // Full render (completed messages)

@@ -18,6 +18,18 @@ afterEach(() => {
 });
 
 describe("MarkdownMessage", () => {
+  it("renders unlabeled fenced code as a copyable code block", () => {
+    render(
+      <MarkdownMessage
+        content={["```", "const plain = true;", "```"].join("\n")}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "copy" })).toBeInTheDocument();
+    expect(screen.getByText("text")).toBeInTheDocument();
+    expect(screen.getByText("const plain = true;")).toBeInTheDocument();
+  });
+
   it("copies the clicked code block when languages repeat", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn((_text: string) => Promise.resolve());
@@ -50,5 +62,20 @@ describe("MarkdownMessage", () => {
     const copiedText = writeText.mock.calls[0]?.[0];
     expect(copiedText).toContain("second");
     expect(copiedText).not.toContain("first");
+  });
+
+  it("wraps markdown tables in a horizontal scroll container", () => {
+    render(
+      <MarkdownMessage
+        content={[
+          "| Column A | Column B |",
+          "| --- | --- |",
+          "| Alpha | Beta |",
+        ].join("\n")}
+      />,
+    );
+
+    const table = screen.getByRole("table");
+    expect(screen.getByTestId("markdown-table-scroll")).toContainElement(table);
   });
 });

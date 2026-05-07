@@ -1,19 +1,24 @@
 /* Markdown message typography */
 .markdown {
-  font-size: var(--text-sm);
-  line-height: var(--leading-relaxed);
+  font-size: var(--chat-prose-font-size, var(--text-md));
+  line-height: var(--chat-prose-line-height, 1.58);
   color: var(--ink);
+  overflow-wrap: normal;
+}
+
+.markdown > :where(p, ul, ol, blockquote, h1, h2, h3, h4, hr) {
+  max-width: var(--chat-prose-measure, 66ch);
 }
 
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }
 
-.markdown p { margin: 0 0 var(--space-3); }
+.markdown p { margin: 0 0 var(--space-4); }
 .markdown p:last-child { margin-bottom: 0; }
 
 .markdown ul,
 .markdown ol {
-  margin: 0 0 var(--space-3);
+  margin: 0 0 var(--space-4);
   padding-left: var(--space-6);
 }
 
@@ -21,7 +26,7 @@
 .markdown li:last-child { margin-bottom: 0; }
 
 .markdown blockquote {
-  margin: 0 0 var(--space-3);
+  margin: 0 0 var(--space-4);
   padding-left: var(--space-4);
   border-left: 3px solid var(--edge);
   color: var(--ink-muted);
@@ -31,18 +36,18 @@
 .markdown h2,
 .markdown h3,
 .markdown h4 {
-  margin: var(--space-4) 0 var(--space-2);
+  margin: var(--space-5) 0 var(--space-2);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-snug);
 }
 
-.markdown h1 { font-size: var(--text-xl); }
-.markdown h2 { font-size: var(--text-lg); }
-.markdown h3 { font-size: var(--text-base); }
+.markdown h1 { font-size: var(--text-lg); }
+.markdown h2 { font-size: var(--text-base); }
+.markdown h3 { font-size: var(--text-sm); }
 .markdown h4 { font-size: var(--text-sm); }
 
 .markdown hr {
-  margin: var(--space-4) 0;
+  margin: var(--space-5) 0;
   border: none;
   border-top: 1px solid var(--edge-subtle);
 }
@@ -55,21 +60,29 @@
 
 .markdown strong { font-weight: var(--weight-semibold); }
 
-.markdown table {
-  width: 100%;
-  margin: 0 0 var(--space-3);
-  border-collapse: collapse;
-  font-size: var(--text-xs);
+.tableScroll {
+  max-width: 100%;
+  margin: 0 0 var(--space-4);
+  overflow-x: auto;
 }
 
-.markdown th,
-.markdown td {
+.tableScroll table {
+  width: max-content;
+  min-width: min(100%, var(--chat-prose-measure, 66ch));
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.tableScroll th,
+.tableScroll td {
   border: 1px solid var(--edge-subtle);
   padding: var(--space-2) var(--space-3);
   text-align: left;
+  vertical-align: top;
 }
 
-.markdown th {
+.tableScroll th {
   background: var(--surface-2);
   font-weight: var(--weight-semibold);
 }
@@ -80,15 +93,18 @@
   padding: 1px 5px;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
 }
 
 /* Code blocks */
 .codeBlock {
   position: relative;
-  margin: 0 0 var(--space-3);
+  max-width: 100%;
+  margin: 0 0 var(--space-4);
   background: var(--surface-2);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -108,7 +124,7 @@
   padding: var(--space-3);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  line-height: var(--leading-normal);
+  line-height: 1.55;
 }
 
 .codeBlockContent pre {
@@ -116,7 +132,15 @@
 }
 
 .codeBlockContent code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
   font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .copyBtn {

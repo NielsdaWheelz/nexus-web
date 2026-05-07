@@ -23,6 +23,8 @@ export default function UserMessage({
   onActivateTarget: (target: ReaderSourceTarget) => void;
 }) {
   const contexts = message.contexts ?? [];
+  const presentation = userPromptPresentation(message.content);
+  const content = message.content || (message.status === "pending" ? "..." : "");
 
   return (
     <div
@@ -30,35 +32,36 @@ export default function UserMessage({
       data-message-id={message.id}
       data-role="user"
     >
-      <div className={styles.userAttribution}>You</div>
-      {contexts.length === 1 ? (
-        <ReaderCitation
-          index={1}
-          color={citationColorFromContext(contexts[0])}
-          preview={citationPreviewFromContext(contexts[0])}
-          target={readerTargetFromContext(contexts[0])}
-          onActivate={onActivateTarget}
-          ariaLabel="Open citation 1"
-        />
-      ) : null}
-      {contexts.length > 1 ? (
-        <span className={styles.citationRow}>
-          {contexts.map((context, index) => (
-            <ReaderCitation
-              key={contextKey(context, index)}
-              index={index + 1}
-              color={citationColorFromContext(context)}
-              preview={citationPreviewFromContext(context)}
-              target={readerTargetFromContext(context)}
-              onActivate={onActivateTarget}
-              ariaLabel={`Open citation ${index + 1}`}
-            />
-          ))}
-        </span>
-      ) : null}
-      <span className={styles.userBody}>
-        {message.content || (message.status === "pending" ? "..." : "")}
-      </span>
+      <div
+        className={`${styles.userPrompt} ${
+          presentation === "compact"
+            ? styles.userPromptCompact
+            : styles.userPromptExpanded
+        }`}
+        role="group"
+        aria-label="User prompt"
+        data-presentation={presentation}
+      >
+        <div className={styles.userPromptHeader}>
+          <span className={styles.userAttribution}>You</span>
+        </div>
+        {contexts.length > 0 ? (
+          <span className={styles.userCitationRow}>
+            {contexts.map((context, index) => (
+              <ReaderCitation
+                key={contextKey(context, index)}
+                index={index + 1}
+                color={citationColorFromContext(context)}
+                preview={citationPreviewFromContext(context)}
+                target={readerTargetFromContext(context)}
+                onActivate={onActivateTarget}
+                ariaLabel={`Open citation ${index + 1}`}
+              />
+            ))}
+          </span>
+        ) : null}
+        <span className={styles.userPromptBody}>{content}</span>
+      </div>
       {message.status === "error" && errorLabel ? (
         <FeedbackNotice
           severity="error"
@@ -69,6 +72,15 @@ export default function UserMessage({
       <span className={styles.timestamp}>{timestampLabel}</span>
     </div>
   );
+}
+
+function userPromptPresentation(content: string): "compact" | "expanded" {
+  const visible = content.trim().replace(/\s+/g, " ");
+  if (visible.length > 320) return "expanded";
+  if (/[\r\n]/.test(content)) return "expanded";
+  if (content.includes("```") || content.includes("~~~")) return "expanded";
+  if (/\S{81,}/.test(content)) return "expanded";
+  return "compact";
 }
 
 function contextKey(context: MessageContextSnapshot, fallback: number): string {

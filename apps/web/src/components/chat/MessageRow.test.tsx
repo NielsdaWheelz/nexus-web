@@ -654,6 +654,38 @@ describe("MessageRow", () => {
     expect(screen.queryByText("Legacy app snippet.")).toBeNull();
   });
 
+  it("renders short user messages as compact prompt blocks", () => {
+    const message: ConversationMessage = {
+      ...baseMessage,
+      id: "user-1",
+      role: "user",
+      content: "Please summarize this.",
+    };
+
+    render(<MessageRow message={message} />);
+
+    const prompt = screen.getByRole("group", { name: "User prompt" });
+    expect(prompt).toHaveAttribute("data-presentation", "compact");
+    expect(prompt).toHaveTextContent("Please summarize this.");
+    expect(prompt).toHaveTextContent("You");
+  });
+
+  it("expands structured user prompts into readable prompt blocks", () => {
+    const message: ConversationMessage = {
+      ...baseMessage,
+      id: "user-1",
+      role: "user",
+      content: ["Review this:", "```ts", "const value = 1;", "```"].join("\n"),
+    };
+
+    render(<MessageRow message={message} />);
+
+    const prompt = screen.getByRole("group", { name: "User prompt" });
+    expect(prompt).toHaveAttribute("data-presentation", "expanded");
+    expect(prompt).toHaveTextContent("Review this:");
+    expect(prompt).toHaveTextContent("const value = 1;");
+  });
+
   it("shows title and route snapshots in inline citation hover cards", async () => {
     const message: ConversationMessage = {
       ...baseMessage,
