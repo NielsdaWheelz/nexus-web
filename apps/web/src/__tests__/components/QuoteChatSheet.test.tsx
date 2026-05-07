@@ -103,7 +103,11 @@ describe("QuoteChatSheet", () => {
     expect(screen.getAllByText("A quote worth asking about.")).toHaveLength(2);
     expect(screen.getByText("Source document")).toBeInTheDocument();
     expect(screen.getByRole("log", { name: "Chat messages" })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Ask anything...")).toHaveFocus();
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const input = screen.getByPlaceholderText("Ask anything...");
+    expect(scrollport).not.toContainElement(input);
+    expect(screen.getByTestId("chat-composer-dock")).toContainElement(input);
+    expect(input).toHaveFocus();
     expect(screen.getByRole("button", { name: /open full chat/i })).toBeDisabled();
 
     fireEvent.keyDown(document, { key: "Escape" });

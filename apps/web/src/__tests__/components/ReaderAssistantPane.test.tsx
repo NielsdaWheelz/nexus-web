@@ -189,7 +189,11 @@ describe("ReaderAssistantPane", () => {
 
     expect(screen.getByRole("region", { name: "Reader assistant" })).toBeInTheDocument();
     expect(screen.getAllByText("Visible before history loads.")).toHaveLength(2);
-    expect(screen.getByPlaceholderText("Ask anything...")).toHaveFocus();
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const input = screen.getByPlaceholderText("Ask anything...");
+    expect(scrollport).not.toContainElement(input);
+    expect(screen.getByTestId("chat-composer-dock")).toContainElement(input);
+    expect(input).toHaveFocus();
     expect(screen.getByRole("button", { name: /open full chat/i })).not.toBeDisabled();
     expect(screen.getByText("Loading chat history...")).toBeInTheDocument();
   });

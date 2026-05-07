@@ -277,6 +277,10 @@ describe("ConversationPaneBody", () => {
 
     expect(await screen.findByText("Answer A")).toBeVisible();
     const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const composerDock = screen.getByTestId("chat-composer-dock");
+    const input = screen.getByRole("textbox", { name: "Ask anything" });
+    expect(scrollport).not.toContainElement(input);
+    expect(composerDock).toContainElement(input);
     scrollport.scrollTop = 180;
 
     await user.click(

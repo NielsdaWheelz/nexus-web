@@ -1,6 +1,13 @@
 "use client";
 
-import type { RefObject, ReactNode, UIEventHandler } from "react";
+import {
+  useCallback,
+  useRef,
+  type ReactNode,
+  type RefObject,
+  type UIEventHandler,
+  type WheelEvent,
+} from "react";
 import Button from "@/components/ui/Button";
 import type {
   BranchDraft,
@@ -41,10 +48,53 @@ export default function ChatSurface({
   onReplyToAssistant?: (draft: BranchDraft) => void;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
 }) {
+  const transcriptScrollportRef = useRef<HTMLDivElement | null>(null);
+  const setScrollportRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      transcriptScrollportRef.current = node;
+      if (scrollportRef) {
+        scrollportRef.current = node;
+      }
+    },
+    [scrollportRef],
+  );
+
+  const handleComposerWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || event.deltaY === 0) return;
+
+    let target = event.target instanceof Element ? event.target : null;
+    while (target && target !== event.currentTarget) {
+      if (
+        target instanceof HTMLElement &&
+        target.scrollHeight > target.clientHeight &&
+        ((event.deltaY < 0 && target.scrollTop > 0) ||
+          (event.deltaY > 0 &&
+            target.scrollTop + target.clientHeight < target.scrollHeight))
+      ) {
+        return;
+      }
+      target = target.parentElement;
+    }
+
+    const scrollport = transcriptScrollportRef.current;
+    if (!scrollport) return;
+
+    if (
+      (event.deltaY < 0 && scrollport.scrollTop <= 0) ||
+      (event.deltaY > 0 &&
+        scrollport.scrollTop + scrollport.clientHeight >= scrollport.scrollHeight)
+    ) {
+      return;
+    }
+
+    scrollport.scrollTop += event.deltaY;
+    event.preventDefault();
+  };
+
   return (
     <div className={styles.surface}>
       <div
-        ref={scrollportRef}
+        ref={setScrollportRef}
         className={styles.scrollport}
         role="region"
         tabIndex={0}
@@ -89,8 +139,14 @@ export default function ChatSurface({
             />
           ))}
         </div>
+      </div>
 
-        <div className={styles.composerSlot}>{composer}</div>
+      <div
+        className={styles.composerSlot}
+        data-testid="chat-composer-dock"
+        onWheel={handleComposerWheel}
+      >
+        {composer}
       </div>
     </div>
   );

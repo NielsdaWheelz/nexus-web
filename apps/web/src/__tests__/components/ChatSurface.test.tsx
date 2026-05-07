@@ -13,7 +13,7 @@ const baseMessage = {
 } as const;
 
 describe("ChatSurface", () => {
-  it("keeps a named focusable scrollport with the message log before the composer", () => {
+  it("keeps the message log in the named scrollport and docks the composer outside it", () => {
     render(
       <ChatSurface
         messages={[]}
@@ -25,13 +25,13 @@ describe("ChatSurface", () => {
     const scrollport = screen.getByRole("region", { name: "Chat conversation" });
     const transcript = screen.getByRole("log", { name: "Chat messages" });
     const composer = screen.getByRole("textbox", { name: "Message" });
+    const composerDock = screen.getByTestId("chat-composer-dock");
 
     expect(scrollport).toHaveAttribute("tabindex", "0");
     expect(scrollport).toContainElement(transcript);
+    expect(scrollport).not.toContainElement(composer);
+    expect(composerDock).toContainElement(composer);
     expect(transcript).toContainElement(screen.getByText("Ask about this quote"));
-    expect(transcript.compareDocumentPosition(composer)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
   });
 
   it("renders user and assistant messages through the shared row component", () => {
@@ -167,5 +167,38 @@ describe("ChatSurface", () => {
     fireEvent.scroll(scrollport);
 
     expect(scrollEvents).toEqual([scrollport]);
+  });
+
+  it("lets wheel gestures over the composer scroll the message scrollport", () => {
+    const scrollportRef = createRef<HTMLDivElement>();
+    const messages: ConversationMessage[] = Array.from({ length: 24 }, (_, index) => ({
+      ...baseMessage,
+      id: `message-${index + 1}`,
+      seq: index + 1,
+      role: index % 2 === 0 ? "user" : "assistant",
+      content: `Overflow message ${index + 1}: ${"chat transcript content ".repeat(8)}`,
+    }));
+
+    render(
+      <div style={{ display: "flex", height: "220px" }}>
+        <ChatSurface
+          messages={messages}
+          scrollportRef={scrollportRef}
+          composer={<textarea aria-label="Message" />}
+        />
+      </div>,
+    );
+
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const composerDock = screen.getByTestId("chat-composer-dock");
+
+    scrollport.scrollTop = scrollport.scrollHeight;
+    const beforeWheel = scrollport.scrollTop;
+
+    fireEvent.wheel(composerDock, { deltaY: -120 });
+
+    expect(scrollportRef.current).toBe(scrollport);
+    expect(beforeWheel).toBeGreaterThan(0);
+    expect(scrollport.scrollTop).toBeLessThan(beforeWheel);
   });
 });

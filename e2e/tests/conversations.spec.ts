@@ -208,6 +208,32 @@ test.describe("conversations", () => {
     }
   });
 
+  test("new chat docks the composer below the empty transcript", async ({ page }) => {
+    await page.goto("/conversations/new");
+
+    const paneBody = page.getByTestId("pane-shell-body");
+    const scrollport = page.getByRole("region", { name: "Chat conversation" });
+    const composerDock = page.getByTestId("chat-composer-dock");
+
+    await expect(paneBody).toHaveAttribute("data-body-mode", "contained");
+    await expect(scrollport).toBeVisible();
+    await expect(page.getByRole("log", { name: "Chat messages" })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Ask anything" })).toBeVisible();
+    await expect(composerDock).toBeVisible();
+    await expect
+      .poll(async () => {
+        const paneBox = await paneBody.boundingBox();
+        const scrollportBox = await scrollport.boundingBox();
+        const dockBox = await composerDock.boundingBox();
+        if (!paneBox || !scrollportBox || !dockBox) return false;
+        const paneBottom = paneBox.y + paneBox.height;
+        const dockBottom = dockBox.y + dockBox.height;
+        const scrollportBottom = scrollportBox.y + scrollportBox.height;
+        return Math.abs(dockBottom - paneBottom) <= 2 && scrollportBottom <= dockBox.y + 1;
+      })
+      .toBe(true);
+  });
+
   test("main chat pane owns message and composer scrolling", async ({ page }) => {
     const seed = await seedScrollConversation(page, 50);
     const conversationId = seed.conversation_id;
@@ -217,10 +243,14 @@ test.describe("conversations", () => {
       const paneBody = page.getByTestId("pane-shell-body");
       const scrollport = page.getByRole("region", { name: "Chat conversation" });
       const log = page.getByRole("log", { name: "Chat messages" });
+      const composerDock = page.getByTestId("chat-composer-dock");
+      const finalMessage = messageRow(page, seed.active_leaf_message_id);
 
       await expect(paneBody).toHaveAttribute("data-body-mode", "contained");
       await expect(scrollport).toBeVisible();
+      await expect(composerDock).toBeVisible();
       await expect(log).toContainText("Scroll fixture message 50", { timeout: 10_000 });
+      await expect(finalMessage).toContainText(`Scroll fixture message ${seed.message_count}`);
       await scrollport.evaluate((node) => {
         node.scrollTop = node.scrollHeight;
       });
@@ -230,6 +260,18 @@ test.describe("conversations", () => {
             (node) => node.scrollHeight > node.clientHeight && node.scrollTop > 0,
           )
         )
+        .toBe(true);
+      await expect
+        .poll(async () => {
+          const paneBox = await paneBody.boundingBox();
+          const dockBox = await composerDock.boundingBox();
+          const finalMessageBox = await finalMessage.boundingBox();
+          if (!paneBox || !dockBox || !finalMessageBox) return false;
+          const paneBottom = paneBox.y + paneBox.height;
+          const dockBottom = dockBox.y + dockBox.height;
+          const finalMessageBottom = finalMessageBox.y + finalMessageBox.height;
+          return Math.abs(dockBottom - paneBottom) <= 2 && finalMessageBottom <= dockBox.y + 1;
+        })
         .toBe(true);
 
       const bottomScrollTop = await scrollport.evaluate((node) => node.scrollTop);
