@@ -276,6 +276,8 @@ describe("ConversationPaneBody", () => {
     renderPane();
 
     expect(await screen.findByText("Answer A")).toBeVisible();
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    scrollport.scrollTop = 180;
 
     await user.click(
       screen.getByRole("button", { name: /switch to fork\. title: branch b/i }),
@@ -285,6 +287,7 @@ describe("ConversationPaneBody", () => {
       expect(screen.getByText("Answer B")).toBeVisible();
     });
     expect(screen.queryByText("Answer A")).not.toBeInTheDocument();
+    expect(scrollport.scrollTop).toBe(0);
 
     resolveActivePath(
       jsonResponse(

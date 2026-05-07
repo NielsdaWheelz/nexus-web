@@ -166,4 +166,35 @@ describe("ConversationForksPanel", () => {
       screen.queryByRole("group", { name: /confirm delete fork.*child path/i }),
     ).not.toBeInTheDocument();
   });
+
+  it("reloads the full tree when a submitted search is cleared", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        return jsonResponse({
+          data: {
+            forks: url.includes("search=child")
+              ? [childFork]
+              : [parentFork, childFork, siblingFork],
+          },
+        });
+      }),
+    );
+
+    renderPanel();
+    await visibleTreeItems();
+
+    const searchInput = screen.getByRole("textbox", { name: "Search forks" });
+    fireEvent.change(searchInput, { target: { value: "child" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => {
+      expect(screen.getAllByRole("treeitem")).toHaveLength(1);
+    });
+
+    fireEvent.change(searchInput, { target: { value: "" } });
+    await waitFor(() => {
+      expect(screen.getAllByRole("treeitem")).toHaveLength(3);
+    });
+  });
 });

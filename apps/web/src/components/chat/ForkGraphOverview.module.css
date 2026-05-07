@@ -1,9 +1,9 @@
 .scroller {
   overflow: auto;
   max-width: 100%;
-  padding: var(--space-2);
+  padding: var(--space-1);
   border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--surface-1);
 }
 
@@ -28,10 +28,12 @@
   position: absolute;
   display: grid;
   gap: 2px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-content: start;
   padding: var(--space-2);
   border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-md);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--ink);
   text-align: left;
@@ -41,15 +43,25 @@ button.node {
   cursor: pointer;
 }
 
-button.node:hover,
+button.node:hover {
+  border-color: var(--accent);
+}
+
 button.node:focus-visible {
   border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+button.node:focus:not(:focus-visible) {
   outline: none;
 }
 
 .node[data-active="true"] {
   border-color: color-mix(in srgb, var(--accent) 56%, var(--edge));
   background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
 }
 
 .node[data-match="true"] {
@@ -67,6 +79,7 @@ button.node:focus-visible {
 .preview,
 .quote,
 .meta {
+  grid-column: 1 / -1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -74,9 +87,22 @@ button.node:focus-visible {
 }
 
 .title {
+  grid-column: 1;
   padding-right: var(--space-4);
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
+}
+
+.currentBadge {
+  grid-column: 2;
+  align-self: start;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--edge));
+  border-radius: var(--radius-xs);
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
 }
 
 .preview,

@@ -56,6 +56,7 @@ export default function ConversationForksPanel({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const loadSeqRef = useRef(0);
 
   useEffect(() => {
     setNodes(fallbackNodes);
@@ -66,6 +67,8 @@ export default function ConversationForksPanel({
   }, [nodes]);
 
   const loadForks = useCallback(async () => {
+    const loadSeq = loadSeqRef.current + 1;
+    loadSeqRef.current = loadSeq;
     setLoading(true);
     setError(null);
     try {
@@ -75,13 +78,17 @@ export default function ConversationForksPanel({
       const response = await apiFetch<ConversationForksResponse>(
         `/api/conversations/${conversationId}/forks${params}`,
       );
+      if (loadSeqRef.current !== loadSeq) return;
       setNodes(buildForkTree(response.data.forks));
     } catch (err) {
+      if (loadSeqRef.current !== loadSeq) return;
       console.error("Failed to load forks:", err);
       setError("Fork search is unavailable.");
       setNodes(fallbackNodes);
     } finally {
-      setLoading(false);
+      if (loadSeqRef.current === loadSeq) {
+        setLoading(false);
+      }
     }
   }, [conversationId, fallbackNodes, submittedQuery]);
 
@@ -287,7 +294,13 @@ export default function ConversationForksPanel({
         <Search size={14} aria-hidden="true" />
         <input
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event) => {
+            const nextQuery = event.target.value;
+            setQuery(nextQuery);
+            if (!nextQuery.trim()) {
+              setSubmittedQuery("");
+            }
+          }}
           aria-label="Search forks"
           placeholder="Search forks"
         />
@@ -425,100 +438,100 @@ function ForkNodeRow({
       style={{ "--depth": depth } as CSSProperties}
       onKeyDown={(event) => onTreeKeyDown(event, { node, depth, parentId })}
     >
-        {hasChildren ? (
-          <ChevronRight
-            size={14}
-            aria-hidden="true"
-            className={styles.chevron}
-            data-expanded={expanded ? "true" : "false"}
+      {hasChildren ? (
+        <ChevronRight
+          size={14}
+          aria-hidden="true"
+          className={styles.chevron}
+          data-expanded={expanded ? "true" : "false"}
+        />
+      ) : (
+        <GitBranch size={14} aria-hidden="true" />
+      )}
+      <div className={styles.nodeBody}>
+        {editingId === node.id ? (
+          <Textarea
+            ref={editRef}
+            value={editingTitle}
+            onChange={(event) => onEditingTitleChange(event.target.value)}
+            aria-label={`Rename fork ${title}`}
+            minRows={1}
+            maxRows={3}
           />
         ) : (
-          <GitBranch size={14} aria-hidden="true" />
+          <>
+            {switchable ? (
+              <button
+                type="button"
+                className={styles.titleButton}
+                onClick={() => {
+                  onSelectFork(toForkOption(node));
+                }}
+                aria-label={`Switch to fork ${title}`}
+              >
+                {title}
+              </button>
+            ) : (
+              <span className={styles.titleText}>{title}</span>
+            )}
+            {activeInPath ? <span className={styles.pathBadge}>Active path</span> : null}
+            {node.branch_anchor_preview ? (
+              <blockquote className={styles.anchor}>
+                {truncateText(node.branch_anchor_preview, 120)}
+              </blockquote>
+            ) : null}
+            <div className={styles.meta}>
+              {node.status} - {node.message_count} messages
+            </div>
+          </>
         )}
-        <div className={styles.nodeBody}>
-          {editingId === node.id ? (
-            <Textarea
-              ref={editRef}
-              value={editingTitle}
-              onChange={(event) => onEditingTitleChange(event.target.value)}
+      </div>
+      <div className={styles.actions}>
+        {editingId === node.id ? (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              onClick={() => onSaveRename(node)}
+              aria-label={`Save fork ${title}`}
+            >
+              <Check size={14} aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              onClick={onCancelRename}
+              aria-label={`Cancel rename fork ${title}`}
+            >
+              <X size={14} aria-hidden="true" />
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              onClick={() => onStartRename(node)}
               aria-label={`Rename fork ${title}`}
-              minRows={1}
-              maxRows={3}
-            />
-          ) : (
-            <>
-              {switchable ? (
-                <button
-                  type="button"
-                  className={styles.titleButton}
-                  onClick={() => {
-                    onSelectFork(toForkOption(node));
-                  }}
-                  aria-label={`Switch to fork ${title}`}
-                >
-                  {title}
-                </button>
-              ) : (
-                <span className={styles.titleText}>{title}</span>
-              )}
-              {node.branch_anchor_preview ? (
-                <blockquote className={styles.anchor}>
-                  {truncateText(node.branch_anchor_preview, 120)}
-                </blockquote>
-              ) : null}
-              <div className={styles.meta}>
-                {activeInPath ? "Active path" : "Inactive"} - {node.status} -{" "}
-                {node.message_count} messages
-              </div>
-            </>
-          )}
-        </div>
-        <div className={styles.actions}>
-          {editingId === node.id ? (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                iconOnly
-                onClick={() => onSaveRename(node)}
-                aria-label={`Save fork ${title}`}
-              >
-                <Check size={14} aria-hidden="true" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                iconOnly
-                onClick={onCancelRename}
-                aria-label={`Cancel rename fork ${title}`}
-              >
-                <X size={14} aria-hidden="true" />
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                iconOnly
-                onClick={() => onStartRename(node)}
-                aria-label={`Rename fork ${title}`}
-              >
-                <Pencil size={14} aria-hidden="true" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                iconOnly
-                disabled={activeInPath}
-                onClick={() => onRequestDelete(node)}
-                aria-label={`Delete fork ${title}`}
-              >
-                <Trash2 size={14} aria-hidden="true" />
-              </Button>
-            </>
-          )}
-        </div>
+            >
+              <Pencil size={14} aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              disabled={activeInPath}
+              onClick={() => onRequestDelete(node)}
+              aria-label={`Delete fork ${title}`}
+            >
+              <Trash2 size={14} aria-hidden="true" />
+            </Button>
+          </>
+        )}
+      </div>
       {pendingDeleteId === node.id ? (
         <div
           className={styles.deleteConfirm}
@@ -526,18 +539,18 @@ function ForkNodeRow({
           aria-label={deleteConfirmationLabel(node)}
           aria-describedby={deleteDescriptionId}
         >
-            <div aria-hidden="true">
-              Delete this fork and {messageCountLabel(node.message_count)}?
-            </div>
-            <span id={deleteDescriptionId} className="sr-only">
-              {deleteConfirmationDescription(node)}
-            </span>
-            <Button variant="danger" size="sm" onClick={() => onConfirmDelete(node)}>
-              Delete
-            </Button>
-            <Button variant="ghost" size="sm" onClick={onCancelDelete}>
-              Cancel
-            </Button>
+          <div aria-hidden="true">
+            Delete this fork and {messageCountLabel(node.message_count)}?
+          </div>
+          <span id={deleteDescriptionId} className="sr-only">
+            {deleteConfirmationDescription(node)}
+          </span>
+          <Button variant="danger" size="sm" onClick={() => onConfirmDelete(node)}>
+            Delete
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onCancelDelete}>
+            Cancel
+          </Button>
         </div>
       ) : null}
       {hasChildren && expanded ? (

@@ -14,6 +14,16 @@ const baseMessage = {
   updated_at: "2026-01-01T00:00:00Z",
 } as const;
 
+function openEvidence() {
+  fireEvent.click(screen.getByRole("button", { name: /^Evidence/ }));
+}
+
+function openAllDetails() {
+  screen
+    .getAllByRole("button", { name: "Details" })
+    .forEach((button) => fireEvent.click(button));
+}
+
 describe("MessageRow", () => {
   it("exposes a reply fork action on complete assistant messages", () => {
     const onReplyToAssistant = vi.fn();
@@ -26,7 +36,7 @@ describe("MessageRow", () => {
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Reply / fork from here" }),
+      screen.getByRole("button", { name: "Fork from this answer" }),
     );
 
     expect(onReplyToAssistant).toHaveBeenCalledWith({
@@ -35,6 +45,7 @@ describe("MessageRow", () => {
       parentMessagePreview: "Current answer.",
       anchor: {
         kind: "assistant_message",
+        message_id: "assistant-1",
       },
     });
   });
@@ -75,7 +86,7 @@ describe("MessageRow", () => {
     } as unknown as Selection);
 
     fireEvent.mouseUp(answer);
-    fireEvent.click(screen.getByRole("button", { name: "Branch from selection" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fork from selection" }));
 
     expect(onReplyToAssistant).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -131,7 +142,7 @@ describe("MessageRow", () => {
     } as unknown as Selection);
 
     fireEvent.mouseUp(answer);
-    fireEvent.click(screen.getByRole("button", { name: "Branch from selection" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fork from selection" }));
 
     const draft = onReplyToAssistant.mock.calls[0][0];
     expect(draft.anchor).toMatchObject({
@@ -219,10 +230,18 @@ describe("MessageRow", () => {
 
     const citation = screen.getByLabelText(/^(Open citation 1|Citation 1)$/);
     expect(citation.tagName).toBe("SUP");
+    expect(screen.queryByRole("link", { name: /example result/i })).toBeNull();
+    expect(screen.queryByText(/support_status: supported/i)).toBeNull();
+
+    openEvidence();
+
     const link = screen.getByRole("link", { name: /example result/i });
     expect(link).toHaveAttribute("href", "https://example.com/story");
     expect(link).toHaveAttribute("target", "_blank");
     expect(screen.getByText("A relevant web excerpt.")).toBeInTheDocument();
+
+    openAllDetails();
+
     expect(
       screen.getAllByText(/support_status: supported/i).length,
     ).toBeGreaterThan(0);
@@ -311,10 +330,15 @@ describe("MessageRow", () => {
 
     render(<MessageRow message={message} />);
 
+    openEvidence();
+
     const link = screen.getByRole("link", { name: /p\. 12/i });
     expect(link).toHaveAttribute("href", "/media/media-1?evidence=span-1&page=12");
     expect(link).not.toHaveAttribute("target");
     expect(screen.getByText("The exact app-source excerpt.")).toBeInTheDocument();
+
+    openAllDetails();
+
     expect(
       screen.getAllByText("retrieval_status: included_in_prompt").length,
     ).toBe(2);
@@ -404,6 +428,8 @@ describe("MessageRow", () => {
         onReaderSourceActivate={onReaderSourceActivate}
       />
     );
+
+    openEvidence();
 
     fireEvent.click(screen.getByRole("button", { name: /open source p\. 12/i }));
 
@@ -510,9 +536,16 @@ describe("MessageRow", () => {
       />
     );
 
+    openEvidence();
+
     expect(screen.queryByRole("button", { name: /open source p\. 12/i })).toBeNull();
     expect(screen.queryByRole("link", { name: /p\. 12/i })).toBeNull();
     expect(screen.getByText("p. 12")).toBeInTheDocument();
+    expect(screen.getByText("Source unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("source_status: unavailable")).toBeNull();
+
+    openAllDetails();
+
     expect(screen.getByText("source_status: unavailable")).toBeInTheDocument();
     expect(onReaderSourceActivate).not.toHaveBeenCalled();
   });
@@ -556,6 +589,11 @@ describe("MessageRow", () => {
     render(<MessageRow message={message} />);
 
     expect(screen.getByText("Not enough evidence")).toBeInTheDocument();
+    expect(screen.queryByText(/support_status: not_enough_evidence/i)).toBeNull();
+
+    openEvidence();
+    openAllDetails();
+
     expect(screen.getAllByText(/support_status: not_enough_evidence/i).length).toBe(2);
     expect(screen.getByText("retrieval_status: excluded_by_scope")).toBeInTheDocument();
     expect(screen.getByText("not_enough_evidence_count: 1")).toBeInTheDocument();

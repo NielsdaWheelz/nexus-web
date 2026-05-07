@@ -102,7 +102,7 @@ Every conversation is a message tree.
 ### Reply To Assistant Message
 
 1. User hovers or focuses a complete assistant message.
-2. Message actions expose `Reply / fork from here`.
+2. Message actions expose `Fork from this answer`.
 3. Activating the action creates a branch draft anchored to that assistant
    message.
 4. The composer enters branch-reply mode and shows a compact anchor preview.
@@ -151,7 +151,7 @@ The `Forks` panel is a management and navigation surface.
 
 1. User selects text inside a complete assistant answer.
 2. A compact selection popover appears with one AI-answer action:
-   `Branch from selection`.
+   `Fork from selection`.
 3. Activating the action creates a branch draft anchored to:
    - the assistant message id
    - exact selected text

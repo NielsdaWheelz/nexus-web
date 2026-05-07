@@ -45,7 +45,7 @@ export default function ForkStrip({
     <section className={styles.strip} aria-label="Forks from this answer">
       <div className={styles.header}>
         <GitBranch size={14} aria-hidden="true" />
-        <span>{forks.length} forks</span>
+        <span>{visibleForks.length} fork options</span>
       </div>
       <div className={styles.list}>
         {visibleForks.map((fork, index) => {
@@ -92,7 +92,10 @@ export default function ForkStrip({
               }}
               onClick={() => onSelectFork(fork)}
             >
-              <span className={styles.itemTitle}>{title}</span>
+              <span className={styles.itemTopline}>
+                <span className={styles.itemTitle}>{title}</span>
+                {fork.active ? <span className={styles.currentBadge}>Current</span> : null}
+              </span>
               <span className={styles.reply}>{truncateText(fork.preview, 96)}</span>
               {fork.branch_anchor_preview ? (
                 <span className={styles.anchor}>
@@ -100,11 +103,7 @@ export default function ForkStrip({
                 </span>
               ) : null}
               <span className={styles.meta}>
-                {fork.active ? "Current - " : ""}
                 {fork.status} - {fork.message_count} messages{date ? ` - ${date}` : ""}
-              </span>
-              <span className={styles.leafMeta}>
-                Leaf {truncateText(fork.leaf_message_id, 12)}
               </span>
             </button>
           );

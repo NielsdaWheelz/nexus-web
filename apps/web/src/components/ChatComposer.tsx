@@ -16,6 +16,7 @@ import {
   type ContextItem,
   type ChatRunCreateRequest,
 } from "@/lib/api/sse";
+import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
 import ComposerContextRail from "@/components/chat/ComposerContextRail";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
@@ -55,12 +56,16 @@ export interface ChatComposerProps {
   focusKey?: string;
   /** Draft text inserted by an explicit user action before the user sends. */
   initialContent?: string;
+  /** Stable draft key supplied by callers that already own path identity. */
+  draftKey?: string;
   /** Assistant answer anchor for branch-reply mode. */
   branchDraft?: BranchDraft | null;
   /** Active-path assistant message used for ordinary continuation replies. */
   parentMessageId?: string | null;
   /** Clears branch-reply mode. */
   onClearBranchDraft?: () => void;
+  /** Jumps the transcript to the visible parent message for branch mode. */
+  onJumpToBranchParent?: (messageId: string) => void;
   /**
    * Clears the conversation scope (reverts to general). Omit when the scope
    * is structural and cannot sensibly be removed (e.g., loaded scoped
@@ -163,9 +168,11 @@ export default function ChatComposer({
   autoFocus = false,
   focusKey,
   initialContent = "",
+  draftKey,
   branchDraft = null,
   parentMessageId = null,
   onClearBranchDraft,
+  onJumpToBranchParent,
   onClearScope,
 }: ChatComposerProps) {
   const [content, setContent] = useState(initialContent);
@@ -183,11 +190,43 @@ export default function ChatComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const settingsPanelRef = useRef<HTMLDivElement>(null);
+  const draftsByKeyRef = useRef<Map<string, string>>(new Map());
+  const initialContentRef = useRef(initialContent);
+  const activeDraftKey = useMemo(() => {
+    if (draftKey) {
+      return draftKey;
+    }
+    if (branchDraft) {
+      if (branchDraft.anchor.kind === "assistant_selection") {
+        return `branch:${branchDraft.parentMessageId}:selection:${branchDraft.anchor.client_selection_id}`;
+      }
+      return `branch:${branchDraft.parentMessageId}:message`;
+    }
+    return `path:${parentMessageId ?? conversationId ?? "new"}`;
+  }, [branchDraft, conversationId, draftKey, parentMessageId]);
+  const activeDraftKeyRef = useRef(activeDraftKey);
 
   useEffect(() => {
     if (!autoFocus) return;
     textareaRef.current?.focus({ preventScroll: true });
   }, [autoFocus, focusKey]);
+
+  useEffect(() => {
+    if (activeDraftKeyRef.current === activeDraftKey) return;
+
+    draftsByKeyRef.current.set(activeDraftKeyRef.current, content);
+    activeDraftKeyRef.current = activeDraftKey;
+    setContent(draftsByKeyRef.current.get(activeDraftKey) ?? "");
+    setError(null);
+  }, [activeDraftKey, content]);
+
+  useEffect(() => {
+    if (initialContentRef.current === initialContent) return;
+
+    initialContentRef.current = initialContent;
+    draftsByKeyRef.current.set(activeDraftKey, initialContent);
+    setContent(initialContent);
+  }, [activeDraftKey, initialContent]);
 
   // --------------------------------------------------------------------------
   // Fetch available models
@@ -317,7 +356,12 @@ export default function ChatComposer({
     const idempotencyKey = crypto.randomUUID();
     const replyParentMessageId = branchDraft?.parentMessageId ?? parentMessageId;
     const branchAnchor = branchDraft
-      ? branchDraft.anchor
+      ? branchDraft.anchor.kind === "assistant_message"
+        ? {
+            kind: "assistant_message" as const,
+            message_id: branchDraft.parentMessageId,
+          }
+        : branchDraft.anchor
       : conversationId && replyParentMessageId
         ? {
             kind: "assistant_message" as const,
@@ -366,6 +410,7 @@ export default function ChatComposer({
     }
 
     if (sent) {
+      draftsByKeyRef.current.delete(activeDraftKey);
       setContent("");
       onClearBranchDraft?.();
       onMessageSent?.();
@@ -386,6 +431,7 @@ export default function ChatComposer({
     onClearBranchDraft,
     onMessageSent,
     onSendStarted,
+    activeDraftKey,
   ]);
 
   const handleProviderChange = useCallback(
@@ -436,17 +482,25 @@ export default function ChatComposer({
   // Render
   // --------------------------------------------------------------------------
 
+  const sendLabel = branchDraft ? "Send fork reply" : "Send message";
+
   return (
     <div className={styles.composer}>
       <div className={styles.composerShell}>
         {error && <div className={styles.composerError}>{error}</div>}
 
+        {branchDraft ? (
+          <BranchComposerHeader
+            branchDraft={branchDraft}
+            onCancel={() => onClearBranchDraft?.()}
+            onJumpToParent={onJumpToBranchParent}
+          />
+        ) : null}
+
         <ComposerContextRail
           scope={conversationScope}
-          branchDraft={branchDraft}
           attachedContexts={attachedContexts}
           onClearScope={onClearScope}
-          onClearBranchDraft={() => onClearBranchDraft?.()}
           onRemoveContext={(index) => onRemoveContext?.(index)}
         />
 
@@ -499,22 +553,41 @@ export default function ChatComposer({
 
           {onlyUseMyKeys && <span className={styles.keyModeStatus}>Your key</span>}
 
-          <Button
-            variant="primary"
-            size="md"
-            iconOnly
-            className={styles.sendButton}
-            onClick={handleSend}
-            aria-label={sending ? "Sending message" : "Send message"}
-            disabled={
-              sending ||
-              !content.trim() ||
-              !selectedProvider ||
-              !selectedModelId
-            }
-          >
-            <ArrowUp size={18} aria-hidden="true" />
-          </Button>
+          {branchDraft ? (
+            <Button
+              variant="primary"
+              size="md"
+              className={styles.sendButton}
+              leadingIcon={<ArrowUp size={16} aria-hidden="true" />}
+              onClick={handleSend}
+              aria-label={sending ? "Sending fork reply" : sendLabel}
+              disabled={
+                sending ||
+                !content.trim() ||
+                !selectedProvider ||
+                !selectedModelId
+              }
+            >
+              {sendLabel}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="md"
+              iconOnly
+              className={styles.sendButton}
+              onClick={handleSend}
+              aria-label={sending ? "Sending message" : sendLabel}
+              disabled={
+                sending ||
+                !content.trim() ||
+                !selectedProvider ||
+                !selectedModelId
+              }
+            >
+              <ArrowUp size={18} aria-hidden="true" />
+            </Button>
+          )}
         </div>
 
         {settingsOpen && (

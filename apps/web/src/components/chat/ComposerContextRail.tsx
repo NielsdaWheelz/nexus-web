@@ -1,15 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Book, FolderOpen, GitBranch, Globe } from "lucide-react";
+import { Book, FolderOpen, Globe } from "lucide-react";
 import Chip from "@/components/ui/Chip";
 import type { ContextItem, ContextItemColor } from "@/lib/api/sse";
 import {
   formatConversationScopeLabel,
   getContextChipLabel,
-  truncateText,
 } from "@/lib/conversations/display";
-import type { BranchDraft, ConversationScope } from "@/lib/conversations/types";
+import type { ConversationScope } from "@/lib/conversations/types";
 import styles from "./ComposerContextRail.module.css";
 
 const SWATCH_CLASS = {
@@ -20,28 +19,21 @@ const SWATCH_CLASS = {
   purple: styles.swatchPurple,
 } satisfies Record<ContextItemColor, string>;
 
-const BRANCH_PREVIEW_MAX = 60;
-
 export default function ComposerContextRail({
   scope,
-  branchDraft,
   attachedContexts,
   onClearScope,
-  onClearBranchDraft,
   onRemoveContext,
 }: {
   scope: ConversationScope;
-  branchDraft: BranchDraft | null;
   attachedContexts: ContextItem[];
   onClearScope?: () => void;
-  onClearBranchDraft: () => void;
   onRemoveContext: (index: number) => void;
 }) {
   const showScope = scope.type !== "general";
-  const showBranch = branchDraft !== null;
   const showContexts = attachedContexts.length > 0;
 
-  if (!showScope && !showBranch && !showContexts) {
+  if (!showScope && !showContexts) {
     return null;
   }
 
@@ -55,17 +47,6 @@ export default function ComposerContextRail({
           onRemove={onClearScope}
         >
           {formatConversationScopeLabel(scope)}
-        </Chip>
-      ) : null}
-
-      {branchDraft ? (
-        <Chip
-          truncate
-          leadingIcon={<GitBranch size={14} aria-hidden="true" />}
-          removable
-          onRemove={onClearBranchDraft}
-        >
-          {truncateText(branchAnchorPreview(branchDraft), BRANCH_PREVIEW_MAX)}
         </Chip>
       ) : null}
 
@@ -96,13 +77,6 @@ function scopeIcon(scope: ConversationScope): ReactNode {
   }
   const exhaustive: never = scope;
   return exhaustive;
-}
-
-function branchAnchorPreview(draft: BranchDraft): string {
-  if (draft.anchor.kind === "assistant_selection") {
-    return draft.anchor.exact;
-  }
-  return draft.parentMessagePreview;
 }
 
 function contextSwatch(color: ContextItemColor | undefined): ReactNode {

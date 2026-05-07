@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PanelRight, X } from "lucide-react";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import Button from "@/components/ui/Button";
@@ -48,20 +48,38 @@ export default function ChatContextDrawer({
   onRemoveContext?: (index: number) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const drawerRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    const handleEscape = (event: KeyboardEvent) => {
+    const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(
+        drawerRef.current?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
-    document.addEventListener("keydown", handleEscape);
+    document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", handleEscape);
+      document.removeEventListener("keydown", handleKeyDown);
     };
   }, [open]);
 
@@ -82,6 +100,7 @@ export default function ChatContextDrawer({
       {open ? (
         <div className={styles.backdrop} onClick={() => setOpen(false)}>
           <aside
+            ref={drawerRef}
             className={styles.drawer}
             role="dialog"
             aria-modal="true"
@@ -112,12 +131,12 @@ export default function ChatContextDrawer({
                 switchableLeafIds={switchableLeafIds}
                 selectedPathMessageIds={selectedPathMessageIds}
                 onSelectFork={(fork) => {
-                  onSelectFork?.(fork);
                   setOpen(false);
+                  onSelectFork?.(fork);
                 }}
                 onSelectGraphLeaf={(leafMessageId) => {
-                  onSelectGraphLeaf?.(leafMessageId);
                   setOpen(false);
+                  onSelectGraphLeaf?.(leafMessageId);
                 }}
                 onForksChanged={onForksChanged}
                 onRemoveContext={onRemoveContext}

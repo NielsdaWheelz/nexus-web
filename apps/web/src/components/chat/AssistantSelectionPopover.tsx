@@ -38,7 +38,7 @@ export default function AssistantSelectionPopover({
         leadingIcon={<GitBranch size={14} aria-hidden="true" />}
         onClick={onBranch}
       >
-        Branch from selection
+        Fork from selection
       </Button>
     </div>
   );

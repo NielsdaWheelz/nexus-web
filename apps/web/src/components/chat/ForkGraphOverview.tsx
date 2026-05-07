@@ -5,10 +5,10 @@ import { truncateText } from "@/lib/conversations/display";
 import type { BranchGraph, BranchGraphNode } from "@/lib/conversations/types";
 import styles from "./ForkGraphOverview.module.css";
 
-const COLUMN_WIDTH = 180;
-const ROW_HEIGHT = 96;
-const NODE_WIDTH = 148;
-const NODE_HEIGHT = 62;
+const COLUMN_WIDTH = 158;
+const ROW_HEIGHT = 78;
+const NODE_WIDTH = 132;
+const NODE_HEIGHT = 54;
 
 export default function ForkGraphOverview({
   graph,
@@ -73,6 +73,9 @@ export default function ForkGraphOverview({
               <span className={styles.title}>
                 {node.title || truncateText(node.preview, 48)}
               </span>
+              {node.active_path ? (
+                <span className={styles.currentBadge}>Current path</span>
+              ) : null}
               <span className={styles.preview}>{truncateText(node.preview, 64)}</span>
               {node.branch_anchor_preview ? (
                 <span className={styles.quote}>
@@ -81,7 +84,7 @@ export default function ForkGraphOverview({
               ) : null}
               <span className={styles.meta}>
                 {node.child_count > 0 ? `${node.child_count} replies - ` : ""}
-                {node.status} - {node.message_count}
+                {node.status} - {node.message_count} messages
               </span>
             </>
           );

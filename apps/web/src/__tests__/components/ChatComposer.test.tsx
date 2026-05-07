@@ -304,6 +304,7 @@ describe("ChatComposer", () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
     const onClearBranchDraft = vi.fn();
+    const onJumpToBranchParent = vi.fn();
     const branchDraft: BranchDraft = {
       parentMessageId: "assistant-parent",
       parentMessageSeq: 4,
@@ -326,15 +327,24 @@ describe("ChatComposer", () => {
         conversationId="conversation-1"
         branchDraft={branchDraft}
         onClearBranchDraft={onClearBranchDraft}
+        onJumpToBranchParent={onJumpToBranchParent}
       />,
     );
 
-    expect(await screen.findByText("assistant answer")).toBeInTheDocument();
+    expect(await screen.findByText("Fork reply")).toBeInTheDocument();
+    expect(screen.getByText("Parent message 4")).toBeInTheDocument();
+    expect(screen.getByText("The complete assistant answer.")).toBeInTheDocument();
+    expect(screen.getByText("assistant answer")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Cancel branch reply" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Jump to parent message" }));
+    expect(onJumpToBranchParent).toHaveBeenCalledWith("assistant-parent");
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
     await user.keyboard("Take this branch");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(screen.getByRole("button", { name: "Send fork reply" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
@@ -352,6 +362,109 @@ describe("ChatComposer", () => {
       branch_anchor: branchDraft.anchor,
     });
     expect(onClearBranchDraft).toHaveBeenCalledOnce();
+  });
+
+  it("restores local drafts when switching between active path and branch mode", async () => {
+    const user = userEvent.setup();
+    installChatComposerFetchMock();
+    const branchDraft: BranchDraft = {
+      parentMessageId: "assistant-parent",
+      parentMessageSeq: 4,
+      parentMessagePreview: "The complete assistant answer.",
+      anchor: {
+        kind: "assistant_message",
+        message_id: "assistant-parent",
+      },
+    };
+
+    const { rerender } = render(
+      <ChatComposer
+        conversationId="conversation-1"
+        parentMessageId="assistant-current"
+        branchDraft={branchDraft}
+      />,
+    );
+
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("branch draft");
+
+    rerender(
+      <ChatComposer
+        conversationId="conversation-1"
+        parentMessageId="assistant-current"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(message).toHaveValue("");
+    });
+    await user.keyboard("path draft");
+
+    rerender(
+      <ChatComposer
+        conversationId="conversation-1"
+        parentMessageId="assistant-current"
+        branchDraft={branchDraft}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(message).toHaveValue("branch draft");
+    });
+
+    rerender(
+      <ChatComposer
+        conversationId="conversation-1"
+        parentMessageId="assistant-current"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(message).toHaveValue("path draft");
+    });
+  });
+
+  it("sends a valid assistant-message branch anchor for full-message forks", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installChatComposerFetchMock();
+    const branchDraft: BranchDraft = {
+      parentMessageId: "assistant-parent",
+      parentMessageSeq: 4,
+      parentMessagePreview: "The complete assistant answer.",
+      anchor: {
+        kind: "assistant_message",
+      },
+    };
+
+    render(
+      <ChatComposer
+        conversationId="conversation-1"
+        branchDraft={branchDraft}
+      />,
+    );
+
+    expect(await screen.findByText("Fork reply")).toBeInTheDocument();
+
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("Fork from the whole answer");
+    await user.click(screen.getByRole("button", { name: "Send fork reply" }));
+
+    await waitFor(() => {
+      expect(chatRunCalls(fetchMock)).toHaveLength(1);
+    });
+
+    const [, init] = chatRunCalls(fetchMock)[0];
+    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
+
+    expect(body).toMatchObject({
+      parent_message_id: "assistant-parent",
+      branch_anchor: {
+        kind: "assistant_message",
+        message_id: "assistant-parent",
+      },
+    });
   });
 
   it("sends an explicit no-branch anchor for root new conversations", async () => {

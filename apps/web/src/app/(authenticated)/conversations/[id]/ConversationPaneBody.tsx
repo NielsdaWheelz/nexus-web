@@ -168,7 +168,7 @@ function ChatView({
   const shouldScrollRef = useRef(true);
   const selectedPathIdsRef = useRef<Set<string>>(new Set());
   const activePathSwitchSeqRef = useRef(0);
-  const pendingPathSwitchScrollRef = useRef<{ messageId: string | null } | null>(null);
+  const pendingScrollTopRef = useRef<number | null>(null);
   const pendingScrollRestoreRef = useRef<{
     scrollHeight: number;
     scrollTop: number;
@@ -222,6 +222,11 @@ function ChatView({
     }
     return null;
   }, [messages]);
+  const composerDraftKey = branchDraft
+    ? branchDraft.anchor.kind === "assistant_selection"
+      ? `branch:${branchDraft.parentMessageId}:selection:${branchDraft.anchor.client_selection_id}`
+      : `branch:${branchDraft.parentMessageId}:message`
+    : `path:${activeLeafMessageId ?? activeReplyParentMessageId ?? id}`;
 
   useEffect(() => {
     selectedPathIdsRef.current = selectedPathIds;
@@ -257,21 +262,6 @@ function ChatView({
     return rows;
   }, [messages]);
 
-  const handleChatRunCreated = useCallback(
-    (runData: ChatRunData) => {
-      shouldScrollRef.current = true;
-      setConversation(runData.conversation);
-      setActiveLeafMessageId(runData.assistant_message.id);
-      selectedPathIdsRef.current = new Set([
-        ...selectedPathIdsRef.current,
-        runData.user_message.id,
-        runData.assistant_message.id,
-      ]);
-      void tailChatRun(runData);
-    },
-    [tailChatRun],
-  );
-
   const applyConversationTree = useCallback((tree: ConversationTreeResponse) => {
     setConversation(tree.conversation);
     setMessages(tree.selected_path);
@@ -293,6 +283,24 @@ function ChatView({
     applyConversationTree(response.data);
     return response.data;
   }, [applyConversationTree, id]);
+
+  const handleChatRunCreated = useCallback(
+    (runData: ChatRunData) => {
+      shouldScrollRef.current = true;
+      setConversation(runData.conversation);
+      setActiveLeafMessageId(runData.assistant_message.id);
+      selectedPathIdsRef.current = new Set([
+        ...selectedPathIdsRef.current,
+        runData.user_message.id,
+        runData.assistant_message.id,
+      ]);
+      void tailChatRun(runData);
+      void loadConversationTree().catch((err) => {
+        console.error("Failed to refresh conversation tree:", err);
+      });
+    },
+    [loadConversationTree, tailChatRun],
+  );
 
   const tailVisibleActiveRuns = useCallback(
     async (visibleMessageIds: Set<string>, skipRunId: string | null = null) => {
@@ -370,17 +378,9 @@ function ChatView({
   useLayoutEffect(() => {
     const scrollport = scrollportRef.current;
     if (!scrollport) return;
-    if (pendingPathSwitchScrollRef.current) {
-      const targetMessageId = pendingPathSwitchScrollRef.current.messageId;
-      pendingPathSwitchScrollRef.current = null;
-      if (targetMessageId) {
-        const target = scrollport.querySelector<HTMLElement>(
-          `[data-message-id="${targetMessageId}"]`,
-        );
-        scrollport.scrollTop = target ? Math.max(0, target.offsetTop - 16) : 0;
-      } else {
-        scrollport.scrollTop = 0;
-      }
+    if (pendingScrollTopRef.current !== null) {
+      scrollport.scrollTop = pendingScrollTopRef.current;
+      pendingScrollTopRef.current = null;
       shouldScrollRef.current = false;
       return;
     }
@@ -463,6 +463,15 @@ function ChatView({
     shouldScrollRef.current = true;
   }, []);
 
+  const jumpToMessage = useCallback((messageId: string) => {
+    const target = scrollportRef.current?.querySelector<HTMLElement>(
+      `[data-message-id="${messageId}"]`,
+    );
+    if (!target || !scrollportRef.current) return;
+    scrollportRef.current.scrollTop = Math.max(0, target.offsetTop - 16);
+    shouldScrollRef.current = false;
+  }, []);
+
   const switchToLeaf = useCallback(
     async (nextLeafId: string) => {
       const nextPath = pathCacheByLeafId[nextLeafId];
@@ -481,19 +490,20 @@ function ChatView({
         activeLeafMessageId,
         forkOptionsByParentId,
         branchGraph,
+        branchDraft,
+        scrollTop: scrollportRef.current?.scrollTop ?? 0,
       };
-      const previousMessageIds = new Set(messages.map((message) => message.id));
-      let lastSharedMessageId: string | null = null;
-      for (const message of nextPath) {
-        if (previousMessageIds.has(message.id)) {
-          lastSharedMessageId = message.id;
-        }
-      }
 
-      pendingPathSwitchScrollRef.current = { messageId: lastSharedMessageId };
+      pendingScrollTopRef.current = 0;
       setMessages(nextPath);
       selectedPathIdsRef.current = messageIdsForPath(nextPath, nextLeafId);
       setActiveLeafMessageId(nextLeafId);
+      if (
+        branchDraft &&
+        !nextPath.some((message) => message.id === branchDraft.parentMessageId)
+      ) {
+        setBranchDraft(null);
+      }
       setForkOptionsByParentId((prev) => activeForkOptionsForPath(prev, nextPath));
       setBranchGraph((prev) => activeBranchGraphForPath(prev, nextPath));
       setError(null);
@@ -508,6 +518,7 @@ function ChatView({
           },
         );
         if (activePathSwitchSeqRef.current !== switchSeq) return;
+        pendingScrollTopRef.current = 0;
         applyConversationTree(response.data);
         void tailVisibleActiveRuns(
           messageIdsForPath(
@@ -519,11 +530,13 @@ function ChatView({
         if (activePathSwitchSeqRef.current !== switchSeq) return;
         setError(toFeedback(err, { fallback: "Failed to switch fork" }));
         setMessages(previous.messages);
+        pendingScrollTopRef.current = previous.scrollTop;
         selectedPathIdsRef.current = messageIdsForPath(
           previous.messages,
           previous.activeLeafMessageId,
         );
         setActiveLeafMessageId(previous.activeLeafMessageId);
+        setBranchDraft(previous.branchDraft);
         setForkOptionsByParentId(previous.forkOptionsByParentId);
         setBranchGraph(previous.branchGraph);
       }
@@ -531,6 +544,7 @@ function ChatView({
     [
       activeLeafMessageId,
       applyConversationTree,
+      branchDraft,
       branchGraph,
       forkOptionsByParentId,
       id,
@@ -597,9 +611,11 @@ function ChatView({
                   conversationId={id}
                   conversationScope={conversationScope}
                   attachedContexts={attachedContexts}
+                  draftKey={composerDraftKey}
                   branchDraft={branchDraft}
                   parentMessageId={activeReplyParentMessageId}
                   onClearBranchDraft={() => setBranchDraft(null)}
+                  onJumpToBranchParent={jumpToMessage}
                   onRemoveContext={onRemoveContext}
                   onChatRunCreated={handleChatRunCreated}
                   onMessageSent={onMessageSent}

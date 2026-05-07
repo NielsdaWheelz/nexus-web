@@ -283,20 +283,20 @@ test.describe("conversations", () => {
       );
 
       const rootAssistant = messageRow(page, seed.root_assistant_id);
-      await rootAssistant.getByRole("button", { name: "Reply / fork from here" }).click();
-      const branchPreview = page.locator('section[aria-label="Branch reply anchor"]');
-      await expect(branchPreview).toContainText("Replying from assistant message #2");
+      await rootAssistant.getByRole("button", { name: "Fork from this answer" }).click();
+      const branchPreview = page.locator('section[aria-label="Fork reply"]');
+      await expect(branchPreview).toContainText("Parent message 2");
       await expect(branchPreview).toContainText("selected source phrase");
-      await page.getByRole("button", { name: "Remove branch reply anchor" }).click();
+      await page.getByRole("button", { name: "Cancel branch reply" }).click();
       await expect(branchPreview).toHaveCount(0);
 
       await selectTextInMessage(page, seed.root_assistant_id, seed.quote_exact);
-      await page.getByRole("button", { name: "Branch from selection" }).click();
+      await page.getByRole("button", { name: "Fork from selection" }).click();
       await expect(branchPreview).toContainText(seed.quote_exact);
 
       const input = page.getByRole("textbox", { name: "Ask anything" });
       await input.fill("E2E selected quote follow-up");
-      const sendButton = page.getByRole("button", { name: "Send message" });
+      const sendButton = page.getByRole("button", { name: "Send fork reply" });
       await expect(sendButton).toBeEnabled({ timeout: 15_000 });
       await sendButton.click();
       await expect(
