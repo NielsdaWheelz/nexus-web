@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import type { CSSProperties } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 
 describe("HtmlRenderer", () => {
   it("renders sanitized HTML content", () => {
@@ -17,6 +18,40 @@ describe("HtmlRenderer", () => {
     render(<HtmlRenderer htmlSanitized={html} className="custom-class" />);
 
     expect(screen.getByTestId("html-renderer")).toHaveClass("custom-class");
+  });
+
+  it("pulses only the requested highlight id", async () => {
+    render(
+      <HtmlRenderer
+        mediaId="media-1"
+        htmlSanitized={`
+          <p data-fragment-id="fragment-1">
+            <span data-active-highlight-ids="h1">First quote</span>
+            <span data-active-highlight-ids="h2">Second quote</span>
+          </p>
+        `}
+      />,
+    );
+
+    const first = screen.getByText("First quote");
+    const second = screen.getByText("Second quote");
+
+    dispatchReaderPulse({
+      mediaId: "media-1",
+      highlightId: "h2",
+      locator: {
+        type: "reader_text_offsets",
+        fragment_id: "fragment-1",
+        start_offset: 20,
+        end_offset: 32,
+      },
+      snippet: "Second quote",
+    });
+
+    await waitFor(() => {
+      expect(Array.from(second.classList).some((name) => name.includes("pulsing"))).toBe(true);
+    });
+    expect(Array.from(first.classList).some((name) => name.includes("pulsing"))).toBe(false);
   });
 
   it("renders links with proper attributes", () => {

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import PdfReader, { type PdfReaderSelectionQuote } from "@/components/PdfReader";
 import { apiFetch } from "@/lib/api/client";
+import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 
 const pdfRuntimeState = vi.hoisted(() => ({
   eventBus: null as null | {
@@ -9,6 +10,7 @@ const pdfRuntimeState = vi.hoisted(() => ({
   },
   viewerHost: null as HTMLDivElement | null,
   textNode: null as Text | null,
+  pageHighlights: [] as unknown[],
 }));
 
 function rectList(rects: DOMRect[]): DOMRectList {
@@ -34,11 +36,15 @@ vi.mock("@/lib/api/client", () => ({
       };
     }
 
-    if (path === "/api/media/media-1/pdf-highlights?page_number=1" && !init) {
+    if (
+      (path === "/api/media/media-1/pdf-highlights?page_number=1" ||
+        path === "/api/media/media-1/pdf-highlights?page_number=1&mine_only=false") &&
+      !init
+    ) {
       return {
         data: {
           page_number: 1,
-          highlights: [],
+          highlights: pdfRuntimeState.pageHighlights,
         },
       };
     }
@@ -193,6 +199,7 @@ describe("PdfReader selection Ask", () => {
     pdfRuntimeState.eventBus = null;
     pdfRuntimeState.viewerHost = null;
     pdfRuntimeState.textNode = null;
+    pdfRuntimeState.pageHighlights = [];
   });
 
   it("emits a transient reader-selection quote without creating a saved PDF highlight", async () => {
@@ -265,5 +272,90 @@ describe("PdfReader selection Ask", () => {
             String(path).includes("/pdf-highlights") && init?.method === "POST"
         )
     ).toBe(false);
+  });
+
+  it("pulses only the requested PDF highlight", async () => {
+    const quads = [
+      {
+        x1: 70,
+        y1: 60,
+        x2: 230,
+        y2: 60,
+        x3: 230,
+        y3: 80,
+        x4: 70,
+        y4: 80,
+      },
+    ];
+    pdfRuntimeState.pageHighlights = [
+      {
+        id: "h1",
+        anchor: {
+          type: "pdf_page_geometry",
+          media_id: "media-1",
+          page_number: 1,
+          quads,
+        },
+        color: "yellow",
+        exact: "First quote",
+        prefix: "",
+        suffix: "",
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+        author_user_id: "user-1",
+        is_owner: true,
+      },
+      {
+        id: "h2",
+        anchor: {
+          type: "pdf_page_geometry",
+          media_id: "media-1",
+          page_number: 1,
+          quads: [
+            {
+              x1: 80,
+              y1: 120,
+              x2: 180,
+              y2: 120,
+              x3: 180,
+              y3: 140,
+              x4: 80,
+              y4: 140,
+            },
+          ],
+        },
+        color: "green",
+        exact: "Second quote",
+        prefix: "",
+        suffix: "",
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+        author_user_id: "user-1",
+        is_owner: true,
+      },
+    ];
+
+    render(<PdfReader mediaId="media-1" />);
+
+    await screen.findByTestId("pdf-highlight-h1-0");
+    await screen.findByTestId("pdf-highlight-h2-0");
+
+    dispatchReaderPulse({
+      mediaId: "media-1",
+      highlightId: "h1",
+      locator: {
+        type: "pdf_page_geometry",
+        page_number: 1,
+        quads,
+      },
+      snippet: "First quote",
+    });
+
+    await waitFor(() => {
+      const first = screen.getByTestId("pdf-highlight-h1-0");
+      expect(Array.from(first.classList).some((name) => name.includes("pulsing"))).toBe(true);
+    });
+    const second = screen.getByTestId("pdf-highlight-h2-0");
+    expect(Array.from(second.classList).some((name) => name.includes("pulsing"))).toBe(false);
   });
 });

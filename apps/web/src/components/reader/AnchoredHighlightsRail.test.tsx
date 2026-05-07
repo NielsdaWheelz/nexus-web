@@ -3,9 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { useRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import AnchoredHighlightsRail, {
-  type AnchoredHighlightRow,
-} from "./AnchoredHighlightsRail";
+import AnchoredHighlightsRail from "./AnchoredHighlightsRail";
+import type { AnchoredHighlightRow } from "./useAnchoredHighlightProjection";
 
 function highlight(
   id: string,
@@ -105,6 +104,19 @@ describe("AnchoredHighlightsRail", () => {
     expect(screen.getByText("Visible quote")).toBeVisible();
     expect(screen.queryByTestId("anchored-highlight-row-h2")).toBeNull();
     expect(screen.queryByText("Hidden quote")).toBeNull();
+  });
+
+  it("aligns a visible row to its source scanline", async () => {
+    render(<AnchoredHighlightsRailHarness />);
+
+    const row = await screen.findByTestId("anchored-highlight-row-h1");
+    const target = screen.getByText("First target");
+    await waitFor(() => {
+      expect(row.getBoundingClientRect().top).toBeCloseTo(
+        target.getBoundingClientRect().top,
+        0,
+      );
+    });
   });
 
   it("shows the final visible row UI without requiring focus first", async () => {

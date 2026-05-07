@@ -14,12 +14,9 @@ import ReaderAssistantPane, {
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import QuoteChatSheet from "@/components/chat/QuoteChatSheet";
 import HtmlRenderer from "@/components/HtmlRenderer";
-import ReaderGutter, {
-  type ReaderGutterTranscriptHighlight,
-} from "@/components/reader/ReaderGutter";
-import AnchoredHighlightsRail, {
-  type AnchoredHighlightRow,
-} from "@/components/reader/AnchoredHighlightsRail";
+import ReaderGutter from "@/components/reader/ReaderGutter";
+import AnchoredHighlightsRail from "@/components/reader/AnchoredHighlightsRail";
+import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
 import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
 import PdfReader, {
   type PdfHighlightOut,
@@ -944,9 +941,9 @@ export default function MediaPaneBody() {
   const [pdfHighlightsPaneState, setPdfHighlightsPaneState] = useState<PdfHighlightsPaneState>(
     createEmptyPdfHighlightsPaneState
   );
-  // Accumulated PDF highlights across every page seen so the right-edge
-  // gutter can heatmap the whole document (Phase 1B P5). The reader streams
-  // page highlights into us via `onPageHighlightsChange`; we union them here.
+  // Accumulated PDF highlights across rendered pages. The reader streams page
+  // highlights into us via `onPageHighlightsChange`; the gutter projects only
+  // highlights whose page geometry is currently visible.
   const [pdfDocumentHighlights, setPdfDocumentHighlights] = useState<
     PdfHighlightOut[]
   >([]);
@@ -3534,8 +3531,6 @@ export default function MediaPaneBody() {
   // Highlights pane state
   // ==========================================================================
 
-  const [readerScrollContainer, setReaderScrollContainer] =
-    useState<HTMLElement | null>(null);
   const [libraryPanelOpen, setLibraryPanelOpen] = useState(false);
   const [libraryPanelAnchorEl, setLibraryPanelAnchorEl] =
     useState<HTMLElement | null>(null);
@@ -4485,25 +4480,6 @@ export default function MediaPaneBody() {
     feedback,
   ]);
 
-  const transcriptGutterHighlights = useMemo<
-    ReaderGutterTranscriptHighlight[]
-  >(() => {
-    if (!isTranscriptMedia) return [];
-    const fragmentStartByid = new Map<string, number>();
-    for (const fragment of fragments) {
-      if (fragment.t_start_ms != null && fragment.t_start_ms >= 0) {
-        fragmentStartByid.set(fragment.id, fragment.t_start_ms);
-      }
-    }
-    const out: ReaderGutterTranscriptHighlight[] = [];
-    for (const highlight of highlights) {
-      const startMs = fragmentStartByid.get(highlight.anchor.fragment_id);
-      if (startMs == null) continue;
-      out.push({ highlight, fragmentStartMs: startMs });
-    }
-    return out;
-  }, [fragments, highlights, isTranscriptMedia]);
-
   const anchoredHighlights = useMemo<AnchoredHighlightRow[]>(() => {
     if (isPdf) {
       return pdfDocumentHighlights.map((highlight) => {
@@ -4544,8 +4520,13 @@ export default function MediaPaneBody() {
       is_owner: highlight.is_owner,
       linked_conversations: highlight.linked_conversations,
       anchor: {
+        fragment_id: highlight.anchor.fragment_id,
         start_offset: highlight.anchor.start_offset,
         end_offset: highlight.anchor.end_offset,
+        t_start_ms: isTranscriptMedia
+          ? (fragments.find((fragment) => fragment.id === highlight.anchor.fragment_id)
+              ?.t_start_ms ?? undefined)
+          : undefined,
       },
       stable_order_key: [
         String(highlight.anchor.start_offset).padStart(12, "0"),
@@ -4554,21 +4535,57 @@ export default function MediaPaneBody() {
         highlight.id,
       ].join(":"),
     }));
-  }, [highlights, isPdf, pdfDocumentHighlights]);
+  }, [fragments, highlights, isPdf, isTranscriptMedia, pdfDocumentHighlights]);
 
   const anchoredHighlightsMeasureKey = useMemo(
     () =>
-      anchoredHighlights
-        .map(
-          (highlight) =>
-            `${highlight.id}:${highlight.updated_at}:${highlight.color}:${
-              highlight.linked_note_blocks?.length ?? 0
-            }:${highlight.linked_conversations?.length ?? 0}:${
-              highlight.stable_order_key ?? ""
-            }`,
-        )
-        .join("|"),
-    [anchoredHighlights],
+      [
+        media?.kind ?? "",
+        activeContent?.fragmentId ?? "",
+        activeEpubSection?.section_id ?? "",
+        activeTranscriptFragment?.id ?? "",
+        renderedHtml,
+        readerProfile.font_family,
+        readerProfile.font_size_px,
+        readerProfile.line_height,
+        readerProfile.column_width_ch,
+        readerProfile.theme,
+        readerProfile.hyphenation,
+        pdfRefreshToken,
+        pdfHighlightsPaneState.version,
+        pdfControlsState?.pageNumber ?? "",
+        pdfControlsState?.zoomPercent ?? "",
+        pdfControlsState?.pageRenderEpoch ?? "",
+        anchoredHighlights
+          .map(
+            (highlight) =>
+              `${highlight.id}:${highlight.updated_at}:${highlight.color}:${
+                highlight.linked_note_blocks?.length ?? 0
+              }:${highlight.linked_conversations?.length ?? 0}:${
+                highlight.stable_order_key ?? ""
+              }`,
+          )
+          .join("|"),
+      ].join("||"),
+    [
+      activeContent?.fragmentId,
+      activeEpubSection?.section_id,
+      activeTranscriptFragment?.id,
+      anchoredHighlights,
+      media?.kind,
+      pdfControlsState?.pageNumber,
+      pdfControlsState?.pageRenderEpoch,
+      pdfControlsState?.zoomPercent,
+      pdfHighlightsPaneState.version,
+      pdfRefreshToken,
+      readerProfile.column_width_ch,
+      readerProfile.font_family,
+      readerProfile.font_size_px,
+      readerProfile.hyphenation,
+      readerProfile.line_height,
+      readerProfile.theme,
+      renderedHtml,
+    ],
   );
 
   // ==========================================================================
@@ -4625,7 +4642,6 @@ export default function MediaPaneBody() {
       })),
   ];
 
-  const transcriptDurationMs = media.listening_state?.duration_ms ?? 0;
   const showDesktopSecondaryRail =
     !isMobileViewport && (showHighlightsPane || readerAssistantState !== null);
   const showMobileHighlightsGutter = isMobileViewport && showHighlightsPane;
@@ -4671,6 +4687,7 @@ export default function MediaPaneBody() {
     />
   ) : (
     <TranscriptContentPanel
+      mediaId={media.id}
       transcriptState={transcriptState}
       transcriptCoverage={transcriptCoverage}
       chapters={media.chapters ?? []}
@@ -4735,7 +4752,6 @@ export default function MediaPaneBody() {
           {isTranscriptMedia ? (
             <div className={readerFrameClassName}>
               <div
-                ref={setReaderScrollContainer}
                 className={styles.documentViewport}
                 data-testid="document-viewport"
                 data-pane-content="true"
@@ -4762,9 +4778,10 @@ export default function MediaPaneBody() {
                 <ReaderGutter
                   mediaId={id}
                   mediaKind="transcript"
-                  transcriptHighlights={transcriptGutterHighlights}
-                  durationMs={transcriptDurationMs}
-                  scrollContainer={readerScrollContainer}
+                  highlights={anchoredHighlights}
+                  contentRef={contentRef}
+                  measureKey={anchoredHighlightsMeasureKey}
+                  onFocusHighlight={focusHighlight}
                   onExpand={() => setMobileHighlightsDrawerOpen(true)}
                 />
               ) : null}
@@ -4840,9 +4857,10 @@ export default function MediaPaneBody() {
                   <ReaderGutter
                     mediaId={id}
                     mediaKind="pdf"
-                    pdfHighlights={pdfDocumentHighlights}
-                    totalPages={pdfControlsState?.numPages ?? 0}
-                    scrollContainer={null}
+                    highlights={anchoredHighlights}
+                    contentRef={pdfContentRef}
+                    measureKey={anchoredHighlightsMeasureKey}
+                    onFocusHighlight={focusHighlight}
                     onExpand={() => setMobileHighlightsDrawerOpen(true)}
                   />
                 ) : null}
@@ -4851,7 +4869,6 @@ export default function MediaPaneBody() {
           ) : isEpub ? (
             <div className={readerFrameClassName}>
               <div
-                ref={setReaderScrollContainer}
                 className={styles.documentViewport}
                 data-testid="document-viewport"
                 data-pane-content="true"
@@ -4887,8 +4904,10 @@ export default function MediaPaneBody() {
                 <ReaderGutter
                   mediaId={id}
                   mediaKind="epub"
-                  highlights={highlights}
-                  scrollContainer={readerScrollContainer}
+                  highlights={anchoredHighlights}
+                  contentRef={contentRef}
+                  measureKey={anchoredHighlightsMeasureKey}
+                  onFocusHighlight={focusHighlight}
                   onExpand={() => setMobileHighlightsDrawerOpen(true)}
                 />
               ) : null}
@@ -4900,7 +4919,6 @@ export default function MediaPaneBody() {
           ) : (
             <div className={readerFrameClassName}>
               <div
-                ref={setReaderScrollContainer}
                 className={styles.documentViewport}
                 data-testid="document-viewport"
                 data-pane-content="true"
@@ -4932,8 +4950,10 @@ export default function MediaPaneBody() {
                 <ReaderGutter
                   mediaId={id}
                   mediaKind="web"
-                  highlights={highlights}
-                  scrollContainer={readerScrollContainer}
+                  highlights={anchoredHighlights}
+                  contentRef={contentRef}
+                  measureKey={anchoredHighlightsMeasureKey}
+                  onFocusHighlight={focusHighlight}
                   onExpand={() => setMobileHighlightsDrawerOpen(true)}
                 />
               ) : null}
@@ -4974,9 +4994,10 @@ export default function MediaPaneBody() {
                   <ReaderGutter
                     mediaId={id}
                     mediaKind="transcript"
-                    transcriptHighlights={transcriptGutterHighlights}
-                    durationMs={transcriptDurationMs}
-                    scrollContainer={readerScrollContainer}
+                    highlights={anchoredHighlights}
+                    contentRef={contentRef}
+                    measureKey={anchoredHighlightsMeasureKey}
+                    onFocusHighlight={focusHighlight}
                     onExpand={() => {
                       setSecondaryRailMode("highlights");
                       setSecondaryRailExpanded(true);
@@ -4986,9 +5007,10 @@ export default function MediaPaneBody() {
                   <ReaderGutter
                     mediaId={id}
                     mediaKind="pdf"
-                    pdfHighlights={pdfDocumentHighlights}
-                    totalPages={pdfControlsState?.numPages ?? 0}
-                    scrollContainer={null}
+                    highlights={anchoredHighlights}
+                    contentRef={pdfContentRef}
+                    measureKey={anchoredHighlightsMeasureKey}
+                    onFocusHighlight={focusHighlight}
                     onExpand={() => {
                       setSecondaryRailMode("highlights");
                       setSecondaryRailExpanded(true);
@@ -4998,8 +5020,10 @@ export default function MediaPaneBody() {
                   <ReaderGutter
                     mediaId={id}
                     mediaKind="epub"
-                    highlights={highlights}
-                    scrollContainer={readerScrollContainer}
+                    highlights={anchoredHighlights}
+                    contentRef={contentRef}
+                    measureKey={anchoredHighlightsMeasureKey}
+                    onFocusHighlight={focusHighlight}
                     onExpand={() => {
                       setSecondaryRailMode("highlights");
                       setSecondaryRailExpanded(true);
@@ -5009,8 +5033,10 @@ export default function MediaPaneBody() {
                   <ReaderGutter
                     mediaId={id}
                     mediaKind="web"
-                    highlights={highlights}
-                    scrollContainer={readerScrollContainer}
+                    highlights={anchoredHighlights}
+                    contentRef={contentRef}
+                    measureKey={anchoredHighlightsMeasureKey}
+                    onFocusHighlight={focusHighlight}
                     onExpand={() => {
                       setSecondaryRailMode("highlights");
                       setSecondaryRailExpanded(true);

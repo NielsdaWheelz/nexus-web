@@ -79,7 +79,12 @@ export default memo(function HtmlRenderer({
         if (!mediaId || target.mediaId !== mediaId) return;
         const root = rootRef.current;
         if (!root) return;
-        const candidates = collectPulseCandidates(root, target.locator, target.snippet);
+        const candidates = collectPulseCandidates(
+          root,
+          target.locator,
+          target.snippet,
+          target.highlightId,
+        );
         for (const candidate of candidates) {
           candidate.scrollIntoView({ behavior: "smooth", block: "center" });
           candidate.classList.add(styles.pulsing);
@@ -141,8 +146,16 @@ function collectPulseCandidates(
   root: HTMLElement,
   locator: unknown,
   snippet: string | null,
+  highlightId: string | undefined,
 ): HTMLElement[] {
   const record = (locator as Record<string, unknown> | null) ?? null;
+  if (highlightId) {
+    const matches = root.querySelectorAll<HTMLElement>(
+      `[data-active-highlight-ids~="${CSS.escape(highlightId)}"]`,
+    );
+    if (matches.length > 0) return Array.from(matches);
+  }
+
   const fragmentId = record && typeof record.fragment_id === "string" ? record.fragment_id : null;
   if (fragmentId) {
     const scoped = root.querySelectorAll<HTMLElement>(

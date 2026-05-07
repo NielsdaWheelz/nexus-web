@@ -4,6 +4,12 @@
 
 Implemented target.
 
+Collapsed gutter positioning update:
+`docs/reader-gutter-marginal-rail-hard-cutover.md` supersedes the
+document-wide heatmap behavior described in this file. The active target for the
+minimized highlight pane is a scanline-aligned marginal rail driven by the same
+visible target projections as the expanded highlights rail.
+
 The codebase contains the hard-cutover pieces:
 
 - `apps/web/src/components/secondaryRail/SecondaryRail.tsx`
@@ -18,7 +24,7 @@ The codebase contains the hard-cutover pieces:
 
 This document owns desktop reader-adjacent secondary rails for media panes:
 
-- collapsed highlight gutter
+- collapsed highlight marginal gutter
 - expanded contextual highlights rail
 - reader Ask rail mode
 
@@ -37,6 +43,8 @@ The current implementation is aligned with this target:
 
 - `SecondaryRail` exists and owns collapsed/expanded rail layout.
 - `ReaderGutter` exists and remains the collapsed right-edge highlight surface.
+  Its heatmap positioning contract is superseded by
+  `docs/reader-gutter-marginal-rail-hard-cutover.md`.
 - `AnchoredHighlightsRail` exists and measures rendered highlight targets into
   scroll-root coordinates.
 - `MediaPaneBody` already composes `SecondaryRail`, `ReaderGutter`,
@@ -52,7 +60,7 @@ The current implementation is aligned with this target:
 
 ## Goals
 
-- Keep the persistent gutter as the collapsed reader highlight overview.
+- Keep the persistent gutter as the collapsed reader highlight marginal rail.
 - Expand the gutter into a stable desktop secondary rail, not a modal overlay.
 - Make `Highlights` and `Ask` sibling modes in the same media-local rail.
 - Render `Highlights` rows only from viewport-visible reader projections.
@@ -96,7 +104,8 @@ The current implementation is aligned with this target:
 
 Desktop media panes have one reader-local secondary rail.
 
-- Collapsed: a 36px gutter remains visible at the reader's right edge.
+- Collapsed: a 36px scanline-aligned gutter remains visible at the reader's
+  right edge.
 - Expanded: the rail occupies layout space and reflows the reader column.
 - Modes: `Highlights` and `Ask`.
 - `Highlights`: contextual, viewport-visible, anchored rows.
@@ -105,7 +114,9 @@ Desktop media panes have one reader-local secondary rail.
 
 Mobile media panes do not use the persistent rail.
 
-- The gutter remains the compact highlight affordance where currently supported.
+- The gutter remains the compact highlight affordance where currently supported,
+  using the scanline-aligned projection target in
+  `docs/reader-gutter-marginal-rail-hard-cutover.md`.
 - Expanded highlights use a local drawer.
 - Ask uses the existing mobile reader assistant sheet.
 
@@ -120,9 +131,9 @@ The contextual highlights rail is not an all-highlights surface.
 
 ### Desktop Collapsed
 
-1. Opening readable media shows the reader plus a collapsed right gutter.
-2. The gutter shows one tick or cluster per known highlight.
-3. Clicking a tick scrolls and pulses the source highlight.
+1. Opening readable media shows the reader plus a collapsed right marginal rail.
+2. The gutter shows one marker or cluster per visible projected highlight.
+3. Clicking a marker scrolls and pulses the source highlight.
 4. Clicking the gutter expand affordance opens the rail in `Highlights` mode.
 5. The reader column reflows; no backdrop appears and the reader remains
    scrollable.
@@ -230,14 +241,14 @@ It does not measure DOM rects or solve row placement.
 
 ### `AnchoredHighlightsRail`
 
-`AnchoredHighlightsRail` owns highlight projection and contextual row layout:
+`AnchoredHighlightsRail` owns contextual row layout. After the collapsed gutter
+projection cutover, target discovery and visible projection are shared with the
+collapsed gutter through the projection module described in
+`docs/reader-gutter-marginal-rail-hard-cutover.md`.
 
-- text target discovery from `data-active-highlight-ids`
-- PDF target discovery from page geometry and viewport transforms
-- scroll-root discovery
-- visible target rect selection
-- viewport filtering
-- missing-target diagnostics
+`AnchoredHighlightsRail` owns:
+
+- consuming shared visible highlight projections
 - row collision layout
 - overflow affordance
 - row hover source outline

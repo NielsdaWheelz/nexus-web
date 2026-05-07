@@ -70,9 +70,9 @@ predecessor is deleted in the same PR.
 
 A user opens a media item. The reader fills the pane in a
 warm-neutral light or dark theme; a 36px gutter on the right edge
-shows a vertical heatmap of every highlight in the document. Selecting
-text spawns a tight selection popover; choosing a color creates a
-highlight, which immediately appears as a tick in the gutter. Expanding
+shows scanline-aligned markers for visible highlights. Selecting text
+spawns a tight selection popover; choosing a color creates a
+highlight, which immediately appears in the gutter when visible. Expanding
 the gutter opens a stable desktop secondary rail with `Highlights` and
 `Ask` modes, reflowing the reader column instead of overlaying it. On
 mobile, highlights and Ask remain drawer or sheet experiences. The chat
@@ -95,7 +95,7 @@ quiet magazine: no gradients, no glass, body font matching the reader.
   click, Esc, or explicit close button all dismiss. Slide-over animates
   with `transform: translateX` over `--duration-base` using
   `--ease-glide`. `prefers-reduced-motion` snaps without animation.
-- **Hover-preview contract.** Citations and gutter ticks share one
+- **Hover-preview contract.** Citations and gutter markers share one
   preview card primitive. Card width is 240px desktop, 80vw mobile;
   body text is 3-line clamped; appears after 150ms hover delay; closes
   on pointerleave with no delay. On touch devices, hover is replaced
@@ -105,7 +105,7 @@ quiet magazine: no gradients, no glass, body font matching the reader.
   { detail: { mediaId, locator, snippet } }))`. The active reader
   subscribes; on receipt it scrolls to the locator and applies a
   `.pulsing` class for 1200ms (a 2-cycle opacity pulse on the highlight
-  background). Citation clicks and gutter tick clicks both dispatch the
+  background). Citation clicks and gutter marker clicks both dispatch the
   same event.
 - **Streaming gutter cue.** Pending assistant messages render a 2px
   vertical bar at the message's left edge. The bar uses
@@ -635,102 +635,79 @@ backdrop, focus management, Esc handling.
 
 ## P5. Ghost gutter — reader highlights as a tick gutter
 
+Superseded positioning note:
+`docs/reader-gutter-marginal-rail-hard-cutover.md` replaces the document-wide
+heatmap contract in this section. The active collapsed-gutter target is a
+scanline-aligned marginal rail driven by visible reader projections.
+
 ### Target behavior
 
 Every reader (PDF, EPUB, web article, transcript) renders a 36px-wide
-gutter on the right edge of the reading column. Each highlight in the
-document appears as a horizontal tick (3px tall, 24px wide, colored by
-the highlight color) at the vertical position corresponding to the
-highlight's location in the document. Tick density acts as a vertical
-heatmap. Hovering a tick shows a `HoverPreview` card with the
-highlighted text. Clicking a tick dispatches the
-`nexus:reader-pulse-highlight` event (P1) — the reader scrolls to the
-highlight and pulses it. A small "expand" affordance at the gutter top
-opens the full highlights inspector as a right-edge slide-over (the
-same overlay shape as P4 chat).
+gutter on the right edge of the reading column. The active target for
+positioning is no longer this phase document's original heatmap plan.
+Collapsed markers are positioned from visible reader projections as
+specified by `docs/reader-gutter-marginal-rail-hard-cutover.md`.
+
+Hovering a marker shows a `HoverPreview` card with the highlighted text.
+Clicking a marker dispatches the `nexus:reader-pulse-highlight` event
+(P1) — the reader scrolls to the highlight and pulses it. A small expand
+affordance opens the reader secondary rail in `Highlights` mode.
 
 ### Architecture
 
-`ReaderGutter` is a positioned column rendered by `MediaPaneBody`
+`ReaderGutter` or its renamed successor is rendered by `MediaPaneBody`
 inside the media pane shell, anchored to the right edge of the reader
-content area. It receives the highlights array and the reader's scroll
-metrics (total height + scrollTop) and computes tick positions.
-Position computation differs by reader kind:
+content area. It consumes the shared anchored highlight projection used
+by `AnchoredHighlightsRail`. It does not compute positions from total
+document height, active page, or transcript duration.
 
-- For HtmlRenderer + EpubContentPane: tick position is the highlight's
-  first-character DOM offset's `getBoundingClientRect().top` relative
-  to the scroll container's full scrollHeight.
-- For PdfReader: tick position is `(page_number + intra_page_y) /
-  total_pages` mapped to gutter height.
-- For TranscriptContentPanel: tick position is `t_start_ms /
-  duration_ms` mapped to gutter height.
-
-The expanded inspector is a `HighlightsInspectorOverlay` that wraps the
-existing `MediaHighlightsPaneBody` content (now NOT mounted as a
-sibling pane).
+The expanded surface is the reader secondary rail in `Highlights` mode,
+not the old desktop slide-over inspector.
 
 ### Files
 
 **Create:**
 - `apps/web/src/components/reader/ReaderGutter.tsx`
 - `apps/web/src/components/reader/ReaderGutter.module.css`
-- `apps/web/src/components/reader/HighlightsInspectorOverlay.tsx`
-- `apps/web/src/components/reader/HighlightsInspectorOverlay.module.css`
-- `apps/web/src/components/reader/highlightTickPositioning.ts` — pure
-  positioning module. Three functions:
-  `tickPositionForHtml(highlight, scroll)`,
-  `tickPositionForPdf(highlight, totalPages)`,
-  `tickPositionForTranscript(highlight, durationMs)`.
+- `apps/web/src/components/reader/useAnchoredHighlightProjection.ts`
 
 **Modify:**
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx` —
-  remove the `AnchoredSecondaryPane` mount of
-  `MediaHighlightsPaneBody`; mount `ReaderGutter` as an absolutely
-  positioned right-rail child of the reader area; mount
-  `HighlightsInspectorOverlay` conditionally on
-  `isHighlightsInspectorOpen` state.
-- `apps/web/src/app/(authenticated)/media/[id]/MediaHighlightsPaneBody.tsx`
-  — keep the body content but remove anything pane-shell-aware (mobile
-  drawer handling, pane-chrome-override calls). It becomes a pure body
-  rendered inside the overlay.
+  mount the collapsed gutter through the reader secondary rail and mount
+  `AnchoredHighlightsRail` as the expanded `Highlights` rail body.
 - `apps/web/src/app/(authenticated)/media/[id]/page.module.css` —
-  remove the `.highlightsRail` / sibling-pane layout rules; add the
-  `.readerWithGutter` two-column layout (column + 36px gutter).
+  keep the reader plus secondary-rail layout aligned with the active
+  secondary-rail spec.
 - `apps/web/src/components/AnchoredSecondaryPane.tsx` — if its only
   consumer was `MediaHighlightsPaneBody`, delete it (verify with grep).
 
 **Delete:**
 - The "highlights as a sibling pane" path from `MediaPaneBody` and any
   pane-registry entries that opened a media-companion highlights pane.
-- Mobile-specific drawer code in `MediaHighlightsPaneBody` (the
-  inspector overlay handles both desktop and mobile from this point).
+- Desktop highlight slide-over code paths.
 
 ### Key decisions
 
-- The gutter is always visible (cannot be collapsed). A document with
-  no highlights shows an empty gutter, which is the negative space
-  carrier for new ticks as the user highlights.
-- Click target for ticks is generous (the tick is 3px tall but the
-  hit area extends 6px above and below).
-- Multiple highlights at the same scroll position stack as a slightly
-  thicker tick; hover preview shows them as a list.
-- The expanded inspector slides in from the right edge of the media
-  pane (same shape as the P4 chat overlay) and dims the gutter only —
-  reader column does not reflow.
-- On mobile, the gutter is 24px wide and ticks are 4px tall (touch
-  targets); tap on the gutter expand affordance opens the inspector
-  full-width as a sheet.
+- The gutter is always visible when the secondary rail is collapsed. A
+  document with no visible highlights shows an empty marker layer.
+- Marker click targets remain generous even if the visible marker is thin.
+- Multiple visible highlights at the same projected scanline cluster; hover
+  preview shows them as a list.
+- The expanded highlight surface is the stable reader secondary rail and reflows
+  the reader column.
+- On mobile, the gutter is 24px wide; tap on the gutter expand affordance opens
+  the local highlights drawer.
 
 ### Acceptance criteria
 
 - The right edge of every reader (PDF, EPUB, web, transcript) shows the
   36px gutter (24px on mobile).
-- Each highlight in the document corresponds to exactly one tick at
-  the correct vertical position.
-- Hovering a tick shows the preview card within 150ms; clicking
+- Each visible projected highlight corresponds to a marker at the source
+  scanline.
+- Hovering a marker shows the preview card within 150ms; clicking
   scrolls and pulses.
-- The expand affordance opens the highlights inspector as a slide-over
-  overlay, not a workspace pane.
+- The expand affordance opens the reader secondary rail or mobile drawer, not a
+  workspace pane.
 - `MediaHighlightsPaneBody` no longer mounts as a sibling pane in any
   code path.
 
@@ -919,7 +896,7 @@ A 1B-complete repo satisfies all of these:
   updates because chat now mounts as an overlay rather than a pane.
 - A new e2e spec `reader-overlays.spec.ts` covers: open chat overlay
   from selection popover; ESC dismisses; reader column unchanged
-  before/after; gutter ticks present; click tick scrolls + pulses;
+  before/after; gutter markers present; click marker scrolls + pulses;
   Cmd-K scope chip appears.
 
 ## Risks
@@ -936,10 +913,9 @@ A 1B-complete repo satisfies all of these:
 - **Sentence segmentation in P0.** `Intl.Segmenter` is broadly
   supported but missing on a few older mobile browsers. Sentence focus
   silently downgrades to paragraph focus on those — no polyfill ships.
-- **Highlight tick positioning for HTML/EPUB requires layout.** First
-  paint of the gutter shows ticks computed from approximate text
-  offsets; precise tick positions stabilize after the IntersectionObserver
-  settles (~one frame after layout).
+- **Highlight marker positioning for HTML/EPUB requires layout.** Gutter
+  markers are driven by post-render visible target projection; tests need
+  browser layout coverage rather than approximate text-offset assertions.
 - **Citation insertion into markdown.** If the markdown stack is not
   remark-based (verify), the placeholder substitution happens as a
   pre-pass on the content string. Edge case: a literal `[1]` in the

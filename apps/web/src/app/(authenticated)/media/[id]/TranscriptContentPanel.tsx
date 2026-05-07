@@ -15,6 +15,7 @@ import {
 import styles from "./page.module.css";
 
 interface TranscriptContentPanelProps {
+  mediaId: string;
   transcriptState: TranscriptState;
   transcriptCoverage: TranscriptCoverage;
   chapters: TranscriptChapter[];
@@ -28,6 +29,7 @@ interface TranscriptContentPanelProps {
 }
 
 export default function TranscriptContentPanel({
+  mediaId,
   transcriptState,
   transcriptCoverage,
   chapters,
@@ -175,7 +177,7 @@ export default function TranscriptContentPanel({
             <div className={readerSurfaceClassName} style={readerSurfaceStyle}>
               <div className={styles.readerContentInner}>
                 <div ref={contentRef} onClick={onContentClick}>
-                  <HtmlRenderer htmlSanitized={renderedHtml} />
+                  <HtmlRenderer htmlSanitized={renderedHtml} mediaId={mediaId} />
                 </div>
               </div>
             </div>

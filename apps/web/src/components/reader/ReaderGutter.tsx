@@ -9,273 +9,189 @@ import {
   useState,
   type FocusEvent as ReactFocusEvent,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
 } from "react";
 import { ListOrdered } from "lucide-react";
 import Button from "@/components/ui/Button";
 import HoverPreview, { HOVER_PREVIEW_DELAY_MS } from "@/components/ui/HoverPreview";
 import { dispatchReaderPulse, type ReaderPulseTarget } from "@/lib/reader/pulseEvent";
-import type { Highlight } from "@/app/(authenticated)/media/[id]/mediaHighlights";
-import type { PdfHighlightOut } from "@/components/PdfReader";
+import {
+  findScrollParent,
+  useAnchoredHighlightProjection,
+  type AnchoredHighlightRow,
+} from "./useAnchoredHighlightProjection";
 import styles from "./ReaderGutter.module.css";
 
 export type ReaderGutterMediaKind = "pdf" | "epub" | "web" | "transcript";
 
-export interface ReaderGutterTranscriptHighlight {
-  highlight: Highlight;
-  /** Start of the transcript fragment containing this highlight, in milliseconds. */
-  fragmentStartMs: number;
-}
-
-interface BaseReaderGutterProps {
+interface ReaderGutterProps {
   mediaId: string;
-  scrollContainer: HTMLElement | null;
+  mediaKind: ReaderGutterMediaKind;
+  highlights: AnchoredHighlightRow[];
+  contentRef: RefObject<HTMLElement | null>;
+  measureKey?: string | number;
+  onFocusHighlight: (highlightId: string) => void;
   onExpand: () => void;
 }
 
-interface PdfReaderGutterProps extends BaseReaderGutterProps {
-  mediaKind: "pdf";
-  pdfHighlights: PdfHighlightOut[];
-  totalPages: number;
-}
-
-interface FragmentReaderGutterProps extends BaseReaderGutterProps {
-  mediaKind: "epub" | "web";
-  highlights: Highlight[];
-}
-
-interface TranscriptReaderGutterProps extends BaseReaderGutterProps {
-  mediaKind: "transcript";
-  transcriptHighlights: ReaderGutterTranscriptHighlight[];
-  durationMs: number;
-}
-
-export type ReaderGutterProps =
-  | PdfReaderGutterProps
-  | FragmentReaderGutterProps
-  | TranscriptReaderGutterProps;
-
-interface ResolvedTick {
+interface Marker {
   id: string;
-  topPercent: number;
+  top: number;
   color: string;
   exact: string;
   target: ReaderPulseTarget;
 }
 
-interface TickCluster {
-  topPercent: number;
-  ticks: ResolvedTick[];
+interface MarkerCluster {
+  top: number;
+  markers: Marker[];
 }
 
-const CLUSTER_BUCKET_PERCENT = 0.6;
+const MARKER_CLUSTER_PX = 6;
 
-function escapeAttrValue(value: string): string {
-  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-    return CSS.escape(value);
-  }
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-function clampPercent(value: number): number | null {
-  if (!Number.isFinite(value)) {
-    return null;
-  }
-  if (value < 0) return 0;
-  if (value > 100) return 100;
-  return value;
-}
-
-function computePdfTopPercent(
-  highlight: PdfHighlightOut,
-  totalPages: number,
-): number | null {
-  if (totalPages <= 0) return null;
-  // The gutter is a heatmap — page-level granularity is sufficient. Multiple
-  // highlights on the same page cluster into a single thicker tick.
-  const pageIndex = Math.max(0, highlight.anchor.page_number - 1);
-  return clampPercent((100 * pageIndex) / totalPages);
-}
-
-function computeTranscriptTopPercent(
-  startMs: number,
-  durationMs: number,
-): number | null {
-  if (durationMs <= 0) return null;
-  return clampPercent((100 * startMs) / durationMs);
-}
-
-function computeFragmentTopPercent(
-  highlight: Highlight,
-  scrollContainer: HTMLElement,
-): number | null {
-  const escapedId = escapeAttrValue(highlight.id);
-  const segment = scrollContainer.querySelector<HTMLElement>(
-    `[data-active-highlight-ids~="${escapedId}"]`,
-  );
-  if (!segment) return null;
-  const containerScrollHeight = scrollContainer.scrollHeight;
-  if (containerScrollHeight <= 0) return null;
-  const containerRect = scrollContainer.getBoundingClientRect();
-  const segmentRect = segment.getBoundingClientRect();
-  const offsetTop =
-    segmentRect.top - containerRect.top + scrollContainer.scrollTop;
-  return clampPercent((100 * offsetTop) / containerScrollHeight);
-}
-
-function buildClusters(ticks: ResolvedTick[]): TickCluster[] {
-  if (ticks.length === 0) return [];
-  const sorted = [...ticks].sort(
-    (left, right) => left.topPercent - right.topPercent,
-  );
-  const clusters: TickCluster[] = [];
-  for (const tick of sorted) {
-    const last = clusters[clusters.length - 1];
-    if (last && Math.abs(last.topPercent - tick.topPercent) <= CLUSTER_BUCKET_PERCENT) {
-      last.ticks.push(tick);
-      continue;
-    }
-    clusters.push({ topPercent: tick.topPercent, ticks: [tick] });
-  }
-  return clusters;
-}
-
-export default function ReaderGutter(props: ReaderGutterProps) {
-  const { mediaId, scrollContainer, onExpand } = props;
-  const [scrollVersion, setScrollVersion] = useState(0);
+export default function ReaderGutter({
+  mediaId,
+  mediaKind,
+  highlights,
+  contentRef,
+  measureKey = 0,
+  onFocusHighlight,
+  onExpand,
+}: ReaderGutterProps) {
+  const gutterRef = useRef<HTMLDivElement | null>(null);
+  const hoverDelayRef = useRef<number | null>(null);
+  const [markers, setMarkers] = useState<Marker[]>([]);
+  const [layoutVersion, setLayoutVersion] = useState(0);
   const [hoveredClusterIndex, setHoveredClusterIndex] = useState<number | null>(
     null,
   );
   const [hoverAnchor, setHoverAnchor] = useState<{ x: number; y: number } | null>(
     null,
   );
-  const hoverDelayRef = useRef<number | null>(null);
+  const { projections, viewportState } = useAnchoredHighlightProjection({
+    contentRef,
+    highlights,
+    measureKey,
+  });
 
-  // Recompute on scroll/layout changes (only matters for fragment-anchored kinds).
   useEffect(() => {
-    if (props.mediaKind !== "epub" && props.mediaKind !== "web") return;
-    if (!scrollContainer) return;
-
-    let frame = 0;
-    const schedule = () => {
-      if (frame) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = 0;
-        setScrollVersion((value) => value + 1);
-      });
-    };
-
-    scrollContainer.addEventListener("scroll", schedule, { passive: true });
-    const resizeObserver = new ResizeObserver(schedule);
-    resizeObserver.observe(scrollContainer);
-    const mutationObserver = new MutationObserver(schedule);
-    mutationObserver.observe(scrollContainer, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["data-active-highlight-ids"],
-    });
-
-    schedule();
-
-    return () => {
-      scrollContainer.removeEventListener("scroll", schedule);
-      resizeObserver.disconnect();
-      mutationObserver.disconnect();
-      if (frame) window.cancelAnimationFrame(frame);
-    };
-  }, [props.mediaKind, scrollContainer]);
-
-  const ticks = useMemo<ResolvedTick[]>(() => {
-    // scrollVersion is consumed only to retrigger memoization on layout updates
-    // for fragment-anchored kinds.
-    void scrollVersion;
-    switch (props.mediaKind) {
-      case "pdf": {
-        const out: ResolvedTick[] = [];
-        for (const highlight of props.pdfHighlights) {
-          const topPercent = computePdfTopPercent(highlight, props.totalPages);
-          if (topPercent === null) continue;
-          out.push({
-            id: highlight.id,
-            topPercent,
-            color: `var(--highlight-${highlight.color})`,
-            exact: highlight.exact,
-            target: {
-              mediaId,
-              locator: {
-                type: "pdf_page_geometry",
-                page_number: highlight.anchor.page_number,
-                quads: highlight.anchor.quads,
-              },
-              snippet: highlight.exact,
-            },
-          });
-        }
-        return out;
-      }
-      case "transcript": {
-        const out: ResolvedTick[] = [];
-        for (const entry of props.transcriptHighlights) {
-          const topPercent = computeTranscriptTopPercent(
-            entry.fragmentStartMs,
-            props.durationMs,
-          );
-          if (topPercent === null) continue;
-          out.push({
-            id: entry.highlight.id,
-            topPercent,
-            color: `var(--highlight-${entry.highlight.color})`,
-            exact: entry.highlight.exact,
-            target: {
-              mediaId,
-              locator: {
-                type: "transcript_time_range",
-                t_start_ms: entry.fragmentStartMs,
-              },
-              snippet: entry.highlight.exact,
-            },
-          });
-        }
-        return out;
-      }
-      case "epub":
-      case "web": {
-        if (!scrollContainer) return [];
-        const out: ResolvedTick[] = [];
-        for (const highlight of props.highlights) {
-          const topPercent = computeFragmentTopPercent(highlight, scrollContainer);
-          if (topPercent === null) continue;
-          out.push({
-            id: highlight.id,
-            topPercent,
-            color: `var(--highlight-${highlight.color})`,
-            exact: highlight.exact,
-            target: {
-              mediaId,
-              locator: {
-                type:
-                  props.mediaKind === "epub"
-                    ? "epub_fragment_offsets"
-                    : "reader_text_offsets",
-                fragment_id: highlight.anchor.fragment_id,
-                start_offset: highlight.anchor.start_offset,
-                end_offset: highlight.anchor.end_offset,
-              },
-              snippet: highlight.exact,
-            },
-          });
-        }
-        return out;
-      }
+    if (!gutterRef.current) {
+      return;
     }
-    props satisfies never;
-    return [];
-    // The discriminated union forces us to depend on the union as a whole; the
-    // memo recomputes whenever the parent passes a new props object, plus on
-    // scroll-driven layout updates via scrollVersion.
-  }, [props, scrollContainer, mediaId, scrollVersion]);
 
-  const clusters = useMemo(() => buildClusters(ticks), [ticks]);
+    const observer = new ResizeObserver(() => {
+      setLayoutVersion((version) => version + 1);
+    });
+    observer.observe(gutterRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    const gutter = gutterRef.current;
+    const contentElement = contentRef.current;
+    if (!gutter || !contentElement) {
+      setMarkers([]);
+      return;
+    }
+
+    const scrollParent = findScrollParent(contentElement);
+    const baseline =
+      scrollParent.getBoundingClientRect().top -
+      gutter.getBoundingClientRect().top;
+    const nextMarkers: Marker[] = [];
+
+    for (const projection of projections) {
+      const highlight = projection.highlight;
+      let target: ReaderPulseTarget | null = null;
+
+      if (mediaKind === "pdf") {
+        if (!highlight.page_number || !highlight.quads?.length) {
+          continue;
+        }
+        target = {
+          mediaId,
+          highlightId: highlight.id,
+          locator: {
+            type: "pdf_page_geometry",
+            page_number: highlight.page_number,
+            quads: highlight.quads,
+          },
+          snippet: highlight.exact,
+        };
+      } else if (mediaKind === "transcript") {
+        if (highlight.anchor?.t_start_ms == null) {
+          continue;
+        }
+        target = {
+          mediaId,
+          highlightId: highlight.id,
+          locator: {
+            type: "transcript_time_range",
+            t_start_ms: highlight.anchor.t_start_ms,
+          },
+          snippet: highlight.exact,
+        };
+      } else {
+        if (!highlight.anchor?.fragment_id) {
+          continue;
+        }
+        target = {
+          mediaId,
+          highlightId: highlight.id,
+          locator: {
+            type:
+              mediaKind === "epub"
+                ? "epub_fragment_offsets"
+                : "reader_text_offsets",
+            fragment_id: highlight.anchor.fragment_id,
+            start_offset: highlight.anchor.start_offset,
+            end_offset: highlight.anchor.end_offset,
+          },
+          snippet: highlight.exact,
+        };
+      }
+
+      nextMarkers.push({
+        id: highlight.id,
+        top: projection.rect.top - viewportState.scrollTop + baseline,
+        color: `var(--highlight-${highlight.color})`,
+        exact: highlight.exact,
+        target,
+      });
+    }
+
+    setMarkers(nextMarkers);
+  }, [
+    contentRef,
+    layoutVersion,
+    mediaId,
+    mediaKind,
+    projections,
+    viewportState.scrollTop,
+  ]);
+
+  const clusters = useMemo<MarkerCluster[]>(() => {
+    if (markers.length === 0) {
+      return [];
+    }
+
+    const sorted = [...markers].sort((left, right) => {
+      if (left.top !== right.top) {
+        return left.top - right.top;
+      }
+      return left.id.localeCompare(right.id);
+    });
+    const out: MarkerCluster[] = [];
+    for (const marker of sorted) {
+      const last = out[out.length - 1];
+      if (last && Math.abs(last.top - marker.top) <= MARKER_CLUSTER_PX) {
+        last.markers.push(marker);
+        continue;
+      }
+      out.push({ top: marker.top, markers: [marker] });
+    }
+    return out;
+  }, [markers]);
 
   const cancelHoverDelay = useCallback(() => {
     if (hoverDelayRef.current != null) {
@@ -292,13 +208,16 @@ export default function ReaderGutter(props: ReaderGutterProps) {
     };
   }, []);
 
-  const handleTickActivate = useCallback(
-    (cluster: TickCluster) => {
-      const primary = cluster.ticks[0];
-      if (!primary) return;
+  const handleMarkerActivate = useCallback(
+    (cluster: MarkerCluster) => {
+      const primary = cluster.markers[0];
+      if (!primary) {
+        return;
+      }
+      onFocusHighlight(primary.id);
       dispatchReaderPulse(primary.target);
     },
-    [],
+    [onFocusHighlight],
   );
 
   const handlePointerEnter = useCallback(
@@ -339,11 +258,40 @@ export default function ReaderGutter(props: ReaderGutterProps) {
 
   return (
     <div
+      ref={gutterRef}
       className={styles.gutter}
       data-testid="reader-gutter"
       role="region"
       aria-label="Highlights gutter"
     >
+      <div className={styles.markerColumn}>
+        {clusters.map((cluster, index) => {
+          const primaryColor = cluster.markers[0]?.color ?? "var(--highlight-yellow)";
+          const isStacked = cluster.markers.length > 1;
+          return (
+            <button
+              key={`${cluster.top.toFixed(1)}:${cluster.markers[0]?.id ?? index}`}
+              type="button"
+              className={`${styles.marker} ${isStacked ? styles.markerStacked : ""}`.trim()}
+              style={{
+                top: `${cluster.top}px`,
+                background: primaryColor,
+              }}
+              data-testid={`reader-gutter-marker-${cluster.markers[0]?.id ?? index}`}
+              onClick={() => handleMarkerActivate(cluster)}
+              onPointerEnter={(event) => handlePointerEnter(index, event)}
+              onPointerLeave={handlePointerLeave}
+              onFocus={(event) => handleFocus(index, event)}
+              onBlur={handlePointerLeave}
+              aria-label={
+                isStacked
+                  ? `${cluster.markers.length} highlights at this position`
+                  : cluster.markers[0]?.exact ?? "Highlight"
+              }
+            />
+          );
+        })}
+      </div>
       <div className={styles.expandSlot}>
         <Button
           variant="ghost"
@@ -355,46 +303,18 @@ export default function ReaderGutter(props: ReaderGutterProps) {
           <ListOrdered size={14} aria-hidden="true" />
         </Button>
       </div>
-      <div className={styles.tickColumn}>
-        {clusters.map((cluster, index) => {
-          const primaryColor = cluster.ticks[0]?.color ?? "var(--highlight-yellow)";
-          const isStacked = cluster.ticks.length > 1;
-          return (
-            <button
-              key={`${cluster.topPercent.toFixed(3)}:${cluster.ticks[0]?.id ?? index}`}
-              type="button"
-              className={`${styles.tick} ${isStacked ? styles.tickStacked : ""}`.trim()}
-              style={{
-                top: `${cluster.topPercent}%`,
-                background: primaryColor,
-              }}
-              data-testid={`reader-gutter-tick-${cluster.ticks[0]?.id ?? index}`}
-              onClick={() => handleTickActivate(cluster)}
-              onPointerEnter={(event) => handlePointerEnter(index, event)}
-              onPointerLeave={handlePointerLeave}
-              onFocus={(event) => handleFocus(index, event)}
-              onBlur={handlePointerLeave}
-              aria-label={
-                isStacked
-                  ? `${cluster.ticks.length} highlights at this position`
-                  : cluster.ticks[0]?.exact ?? "Highlight"
-              }
-            />
-          );
-        })}
-      </div>
       {hoveredCluster && hoverAnchor ? (
         <HoverPreview anchor={hoverAnchor} onClose={handlePointerLeave}>
-          {hoveredCluster.ticks.length > 1 ? (
+          {hoveredCluster.markers.length > 1 ? (
             <ul className={styles.previewList}>
-              {hoveredCluster.ticks.map((tick) => (
-                <li key={tick.id} className={styles.previewListItem}>
-                  {tick.exact}
+              {hoveredCluster.markers.map((marker) => (
+                <li key={marker.id} className={styles.previewListItem}>
+                  {marker.exact}
                 </li>
               ))}
             </ul>
           ) : (
-            <p className={styles.previewExcerpt}>{hoveredCluster.ticks[0]?.exact}</p>
+            <p className={styles.previewExcerpt}>{hoveredCluster.markers[0]?.exact}</p>
           )}
         </HoverPreview>
       ) : null}

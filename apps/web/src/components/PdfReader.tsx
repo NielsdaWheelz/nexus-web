@@ -651,6 +651,7 @@ export default function PdfReader({
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [pageHighlights, setPageHighlights] = useState<PdfHighlightOut[]>([]);
+  const [pulsingHighlightId, setPulsingHighlightId] = useState<string | null>(null);
   const [createTelemetry, setCreateTelemetry] = useState<CreateTelemetryState>(
     createInitialCreateTelemetry
   );
@@ -685,6 +686,7 @@ export default function PdfReader({
   const selectionSnapshotKeyRef = useRef<string | null>(null);
   const selectionVisibleRef = useRef(false);
   const mobileSelectionTimerRef = useRef<number | null>(null);
+  const pulseTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     onPageHighlightsChangeRef.current = onPageHighlightsChange;
@@ -697,6 +699,14 @@ export default function PdfReader({
   useEffect(() => {
     isMobileRef.current = isMobile;
   }, [isMobile]);
+
+  useEffect(() => {
+    return () => {
+      if (pulseTimerRef.current != null) {
+        window.clearTimeout(pulseTimerRef.current);
+      }
+    };
+  }, []);
 
   const onResumeStateChangeRef = useRef(onResumeStateChange);
   useEffect(() => {
@@ -1227,6 +1237,21 @@ export default function PdfReader({
         markPageSurfaceForTesting(renderedPage, event.source);
         rememberPageScale(renderedPage, event.source);
         evaluatePageGeometryReliability(renderedPage);
+        void fetchPageHighlights(renderedPage)
+          .then((highlights) => {
+            if (runId !== runRef.current) {
+              return;
+            }
+            if (renderedPage === pageNumberRef.current) {
+              setPageHighlights(highlights);
+            }
+            onPageHighlightsChangeRef.current?.(renderedPage, highlights);
+          })
+          .catch(() => {
+            if (runId === runRef.current && renderedPage === pageNumberRef.current) {
+              setSelectionError("Failed to load PDF highlights for this page.");
+            }
+          });
 
         if (
           event.error &&
@@ -1305,6 +1330,7 @@ export default function PdfReader({
       applyStartPageProgression,
       clearSelection,
       evaluatePageGeometryReliability,
+      fetchPageHighlights,
       ensurePdfJsViewer,
       isTextLayerUsableForPage,
       markPageSurfaceForTesting,
@@ -1934,18 +1960,33 @@ export default function PdfReader({
           ? (quadsRaw as PdfHighlightQuad[])
           : [];
         const pageNumber = pageNumberRaw;
+        const highlightId =
+          typeof target.highlightId === "string" ? target.highlightId : null;
         const pulseOverlaysOnPage = () => {
+          if (highlightId) {
+            if (pulseTimerRef.current != null) {
+              window.clearTimeout(pulseTimerRef.current);
+            }
+            setPulsingHighlightId(highlightId);
+            pulseTimerRef.current = window.setTimeout(() => {
+              pulseTimerRef.current = null;
+              setPulsingHighlightId((current) =>
+                current === highlightId ? null : current,
+              );
+            }, PDF_PULSE_DURATION_MS);
+            return;
+          }
+
           const pageEl = getPageElement(pageNumber);
           if (!pageEl) return;
-          const overlays = pageEl.querySelectorAll<HTMLElement>(
+          for (const overlay of pageEl.querySelectorAll<HTMLElement>(
             "[data-highlight-anchor]",
-          );
-          overlays.forEach((overlay) => {
+          )) {
             overlay.classList.add(styles.pulsing);
             window.setTimeout(() => {
               overlay.classList.remove(styles.pulsing);
             }, PDF_PULSE_DURATION_MS);
-          });
+          }
         };
         const navigate = async () => {
           if (pageNumber !== pageNumberRef.current) {
@@ -2207,8 +2248,12 @@ export default function PdfReader({
       if (focusedHighlightId === rect.highlightId) {
         rectEl.classList.add(styles.highlightOverlayRectFocused);
       }
+      if (pulsingHighlightId === rect.highlightId) {
+        rectEl.classList.add(styles.pulsing);
+      }
       rectEl.setAttribute("data-testid", `pdf-highlight-${rect.highlightId}-${rect.index}`);
       rectEl.setAttribute("data-highlight-color", rect.color);
+      rectEl.setAttribute("data-highlight-id", rect.highlightId);
       if (rect.index === 0) {
         rectEl.setAttribute("data-highlight-anchor", rect.highlightId);
       }
@@ -2246,6 +2291,7 @@ export default function PdfReader({
     hasHighlightTapHandler,
     pageNumber,
     projectedHighlightRects,
+    pulsingHighlightId,
     removeOverlayLayers,
   ]);
 
