@@ -19,8 +19,8 @@ interface SecondaryRailProps {
   testId?: string;
 }
 
-const DEFAULT_EXPANDED_WIDTH_PX = 360;
-const DEFAULT_COLLAPSED_WIDTH_PX = 36;
+export const SECONDARY_RAIL_EXPANDED_WIDTH_PX = 360;
+export const SECONDARY_RAIL_COLLAPSED_WIDTH_PX = 36;
 
 export default function SecondaryRail({
   ariaLabel,
@@ -31,7 +31,7 @@ export default function SecondaryRail({
   tabs = [],
   activeTabId,
   onActiveTabChange,
-  expandedWidthPx = DEFAULT_EXPANDED_WIDTH_PX,
+  expandedWidthPx = SECONDARY_RAIL_EXPANDED_WIDTH_PX,
   bodyClassName,
   testId,
 }: SecondaryRailProps) {
@@ -40,8 +40,8 @@ export default function SecondaryRail({
       <aside
         className={`${styles.rail} ${styles.collapsed}`}
         style={{
-          width: DEFAULT_COLLAPSED_WIDTH_PX,
-          flexBasis: DEFAULT_COLLAPSED_WIDTH_PX,
+          width: SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
+          flexBasis: SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
         }}
         aria-label={ariaLabel}
         data-testid={testId}

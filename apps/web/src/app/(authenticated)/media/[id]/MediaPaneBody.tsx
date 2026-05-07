@@ -7,7 +7,15 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from "react";
+import {
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  useMemo,
+  useLayoutEffect,
+  type CSSProperties,
+} from "react";
 import ReaderAssistantPane, {
   type ReaderAssistantScopeOption,
 } from "@/components/chat/ReaderAssistantPane";
@@ -17,7 +25,10 @@ import HtmlRenderer from "@/components/HtmlRenderer";
 import ReaderGutter from "@/components/reader/ReaderGutter";
 import AnchoredHighlightsRail from "@/components/reader/AnchoredHighlightsRail";
 import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
-import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
+import SecondaryRail, {
+  SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
+  SECONDARY_RAIL_EXPANDED_WIDTH_PX,
+} from "@/components/secondaryRail/SecondaryRail";
 import PdfReader, {
   type PdfHighlightOut,
   type PdfReaderSelectionQuote,
@@ -68,6 +79,7 @@ import {
   usePaneRouter,
   usePaneSearchParams,
   useSetPaneTitle,
+  usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
 import {
   usePaneChromeOverride,
@@ -842,6 +854,7 @@ export default function MediaPaneBody() {
   }
 
   const router = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   const searchParams = usePaneSearchParams();
   const paneMobileChrome = usePaneMobileChromeController();
   const requestedFragmentId = searchParams.get("fragment");
@@ -1139,6 +1152,7 @@ export default function MediaPaneBody() {
   const readerLayoutKey = `${readerProfile.font_family}:${readerProfile.font_size_px}:${readerProfile.line_height}:${readerProfile.column_width_ch}`;
   const focusModeEnabled = readerProfile.focus_mode !== "off";
   const showHighlightsPane = canRead && !focusModeEnabled;
+  const hasProtectedReaderTextWidth = canRead && !isPdf;
   const playbackSource = media?.playback_source ?? null;
   const activeTranscriptFragment = useMemo(() => {
     if (!isTranscriptMedia) {
@@ -3278,10 +3292,82 @@ export default function MediaPaneBody() {
   const readerSurfaceClassName = `${styles.readerContentRoot} ${
     readerProfile.theme === "dark" ? styles.readerThemeDark : styles.readerThemeLight
   }`;
+  const showDesktopSecondaryRail =
+    !isMobileViewport && (showHighlightsPane || readerAssistantState !== null);
+  const desktopSecondaryRailWidthPx = showDesktopSecondaryRail
+    ? isSecondaryRailExpanded
+      ? SECONDARY_RAIL_EXPANDED_WIDTH_PX
+      : SECONDARY_RAIL_COLLAPSED_WIDTH_PX
+    : 0;
   const readerRootRef = useRef<HTMLDivElement | null>(null);
+  const protectedReaderWidthRef = useRef<HTMLDivElement | null>(null);
+  const [protectedReaderWidthPx, setProtectedReaderWidthPx] = useState(0);
+  const readerColumnStyle =
+    protectedReaderWidthPx > 0 && !isMobileViewport
+      ? ({
+          "--reader-protected-width-px": `${protectedReaderWidthPx}px`,
+        } as CSSProperties)
+      : undefined;
   const [chromeRevealed, setChromeRevealed] = useState(false);
   const focusModeForRoot = readerProfile.focus_mode;
   const hyphenationForRoot = readerProfile.hyphenation;
+
+  useLayoutEffect(() => {
+    if (isMobileViewport || !hasProtectedReaderTextWidth) {
+      setProtectedReaderWidthPx(0);
+      return;
+    }
+
+    const node = protectedReaderWidthRef.current;
+    if (!node) {
+      setProtectedReaderWidthPx(0);
+      return;
+    }
+
+    const updateProtectedWidth = () => {
+      setProtectedReaderWidthPx(Math.ceil(node.getBoundingClientRect().width));
+    };
+
+    updateProtectedWidth();
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(updateProtectedWidth);
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+    };
+  }, [
+    hasProtectedReaderTextWidth,
+    isMobileViewport,
+    readerProfile.column_width_ch,
+    readerProfile.font_family,
+    readerProfile.font_size_px,
+    readerProfile.line_height,
+  ]);
+
+  useEffect(() => {
+    if (!paneRuntime) {
+      return;
+    }
+
+    if (isMobileViewport || !hasProtectedReaderTextWidth || protectedReaderWidthPx <= 0) {
+      paneRuntime.setPaneMinWidth(null);
+      return;
+    }
+
+    paneRuntime.setPaneMinWidth(protectedReaderWidthPx + desktopSecondaryRailWidthPx);
+    return () => {
+      paneRuntime.setPaneMinWidth(null);
+    };
+  }, [
+    desktopSecondaryRailWidthPx,
+    hasProtectedReaderTextWidth,
+    isMobileViewport,
+    paneRuntime,
+    protectedReaderWidthPx,
+  ]);
 
   // Cmd/Ctrl+Shift+F cycles focus mode; Esc returns to off.
   // Suppress when typing in form fields or contenteditable surfaces.
@@ -4628,8 +4714,6 @@ export default function MediaPaneBody() {
       })),
   ];
 
-  const showDesktopSecondaryRail =
-    !isMobileViewport && (showHighlightsPane || readerAssistantState !== null);
   const showMobileHighlightsGutter = isMobileViewport && showHighlightsPane;
   const readerFrameClassName = showMobileHighlightsGutter
     ? styles.readerWithGutter
@@ -4711,7 +4795,15 @@ export default function MediaPaneBody() {
         data-focus-mode={focusModeForRoot}
         data-chrome-revealed={chromeRevealed ? "true" : undefined}
       >
-        <div className={styles.readerColumn}>
+        {!isMobileViewport && hasProtectedReaderTextWidth ? (
+          <div
+            ref={protectedReaderWidthRef}
+            className={styles.readerProtectedWidthProbe}
+            style={readerSurfaceStyle}
+            aria-hidden="true"
+          />
+        ) : null}
+        <div className={styles.readerColumn} style={readerColumnStyle}>
           {!isPdf && isMismatchDisabled && (
             <div className={styles.mismatchBanner}>
               Highlights disabled due to content mismatch. Try reloading.

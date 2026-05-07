@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_MEDIA_PANE_WIDTH_PX,
+  MAX_STANDARD_PANE_WIDTH_PX,
   createDefaultWorkspaceState,
   createPaneId,
   type WorkspacePaneStateV4,
@@ -106,6 +108,17 @@ describe("workspace reducer", () => {
     });
     expect(next.panes[0]?.href).toBe("/settings");
     expect(next.activePaneId).toBe(initial.panes[0]!.id);
+  });
+
+  it("clamps width when navigating a wide media pane to a standard route", () => {
+    const initial = createDefaultWorkspaceState("/media/1", MAX_MEDIA_PANE_WIDTH_PX);
+    const next = workspaceReducer(initial, {
+      type: "navigate_pane",
+      paneId: initial.panes[0]!.id,
+      href: "/libraries",
+      activate: true,
+    });
+    expect(next.panes[0]?.widthPx).toBe(MAX_STANDARD_PANE_WIDTH_PX);
   });
 
   it("can update a background pane without activating it", () => {
@@ -325,14 +338,24 @@ describe("workspace reducer", () => {
     expect(next.activePaneId).toBe(initial.activePaneId);
   });
 
-  it("resizes a pane and clamps the width", () => {
+  it("resizes a standard pane and clamps the width", () => {
     const initial = createDefaultWorkspaceState("/libraries");
     const next = workspaceReducer(initial, {
       type: "resize_pane",
       paneId: initial.panes[0]!.id,
       widthPx: 99999,
     });
-    expect(next.panes[0]?.widthPx).toBe(1400);
+    expect(next.panes[0]?.widthPx).toBe(MAX_STANDARD_PANE_WIDTH_PX);
+  });
+
+  it("resizes a media pane to the media width cap", () => {
+    const initial = createDefaultWorkspaceState("/media/1");
+    const next = workspaceReducer(initial, {
+      type: "resize_pane",
+      paneId: initial.panes[0]!.id,
+      widthPx: 99999,
+    });
+    expect(next.panes[0]?.widthPx).toBe(MAX_MEDIA_PANE_WIDTH_PX);
   });
 
   it("resizes a minimized pane without restoring it", () => {
@@ -355,7 +378,7 @@ describe("workspace reducer", () => {
     });
 
     const resizedPane = next.panes.find((pane) => pane.id === secondId);
-    expect(resizedPane?.widthPx).toBe(1400);
+    expect(resizedPane?.widthPx).toBe(MAX_STANDARD_PANE_WIDTH_PX);
     expect(resizedPane?.visibility).toBe("minimized");
   });
 });

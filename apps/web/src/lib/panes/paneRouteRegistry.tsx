@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { parseWorkspaceHref } from "@/lib/workspace/schema";
+import { MAX_MEDIA_PANE_WIDTH_PX, parseWorkspaceHref } from "@/lib/workspace/schema";
 import LibrariesPaneBody from "@/app/(authenticated)/libraries/LibrariesPaneBody";
 import LibraryPaneBody from "@/app/(authenticated)/libraries/[id]/LibraryPaneBody";
 import MediaPaneBody from "@/app/(authenticated)/media/[id]/MediaPaneBody";
@@ -138,7 +138,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     bodyMode: "document",
     defaultWidthPx: 1280,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: 1800,
+    maxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Media" }),
   },
   {

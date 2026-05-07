@@ -42,6 +42,24 @@ describe("workspace url codec", () => {
     expect(decoded.state.panes[1]?.visibility).toBe("minimized");
   });
 
+  it("preserves media pane widths above the standard pane cap", () => {
+    const base = createDefaultWorkspaceState("/media/123", 2200);
+    const secondId = createPaneId();
+    const state = {
+      ...base,
+      panes: [...base.panes, makePane(secondId, "/libraries")],
+    };
+
+    const encoded = encodeWorkspaceStateParam(state);
+    expect(encoded.ok).toBe(true);
+    const decoded = decodeWorkspaceStateParam(encoded.value, {
+      fallbackHref: "/libraries",
+      baseOrigin: "http://localhost",
+    });
+    expect(decoded.errorCode).toBeNull();
+    expect(decoded.state.panes[0]?.widthPx).toBe(2200);
+  });
+
   it("does not migrate legacy v3 URL state", () => {
     const params = new URLSearchParams();
     params.set("wsv", "3");

@@ -172,6 +172,22 @@
   margin: 0 auto;
 }
 
+.readerProtectedWidthProbe {
+  position: fixed;
+  top: -10000px;
+  left: -10000px;
+  visibility: hidden;
+  pointer-events: none;
+  box-sizing: content-box;
+  width: var(--reader-column-width-ch, 65ch);
+  height: 0;
+  overflow: hidden;
+  padding-inline: var(--space-4);
+  font-family: var(--reader-font-family, var(--font-mono));
+  font-size: var(--reader-font-size-px, var(--text-md));
+  line-height: var(--reader-line-height, var(--leading-normal));
+}
+
 /* === Reader scope (preserved literal hex per spec §5 rule 14) === */
 .readerThemeLight {
   --reader-bg: #faf8f3;
@@ -722,7 +738,7 @@
 
 .readerColumn {
   flex: 1 1 0%;
-  min-width: 0;
+  min-width: var(--reader-protected-width-px, 0);
   display: flex;
   flex-direction: column;
   overflow: hidden;

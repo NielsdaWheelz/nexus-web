@@ -23,6 +23,7 @@ interface PaneRuntimeContextValue {
   router: PaneScopedRouter;
   openInNewPane: (href: string) => void;
   setPaneTitle: (title: string | null) => void;
+  setPaneMinWidth: (widthPx: number | null) => void;
 }
 
 const PaneRuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
@@ -37,6 +38,7 @@ interface PaneRuntimeProviderProps {
   onReplacePane: (paneId: string, href: string) => void;
   onOpenInNewPane: (href: string) => void;
   onSetPaneTitle?: (paneId: string, title: string | null) => void;
+  onSetPaneMinWidth?: (paneId: string, widthPx: number | null) => void;
   children: React.ReactNode;
 }
 
@@ -64,6 +66,7 @@ export function PaneRuntimeProvider({
   onReplacePane,
   onOpenInNewPane,
   onSetPaneTitle,
+  onSetPaneMinWidth,
   children,
 }: PaneRuntimeProviderProps) {
   const parsed = useMemo(() => parsePaneHref(href), [href]);
@@ -102,6 +105,9 @@ export function PaneRuntimeProvider({
       setPaneTitle: (title: string | null) => {
         onSetPaneTitle?.(paneId, title);
       },
+      setPaneMinWidth: (widthPx: number | null) => {
+        onSetPaneMinWidth?.(paneId, widthPx);
+      },
     }),
     [
       href,
@@ -109,6 +115,7 @@ export function PaneRuntimeProvider({
       onOpenInNewPane,
       onReplacePane,
       onSetPaneTitle,
+      onSetPaneMinWidth,
       paneId,
       parsed.pathname,
       parsed.searchParams,

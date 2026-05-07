@@ -93,7 +93,11 @@ function workspaceReducer(state: WorkspaceStateV4, action: WorkspaceAction): Wor
       let activePaneId = state.activePaneId;
 
       for (const pane of action.panes) {
-        const paneToOpen = { ...pane, visibility: "visible" as const };
+        const paneToOpen = {
+          ...pane,
+          widthPx: clampPaneWidth(pane.widthPx, pane.href),
+          visibility: "visible" as const,
+        };
         const resourceRef = resolvePaneRoute(paneToOpen.href).resourceRef;
         const existingPane = resourceRef
           ? panes.find((item) => resolvePaneRoute(item.href).resourceRef === resourceRef)
@@ -102,7 +106,12 @@ function workspaceReducer(state: WorkspaceStateV4, action: WorkspaceAction): Wor
         if (existingPane) {
           panes = panes.map((item) =>
             item.id === existingPane.id
-              ? { ...item, href: paneToOpen.href, widthPx: paneToOpen.widthPx, visibility: "visible" }
+              ? {
+                  ...item,
+                  href: paneToOpen.href,
+                  widthPx: paneToOpen.widthPx,
+                  visibility: "visible",
+                }
               : item
           );
           if (action.activate) {
@@ -139,6 +148,7 @@ function workspaceReducer(state: WorkspaceStateV4, action: WorkspaceAction): Wor
           ? {
               ...p,
               href: action.href,
+              widthPx: clampPaneWidth(p.widthPx, action.href),
               visibility: action.activate ? "visible" : p.visibility,
             }
           : p
@@ -189,7 +199,9 @@ function workspaceReducer(state: WorkspaceStateV4, action: WorkspaceAction): Wor
 
     case "resize_pane": {
       const panes = state.panes.map((p) =>
-        p.id === action.paneId ? { ...p, widthPx: clampPaneWidth(action.widthPx) } : p
+        p.id === action.paneId
+          ? { ...p, widthPx: clampPaneWidth(action.widthPx, p.href) }
+          : p
       );
       return { ...state, panes };
     }

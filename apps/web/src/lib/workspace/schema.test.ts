@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_MEDIA_PANE_WIDTH_PX,
   MAX_PANES,
+  MAX_STANDARD_PANE_WIDTH_PX,
+  MIN_PANE_WIDTH_PX,
   WORKSPACE_SCHEMA_VERSION,
   createDefaultWorkspaceState,
   normalizeWorkspaceHref,
@@ -62,7 +65,7 @@ describe("workspace schema", () => {
     expect(state.panes.length).toBeLessThanOrEqual(MAX_PANES);
   });
 
-  it("clamps pane widths to valid range", () => {
+  it("clamps pane widths by route", () => {
     const state = sanitizeWorkspaceState(
       {
         schemaVersion: WORKSPACE_SCHEMA_VERSION,
@@ -70,12 +73,14 @@ describe("workspace schema", () => {
         panes: [
           { id: "pane-1", href: "/libraries", widthPx: 10, visibility: "visible" },
           { id: "pane-2", href: "/media/1", widthPx: 99999, visibility: "visible" },
+          { id: "pane-3", href: "/conversations", widthPx: 99999, visibility: "visible" },
         ],
       },
       { fallbackHref: "/libraries" }
     );
-    expect(state.panes[0]?.widthPx).toBe(320);
-    expect(state.panes[1]?.widthPx).toBe(1400);
+    expect(state.panes[0]?.widthPx).toBe(MIN_PANE_WIDTH_PX);
+    expect(state.panes[1]?.widthPx).toBe(MAX_MEDIA_PANE_WIDTH_PX);
+    expect(state.panes[2]?.widthPx).toBe(MAX_STANDARD_PANE_WIDTH_PX);
   });
 
   it("keeps minimized panes when the active pane is visible", () => {

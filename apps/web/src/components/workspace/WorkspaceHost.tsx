@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { Component, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getParentHref,
   resolvePaneRoute,
@@ -179,6 +179,7 @@ const PaneContent = memo(function PaneContent({
   navigatePane,
   openPane,
   publishPaneTitle,
+  publishPaneMinWidth,
 }: {
   paneId: string;
   href: string;
@@ -189,6 +190,7 @@ const PaneContent = memo(function PaneContent({
   ) => void;
   openPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
   publishPaneTitle: (paneId: string, title: string | null) => void;
+  publishPaneMinWidth: (paneId: string, widthPx: number | null) => void;
 }) {
   const handleReplacePane = useCallback(
     (pid: string, h: string) => navigatePane(pid, h, { replace: true }),
@@ -220,6 +222,7 @@ const PaneContent = memo(function PaneContent({
         onReplacePane={handleReplacePane}
         onOpenInNewPane={handleOpenInNewPane}
         onSetPaneTitle={handleSetPaneTitle}
+        onSetPaneMinWidth={publishPaneMinWidth}
       >
         <PaneRouteBoundary>
           <PaneRouteErrorBoundary resetKey={href}>
@@ -245,13 +248,22 @@ function buildShellPane(input: {
   ) => void;
   onOpenPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
   onPublishPaneTitle: (paneId: string, title: string | null) => void;
+  onPublishPaneMinWidth: (paneId: string, widthPx: number | null) => void;
   isActive: boolean;
+  runtimeMinWidthPx: number | null;
 }): WorkspaceShellPane {
   const { chrome, route, title } = input.descriptor;
   const parentHref = getParentHref(route);
   const onBack = parentHref
     ? () => input.onNavigatePane(input.pane.id, parentHref)
     : () => window.history.back();
+
+  const maxWidthPx = route.definition?.maxWidthPx ?? MAX_STANDARD_PANE_WIDTH_PX;
+  const routeMinWidthPx = route.definition?.minWidthPx ?? MIN_PANE_WIDTH_PX;
+  const minWidthPx = Math.min(
+    maxWidthPx,
+    Math.max(routeMinWidthPx, input.runtimeMinWidthPx ?? routeMinWidthPx)
+  );
 
   return {
     paneId: input.pane.id,
@@ -263,8 +275,8 @@ function buildShellPane(input: {
     onBack,
     bodyMode: route.definition?.bodyMode ?? "standard",
     widthPx: input.pane.widthPx,
-    minWidthPx: route.definition?.minWidthPx ?? MIN_PANE_WIDTH_PX,
-    maxWidthPx: route.definition?.maxWidthPx ?? MAX_STANDARD_PANE_WIDTH_PX,
+    minWidthPx,
+    maxWidthPx,
     isActive: input.isActive,
     visibility: input.pane.visibility,
     content: (
@@ -274,6 +286,7 @@ function buildShellPane(input: {
         navigatePane={input.onNavigatePane}
         openPane={input.onOpenPane}
         publishPaneTitle={input.onPublishPaneTitle}
+        publishPaneMinWidth={input.onPublishPaneMinWidth}
       />
     ),
   };
@@ -298,6 +311,9 @@ export default function WorkspaceHost() {
     publishPaneTitle,
   } = useWorkspaceStore();
   const titleTelemetryByPaneIdRef = useRef<Map<string, string>>(new Map());
+  const [runtimeMinWidthByPaneId, setRuntimeMinWidthByPaneId] = useState<Map<string, number>>(
+    () => new Map()
+  );
 
   // --- Mobile / focus management (inlined from WorkspaceShell) ---
   const isMobile = useIsMobileViewport();
@@ -311,6 +327,27 @@ export default function WorkspaceHost() {
       })),
     [runtimeTitleByPaneId, state.panes]
   );
+
+  const publishPaneMinWidth = useCallback((paneId: string, widthPx: number | null) => {
+    setRuntimeMinWidthByPaneId((current) => {
+      if (widthPx === null || !Number.isFinite(widthPx) || widthPx <= 0) {
+        if (!current.has(paneId)) {
+          return current;
+        }
+        const next = new Map(current);
+        next.delete(paneId);
+        return next;
+      }
+
+      const roundedWidthPx = Math.ceil(widthPx);
+      if (current.get(paneId) === roundedWidthPx) {
+        return current;
+      }
+      const next = new Map(current);
+      next.set(paneId, roundedWidthPx);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     const nextTelemetryByPaneId = new Map<string, string>();
@@ -346,7 +383,9 @@ export default function WorkspaceHost() {
           onNavigatePane: navigatePane,
           onOpenPane: openPane,
           onPublishPaneTitle: publishPaneTitle,
+          onPublishPaneMinWidth: publishPaneMinWidth,
           isActive: pane.id === state.activePaneId,
+          runtimeMinWidthPx: runtimeMinWidthByPaneId.get(pane.id) ?? null,
         })
       ),
     [
@@ -355,8 +394,21 @@ export default function WorkspaceHost() {
       navigatePane,
       openPane,
       publishPaneTitle,
+      publishPaneMinWidth,
+      runtimeMinWidthByPaneId,
     ]
   );
+
+  useEffect(() => {
+    if (isMobile) {
+      return;
+    }
+    for (const pane of panes) {
+      if (pane.visibility === "visible" && pane.widthPx < pane.minWidthPx) {
+        resizePane(pane.paneId, pane.minWidthPx);
+      }
+    }
+  }, [isMobile, panes, resizePane]);
 
   const visiblePaneCount = state.panes.filter((pane) => pane.visibility === "visible").length;
   const stripItems = useMemo(

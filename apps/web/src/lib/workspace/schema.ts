@@ -8,6 +8,7 @@ export const WORKSPACE_DEFAULT_FALLBACK_HREF = "/libraries";
 export const MAX_PANES = 12;
 export const MIN_PANE_WIDTH_PX = 320;
 export const MAX_STANDARD_PANE_WIDTH_PX = 1400;
+export const MAX_MEDIA_PANE_WIDTH_PX = 2400;
 const MAX_PANE_TITLE_LENGTH = 120;
 
 export type WorkspacePaneVisibility = "visible" | "minimized";
@@ -94,11 +95,15 @@ export function normalizePaneTitle(raw: string | null | undefined): string | nul
   return normalized.slice(0, MAX_PANE_TITLE_LENGTH).trim();
 }
 
-export function clampPaneWidth(value: number): number {
+export function clampPaneWidth(value: number, href?: string): number {
   if (!Number.isFinite(value)) {
     return MIN_PANE_WIDTH_PX;
   }
-  return Math.min(MAX_STANDARD_PANE_WIDTH_PX, Math.max(MIN_PANE_WIDTH_PX, Math.round(value)));
+  const parsedHref = href ? parseWorkspaceHref(href) : null;
+  const maxWidthPx = parsedHref?.pathname.startsWith("/media/")
+    ? MAX_MEDIA_PANE_WIDTH_PX
+    : MAX_STANDARD_PANE_WIDTH_PX;
+  return Math.min(maxWidthPx, Math.max(MIN_PANE_WIDTH_PX, Math.round(value)));
 }
 
 export function createDefaultWorkspaceState(
@@ -114,7 +119,7 @@ export function createDefaultWorkspaceState(
       {
         id,
         href,
-        widthPx: widthPx != null ? clampPaneWidth(widthPx) : 480,
+        widthPx: widthPx != null ? clampPaneWidth(widthPx, href) : 480,
         visibility: "visible",
       },
     ],
@@ -144,7 +149,7 @@ function sanitizePane(
   seenIds.add(id);
 
   const widthPx =
-    typeof value.widthPx === "number" ? clampPaneWidth(value.widthPx) : 480;
+    typeof value.widthPx === "number" ? clampPaneWidth(value.widthPx, href) : 480;
 
   return { id, href, widthPx, visibility };
 }
