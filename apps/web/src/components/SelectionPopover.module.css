@@ -48,13 +48,13 @@
 }
 
 .colorPicker {
-  display: flex;
-  gap: var(--space-1);
-  justify-content: center;
+  --highlight-color-picker-gap: var(--space-1);
+  --highlight-color-picker-button-size: var(--size-xs);
 }
 
 .mobilePopover .colorPicker {
-  gap: var(--space-2);
+  --highlight-color-picker-gap: var(--space-2);
+  --highlight-color-picker-button-size: var(--size-sm);
 }
 
 .askButton {
@@ -84,53 +84,4 @@
 .askButton:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-}
-
-.colorButton {
-  width: var(--size-xs);
-  height: var(--size-xs);
-  border-radius: var(--radius-full);
-  border: 2px solid transparent;
-  cursor: pointer;
-  transition: transform var(--duration-fast) var(--ease-glide), border-color var(--duration-fast) var(--ease-glide);
-}
-
-.mobilePopover .colorButton {
-  width: var(--size-sm);
-  height: var(--size-sm);
-}
-
-.colorButton:hover:not(:disabled) {
-  transform: scale(1.1);
-}
-
-.colorButton.selected {
-  border-color: var(--ink);
-  outline: 2px solid var(--surface-2);
-}
-
-.colorButton:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Color-specific backgrounds */
-.color-yellow {
-  background: var(--highlight-yellow);
-}
-
-.color-green {
-  background: var(--highlight-green);
-}
-
-.color-blue {
-  background: var(--highlight-blue);
-}
-
-.color-pink {
-  background: var(--highlight-pink);
-}
-
-.color-purple {
-  background: var(--highlight-purple);
 }

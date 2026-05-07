@@ -320,7 +320,11 @@ export function applyFocusClass(
   // Add focus class to elements containing the focused highlight
   // Using ~= selector for O(1) space-delimited token matching (PR-10)
   if (highlightId) {
-    const selector = `[data-active-highlight-ids~="${highlightId}"]`;
+    const escapedId =
+      typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? CSS.escape(highlightId)
+        : highlightId.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const selector = `[data-active-highlight-ids~="${escapedId}"]`;
     const elements = container.querySelectorAll(selector);
     elements.forEach((el) => el.classList.add(focusClass));
   }

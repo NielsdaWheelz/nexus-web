@@ -11,9 +11,9 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MessageSquare } from "lucide-react";
-import { COLOR_LABELS } from "@/lib/highlights/colors";
-import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights/segmenter";
+import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
 import Button from "@/components/ui/Button";
 import styles from "./SelectionPopover.module.css";
 
@@ -311,24 +311,12 @@ export default function SelectionPopover({
       data-mobile={isMobileViewport ? "true" : "false"}
       onPointerDown={handlePopoverPointerDown}
     >
-      <div className={styles.colorPicker}>
-        {HIGHLIGHT_COLORS.map((color) => (
-          // Highlight color swatch — the entire visual is the bg color and a thin
-          // selected border. Migrating to Button primitive would lose the bespoke
-          // swatch geometry; documented exception per Foundation 1A §8 acceptance.
-          <button
-            key={color}
-            type="button"
-            className={`${styles.colorButton} ${styles[`color-${color}`]} ${
-              selectedColor === color ? styles.selected : ""
-            }`}
-            onClick={() => handleColorSelect(color)}
-            aria-label={`${COLOR_LABELS[color]}${selectedColor === color ? " (selected)" : ""}`}
-            aria-pressed={selectedColor === color}
-            disabled={isCreating}
-          />
-        ))}
-      </div>
+      <HighlightColorPicker
+        selectedColor={selectedColor}
+        onSelectColor={handleColorSelect}
+        disabled={isCreating}
+        className={styles.colorPicker}
+      />
       {onAsk ? (
         <Button
           variant="secondary"

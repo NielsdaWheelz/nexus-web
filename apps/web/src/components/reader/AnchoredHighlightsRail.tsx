@@ -10,29 +10,23 @@ import {
   type CSSProperties,
   type RefObject,
 } from "react";
-import { MessageSquare, NotebookPen } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 import {
   FeedbackNotice,
   toFeedback,
   useFeedback,
 } from "@/components/feedback/Feedback";
-import HighlightNoteEditor, {
-  highlightNoteBodyHasContent,
-} from "@/components/notes/HighlightNoteEditor";
-import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
+import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
 import Button from "@/components/ui/Button";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
-import { COLOR_LABELS } from "@/lib/highlights/colors";
+import HighlightActionsMenu from "./HighlightActionsMenu";
 import {
   normalizeQuarterTurnRotation,
   projectPdfQuadToViewportRect,
   type PdfPageViewportTransform,
 } from "@/lib/highlights/coordinateTransforms";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
-import {
-  HIGHLIGHT_COLORS,
-  type HighlightColor,
-} from "@/lib/highlights/segmenter";
+import type { HighlightColor } from "@/lib/highlights/segmenter";
 import Pill from "@/components/ui/Pill";
 import styles from "./AnchoredHighlightsRail.module.css";
 
@@ -162,28 +156,25 @@ function readPdfPageViewportTransform(
   };
 }
 
-function linkedNoteHasContent(note: {
-  body_pm_json?: Record<string, unknown>;
-  body_markdown?: string;
-  body_text: string;
-}): boolean {
-  if (note.body_markdown?.trim()) {
-    return true;
-  }
-  return highlightNoteBodyHasContent({
-    bodyText: note.body_text,
-    bodyPmJson: note.body_pm_json ?? { type: "paragraph" },
-  });
-}
-
 function pickVisibleRect(
   rects: Array<{ top: number; bottom: number }>,
   viewportTop: number,
   viewportBottom: number,
 ) {
+  for (const rect of rects) {
+    const center = rect.top + (rect.bottom - rect.top) / 2;
+    if (
+      center >= viewportTop &&
+      center <= viewportBottom &&
+      rect.bottom > viewportTop &&
+      rect.top < viewportBottom
+    ) {
+      return rect;
+    }
+  }
+
   let visibleRect: { top: number; bottom: number } | null = null;
   let visiblePixels = 0;
-
   for (const rect of rects) {
     const pixels =
       Math.min(rect.bottom, viewportBottom) - Math.max(rect.top, viewportTop);
@@ -771,9 +762,23 @@ export default function AnchoredHighlightsRail({
     (highlightId: string) => {
       onFocusHighlight(highlightId);
       const anchor = findHighlightAnchorElement(highlightId);
-      anchor?.scrollIntoView({ behavior: "auto", block: "center" });
+      if (!anchor || !contentRef.current) {
+        return;
+      }
+
+      const scrollParent =
+        scrollParentRef.current ?? findScrollParent(contentRef.current);
+      scrollParentRef.current = scrollParent;
+      const scrollPaddingTop = Number.parseFloat(
+        getComputedStyle(scrollParent).scrollPaddingTop,
+      );
+      const delta =
+        anchor.getBoundingClientRect().top -
+        scrollParent.getBoundingClientRect().top -
+        (Number.isFinite(scrollPaddingTop) ? scrollPaddingTop : 0);
+      scrollParent.scrollTop = Math.max(0, scrollParent.scrollTop + delta);
     },
-    [findHighlightAnchorElement, onFocusHighlight],
+    [contentRef, findHighlightAnchorElement, onFocusHighlight],
   );
 
   const handleRowClick = useCallback(
@@ -882,181 +887,131 @@ export default function AnchoredHighlightsRail({
       const canEditHighlight = highlight.is_owner !== false;
       const linkedNotes = highlight.linked_note_blocks ?? [];
       const notesToRender = linkedNotes.length > 0 ? linkedNotes : [null];
-      const hasNote = linkedNotes.some(linkedNoteHasContent);
-      const linkedConversationCount =
-        highlight.linked_conversations?.length ?? 0;
-      const menuOptions: ActionMenuOption[] = [];
-
-      if (isFocused && canEditHighlight) {
-        menuOptions.push({
-          id: isEditingBounds ? "cancel-edit-bounds" : "edit-bounds",
-          label: isEditingBounds ? "Cancel edit bounds" : "Edit bounds",
-          onSelect: () => {
-            if (isEditingBounds) {
-              onCancelEditBounds();
-              return;
-            }
-            onStartEditBounds();
-          },
-        });
-        for (const color of HIGHLIGHT_COLORS) {
-          menuOptions.push({
-            id: `color-${color}`,
-            label:
-              highlight.color === color
-                ? `Color: ${COLOR_LABELS[color]} (current)`
-                : `Color: ${COLOR_LABELS[color]}`,
-            disabled: changingColor || highlight.color === color,
-            onSelect: () => {
-              void handleColorChange(highlight, color);
-            },
-          });
-        }
-        menuOptions.push({
-          id: "delete-highlight",
-          label: deleting ? "Deleting..." : "Delete highlight",
-          tone: "danger",
-          disabled: deleting,
-          onSelect: () => {
-            void handleDelete(highlight);
-          },
-        });
-      }
 
       return (
         <div
           key={highlight.id}
           ref={setRowRef(highlight.id)}
           data-highlight-id={highlight.id}
-          data-testid={`linked-item-row-${highlight.id}`}
+          data-testid={`anchored-highlight-row-${highlight.id}`}
           className={`${styles.linkedItemRow} ${className} ${
             isFocused ? styles.rowFocused : ""
           }`.trim()}
           style={style}
           onMouseEnter={() => handleRowMouseEnter(highlight.id)}
           onMouseLeave={handleRowMouseLeave}
+          onClick={(event) => {
+            const target = event.target;
+            if (
+              target instanceof Element &&
+              target.closest(
+                'a, button, input, textarea, select, [contenteditable="true"], .ProseMirror',
+              )
+            ) {
+              return;
+            }
+            handleRowClick(highlight.id);
+          }}
         >
           <div className={styles.rowTop}>
-            <Button
-              variant="ghost"
-              className={styles.rowPreviewButton}
+            <button
+              type="button"
+              className={styles.contextButton}
               onClick={() => handleRowClick(highlight.id)}
               aria-pressed={isFocused}
-              aria-expanded={isFocused}
             >
-              <span
-                className={`${styles.colorSwatch} ${styles[`swatch-${highlight.color}`]}`}
-                aria-hidden="true"
-              />
               <HighlightSnippet
+                prefix={highlight.prefix}
                 exact={highlight.exact}
+                suffix={highlight.suffix}
                 color={highlight.color}
-                compact
-                className={styles.previewText}
+                className={styles.contextText}
               />
-              <span className={styles.rowMeta} aria-hidden="true">
-                {hasNote ? (
-                  <span className={styles.metaBadge} title="Has note">
-                    <NotebookPen size={12} />
-                  </span>
-                ) : null}
-                {linkedConversationCount > 0 ? (
-                  <span
-                    className={styles.metaBadge}
-                    title={`${linkedConversationCount} linked chats`}
-                  >
-                    <MessageSquare size={12} />
-                    <span>{linkedConversationCount}</span>
-                  </span>
-                ) : null}
-              </span>
-            </Button>
+            </button>
 
-            {isFocused ? (
-              <div className={styles.rowActions}>
-                {canSendToChat ? (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    iconOnly
-                    className={styles.chatButton}
-                    aria-label="Ask in chat"
-                    onClick={() => onSendToChat(highlight.id)}
-                  >
-                    <MessageSquare size={14} aria-hidden="true" />
-                  </Button>
-                ) : null}
-                {menuOptions.length > 0 ? (
-                  <ActionMenu options={menuOptions} />
-                ) : null}
-              </div>
-            ) : null}
+            <div className={styles.rowActions}>
+              {canSendToChat ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  iconOnly
+                  className={styles.chatButton}
+                  aria-label="Ask in chat"
+                  onClick={() => onSendToChat(highlight.id)}
+                >
+                  <MessageSquare size={14} aria-hidden="true" />
+                </Button>
+              ) : null}
+              {canEditHighlight ? (
+                <HighlightActionsMenu
+                  color={highlight.color}
+                  changingColor={changingColor}
+                  deleting={deleting}
+                  isEditingBounds={isFocused && isEditingBounds}
+                  onStartEditBounds={() => {
+                    onFocusHighlight(highlight.id);
+                    onStartEditBounds();
+                  }}
+                  onCancelEditBounds={onCancelEditBounds}
+                  onColorChange={(color) => {
+                    void handleColorChange(highlight, color);
+                  }}
+                  onDelete={() => {
+                    void handleDelete(highlight);
+                  }}
+                />
+              ) : null}
+            </div>
           </div>
 
-          {isFocused ? (
-            <div className={styles.rowExpanded}>
-              <div className={styles.quoteCard}>
-                <HighlightSnippet
-                  prefix={highlight.prefix}
-                  exact={highlight.exact}
-                  suffix={highlight.suffix}
-                  color={highlight.color}
+          {isFocused && isEditingBounds ? (
+            <p className={styles.editHint}>
+              Select new text in the reader to replace this highlight.
+            </p>
+          ) : null}
+
+          <div className={styles.noteEditorList}>
+            {notesToRender.map((note, index) => (
+              <div
+                key={
+                  note?.note_block_id ?? `new-note-${highlight.id}-${index}`
+                }
+                className={styles.noteEditor}
+              >
+                <HighlightNoteEditor
+                  highlightId={highlight.id}
+                  note={note}
+                  editable={true}
+                  onSave={onNoteSave}
+                  onDelete={onNoteDelete}
+                  onLocalChange={() =>
+                    setNoteLayoutVersion((version) => version + 1)
+                  }
                 />
               </div>
+            ))}
+          </div>
 
-              {isEditingBounds ? (
-                <p className={styles.editHint}>
-                  Select new text in the reader to replace this highlight.
-                </p>
-              ) : null}
-
-              {notesToRender.length > 0 ? (
-                <div className={styles.noteEditorList}>
-                  {notesToRender.map((note, index) => (
-                    <div
-                      key={
-                        note?.note_block_id ??
-                        `new-note-${highlight.id}-${index}`
-                      }
-                      className={styles.noteEditor}
-                    >
-                      <HighlightNoteEditor
-                        highlightId={highlight.id}
-                        note={note}
-                        editable={true}
-                        onSave={onNoteSave}
-                        onDelete={onNoteDelete}
-                        onLocalChange={() =>
-                          setNoteLayoutVersion((version) => version + 1)
-                        }
-                      />
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-
-              {highlight.linked_conversations &&
-              highlight.linked_conversations.length > 0 ? (
-                <div className={styles.conversationList}>
-                  {highlight.linked_conversations.map((conversation) => (
-                    <Button
-                      key={conversation.conversation_id}
-                      variant="secondary"
-                      size="md"
-                      className={styles.conversationButton}
-                      onClick={() =>
-                        onOpenConversation(
-                          conversation.conversation_id,
-                          conversation.title,
-                        )
-                      }
-                      leadingIcon={<MessageSquare size={14} />}
-                    >
-                      <span>{conversation.title}</span>
-                    </Button>
-                  ))}
-                </div>
-              ) : null}
+          {highlight.linked_conversations &&
+          highlight.linked_conversations.length > 0 ? (
+            <div className={styles.conversationList}>
+              {highlight.linked_conversations.map((conversation) => (
+                <Button
+                  key={conversation.conversation_id}
+                  variant="secondary"
+                  size="sm"
+                  className={styles.conversationButton}
+                  onClick={() =>
+                    onOpenConversation(
+                      conversation.conversation_id,
+                      conversation.title,
+                    )
+                  }
+                  leadingIcon={<MessageSquare size={14} />}
+                >
+                  <span>{conversation.title}</span>
+                </Button>
+              ))}
             </div>
           ) : null}
         </div>
@@ -1074,6 +1029,7 @@ export default function AnchoredHighlightsRail({
       handleRowMouseLeave,
       isEditingBounds,
       onCancelEditBounds,
+      onFocusHighlight,
       onNoteDelete,
       onNoteSave,
       onOpenConversation,
@@ -1103,7 +1059,7 @@ export default function AnchoredHighlightsRail({
         {header}
         <div
           className={styles.linkedItemsContainer}
-          data-testid="linked-items-container"
+          data-testid="anchored-highlights-container"
         >
           <div className={styles.emptyFeedbackMessage}>
             <FeedbackNotice
@@ -1123,7 +1079,7 @@ export default function AnchoredHighlightsRail({
         <div
           ref={containerRef}
           className={`${styles.linkedItemsContainer} ${styles.mobileVisibleContainer}`}
-          data-testid="linked-items-container"
+          data-testid="anchored-highlights-container"
         >
           {mobileHighlightsState.aboveCount > 0 ? (
             <Button
@@ -1180,7 +1136,7 @@ export default function AnchoredHighlightsRail({
       <div
         ref={containerRef}
         className={styles.linkedItemsContainer}
-        data-testid="linked-items-container"
+        data-testid="anchored-highlights-container"
       >
         {alignedRows.map((row) => {
           const highlight = highlightMap.get(row.id);

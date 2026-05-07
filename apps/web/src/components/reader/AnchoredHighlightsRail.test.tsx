@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useRef } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -7,10 +7,17 @@ import AnchoredHighlightsRail, {
   type AnchoredHighlightRow,
 } from "./AnchoredHighlightsRail";
 
-function highlight(id: string, exact: string): AnchoredHighlightRow {
+function highlight(
+  id: string,
+  exact: string,
+  prefix: string,
+  suffix: string,
+): AnchoredHighlightRow {
   return {
     id,
     exact,
+    prefix,
+    suffix,
     color: "yellow",
     anchor: {
       start_offset: id === "h1" ? 10 : 400,
@@ -54,8 +61,18 @@ function AnchoredHighlightsRailHarness({
       <FeedbackProvider>
         <AnchoredHighlightsRail
           highlights={[
-            highlight("h1", "Visible quote"),
-            highlight("h2", "Hidden quote"),
+            highlight(
+              "h1",
+              "Visible quote",
+              "Before visible context ",
+              " after visible context.",
+            ),
+            highlight(
+              "h2",
+              "Hidden quote",
+              "Before hidden context ",
+              " after hidden context.",
+            ),
           ]}
           contentRef={contentRef}
           focusedId={focusedId}
@@ -79,21 +96,42 @@ function AnchoredHighlightsRailHarness({
 }
 
 describe("AnchoredHighlightsRail", () => {
-  it("renders viewport-visible highlight rows and omits offscreen rows", async () => {
+  it("renders only viewport-visible highlight rows", async () => {
     render(<AnchoredHighlightsRailHarness />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("linked-item-row-h1")).toBeTruthy();
+      expect(screen.getByTestId("anchored-highlight-row-h1")).toBeTruthy();
     });
-    expect(screen.queryByTestId("linked-item-row-h2")).toBeNull();
+    expect(screen.getByText("Visible quote")).toBeVisible();
+    expect(screen.queryByTestId("anchored-highlight-row-h2")).toBeNull();
+    expect(screen.queryByText("Hidden quote")).toBeNull();
   });
 
-  it("focuses a row when its preview is clicked", async () => {
+  it("shows the final visible row UI without requiring focus first", async () => {
+    render(<AnchoredHighlightsRailHarness />);
+
+    const row = await screen.findByTestId("anchored-highlight-row-h1");
+    expect(within(row).getByText("Before visible context")).toBeVisible();
+    expect(within(row).getByText("Visible quote")).toBeVisible();
+    expect(within(row).getByText("after visible context.")).toBeVisible();
+    expect(
+      within(row).queryByRole("button", { name: "Yellow (selected)" }),
+    ).toBeNull();
+    expect(
+      within(row).getByRole("button", { name: "Ask in chat" }),
+    ).toBeVisible();
+    expect(within(row).getByRole("button", { name: "Actions" })).toBeVisible();
+    expect(
+      within(row).getByRole("textbox", { name: "Highlight note" }),
+    ).toBeVisible();
+  });
+
+  it("focuses the source highlight when the row is clicked", async () => {
     const user = userEvent.setup();
     const onFocusHighlight = vi.fn();
     render(<AnchoredHighlightsRailHarness onFocusHighlight={onFocusHighlight} />);
 
-    await user.click(await screen.findByText("Visible quote"));
+    await user.click(await screen.findByTestId("anchored-highlight-row-h1"));
     expect(onFocusHighlight).toHaveBeenCalledWith("h1");
   });
 });

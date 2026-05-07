@@ -4,229 +4,399 @@
 
 Implemented target.
 
+The codebase contains the hard-cutover pieces:
+
+- `apps/web/src/components/secondaryRail/SecondaryRail.tsx`
+- `apps/web/src/components/reader/ReaderGutter.tsx`
+- `apps/web/src/components/reader/AnchoredHighlightsRail.tsx`
+- `apps/web/src/components/highlights/HighlightColorPicker.tsx`
+- `apps/web/src/components/reader/HighlightActionsMenu.tsx`
+- `MediaPaneBody` composition that mounts the collapsed gutter, expanded
+  contextual highlights rail, and Ask rail mode
+
 ## Role
 
-This document owns the target state for desktop reader-adjacent secondary rails:
-media highlights, media Ask, and chat context. It supersedes the Visual Refactor
-1B slide-over target for desktop reader chat and expanded highlights. Mobile
-continues to use local drawers and sheets.
+This document owns desktop reader-adjacent secondary rails for media panes:
+
+- collapsed highlight gutter
+- expanded contextual highlights rail
+- reader Ask rail mode
+
+It supersedes the desktop highlight slide-over and desktop reader-chat overlay
+targets from `docs/visual-refactor-1b-hard-cutover.md`. Mobile keeps local
+drawers and sheets.
 
 The cutover is hard. The final state keeps no desktop highlights slide-over, no
-desktop reader-chat slide-over, no compatibility branch for the Visual Refactor
-1B overlay shape, no duplicate rail layout primitives, and no fallback path that
-opens reader-adjacent work as an unrelated workspace pane.
+desktop reader-chat slide-over, no all-highlights list in the reader rail, no
+legacy row-disclosure behavior, no feature flag, no fallback branch, and no
+backward-compatible wrapper for removed APIs.
+
+## Implementation State
+
+The current implementation is aligned with this target:
+
+- `SecondaryRail` exists and owns collapsed/expanded rail layout.
+- `ReaderGutter` exists and remains the collapsed right-edge highlight surface.
+- `AnchoredHighlightsRail` exists and measures rendered highlight targets into
+  scroll-root coordinates.
+- `MediaPaneBody` already composes `SecondaryRail`, `ReaderGutter`,
+  `AnchoredHighlightsRail`, and `ReaderAssistantPane`.
+- `HighlightColorPicker` is shared by `SelectionPopover` and highlight row
+  actions.
+- `HighlightActionsMenu` owns edit-bounds, color, and delete row actions.
+- Highlight rows render full context, visible Ask/actions, inline notes, and
+  linked conversations without a disclosure click.
+- Desktop source refs to `HighlightsInspectorOverlay`,
+  `ReaderChatOverlay`, `MediaHighlightsPaneBody`, and `mediaHighlightOrdering`
+  are gone.
 
 ## Goals
 
-- Keep the media reader's highlight surface collapsed by default.
-- Expand the collapsed highlight gutter into a stable desktop right-side
-  secondary rail, not a temporary overlay.
-- Make `Highlights` and `Ask` sibling modes in the same media secondary rail.
-- Render media highlight rows from viewport-visible reader projections, not from
-  an all-highlights list.
-- Share the desktop secondary rail layout primitive between media and chat.
-- Keep mobile behavior drawer- or sheet-based.
-- Preserve the workspace pane runtime for independent resources, while making
-  reader-adjacent work local to the owning pane.
-- Remove the desktop overlay implementation paths in the same cutover.
+- Keep the persistent gutter as the collapsed reader highlight overview.
+- Expand the gutter into a stable desktop secondary rail, not a modal overlay.
+- Make `Highlights` and `Ask` sibling modes in the same media-local rail.
+- Render `Highlights` rows only from viewport-visible reader projections.
+- Align each contextual row to its visible source target while the reader
+  scrolls.
+- Make each row content-first: full context text first, selected span marked.
+- Keep Ask, actions, notes, and linked chats immediately visible without a row
+  expansion click.
+- Reuse one highlight color picker component in selection popovers and highlight
+  action menus.
+- Keep durable highlight storage separate from viewport projection state.
+- Preserve mobile drawer/sheet behavior without adding a persistent mobile rail.
 
 ## Non-Goals
 
+- Do not build an all-highlights notebook or library-wide highlight browser.
+- Do not change durable saved-highlight storage or API semantics.
+- Do not add backend APIs for viewport visibility, DOM rects, row positions, or
+  scroll state.
+- Do not change evidence resolver ownership of citation navigation.
 - Do not redesign the global workspace pane runtime.
-- Do not remove full conversation panes or normal workspace pane opening.
-- Do not build an all-highlights notebook surface.
+- Do not remove normal full conversation panes or explicit full-chat promotion.
 - Do not make mobile use a persistent secondary rail.
-- Do not change durable saved-highlight storage.
-- Do not change chat context, memory, or fork domain semantics.
-- Do not persist viewport projection, rail expansion, row position, or DOM rects.
-- Do not introduce feature flags, query toggles, or environment gates.
+- Do not prefetch every PDF page highlight solely to fill a contextual rail.
+- Do not keep old inspector/list files as compatibility paths.
 
 ## Hard-Cutover Policy
 
 - No feature flags.
-- No legacy desktop reader overlay path.
-- No fallback from media Ask or media Highlights to `requestOpenInAppPane`.
-- No backward-compatible wrapper components around removed overlay APIs.
-- No duplicated old/new test paths.
-- Delete or rewrite tests that assert removed overlay behavior.
-- Update docs that describe superseded desktop overlay behavior.
+- No environment toggles.
+- No query toggles.
+- No old/new component branches.
+- No duplicate tests for removed behavior.
+- No fallback from media Ask or media Highlights to opening a workspace pane.
+- No hidden legacy all-highlights list inside the reader rail.
+- No backward-compatible wrappers around removed overlay APIs.
+- Delete or rewrite tests that assert the removed overlay or row expansion.
+- Update docs that describe desktop reader overlays as the active target.
 
 ## Final State
 
-Desktop media panes have one right-side reader secondary rail.
+Desktop media panes have one reader-local secondary rail.
 
-- Collapsed state: a narrow gutter remains visible at the reader's right edge.
-- Expanded state: the gutter becomes a stable rail that occupies layout space and
-  reflows the reader column.
-- The rail has `Highlights` and `Ask` modes.
-- `Highlights` renders viewport-visible highlight rows aligned to rendered
-  source targets.
-- `Ask` renders the reader assistant in the same rail.
-- Invoking Ask from a selection or saved highlight switches the rail to `Ask`
-  and leaves the document in place.
-- Returning to `Highlights` preserves highlight focus and projection behavior.
-- Closing or minimizing the rail returns to the collapsed gutter.
+- Collapsed: a 36px gutter remains visible at the reader's right edge.
+- Expanded: the rail occupies layout space and reflows the reader column.
+- Modes: `Highlights` and `Ask`.
+- `Highlights`: contextual, viewport-visible, anchored rows.
+- `Ask`: `ReaderAssistantPane` hosted in the same rail.
+- Closing/collapsing the rail returns to the gutter.
 
-Desktop conversation panes use the same secondary rail primitive.
+Mobile media panes do not use the persistent rail.
 
-- The chat primary column remains the conversation transcript and composer.
-- The right rail hosts chat `Context` and `Forks` domain content.
-- The chat rail may be expanded by default on desktop.
-- Mobile chat context continues to use `ChatContextDrawer`.
+- The gutter remains the compact highlight affordance where currently supported.
+- Expanded highlights use a local drawer.
+- Ask uses the existing mobile reader assistant sheet.
 
-Mobile media panes keep the existing local sheet/drawer pattern.
+The contextual highlights rail is not an all-highlights surface.
 
-- Media Ask uses the mobile reader assistant sheet.
-- Expanded highlights use a mobile drawer or sheet.
-- No mobile viewport attempts to preserve a persistent side rail.
+- Offscreen highlights remain durable data but do not render.
+- Active EPUB section, active fragment, active transcript segment, and active PDF
+  page are loading scopes only. They are not visibility scopes.
+- Missing or unprojectable targets fail closed and render no row.
 
 ## Target Behavior
 
-### Desktop Media Collapsed
+### Desktop Collapsed
 
-1. Opening readable media shows the reader plus a narrow right gutter.
-2. The gutter contains highlight ticks and an expand affordance.
+1. Opening readable media shows the reader plus a collapsed right gutter.
+2. The gutter shows one tick or cluster per known highlight.
 3. Clicking a tick scrolls and pulses the source highlight.
-4. Clicking the expand affordance opens the secondary rail in `Highlights` mode.
-5. The reader column reflows to make room for the rail.
+4. Clicking the gutter expand affordance opens the rail in `Highlights` mode.
+5. The reader column reflows; no backdrop appears and the reader remains
+   scrollable.
 
-### Desktop Media Highlights
+### Desktop Highlights Mode
 
-1. The expanded rail shows `Highlights` as the active mode.
-2. Rows render only for highlights with at least one rendered target rect
-   intersecting the reader viewport.
-3. Rows align vertically to their visible source target.
-4. Scrolling the reader updates visible rows and row alignment.
-5. Clicking a row focuses the highlight and scrolls the source target into view.
-6. Clicking a source highlight focuses the row when that row is visible.
-7. Offscreen highlights remain durable data but do not render in the contextual
-   rail.
+1. Rows appear only when at least one source target rect intersects the reader
+   viewport.
+2. Rows align vertically with the selected visible source target rect.
+3. Scrolling the reader updates row visibility and row alignment in a single
+   animation-frame pass.
+4. Reflow from reader typography, image load, EPUB section changes, PDF render,
+   PDF zoom, note edits, rail resize, and highlight mutation invalidates
+   projections.
+5. Rows never clamp offscreen highlights into view.
+6. Collisions are solved by row placement, not by changing projection truth.
+7. Overflow inside the visible rail is represented by an in-view overflow
+   affordance.
 
-### Desktop Media Ask
+### Row Presentation
+
+Each row is always expanded in the old sense. There is no disclosure state.
+
+The row shows, in order:
+
+1. A full context snippet: prefix, exact selection, suffix.
+2. The exact selection marked with the highlight color.
+3. Visible row actions: Ask and menu when allowed.
+4. Inline note editor.
+5. Linked conversations when present.
+
+Rules:
+
+- Rows are left-aligned.
+- No separate highlight color swatch renders in the row.
+- No compact exact-only preview renders in the row.
+- No note/chat metadata badges replace visible content.
+- The note editor has no visible textbox outline in its resting state.
+- Note text uses compact body sizing and cannot be visually louder than the
+  selected quote.
+- A row content click scrolls the reader to the highlight target.
+- Ask, menu, color, delete, edit-bounds, note editing, and linked conversation
+  controls stop their own clicks and do not trigger row navigation.
+
+### Source Highlight Clicks
+
+Clicking highlighted text in the reader is not a disclosure action.
+
+- It may focus the highlight for visual sync and overlap cycling.
+- It may emphasize the visible row if the rail is open and the row exists.
+- It does not open the rail.
+- It does not reveal hidden controls because no controls are hidden.
+- It does not switch to Ask.
+
+### Ask Mode
 
 1. Selecting text and invoking Ask expands the rail if needed.
 2. The rail switches to `Ask`.
-3. The selected quote appears as pending context.
+3. The selected quote is attached as pending reader-selection context.
 4. The composer is focused without changing the active workspace pane.
-5. Asking from a saved highlight row attaches that highlight as context and
-   switches the same rail to `Ask`.
+5. Asking from a saved highlight row attaches that highlight as object-ref
+   context and switches the same rail to `Ask`.
 6. Full chat opens only through explicit promotion after a conversation exists.
-
-### Desktop Chat
-
-1. Conversation panes render their right-side context/forks UI inside the shared
-   secondary rail primitive.
-2. The rail uses the same width, border, surface, collapsed gutter contract, and
-   expansion API as media.
-3. Chat domain content remains owned by `ConversationContextPane`.
-4. Chat context actions and fork switching keep their existing behavior.
 
 ### Mobile
 
-1. Media highlights and Ask do not render as persistent side rails.
-2. Chat context does not render as a persistent side rail.
-3. Existing mobile sheet/drawer behavior remains the only mobile path.
+1. Mobile never renders a persistent secondary rail.
+2. Expanded highlights use the local drawer.
+3. Ask uses the local sheet.
+4. The mobile drawer still renders only visible contextual rows and above/below
+   navigation metadata.
 
 ## Architecture
 
-### Shared Rail Primitive
+### `SecondaryRail`
 
-Create a small layout primitive for desktop secondary rails. It owns layout
-behavior only:
+`SecondaryRail` owns layout only:
 
-- expanded and collapsed widths
-- gutter rendering slot
-- panel rendering slot
-- mode/tab rendering slot
-- border, surface, overflow, and sizing
-- expand, collapse, and mode callbacks
-- desktop-only layout contract
+- collapsed width
+- expanded width
+- collapsed slot
+- header and tab slot
+- body slot
+- expand/collapse callback
+- overflow and border styling
 
-It does not know about highlights, chat context, forks, memory, reader
-assistant state, or workspace routes.
+It does not know about highlights, chat, reader contexts, PDF, EPUB, notes,
+workspace routing, or conversations.
 
-### Media Rail
+### `MediaPaneBody`
 
-`MediaPaneBody` owns media rail state and composes the shared rail directly:
+`MediaPaneBody` owns route-local media rail state:
 
-- rail expanded/collapsed
-- current mode: `highlights` or `ask`
-- reader assistant session
-- pending reader-selection and saved-highlight contexts
-- promotion to full conversation pane
-- `ReaderGutter` in collapsed mode
-- contextual projected highlight rows in `Highlights` mode
-- `ReaderAssistantPane` in `Ask` mode
+- `secondaryRailMode`
+- `isSecondaryRailExpanded`
+- reader assistant state
+- pending reader-selection contexts
+- saved-highlight Ask contexts
+- full-chat promotion
+- highlight DTO shaping for `AnchoredHighlightsRail`
+- collapsed gutter composition
+- mobile drawer/sheet composition
 
-### Highlight Projection
+It does not measure DOM rects or solve row placement.
 
-The contextual highlight pane is projection-driven.
+### `AnchoredHighlightsRail`
 
-- Text readers measure rendered highlight spans selected by
-  `data-active-highlight-ids`.
-- PDF readers use page geometry and viewport transforms.
-- Transcript readers use rendered transcript highlight targets or time-derived
-  positions only where rendered text geometry is unavailable.
-- Projection state is frontend-only and recalculated on scroll, resize, reader
-  reflow, PDF render, PDF zoom, section change, and highlight refresh.
-- Durable anchors and viewport projections remain distinct types.
+`AnchoredHighlightsRail` owns highlight projection and contextual row layout:
 
-### Chat Rail
+- text target discovery from `data-active-highlight-ids`
+- PDF target discovery from page geometry and viewport transforms
+- scroll-root discovery
+- visible target rect selection
+- viewport filtering
+- missing-target diagnostics
+- row collision layout
+- overflow affordance
+- row hover source outline
+- row navigation to source target
 
-Conversation panes use the same rail primitive but keep domain content unchanged.
+Projection state is frontend-only and ephemeral.
 
-- `ConversationPaneBody` renders `ConversationContextPane` inside the rail.
-- `ConversationNewPaneBody` renders pending context inside the rail.
-- `ChatContextDrawer` remains mobile-only.
+### Shared Color Picker
+
+Create one reusable highlight color picker component for all highlight color
+selection UI.
+
+The picker owns:
+
+- color order from `HIGHLIGHT_COLORS`
+- accessible labels from `COLOR_LABELS`
+- selected/current color state
+- disabled colors
+- swatch geometry
+- keyboard behavior
+
+`SelectionPopover` and the highlight action menu both use this component. Neither
+component maps `HIGHLIGHT_COLORS` into ad hoc swatch or text-menu markup.
+
+### Highlight Action Menu
+
+The row menu is a highlight-specific action popover, not a list of color text
+items inside generic `ActionMenu`.
+
+It owns:
+
+- edit bounds / cancel edit bounds
+- shared color picker
+- delete
+- disabled and pending state
+
+The generic `ActionMenu` remains available for simple text action lists, but it
+does not own highlight color selection.
+
+## Projection Details
+
+### Text Readers
+
+- Measure rendered highlight segments with
+  `[data-active-highlight-ids~="{escapedHighlightId}"]`.
+- Use `CSS.escape` for highlight ids in all selectors.
+- Derive rects from `getClientRects()` and ignore zero-area rects.
+- Keep `data-highlight-anchor` for scroll-to-start diagnostics and navigation,
+  not as the only projection target.
+- A long highlight whose start anchor is offscreen appears when a rendered
+  highlighted segment is visible.
+
+### PDF Readers
+
+- Use page-local quads plus the same viewport transform metadata used for PDF
+  highlight overlay rendering.
+- Do not infer row position from quote text.
+- Do not render a row when page geometry or transform metadata is missing.
+- Current active-page loading remains a loading concern, not a visibility rule.
+
+### Visible Rect Selection
+
+When a highlight has multiple visible rects, choose the alignment rect in this
+order:
+
+1. First rect whose vertical center is inside the viewport.
+2. Rect with the largest visible intersection area.
+3. First intersecting rect in document order.
+
+### Row Collision
+
+Desktop row placement is deterministic:
+
+1. Sort by target top, stable document order, created timestamp, then id.
+2. Place each row at its desired top.
+3. Push overlapping rows downward by the minimum row gap.
+4. Compact only inside the visible rail bounds.
+5. Represent rows that cannot fit with an overflow affordance.
+
+Collision displacement is presentation only. It never changes source focus,
+projection state, durable order, or row identity.
 
 ## Rules
 
-- Desktop expanded reader-adjacent work is a stable rail, not an overlay.
-- Mobile reader-adjacent work is a drawer or sheet, not a persistent rail.
-- A collapsed media rail still exposes the highlight gutter.
-- A contextual media highlight row exists only when its source target is visible.
-- Do not render offscreen highlights by clamping rows into the rail.
-- Do not persist projection rects, row positions, scroll offsets, or rail pixel
-  state.
-- Do not use active page, active fragment, or active EPUB section as a proxy for
-  viewport visibility.
-- Do not open a workspace pane as the default path for media Ask or media
-  Highlights.
-- Keep rail layout behavior in the shared primitive.
-- Keep domain behavior in media/chat-specific components.
+- Keep durable anchors and viewport projections as separate types.
+- Never persist projection state.
+- Never use active fragment, active EPUB section, active transcript segment, or
+  active PDF page as a proxy for viewport visibility.
+- Never render an offscreen contextual row.
+- Never clamp an offscreen row to the top or bottom of the rail.
+- Never invent PDF row positions from quote text.
+- Use one scroll root per projection pass.
+- Use one `requestAnimationFrame` per scroll frame.
+- Batch layout reads before layout writes.
+- Use `ResizeObserver`; unsupported primitives are unsupported-reader defects,
+  not silent fallbacks.
+- Use shared reader scroll-padding-aware navigation for row-to-source jumps.
+- Keep row controls visible without row focus.
+- Keep row content left-aligned.
+- Keep row color visible only through the marked exact quote and color picker.
+- Do not render a separate row swatch.
+- Do not render a compact exact-only preview.
+- Do not keep `rowExpanded`, `quoteCard`, `previewText`, or `colorSwatch` as
+  final row concepts.
 
 ## Files
 
 ### Add
 
-- `apps/web/src/components/secondaryRail/SecondaryRail.tsx`
-- `apps/web/src/components/secondaryRail/SecondaryRail.module.css`
-- `apps/web/src/components/reader/AnchoredHighlightsRail.tsx`
-- `apps/web/src/components/reader/AnchoredHighlightsRail.module.css`
+- `apps/web/src/components/highlights/HighlightColorPicker.tsx`
+- `apps/web/src/components/highlights/HighlightColorPicker.module.css`
+- `apps/web/src/components/highlights/HighlightColorPicker.test.tsx`
+- `apps/web/src/components/reader/HighlightActionsMenu.tsx`
+- `apps/web/src/components/reader/HighlightActionsMenu.module.css`
+- `apps/web/src/components/reader/HighlightActionsMenu.test.tsx`
+
+Optional only if row rendering becomes too large for `AnchoredHighlightsRail`:
+
+- `apps/web/src/components/reader/AnchoredHighlightRowView.tsx`
+- `apps/web/src/components/reader/AnchoredHighlightRowView.module.css`
 
 ### Change
 
+- `apps/web/src/components/reader/AnchoredHighlightsRail.tsx`
+  - remove old preview/disclosure row model
+  - render full context and visible controls for every visible row
+  - use `HighlightActionsMenu`
+  - use improved visible-rect selection
+  - use padding-aware source navigation
+  - keep projection and collision ownership
+- `apps/web/src/components/reader/AnchoredHighlightsRail.module.css`
+  - delete old row preview, swatch, quote-card, and expanded-state styles
+  - add compact content-first row styles
+  - add minimal inline note styles
+- `apps/web/src/components/reader/AnchoredHighlightsRail.test.tsx`
+  - cover visible rows, offscreen omission, full context, visible actions,
+    visible note editor, row navigation, overflow, and color menu wiring
+- `apps/web/src/components/SelectionPopover.tsx`
+  - replace local color swatch loop with `HighlightColorPicker`
+- `apps/web/src/components/SelectionPopover.module.css`
+  - remove duplicated color picker styles
+- `apps/web/src/__tests__/components/SelectionPopover.test.tsx`
+  - assert shared picker behavior remains intact
+- `apps/web/src/lib/highlights/useHighlightInteraction.ts`
+  - use escaped selectors
+  - keep source click semantics focused on source/row sync, not disclosure
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
-  - replace desktop `HighlightsInspectorOverlay` and `ReaderChatOverlay` with
-    direct `SecondaryRail` composition
-  - keep mobile `QuoteChatSheet`
-  - route selection Ask and saved-highlight Ask into the rail
+  - keep `SecondaryRail` composition
+  - keep Ask and Highlights as local rail modes
+  - route saved-highlight Ask through the rail
+  - keep mobile drawer/sheet paths only for mobile
 - `apps/web/src/app/(authenticated)/media/[id]/page.module.css`
-  - replace overlay host assumptions with split reader + rail layout
-  - keep narrow gutter sizing in the collapsed state
-- `apps/web/src/components/reader/ReaderGutter.tsx`
-  - keep as collapsed media gutter
-  - keep tick jump and pulse behavior
-- `apps/web/src/app/(authenticated)/conversations/[id]/ConversationPaneBody.tsx`
-  - render `ConversationContextPane` through the shared rail primitive
-- `apps/web/src/app/(authenticated)/conversations/new/ConversationNewPaneBody.tsx`
-  - render pending context through the shared rail primitive
-- `apps/web/src/app/(authenticated)/conversations/page.module.css`
-  - remove bespoke desktop context-column rail layout after migration
+  - keep split reader plus rail layout
+  - remove any styles that exist only for deleted overlays or old row states
 - `docs/visual-refactor-1b-hard-cutover.md`
-  - mark desktop reader overlay requirements as superseded by this document
+  - mark desktop highlights inspector and reader-chat overlay sections as
+    superseded by this document
 
-### Delete
+### Delete Or Verify Absent
 
 - `apps/web/src/components/reader/HighlightsInspectorOverlay.tsx`
 - `apps/web/src/components/reader/HighlightsInspectorOverlay.module.css`
@@ -235,45 +405,94 @@ Conversation panes use the same rail primitive but keep domain content unchanged
 - `apps/web/src/app/(authenticated)/media/[id]/MediaHighlightsPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaHighlightsPaneBody.module.css`
 - `apps/web/src/app/(authenticated)/media/[id]/mediaHighlightOrdering.ts`
+- tests and screenshots that assert the deleted overlay or row expansion behavior
+
+## Implementation Plan
+
+### Phase 1: Lock The Rail Contract
+
+- Keep `SecondaryRail` as the only desktop reader rail primitive.
+- Verify no desktop overlay imports or files remain.
+- Rename tests and test ids away from `linked-item` terminology where practical.
+- Update docs that still describe desktop slide-over behavior.
+
+### Phase 2: Shared Color Picker
+
+- Extract `HighlightColorPicker` from `SelectionPopover` behavior.
+- Replace `SelectionPopover` local swatches with the shared picker.
+- Add `HighlightActionsMenu` and use the same picker for highlight color changes.
+- Remove text color menu items from the row action path.
+
+### Phase 3: Row Presentation Cutover
+
+- Rewrite row markup to content-first, always-visible controls.
+- Remove color swatch, compact exact preview, badges-as-proxy, quote card, and
+  expanded-only note/actions.
+- Make the note editor inline, compact, and borderless in the row.
+- Keep linked conversations visible when present.
+
+### Phase 4: Projection And Navigation Tightening
+
+- Implement the final visible-rect selection order.
+- Ensure all highlight id selectors are escaped.
+- Recalculate on scroll, resize, image load/error, note local edits, highlight
+  mutation, reader profile changes, PDF render, PDF zoom, and EPUB section
+  change.
+- Replace raw `scrollIntoView({ block: "center" })` row navigation with the
+  reader scroll-root and scroll-padding-aware path.
+
+### Phase 5: Tests And Cleanup
+
+- Rewrite `AnchoredHighlightsRail` tests around the final row contract.
+- Add picker and action-menu tests.
+- Update selection popover tests for shared picker reuse.
+- Add browser tests for scroll-driven row visibility/alignment where jsdom is
+  insufficient.
+- Delete stale overlay/list tests and snapshots.
+- Run typecheck, lint, unit tests, and browser tests.
 
 ## Key Decisions
 
-- The shared primitive is a layout shell, not a domain component.
-- Media and chat use the same rail shell but keep separate content ownership.
-- Media `Highlights` is contextual and viewport-visible, not an all-highlights
-  list.
-- The collapsed media gutter remains first-class because it is useful while
-  reading.
-- Mobile remains modal because narrow screens cannot preserve a useful side rail.
-- Ask and Highlights share one media rail so source context, highlight focus, and
-  assistant state stay local to the reader.
+- The gutter stays. It is the collapsed highlight overview, not legacy UI.
+- The expanded desktop surface is a stable rail, not a modal slide-over.
+- `Highlights` is contextual. It shows highlights in view, not all highlights in
+  the document.
+- `Ask` shares the same rail so reader context remains local.
+- Row focus remains useful for visual sync and edit-bounds ownership, but focus
+  does not reveal controls.
+- Color selection is a shared highlight component, not menu text duplicated in
+  each caller.
+- Mobile remains drawer/sheet based because a persistent rail is not useful on
+  narrow screens.
 
 ## Acceptance Criteria
 
-- Desktop media opens with a collapsed right highlight gutter by default.
-- Expanding highlights opens a stable right-side rail and reflows the reader.
+- Desktop readable media opens with a collapsed right highlight gutter by default.
+- Expanding the gutter opens a stable right-side rail and reflows the reader.
 - No desktop highlights slide-over appears.
 - No desktop reader-chat slide-over appears.
-- Selecting text and invoking Ask switches the media rail to `Ask`.
-- Asking from a saved highlight row switches the same rail to `Ask`.
-- `Highlights` rows are driven by viewport-visible source targets.
+- `Highlights` rows render only for viewport-visible source targets.
+- Rows stay aligned to visible source targets while scrolling.
 - Offscreen highlights do not render as contextual rows.
-- Desktop chat context/forks render through the shared rail primitive.
+- Every visible row is left-aligned.
+- Every visible row shows full context with the exact selection marked.
+- No visible row shows a separate color swatch.
+- No visible row shows an exact-only compact preview.
+- Ask button is visible immediately on every row where quoting is available.
+- Menu button is visible immediately on every row where actions are available.
+- Note editor is visible immediately on every row.
+- The note editor is compact and borderless in resting state.
+- Color changing in the row menu uses the same picker component as the selection
+  popover.
+- Clicking row content scrolls to the source highlight.
+- Clicking source highlighted text does not disclose row controls or switch to
+  Ask.
+- Selecting text and invoking Ask switches the local rail to `Ask`.
+- Asking from a saved highlight row switches the local rail to `Ask`.
 - Mobile media Ask still uses a sheet.
-- Mobile chat context still uses a drawer.
-- Removed overlay tests are deleted or rewritten against the rail behavior.
-- Docs no longer describe desktop reader overlays as the active target.
-
-## Test Strategy
-
-- Component tests cover shared rail expanded/collapsed behavior.
-- Component tests cover media rail mode switching from gutter, highlight row Ask,
-  and selection Ask.
-- Browser/component tests cover highlight projection visibility and scroll
-  updates where practical.
-- Existing chat context tests continue to assert context/fork behavior after the
-  layout wrapper changes.
-- E2E reader tests assert that desktop rail expansion changes layout width rather
-  than overlaying the reader.
-- Mobile E2E or component coverage asserts drawer/sheet behavior remains mobile
-  only.
+- Mobile highlights still use a local drawer.
+- Removed overlay/list files and tests are deleted or verified absent.
+- `cd apps/web && bun run typecheck` passes.
+- `cd apps/web && bun run lint` passes.
+- `cd apps/web && bun run test:unit` passes.
+- `cd apps/web && bun run test:browser` passes.

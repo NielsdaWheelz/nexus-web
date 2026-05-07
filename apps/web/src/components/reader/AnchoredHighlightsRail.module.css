@@ -86,87 +86,33 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
-  min-height: var(--size-sm);
 }
 
-.rowPreviewButton {
+.contextButton {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: var(--size-sm);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  display: block;
   border: none;
   background: transparent;
   color: inherit;
   padding: 0;
   cursor: pointer;
   text-align: left;
+  white-space: normal;
 }
 
-.rowPreviewButton:focus-visible,
+.contextButton:focus-visible,
 .chatButton:focus-visible,
-.conversationButton:focus-visible,
-.noteEditor:focus-visible {
+.conversationButton:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.colorSwatch {
-  flex: 0 0 auto;
-  width: 12px;
-  height: 12px;
-  border-radius: var(--radius-xs);
-}
-
-.swatch-yellow {
-  background: var(--highlight-yellow);
-}
-
-.swatch-green {
-  background: var(--highlight-green);
-}
-
-.swatch-blue {
-  background: var(--highlight-blue);
-}
-
-.swatch-pink {
-  background: var(--highlight-pink);
-}
-
-.swatch-purple {
-  background: var(--highlight-purple);
-}
-
-.previewText {
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.contextText {
   font-size: var(--text-sm);
+  line-height: var(--leading-snug);
   color: var(--ink);
-}
-
-.rowMeta {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex: 0 0 auto;
-  color: var(--ink-faint);
-}
-
-.metaBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  font-size: var(--text-xs);
-}
-
-.metaBadge span {
-  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
 }
 
 .rowActions {
@@ -189,24 +135,9 @@
   cursor: pointer;
 }
 
-.rowExpanded {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.quoteCard {
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--surface-2);
-  padding: var(--space-3);
-  line-height: var(--leading-relaxed);
-  overflow-wrap: anywhere;
-}
-
 .editHint {
   margin: 0;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--ink-faint);
 }
 
@@ -218,14 +149,23 @@
 
 .noteEditor {
   width: 100%;
-  min-height: 88px;
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-lg);
-  background: var(--surface-2);
+  min-height: 32px;
+  border: 0;
+  background: transparent;
   color: var(--ink);
   font: inherit;
-  line-height: var(--leading-normal);
-  padding: var(--space-3);
+  line-height: var(--leading-snug);
+  padding: 0;
+}
+
+.noteEditor :global(.ProseMirror) {
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--ink-muted);
 }
 
 .conversationList {
@@ -240,12 +180,12 @@
   gap: var(--space-1);
   justify-content: flex-start;
   width: 100%;
-  min-height: var(--size-md);
+  min-height: var(--size-sm);
   border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   background: var(--surface-2);
   color: var(--ink);
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-2);
   font: inherit;
   cursor: pointer;
 }
