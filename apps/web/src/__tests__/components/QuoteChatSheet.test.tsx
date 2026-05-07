@@ -187,6 +187,88 @@ describe("QuoteChatSheet", () => {
     expect(onOpenFullChat).toHaveBeenCalledWith("conversation-1");
   });
 
+  it("passes scoped reader assistant behavior through the mobile shell", async () => {
+    const onConversationCreated = vi.fn();
+    const onScopeChange = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = pathOf(input);
+        if (path === "/api/models") {
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: "model-1",
+                  provider: "openai",
+                  provider_display_name: "OpenAI",
+                  model_name: "test-model",
+                  model_display_name: "Test model",
+                  model_tier: "light",
+                  reasoning_modes: ["default", "none"],
+                  max_context_tokens: 128000,
+                  available_via: "platform",
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        if (path === "/api/conversations/resolve") {
+          return new Response(
+            JSON.stringify({
+              data: {
+                id: "conversation-resolved",
+                title: "Document chat",
+                sharing: "private",
+                message_count: 0,
+                scope: { type: "media", media_id: "media-1" },
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:00:00Z",
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        if (path === "/api/conversations/conversation-resolved/messages") {
+          return new Response(
+            JSON.stringify({ data: [], page: { next_cursor: null } }),
+            { status: 200 },
+          );
+        }
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }),
+    );
+
+    render(
+      <QuoteChatSheet
+        contexts={[]}
+        conversationId={null}
+        conversationScope={{ type: "media", media_id: "media-1", title: "Document" }}
+        scopeOptions={[
+          {
+            id: "document",
+            label: "Document",
+            scope: { type: "media", media_id: "media-1", title: "Document" },
+          },
+          { id: "new", label: "New chat", scope: { type: "general" } },
+        ]}
+        targetLabel="Document chat"
+        onScopeChange={onScopeChange}
+        onClose={vi.fn()}
+        onConversationCreated={onConversationCreated}
+        onOpenFullChat={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "Ask in chat" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(onConversationCreated.mock.calls[0]?.[0]).toBe("conversation-resolved");
+    });
+    fireEvent.change(screen.getByLabelText("Scope"), { target: { value: "new" } });
+    expect(onScopeChange).toHaveBeenCalledWith({ type: "general" });
+  });
+
   it("opens the full chat with the active run id while streaming is pending", async () => {
     const onConversationCreated = vi.fn();
     const onOpenFullChat = vi.fn();

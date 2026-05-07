@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  getContextIdentityKey,
   getConversationScopeSignature,
   getPendingContextSignature,
   parseConversationScopeFromUrl,
@@ -143,7 +144,18 @@ describe("pending context params", () => {
 });
 
 describe("signatures", () => {
-  it("serializes pending contexts and conversation scopes", () => {
+  it("serializes context identity and conversation scopes", () => {
+    expect(
+      getContextIdentityKey({
+        kind: "reader_selection",
+        client_context_id: "selection-1",
+        media_id: "media-1",
+        media_kind: "article",
+        media_title: "Source",
+        exact: "Selected text",
+        locator: { type: "web_fragment", fragment_id: "fragment-1" },
+      }),
+    ).toBe("reader_selection:selection-1");
     expect(
       getPendingContextSignature([
         {

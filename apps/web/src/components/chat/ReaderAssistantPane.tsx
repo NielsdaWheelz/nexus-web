@@ -23,6 +23,11 @@ import Select from "@/components/ui/Select";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { type ContextItem } from "@/lib/api/sse";
 import {
+  getContextIdentityKey,
+  getConversationScopeSignature,
+  getPendingContextSignature,
+} from "@/lib/conversations/attachedContext";
+import {
   formatContextMeta,
   formatConversationScopeLabel,
   getContextChipLabel,
@@ -66,7 +71,6 @@ export default function ReaderAssistantPane({
   onOpenFullChat,
   onReaderSourceActivate,
   autoFocusComposer = true,
-  resolveScopedConversation = true,
   className,
 }: {
   contexts: ContextItem[];
@@ -81,7 +85,6 @@ export default function ReaderAssistantPane({
   onOpenFullChat: (conversationId: string) => void;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
   autoFocusComposer?: boolean;
-  resolveScopedConversation?: boolean;
   className?: string;
 }) {
   const scrollportRef = useRef<HTMLDivElement>(null);
@@ -129,14 +132,14 @@ export default function ReaderAssistantPane({
   }
 
   const incomingContextKey = useMemo(
-    () => contexts.map(contextDedupeKey).join("\n"),
+    () => getPendingContextSignature(contexts),
     [contexts],
   );
   const scopeType = conversationScope.type;
   const scopeMediaId = scopeType === "media" ? conversationScope.media_id : null;
   const scopeLibraryId = scopeType === "library" ? conversationScope.library_id : null;
   const conversationScopeKey = useMemo(
-    () => scopeDedupeKey(conversationScope),
+    () => getConversationScopeSignature(conversationScope),
     [conversationScope],
   );
   const resolveScopeBody = useMemo(() => {
@@ -259,7 +262,6 @@ export default function ReaderAssistantPane({
 
   useEffect(() => {
     if (
-      !resolveScopedConversation ||
       conversationId ||
       sentInPaneRef.current ||
       resolveScopeBody.type === "general"
@@ -317,7 +319,6 @@ export default function ReaderAssistantPane({
     conversationScopeKey,
     notifyConversationAvailable,
     resolveScopeBody,
-    resolveScopedConversation,
   ]);
 
   useEffect(() => {
@@ -454,7 +455,9 @@ export default function ReaderAssistantPane({
       ? `${activeConversationId}?run=${encodeURIComponent(activeRunId)}`
       : activeConversationId;
   const activeScopeOptionId =
-    scopeOptions.find((option) => scopeDedupeKey(option.scope) === conversationScopeKey)
+    scopeOptions.find(
+      (option) => getConversationScopeSignature(option.scope) === conversationScopeKey,
+    )
       ?.id ?? "";
 
   return (
@@ -545,7 +548,7 @@ export default function ReaderAssistantPane({
         <div className={styles.contextStack} aria-label="Attached context">
           {pendingContexts.map((context, index) => (
             <PendingContextCard
-              key={`${contextDedupeKey(context)}-${index}`}
+              key={`${getContextIdentityKey(context)}-${index}`}
               context={context}
               onRemove={() =>
                 setPendingContexts((prev) => prev.filter((_, i) => i !== index))
@@ -672,10 +675,10 @@ function dedupeContexts(contexts: ContextItem[]): ContextItem[] {
 }
 
 function mergeContexts(prev: ContextItem[], incoming: ContextItem[]): ContextItem[] {
-  const seen = new Set(prev.map(contextDedupeKey));
+  const seen = new Set(prev.map(getContextIdentityKey));
   const next = [...prev];
   for (const context of incoming) {
-    const key = contextDedupeKey(context);
+    const key = getContextIdentityKey(context);
     if (seen.has(key)) {
       continue;
     }
@@ -683,28 +686,6 @@ function mergeContexts(prev: ContextItem[], incoming: ContextItem[]): ContextIte
     next.push(context);
   }
   return next;
-}
-
-function contextDedupeKey(context: ContextItem): string {
-  if (context.kind === "reader_selection") {
-    return `reader_selection:${context.client_context_id}`;
-  }
-  const evidence = context.evidence_span_ids?.join(",") ?? "";
-  return `object_ref:${context.type}:${context.id}:${evidence}`;
-}
-
-function scopeDedupeKey(scope: ConversationScope): string {
-  if (scope.type === "general") {
-    return "general";
-  }
-  if (scope.type === "media") {
-    return `media:${scope.media_id}`;
-  }
-  if (scope.type === "library") {
-    return `library:${scope.library_id}`;
-  }
-  const exhaustive: never = scope;
-  return exhaustive;
 }
 
 function nowMs(): number {

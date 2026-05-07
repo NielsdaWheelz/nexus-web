@@ -73,17 +73,17 @@ export function parseConversationScopeFromUrl(
   return { type: "general" };
 }
 
+export function getContextIdentityKey(item: ContextItem): string {
+  if (item.kind === "reader_selection") {
+    return `reader_selection:${item.client_context_id}`;
+  }
+  return item.evidence_span_ids?.length
+    ? `${item.type}:${item.id}:${item.evidence_span_ids.join(",")}`
+    : `${item.type}:${item.id}`;
+}
+
 export function getPendingContextSignature(items: ContextItem[]): string {
-  return items
-    .map((item) => {
-      if (item.kind === "reader_selection") {
-        return `reader_selection:${item.client_context_id}`;
-      }
-      return item.evidence_span_ids?.length
-        ? `${item.type}:${item.id}:${item.evidence_span_ids.join(",")}`
-        : `${item.type}:${item.id}`;
-    })
-    .join("\u001e");
+  return items.map(getContextIdentityKey).join("\u001e");
 }
 
 export function getConversationScopeSignature(scope: ConversationScope): string {

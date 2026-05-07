@@ -322,14 +322,12 @@ Rule:
 
 - Normalize persisted per-media state before asserting initial reader UI (for example, reset reader state and explicitly select chapter/page where applicable)
 - Quote-to-chat assertions must be deterministic:
-  - Desktop: If the active pane is chat (`/conversations/new` or `/conversations/:id`), assert quote-to-chat updates that pane with new `attach_*` params and does not open another chat tab
-  - Desktop: If the active pane is not chat and exactly one chat pane exists, assert quote-to-chat updates that existing chat pane and does not open another chat tab
-  - Desktop: Otherwise, assert quote-to-chat opens one new chat pane at `/conversations/new` with the expected `attach_*` params
-  - Desktop: In all quote-to-chat cases, assert the linked-context chip is visible in chat composer after navigation
-  - Mobile: Assert quote-to-chat opens the local reader quote drawer instead of navigating away immediately
-  - Mobile: Assert the drawer shows the attached quote context and keeps the reader pane active until send
-  - Mobile: After send, assert the app reuses the active chat pane, reuses the only existing chat pane, or opens one new `/conversations/new` pane using the same pane-aware rules as desktop
-  - Mobile: After send, assert the linked-context chip is visible in chat composer and the reader quote drawer is closed
+  - Desktop: Assert quote-to-chat opens the media secondary rail in `Ask` mode and does not open or activate a full chat pane by default
+  - Desktop: Assert the reader assistant shows the attached quote context in the rail before send
+  - Desktop: Assert explicit full-chat promotion opens or reuses `/conversations/:id`, preserving `run` while streaming
+  - Mobile: Assert quote-to-chat opens the local reader assistant sheet instead of navigating away immediately
+  - Mobile: Assert the sheet shows the attached quote context and keeps the reader pane active until explicit full-chat promotion
+  - Mobile: After explicit full-chat promotion, assert the sheet closes and the app opens or reuses the promoted full chat pane
 - Prefer explicit action-menu interactions (`Actions` -> `menuitem`) over styling-dependent selectors
 - Keep single-flow E2E tests focused on one behavior; use API setup for prerequisites already covered by separate UI stress/interaction tests
 

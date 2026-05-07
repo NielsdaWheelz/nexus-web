@@ -106,7 +106,13 @@ async function expectHighlightRowToBeExpanded(row: Locator): Promise<void> {
 }
 
 async function expectReaderAssistantContext(page: Page, exact: string): Promise<void> {
-  const assistant = page.getByRole("region", { name: "Reader assistant" });
+  const rail = page.getByTestId("reader-secondary-rail");
+  await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
+  await expect(rail.getByRole("tab", { name: "Ask" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const assistant = rail.getByRole("region", { name: "Reader assistant" });
   await expect(assistant).toBeVisible({ timeout: 10_000 });
   await expect(assistant.getByLabel("Attached context")).toContainText(exact);
 }

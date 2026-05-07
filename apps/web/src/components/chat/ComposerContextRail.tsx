@@ -8,6 +8,7 @@ import {
   formatConversationScopeLabel,
   getContextChipLabel,
 } from "@/lib/conversations/display";
+import { getContextIdentityKey } from "@/lib/conversations/attachedContext";
 import type { ConversationScope } from "@/lib/conversations/types";
 import styles from "./ComposerContextRail.module.css";
 
@@ -52,7 +53,7 @@ export default function ComposerContextRail({
 
       {attachedContexts.map((context, index) => (
         <Chip
-          key={`${contextKey(context)}-${index}`}
+          key={`${getContextIdentityKey(context)}-${index}`}
           truncate
           leadingIcon={contextSwatch(context.color)}
           removable
@@ -84,11 +85,4 @@ function contextSwatch(color: ContextItemColor | undefined): ReactNode {
     return undefined;
   }
   return <span className={`${styles.swatch} ${SWATCH_CLASS[color]}`} />;
-}
-
-function contextKey(context: ContextItem): string {
-  if (context.kind === "reader_selection") {
-    return `reader_selection-${context.client_context_id}`;
-  }
-  return `${context.type}-${context.id}`;
 }

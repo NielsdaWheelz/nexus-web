@@ -112,7 +112,13 @@ function workspacePaneButton(page: Page, name: RegExp | string) {
 }
 
 async function expectReaderAssistantContext(page: Page, exact: string): Promise<void> {
-  const assistant = page.getByRole("region", { name: "Reader assistant" });
+  const rail = page.getByTestId("reader-secondary-rail");
+  await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
+  await expect(rail.getByRole("tab", { name: "Ask" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const assistant = rail.getByRole("region", { name: "Reader assistant" });
   await expect(assistant).toBeVisible({ timeout: 10_000 });
   await expect(assistant.getByLabel("Attached context")).toContainText(exact);
 }
@@ -149,10 +155,6 @@ test.describe("non-pdf linked-items @legacy-synthetic", () => {
     await expect
       .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
       .toBe(chatPaneCountBefore);
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("dialog", { name: "Reader chat" })).toBeHidden({
-      timeout: 10_000,
-    });
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
     const focusedSegment = contentPane

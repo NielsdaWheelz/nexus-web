@@ -96,7 +96,7 @@ function workspacePaneButton(page: Page, name: RegExp | string) {
     .getByRole("button", { name });
 }
 
-test("@real-media desktop selected quote opens reader chat overlay", async ({
+test("@real-media desktop selected quote opens reader secondary rail Ask", async ({
   page,
 }, testInfo) => {
   const seed = readRealMediaSeed();
@@ -131,9 +131,13 @@ test("@real-media desktop selected quote opens reader chat overlay", async ({
   });
   await actions.getByRole("button", { name: "Ask" }).click();
 
-  const overlay = page.getByRole("dialog", { name: "Reader chat" });
-  await expect(overlay).toBeVisible({ timeout: 10_000 });
-  const assistant = overlay.getByRole("region", { name: "Reader assistant" });
+  const rail = page.getByTestId("reader-secondary-rail");
+  await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
+  await expect(rail.getByRole("tab", { name: "Ask" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const assistant = rail.getByRole("region", { name: "Reader assistant" });
   await expect(assistant).toBeVisible({ timeout: 10_000 });
   await expect(assistant.getByLabel("Attached context")).toContainText(selectedText);
   await expect

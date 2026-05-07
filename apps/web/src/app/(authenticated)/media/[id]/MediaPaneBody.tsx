@@ -86,6 +86,10 @@ import { useReaderResumeState } from "@/lib/reader/useReaderResumeState";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import type { ConversationScope } from "@/lib/conversations/types";
 import {
+  getContextIdentityKey,
+  getConversationScopeSignature,
+} from "@/lib/conversations/attachedContext";
+import {
   normalizeEpubNavigationToc,
   isReadableStatus,
   type EpubNavigationResponse,
@@ -3147,38 +3151,20 @@ export default function MediaPaneBody() {
   );
 
   const openReaderAssistant = useCallback(
-    (contexts: ContextItem[], conversationScope: ConversationScope = buildMediaConversationScope()) => {
+    (
+      contexts: ContextItem[],
+      conversationScope: ConversationScope = buildMediaConversationScope(),
+    ) => {
       setReaderAssistantState((current) => {
-        let currentScopeKey = "";
-        if (current?.conversationScope.type === "general") {
-          currentScopeKey = "general";
-        } else if (current?.conversationScope.type === "media") {
-          currentScopeKey = `media:${current.conversationScope.media_id}`;
-        } else if (current?.conversationScope.type === "library") {
-          currentScopeKey = `library:${current.conversationScope.library_id}`;
-        }
-
-        let nextScopeKey = "general";
-        if (conversationScope.type === "media") {
-          nextScopeKey = `media:${conversationScope.media_id}`;
-        } else if (conversationScope.type === "library") {
-          nextScopeKey = `library:${conversationScope.library_id}`;
-        }
-
+        const currentScopeKey = current
+          ? getConversationScopeSignature(current.conversationScope)
+          : "";
+        const nextScopeKey = getConversationScopeSignature(conversationScope);
         const nextContexts =
           current && currentScopeKey === nextScopeKey ? [...current.contexts] : [];
-        const seen = new Set(
-          nextContexts.map((context) =>
-            context.kind === "reader_selection"
-              ? `reader_selection:${context.client_context_id}`
-              : `${context.type}:${context.id}:${context.evidence_span_ids?.join(",") ?? ""}`,
-          ),
-        );
+        const seen = new Set(nextContexts.map(getContextIdentityKey));
         for (const context of contexts) {
-          const key =
-            context.kind === "reader_selection"
-              ? `reader_selection:${context.client_context_id}`
-              : `${context.type}:${context.id}:${context.evidence_span_ids?.join(",") ?? ""}`;
+          const key = getContextIdentityKey(context);
           if (seen.has(key)) {
             continue;
           }
@@ -5126,7 +5112,9 @@ export default function MediaPaneBody() {
           contexts={readerAssistantState.contexts}
           conversationId={readerAssistantState.conversationId}
           conversationScope={readerAssistantState.conversationScope}
+          scopeOptions={readerAssistantScopeOptions}
           targetLabel={readerAssistantState.targetLabel}
+          onScopeChange={handleReaderAssistantScopeChange}
           onClose={() => setReaderAssistantState(null)}
           onConversationCreated={handleReaderAssistantConversationAvailable}
           onOpenFullChat={handleOpenReaderAssistantConversation}

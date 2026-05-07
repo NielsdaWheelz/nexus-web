@@ -7,7 +7,9 @@ import {
   useState,
   type FocusEvent,
 } from "react";
-import ReaderAssistantPane from "@/components/chat/ReaderAssistantPane";
+import ReaderAssistantPane, {
+  type ReaderAssistantScopeOption,
+} from "@/components/chat/ReaderAssistantPane";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { type ContextItem } from "@/lib/api/sse";
 import type { ConversationScope } from "@/lib/conversations/types";
@@ -18,7 +20,9 @@ export default function QuoteChatSheet({
   contexts,
   conversationId,
   conversationScope,
+  scopeOptions,
   targetLabel,
+  onScopeChange,
   onClose,
   onConversationCreated,
   onOpenFullChat,
@@ -27,7 +31,9 @@ export default function QuoteChatSheet({
   contexts: ContextItem[];
   conversationId: string | null;
   conversationScope?: ConversationScope;
+  scopeOptions?: ReaderAssistantScopeOption[];
   targetLabel?: string;
+  onScopeChange?: (scope: ConversationScope) => void;
   onClose: () => void;
   onConversationCreated: (conversationId: string, runId?: string) => void;
   onOpenFullChat: (conversationId: string) => void;
@@ -93,13 +99,14 @@ export default function QuoteChatSheet({
           contexts={contexts}
           conversationId={conversationId}
           conversationScope={conversationScope}
+          scopeOptions={scopeOptions}
           targetLabel={targetLabel}
+          onScopeChange={onScopeChange}
           onClose={onClose}
           onConversationAvailable={onConversationCreated}
           onOpenFullChat={onOpenFullChat}
           onReaderSourceActivate={onReaderSourceActivate}
           autoFocusComposer
-          resolveScopedConversation={false}
         />
       </aside>
     </div>
