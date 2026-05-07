@@ -349,7 +349,7 @@ export default function ReaderGutter(props: ReaderGutterProps) {
           variant="ghost"
           size="sm"
           iconOnly
-          aria-label="Open highlights inspector"
+          aria-label="Open highlights pane"
           onClick={onExpand}
         >
           <ListOrdered size={14} aria-hidden="true" />

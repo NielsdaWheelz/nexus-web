@@ -91,7 +91,7 @@ describe("ReaderGutter", () => {
       />,
     );
     await user.click(
-      screen.getByRole("button", { name: "Open highlights inspector" }),
+      screen.getByRole("button", { name: "Open highlights pane" }),
     );
     await waitFor(() => {
       expect(onExpand).toHaveBeenCalledTimes(1);

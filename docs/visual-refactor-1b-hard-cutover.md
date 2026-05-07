@@ -6,18 +6,26 @@ between 1A (token system + light mode + UI primitives) and 2 (final
 visual direction). Every pattern below is direction-agnostic and lands
 the same regardless of the eventual aesthetic.
 
+## Supersession
+
+The desktop reader chat and expanded highlights slide-over requirements in this
+document are superseded by
+[`reader-secondary-rail-hard-cutover.md`](reader-secondary-rail-hard-cutover.md).
+Mobile sheet and drawer behavior remains active. Treat the P4/P5 overlay text
+below as historical context where it conflicts with the secondary rail spec.
+
 ## Goals
 
 - Replace the bubble-chat surface with a flowing document chat.
-- Move chat and highlights from sibling panes into right-edge
-  slide-overs on top of the reader.
+- Move reader-adjacent desktop chat and highlights into a shared stable
+  right-side secondary rail, with mobile retaining drawer and sheet behavior.
 - Replace the existing pill citations with superscript + hover-preview
   citations that jump and pulse the reader.
 - Consolidate composer chips into a single context rail.
 - Make the command palette aware of its invoking pane and surface a
   scope chip plus pane-specific commands.
-- Replace the secondary highlights pane with a thin always-visible
-  ghost gutter that tick-marks every highlight along the reader column.
+- Keep a thin always-visible ghost gutter for the collapsed media highlights
+  state, expanding into the stable reader secondary rail.
 - Re-skin the marketing and legal pages as a magazine layout that does
   not look like a SaaS hero.
 - Realign the reader's color palette to the warm-neutral 1A tokens and
@@ -43,12 +51,13 @@ This is a hard cutover. Every pattern is replaced wholesale and the
 predecessor is deleted in the same PR.
 
 - No feature flags. No `?next_chat=1` query toggles. No environment gates.
-- No fallback paths. If the new chat overlay fails to mount, the user
-  sees an error boundary, not the old companion pane.
+- No fallback paths. If the new reader secondary rail fails to mount,
+  the user sees an error boundary, not the old companion pane or
+  overlay path.
 - No backward-compatibility shims. Type aliases for renamed types are
   removed in the same PR. No `// removed in 1B` comments — delete the line.
 - No deprecation period. The old `InlineCitations`, `BranchAnchorPreview`,
-  `MediaHighlightsPaneBody` (sibling-pane shape), and the chat-as-pane
+  `MediaHighlightsPaneBody`, reader overlay paths, and the chat-as-pane
   registry entry are removed in the PRs that introduce their replacements.
 - No reuse of replaced files as "wrappers". When a component is renamed
   or restructured, it is rewritten in its new file and the old file is
@@ -63,19 +72,19 @@ A user opens a media item. The reader fills the pane in a
 warm-neutral light or dark theme; a 36px gutter on the right edge
 shows a vertical heatmap of every highlight in the document. Selecting
 text spawns a tight selection popover; choosing a color creates a
-highlight, which immediately appears as a tick in the gutter. Pressing
-a chat affordance (or the "ask" action in the popover) slides a chat
-overlay in from the right edge — 440px on desktop, full width on
-mobile — over the gutter only; the reader column does not reflow. The
-chat is a flowing document, not bubbles: the user's message reads as
-muted attribution, the assistant's reply as full-body prose.
+highlight, which immediately appears as a tick in the gutter. Expanding
+the gutter opens a stable desktop secondary rail with `Highlights` and
+`Ask` modes, reflowing the reader column instead of overlaying it. On
+mobile, highlights and Ask remain drawer or sheet experiences. The chat
+is a flowing document, not bubbles: the user's message reads as muted
+attribution, the assistant's reply as full-body prose.
 Citations in the reply render as superscript pills; hovering one shows
 a 3-line excerpt card; clicking jumps the reader to the source span and
 pulses the highlight. The composer above the input is a single chip
 rail: scope, branch, selection, attached refs. Cmd-K opens with a
 scope chip showing "In: Media — [title]" and surfaces commands relevant
-to this pane. Closing the chat (Esc or backdrop click) returns the
-reader to its untouched column. The login and legal pages read as a
+to this pane. Collapsing the secondary rail returns the reader to the
+narrow highlight gutter. The login and legal pages read as a
 quiet magazine: no gradients, no glass, body font matching the reader.
 
 ## Cross-cutting rules

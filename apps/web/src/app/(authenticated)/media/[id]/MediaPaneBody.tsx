@@ -17,9 +17,10 @@ import HtmlRenderer from "@/components/HtmlRenderer";
 import ReaderGutter, {
   type ReaderGutterTranscriptHighlight,
 } from "@/components/reader/ReaderGutter";
-import HighlightsInspectorOverlay from "@/components/reader/HighlightsInspectorOverlay";
-import ReaderChatOverlay from "@/components/chat/ReaderChatOverlay";
-import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
+import AnchoredHighlightsRail, {
+  type AnchoredHighlightRow,
+} from "@/components/reader/AnchoredHighlightsRail";
+import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
 import PdfReader, {
   type PdfHighlightOut,
   type PdfReaderSelectionQuote,
@@ -61,7 +62,6 @@ import {
 } from "@/lib/highlights/useHighlightInteraction";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import MediaHighlightsPaneBody from "./MediaHighlightsPaneBody";
 import Pill from "@/components/ui/Pill";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
@@ -126,7 +126,7 @@ import {
   buildEpubLocationHref,
   resolveSectionAnchorId,
 } from "./epubHelpers";
-import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, PanelRightOpen, RefreshCw } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import styles from "./page.module.css";
@@ -1026,6 +1026,9 @@ export default function MediaPaneBody() {
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isMismatchDisabled, setIsMismatchDisabled] = useState(false);
+  const [secondaryRailMode, setSecondaryRailMode] = useState<"highlights" | "ask">("highlights");
+  const [isSecondaryRailExpanded, setSecondaryRailExpanded] = useState(false);
+  const [isMobileHighlightsDrawerOpen, setMobileHighlightsDrawerOpen] = useState(false);
   const [readerAssistantState, setReaderAssistantState] = useState<{
     contexts: ContextItem[];
     conversationId: string | null;
@@ -3192,7 +3195,9 @@ export default function MediaPaneBody() {
           conversationScope,
         };
       });
-      setHighlightsInspectorOpen(false);
+      setSecondaryRailMode("ask");
+      setSecondaryRailExpanded(true);
+      setMobileHighlightsDrawerOpen(false);
     },
     [buildMediaConversationScope],
   );
@@ -3529,7 +3534,6 @@ export default function MediaPaneBody() {
   // Highlights pane state
   // ==========================================================================
 
-  const [isHighlightsInspectorOpen, setHighlightsInspectorOpen] = useState(false);
   const [readerScrollContainer, setReaderScrollContainer] =
     useState<HTMLElement | null>(null);
   const [libraryPanelOpen, setLibraryPanelOpen] = useState(false);
@@ -3805,16 +3809,22 @@ export default function MediaPaneBody() {
 
   const handleContentClick = useCallback(
     (e: React.MouseEvent) => {
-      handleMediaContentClick(e);
+      const highlightId = handleMediaContentClick(e);
+      if (highlightId && isMobileViewport && showHighlightsPane) {
+        setMobileHighlightsDrawerOpen(true);
+      }
     },
-    [handleMediaContentClick]
+    [handleMediaContentClick, isMobileViewport, showHighlightsPane]
   );
 
   const handlePdfHighlightTap = useCallback(
     (highlightId: string, _anchorRect: DOMRect) => {
       focusHighlight(highlightId);
+      if (isMobileViewport && showHighlightsPane) {
+        setMobileHighlightsDrawerOpen(true);
+      }
     },
-    [focusHighlight]
+    [focusHighlight, isMobileViewport, showHighlightsPane]
   );
 
   const handleDocumentScroll = useCallback(
@@ -4230,14 +4240,19 @@ export default function MediaPaneBody() {
     meta: mediaHeaderMeta,
   });
 
-  // Close the highlights inspector when highlights become unavailable (focus
-  // mode flip, media swap, etc.). The gutter itself stays mounted but the
-  // overlay should not strand on top of an unrelated reader.
+  // Keep the secondary rail on an available tab when focus mode or media state
+  // hides highlights.
   useEffect(() => {
-    if (isHighlightsInspectorOpen && !showHighlightsPane) {
-      setHighlightsInspectorOpen(false);
+    if (showHighlightsPane) {
+      return;
     }
-  }, [isHighlightsInspectorOpen, showHighlightsPane]);
+    setMobileHighlightsDrawerOpen(false);
+    if (readerAssistantState) {
+      setSecondaryRailMode("ask");
+      return;
+    }
+    setSecondaryRailExpanded(false);
+  }, [readerAssistantState, showHighlightsPane]);
 
   useEffect(() => {
     setVideoSeekTargetMs(null);
@@ -4357,8 +4372,8 @@ export default function MediaPaneBody() {
       return;
     }
     const releaseLocks: Array<() => void> = [];
-    if (isHighlightsInspectorOpen) {
-      releaseLocks.push(paneMobileChrome.acquireVisibleLock("highlights-inspector"));
+    if (isMobileHighlightsDrawerOpen) {
+      releaseLocks.push(paneMobileChrome.acquireVisibleLock("highlights-drawer"));
     }
     if (libraryPanelOpen) {
       releaseLocks.push(paneMobileChrome.acquireVisibleLock("library-picker"));
@@ -4372,7 +4387,7 @@ export default function MediaPaneBody() {
       }
     };
   }, [
-    isHighlightsInspectorOpen,
+    isMobileHighlightsDrawerOpen,
     libraryPanelOpen,
     focusState.editingBounds,
     isMobileViewport,
@@ -4470,38 +4485,6 @@ export default function MediaPaneBody() {
     feedback,
   ]);
 
-  const handleJumpToHighlight = useCallback(
-    (highlightId: string) => {
-      const fragmentMatch = highlights.find((h) => h.id === highlightId);
-      if (fragmentMatch) {
-        dispatchReaderPulse({
-          mediaId: id,
-          locator: {
-            type: isEpub ? "epub_fragment_offsets" : "reader_text_offsets",
-            fragment_id: fragmentMatch.anchor.fragment_id,
-            start_offset: fragmentMatch.anchor.start_offset,
-            end_offset: fragmentMatch.anchor.end_offset,
-          },
-          snippet: fragmentMatch.exact,
-        });
-        return;
-      }
-      const pdfMatch = pdfDocumentHighlights.find((h) => h.id === highlightId);
-      if (pdfMatch) {
-        dispatchReaderPulse({
-          mediaId: id,
-          locator: {
-            type: "pdf_page_geometry",
-            page_number: pdfMatch.anchor.page_number,
-            quads: pdfMatch.anchor.quads,
-          },
-          snippet: pdfMatch.exact,
-        });
-      }
-    },
-    [highlights, id, isEpub, pdfDocumentHighlights],
-  );
-
   const transcriptGutterHighlights = useMemo<
     ReaderGutterTranscriptHighlight[]
   >(() => {
@@ -4520,6 +4503,73 @@ export default function MediaPaneBody() {
     }
     return out;
   }, [fragments, highlights, isTranscriptMedia]);
+
+  const anchoredHighlights = useMemo<AnchoredHighlightRow[]>(() => {
+    if (isPdf) {
+      return pdfDocumentHighlights.map((highlight) => {
+        const firstQuad = highlight.anchor.quads[0];
+        return {
+          id: highlight.id,
+          exact: highlight.exact,
+          color: highlight.color,
+          linked_note_blocks: highlight.linked_note_blocks,
+          created_at: highlight.created_at,
+          updated_at: highlight.updated_at,
+          prefix: highlight.prefix,
+          suffix: highlight.suffix,
+          is_owner: highlight.is_owner,
+          linked_conversations: highlight.linked_conversations,
+          page_number: highlight.anchor.page_number,
+          quads: highlight.anchor.quads,
+          stable_order_key: [
+            String(highlight.anchor.page_number).padStart(6, "0"),
+            (firstQuad?.y1 ?? 0).toFixed(3).padStart(12, "0"),
+            (firstQuad?.x1 ?? 0).toFixed(3).padStart(12, "0"),
+            highlight.created_at,
+            highlight.id,
+          ].join(":"),
+        };
+      });
+    }
+
+    return highlights.map((highlight) => ({
+      id: highlight.id,
+      exact: highlight.exact,
+      color: highlight.color,
+      linked_note_blocks: highlight.linked_note_blocks,
+      created_at: highlight.created_at,
+      updated_at: highlight.updated_at,
+      prefix: highlight.prefix,
+      suffix: highlight.suffix,
+      is_owner: highlight.is_owner,
+      linked_conversations: highlight.linked_conversations,
+      anchor: {
+        start_offset: highlight.anchor.start_offset,
+        end_offset: highlight.anchor.end_offset,
+      },
+      stable_order_key: [
+        String(highlight.anchor.start_offset).padStart(12, "0"),
+        String(highlight.anchor.end_offset).padStart(12, "0"),
+        highlight.created_at,
+        highlight.id,
+      ].join(":"),
+    }));
+  }, [highlights, isPdf, pdfDocumentHighlights]);
+
+  const anchoredHighlightsMeasureKey = useMemo(
+    () =>
+      anchoredHighlights
+        .map(
+          (highlight) =>
+            `${highlight.id}:${highlight.updated_at}:${highlight.color}:${
+              highlight.linked_note_blocks?.length ?? 0
+            }:${highlight.linked_conversations?.length ?? 0}:${
+              highlight.stable_order_key ?? ""
+            }`,
+        )
+        .join("|"),
+    [anchoredHighlights],
+  );
 
   // ==========================================================================
   // Render
@@ -4576,47 +4626,42 @@ export default function MediaPaneBody() {
   ];
 
   const transcriptDurationMs = media.listening_state?.duration_ms ?? 0;
-
-  const highlightsInspectorBody = (
-    <MediaHighlightsPaneBody
-      isPdf={isPdf}
-      isEpub={isEpub}
-      fragmentHighlights={highlights}
-      pdfPageHighlights={pdfHighlightsPaneState.highlights}
-      pdfActivePage={pdfHighlightsPaneState.activePage}
+  const showDesktopSecondaryRail =
+    !isMobileViewport && (showHighlightsPane || readerAssistantState !== null);
+  const showMobileHighlightsGutter = isMobileViewport && showHighlightsPane;
+  const readerFrameClassName = showMobileHighlightsGutter
+    ? styles.readerWithGutter
+    : `${styles.readerWithGutter} ${styles.readerWithoutGutter}`;
+  const highlightsRail = showHighlightsPane ? (
+    <AnchoredHighlightsRail
+      title="Visible highlights"
+      description={
+        isPdf
+          ? "Showing highlights visible in the PDF viewport."
+          : isEpub
+            ? "Showing highlights visible in the active section viewport."
+            : "Showing highlights visible in the reader viewport."
+      }
+      pdfActivePage={isPdf ? pdfHighlightsPaneState.activePage : null}
+      highlights={anchoredHighlights}
+      contentRef={isPdf ? pdfContentRef : contentRef}
       focusedId={focusState.focusedId}
       onFocusHighlight={focusHighlight}
+      measureKey={anchoredHighlightsMeasureKey}
+      isMobile={isMobileViewport}
+      isEditingBounds={focusState.editingBounds}
       canSendToChat={Boolean(media.capabilities?.can_quote)}
       onSendToChat={handleExistingHighlightSendToChat}
       onColorChange={handleColorChange}
       onDelete={handleDelete}
       onStartEditBounds={startEditBounds}
       onCancelEditBounds={cancelEditBounds}
-      isEditingBounds={focusState.editingBounds}
       onNoteSave={handleNoteSave}
       onNoteDelete={handleNoteDelete}
       onOpenConversation={handleOpenConversation}
-      onJumpToHighlight={handleJumpToHighlight}
     />
-  );
+  ) : null;
 
-  const isReaderChatOverlayOpen =
-    !isMobileViewport && readerAssistantState !== null;
-  const readerChatOverlayContent =
-    readerAssistantState ? (
-      <ReaderAssistantPane
-        contexts={readerAssistantState.contexts}
-        conversationId={readerAssistantState.conversationId}
-        conversationScope={readerAssistantState.conversationScope}
-        targetLabel={readerAssistantState.targetLabel}
-        scopeOptions={readerAssistantScopeOptions}
-        onScopeChange={handleReaderAssistantScopeChange}
-        onConversationAvailable={handleReaderAssistantConversationAvailable}
-        onOpenFullChat={handleOpenReaderAssistantConversation}
-        onReaderSourceActivate={handleReaderSourceActivate}
-        onClose={() => setReaderAssistantState(null)}
-      />
-    ) : null;
   const transcriptPaneBody = !canRead ? (
     <TranscriptStatePanel
       mediaId={media.id}
@@ -4688,7 +4733,7 @@ export default function MediaPaneBody() {
           ) : null}
 
           {isTranscriptMedia ? (
-            <div className={styles.readerWithGutter}>
+            <div className={readerFrameClassName}>
               <div
                 ref={setReaderScrollContainer}
                 className={styles.documentViewport}
@@ -4713,14 +4758,14 @@ export default function MediaPaneBody() {
                   {transcriptPaneBody}
                 </div>
               </div>
-              {showHighlightsPane ? (
+              {showMobileHighlightsGutter ? (
                 <ReaderGutter
                   mediaId={id}
                   mediaKind="transcript"
                   transcriptHighlights={transcriptGutterHighlights}
                   durationMs={transcriptDurationMs}
                   scrollContainer={readerScrollContainer}
-                  onExpand={() => setHighlightsInspectorOpen(true)}
+                  onExpand={() => setMobileHighlightsDrawerOpen(true)}
                 />
               ) : null}
             </div>
@@ -4761,7 +4806,7 @@ export default function MediaPaneBody() {
                 <p>Loading reader state...</p>
               </div>
             ) : (
-              <div className={styles.readerWithGutter}>
+              <div className={readerFrameClassName}>
                 <PdfReader
                   key={`${id}:${activeRequestedPdfPageNumber ?? resolvedPdfPageNumber ?? "resume"}`}
                   mediaId={id}
@@ -4791,20 +4836,20 @@ export default function MediaPaneBody() {
                   startZoom={pdfReaderResumeState?.zoom ?? undefined}
                   onResumeStateChange={saveReaderResumeState}
                 />
-                {showHighlightsPane ? (
+                {showMobileHighlightsGutter ? (
                   <ReaderGutter
                     mediaId={id}
                     mediaKind="pdf"
                     pdfHighlights={pdfDocumentHighlights}
                     totalPages={pdfControlsState?.numPages ?? 0}
                     scrollContainer={null}
-                    onExpand={() => setHighlightsInspectorOpen(true)}
+                    onExpand={() => setMobileHighlightsDrawerOpen(true)}
                   />
                 ) : null}
               </div>
             )
           ) : isEpub ? (
-            <div className={styles.readerWithGutter}>
+            <div className={readerFrameClassName}>
               <div
                 ref={setReaderScrollContainer}
                 className={styles.documentViewport}
@@ -4838,13 +4883,13 @@ export default function MediaPaneBody() {
                   </div>
                 </div>
               </div>
-              {showHighlightsPane ? (
+              {showMobileHighlightsGutter ? (
                 <ReaderGutter
                   mediaId={id}
                   mediaKind="epub"
                   highlights={highlights}
                   scrollContainer={readerScrollContainer}
-                  onExpand={() => setHighlightsInspectorOpen(true)}
+                  onExpand={() => setMobileHighlightsDrawerOpen(true)}
                 />
               ) : null}
             </div>
@@ -4853,7 +4898,7 @@ export default function MediaPaneBody() {
               <p>No content available for this media.</p>
             </div>
           ) : (
-            <div className={styles.readerWithGutter}>
+            <div className={readerFrameClassName}>
               <div
                 ref={setReaderScrollContainer}
                 className={styles.documentViewport}
@@ -4883,35 +4928,172 @@ export default function MediaPaneBody() {
                   </div>
                 </div>
               </div>
-              {showHighlightsPane ? (
+              {showMobileHighlightsGutter ? (
                 <ReaderGutter
                   mediaId={id}
                   mediaKind="web"
                   highlights={highlights}
                   scrollContainer={readerScrollContainer}
-                  onExpand={() => setHighlightsInspectorOpen(true)}
+                  onExpand={() => setMobileHighlightsDrawerOpen(true)}
                 />
               ) : null}
             </div>
           )}
         </div>
 
-        <ReaderChatOverlay
-          open={isReaderChatOverlayOpen}
-          onClose={() => setReaderAssistantState(null)}
-        >
-          {readerChatOverlayContent}
-        </ReaderChatOverlay>
-
-        {showHighlightsPane ? (
-          <HighlightsInspectorOverlay
-            open={isHighlightsInspectorOpen}
-            onClose={() => setHighlightsInspectorOpen(false)}
+        {showDesktopSecondaryRail ? (
+          <SecondaryRail
+            ariaLabel="Reader tools"
+            expanded={isSecondaryRailExpanded}
+            onExpandedChange={setSecondaryRailExpanded}
+            bodyClassName={styles.readerSecondaryRailBody}
+            testId="reader-secondary-rail"
+            tabs={
+              showHighlightsPane
+                ? [
+                    { id: "highlights", label: "Highlights" },
+                    { id: "ask", label: "Ask" },
+                  ]
+                : [{ id: "ask", label: "Ask" }]
+            }
+            activeTabId={showHighlightsPane ? secondaryRailMode : "ask"}
+            onActiveTabChange={(tabId) => {
+              if (tabId === "highlights") {
+                setSecondaryRailMode("highlights");
+                return;
+              }
+              if (!readerAssistantState) {
+                openReaderAssistant([]);
+                return;
+              }
+              setSecondaryRailMode("ask");
+            }}
+            collapsed={
+              showHighlightsPane ? (
+                isTranscriptMedia ? (
+                  <ReaderGutter
+                    mediaId={id}
+                    mediaKind="transcript"
+                    transcriptHighlights={transcriptGutterHighlights}
+                    durationMs={transcriptDurationMs}
+                    scrollContainer={readerScrollContainer}
+                    onExpand={() => {
+                      setSecondaryRailMode("highlights");
+                      setSecondaryRailExpanded(true);
+                    }}
+                  />
+                ) : isPdf ? (
+                  <ReaderGutter
+                    mediaId={id}
+                    mediaKind="pdf"
+                    pdfHighlights={pdfDocumentHighlights}
+                    totalPages={pdfControlsState?.numPages ?? 0}
+                    scrollContainer={null}
+                    onExpand={() => {
+                      setSecondaryRailMode("highlights");
+                      setSecondaryRailExpanded(true);
+                    }}
+                  />
+                ) : isEpub ? (
+                  <ReaderGutter
+                    mediaId={id}
+                    mediaKind="epub"
+                    highlights={highlights}
+                    scrollContainer={readerScrollContainer}
+                    onExpand={() => {
+                      setSecondaryRailMode("highlights");
+                      setSecondaryRailExpanded(true);
+                    }}
+                  />
+                ) : (
+                  <ReaderGutter
+                    mediaId={id}
+                    mediaKind="web"
+                    highlights={highlights}
+                    scrollContainer={readerScrollContainer}
+                    onExpand={() => {
+                      setSecondaryRailMode("highlights");
+                      setSecondaryRailExpanded(true);
+                    }}
+                  />
+                )
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  className={styles.readerSecondaryRailCollapsedButton}
+                  aria-label="Expand reader tools"
+                  onClick={() => setSecondaryRailExpanded(true)}
+                >
+                  <PanelRightOpen size={15} aria-hidden="true" />
+                </Button>
+              )
+            }
           >
-            {highlightsInspectorBody}
-          </HighlightsInspectorOverlay>
+            {showHighlightsPane && secondaryRailMode === "highlights" ? (
+              highlightsRail
+            ) : readerAssistantState ? (
+              <ReaderAssistantPane
+                contexts={readerAssistantState.contexts}
+                conversationId={readerAssistantState.conversationId}
+                conversationScope={readerAssistantState.conversationScope}
+                targetLabel={readerAssistantState.targetLabel}
+                scopeOptions={readerAssistantScopeOptions}
+                onScopeChange={handleReaderAssistantScopeChange}
+                onBack={
+                  showHighlightsPane
+                    ? () => setSecondaryRailMode("highlights")
+                    : undefined
+                }
+                onClose={() => {
+                  setReaderAssistantState(null);
+                  if (showHighlightsPane) {
+                    setSecondaryRailMode("highlights");
+                    return;
+                  }
+                  setSecondaryRailExpanded(false);
+                }}
+                onConversationAvailable={handleReaderAssistantConversationAvailable}
+                onOpenFullChat={handleOpenReaderAssistantConversation}
+                onReaderSourceActivate={handleReaderSourceActivate}
+              />
+            ) : (
+              <div className={styles.readerSecondaryRailEmpty}>
+                Select text or choose Ask on a highlight.
+              </div>
+            )}
+          </SecondaryRail>
         ) : null}
       </div>
+
+      {isMobileViewport && isMobileHighlightsDrawerOpen && highlightsRail ? (
+        <div
+          className={styles.highlightsBackdrop}
+          data-testid="mobile-highlights-backdrop"
+          onClick={() => setMobileHighlightsDrawerOpen(false)}
+        >
+          <aside
+            className={styles.highlightsDrawer}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Highlights"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className={styles.highlightsDrawerHeader}>
+              <h2>Highlights</h2>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setMobileHighlightsDrawerOpen(false)}
+              >
+                Close
+              </Button>
+            </header>
+            <div className={styles.highlightsDrawerBody}>{highlightsRail}</div>
+          </aside>
+        </div>
+      ) : null}
 
       {isMobileViewport && readerAssistantState ? (
         <QuoteChatSheet

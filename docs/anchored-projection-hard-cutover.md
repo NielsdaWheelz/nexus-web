@@ -75,7 +75,7 @@ the reader scroll root.
   `data-highlight-anchor` attributes.
 - PDF readers keep page-local quads and page viewport transform metadata as the
   projection source for the secondary pane.
-- `AnchoredSecondaryPane` measures rendered text segments and PDF quads into
+- `AnchoredHighlightsRail` measures rendered text segments and PDF quads into
   scroll-root coordinates.
 - The right secondary pane renders only highlights with a measured rect that
   intersects the primary reader viewport.
@@ -200,11 +200,12 @@ the reader scroll root.
 
 ### Pane-Owned Projection
 
-The subsystem lives in `apps/web/src/components/AnchoredSecondaryPane.tsx`.
+The subsystem lives in
+`apps/web/src/components/reader/AnchoredHighlightsRail.tsx`.
 This keeps the single projection consumer, row presentation, measurement loop,
 and collision layout in one file with direct control flow.
 
-`AnchoredSecondaryPane` owns:
+`AnchoredHighlightsRail` owns:
 
 - Scroll-root discovery.
 - Text target discovery from `data-active-highlight-ids`.
@@ -215,8 +216,8 @@ and collision layout in one file with direct control flow.
 - Mobile visible rows plus above and below counts.
 - Missing-target diagnostics.
 
-`MediaHighlightsPaneBody` owns only route-level composition, DTO shaping, and
-copy. It does not measure DOM or compute row positions.
+`MediaPaneBody` owns route-level composition, DTO shaping, and copy. It does
+not measure DOM or compute row positions.
 
 `PdfReader` continues to own PDF rendering, page loading, highlight fetching,
 overlay rendering, and page transform metadata.
@@ -224,7 +225,7 @@ overlay rendering, and page transform metadata.
 ### State Ownership
 
 - Durable highlight state stays in `MediaPaneBody` and existing API helpers.
-- Projection rect state lives inside `AnchoredSecondaryPane`.
+- Projection rect state lives inside `AnchoredHighlightsRail`.
 - Focus state stays in the existing highlight interaction path.
 - Reader resume state stays in `useReaderResumeState`.
 - PDF controls state stays in `PdfReader`.
@@ -253,14 +254,13 @@ No code path persists projection rects, viewport positions, or row positions.
 
 ### Add
 
-- `apps/web/src/components/AnchoredSecondaryPane.tsx`
-- `apps/web/src/components/AnchoredSecondaryPane.module.css`
-- `apps/web/src/__tests__/components/AnchoredSecondaryPane.test.tsx`
+- `apps/web/src/components/reader/AnchoredHighlightsRail.tsx`
+- `apps/web/src/components/reader/AnchoredHighlightsRail.module.css`
+- `apps/web/src/components/reader/AnchoredHighlightsRail.test.tsx`
 
 ### Change
 
-- `apps/web/src/app/(authenticated)/media/[id]/MediaHighlightsPaneBody.tsx`
-- `apps/web/src/app/(authenticated)/media/[id]/MediaHighlightsPaneBody.test.tsx`
+- `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
 
 ### Delete
 
@@ -268,8 +268,8 @@ No code path persists projection rects, viewport positions, or row positions.
 - `apps/web/src/components/LinkedItemsPane.module.css`
 - `apps/web/src/__tests__/components/LinkedItemsPane.test.tsx`
 
-`MediaHighlightsPaneBody.tsx` keeps route-level composition ownership. It does
-not own measurement, projection, or layout.
+`MediaPaneBody.tsx` keeps route-level composition ownership. It does not own
+measurement, projection, or layout.
 
 ## Key Decisions
 
@@ -282,7 +282,7 @@ not own measurement, projection, or layout.
 - Projection state is frontend-only and ephemeral.
 - Contextual visible-highlight panes and all-highlight notebook/list panes are
   separate products.
-- `AnchoredSecondaryPane` owns coordinate conversion, visibility, and row
+- `AnchoredHighlightsRail` owns coordinate conversion, visibility, and row
   collision layout.
 - The cutover deletes legacy measurement code instead of wrapping it.
 
@@ -290,7 +290,7 @@ not own measurement, projection, or layout.
 
 ### Phase 1: Component Cutover
 
-- Replace `LinkedItemsPane` with `AnchoredSecondaryPane`.
+- Replace `LinkedItemsPane` with `AnchoredHighlightsRail`.
 - Keep row presentation local to the pane.
 - Remove legacy desktop alignment and mobile-only visibility filtering.
 

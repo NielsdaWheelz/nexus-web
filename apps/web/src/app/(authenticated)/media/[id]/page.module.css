@@ -709,7 +709,7 @@
   }
 }
 
-/* --- Split layout: reader column hosts overlays as positioned children --- */
+/* --- Split layout: reader column plus stable secondary rail --- */
 
 .splitLayout {
   position: relative;
@@ -738,8 +738,82 @@
   position: relative;
 }
 
+.readerWithoutGutter {
+  grid-template-columns: 1fr;
+}
+
+.readerSecondaryRailBody {
+  overflow: hidden;
+}
+
+.readerSecondaryRailCollapsedButton.readerSecondaryRailCollapsedButton {
+  width: 100%;
+  height: var(--size-md);
+  border-radius: 0;
+}
+
+.readerSecondaryRailEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--space-6);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.highlightsBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgb(0 0 0 / 0.24);
+}
+
+.highlightsDrawer {
+  width: 100%;
+  max-height: min(80vh, 640px);
+  max-height: min(80dvh, 640px);
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--surface-canvas);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.highlightsDrawerHeader {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
+}
+
+.highlightsDrawerHeader h2 {
+  margin: 0;
+  font-size: var(--text-base);
+}
+
+.highlightsDrawerBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
 @media (max-width: 600px) {
   .readerWithGutter {
     grid-template-columns: 1fr 24px;
+  }
+
+  .readerWithoutGutter {
+    grid-template-columns: 1fr;
   }
 }

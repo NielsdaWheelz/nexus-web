@@ -103,6 +103,7 @@ the real-media acceptance gates.
 - `docs/real-media-test-hard-cutover.md` -> real-media evidence test hard-cutover plan
 - `docs/notes-layer-hard-cutover.md` -> ProseMirror notes, object links, and annotation hard-cutover plan
 - `docs/anchored-projection-hard-cutover.md` -> visible reader highlight projection and secondary-pane hard-cutover plan
+- `docs/reader-secondary-rail-hard-cutover.md` -> shared desktop secondary rail hard-cutover plan for media highlights, media Ask, and chat context
 - `docs/authors-layer-hard-cutover.md` -> contributor identity and author surface hard-cutover plan
 - `docs/reader-implementation.md` -> current reader behavior contract
 - `docs/black-forest-oracle-hard-cutover.md` -> hybrid public-domain + library divination feature hard-cutover plan

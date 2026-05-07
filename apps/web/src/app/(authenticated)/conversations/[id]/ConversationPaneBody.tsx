@@ -15,6 +15,7 @@ import {
   useMemo,
   useLayoutEffect,
 } from "react";
+import { PanelRightOpen } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { type ContextItem } from "@/lib/api/sse";
@@ -24,6 +25,8 @@ import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
+import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
+import Button from "@/components/ui/Button";
 import type {
   BranchDraft,
   BranchGraph,
@@ -149,6 +152,7 @@ function ChatView({
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [contextRailExpanded, setContextRailExpanded] = useState(true);
   const conversationScope = conversation?.scope ?? { type: "general" as const };
   useSetPaneTitle(
     conversation
@@ -608,7 +612,25 @@ function ChatView({
         </div>
 
         {!isMobileViewport ? (
-          <aside className={styles.chatContextColumn}>
+          <SecondaryRail
+            ariaLabel="Chat context"
+            expanded={contextRailExpanded}
+            onExpandedChange={setContextRailExpanded}
+            expandedWidthPx={320}
+            bodyClassName={styles.chatSecondaryRailBody}
+            collapsed={
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                className={styles.chatSecondaryRailCollapsedButton}
+                aria-label="Expand chat context"
+                onClick={() => setContextRailExpanded(true)}
+              >
+                <PanelRightOpen size={15} aria-hidden="true" />
+              </Button>
+            }
+          >
             <ConversationContextPane
               conversationId={id}
               scope={conversationScope}
@@ -630,7 +652,7 @@ function ChatView({
               }}
               onRemoveContext={onRemoveContext}
             />
-          </aside>
+          </SecondaryRail>
         ) : null}
       </div>
 

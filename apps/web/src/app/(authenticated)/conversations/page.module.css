@@ -24,14 +24,15 @@
   display: flex;
 }
 
-.chatContextColumn {
-  display: flex;
-  flex: 0 0 320px;
-  width: 320px;
-  min-width: 280px;
-  min-height: 0;
-  border-left: 1px solid var(--edge-subtle);
+.chatSecondaryRailBody {
+  overflow: hidden;
   background: var(--surface-2);
+}
+
+.chatSecondaryRailCollapsedButton.chatSecondaryRailCollapsedButton {
+  width: 100%;
+  height: var(--size-md);
+  border-radius: 0;
 }
 
 .linkedItemsColorSwatch {

@@ -854,7 +854,7 @@ Path B owns these files and new sibling modules:
 - `apps/web/src/lib/highlights/pdfTypes.ts`
 - `apps/web/src/lib/highlights/coordinateTransforms.ts`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
-- `apps/web/src/app/(authenticated)/media/[id]/MediaHighlightsPaneBody.tsx`
+- `apps/web/src/components/reader/AnchoredHighlightsRail.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/mediaHighlights.ts`
 - `apps/web/src/app/(authenticated)/search/SearchPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/settings/local-vault/SettingsLocalVaultPaneBody.tsx`

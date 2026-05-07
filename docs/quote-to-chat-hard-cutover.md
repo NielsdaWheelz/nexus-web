@@ -66,7 +66,7 @@ External product signals used for this target:
 - Do not redesign the global workspace pane system.
 - Do not remove full conversation panes. Full chat remains available through
   explicit promotion.
-- Do not replace `AnchoredSecondaryPane` projection rules or make it own chat
+- Do not replace `AnchoredHighlightsRail` projection rules or make it own chat
   behavior.
 - Do not change durable saved-highlight semantics except removing the
   requirement that quote-to-chat first creates a saved highlight.
@@ -199,12 +199,7 @@ Desktop media panes have one right-side reader secondary rail.
 - Scope options derived from media and library membership.
 - The promotion callback that opens full chat explicitly.
 
-`MediaHighlightsPaneBody` owns:
-
-- Existing route-level highlight DTO shaping and copy.
-- Passing row Ask events upward.
-
-`AnchoredSecondaryPane` owns:
+`AnchoredHighlightsRail` owns:
 
 - Highlight projection, row visibility, row alignment, row focus, row actions.
 - It does not import chat components, resolve conversations, or manage assistant
@@ -407,8 +402,7 @@ Primary frontend files to modify:
 
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/media/[id]/page.module.css`
-- `apps/web/src/app/(authenticated)/media/[id]/MediaHighlightsPaneBody.tsx`
-- `apps/web/src/components/AnchoredSecondaryPane.tsx`
+- `apps/web/src/components/reader/AnchoredHighlightsRail.tsx`
 - `apps/web/src/components/SelectionPopover.tsx`
 - `apps/web/src/components/PdfReader.tsx`
 - `apps/web/src/components/ChatComposer.tsx`
@@ -440,7 +434,7 @@ Primary backend files to modify:
 Primary tests to update or add:
 
 - `apps/web/src/__tests__/components/SelectionPopover.test.tsx`
-- `apps/web/src/__tests__/components/AnchoredSecondaryPane.test.tsx`
+- `apps/web/src/components/reader/AnchoredHighlightsRail.test.tsx`
 - `apps/web/src/__tests__/components/QuoteChatSheet.test.tsx`
 - `apps/web/src/__tests__/components/ChatComposer.test.tsx`
 - New `apps/web/src/__tests__/components/ReaderAssistantPane.test.tsx`
@@ -496,7 +490,7 @@ Delete or replace these active legacy concepts:
 
 - Replace the fixed desktop highlights-only column in `MediaPaneBody` with a
   reader secondary rail that switches between `Highlights` and `Ask`.
-- Keep `MediaHighlightsPaneBody` and `AnchoredSecondaryPane` focused on
+- Keep `AnchoredHighlightsRail` focused on
   highlights.
 - Add `ReaderAssistantPane` to the rail.
 
@@ -636,7 +630,7 @@ Delete or replace these active legacy concepts:
 - Selected quote context is not a saved highlight.
 - Scope is chosen inside the assistant, not in the selection popover.
 - Full chat is promotion, not default navigation.
-- `AnchoredSecondaryPane` remains highlight projection infrastructure.
+- `AnchoredHighlightsRail` remains highlight projection infrastructure.
 - Embedded chat logic is shared across desktop and mobile.
 - URL-attached context moves to `attach_*`; `context=` is removed.
 - Reader-selection context is persisted as message context with source media
