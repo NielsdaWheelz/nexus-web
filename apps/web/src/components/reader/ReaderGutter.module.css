@@ -2,7 +2,8 @@
   position: relative;
   width: 36px;
   height: 100%;
-  flex: 0 0 36px;
+  min-height: 0;
+  flex: 1 1 auto;
   background: var(--reader-bg-secondary, var(--surface-2));
   border-left: 1px solid var(--reader-border-subtle, var(--edge-subtle));
   overflow: hidden;
@@ -11,7 +12,6 @@
 @media (max-width: 600px) {
   .gutter {
     width: 24px;
-    flex-basis: 24px;
   }
 }
 
@@ -38,7 +38,7 @@
   position: absolute;
   left: 50%;
   width: 24px;
-  height: 3px;
+  height: 15px;
   margin-left: -12px;
   padding: 6px 0;
   background-clip: content-box;
@@ -52,7 +52,7 @@
 @media (max-width: 600px) {
   .marker {
     width: 20px;
-    height: 4px;
+    height: 16px;
     margin-left: -10px;
   }
 }
@@ -65,12 +65,12 @@
 }
 
 .markerStacked {
-  height: 5px;
+  height: 17px;
 }
 
 @media (max-width: 600px) {
   .markerStacked {
-    height: 6px;
+    height: 18px;
   }
 }
 
