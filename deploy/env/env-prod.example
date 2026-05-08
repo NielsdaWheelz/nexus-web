@@ -1,0 +1,22 @@
+# Shared production values.
+# This file is included by both the frontend and VPS runtime env flows.
+
+NEXUS_ENV=prod
+
+# Public URLs
+APP_PUBLIC_URL=https://your-vercel-app.example.com
+API_PUBLIC_URL=https://api.example.com
+
+# Supabase
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_ISSUER=https://<project-ref>.supabase.co/auth/v1
+SUPABASE_JWKS_URL=https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json
+SUPABASE_AUDIENCES=authenticated
+
+# Shared BFF -> FastAPI secret. Use the same value in Vercel and on the VPS.
+NEXUS_INTERNAL_SECRET=<generate-a-long-random-secret>
+
+# Browser origins
+AUTH_ALLOWED_REDIRECT_ORIGINS=https://your-vercel-app.example.com
+STREAM_CORS_ORIGINS=https://your-vercel-app.example.com
+NEXUS_EXTENSION_REDIRECT_ORIGINS=

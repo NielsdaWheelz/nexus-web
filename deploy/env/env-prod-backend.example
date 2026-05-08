@@ -1,0 +1,40 @@
+# FastAPI/Caddy env for the Hetzner VPS.
+# Merged after env-prod, so values here can override shared defaults.
+
+# Caddy
+CADDY_SITE=api.example.com
+CADDY_ACME_EMAIL=you@example.com
+
+# Supabase Postgres. Prefer the Supabase pooler URL for small VPS deployments.
+DATABASE_URL=postgresql+psycopg://postgres.<project-ref>:<password>@<supabase-pooler-host>:6543/postgres?sslmode=require
+
+# Supabase Storage service-role key.
+SUPABASE_SERVICE_KEY=<supabase-service-role-key>
+STORAGE_BUCKET=media
+
+# Generate both with:
+# python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
+NEXUS_KEY_ENCRYPTION_KEY=<base64-encoded-32-byte-key>
+STREAM_TOKEN_SIGNING_KEY=<base64-encoded-32-byte-key>
+STREAM_BASE_URL=https://api.example.com
+
+# Keep paid/provider-gated features off until credentials are present.
+BILLING_ENABLED=false
+PODCASTS_ENABLED=false
+
+# Required by staging/prod config for browse providers.
+YOUTUBE_DATA_API_KEY=<youtube-data-api-key>
+
+# Optional platform provider keys. BYOK can still be used where supported.
+# OPENAI_API_KEY=
+# ANTHROPIC_API_KEY=
+# GEMINI_API_KEY=
+# DEEPSEEK_API_KEY=
+# BRAVE_SEARCH_API_KEY=
+
+# Stripe, required only if BILLING_ENABLED=true.
+# STRIPE_SECRET_KEY=
+# STRIPE_WEBHOOK_SECRET=
+# STRIPE_PLUS_PRICE_ID=
+# STRIPE_AI_PLUS_PRICE_ID=
+# STRIPE_AI_PRO_PRICE_ID=
