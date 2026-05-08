@@ -17,17 +17,6 @@ vi.mock("next/navigation", () => ({
 
 const MODELS = [
   {
-    id: "gpt-5-mini",
-    provider: "openai",
-    provider_display_name: "OpenAI",
-    model_name: "gpt-5-mini",
-    model_display_name: "GPT-5 mini",
-    model_tier: "light",
-    reasoning_modes: ["default", "none", "medium"],
-    max_context_tokens: 128000,
-    available_via: "platform",
-  },
-  {
     id: "gpt-5.5",
     provider: "openai",
     provider_display_name: "OpenAI",
@@ -37,6 +26,17 @@ const MODELS = [
     reasoning_modes: ["default", "medium", "high"],
     max_context_tokens: 256000,
     available_via: "both",
+  },
+  {
+    id: "gpt-5-mini",
+    provider: "openai",
+    provider_display_name: "OpenAI",
+    model_name: "gpt-5-mini",
+    model_display_name: "GPT-5 mini",
+    model_tier: "light",
+    reasoning_modes: ["default", "none", "medium"],
+    max_context_tokens: 128000,
+    available_via: "platform",
   },
 ] as const;
 

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -42,6 +42,21 @@ function readSeededYoutubeMedia(): SeededYoutubeMedia {
   }
 
   return parsed;
+}
+
+async function openHighlightsPane(page: Page): Promise<Locator> {
+  const rail = page.getByTestId("reader-secondary-rail");
+  if ((await rail.getAttribute("data-expanded")) === "true") {
+    await rail.getByRole("tab", { name: "Highlights" }).click();
+  } else {
+    await page.getByRole("button", { name: "Open highlights pane" }).click();
+  }
+  await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
+  await expect(rail.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  return page.getByTestId("anchored-highlights-container").first();
 }
 
 async function selectFreshVisibleTextSnippet(
@@ -179,7 +194,6 @@ test.describe("youtube transcript media @legacy-synthetic", () => {
     await expect(playerFrame).toBeVisible();
     await expect(page.locator("video")).toHaveCount(0);
 
-    await expect(page.getByText("No highlights in this context.")).toBeVisible();
     await expect(page.getByRole("link", { name: /open in source/i })).toHaveAttribute(
       "href",
       seed.watch_url
@@ -246,7 +260,8 @@ test.describe("youtube transcript media @legacy-synthetic", () => {
     };
     const existingExacts = existingHighlightsPayload.data.highlights.map((highlight) => highlight.exact);
 
-    const linkedRows = page.locator("[data-highlight-id]");
+    const highlightsPane = await openHighlightsPane(page);
+    const linkedRows = highlightsPane.locator("[data-highlight-id]");
     const highlightedSegments = transcriptContent.locator("[data-active-highlight-ids]");
     const beforeLinkedRowCount = await linkedRows.count();
     const beforeHighlightedCount = await highlightedSegments.count();
@@ -272,9 +287,6 @@ test.describe("youtube transcript media @legacy-synthetic", () => {
     await expect(linkedRow).toBeVisible({ timeout: 10_000 });
     await expect(linkedRow).toContainText(selectedText);
     await expect(highlightActions).toHaveCount(0);
-    if (beforeLinkedRowCount === 0) {
-      await expect(page.getByText("No highlights in this context.")).toHaveCount(0);
-    }
 
     await expect
       .poll(async () => linkedRows.count(), { timeout: 10_000 })

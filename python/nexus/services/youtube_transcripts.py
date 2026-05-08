@@ -110,14 +110,13 @@ def _fetch_real_media_fixture(video_id: str, fixture_dir: str | None) -> dict[st
 
     path = Path(fixture_dir) / "nasa-picturing-earth-behind-scenes-captions.srt"
     try:
-        content = path.read_text(encoding="utf-8")
+        payload = path.read_bytes()
     except OSError as exc:
         return _failure(
             ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
             f"YouTube transcript fixture unavailable: {exc}",
         )
 
-    payload = content.encode("utf-8")
     if len(payload) != 9_805 or hashlib.sha256(payload).hexdigest() != (
         "f2be864a2e42f94e629245a4a46326258ecaaffa64868caf16b46e75b4f7d237"
     ):
@@ -128,6 +127,7 @@ def _fetch_real_media_fixture(video_id: str, fixture_dir: str | None) -> dict[st
 
     from nexus.services.rss_transcript_fetch import _parse_srt_transcript
 
+    content = payload.decode("utf-8", errors="ignore").replace("\xa0", " ")
     segments = _parse_srt_transcript(content)
     if not segments:
         return _failure(

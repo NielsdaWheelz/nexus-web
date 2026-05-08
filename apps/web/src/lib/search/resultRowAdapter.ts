@@ -631,6 +631,9 @@ function buildPrimaryText(result: SearchApiResult): string {
     );
   }
   if (result.type === "note_block") {
+    if (result.source_label && result.source_label !== "note" && result.source_label !== result.title) {
+      return result.source_label;
+    }
     return result.body_text || sanitizeSnippet(result.snippet) || "Note";
   }
   if (result.type === "media" || result.type === "podcast") {

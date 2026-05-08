@@ -10,6 +10,10 @@ interface SearchResultRowProps {
 }
 
 function renderSnippetContent(row: SearchResultRowViewModel) {
+  if (row.type === "note_block") {
+    return row.primaryText;
+  }
+
   if (row.snippetSegments.length === 0) {
     return row.primaryText;
   }

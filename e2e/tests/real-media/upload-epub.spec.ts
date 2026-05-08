@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import path from "node:path";
 import {
   createFragmentHighlightThroughVisibleSelection,
+  expectVisibleTextEvidenceHighlight,
   readRealMediaSeed,
   searchRealMediaEvidenceThroughUi,
   writeRealMediaTrace,
@@ -73,28 +74,39 @@ test("@real-media real EPUB opens from upload-backed media and projects evidence
   await expect(page.locator("body")).not.toContainText(
     /not found|failed to load/i,
   );
-  await expect(
-    page.locator('[data-highlight-anchor^="evidence-"], .hl-evidence').first(),
-  ).toBeVisible({
-    timeout: 15_000,
-  });
-  const savedHighlight = await createFragmentHighlightThroughVisibleSelection(
-    page,
-    mediaId,
-    '[class*="fragments"]',
-  );
+  await expectVisibleTextEvidenceHighlight(page);
 
-  writeRealMediaTrace(testInfo, "real-epub-upload-trace.json", {
-    fixture_id: "epub-moby-dick-epub3",
-    artifact_sha256: seed.fixtures.epub.artifact_sha256,
-    artifact_bytes: seed.fixtures.epub.artifact_bytes,
-    media_id: mediaId,
-    query,
-    search_api_url: search.api_url,
-    search_result: result,
-    visible_result_href: visibleHref,
-    resolver: resolver.data,
-    saved_highlight: savedHighlight,
-    browser_url: page.url(),
-  });
+  let savedHighlightId: string | null = null;
+  try {
+    const savedHighlight = await createFragmentHighlightThroughVisibleSelection(
+      page,
+      mediaId,
+      '[class*="fragments"]',
+    );
+    savedHighlightId = savedHighlight.id;
+
+    writeRealMediaTrace(testInfo, "real-epub-upload-trace.json", {
+      fixture_id: "epub-moby-dick-epub3",
+      artifact_sha256: seed.fixtures.epub.artifact_sha256,
+      artifact_bytes: seed.fixtures.epub.artifact_bytes,
+      media_id: mediaId,
+      query,
+      search_api_url: search.api_url,
+      search_result: result,
+      visible_result_href: visibleHref,
+      resolver: resolver.data,
+      saved_highlight: savedHighlight,
+      browser_url: page.url(),
+    });
+  } finally {
+    if (savedHighlightId) {
+      try {
+        await page.request.delete(`/api/highlights/${savedHighlightId}`, {
+          timeout: 5_000,
+        });
+      } catch {
+        // justify-ignore-error: cleanup must not mask the product assertion.
+      }
+    }
+  }
 });

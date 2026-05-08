@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import {
   createFragmentHighlightThroughVisibleSelection,
+  expectVisibleTextEvidenceHighlight,
+  openTranscriptEvidenceSegment,
   readRealMediaSeed,
   searchRealMediaEvidenceThroughUi,
   writeRealMediaTrace,
@@ -51,34 +53,49 @@ test("@real-media podcast episode transcript opens seekable evidence", async ({
   ).toBeVisible();
   const visibleHref = await resultLink.getAttribute("href");
   expect(visibleHref ?? "").toContain("t_start_ms=");
+  if (!visibleHref) {
+    throw new Error(`podcast transcript result for ${mediaId} did not expose a href`);
+  }
   await resultLink.click();
   await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
   await expect(page.locator("body")).not.toContainText(
     /not found|failed to load/i,
   );
-  await expect(
-    page.locator('[data-highlight-anchor^="evidence-"], .hl-evidence').first(),
-  ).toBeVisible({
-    timeout: 15_000,
-  });
-  const savedHighlight = await createFragmentHighlightThroughVisibleSelection(
-    page,
-    mediaId,
-    '[data-testid="document-viewport"] [data-testid="html-renderer"]',
-  );
+  await openTranscriptEvidenceSegment(page, query, visibleHref);
+  await expectVisibleTextEvidenceHighlight(page);
 
-  writeRealMediaTrace(testInfo, "real-podcast-transcript-trace.json", {
-    fixture_id: "podcast-nasa-hwhap-crew4-transcript",
-    artifact_sha256: seed.fixtures.podcast.artifact_sha256,
-    artifact_bytes: seed.fixtures.podcast.artifact_bytes,
-    media_id: mediaId,
-    podcast_id: seed.fixtures.podcast.podcast_id,
-    query,
-    search_api_url: search.api_url,
-    search_result: result,
-    visible_result_href: visibleHref,
-    resolver: resolver.data,
-    saved_highlight: savedHighlight,
-    browser_url: page.url(),
-  });
+  let savedHighlightId: string | null = null;
+  try {
+    const savedHighlight = await createFragmentHighlightThroughVisibleSelection(
+      page,
+      mediaId,
+      '[data-testid="document-viewport"] [data-testid="html-renderer"]',
+    );
+    savedHighlightId = savedHighlight.id;
+
+    writeRealMediaTrace(testInfo, "real-podcast-transcript-trace.json", {
+      fixture_id: "podcast-nasa-hwhap-crew4-transcript",
+      artifact_sha256: seed.fixtures.podcast.artifact_sha256,
+      artifact_bytes: seed.fixtures.podcast.artifact_bytes,
+      media_id: mediaId,
+      podcast_id: seed.fixtures.podcast.podcast_id,
+      query,
+      search_api_url: search.api_url,
+      search_result: result,
+      visible_result_href: visibleHref,
+      resolver: resolver.data,
+      saved_highlight: savedHighlight,
+      browser_url: page.url(),
+    });
+  } finally {
+    if (savedHighlightId) {
+      try {
+        await page.request.delete(`/api/highlights/${savedHighlightId}`, {
+          timeout: 5_000,
+        });
+      } catch {
+        // justify-ignore-error: cleanup must not mask the product assertion.
+      }
+    }
+  }
 });

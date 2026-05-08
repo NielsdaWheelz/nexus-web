@@ -79,32 +79,43 @@ def _embed_with_openai(texts: list[str], *, dimensions: int) -> list[list[float]
             "OPENAI_API_KEY is required for transcript semantic embeddings.",
         )
 
-    payload = {
-        "model": settings.transcript_embedding_model_openai,
-        "input": texts,
-        "dimensions": dimensions,
-    }
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
-    response = httpx.post(
-        _OPENAI_EMBEDDINGS_URL,
-        headers=headers,
-        json=payload,
-        timeout=httpx.Timeout(settings.transcript_embedding_timeout_seconds, connect=10.0),
-    )
-    response.raise_for_status()
-    body = response.json()
-    data = body.get("data")
-    if not isinstance(data, list):
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Embedding provider response missing data list.")
-
-    ordered = sorted(data, key=lambda item: int(item.get("index", 0)))
     vectors: list[list[float]] = []
-    for item in ordered:
-        vectors.append(_normalize_and_validate_vector(item.get("embedding"), dimensions=dimensions))
+    for start in range(0, len(texts), 64):
+        batch = texts[start : start + 64]
+        response = httpx.post(
+            _OPENAI_EMBEDDINGS_URL,
+            headers=headers,
+            json={
+                "model": settings.transcript_embedding_model_openai,
+                "input": batch,
+                "dimensions": dimensions,
+            },
+            timeout=httpx.Timeout(settings.transcript_embedding_timeout_seconds, connect=10.0),
+        )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ApiError(
+                ApiErrorCode.E_INTERNAL,
+                f"Embedding provider request failed: {response.text[:500]}",
+            ) from exc
+        body = response.json()
+        data = body.get("data")
+        if not isinstance(data, list):
+            raise ApiError(
+                ApiErrorCode.E_INTERNAL, "Embedding provider response missing data list."
+            )
+
+        ordered = sorted(data, key=lambda item: int(item.get("index", 0)))
+        for item in ordered:
+            vectors.append(
+                _normalize_and_validate_vector(item.get("embedding"), dimensions=dimensions)
+            )
     if len(vectors) != len(texts):
         raise ApiError(
             ApiErrorCode.E_INTERNAL,

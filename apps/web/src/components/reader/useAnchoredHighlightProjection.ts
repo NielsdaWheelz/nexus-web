@@ -350,10 +350,19 @@ export function useAnchoredHighlightProjection({
   useEffect(() => {
     setTargetRects(new Map());
     setMissingTargets([]);
+    let secondFrameId: number | null = null;
     const frameId = window.requestAnimationFrame(() => {
       measureTargets();
+      secondFrameId = window.requestAnimationFrame(() => {
+        measureTargets();
+      });
     });
-    return () => window.cancelAnimationFrame(frameId);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      if (secondFrameId != null) {
+        window.cancelAnimationFrame(secondFrameId);
+      }
+    };
   }, [measureKey, measureTargets]);
 
   useEffect(() => {

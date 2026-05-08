@@ -73,6 +73,7 @@ print(json.dumps(result, sort_keys=True))
 test("@real-media owner can see delete action and legacy retrieval filters stay rejected", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(120_000);
   const seed = readRealMediaSeed();
   const mediaId = seed.fixtures.web.media_id;
   const refreshMediaId = seed.fixtures.web_url.media_id;
@@ -113,7 +114,7 @@ test("@real-media owner can see delete action and legacy retrieval filters stay 
   await expect(page.locator("body")).not.toContainText(
     /not found|failed to load/i,
   );
-  await page.getByRole("button", { name: "Actions" }).click();
+  await page.getByRole("button", { name: "Options" }).last().click();
   await expect(
     page.getByRole("menuitem", { name: /Delete document/ }),
   ).toBeVisible();
@@ -122,7 +123,7 @@ test("@real-media owner can see delete action and legacy retrieval filters stay 
   await expect(page.locator("body")).not.toContainText(
     /not found|failed to load/i,
   );
-  await page.getByRole("button", { name: "Actions" }).click();
+  await page.getByRole("button", { name: "Options" }).last().click();
   const refreshResponsePromise = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -182,6 +183,7 @@ test("@real-media owner can see delete action and legacy retrieval filters stay 
       conversation_scope: { type: "media", media_id: refreshMediaId },
       contexts: [
         {
+          kind: "object_ref",
           type: "content_chunk",
           id: initialRefreshResult.context_ref.id,
           evidence_span_ids: initialRefreshResult.context_ref.evidence_span_ids,
@@ -203,7 +205,7 @@ test("@real-media owner can see delete action and legacy retrieval filters stay 
   expect(match, `Expected media id in ${page.url()}`).toBeTruthy();
   const deletedMediaId = match![1];
 
-  await page.getByRole("button", { name: "Actions" }).click();
+  await page.getByRole("button", { name: "Options" }).last().click();
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toContain("Delete");
     await dialog.accept();

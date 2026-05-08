@@ -8,10 +8,18 @@
 
 "use client";
 
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { PanelRightOpen } from "lucide-react";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
 import {
+  getConversationScopeSignature,
   parseConversationScopeFromUrl,
   setConversationScopeParam,
 } from "@/lib/conversations/attachedContext";
@@ -20,8 +28,14 @@ import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
 import Button from "@/components/ui/Button";
+import { apiFetch } from "@/lib/api/client";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   usePaneRouter,
@@ -31,6 +45,8 @@ import {
 import type {
   ChatRunResponse,
   ConversationMessage,
+  ConversationMessagesResponse,
+  ConversationSummary,
 } from "@/lib/conversations/types";
 import styles from "../page.module.css";
 
@@ -46,7 +62,23 @@ export default function ConversationNewPaneBody() {
   const shouldScrollRef = useRef(true);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [contextRailExpanded, setContextRailExpanded] = useState(true);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [resolvingScopedConversation, setResolvingScopedConversation] = useState(false);
+  const [resolveError, setResolveError] = useState<FeedbackContent | null>(null);
   const conversationScope = parseConversationScopeFromUrl(searchParams);
+  const conversationScopeKey = getConversationScopeSignature(conversationScope);
+  const scopeType = conversationScope.type;
+  const scopeMediaId = scopeType === "media" ? conversationScope.media_id : null;
+  const scopeLibraryId = scopeType === "library" ? conversationScope.library_id : null;
+  const activeReplyParentMessageId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role === "assistant" && message.status === "complete") {
+        return message.id;
+      }
+    }
+    return null;
+  }, [messages]);
   useSetPaneTitle(
     conversationScope.type === "media"
       ? "Chat: Document"
@@ -68,6 +100,68 @@ export default function ConversationNewPaneBody() {
     if (!scrollportRef.current || !shouldScrollRef.current) return;
     scrollportRef.current.scrollTop = scrollportRef.current.scrollHeight;
   }, [messages]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setMessages([]);
+    setActiveConversationId(null);
+    setResolveError(null);
+
+    if (scopeType === "general") {
+      setResolvingScopedConversation(false);
+      return;
+    }
+    if (
+      (scopeType === "media" && !scopeMediaId) ||
+      (scopeType === "library" && !scopeLibraryId)
+    ) {
+      setResolvingScopedConversation(false);
+      return;
+    }
+
+    setResolvingScopedConversation(true);
+    apiFetch<{ data: ConversationSummary }>("/api/conversations/resolve", {
+      method: "POST",
+      body: JSON.stringify(
+        scopeType === "media"
+          ? { type: "media", media_id: scopeMediaId }
+          : { type: "library", library_id: scopeLibraryId },
+      ),
+    })
+      .then(async (response) => {
+        if (cancelled || response.data.message_count === 0) return;
+        const messagesResponse = await apiFetch<ConversationMessagesResponse>(
+          `/api/conversations/${response.data.id}/messages?limit=30`,
+        );
+        if (cancelled) return;
+        setMessages(messagesResponse.data);
+        if (
+          messagesResponse.data.some(
+            (message) => message.role === "assistant" && message.status === "complete",
+          )
+        ) {
+          setActiveConversationId(response.data.id);
+        } else {
+          setResolveError({
+            severity: "warning",
+            title: "Scoped chat cannot be continued yet.",
+          });
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setResolveError(toFeedback(err, { fallback: "Failed to load scoped chat" }));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setResolvingScopedConversation(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationScopeKey, scopeLibraryId, scopeMediaId, scopeType]);
 
   const handleChatScroll = useCallback(() => {
     const scrollport = scrollportRef.current;
@@ -110,20 +204,30 @@ export default function ConversationNewPaneBody() {
               scrollportRef={scrollportRef}
               onScroll={handleChatScroll}
               composer={
-                <ChatComposer
-                  conversationId={null}
-                  conversationScope={conversationScope}
-                  attachedContexts={attachedContexts}
-                  onRemoveContext={removeContext}
-                  onChatRunCreated={handleChatRunCreated}
-                  onMessageSent={clearAttachState}
-                  initialContent={draft}
-                  onClearScope={
-                    conversationScope.type === "general"
-                      ? undefined
-                      : clearConversationScope
-                  }
-                />
+                resolvingScopedConversation || resolveError ? null : (
+                  <ChatComposer
+                    conversationId={activeConversationId}
+                    conversationScope={conversationScope}
+                    attachedContexts={attachedContexts}
+                    parentMessageId={activeReplyParentMessageId}
+                    onRemoveContext={removeContext}
+                    onChatRunCreated={handleChatRunCreated}
+                    onMessageSent={clearAttachState}
+                    initialContent={draft}
+                    onClearScope={
+                      conversationScope.type === "general"
+                        ? undefined
+                        : clearConversationScope
+                    }
+                  />
+                )
+              }
+              emptyState={
+                resolveError ? (
+                  <FeedbackNotice feedback={resolveError} />
+                ) : resolvingScopedConversation ? (
+                  "Loading scoped chat..."
+                ) : undefined
               }
             />
           </div>

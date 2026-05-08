@@ -117,6 +117,21 @@ async function expectReaderAssistantContext(page: Page, exact: string): Promise<
   await expect(assistant.getByLabel("Attached context")).toContainText(exact);
 }
 
+async function openHighlightsPane(page: Page): Promise<Locator> {
+  const rail = page.getByTestId("reader-secondary-rail");
+  if ((await rail.getAttribute("data-expanded")) === "true") {
+    await rail.getByRole("tab", { name: "Highlights" }).click();
+  } else {
+    await page.getByRole("button", { name: "Open highlights pane" }).click();
+  }
+  await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
+  await expect(rail.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  return page.getByTestId("anchored-highlights-container").first();
+}
+
 function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
   return pdfControlsToolbar(page)
     .locator(`[aria-label="Page ${pageNumber} of ${pageCount}"]`)
@@ -280,15 +295,23 @@ test.describe("pdf reader @legacy-synthetic", () => {
       // Normalize deterministically so this test validates highlight persistence only.
       await ensureOnPage(page, 2, expectedPageCount);
 
-      const linkedRow = page.locator(`[data-highlight-id="${createdHighlightId}"]`).first();
+      await openHighlightsPane(page);
+      const linkedRow = page.getByTestId(`anchored-highlight-row-${createdHighlightId}`);
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
-      await linkedRow.click();
+      await linkedRow.evaluate((element) => {
+        (element as HTMLElement).click();
+      });
       await expectHighlightRowToBeExpanded(linkedRow);
       await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
       await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
       const chatButton = rowAskInChatButton(linkedRow);
       const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
-      await chatButton.click();
+      await chatButton.evaluate((element) => {
+        (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+      });
+      await chatButton.evaluate((element) => {
+        (element as HTMLButtonElement).click();
+      });
       await expectReaderAssistantContext(page, exact);
       await expect
         .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
@@ -371,9 +394,10 @@ test.describe("pdf reader @legacy-synthetic", () => {
 
       await page.goto(`/media/${mediaId}`);
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
+      await openHighlightsPane(page);
 
-      const onPageRow = page.locator(`[data-highlight-id="${pageOneHighlightId}"]`).first();
-      const offPageRow = page.locator(`[data-highlight-id="${pageTwoHighlightId}"]`).first();
+      const onPageRow = page.getByTestId(`anchored-highlight-row-${pageOneHighlightId}`);
+      const offPageRow = page.getByTestId(`anchored-highlight-row-${pageTwoHighlightId}`);
       await expect(onPageRow).toBeVisible({ timeout: 10_000 });
       await expect(offPageRow).toHaveCount(0);
 

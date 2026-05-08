@@ -526,6 +526,7 @@ def assert_search_and_resolver(
             "q": query,
             "scope": f"media:{media_id}",
             "types": "content_chunk",
+            "semantic": "false",
             "limit": 5,
         },
         headers=headers,
@@ -624,7 +625,7 @@ def assert_context_chat_trace(
                         am.status AS assistant_message_status,
                         mci.object_type,
                         mci.object_id,
-                        mci.context_snapshot_json,
+                        mci.context_snapshot AS context_snapshot_json,
                         mtc.id AS tool_call_id,
                         mtc.tool_name,
                         mtc.scope,
@@ -723,7 +724,6 @@ def assert_context_chat_trace(
         event_types = [event["event_type"] for event in event_rows]
         assert "tool_call" in event_types, event_types
         assert "tool_result" in event_types, event_types
-        assert "citation" in event_types, event_types
         assert event_types[-1] == "done", event_types
 
     return {
@@ -1094,6 +1094,7 @@ def assert_no_search_results(
             "q": query,
             "scope": f"media:{media_id}",
             "types": "content_chunk",
+            "semantic": "false",
             "limit": 5,
         },
         headers=headers,

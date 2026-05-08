@@ -22,6 +22,9 @@ interface TranscriptContentPanelProps {
   fragments: TranscriptFragment[];
   activeFragment: TranscriptFragment | null;
   renderedHtml: string;
+  evidenceHighlightId?: string | null;
+  evidenceStartMs?: number | null;
+  evidenceEndMs?: number | null;
   contentRef: RefObject<HTMLDivElement | null>;
   onSegmentSelect: (fragment: TranscriptFragment) => void;
   onSeek: (timestampMs: number | null | undefined) => void;
@@ -36,6 +39,9 @@ export default function TranscriptContentPanel({
   fragments,
   activeFragment,
   renderedHtml,
+  evidenceHighlightId,
+  evidenceStartMs,
+  evidenceEndMs,
   contentRef,
   onSegmentSelect,
   onSeek,
@@ -144,6 +150,16 @@ export default function TranscriptContentPanel({
 
               const timestamp = formatTranscriptTimestampMs(entry.fragment.t_start_ms);
               const isActive = entry.fragment.id === activeFragment?.id;
+              const segmentStartMs = entry.fragment.t_start_ms;
+              const segmentEndMs = entry.fragment.t_end_ms;
+              const hasEvidence = Boolean(
+                evidenceHighlightId &&
+                  typeof evidenceStartMs === "number" &&
+                  typeof segmentStartMs === "number" &&
+                  (typeof evidenceEndMs === "number" && typeof segmentEndMs === "number"
+                    ? segmentStartMs < evidenceEndMs && segmentEndMs > evidenceStartMs
+                    : segmentStartMs === evidenceStartMs),
+              );
 
               return (
                 <Button
@@ -152,13 +168,22 @@ export default function TranscriptContentPanel({
                   size="md"
                   className={`${styles.segmentButton} ${
                     isActive ? styles.segmentButtonActive : ""
-                  }`}
+                  } ${hasEvidence ? "hl-blue hl-evidence" : ""}`}
                   aria-current={isActive ? "true" : undefined}
+                  data-active-highlight-ids={
+                    hasEvidence ? (evidenceHighlightId ?? undefined) : undefined
+                  }
                   onClick={() => {
                     onSegmentSelect(entry.fragment);
                     onSeek(entry.fragment.t_start_ms);
                   }}
                 >
+                  {hasEvidence ? (
+                    <span
+                      data-highlight-anchor={evidenceHighlightId ?? undefined}
+                      aria-hidden="true"
+                    />
+                  ) : null}
                   <span className={styles.segmentMeta}>
                     {timestamp ? <span>{timestamp}</span> : null}
                     {entry.fragment.speaker_label ? (

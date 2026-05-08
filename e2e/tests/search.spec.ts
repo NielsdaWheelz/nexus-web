@@ -94,7 +94,9 @@ async function clickCitationResult(
   await searchInput.fill(query);
   await submitSearch(page).click();
 
-  const citationLink = page.locator(`a[href^="/media/${mediaId}?evidence="]`).first();
+  const citationLink = page
+    .locator(`a[href^="/media/${mediaId}"][href*="evidence="]`)
+    .first();
   await expect(citationLink).toBeVisible({ timeout: 15_000 });
   await expect(citationLink).toContainText(resultText ?? new RegExp(escapeRegExp(query), "i"));
 

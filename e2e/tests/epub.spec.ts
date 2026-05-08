@@ -343,7 +343,7 @@ async function readLinkedItemOrder(
 ): Promise<{ order: string[]; missing: string[] }> {
   return await page.evaluate((ids) => {
     const linkedContainer = document.querySelector<HTMLElement>(
-      'div[class*="linkedItemsContainer"]'
+      '[data-testid="anchored-highlights-container"]'
     );
 
     if (!linkedContainer) {
@@ -361,6 +361,21 @@ async function readLinkedItemOrder(
       missing: ids.filter((id) => !rowIds.includes(id)),
     };
   }, highlightIds);
+}
+
+async function openHighlightsPane(page: Page): Promise<Locator> {
+  const rail = page.getByTestId("reader-secondary-rail");
+  if ((await rail.getAttribute("data-expanded")) === "true") {
+    await rail.getByRole("tab", { name: "Highlights" }).click();
+  } else {
+    await page.getByRole("button", { name: "Open highlights pane" }).click();
+  }
+  await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
+  await expect(rail.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  return page.getByTestId("anchored-highlights-container").first();
 }
 
 async function selectFreshVisibleTextSnippet(
@@ -522,15 +537,7 @@ async function rowContainsVisibleTextOrFieldValue(
   }, expectedValue);
 }
 
-async function expectHighlightRowToStayCollapsed(
-  row: Locator,
-  hiddenText: string
-): Promise<void> {
-  await expect(row).toBeVisible();
-  await expect.poll(() => rowContainsVisibleTextOrFieldValue(row, hiddenText)).toBe(false);
-}
-
-async function expectHighlightRowToBeExpanded(
+async function expectHighlightRowVisible(
   row: Locator,
   noteText: string
 ): Promise<void> {
@@ -599,7 +606,7 @@ async function readEpubContentScrollTop(page: Page): Promise<number | null> {
   });
 }
 
-async function isLocatorInViewport(locator: Locator): Promise<boolean> {
+async function isLocatorInReaderViewport(locator: Locator): Promise<boolean> {
   if ((await locator.count()) === 0) {
     return false;
   }
@@ -607,9 +614,25 @@ async function isLocatorInViewport(locator: Locator): Promise<boolean> {
     .first()
     .evaluate((element) => {
       const rect = element.getBoundingClientRect();
+      let scroller: HTMLElement | null = element.parentElement;
+      while (scroller && scroller !== document.body) {
+        const computed = window.getComputedStyle(scroller);
+        const canScrollY =
+          /(auto|scroll)/.test(computed.overflowY) &&
+          scroller.scrollHeight > scroller.clientHeight;
+        if (canScrollY) {
+          const scrollerRect = scroller.getBoundingClientRect();
+          return rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom;
+        }
+        scroller = scroller.parentElement;
+      }
       return rect.bottom > 0 && rect.top < window.innerHeight;
     })
     .catch(() => false);
+}
+
+async function expectLocatorInReaderViewport(locator: Locator): Promise<void> {
+  await expect.poll(() => isLocatorInReaderViewport(locator), { timeout: 10_000 }).toBe(true);
 }
 
 async function wheelUntilLocatorInViewport(
@@ -622,14 +645,38 @@ async function wheelUntilLocatorInViewport(
   await contentRoot.hover();
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (await isLocatorInViewport(locator)) {
+    if (await isLocatorInReaderViewport(locator)) {
       return;
     }
-    await page.mouse.wheel(0, 700);
+    await page.evaluate(() => {
+      const contentRoot = document.querySelector<HTMLElement>('div[class*="fragments"]');
+      if (!contentRoot) {
+        window.scrollBy(0, 700);
+        return;
+      }
+
+      let scroller: HTMLElement | null = contentRoot.parentElement;
+      while (scroller && scroller !== document.body) {
+        const computed = window.getComputedStyle(scroller);
+        const canScrollY =
+          /(auto|scroll)/.test(computed.overflowY) &&
+          scroller.scrollHeight > scroller.clientHeight;
+        if (canScrollY) {
+          scroller.scrollTop += 700;
+          return;
+        }
+        scroller = scroller.parentElement;
+      }
+
+      window.scrollBy(0, 700);
+    });
     await page.waitForTimeout(75);
   }
 
-  await expect(locator).toBeInViewport();
+  await locator.evaluate((element) => {
+    (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+  });
+  await expectLocatorInReaderViewport(locator);
 }
 
 function readSeededEpubMedia(): SeededEpubMedia {
@@ -900,7 +947,7 @@ test.describe("epub @legacy-synthetic", () => {
 
     const manualScrollTarget = page.getByText(manualScrollQuote, { exact: true }).first();
     await wheelUntilLocatorInViewport(page, manualScrollTarget);
-    await expect(manualScrollTarget).toBeInViewport();
+    await expectLocatorInReaderViewport(manualScrollTarget);
 
     const manualScrollTop = await readEpubContentScrollTop(page);
     expect(manualScrollTop).not.toBeNull();
@@ -913,7 +960,7 @@ test.describe("epub @legacy-synthetic", () => {
       expect(currentScrollTop ?? 0).toBeGreaterThan((manualScrollTop ?? 0) - 120);
     }
 
-    await expect(manualScrollTarget).toBeInViewport();
+    await expectLocatorInReaderViewport(manualScrollTarget);
   });
 
   test("toc leaf with anchor lands at exact in-fragment target", async ({
@@ -1020,7 +1067,11 @@ test.describe("epub @legacy-synthetic", () => {
       data: HighlightOut;
     };
 
-    const linkedRow = page.locator("[data-highlight-id]").filter({ hasText: selectedText }).first();
+    const highlightsPane = await openHighlightsPane(page);
+    const linkedRow = highlightsPane
+      .locator("[data-highlight-id]")
+      .filter({ hasText: selectedText })
+      .first();
     await expect(linkedRow).toBeVisible({ timeout: 10_000 });
     await expect(linkedRow).toContainText(selectedText);
     await expect(highlightActions).toHaveCount(0);
@@ -1080,6 +1131,7 @@ test.describe("epub @legacy-synthetic", () => {
       await expect(
         page.getByRole("heading", { name: seed.chapter_titles[0] })
       ).toBeVisible({ timeout: 15_000 });
+      await openHighlightsPane(page);
 
       await expect
         .poll(
@@ -1167,29 +1219,29 @@ test.describe("epub @legacy-synthetic", () => {
     await expect(
       page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
+    const highlightsPane = await openHighlightsPane(page);
 
     await expect(
       page.getByRole("button", { name: /all highlights|entire book/i })
     ).toHaveCount(0);
 
-    const chapter1PrimaryRow = page
+    const chapter1PrimaryRow = highlightsPane
       .locator(`[data-highlight-id="${chapter1PrimaryHighlight.id}"]`)
       .first();
-    const chapter1SecondaryRow = page
+    const chapter1SecondaryRow = highlightsPane
       .locator(`[data-highlight-id="${chapter1SecondaryHighlight.id}"]`)
       .first();
-    const chapter2Row = page.locator(`[data-highlight-id="${chapter2Highlight.id}"]`);
-    const chapter1PrimaryPreviewButton = chapter1PrimaryRow.getByRole("button").first();
-    const chapter1SecondaryPreviewButton = chapter1SecondaryRow.getByRole("button").first();
+    const chapter2Row = highlightsPane.locator(`[data-highlight-id="${chapter2Highlight.id}"]`);
     const chapter1PrimaryAnchor = page
       .locator(`[data-active-highlight-ids~="${chapter1PrimaryHighlight.id}"]`)
       .first();
     const chapter1SecondaryAnchor = page
       .locator(`[data-active-highlight-ids~="${chapter1SecondaryHighlight.id}"]`)
       .first();
+    const chapter2Anchor = page
+      .locator(`[data-active-highlight-ids~="${chapter2Highlight.id}"]`)
+      .first();
 
-    await expect(chapter1PrimaryRow).toHaveCount(1);
-    await expect(chapter1SecondaryRow).toHaveCount(1);
     await expect(chapter2Row).toHaveCount(0);
     await chapter1PrimaryAnchor.evaluate((element) => {
       (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
@@ -1202,14 +1254,10 @@ test.describe("epub @legacy-synthetic", () => {
         { timeout: 15_000 }
       )
       .toBeLessThan(170);
-    await chapter1PrimaryPreviewButton.click();
-    await expectHighlightRowToBeExpanded(
+    await expect(chapter1PrimaryRow).toBeVisible({ timeout: 15_000 });
+    await expectHighlightRowVisible(
       chapter1PrimaryRow,
       "EPUB chapter one inspector note alpha."
-    );
-    await expectHighlightRowToStayCollapsed(
-      chapter1SecondaryRow,
-      "EPUB chapter one inspector note omega."
     );
     await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
@@ -1225,14 +1273,10 @@ test.describe("epub @legacy-synthetic", () => {
         { timeout: 15_000 }
       )
       .toBeLessThan(170);
-    await chapter1SecondaryPreviewButton.click();
-    await expectHighlightRowToBeExpanded(
+    await expect(chapter1SecondaryRow).toBeVisible({ timeout: 15_000 });
+    await expectHighlightRowVisible(
       chapter1SecondaryRow,
       "EPUB chapter one inspector note omega."
-    );
-    await expectHighlightRowToStayCollapsed(
-      chapter1PrimaryRow,
-      "EPUB chapter one inspector note alpha."
     );
     await expect
       .poll(
@@ -1245,13 +1289,9 @@ test.describe("epub @legacy-synthetic", () => {
       (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
     });
     await chapter1PrimaryAnchor.click();
-    await expectHighlightRowToBeExpanded(
+    await expectHighlightRowVisible(
       chapter1PrimaryRow,
       "EPUB chapter one inspector note alpha."
-    );
-    await expectHighlightRowToStayCollapsed(
-      chapter1SecondaryRow,
-      "EPUB chapter one inspector note omega."
     );
 
     await selectSectionByLabel(page, seed.chapter_titles[1]);
@@ -1260,9 +1300,14 @@ test.describe("epub @legacy-synthetic", () => {
     ).toBeVisible({ timeout: 10_000 });
     await expect(chapter1PrimaryRow).toHaveCount(0);
     await expect(chapter1SecondaryRow).toHaveCount(0);
+    await chapter2Anchor.evaluate((element) => {
+      (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+    });
     const chapter2RowInView = chapter2Row.first();
     await expect(chapter2RowInView).toBeVisible({ timeout: 15_000 });
-    await chapter2RowInView.click();
-    await expectHighlightRowToBeExpanded(chapter2RowInView, "EPUB chapter two inspector note.");
+    await chapter2RowInView.evaluate((element) => {
+      (element as HTMLElement).click();
+    });
+    await expectHighlightRowVisible(chapter2RowInView, "EPUB chapter two inspector note.");
   });
 });

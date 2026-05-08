@@ -13,6 +13,8 @@ from nexus.config import get_settings
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
 from nexus.services.chat_runs import execute_chat_run
+from nexus.services.rate_limit import RateLimiter, set_rate_limiter
+from nexus.services.real_media_fixture_llm import RealMediaFixtureLLMRouter
 
 logger = get_logger(__name__)
 
@@ -21,6 +23,13 @@ def chat_run(run_id: str) -> dict:
     run_uuid = UUID(run_id)
     settings = get_settings()
     session_factory = get_session_factory()
+    set_rate_limiter(
+        RateLimiter(
+            session_factory=session_factory,
+            rpm_limit=settings.rate_limit_rpm,
+            concurrent_limit=settings.rate_limit_concurrent,
+        )
+    )
     db = session_factory()
 
     async def _call() -> dict:
@@ -28,13 +37,21 @@ def chat_run(run_id: str) -> dict:
             timeout=httpx.Timeout(60.0, connect=10.0),
             limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
         ) as client:
-            router = LLMRouter(
-                client,
-                enable_openai=settings.enable_openai,
-                enable_anthropic=settings.enable_anthropic,
-                enable_gemini=settings.enable_gemini,
-                enable_deepseek=settings.enable_deepseek,
-            )
+            if settings.real_media_provider_fixtures:
+                router = RealMediaFixtureLLMRouter(
+                    enable_openai=settings.enable_openai,
+                    enable_anthropic=settings.enable_anthropic,
+                    enable_gemini=settings.enable_gemini,
+                    enable_deepseek=settings.enable_deepseek,
+                )
+            else:
+                router = LLMRouter(
+                    client,
+                    enable_openai=settings.enable_openai,
+                    enable_anthropic=settings.enable_anthropic,
+                    enable_gemini=settings.enable_gemini,
+                    enable_deepseek=settings.enable_deepseek,
+                )
             web_search_provider = (
                 BraveSearchProvider(
                     client,

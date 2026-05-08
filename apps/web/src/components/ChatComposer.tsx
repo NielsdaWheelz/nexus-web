@@ -136,8 +136,13 @@ function isAvailableViaUserKey(model: ComposerModel): boolean {
 
 function firstModelForProviderOrder(models: ComposerModel[]): ComposerModel | undefined {
   for (const provider of PROVIDER_ORDER) {
-    const model = models.find((item) => item.provider === provider);
-    if (model) return model;
+    const lightModel = models.find(
+      (item) => item.provider === provider && item.model_tier === "light"
+    );
+    if (lightModel) return lightModel;
+
+    const firstProviderModel = models.find((item) => item.provider === provider);
+    if (firstProviderModel) return firstProviderModel;
   }
   return models[0];
 }

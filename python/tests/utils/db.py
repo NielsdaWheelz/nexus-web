@@ -137,6 +137,10 @@ class DirectSessionManager:
                         text("DELETE FROM daily_note_pages WHERE user_id = :value"),
                         {"value": value},
                     )
+                    session.execute(
+                        text("DELETE FROM object_links WHERE user_id = :value"),
+                        {"value": value},
+                    )
 
                 if table == "media" and column == "id":
                     session.execute(
@@ -258,6 +262,17 @@ class DirectSessionManager:
                     )
                     session.execute(
                         text("DELETE FROM conversation_branches WHERE conversation_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_context_items
+                            WHERE message_id IN (
+                                SELECT id FROM messages WHERE conversation_id = :value
+                            )
+                            """
+                        ),
                         {"value": value},
                     )
 

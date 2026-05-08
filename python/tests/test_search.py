@@ -1363,6 +1363,7 @@ class TestSearchResultFormat:
 
         assert result["type"] == "note_block"
         assert result["page_title"] == "Notes"
+        assert result["source_label"] == "test exact"
         assert result["body_text"] == note_body
         assert result["deep_link"] == f"/notes/{note_block_id}"
         assert result["media_id"] is None
@@ -1474,8 +1475,7 @@ class TestSearchResultFormat:
             headers=auth_headers(user_id),
         )
         assert default_response.status_code == 200, default_response.text
-        default_result_ids = {row["id"] for row in default_response.json()["results"]}
-        assert str(page.id) in default_result_ids
+        assert default_response.json()["results"] == []
 
 
 # =============================================================================

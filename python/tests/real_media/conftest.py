@@ -160,10 +160,9 @@ def create_nasa_captioned_video(
     headers: dict[str, str],
     user_id: UUID,
 ) -> tuple[UUID, dict]:
-    caption_text = (
+    caption_bytes = (
         REAL_MEDIA_FIXTURES_DIR / "nasa-picturing-earth-behind-scenes-captions.srt"
-    ).read_text(encoding="utf-8")
-    caption_bytes = caption_text.encode("utf-8")
+    ).read_bytes()
     assert len(caption_bytes) == 9_805
     assert hashlib.sha256(caption_bytes).hexdigest() == (
         "f2be864a2e42f94e629245a4a46326258ecaaffa64868caf16b46e75b4f7d237"
@@ -233,7 +232,14 @@ def create_nasa_podcast_episode(
         json={
             "provider_podcast_id": podcast["provider_podcast_id"],
             "title": podcast["title"],
-            "contributors": podcast["contributors"],
+            "contributors": [
+                {
+                    "credited_name": contributor["credited_name"],
+                    "role": contributor["role"],
+                    "source": contributor["source"],
+                }
+                for contributor in podcast["contributors"]
+            ],
             "feed_url": podcast["feed_url"],
             "website_url": podcast["website_url"],
             "image_url": podcast["image_url"],

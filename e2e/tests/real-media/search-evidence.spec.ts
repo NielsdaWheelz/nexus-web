@@ -1,5 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
-import { readRealMediaSeed, writeRealMediaTrace } from "./real-media-seed";
+import {
+  expectVisiblePdfEvidenceHighlight,
+  expectVisibleTextEvidenceHighlight,
+  openTranscriptEvidenceSegment,
+  readRealMediaSeed,
+  writeRealMediaTrace,
+} from "./real-media-seed";
 
 const CONTENT_KIND_LABELS = {
   epub: "EPUBs",
@@ -51,7 +57,7 @@ async function searchEvidenceThroughUi(
     );
   });
   await page.getByLabel("Search content").fill(query);
-  await page.getByRole("button", { name: "Search" }).click();
+  await page.getByRole("button", { name: "Search", exact: true }).click();
   const response = await responsePromise;
   expect(response.ok(), `visible search for ${contentKind} should succeed`).toBeTruthy();
   return response.json() as Promise<SearchResponseBody>;
@@ -103,18 +109,27 @@ test("@real-media search returns resolver-backed evidence for every configured m
     const resultLink = page.locator(`a[href*="/media/${mediaId}?"]`).first();
     await expect(resultLink, `${kind} should render a visible evidence result`).toBeVisible();
     const visibleHref = await resultLink.getAttribute("href");
+    if (!visibleHref) {
+      throw new Error(`${kind} evidence result for ${mediaId} did not expose a href`);
+    }
     await resultLink.click();
     await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
     await expect(page.locator("body")).not.toContainText(
       /not found|failed to load/i,
     );
-    await expect(
-      page
-        .locator(
-          '[data-testid^="pdf-highlight-evidence-"], [data-highlight-anchor^="evidence-"], .hl-evidence',
-        )
-        .first(),
-    ).toBeVisible({ timeout: 15_000 });
+    if (contentKind === "pdf") {
+      expect(["resolved", "no_geometry"]).toContain(resolver.data.resolver.status);
+      if (resolver.data.resolver.status === "resolved") {
+        await expectVisiblePdfEvidenceHighlight(page);
+      } else {
+        await expect(page.getByRole("toolbar", { name: "PDF controls" })).toBeVisible();
+      }
+    } else if (contentKind === "video" || contentKind === "podcast_episode") {
+      await openTranscriptEvidenceSegment(page, query, visibleHref);
+      await expectVisibleTextEvidenceHighlight(page);
+    } else {
+      await expectVisibleTextEvidenceHighlight(page);
+    }
     traces.push({
       kind,
       media_id: mediaId,

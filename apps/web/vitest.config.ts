@@ -5,6 +5,9 @@ import path from "path";
 
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: {
+    include: ["next/navigation"],
+  },
   test: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

@@ -3,6 +3,7 @@ import {
   test,
   type APIRequestContext,
   type APIResponse,
+  type Locator,
   type Page,
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
@@ -129,6 +130,26 @@ async function expectOk(response: APIResponse, label: string): Promise<void> {
   expect(response.status(), `${label}: ${await response.text()}`).toBe(200);
 }
 
+async function openHighlightsPane(page: Page): Promise<Locator> {
+  await page.getByRole("button", { name: "Open highlights pane" }).click();
+  const rail = page.getByTestId("reader-secondary-rail");
+  await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
+  await expect(rail.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  return page.getByTestId("anchored-highlights-container").first();
+}
+
+async function scrollHighlightIntoView(contentPane: Locator, highlightId: string): Promise<void> {
+  const segment = contentPane.locator(`[data-active-highlight-ids~="${highlightId}"]`).first();
+  await expect(segment).toBeAttached({ timeout: 10_000 });
+  await segment.evaluate((element) => {
+    (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+  });
+  await expect(segment).toBeVisible({ timeout: 10_000 });
+}
+
 test.describe("notes cutover @legacy-synthetic", () => {
   test("creates a linked highlight note, persists object refs, opens note blocks, and accepts note context", async ({
     page,
@@ -150,14 +171,20 @@ test.describe("notes cutover @legacy-synthetic", () => {
       highlightFragmentId = highlight.fragmentId;
 
       await page.goto(`/media/${seeded.media_id}`);
-      const linkedRow = page.locator(`[data-highlight-id="${highlight.id}"]`).first();
+      const contentPane = page.locator('div[class*="fragments"]');
+      await expect(contentPane).toBeVisible({ timeout: 10_000 });
+      await scrollHighlightIntoView(contentPane, highlight.id);
+      const highlightsPane = await openHighlightsPane(page);
+      const linkedRow = highlightsPane.locator(`[data-highlight-id="${highlight.id}"]`).first();
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
       await expect(linkedRow).toContainText(highlight.exact);
-      await linkedRow.getByRole("button").first().click();
 
       const noteEditor = linkedRow.getByRole("textbox", { name: "Highlight note" });
       await expect(noteEditor).toBeVisible({ timeout: 10_000 });
-      await noteEditor.click();
+      await noteEditor.evaluate((element) => {
+        (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+      });
+      await noteEditor.focus();
       await page.keyboard.insertText(`${noteText} ${mediaRefText}`);
 
       await expect(linkedRow.getByText("Saved")).toBeVisible({ timeout: 15_000 });

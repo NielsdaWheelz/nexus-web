@@ -1016,6 +1016,14 @@ export default function MediaPaneBody() {
     resolvedEvidenceHighlight.t_start_ms >= 0
       ? resolvedEvidenceHighlight.t_start_ms
       : null);
+  const resolvedEvidenceEndMs =
+    parseNonnegativeMs(resolvedEvidenceParams?.t_end_ms) ??
+    (resolvedEvidenceHighlight?.kind === "transcript_time_text" &&
+    typeof resolvedEvidenceHighlight.t_end_ms === "number" &&
+    Number.isInteger(resolvedEvidenceHighlight.t_end_ms) &&
+    resolvedEvidenceHighlight.t_end_ms >= 0
+      ? resolvedEvidenceHighlight.t_end_ms
+      : null);
   const activeRequestedFragmentId = requestedFragmentId ?? resolvedEvidenceFragmentId;
   const activeRequestedEpubLoc = requestedEpubLoc ?? resolvedEvidenceEpubLoc;
   const activeRequestedStartMs = requestedStartMs ?? resolvedEvidenceStartMs;
@@ -1033,6 +1041,7 @@ export default function MediaPaneBody() {
   const focusedHighlightIdRef = useRef<string | null>(focusState.focusedId);
   const urlHighlightAppliedRef = useRef<string | null>(null);
   const urlEvidenceAppliedRef = useRef<string | null>(null);
+  const railFocusScrollAppliedRef = useRef<string | null>(null);
   const mismatchToastFragmentRef = useRef<string | null>(null);
   const mismatchLoggedFragmentRef = useRef<string | null>(null);
 
@@ -3123,7 +3132,7 @@ export default function MediaPaneBody() {
   // Quote-to-Chat
   // ==========================================================================
 
-  const activeChatHighlights = isPdf ? pdfHighlightsPaneState.highlights : highlights;
+  const activeChatHighlights = isPdf ? pdfDocumentHighlights : highlights;
 
   const buildHighlightChatContext = useCallback(
     (highlightId: string): ContextItem => {
@@ -3299,6 +3308,64 @@ export default function MediaPaneBody() {
       ? SECONDARY_RAIL_EXPANDED_WIDTH_PX
       : SECONDARY_RAIL_COLLAPSED_WIDTH_PX
     : 0;
+
+  useEffect(() => {
+    if (
+      !showHighlightsPane ||
+      isPdf ||
+      isMobileViewport ||
+      !isSecondaryRailExpanded ||
+      secondaryRailMode !== "highlights" ||
+      !focusState.focusedId ||
+      !activeContent ||
+      !contentRef.current
+    ) {
+      railFocusScrollAppliedRef.current = null;
+      return;
+    }
+
+    const scrollKey = [
+      activeContent.fragmentId,
+      focusState.focusedId,
+      desktopSecondaryRailWidthPx,
+    ].join(":");
+    if (railFocusScrollAppliedRef.current === scrollKey) {
+      return;
+    }
+    railFocusScrollAppliedRef.current = scrollKey;
+
+    const frameId = window.requestAnimationFrame(() => {
+      if (!contentRef.current || !focusState.focusedId) {
+        return;
+      }
+      const escapedId = escapeAttrValue(focusState.focusedId);
+      const anchor =
+        contentRef.current.querySelector<HTMLElement>(
+          `[data-highlight-anchor="${escapedId}"]`,
+        ) ??
+        contentRef.current.querySelector<HTMLElement>(
+          `[data-active-highlight-ids~="${escapedId}"]`,
+        );
+      anchor?.scrollIntoView({
+        behavior: "auto",
+        block: "center",
+        inline: "nearest",
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [
+    activeContent,
+    desktopSecondaryRailWidthPx,
+    focusState.focusedId,
+    isMobileViewport,
+    isPdf,
+    isSecondaryRailExpanded,
+    renderedHtml,
+    secondaryRailMode,
+    showHighlightsPane,
+  ]);
+
   const readerRootRef = useRef<HTMLDivElement | null>(null);
   const protectedReaderWidthRef = useRef<HTMLDivElement | null>(null);
   const [protectedReaderWidthPx, setProtectedReaderWidthPx] = useState(0);
@@ -4616,6 +4683,8 @@ export default function MediaPaneBody() {
         activeContent?.fragmentId ?? "",
         activeEpubSection?.section_id ?? "",
         activeTranscriptFragment?.id ?? "",
+        desktopSecondaryRailWidthPx,
+        secondaryRailMode,
         renderedHtml,
         readerProfile.font_family,
         readerProfile.font_size_px,
@@ -4643,6 +4712,7 @@ export default function MediaPaneBody() {
       activeContent?.fragmentId,
       activeEpubSection?.section_id,
       activeTranscriptFragment?.id,
+      desktopSecondaryRailWidthPx,
       anchoredHighlights,
       media?.kind,
       pdfControlsState?.pageNumber,
@@ -4657,6 +4727,7 @@ export default function MediaPaneBody() {
       readerProfile.line_height,
       readerProfile.theme,
       renderedHtml,
+      secondaryRailMode,
     ],
   );
 
@@ -4764,6 +4835,13 @@ export default function MediaPaneBody() {
       fragments={fragments}
       activeFragment={activeTranscriptFragment}
       renderedHtml={renderedHtml}
+      evidenceHighlightId={
+        resolvedEvidenceHighlight?.kind === "transcript_time_text" && resolvedEvidence
+          ? `evidence-${resolvedEvidence.evidence_span_id}`
+          : null
+      }
+      evidenceStartMs={resolvedEvidenceStartMs}
+      evidenceEndMs={resolvedEvidenceEndMs}
       contentRef={contentRef}
       onSegmentSelect={handleTranscriptSegmentSelect}
       onSeek={handleTranscriptSeek}

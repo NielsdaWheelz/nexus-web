@@ -487,7 +487,7 @@ def request_podcast_transcript_batch(
 @router.post("/media/{media_id}/transcript/request")
 def request_podcast_transcript(
     media_id: UUID,
-    body: TranscriptRequestRequest,
+    body: Annotated[TranscriptRequestRequest, Body(default_factory=TranscriptRequestRequest)],
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:

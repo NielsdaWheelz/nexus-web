@@ -14,7 +14,6 @@ from tests.real_media.assertions import (
     assert_library_removed_evidence_trace,
     assert_media_deleted_evidence_trace,
     assert_media_ready,
-    assert_no_search_results,
     assert_reingest_replacement_trace,
     assert_search_and_resolver,
 )
@@ -178,8 +177,8 @@ def test_real_web_article_permissions_and_delete_remove_retrievable_evidence(
         },
         headers=outsider_headers,
     )
-    assert outsider_search.status_code == 200, outsider_search.text
-    assert outsider_search.json()["results"] == [], outsider_search.json()
+    assert outsider_search.status_code == 404, outsider_search.text
+    assert outsider_search.json()["error"]["code"] == "E_NOT_FOUND", outsider_search.json()
 
     delete_response = auth_client.delete(f"/media/{media_id}", headers=owner_headers)
     assert delete_response.status_code == 200, delete_response.text
@@ -188,7 +187,24 @@ def test_real_web_article_permissions_and_delete_remove_retrievable_evidence(
 
     owner_media = auth_client.get(f"/media/{media_id}", headers=owner_headers)
     assert owner_media.status_code == 404, owner_media.text
-    no_result_trace = assert_no_search_results(auth_client, owner_headers, media_id, "SOFIA")
+    owner_search_after_delete = auth_client.get(
+        "/search",
+        params={
+            "q": "SOFIA",
+            "types": "content_chunk",
+            "semantic": "false",
+            "limit": 5,
+        },
+        headers=owner_headers,
+    )
+    assert owner_search_after_delete.status_code == 200, owner_search_after_delete.text
+    post_delete_matches = [
+        result
+        for result in owner_search_after_delete.json()["results"]
+        if result["type"] == "content_chunk" and result["source"]["media_id"] == str(media_id)
+    ]
+    assert post_delete_matches == [], owner_search_after_delete.json()
+    no_result_trace = {"media_id": str(media_id), "query": "SOFIA", "result_count": 0}
 
     deleted_evidence_trace = assert_media_deleted_evidence_trace(direct_db, media_id)
 
@@ -202,7 +218,12 @@ def test_real_web_article_permissions_and_delete_remove_retrievable_evidence(
             "media": media_trace,
             "evidence": evidence_trace,
             "search": search_trace,
-            "outsider_search": {"media_id": str(media_id), "query": "SOFIA", "result_count": 0},
+            "outsider_search": {
+                "media_id": str(media_id),
+                "query": "SOFIA",
+                "status_code": outsider_search.status_code,
+                "error_code": outsider_search.json()["error"]["code"],
+            },
             "delete": delete_response.json()["data"],
             "post_delete_search": no_result_trace,
             "post_delete_counts": deleted_evidence_trace,

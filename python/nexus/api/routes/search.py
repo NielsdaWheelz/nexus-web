@@ -52,8 +52,8 @@ def search(
         description="Comma-separated media/content kinds to filter credited content.",
     ),
     semantic: bool = Query(
-        default=True,
-        description="Enable hybrid semantic ranking for searchable content.",
+        default=False,
+        description="Enable explicit hybrid semantic ranking for searchable content.",
     ),
     cursor: str | None = Query(default=None, description="Pagination cursor"),
     limit: int = Query(

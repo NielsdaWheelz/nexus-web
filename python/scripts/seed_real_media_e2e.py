@@ -130,10 +130,8 @@ def main() -> None:
                 ):
                     raise RuntimeError(f"EPUB seed ingest failed: {epub_result}")
 
-            web_html = (REAL_MEDIA_FIXTURES_DIR / "nasa-water-on-moon-capture.html").read_text(
-                encoding="utf-8"
-            )
-            web_sha256 = hashlib.sha256(web_html.encode()).hexdigest()
+            web_bytes = (REAL_MEDIA_FIXTURES_DIR / "nasa-water-on-moon-capture.html").read_bytes()
+            web_sha256 = hashlib.sha256(web_bytes).hexdigest()
             assert web_sha256 == "cedefaeab3c7fb3fab6be4aba68a23db58280e65b71c3914af2c8023e30e4e7a"
             web_media_id = capture_nasa_water_article(client, direct_db, headers)
 
@@ -156,13 +154,36 @@ def main() -> None:
                     "real-media-e2e-web-url",
                 )
                 session.commit()
-            if web_url_result.get("status") != "success":
+            if web_url_result.get("status") == "deduped":
+                canonical_url = web_url_result.get("canonical_url")
+                if not isinstance(canonical_url, str) or not canonical_url:
+                    raise RuntimeError(f"URL article seed dedupe missing URL: {web_url_result}")
+                with engine.connect() as conn:
+                    existing_web_url_media_id = conn.execute(
+                        text(
+                            """
+                            SELECT m.id
+                            FROM media m
+                            JOIN media_content_index_states mcis ON mcis.media_id = m.id
+                            WHERE m.kind = 'web_article'
+                              AND m.canonical_url = :canonical_url
+                              AND m.processing_status = 'ready_for_reading'
+                              AND mcis.status = 'ready'
+                            LIMIT 1
+                            """
+                        ),
+                        {"canonical_url": canonical_url},
+                    ).scalar_one_or_none()
+                if existing_web_url_media_id is None:
+                    raise RuntimeError(f"URL article seed dedupe target missing: {web_url_result}")
+                web_url_media_id = UUID(str(existing_web_url_media_id))
+            elif web_url_result.get("status") != "success":
                 raise RuntimeError(f"URL article seed ingest failed: {web_url_result}")
 
-            caption_text = (
+            caption_bytes = (
                 REAL_MEDIA_FIXTURES_DIR / "nasa-picturing-earth-behind-scenes-captions.srt"
-            ).read_text(encoding="utf-8")
-            caption_sha256 = hashlib.sha256(caption_text.encode()).hexdigest()
+            ).read_bytes()
+            caption_sha256 = hashlib.sha256(caption_bytes).hexdigest()
             assert (
                 caption_sha256 == "f2be864a2e42f94e629245a4a46326258ecaaffa64868caf16b46e75b4f7d237"
             )
@@ -170,10 +191,10 @@ def main() -> None:
                 client, direct_db, headers, user_id
             )
 
-            podcast_text = (REAL_MEDIA_FIXTURES_DIR / "nasa-hwhap-crew4-transcript.txt").read_text(
-                encoding="utf-8"
-            )
-            podcast_sha256 = hashlib.sha256(podcast_text.encode()).hexdigest()
+            podcast_bytes = (
+                REAL_MEDIA_FIXTURES_DIR / "nasa-hwhap-crew4-transcript.txt"
+            ).read_bytes()
+            podcast_sha256 = hashlib.sha256(podcast_bytes).hexdigest()
             assert (
                 podcast_sha256 == "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953"
             )
@@ -225,7 +246,7 @@ def main() -> None:
                             "source_url": "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/",
                             "license": "NASA public web content",
                             "artifact_sha256": web_sha256,
-                            "artifact_bytes": len(web_html.encode()),
+                            "artifact_bytes": len(web_bytes),
                             "query": "SOFIA",
                             "needle": "SOFIA mission",
                         },
@@ -235,7 +256,7 @@ def main() -> None:
                             "source_url": "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/",
                             "license": "NASA public web content",
                             "artifact_sha256": web_sha256,
-                            "artifact_bytes": len(web_html.encode()),
+                            "artifact_bytes": len(web_bytes),
                             "query": "SOFIA",
                             "needle": "SOFIA mission",
                             "provider_fixture": web_url_result.get("provider_fixture"),
@@ -246,7 +267,7 @@ def main() -> None:
                             "source_url": "https://science.nasa.gov/earth/earth-observatory/picturing-earth-behind-the-scenes/",
                             "license": "NASA public web content",
                             "artifact_sha256": caption_sha256,
-                            "artifact_bytes": len(caption_text.encode()),
+                            "artifact_bytes": len(caption_bytes),
                             "query": "International Space Station",
                             "needle": "International Space Station",
                             "provider_fixture": video_result.get("provider_fixture"),
@@ -258,7 +279,7 @@ def main() -> None:
                             "source_url": "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/the-crew-4-astronauts/",
                             "license": "NASA public web content",
                             "artifact_sha256": podcast_sha256,
-                            "artifact_bytes": len(podcast_text.encode()),
+                            "artifact_bytes": len(podcast_bytes),
                             "query": "International Space Station",
                             "needle": "International Space Station",
                             "provider_fixture": podcast_result.get("provider_fixture"),

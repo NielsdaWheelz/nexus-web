@@ -10,15 +10,15 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 from uuid import UUID
 
+import httpx
 from llm_calling.errors import LLMError, LLMErrorCode
-from llm_calling.router import LLMRouter
-from llm_calling.types import LLMUsage
+from llm_calling.types import LLMChunk, LLMRequest, LLMUsage
 from sqlalchemy import bindparam, func, or_, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -161,6 +161,17 @@ class PreparedMessages:
     conversation: Conversation
     user_message: Message
     assistant_message: Message
+
+
+class ChatRunLLMRouter(Protocol):
+    def generate_stream(
+        self,
+        provider: str,
+        req: LLMRequest,
+        api_key: str,
+        *,
+        timeout_s: int,
+    ) -> AsyncIterator[LLMChunk]: ...
 
 
 def _api_error_code_for_llm_error(error_code: LLMErrorCode) -> ApiErrorCode:
@@ -602,7 +613,7 @@ async def execute_chat_run(
     db: Session,
     *,
     run_id: UUID,
-    llm_router: LLMRouter,
+    llm_router: ChatRunLLMRouter,
     web_search_provider: WebSearchProvider | None,
     web_search_country: str = "US",
     web_search_language: str = "en",
@@ -620,6 +631,34 @@ async def execute_chat_run(
             web_search_language=web_search_language,
             web_search_safe_search=web_search_safe_search,
         )
+    except ApiError as exc:
+        logger.warning(
+            "chat_run.api_error",
+            run_id=str(run_id),
+            error_code=exc.code.value,
+            error=str(exc),
+        )
+        try:
+            _finalize_run(
+                db,
+                run_id=run_id,
+                assistant_content=ERROR_CODE_TO_MESSAGE.get(exc.code.value, exc.message),
+                assistant_status="error",
+                run_status="error",
+                done_status="error",
+                error_code=exc.code.value,
+                model=None,
+                resolved_key=None,
+                key_mode="auto",
+                latency_ms=0,
+                usage=None,
+                provider_request_id=None,
+                viewer_id=None,
+            )
+            return {"status": "error", "error_code": exc.code.value}
+        except Exception:
+            db.rollback()
+            raise
     except Exception as exc:
         logger.exception("chat_run.unhandled_error", run_id=str(run_id), error=str(exc))
         try:
@@ -651,7 +690,7 @@ async def _execute_chat_run(
     db: Session,
     *,
     run_id: UUID,
-    llm_router: LLMRouter,
+    llm_router: ChatRunLLMRouter,
     web_search_provider: WebSearchProvider | None,
     web_search_country: str,
     web_search_language: str,
@@ -1056,6 +1095,36 @@ async def _execute_chat_run(
                     error_code,
                     "An unexpected error occurred. Please try again.",
                 ),
+                assistant_status="error",
+                run_status="error",
+                done_status="error",
+                error_code=error_code,
+                model=model,
+                resolved_key=resolved_key,
+                key_mode=run.key_mode,
+                latency_ms=latency_ms,
+                usage=usage,
+                provider_request_id=provider_request_id,
+                viewer_id=run.owner_user_id,
+            )
+            return {"status": "error", "error_code": error_code}
+        except httpx.ResponseNotRead:
+            latency_ms = int((time.monotonic() - start_time) * 1000)
+            error_code = ApiErrorCode.E_LLM_PROVIDER_DOWN.value
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **llm_log_fields,
+                    outcome="error",
+                    error_class=error_code,
+                    unread_provider_error_response=True,
+                    latency_ms=int((time.monotonic() - llm_start) * 1000),
+                ),
+            )
+            _finalize_run(
+                db,
+                run_id=run.id,
+                assistant_content=ERROR_CODE_TO_MESSAGE[error_code],
                 assistant_status="error",
                 run_status="error",
                 done_status="error",

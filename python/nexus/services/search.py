@@ -142,6 +142,7 @@ class _RankedNoteBlockResult:
     page_title: str
     body_text: str
     score: _SearchScore
+    source_label: str | None = None
     result_type: Literal["note_block"] = "note_block"
 
 
@@ -596,7 +597,7 @@ def search(
     contributor_handles: list[str] | None = None,
     roles: list[str] | None = None,
     content_kinds: list[str] | None = None,
-    semantic: bool = True,
+    semantic: bool = False,
     cursor: str | None = None,
     limit: int = DEFAULT_LIMIT,
 ) -> SearchResponse:
@@ -1618,6 +1619,36 @@ def _search_note_blocks(
         scope_id=scope_id,
         limit=limit,
     )
+    note_ids = [row["object_id"] for row in rows]
+    highlight_labels: dict[UUID, str] = {}
+    if note_ids:
+        for row in db.execute(
+            text(
+                """
+                SELECT
+                    CASE
+                        WHEN ol.a_type = 'note_block' THEN ol.a_id
+                        ELSE ol.b_id
+                    END AS note_block_id,
+                    h.exact
+                FROM object_links ol
+                JOIN highlights h
+                  ON (
+                        (ol.a_type = 'highlight' AND h.id = ol.a_id)
+                     OR (ol.b_type = 'highlight' AND h.id = ol.b_id)
+                  )
+                WHERE ol.user_id = :viewer_id
+                  AND ol.relation_type = 'note_about'
+                  AND (
+                        (ol.a_type = 'note_block' AND ol.a_id = ANY(:note_ids))
+                     OR (ol.b_type = 'note_block' AND ol.b_id = ANY(:note_ids))
+                  )
+                ORDER BY ol.created_at ASC, ol.id ASC
+                """
+            ),
+            {"viewer_id": viewer_id, "note_ids": note_ids},
+        ).mappings():
+            highlight_labels.setdefault(row["note_block_id"], row["exact"])
     return [
         _RankedNoteBlockResult(
             id=row["object_id"],
@@ -1626,6 +1657,7 @@ def _search_note_blocks(
             page_title=row["title_text"],
             body_text=row["body_text"],
             score=_build_search_score(row["score"]),
+            source_label=highlight_labels.get(row["object_id"]),
         )
         for row in rows
     ]
@@ -1835,7 +1867,7 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
     if isinstance(result, _RankedNoteBlockResult):
         return {
             "title": result.page_title,
-            "source_label": "note",
+            "source_label": result.source_label or "note",
             "media_id": None,
             "media_kind": None,
             "deep_link": deep_link,

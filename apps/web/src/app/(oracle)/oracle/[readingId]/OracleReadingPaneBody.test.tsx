@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 import OracleReadingPaneBody, { type ReadingDetail } from "./OracleReadingPaneBody";
 
 vi.mock("next/navigation", () => ({
+  __esModule: true,
+  default: {},
+  usePathname: () => "/oracle/reading-1",
   useRouter: () => ({
     push: vi.fn(),
     replace: vi.fn(),

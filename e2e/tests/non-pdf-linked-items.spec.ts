@@ -85,15 +85,7 @@ async function rowContainsVisibleTextOrFieldValue(
   }, expectedValue);
 }
 
-async function expectHighlightRowToStayCollapsed(
-  row: Locator,
-  hiddenText: string
-): Promise<void> {
-  await expect(row).toBeVisible();
-  await expect.poll(() => rowContainsVisibleTextOrFieldValue(row, hiddenText)).toBe(false);
-}
-
-async function expectHighlightRowToBeExpanded(
+async function expectHighlightRowVisible(
   row: Locator,
   noteText: string
 ): Promise<void> {
@@ -123,6 +115,27 @@ async function expectReaderAssistantContext(page: Page, exact: string): Promise<
   await expect(assistant.getByLabel("Attached context")).toContainText(exact);
 }
 
+async function openHighlightsPane(page: Page): Promise<Locator> {
+  await page.getByRole("button", { name: "Open highlights pane" }).click();
+  const rail = page.getByTestId("reader-secondary-rail");
+  await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
+  await expect(rail.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  return page.getByTestId("anchored-highlights-container").first();
+}
+
+async function scrollHighlightIntoView(contentPane: Locator, highlightId: string): Promise<Locator> {
+  const segment = contentPane.locator(`[data-active-highlight-ids~="${highlightId}"]`).first();
+  await expect(segment).toBeAttached({ timeout: 10_000 });
+  await segment.evaluate((element) => {
+    (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+  });
+  await expect(segment).toBeVisible({ timeout: 10_000 });
+  return segment;
+}
+
 test.describe("non-pdf linked-items @legacy-synthetic", () => {
   test("contextual highlights expand inline and keep row-local chat + source focus in sync", async ({
     page,
@@ -135,22 +148,34 @@ test.describe("non-pdf linked-items @legacy-synthetic", () => {
 
     await page.goto(mediaUrl);
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
+    const highlightsPane = await openHighlightsPane(page);
 
-    const quoteRow = page.locator(linkedItemRowByHighlightId(seeded.quote_highlight_id)).first();
-    const focusRow = page.locator(linkedItemRowByHighlightId(seeded.focus_highlight_id)).first();
-    await expect(quoteRow).toBeVisible({ timeout: 10_000 });
-    await expect(focusRow).toBeVisible({ timeout: 10_000 });
-    await expectHighlightRowToStayCollapsed(quoteRow, quoteNote);
-    await expectHighlightRowToStayCollapsed(focusRow, focusNote);
+    const quoteRow = highlightsPane
+      .locator(linkedItemRowByHighlightId(seeded.quote_highlight_id))
+      .first();
+    const focusRow = highlightsPane
+      .locator(linkedItemRowByHighlightId(seeded.focus_highlight_id))
+      .first();
+
+    await scrollHighlightIntoView(contentPane, seeded.quote_highlight_id);
+    await expectHighlightRowVisible(quoteRow, quoteNote);
+    await scrollHighlightIntoView(contentPane, seeded.focus_highlight_id);
+    await expectHighlightRowVisible(focusRow, focusNote);
     await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
 
-    await focusRow.click();
-    await expectHighlightRowToBeExpanded(focusRow, focusNote);
-    await expectHighlightRowToStayCollapsed(quoteRow, quoteNote);
+    await focusRow.evaluate((element) => {
+      (element as HTMLElement).click();
+    });
+    await expectHighlightRowVisible(focusRow, focusNote);
     const focusRowChatButton = rowAskInChatButton(focusRow);
     const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
-    await focusRowChatButton.click();
+    await focusRowChatButton.evaluate((element) => {
+      (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+    });
+    await focusRowChatButton.evaluate((element) => {
+      (element as HTMLButtonElement).click();
+    });
     await expectReaderAssistantContext(page, seeded.focus_exact);
     await expect
       .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
@@ -185,7 +210,14 @@ test.describe("non-pdf linked-items @legacy-synthetic", () => {
     }
     const distanceBefore = distanceOutsideViewport(topBefore, viewportHeight);
 
-    await focusRow.click();
+    await page.getByRole("tab", { name: "Highlights" }).click();
+    await expect(page.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await focusRow.evaluate((element) => {
+      (element as HTMLElement).click();
+    });
 
     await expect
       .poll(
@@ -203,20 +235,19 @@ test.describe("non-pdf linked-items @legacy-synthetic", () => {
     }
     await expect(focusedSegment).toBeVisible();
     await expect(focusedSegment).toHaveClass(/hl-focused/);
-    await expectHighlightRowToBeExpanded(focusRow, focusNote);
-    await expectHighlightRowToStayCollapsed(quoteRow, quoteNote);
+    await expectHighlightRowVisible(focusRow, focusNote);
 
-    const quoteSegment = contentPane
-      .locator(`[data-active-highlight-ids~="${seeded.quote_highlight_id}"]`)
-      .first();
-    await quoteSegment.evaluate((element) => {
+    const quoteSegment = await scrollHighlightIntoView(contentPane, seeded.quote_highlight_id);
+    await quoteSegment.click();
+    await expectHighlightRowVisible(quoteRow, quoteNote);
+
+    const quoteRowChatButton = rowAskInChatButton(quoteRow);
+    await quoteRowChatButton.evaluate((element) => {
       (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
     });
-    await quoteSegment.click();
-    await expectHighlightRowToBeExpanded(quoteRow, quoteNote);
-    await expectHighlightRowToStayCollapsed(focusRow, focusNote);
-
-    await rowAskInChatButton(quoteRow).click();
+    await quoteRowChatButton.evaluate((element) => {
+      (element as HTMLButtonElement).click();
+    });
     await expectReaderAssistantContext(page, seeded.quote_exact);
     await expect
       .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })

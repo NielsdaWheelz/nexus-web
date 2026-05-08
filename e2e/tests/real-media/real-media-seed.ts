@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { expect, type Page, type TestInfo } from "@playwright/test";
+import { expect, type Locator, type Page, type TestInfo } from "@playwright/test";
 
 const CONTENT_KIND_LABELS = {
   epub: "EPUBs",
@@ -75,7 +75,7 @@ export async function searchRealMediaEvidenceThroughUi(
   ).toBeChecked();
 
   await page.getByLabel("Search content").fill(query);
-  const searchButton = page.getByRole("button", { name: "Search" });
+  const searchButton = page.getByRole("button", { name: "Search", exact: true });
   await expect(searchButton).toBeEnabled();
 
   const responsePromise = page.waitForResponse((response) => {
@@ -98,6 +98,59 @@ export async function searchRealMediaEvidenceThroughUi(
   ).toBeTruthy();
   const body = (await response.json()) as { results: RealMediaSearchResult[] };
   return { ...body, api_url: response.url() };
+}
+
+export async function expectVisibleTextEvidenceHighlight(page: Page) {
+  await expect(
+    page.locator('[data-highlight-anchor^="evidence-"]').first(),
+  ).toBeAttached({ timeout: 15_000 });
+  await expect(page.locator(".hl-evidence").first()).toBeVisible({
+    timeout: 15_000,
+  });
+}
+
+export async function expectVisiblePdfEvidenceHighlight(page: Page) {
+  await expect(
+    page.locator('[data-testid^="pdf-highlight-evidence-"]').first(),
+  ).toBeVisible({ timeout: 15_000 });
+}
+
+export async function openTranscriptEvidenceSegment(
+  page: Page,
+  query: string,
+  visibleHref: string,
+) {
+  const startMsValue = new URL(visibleHref, page.url()).searchParams.get("t_start_ms");
+  const startMs = startMsValue === null ? Number.NaN : Number(startMsValue);
+  if (!Number.isInteger(startMs) || startMs < 0) {
+    throw new Error(
+      `Transcript evidence link should include nonnegative integer t_start_ms: ${visibleHref}`,
+    );
+  }
+  const totalSeconds = Math.floor(startMs / 1000);
+  const timestamp = `${Math.floor(totalSeconds / 3600)
+    .toString()
+    .padStart(2, "0")}:${Math.floor((totalSeconds % 3600) / 60)
+    .toString()
+    .padStart(2, "0")}:${(totalSeconds % 60).toString().padStart(2, "0")}`;
+  const segment = page
+    .getByRole("button", { name: new RegExp(`^${escapeRegExp(timestamp)}\\b`) })
+    .first();
+  await expect(segment).toBeVisible({ timeout: 15_000 });
+  await segment.click();
+  await expect(segment).toHaveAttribute("aria-current", "true", { timeout: 10_000 });
+  const renderer = page.getByTestId("html-renderer");
+  await expect(renderer).toBeVisible({ timeout: 10_000 });
+  await expect(renderer).toContainText(new RegExp(escapeRegExp(query), "i"), {
+    timeout: 10_000,
+  });
+  await expect(renderer.locator(".hl-evidence").first()).toBeVisible({
+    timeout: 10_000,
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export async function selectFreshVisibleTextSnippet(
@@ -147,20 +200,14 @@ export async function selectFreshVisibleTextSnippet(
           }
 
           const parent = textNode.parentElement;
-          if (!parent || parent.closest("[data-active-highlight-ids]")) {
+          if (!parent) {
             continue;
           }
-
           const style = window.getComputedStyle(parent);
-          const rect = parent.getBoundingClientRect();
           const rawText = textNode.textContent ?? "";
           if (
             style.display === "none" ||
             style.visibility === "hidden" ||
-            rect.width <= 0 ||
-            rect.height <= 0 ||
-            rect.bottom <= 0 ||
-            rect.top >= window.innerHeight ||
             rawText.trim().length < minLength
           ) {
             continue;
@@ -202,6 +249,15 @@ export async function selectFreshVisibleTextSnippet(
               const range = document.createRange();
               range.setStart(textNode, start);
               range.setEnd(textNode, end);
+              const rect = range.getBoundingClientRect();
+              if (
+                rect.width <= 0 ||
+                rect.height <= 0 ||
+                rect.bottom <= 0 ||
+                rect.top >= window.innerHeight
+              ) {
+                continue;
+              }
               selection.removeAllRanges();
               selection.addRange(range);
               document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
@@ -221,9 +277,59 @@ export async function selectFreshVisibleTextSnippet(
     },
   );
 
-  expect(selected).toBeTruthy();
   if (!selected) {
-    throw new Error(`Expected to select visible text in ${containerSelector}.`);
+    const debug = await page.evaluate(({ selector }) => {
+      const containers = Array.from(document.querySelectorAll(selector)).filter(
+        (node): node is HTMLElement => node instanceof HTMLElement,
+      );
+      return {
+        containerCount: containers.length,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        containers: containers.slice(0, 3).map((container) => {
+          const rect = container.getBoundingClientRect();
+          const textNodes = [];
+          const walker = document.createTreeWalker(
+            container,
+            NodeFilter.SHOW_TEXT,
+          );
+          while (walker.nextNode() && textNodes.length < 8) {
+            const textNode = walker.currentNode;
+            if (!(textNode instanceof Text) || !textNode.textContent?.trim()) {
+              continue;
+            }
+            const range = document.createRange();
+            range.selectNodeContents(textNode);
+            const textRect = range.getBoundingClientRect();
+            textNodes.push({
+              text: textNode.textContent.replace(/\s+/g, " ").trim().slice(0, 120),
+              rect: {
+                top: textRect.top,
+                bottom: textRect.bottom,
+                width: textRect.width,
+                height: textRect.height,
+              },
+            });
+          }
+          return {
+            text: container.innerText.replace(/\s+/g, " ").trim().slice(0, 300),
+            rect: {
+              top: rect.top,
+              bottom: rect.bottom,
+              width: rect.width,
+              height: rect.height,
+            },
+            textNodes,
+          };
+        }),
+      };
+    }, { selector: containerSelector });
+    throw new Error(
+      `Expected to select visible text in ${containerSelector}. Selection debug: ${JSON.stringify({
+        blockedExactCount: existingExacts.length,
+        blockedExactSamples: existingExacts.slice(0, 5),
+        ...debug,
+      })}`,
+    );
   }
   return selected;
 }
@@ -233,6 +339,12 @@ export async function createFragmentHighlightThroughVisibleSelection(
   mediaId: string,
   containerSelector: string,
 ): Promise<RealMediaSavedHighlightTrace> {
+  const container = page.locator(containerSelector).filter({ hasText: /\S/ }).first();
+  await expect(container).toBeVisible({
+    timeout: 15_000,
+  });
+  await container.scrollIntoViewIfNeeded();
+
   const fragmentsResponse = await page.request.get(`/api/media/${mediaId}/fragments`);
   expect(fragmentsResponse.ok()).toBeTruthy();
   const fragments = (await fragmentsResponse.json()) as {
@@ -273,16 +385,84 @@ export async function createFragmentHighlightThroughVisibleSelection(
       anchor: { fragment_id: string };
     };
   };
+  const highlightIdSelectorValue = createdHighlight.data.id
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
 
-  await expect(
-    page
-      .locator("[data-active-highlight-ids]")
-      .filter({ hasText: selectedText })
-      .first(),
-  ).toBeVisible({ timeout: 10_000 });
-  await expect(
-    page.locator(`[data-highlight-id="${createdHighlight.data.id}"]`).first(),
-  ).toBeVisible({ timeout: 10_000 });
+  try {
+    await expect(
+      page
+        .locator(containerSelector)
+        .locator(`[data-active-highlight-ids~="${highlightIdSelectorValue}"]`)
+        .filter({ hasText: selectedText })
+        .first(),
+    ).toBeVisible({ timeout: 10_000 });
+    const highlightsPane = await openHighlightsPane(page);
+    const row = highlightsPane
+      .locator(`[data-highlight-id="${highlightIdSelectorValue}"]`)
+      .first();
+    try {
+      await expect(row).toBeVisible({ timeout: 10_000 });
+    } catch (error) {
+      const debug = await page.evaluate(
+        ({ containerSelector, highlightId, selectedText }) => {
+          const container = document.querySelector(containerSelector);
+          const escapedId = CSS.escape(highlightId);
+          const targets = Array.from(
+            container?.querySelectorAll<HTMLElement>(
+              `[data-active-highlight-ids~="${escapedId}"]`,
+            ) ?? [],
+          );
+          const viewport = document.querySelector<HTMLElement>(
+            '[data-testid="document-viewport"]',
+          );
+          const rail = document.querySelector<HTMLElement>(
+            '[data-testid="reader-secondary-rail"]',
+          );
+          return {
+            targetCount: targets.length,
+            targetText: targets.map((target) => target.textContent?.slice(0, 120)),
+            targetRects: targets.map((target) =>
+              Array.from(target.getClientRects()).map((rect) => ({
+                top: rect.top,
+                bottom: rect.bottom,
+                width: rect.width,
+                height: rect.height,
+              })),
+            ),
+            viewport: viewport
+              ? {
+                  top: viewport.getBoundingClientRect().top,
+                  bottom: viewport.getBoundingClientRect().bottom,
+                  scrollTop: viewport.scrollTop,
+                  clientHeight: viewport.clientHeight,
+                }
+              : null,
+            railText: rail?.textContent?.slice(0, 500) ?? null,
+            selectedText,
+          };
+        },
+        {
+          containerSelector,
+          highlightId: createdHighlight.data.id,
+          selectedText,
+        },
+      );
+      throw new Error(
+        `Saved highlight ${createdHighlight.data.id} did not appear in the highlights rail. Projection debug: ${JSON.stringify(debug)}`,
+        { cause: error },
+      );
+    }
+  } catch (error) {
+    try {
+      await page.request.delete(`/api/highlights/${createdHighlight.data.id}`, {
+        timeout: 5_000,
+      });
+    } catch {
+      // justify-ignore-error: cleanup must not mask the product assertion.
+    }
+    throw error;
+  }
 
   return {
     id: createdHighlight.data.id,
@@ -295,45 +475,17 @@ export async function createFragmentHighlightThroughVisibleSelection(
   };
 }
 
-export async function createPdfHighlightThroughVisibleSelection(
-  page: Page,
-  mediaId: string,
-): Promise<RealMediaSavedHighlightTrace> {
-  const containerSelector = '[data-testid^="pdf-page-text-layer-"]';
-  const selectedText = await selectFreshVisibleTextSnippet(
-    page,
-    containerSelector,
-    [],
-    { minLength: 12, maxLength: 40 },
+async function openHighlightsPane(page: Page): Promise<Locator> {
+  const rail = page.getByTestId("reader-secondary-rail");
+  if ((await rail.getAttribute("data-expanded")) === "true") {
+    await rail.getByRole("tab", { name: "Highlights" }).click();
+  } else {
+    await page.getByRole("button", { name: "Open highlights pane" }).click();
+  }
+  await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
+  await expect(rail.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
+    "aria-selected",
+    "true",
   );
-  const highlightButton = page.getByRole("button", { name: "Highlight selection" });
-  await expect(highlightButton).toBeEnabled({ timeout: 10_000 });
-  const createHighlightResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      response.url().includes(`/api/media/${mediaId}/pdf-highlights`),
-  );
-  await highlightButton.click();
-  const createdHighlightResponse = await createHighlightResponse;
-  expect(createdHighlightResponse.ok()).toBeTruthy();
-  const createdHighlight = (await createdHighlightResponse.json()) as {
-    data: {
-      id: string;
-      exact: string;
-      anchor: { page_number: number };
-    };
-  };
-  await expect(
-    page.locator(`[data-testid^="pdf-highlight-${createdHighlight.data.id}-"]`).first(),
-  ).toBeVisible({ timeout: 10_000 });
-
-  return {
-    id: createdHighlight.data.id,
-    page_number: createdHighlight.data.anchor.page_number,
-    exact: createdHighlight.data.exact,
-    selected_text: selectedText,
-    container_selector: containerSelector,
-    action_selector: 'button[aria-label="Highlight selection"]',
-    request_url: createdHighlightResponse.url(),
-  };
+  return page.getByTestId("anchored-highlights-container").first();
 }

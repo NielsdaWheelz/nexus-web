@@ -37,6 +37,38 @@ describe("SearchResultRow", () => {
     );
   });
 
+  it("uses linked highlight quote as the note row link title", () => {
+    const row: SearchResultRowViewModel = {
+      key: "note_block-note-1",
+      href: "/notes/note-1",
+      type: "note_block",
+      mediaId: null,
+      contextRef: {
+        type: "note_block",
+        id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        evidenceSpanIds: [],
+      },
+      typeLabel: "note_block",
+      primaryText: "linked source quote text",
+      snippetSegments: [
+        { text: "note ", emphasized: false },
+        { text: "body", emphasized: true },
+      ],
+      sourceMeta: "Deep Work Notes",
+      noteBody: "note body text",
+      scoreLabel: "score 0.91",
+      contributorCredits: [],
+    };
+
+    render(<SearchResultRow row={row} />);
+
+    expect(
+      screen.getByRole("link", { name: /linked source quote text/i })
+    ).toHaveAttribute("href", "/notes/note-1");
+    expect(screen.queryByRole("link", { name: /note body/i })).toBeNull();
+    expect(screen.getByText("note body text")).toBeInTheDocument();
+  });
+
   it("renders emphasized snippet segments for non-highlight rows", () => {
     const row: SearchResultRowViewModel = {
       key: "content_chunk-chunk-1",
