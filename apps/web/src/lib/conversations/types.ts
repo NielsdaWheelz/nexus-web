@@ -343,6 +343,7 @@ export interface ConversationMessage {
   claim_evidence?: MessageClaimEvidence[];
   status: "pending" | "complete" | "error" | "cancelled";
   error_code: string | null;
+  can_retry_response: boolean;
   created_at: string;
   updated_at: string;
 }

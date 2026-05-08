@@ -1,9 +1,11 @@
 "use client";
 
+import { RefreshCcw } from "lucide-react";
 import ReaderCitation, {
   type ReaderCitationColor,
 } from "@/components/ui/ReaderCitation";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
 import type {
   ConversationMessage,
   MessageContextSnapshot,
@@ -15,11 +17,17 @@ export default function UserMessage({
   message,
   errorLabel,
   timestampLabel,
+  retryAssistantMessageId,
+  retrying,
+  onRetryAssistantResponse,
   onActivateTarget,
 }: {
   message: ConversationMessage;
   errorLabel: string;
   timestampLabel: string;
+  retryAssistantMessageId?: string;
+  retrying: boolean;
+  onRetryAssistantResponse?: (assistantMessageId: string) => void;
   onActivateTarget: (target: ReaderSourceTarget) => void;
 }) {
   const contexts = message.contexts ?? [];
@@ -43,6 +51,18 @@ export default function UserMessage({
         data-presentation={presentation}
       >
         <div className={styles.userPromptHeader}>
+          {retryAssistantMessageId && onRetryAssistantResponse ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              leadingIcon={<RefreshCcw size={14} aria-hidden="true" />}
+              loading={retrying}
+              aria-label="Retry response"
+              onClick={() => onRetryAssistantResponse(retryAssistantMessageId)}
+            >
+              Retry
+            </Button>
+          ) : null}
           <span className={styles.userAttribution}>You</span>
         </div>
         {contexts.length > 0 ? (

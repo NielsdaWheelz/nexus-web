@@ -145,6 +145,19 @@ class ApiErrorCode(str, Enum):
     E_BILLING_NOT_CONFIGURED = "E_BILLING_NOT_CONFIGURED"  # 500
 
 
+CHAT_RESPONSE_RETRYABLE_ERROR_CODES = frozenset(
+    {
+        ApiErrorCode.E_INTERNAL.value,
+        ApiErrorCode.E_LLM_PROVIDER_DOWN.value,
+        ApiErrorCode.E_LLM_TIMEOUT.value,
+        ApiErrorCode.E_LLM_RATE_LIMIT.value,
+        ApiErrorCode.E_LLM_INTERRUPTED.value,
+        ApiErrorCode.E_RATE_LIMITED.value,
+        ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE.value,
+    }
+)
+
+
 # Error code to HTTP status mapping
 ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     # Authentication errors

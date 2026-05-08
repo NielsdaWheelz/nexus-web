@@ -152,6 +152,9 @@ function ChatView({
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [retryingAssistantMessageIds, setRetryingAssistantMessageIds] = useState<
+    Set<string>
+  >(new Set());
   const [contextRailExpanded, setContextRailExpanded] = useState(true);
   const conversationScope = conversation?.scope ?? { type: "general" as const };
   useSetPaneTitle(
@@ -173,6 +176,7 @@ function ChatView({
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
+  const retryingAssistantMessageIdsRef = useRef<Set<string>>(new Set());
   const messageIdsForPath = useCallback(
     (path: ConversationMessage[], leafMessageId: string | null = null) => {
       const ids = selectedPathMessageIds(path);
@@ -294,6 +298,9 @@ function ChatView({
         runData.user_message.id,
         runData.assistant_message.id,
       ]);
+      if (!runData.user_message.parent_message_id) {
+        setMessages([runData.user_message, runData.assistant_message]);
+      }
       void tailChatRun(runData);
       void loadConversationTree().catch((err) => {
         console.error("Failed to refresh conversation tree:", err);
@@ -463,6 +470,38 @@ function ChatView({
     shouldScrollRef.current = true;
   }, []);
 
+  const handleRetryAssistantResponse = useCallback(
+    async (assistantMessageId: string) => {
+      if (retryingAssistantMessageIdsRef.current.has(assistantMessageId)) return;
+
+      retryingAssistantMessageIdsRef.current = new Set([
+        ...retryingAssistantMessageIdsRef.current,
+        assistantMessageId,
+      ]);
+      setRetryingAssistantMessageIds(retryingAssistantMessageIdsRef.current);
+      setError(null);
+
+      try {
+        const response = await apiFetch<ChatRunResponse>(
+          `/api/messages/${assistantMessageId}/retry`,
+          {
+            method: "POST",
+            headers: { "Idempotency-Key": crypto.randomUUID() },
+          },
+        );
+        handleChatRunCreated(response.data);
+      } catch (err) {
+        setError(toFeedback(err, { fallback: "Failed to retry response" }));
+      } finally {
+        const next = new Set(retryingAssistantMessageIdsRef.current);
+        next.delete(assistantMessageId);
+        retryingAssistantMessageIdsRef.current = next;
+        setRetryingAssistantMessageIds(next);
+      }
+    },
+    [handleChatRunCreated],
+  );
+
   const jumpToMessage = useCallback((messageId: string) => {
     const target = scrollportRef.current?.querySelector<HTMLElement>(
       `[data-message-id="${messageId}"]`,
@@ -493,8 +532,8 @@ function ChatView({
         branchDraft,
         scrollTop: scrollportRef.current?.scrollTop ?? 0,
       };
-
       pendingScrollTopRef.current = 0;
+      pendingScrollRestoreRef.current = null;
       setMessages(nextPath);
       selectedPathIdsRef.current = messageIdsForPath(nextPath, nextLeafId);
       setActiveLeafMessageId(nextLeafId);
@@ -602,6 +641,8 @@ function ChatView({
                 void switchToFork(fork);
               }}
               onReplyToAssistant={handleReplyToAssistant}
+              onRetryAssistantResponse={handleRetryAssistantResponse}
+              retryingAssistantMessageIds={retryingAssistantMessageIds}
               scrollportRef={scrollportRef}
               onScroll={handleChatScroll}
               olderCursor={olderCursor}

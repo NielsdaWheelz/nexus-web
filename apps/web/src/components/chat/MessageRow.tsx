@@ -33,6 +33,9 @@ interface MessageRowProps {
   switchableLeafIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
   onReplyToAssistant?: (draft: BranchDraft) => void;
+  retryAssistantMessageId?: string;
+  retryingAssistantMessageIds?: Set<string>;
+  onRetryAssistantResponse?: (assistantMessageId: string) => void;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
 }
 
@@ -59,6 +62,9 @@ export function MessageRow({
   switchableLeafIds,
   onSelectFork,
   onReplyToAssistant,
+  retryAssistantMessageId,
+  retryingAssistantMessageIds,
+  onRetryAssistantResponse,
   onReaderSourceActivate,
 }: MessageRowProps) {
   const activateTarget = useCallback(
@@ -83,6 +89,13 @@ export function MessageRow({
           message={message}
           errorLabel={messageErrorLabel}
           timestampLabel={timestampLabel}
+          retryAssistantMessageId={retryAssistantMessageId}
+          retrying={
+            retryAssistantMessageId
+              ? retryingAssistantMessageIds?.has(retryAssistantMessageId) === true
+              : false
+          }
+          onRetryAssistantResponse={onRetryAssistantResponse}
           onActivateTarget={activateTarget}
         />
       );

@@ -30,6 +30,7 @@ function message(
     content: "",
     status: "complete",
     error_code: null,
+    can_retry_response: false,
     created_at: baseTimestamp,
     updated_at: baseTimestamp,
     ...overrides,

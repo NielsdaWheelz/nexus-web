@@ -8,6 +8,7 @@ const baseMessage = {
   seq: 1,
   status: "complete",
   error_code: null,
+  can_retry_response: false,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 } as const;
@@ -60,6 +61,113 @@ describe("ChatSurface", () => {
 
     expect(screen.getByText("What does this quote mean?")).toBeInTheDocument();
     expect(screen.getByText("It is about the tradeoff.")).toBeInTheDocument();
+  });
+
+  it("puts retry actions on user prompts for retryable assistant children", () => {
+    const onRetryAssistantResponse = vi.fn();
+    const messages: ConversationMessage[] = [
+      {
+        ...baseMessage,
+        id: "user-1",
+        role: "user",
+        content: "Try this",
+      },
+      {
+        ...baseMessage,
+        id: "assistant-1",
+        seq: 2,
+        role: "assistant",
+        content: "",
+        status: "error",
+        error_code: "E_INTERNAL",
+        parent_message_id: "user-1",
+        can_retry_response: true,
+      },
+      {
+        ...baseMessage,
+        id: "user-2",
+        seq: 3,
+        role: "user",
+        content: "Try that",
+      },
+      {
+        ...baseMessage,
+        id: "assistant-2",
+        seq: 4,
+        role: "assistant",
+        content: "",
+        status: "error",
+        error_code: "E_CONTEXT_TOO_LARGE",
+        parent_message_id: "user-2",
+        can_retry_response: false,
+      },
+    ];
+
+    render(
+      <ChatSurface
+        messages={messages}
+        onRetryAssistantResponse={onRetryAssistantResponse}
+        composer={<textarea aria-label="Message" />}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry response" }));
+
+    expect(onRetryAssistantResponse).toHaveBeenCalledWith("assistant-1");
+    expect(screen.getAllByRole("alert")).toHaveLength(2);
+  });
+
+  it("disables only the retry action matching the in-flight assistant response", () => {
+    const messages: ConversationMessage[] = [
+      {
+        ...baseMessage,
+        id: "user-1",
+        role: "user",
+        content: "First prompt",
+      },
+      {
+        ...baseMessage,
+        id: "assistant-1",
+        seq: 2,
+        role: "assistant",
+        content: "",
+        status: "error",
+        error_code: "E_INTERNAL",
+        parent_message_id: "user-1",
+        can_retry_response: true,
+      },
+      {
+        ...baseMessage,
+        id: "user-2",
+        seq: 3,
+        role: "user",
+        content: "Second prompt",
+      },
+      {
+        ...baseMessage,
+        id: "assistant-2",
+        seq: 4,
+        role: "assistant",
+        content: "",
+        status: "error",
+        error_code: "E_INTERNAL",
+        parent_message_id: "user-2",
+        can_retry_response: true,
+      },
+    ];
+
+    render(
+      <ChatSurface
+        messages={messages}
+        retryingAssistantMessageIds={new Set(["assistant-1"])}
+        onRetryAssistantResponse={vi.fn()}
+        composer={<textarea aria-label="Message" />}
+      />,
+    );
+
+    const retryButtons = screen.getAllByRole("button", { name: "Retry response" });
+    expect(retryButtons[0]).toBeDisabled();
+    expect(retryButtons[1]).not.toBeDisabled();
   });
 
   it("renders inline fork previews at the assistant branch point", () => {

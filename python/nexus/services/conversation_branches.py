@@ -37,6 +37,7 @@ from nexus.services.conversations import (
     load_message_evidence_for_message_ids,
     load_message_tool_calls_for_message_ids,
     message_to_out,
+    retryable_assistant_message_ids,
 )
 
 
@@ -269,11 +270,12 @@ def get_conversation_tree(
     )
     path_cache_by_leaf_id = build_path_cache_by_leaf_id(
         db,
+        viewer_id=viewer_id,
         conversation_id=conversation_id,
         branch_graph=branch_graph,
         fork_options_by_parent_id=fork_options_by_parent_id,
     )
-    selected_messages_by_id = _message_outs_by_id(db, selected_path)
+    selected_messages_by_id = _message_outs_by_id(db, viewer_id, selected_path)
     return ConversationTreeOut(
         conversation=conversation_to_out(
             db,
@@ -652,6 +654,7 @@ def fork_options_by_parent(
 def build_path_cache_by_leaf_id(
     db: Session,
     *,
+    viewer_id: UUID,
     conversation_id: UUID,
     branch_graph: BranchGraphOut,
     fork_options_by_parent_id: Mapping[str, Sequence[ForkOptionOut]],
@@ -670,6 +673,7 @@ def build_path_cache_by_leaf_id(
     }
     messages_by_id = _message_outs_by_id(
         db,
+        viewer_id,
         [message for path in path_messages_by_leaf_id.values() for message in path],
     )
     return {
@@ -915,13 +919,22 @@ def _graph_node_status(
     return "complete"
 
 
-def _message_outs_by_id(db: Session, messages: Sequence[Message]) -> dict[UUID, MessageOut]:
+def _message_outs_by_id(
+    db: Session,
+    viewer_id: UUID,
+    messages: Sequence[Message],
+) -> dict[UUID, MessageOut]:
     messages_by_id = {message.id: message for message in messages}
     message_ids = list(messages_by_id)
     contexts_by_message_id = load_message_context_snapshots_for_message_ids(db, message_ids)
     tool_calls_by_message_id = load_message_tool_calls_for_message_ids(db, message_ids)
     summaries_by_message_id, claims_by_message_id, claim_evidence_by_message_id = (
         load_message_evidence_for_message_ids(db, message_ids)
+    )
+    retryable_message_ids = retryable_assistant_message_ids(
+        db,
+        viewer_id=viewer_id,
+        assistant_message_ids=message_ids,
     )
     return {
         message_id: message_to_out(
@@ -931,6 +944,7 @@ def _message_outs_by_id(db: Session, messages: Sequence[Message]) -> dict[UUID, 
             summaries_by_message_id.get(message.id),
             claims_by_message_id.get(message.id, []),
             claim_evidence_by_message_id.get(message.id, []),
+            can_retry_response=message.id in retryable_message_ids,
         )
         for message_id, message in messages_by_id.items()
     }

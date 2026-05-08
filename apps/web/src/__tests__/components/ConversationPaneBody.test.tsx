@@ -68,6 +68,7 @@ function message(
     tool_calls: [],
     status,
     error_code: null,
+    can_retry_response: false,
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -210,6 +211,78 @@ function activeBranchBRun(): ChatRunResponse["data"] {
   };
 }
 
+function failedRootRetryTree(): ConversationTreeResponse {
+  const failedUser = message("failed-user", 1, "user", "Original prompt");
+  const failedAssistant: ConversationMessage = {
+    ...message(
+      "failed-assistant",
+      2,
+      "assistant",
+      "An unexpected error occurred. Please try again.",
+      "failed-user",
+      "error",
+    ),
+    error_code: "E_INTERNAL",
+    can_retry_response: true,
+  };
+  return {
+    conversation: {
+      id: "conversation-1",
+      title: "Retry chat",
+      sharing: "private",
+      message_count: 2,
+      scope: { type: "general" },
+      created_at: timestamp,
+      updated_at: timestamp,
+    },
+    selected_path: [failedUser, failedAssistant],
+    active_leaf_message_id: "failed-assistant",
+    fork_options_by_parent_id: {},
+    path_cache_by_leaf_id: {
+      "failed-assistant": [failedUser, failedAssistant],
+    },
+    branch_graph: {
+      root_message_id: "failed-user",
+      edges: [],
+      nodes: [],
+    },
+    page: { before_cursor: null },
+  };
+}
+
+function retryRun(): ChatRunResponse["data"] {
+  const retryUser = message("retry-user", 3, "user", "Original prompt");
+  const retryAssistant = message(
+    "retry-assistant",
+    4,
+    "assistant",
+    "",
+    "retry-user",
+    "pending",
+  );
+  return {
+    run: {
+      id: "retry-run",
+      status: "queued",
+      conversation_id: "conversation-1",
+      user_message_id: "retry-user",
+      assistant_message_id: "retry-assistant",
+      model_id: "gpt-5-mini",
+      reasoning: "default",
+      key_mode: "auto",
+      cancel_requested_at: null,
+      started_at: null,
+      completed_at: null,
+      error_code: null,
+      created_at: timestamp,
+      updated_at: timestamp,
+    },
+    conversation: failedRootRetryTree().conversation,
+    user_message: retryUser,
+    assistant_message: retryAssistant,
+  };
+}
+
 function renderPane() {
   render(
     <PaneRuntimeProvider
@@ -242,6 +315,49 @@ describe("ConversationPaneBody", () => {
       value: 320,
       writable: true,
     });
+  });
+
+  it("posts retry with an idempotency key and tails the returned run", async () => {
+    const user = userEvent.setup();
+    const retryData = retryRun();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse({ data: failedRootRetryTree() });
+      }
+      if (path === "/api/models") {
+        return jsonResponse({ data: MODELS });
+      }
+      if (path === "/api/chat-runs") {
+        return jsonResponse({ data: [] });
+      }
+      if (
+        path === "/api/messages/failed-assistant/retry" &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse({ data: retryData });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane();
+
+    expect(await screen.findByText("Original prompt")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Retry response" }));
+
+    await waitFor(() => {
+      expect(tailMocks.tailChatRun).toHaveBeenCalledWith(retryData);
+    });
+    const retryCall = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        pathOf(input) === "/api/messages/failed-assistant/retry" &&
+        init?.method === "POST",
+    );
+    expect(retryCall).toBeDefined();
+    expect(
+      (retryCall?.[1]?.headers as Record<string, string>)["Idempotency-Key"],
+    ).toEqual(expect.any(String));
   });
 
   it("switches visible cached paths immediately and rolls back when active-path persistence fails", async () => {

@@ -15,7 +15,7 @@ Error envelope: {"error": {"code": "...", "message": "...", "request_id": "..."}
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
@@ -28,6 +28,7 @@ from nexus.schemas.conversation import (
     SetActivePathRequest,
     SetConversationSharesRequest,
 )
+from nexus.services import chat_runs as chat_runs_service
 from nexus.services import conversation_branches as conversation_branches_service
 from nexus.services import conversations as conversations_service
 from nexus.services import shares as shares_service
@@ -322,6 +323,22 @@ def list_messages(
         "data": [m.model_dump(mode="json") for m in messages],
         "page": page.model_dump(mode="json"),
     }
+
+
+@router.post("/messages/{assistant_message_id}/retry", status_code=200)
+def retry_failed_assistant_response(
+    assistant_message_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> dict:
+    result = chat_runs_service.retry_failed_assistant_response(
+        db=db,
+        viewer_id=viewer.user_id,
+        assistant_message_id=assistant_message_id,
+        idempotency_key=idempotency_key,
+    )
+    return success_response(result.model_dump(mode="json"))
 
 
 @router.delete("/messages/{message_id}", status_code=204)

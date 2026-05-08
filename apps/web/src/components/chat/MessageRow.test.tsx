@@ -10,6 +10,7 @@ const baseMessage = {
   content: "Current answer.",
   status: "complete",
   error_code: null,
+  can_retry_response: false,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 } as const;
@@ -809,5 +810,35 @@ describe("MessageRow", () => {
       "Response stopped before completion."
     );
     expect(screen.queryByText("E_LLM_INCOMPLETE")).not.toBeInTheDocument();
+  });
+
+  it("does not render generic backend failure prose as assistant body content", () => {
+    const message: ConversationMessage = {
+      ...baseMessage,
+      content: "An unexpected error occurred. Please try again.",
+      status: "error",
+      error_code: "E_INTERNAL",
+    };
+
+    render(<MessageRow message={message} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("The response failed.");
+    expect(
+      screen.queryByText("An unexpected error occurred. Please try again."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps partial assistant content before the terminal failure notice", () => {
+    const message: ConversationMessage = {
+      ...baseMessage,
+      content: "Partial answer before failure.",
+      status: "error",
+      error_code: "E_INTERNAL",
+    };
+
+    render(<MessageRow message={message} />);
+
+    expect(screen.getByText("Partial answer before failure.")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("The response failed.");
   });
 });

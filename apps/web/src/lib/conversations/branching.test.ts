@@ -13,6 +13,7 @@ import type {
 const base = {
   status: "complete",
   error_code: null,
+  can_retry_response: false,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 } as const;

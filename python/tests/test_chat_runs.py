@@ -1,6 +1,8 @@
 """Integration tests for the durable chat-run HTTP contract."""
 
 import hashlib
+import json
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -126,6 +128,48 @@ def _register_run_cleanup(
         ).scalars()
         for job_id in job_ids:
             direct_db.register_cleanup("background_jobs", "id", job_id)
+
+
+def _create_failed_chat_run(
+    direct_db: DirectSessionManager,
+    *,
+    user_id: UUID,
+    conversation_id: UUID,
+    model_id: UUID,
+    user_message_id: UUID,
+    assistant_message_id: UUID,
+    idempotency_key: str,
+    error_code: str = "E_LLM_TIMEOUT",
+) -> UUID:
+    run_id = uuid4()
+    with direct_db.session() as session:
+        session.add(
+            ChatRun(
+                id=run_id,
+                owner_user_id=user_id,
+                conversation_id=conversation_id,
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+                idempotency_key=idempotency_key,
+                payload_hash=f"{idempotency_key}-payload",
+                status="error",
+                model_id=model_id,
+                reasoning="none",
+                key_mode="auto",
+                web_search={"mode": "off"},
+                error_code=error_code,
+                completed_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+    return run_id
+
+
+def _post_retry(auth_client, user_id: UUID, assistant_message_id: UUID, idempotency_key: str):
+    return auth_client.post(
+        f"/messages/{assistant_message_id}/retry",
+        headers={**auth_headers(user_id), "Idempotency-Key": idempotency_key},
+    )
 
 
 class TestChatRunCreate:
@@ -924,6 +968,440 @@ class TestChatRunCreate:
             ).scalar_one()
         assert remaining_runs == 0
         assert remaining_events == 0
+
+
+class TestChatResponseRetry:
+    def test_retry_failed_root_response_creates_new_root_attempt_and_preserves_failure(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            context_object_id = uuid4()
+            source_user_id = create_test_message(
+                session,
+                conversation_id,
+                1,
+                "user",
+                "Why did the first answer fail?",
+            )
+            failed_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "The model timed out while responding. Please try again.",
+                status="error",
+                model_id=model_id,
+                parent_message_id=source_user_id,
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_context_items (
+                        message_id,
+                        user_id,
+                        context_kind,
+                        object_type,
+                        object_id,
+                        ordinal,
+                        context_snapshot
+                    )
+                    VALUES (
+                        :message_id,
+                        :user_id,
+                        'object_ref',
+                        'page',
+                        :object_id,
+                        0,
+                        CAST(:snapshot AS jsonb)
+                    )
+                    """
+                ),
+                {
+                    "message_id": source_user_id,
+                    "user_id": user_id,
+                    "object_id": context_object_id,
+                    "snapshot": json.dumps(
+                        {"kind": "object_ref", "type": "page", "title": "Retry Source"}
+                    ),
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO object_links (
+                        user_id,
+                        relation_type,
+                        a_type,
+                        a_id,
+                        b_type,
+                        b_id,
+                        a_order_key,
+                        metadata
+                    )
+                    VALUES (
+                        :user_id,
+                        'used_as_context',
+                        'message',
+                        :message_id,
+                        'page',
+                        :object_id,
+                        '0000000001',
+                        '{}'::jsonb
+                    )
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "message_id": source_user_id,
+                    "object_id": context_object_id,
+                },
+            )
+            session.commit()
+        direct_db.register_cleanup("object_links", "a_id", source_user_id)
+        _create_failed_chat_run(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            model_id=model_id,
+            user_message_id=source_user_id,
+            assistant_message_id=failed_assistant_id,
+            idempotency_key="failed-root-source",
+        )
+
+        response = _post_retry(auth_client, user_id, failed_assistant_id, "retry-root")
+
+        assert response.status_code == 200, f"Expected retry to succeed: {response.text}"
+        data = response.json()["data"]
+        retry_run_id = UUID(data["run"]["id"])
+        retry_user_id = UUID(data["user_message"]["id"])
+        retry_assistant_id = UUID(data["assistant_message"]["id"])
+        _register_run_cleanup(direct_db, retry_run_id, conversation_id)
+        direct_db.register_cleanup("object_links", "a_id", retry_user_id)
+
+        assert data["run"]["status"] == "queued"
+        assert data["run"]["model_id"] == str(model_id)
+        assert data["run"]["reasoning"] == "none"
+        assert data["user_message"]["content"] == "Why did the first answer fail?"
+        assert data["user_message"]["parent_message_id"] is None
+        assert data["user_message"]["contexts"][0]["title"] == "Retry Source"
+        assert data["assistant_message"]["status"] == "pending"
+        assert data["assistant_message"]["parent_message_id"] == str(retry_user_id)
+
+        with direct_db.session() as session:
+            failed_status = session.execute(
+                text("SELECT status FROM messages WHERE id = :message_id"),
+                {"message_id": failed_assistant_id},
+            ).scalar_one()
+            active_leaf_id = session.execute(
+                text(
+                    """
+                    SELECT active_leaf_message_id
+                    FROM conversation_active_paths
+                    WHERE conversation_id = :conversation_id
+                      AND viewer_user_id = :viewer_user_id
+                    """
+                ),
+                {"conversation_id": conversation_id, "viewer_user_id": user_id},
+            ).scalar_one()
+            meta_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM chat_run_events
+                    WHERE run_id = :run_id
+                      AND event_type = 'meta'
+                    """
+                ),
+                {"run_id": retry_run_id},
+            ).scalar_one()
+            job_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM background_jobs
+                    WHERE kind = 'chat_run'
+                      AND payload->>'run_id' = :run_id
+                    """
+                ),
+                {"run_id": str(retry_run_id)},
+            ).scalar_one()
+            copied_link_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM object_links
+                    WHERE user_id = :user_id
+                      AND relation_type = 'used_as_context'
+                      AND a_type = 'message'
+                      AND a_id = :message_id
+                      AND b_type = 'page'
+                      AND b_id = :object_id
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "message_id": retry_user_id,
+                    "object_id": context_object_id,
+                },
+            ).scalar_one()
+
+        assert failed_status == "error"
+        assert active_leaf_id == retry_assistant_id
+        assert meta_count == 1
+        assert job_count == 1
+        assert copied_link_count == 1
+
+    def test_retry_failed_followup_response_creates_sibling_under_same_parent(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
+            parent_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "Complete parent",
+                parent_message_id=root_user_id,
+            )
+            source_user_id = create_test_message(
+                session,
+                conversation_id,
+                3,
+                "user",
+                "Follow up",
+                parent_message_id=parent_assistant_id,
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE messages
+                    SET branch_anchor_kind = 'assistant_message',
+                        branch_anchor = CAST(:branch_anchor AS jsonb)
+                    WHERE id = :message_id
+                    """
+                ),
+                {
+                    "message_id": source_user_id,
+                    "branch_anchor": json.dumps({"message_id": str(parent_assistant_id)}),
+                },
+            )
+            failed_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                4,
+                "assistant",
+                "Provider unavailable.",
+                status="error",
+                model_id=model_id,
+                parent_message_id=source_user_id,
+            )
+            session.commit()
+        _create_failed_chat_run(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            model_id=model_id,
+            user_message_id=source_user_id,
+            assistant_message_id=failed_assistant_id,
+            idempotency_key="failed-followup-source",
+            error_code="E_LLM_PROVIDER_DOWN",
+        )
+
+        response = _post_retry(auth_client, user_id, failed_assistant_id, "retry-followup")
+
+        assert response.status_code == 200, f"Expected follow-up retry to succeed: {response.text}"
+        data = response.json()["data"]
+        retry_run_id = UUID(data["run"]["id"])
+        retry_user_id = UUID(data["user_message"]["id"])
+        retry_assistant_id = UUID(data["assistant_message"]["id"])
+        _register_run_cleanup(direct_db, retry_run_id, conversation_id)
+
+        assert data["user_message"]["content"] == "Follow up"
+        assert data["user_message"]["parent_message_id"] == str(parent_assistant_id)
+        assert data["user_message"]["branch_anchor_kind"] == "assistant_message"
+        assert data["user_message"]["branch_anchor"]["message_id"] == str(parent_assistant_id)
+        assert data["assistant_message"]["parent_message_id"] == str(retry_user_id)
+
+        with direct_db.session() as session:
+            branch_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM conversation_branches
+                    WHERE branch_user_message_id = :message_id
+                    """
+                ),
+                {"message_id": retry_user_id},
+            ).scalar_one()
+            active_leaf_id = session.execute(
+                text(
+                    """
+                    SELECT active_leaf_message_id
+                    FROM conversation_active_paths
+                    WHERE conversation_id = :conversation_id
+                      AND viewer_user_id = :viewer_user_id
+                    """
+                ),
+                {"conversation_id": conversation_id, "viewer_user_id": user_id},
+            ).scalar_one()
+        assert branch_count == 1
+        assert active_leaf_id == retry_assistant_id
+
+    def test_retry_idempotency_replay_and_mismatch(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            source_user_id = create_test_message(session, conversation_id, 1, "user", "First")
+            failed_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "Timed out.",
+                status="error",
+                model_id=model_id,
+                parent_message_id=source_user_id,
+            )
+            other_user_id = create_test_message(session, conversation_id, 3, "user", "Second")
+            other_failed_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                4,
+                "assistant",
+                "Timed out again.",
+                status="error",
+                model_id=model_id,
+                parent_message_id=other_user_id,
+            )
+        _create_failed_chat_run(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            model_id=model_id,
+            user_message_id=source_user_id,
+            assistant_message_id=failed_assistant_id,
+            idempotency_key="failed-replay-source",
+        )
+        _create_failed_chat_run(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            model_id=model_id,
+            user_message_id=other_user_id,
+            assistant_message_id=other_failed_assistant_id,
+            idempotency_key="failed-mismatch-source",
+        )
+
+        first = _post_retry(auth_client, user_id, failed_assistant_id, "retry-replay")
+        second = _post_retry(auth_client, user_id, failed_assistant_id, "retry-replay")
+        mismatch = _post_retry(auth_client, user_id, other_failed_assistant_id, "retry-replay")
+
+        assert first.status_code == 200, f"Initial retry failed: {first.text}"
+        assert second.status_code == 200, f"Retry replay failed: {second.text}"
+        assert mismatch.status_code == 409, (
+            f"Expected retry idempotency mismatch, got {mismatch.status_code}: {mismatch.text}"
+        )
+        assert first.json()["data"]["run"]["id"] == second.json()["data"]["run"]["id"]
+        assert mismatch.json()["error"]["code"] == "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"
+
+        retry_run_id = UUID(first.json()["data"]["run"]["id"])
+        _register_run_cleanup(direct_db, retry_run_id, conversation_id)
+
+    def test_message_list_marks_only_retryable_failed_assistant(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            source_user_id = create_test_message(session, conversation_id, 1, "user", "Retry?")
+            failed_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "Timed out.",
+                status="error",
+                model_id=model_id,
+                parent_message_id=source_user_id,
+            )
+        _create_failed_chat_run(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            model_id=model_id,
+            user_message_id=source_user_id,
+            assistant_message_id=failed_assistant_id,
+            idempotency_key="failed-capability-source",
+        )
+
+        listed = auth_client.get(
+            f"/conversations/{conversation_id}/messages",
+            headers=auth_headers(user_id),
+        )
+
+        assert listed.status_code == 200, f"Expected messages list: {listed.text}"
+        messages = listed.json()["data"]
+        retryable = {row["id"]: row["can_retry_response"] for row in messages}
+        assert retryable[str(source_user_id)] is False
+        assert retryable[str(failed_assistant_id)] is True
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+
+    def test_retry_rejects_nonretryable_failed_assistant(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            source_user_id = create_test_message(
+                session, conversation_id, 1, "user", "Bad request?"
+            )
+            failed_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "The request was rejected by the model provider.",
+                status="error",
+                model_id=model_id,
+                parent_message_id=source_user_id,
+            )
+        _create_failed_chat_run(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            model_id=model_id,
+            user_message_id=source_user_id,
+            assistant_message_id=failed_assistant_id,
+            idempotency_key="failed-nonretryable-source",
+            error_code="E_LLM_BAD_REQUEST",
+        )
+
+        response = _post_retry(auth_client, user_id, failed_assistant_id, "retry-nonretryable")
+
+        assert response.status_code == 409, (
+            f"Expected nonretryable retry to fail, got {response.status_code}: {response.text}"
+        )
+        assert response.json()["error"]["code"] == "E_RETRY_NOT_ALLOWED"
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
 
 
 class TestLegacySendRoutesRemoved:

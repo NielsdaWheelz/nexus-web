@@ -29,6 +29,7 @@ from nexus.auth.permissions import can_read_conversation, can_read_media, is_lib
 from nexus.db.models import (
     AssistantMessageClaim,
     AssistantMessageEvidenceSummary,
+    ChatRun,
     Conversation,
     Library,
     Media,
@@ -36,7 +37,12 @@ from nexus.db.models import (
     MessageContextItem,
     MessageToolCall,
 )
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import (
+    CHAT_RESPONSE_RETRYABLE_ERROR_CODES,
+    ApiErrorCode,
+    InvalidRequestError,
+    NotFoundError,
+)
 from nexus.logging import get_logger
 from nexus.schemas.conversation import (
     BRANCH_ANCHOR_KINDS,
@@ -429,6 +435,7 @@ def message_to_out(
     evidence_summary: MessageEvidenceSummaryOut | None = None,
     claims: list[MessageClaimOut] | None = None,
     claim_evidence: list[MessageClaimEvidenceOut] | None = None,
+    can_retry_response: bool = False,
 ) -> MessageOut:
     """Convert Message ORM model to MessageOut schema."""
     branch_anchor = {"kind": message.branch_anchor_kind, **(message.branch_anchor or {})}
@@ -448,9 +455,34 @@ def message_to_out(
         claim_evidence=claim_evidence or [],
         status=message.status,
         error_code=message.error_code,
+        can_retry_response=can_retry_response,
         created_at=message.created_at,
         updated_at=message.updated_at,
     )
+
+
+def retryable_assistant_message_ids(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    assistant_message_ids: Sequence[UUID],
+) -> set[UUID]:
+    if not assistant_message_ids:
+        return set()
+
+    rows = db.scalars(
+        select(ChatRun.assistant_message_id)
+        .join(Message, Message.id == ChatRun.assistant_message_id)
+        .where(
+            ChatRun.owner_user_id == viewer_id,
+            ChatRun.assistant_message_id.in_(assistant_message_ids),
+            ChatRun.status == "error",
+            ChatRun.error_code.in_(CHAT_RESPONSE_RETRYABLE_ERROR_CODES),
+            Message.role == "assistant",
+            Message.status == "error",
+        )
+    )
+    return set(rows)
 
 
 def load_message_context_snapshots_for_message_ids(
@@ -995,6 +1027,11 @@ def list_messages(
         claims_by_message_id,
         claim_evidence_by_message_id,
     ) = load_message_evidence_for_message_ids(db, message_ids)
+    retryable_message_ids = retryable_assistant_message_ids(
+        db,
+        viewer_id=viewer_id,
+        assistant_message_ids=message_ids,
+    )
     messages = [
         MessageOut(
             id=row[0],
@@ -1012,6 +1049,7 @@ def list_messages(
             claim_evidence=claim_evidence_by_message_id.get(row[0], []),
             status=row[4],
             error_code=row[5],
+            can_retry_response=row[0] in retryable_message_ids,
             created_at=row[6],
             updated_at=row[7],
         )

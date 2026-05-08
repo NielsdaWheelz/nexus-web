@@ -109,6 +109,10 @@ export default function ReaderAssistantPane({
   const [loadingMessages, setLoadingMessages] = useState(Boolean(conversationId));
   const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
   const [resolveError, setResolveError] = useState<FeedbackContent | null>(null);
+  const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
+  const [retryingAssistantMessageIds, setRetryingAssistantMessageIds] = useState<
+    Set<string>
+  >(new Set());
   const [resolvingConversation, setResolvingConversation] = useState(false);
   const [pendingContexts, setPendingContexts] = useState<ContextItem[]>(() =>
     dedupeContexts(contexts),
@@ -161,6 +165,7 @@ export default function ReaderAssistantPane({
     [conversationScope.type, pendingContexts],
   );
   const telemetryBaseRef = useRef(telemetryBase());
+  const retryingAssistantMessageIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     telemetryBaseRef.current = telemetryBase();
@@ -443,11 +448,47 @@ export default function ReaderAssistantPane({
       locallyCreatedConversationIdsRef.current.add(runData.conversation.id);
       activeConversationIdRef.current = runData.conversation.id;
       setActiveConversationId(runData.conversation.id);
+      if (!runData.user_message.parent_message_id) {
+        setMessages([runData.user_message, runData.assistant_message]);
+      }
       notifyConversationAvailable(runData.conversation.id, runData.run.id);
       abortAll();
       void tailChatRun(runData);
     },
     [abortAll, notifyConversationAvailable, tailChatRun],
+  );
+
+  const handleRetryAssistantResponse = useCallback(
+    async (assistantMessageId: string) => {
+      if (retryingAssistantMessageIdsRef.current.has(assistantMessageId)) return;
+
+      retryingAssistantMessageIdsRef.current = new Set([
+        ...retryingAssistantMessageIdsRef.current,
+        assistantMessageId,
+      ]);
+      setRetryingAssistantMessageIds(retryingAssistantMessageIdsRef.current);
+      setRetryError(null);
+      lastSendStartedAtMsRef.current = nowMs();
+
+      try {
+        const response = await apiFetch<ChatRunResponse>(
+          `/api/messages/${assistantMessageId}/retry`,
+          {
+            method: "POST",
+            headers: { "Idempotency-Key": crypto.randomUUID() },
+          },
+        );
+        handleChatRunCreated(response.data);
+      } catch (err) {
+        setRetryError(toFeedback(err, { fallback: "Failed to retry response" }));
+      } finally {
+        const next = new Set(retryingAssistantMessageIdsRef.current);
+        next.delete(assistantMessageId);
+        retryingAssistantMessageIdsRef.current = next;
+        setRetryingAssistantMessageIds(next);
+      }
+    },
+    [handleChatRunCreated],
   );
 
   const fullChatTarget =
@@ -563,12 +604,19 @@ export default function ReaderAssistantPane({
           <FeedbackNotice feedback={resolveError} />
         </div>
       ) : null}
+      {retryError ? (
+        <div className={styles.status}>
+          <FeedbackNotice feedback={retryError} />
+        </div>
+      ) : null}
 
       <ChatSurface
         messages={messages}
         scope={conversationScope}
         scrollportRef={scrollportRef}
         onScroll={handleChatScroll}
+        onRetryAssistantResponse={handleRetryAssistantResponse}
+        retryingAssistantMessageIds={retryingAssistantMessageIds}
         onReaderSourceActivate={onReaderSourceActivate}
         olderCursor={olderCursor}
         onLoadOlder={loadOlder}

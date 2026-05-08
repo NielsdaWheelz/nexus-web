@@ -51,6 +51,10 @@ export default function AssistantMessage({
   const toolCalls = message.tool_calls ?? [];
   const canBranchFromAssistant =
     message.status === "complete" && Boolean(onReplyToAssistant);
+  const renderAssistantBody =
+    message.status !== "error" ||
+    (message.content.trim().length > 0 &&
+      !isGenericAssistantFailureContent(message.content));
 
   const createBranchDraft = useCallback(
     (selection?: AssistantSelectionDraft): BranchDraft => ({
@@ -156,33 +160,33 @@ export default function AssistantMessage({
     >
       {canBranchFromAssistant ? (
         <div className={styles.messageActions}>
-            <Button
-              variant="ghost"
-              size="sm"
-              leadingIcon={<GitBranch size={14} aria-hidden="true" />}
-              onClick={() => onReplyToAssistant?.(createBranchDraft())}
-              aria-label="Fork from this answer"
-            >
-              Fork
-            </Button>
-          </div>
-        ) : null}
-        <ToolActivity toolCalls={toolCalls} />
-        {message.status === "pending" ? (
-          <div ref={answerRef} className={styles.assistantBody}>
-            <StreamingGutterCue />
-            {message.content ? (
-              <StreamingMarkdownMessage content={message.content} />
-            ) : null}
-          </div>
-      ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={<GitBranch size={14} aria-hidden="true" />}
+            onClick={() => onReplyToAssistant?.(createBranchDraft())}
+            aria-label="Fork from this answer"
+          >
+            Fork
+          </Button>
+        </div>
+      ) : null}
+      <ToolActivity toolCalls={toolCalls} />
+      {message.status === "pending" ? (
+        <div ref={answerRef} className={styles.assistantBody}>
+          <StreamingGutterCue />
+          {message.content ? (
+            <StreamingMarkdownMessage content={message.content} />
+          ) : null}
+        </div>
+      ) : renderAssistantBody ? (
         <AssistantEvidenceDisclosure
           message={message}
           answerRef={answerRef}
           onActivateTarget={onActivateTarget}
           hasReaderActivator={hasReaderActivator}
         />
-      )}
+      ) : null}
       {selectionDraft ? (
         <AssistantSelectionPopover
           selection={selectionDraft}
@@ -205,6 +209,14 @@ export default function AssistantMessage({
       ) : null}
       <span className={styles.timestamp}>{timestampLabel}</span>
     </div>
+  );
+}
+
+function isGenericAssistantFailureContent(content: string): boolean {
+  const normalized = content.trim().replace(/\s+/g, " ");
+  return (
+    normalized === "An unexpected error occurred. Please try again." ||
+    normalized === "The response failed."
   );
 }
 

@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useMemo,
   useRef,
   type ReactNode,
   type RefObject,
@@ -32,6 +33,8 @@ export default function ChatSurface({
   switchableLeafIds,
   onSelectFork,
   onReplyToAssistant,
+  onRetryAssistantResponse,
+  retryingAssistantMessageIds,
   onReaderSourceActivate,
 }: {
   messages: ConversationMessage[];
@@ -46,6 +49,8 @@ export default function ChatSurface({
   switchableLeafIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
   onReplyToAssistant?: (draft: BranchDraft) => void;
+  onRetryAssistantResponse?: (assistantMessageId: string) => void;
+  retryingAssistantMessageIds?: Set<string>;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
 }) {
   const transcriptScrollportRef = useRef<HTMLDivElement | null>(null);
@@ -58,6 +63,19 @@ export default function ChatSurface({
     },
     [scrollportRef],
   );
+  const retryAssistantIdByUserId = useMemo(() => {
+    const retryByUserId = new Map<string, string>();
+    for (const message of messages) {
+      if (
+        message.role === "assistant" &&
+        message.can_retry_response === true &&
+        message.parent_message_id
+      ) {
+        retryByUserId.set(message.parent_message_id, message.id);
+      }
+    }
+    return retryByUserId;
+  }, [messages]);
 
   const handleComposerWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || event.deltaY === 0) return;
@@ -135,6 +153,9 @@ export default function ChatSurface({
               switchableLeafIds={switchableLeafIds}
               onSelectFork={onSelectFork}
               onReplyToAssistant={onReplyToAssistant}
+              retryAssistantMessageId={retryAssistantIdByUserId.get(msg.id)}
+              retryingAssistantMessageIds={retryingAssistantMessageIds}
+              onRetryAssistantResponse={onRetryAssistantResponse}
               onReaderSourceActivate={onReaderSourceActivate}
             />
           ))}

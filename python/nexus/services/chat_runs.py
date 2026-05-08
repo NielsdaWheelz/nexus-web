@@ -19,7 +19,7 @@ from uuid import UUID
 from llm_calling.errors import LLMError, LLMErrorCode
 from llm_calling.router import LLMRouter
 from llm_calling.types import LLMUsage
-from sqlalchemy import bindparam, func, select, text
+from sqlalchemy import bindparam, func, or_, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
@@ -32,10 +32,17 @@ from nexus.db.models import (
     Conversation,
     Media,
     Message,
+    MessageContextItem,
     MessageLLM,
     Model,
+    ObjectLink,
 )
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.errors import (
+    CHAT_RESPONSE_RETRYABLE_ERROR_CODES,
+    ApiError,
+    ApiErrorCode,
+    NotFoundError,
+)
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.conversation import (
@@ -96,6 +103,7 @@ from nexus.services.conversations import (
     load_message_tool_calls_for_message_ids,
     message_to_out,
     resolve_conversation_for_scope,
+    retryable_assistant_message_ids,
 )
 from nexus.services.models import get_model_catalog_metadata
 from nexus.services.object_refs import hydrate_object_ref
@@ -194,6 +202,48 @@ def compute_payload_hash(
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def compute_retry_payload_hash(
+    *,
+    failed_assistant_message_id: UUID,
+    source_run: ChatRun,
+    source_user_message: Message,
+    context_rows: Sequence[MessageContextItem],
+) -> str:
+    contexts = [
+        {
+            "id": str(row.id),
+            "ordinal": row.ordinal,
+            "context_kind": row.context_kind,
+            "object_type": row.object_type,
+            "object_id": str(row.object_id) if row.object_id is not None else None,
+            "source_media_id": str(row.source_media_id) if row.source_media_id else None,
+            "locator_json": row.locator_json,
+            "context_snapshot": row.context_snapshot_json,
+        }
+        for row in context_rows
+    ]
+    payload = {
+        "operation": "chat_response_retry",
+        "failed_assistant_message_id": str(failed_assistant_message_id),
+        "source_run_id": str(source_run.id),
+        "source_conversation_id": str(source_run.conversation_id),
+        "source_user_message_id": str(source_user_message.id),
+        "source_user_parent_message_id": (
+            str(source_user_message.parent_message_id)
+            if source_user_message.parent_message_id is not None
+            else None
+        ),
+        "source_prompt_content": source_user_message.content,
+        "source_model_id": str(source_run.model_id),
+        "source_reasoning": source_run.reasoning,
+        "source_key_mode": source_run.key_mode,
+        "source_web_search": source_run.web_search,
+        "source_contexts": contexts,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
 def create_chat_run(
     db: Session,
     *,
@@ -216,11 +266,7 @@ def create_chat_run(
             ApiErrorCode.E_INVALID_REQUEST,
             "Exactly one of conversation_id or conversation_scope is required",
         )
-    normalized_key = (idempotency_key or "").strip()
-    if not normalized_key:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key is required")
-    if len(normalized_key) > 128:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key is too long")
+    normalized_key = _normalize_idempotency_key(idempotency_key)
 
     payload_hash = compute_payload_hash(
         content,
@@ -313,6 +359,140 @@ def create_chat_run(
                 "conversation_id": str(prepared.conversation.id),
                 "user_message_id": str(prepared.user_message.id),
                 "assistant_message_id": str(prepared.assistant_message.id),
+                "model_id": str(model.id),
+                "provider": model.provider,
+            },
+        )
+        enqueue_job(
+            db,
+            kind="chat_run",
+            payload={"run_id": str(run.id)},
+            priority=50,
+            max_attempts=3,
+            dedupe_key=f"chat_run:{run.id}",
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return build_chat_run_response(db, viewer_id, run)
+
+
+def retry_failed_assistant_response(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    assistant_message_id: UUID,
+    idempotency_key: str | None,
+) -> ChatRunResponse:
+    normalized_key = _normalize_idempotency_key(idempotency_key)
+    try:
+        _lock_idempotency_key(db, viewer_id, normalized_key)
+        assistant_message = _load_retryable_failed_assistant_message(
+            db,
+            viewer_id=viewer_id,
+            assistant_message_id=assistant_message_id,
+        )
+        source_run = _load_source_run_for_retry(
+            db,
+            viewer_id=viewer_id,
+            assistant_message=assistant_message,
+        )
+        source_user_message = db.get(Message, source_run.user_message_id)
+        if source_user_message is None or source_user_message.role != "user":
+            raise ApiError(ApiErrorCode.E_RETRY_INVALID_STATE, "Retry source prompt not found")
+        context_rows = _load_context_rows_for_message(db, source_user_message.id)
+        payload_hash = compute_retry_payload_hash(
+            failed_assistant_message_id=assistant_message_id,
+            source_run=source_run,
+            source_user_message=source_user_message,
+            context_rows=context_rows,
+        )
+
+        existing = _get_run_by_idempotency_key(db, viewer_id, normalized_key)
+        if existing is not None:
+            _raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
+            db.commit()
+            return build_chat_run_response(db, viewer_id, existing)
+
+        model = db.get(Model, source_run.model_id)
+        if model is None:
+            raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model not found")
+
+        user_message = Message(
+            conversation_id=source_run.conversation_id,
+            seq=assign_next_message_seq(db, source_run.conversation_id),
+            role="user",
+            content=source_user_message.content,
+            status="complete",
+            parent_message_id=source_user_message.parent_message_id,
+            branch_root_message_id=source_user_message.branch_root_message_id,
+            branch_anchor_kind=source_user_message.branch_anchor_kind,
+            branch_anchor=dict(source_user_message.branch_anchor or {}),
+        )
+        db.add(user_message)
+        db.flush()
+        _copy_context_rows(
+            db,
+            viewer_id=viewer_id,
+            source_message_id=source_user_message.id,
+            target_message_id=user_message.id,
+            rows=context_rows,
+        )
+        if user_message.parent_message_id is not None:
+            ensure_branch_metadata(
+                db,
+                conversation_id=source_run.conversation_id,
+                branch_user_message_id=user_message.id,
+            )
+
+        assistant_retry_message = Message(
+            conversation_id=source_run.conversation_id,
+            seq=assign_next_message_seq(db, source_run.conversation_id),
+            role="assistant",
+            content="",
+            status="pending",
+            model_id=source_run.model_id,
+            parent_message_id=user_message.id,
+            branch_root_message_id=user_message.branch_root_message_id,
+            branch_anchor_kind="none",
+            branch_anchor={},
+        )
+        db.add(assistant_retry_message)
+        db.flush()
+        persist_active_leaf(
+            db,
+            viewer_id=viewer_id,
+            conversation_id=source_run.conversation_id,
+            active_leaf_message_id=assistant_retry_message.id,
+        )
+
+        run = ChatRun(
+            owner_user_id=viewer_id,
+            conversation_id=source_run.conversation_id,
+            user_message_id=user_message.id,
+            assistant_message_id=assistant_retry_message.id,
+            idempotency_key=normalized_key,
+            payload_hash=payload_hash,
+            status="queued",
+            model_id=source_run.model_id,
+            reasoning=source_run.reasoning,
+            key_mode=source_run.key_mode,
+            web_search=dict(source_run.web_search or {}),
+            next_event_seq=1,
+        )
+        db.add(run)
+        db.flush()
+        append_run_event(
+            db,
+            run,
+            "meta",
+            {
+                "run_id": str(run.id),
+                "conversation_id": str(source_run.conversation_id),
+                "user_message_id": str(user_message.id),
+                "assistant_message_id": str(assistant_retry_message.id),
                 "model_id": str(model.id),
                 "provider": model.provider,
             },
@@ -1279,6 +1459,29 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
         claims_by_message_id,
         claim_evidence_by_message_id,
     ) = load_message_evidence_for_message_ids(db, message_ids)
+    retryable_message_ids = retryable_assistant_message_ids(
+        db,
+        viewer_id=viewer_id,
+        assistant_message_ids=message_ids,
+    )
+    user_message_out = message_to_out(
+        user_message,
+        contexts_by_message_id.get(user_message.id, []),
+        tool_calls_by_message_id.get(user_message.id, []),
+        evidence_summary_by_message_id.get(user_message.id),
+        claims_by_message_id.get(user_message.id, []),
+        claim_evidence_by_message_id.get(user_message.id, []),
+        can_retry_response=user_message.id in retryable_message_ids,
+    )
+    assistant_message_out = message_to_out(
+        assistant_message,
+        contexts_by_message_id.get(assistant_message.id, []),
+        tool_calls_by_message_id.get(assistant_message.id, []),
+        evidence_summary_by_message_id.get(assistant_message.id),
+        claims_by_message_id.get(assistant_message.id, []),
+        claim_evidence_by_message_id.get(assistant_message.id, []),
+        can_retry_response=assistant_message.id in retryable_message_ids,
+    )
     return ChatRunResponse(
         run=ChatRunOut.model_validate(run),
         conversation=conversation_to_out(
@@ -1287,23 +1490,18 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
             get_message_count(db, conversation.id),
             viewer_id=viewer_id,
         ),
-        user_message=message_to_out(
-            user_message,
-            contexts_by_message_id.get(user_message.id, []),
-            tool_calls_by_message_id.get(user_message.id, []),
-            evidence_summary_by_message_id.get(user_message.id),
-            claims_by_message_id.get(user_message.id, []),
-            claim_evidence_by_message_id.get(user_message.id, []),
-        ),
-        assistant_message=message_to_out(
-            assistant_message,
-            contexts_by_message_id.get(assistant_message.id, []),
-            tool_calls_by_message_id.get(assistant_message.id, []),
-            evidence_summary_by_message_id.get(assistant_message.id),
-            claims_by_message_id.get(assistant_message.id, []),
-            claim_evidence_by_message_id.get(assistant_message.id, []),
-        ),
+        user_message=user_message_out,
+        assistant_message=assistant_message_out,
     )
+
+
+def _normalize_idempotency_key(idempotency_key: str | None) -> str:
+    normalized_key = (idempotency_key or "").strip()
+    if not normalized_key:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key is required")
+    if len(normalized_key) > 128:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key is too long")
+    return normalized_key
 
 
 def _get_run_for_owner(db: Session, viewer_id: UUID, run_id: UUID) -> ChatRun:
@@ -1311,6 +1509,126 @@ def _get_run_for_owner(db: Session, viewer_id: UUID, run_id: UUID) -> ChatRun:
     if run is None or run.owner_user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Chat run not found")
     return run
+
+
+def _load_retryable_failed_assistant_message(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    assistant_message_id: UUID,
+) -> Message:
+    message = db.get(Message, assistant_message_id)
+    if message is None:
+        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
+    conversation = db.get(Conversation, message.conversation_id)
+    if conversation is None or conversation.owner_user_id != viewer_id:
+        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
+    if message.role != "assistant" or message.status != "error":
+        raise ApiError(
+            ApiErrorCode.E_RETRY_INVALID_STATE,
+            "Only failed assistant messages can be retried",
+        )
+    return message
+
+
+def _load_source_run_for_retry(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    assistant_message: Message,
+) -> ChatRun:
+    run = (
+        db.execute(
+            select(ChatRun)
+            .where(
+                ChatRun.owner_user_id == viewer_id,
+                ChatRun.assistant_message_id == assistant_message.id,
+            )
+            .order_by(ChatRun.created_at.desc(), ChatRun.id.desc())
+        )
+        .scalars()
+        .first()
+    )
+    if run is None:
+        raise ApiError(ApiErrorCode.E_RETRY_INVALID_STATE, "Retry source run not found")
+    if run.conversation_id != assistant_message.conversation_id:
+        raise ApiError(ApiErrorCode.E_RETRY_INVALID_STATE, "Retry source run is invalid")
+    if run.status != "error":
+        raise ApiError(ApiErrorCode.E_RETRY_INVALID_STATE, "Retry source run is not failed")
+    if run.error_code not in CHAT_RESPONSE_RETRYABLE_ERROR_CODES:
+        raise ApiError(ApiErrorCode.E_RETRY_NOT_ALLOWED, "Assistant response is not retryable")
+    return run
+
+
+def _load_context_rows_for_message(db: Session, message_id: UUID) -> list[MessageContextItem]:
+    return list(
+        db.execute(
+            select(MessageContextItem)
+            .where(MessageContextItem.message_id == message_id)
+            .order_by(MessageContextItem.ordinal.asc(), MessageContextItem.id.asc())
+        )
+        .scalars()
+        .all()
+    )
+
+
+def _copy_context_rows(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    source_message_id: UUID,
+    target_message_id: UUID,
+    rows: Sequence[MessageContextItem],
+) -> None:
+    for row in rows:
+        db.add(
+            MessageContextItem(
+                message_id=target_message_id,
+                user_id=viewer_id,
+                context_kind=row.context_kind,
+                object_type=row.object_type,
+                object_id=row.object_id,
+                source_media_id=row.source_media_id,
+                locator_json=row.locator_json,
+                ordinal=row.ordinal,
+                context_snapshot_json=row.context_snapshot_json,
+            )
+        )
+    links = db.scalars(
+        select(ObjectLink).where(
+            ObjectLink.user_id == viewer_id,
+            ObjectLink.relation_type == "used_as_context",
+            or_(
+                (ObjectLink.a_type == "message") & (ObjectLink.a_id == source_message_id),
+                (ObjectLink.b_type == "message") & (ObjectLink.b_id == source_message_id),
+            ),
+        )
+    ).all()
+    for link in links:
+        db.add(
+            ObjectLink(
+                user_id=viewer_id,
+                relation_type=link.relation_type,
+                a_type=link.a_type,
+                a_id=target_message_id
+                if link.a_type == "message" and link.a_id == source_message_id
+                else link.a_id,
+                b_type=link.b_type,
+                b_id=target_message_id
+                if link.b_type == "message" and link.b_id == source_message_id
+                else link.b_id,
+                a_order_key=link.a_order_key,
+                b_order_key=link.b_order_key,
+                a_locator_json=(
+                    dict(link.a_locator_json) if link.a_locator_json is not None else None
+                ),
+                b_locator_json=(
+                    dict(link.b_locator_json) if link.b_locator_json is not None else None
+                ),
+                metadata_json=dict(link.metadata_json or {}),
+            )
+        )
+    db.flush()
 
 
 def _get_run_by_idempotency_key(
