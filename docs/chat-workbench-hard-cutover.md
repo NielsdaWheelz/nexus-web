@@ -18,9 +18,10 @@ reasoning workspace:
 This document supersedes the chat-specific UX guidance in
 `chat-branching-hard-cutover.md`,
 `chat-branching-sota-completion-hard-cutover.md`, and
-`visual-refactor-1b-hard-cutover.md` where they conflict. Backend branch and
-evidence data contracts from those documents remain valid unless this document
-explicitly replaces them.
+`visual-refactor-1b-hard-cutover.md` where they conflict. Branch-switch viewport
+behavior is superseded by `chat-branch-switch-viewport-hard-cutover.md`.
+Backend branch and evidence data contracts from those documents remain valid
+unless this document explicitly replaces them.
 
 ## Hard-Cutover Policy
 
@@ -64,8 +65,8 @@ The current frontend exposes these primitives too literally:
 - evidence summaries and claim evidence render fully expanded inline
 - internal fields like `support_status`, `retrieval_status`,
   `included_in_prompt`, and `score` appear as primary UI
-- fork switching uses cached paths, but scrolls to the last shared message
-  instead of treating the new branch as a fresh active transcript
+- fork switching uses cached paths, but older scroll behavior can reset or stale
+  the user's visible reading context during comparison
 - branch authoring is represented as a small chip inside the normal composer,
   which makes the interaction easy to miss and easy to misunderstand
 - user and assistant messages share too much visual treatment
@@ -78,9 +79,10 @@ The current frontend exposes these primitives too literally:
    skin.
 2. Keep all existing branch, evidence, citation, model, web-search, and context
    capabilities.
-3. Render one active transcript path and make path changes feel like navigation.
-4. Switch branches synchronously from cached paths and scroll to the top of the
-   new transcript.
+3. Render one active transcript path and make path changes feel immediate
+   without losing reading context.
+4. Switch branches synchronously from cached paths and preserve the visible
+   viewport by semantic anchor when possible.
 5. Make branch creation explicit without placing a full input in the middle of
    the transcript.
 6. Make user prompts and assistant answers visually distinct while preserving a
@@ -121,9 +123,10 @@ badges or raw evidence diagnostics.
 
 If an assistant answer has forks, a compact fork strip appears below that
 answer. Selecting a fork immediately replaces the transcript with that branch,
-sets the scrollport to the top, updates active branch indicators, and then
-persists the active leaf. Backend reconciliation may replace the optimistic
-state, but there is no visible append fallback.
+preserves the visible viewport by semantic anchor when possible, updates active
+branch indicators, and then persists the active leaf. Backend reconciliation may
+replace the optimistic state, but it must not introduce a top jump or visible
+append fallback.
 
 If the user chooses "Fork" or "Fork from selection", the sticky composer enters
 branch mode. The composer shows a clear branch header with the parent message
@@ -169,7 +172,10 @@ Lower layers must not visually dominate higher layers.
 - A fork or graph leaf without a cached path is not rendered as an enabled
   switch target.
 - Clicking a branch target replaces the transcript in the same event turn.
-- Branch switching scrolls the chat scrollport to `0`.
+- Branch switching preserves visible viewport context by semantic anchor when
+  possible.
+- If no semantic anchor exists in the next path, branch switching preserves the
+  current scroll offset subject to normal browser clamping.
 - Branch switching updates active fork and graph states immediately.
 - Branch switching persists through `POST /conversations/:id/active-path`.
 - Persistence failure restores the previous path and shows typed feedback.
@@ -278,14 +284,14 @@ Lower layers must not visually dominate higher layers.
 5. The transcript is replaced with the cached path synchronously.
 6. Active leaf, selected path ids, fork strip state, and graph state update
    synchronously.
-7. The scrollport scrolls to the top in the next layout pass.
+7. The current viewport anchor is restored in the next layout pass.
 8. The composer restores the draft for the new active leaf or enters an empty
    normal continuation state.
 9. The pane posts `POST /conversations/:id/active-path`.
 10. If the response differs, the response tree replaces optimistic state and the
-    scrollport remains at the top.
-11. If persistence fails, the previous path and draft state are restored and
-    feedback is shown.
+    viewport remains anchored.
+11. If persistence fails, the previous path, draft state, and viewport are
+    restored and feedback is shown.
 
 ### 3. Switching Forks From The Panel Or Graph
 
@@ -356,7 +362,7 @@ Lower layers must not visually dominate higher layers.
 - path cache
 - active leaf id
 - optimistic branch switching
-- scroll-to-top on branch switch
+- branch-switch viewport transition state
 - backend reconciliation
 - draft key persistence across path switches
 - desktop/mobile rail wiring
@@ -461,7 +467,7 @@ GET /conversations/:id/tree
 Fork activation
   -> ConversationPaneBody.switchToLeaf
   -> cached selected path replacement
-  -> scrollport top
+  -> viewport anchor restoration
   -> POST /active-path
   -> reconciled tree replacement
 
@@ -628,9 +634,9 @@ source context.
 1. **Document workbench over bubbles.** This product handles long answers,
    citations, sources, and branch navigation. Right-aligned messenger bubbles
    reduce readability and waste horizontal space.
-2. **Scroll to top on branch switch.** A branch switch is navigation into a new
-   selected transcript. Restoring to the last shared message keeps old local
-   context but makes the window feel partially stale.
+2. **Preserve viewport on branch switch.** A branch switch changes the selected
+   path, but the user's visible reading context should remain stable when the
+   next path can represent the same semantic anchor.
 3. **One composer.** Inline historical composers create focus, layout, and send
    target ambiguity. Branch mode belongs in the sticky composer with a strong
    header.
@@ -653,7 +659,8 @@ source context.
 
 ### Step 1 - Branch Navigation Semantics
 
-- Change branch switching to scroll the chat scrollport to top.
+- Change branch switching to preserve viewport anchors as specified by
+  `chat-branch-switch-viewport-hard-cutover.md`.
 - Keep optimistic cached path replacement.
 - Keep backend reconciliation.
 - Disable or omit switch targets without cached paths.
@@ -701,7 +708,7 @@ source context.
 ### Step 6 - Tests And Screenshots
 
 - Rewrite component tests for the new message and evidence shape.
-- Add branch switch scroll test.
+- Add branch switch viewport preservation tests.
 - Add branch composer mode tests.
 - Add evidence collapsed/expanded tests.
 - Preserve fork strip and fork panel keyboard tests.
@@ -715,9 +722,10 @@ source context.
   `/active-path` response resolves.
 - Activating an enabled graph leaf replaces the transcript before the
   `/active-path` response resolves.
-- After any branch switch, `scrollport.scrollTop === 0`.
+- After any branch switch, the viewport remains anchored when possible and does
+  not reset to top unless it was already at top or browser clamping requires it.
 - If the backend returns a different selected path, the backend path replaces
-  optimistic state and the scrollport remains at top.
+  optimistic state and the viewport remains anchored.
 - If persistence fails, the previous path is restored and typed feedback is
   visible.
 - Fork/graph targets without cached paths are not enabled.
@@ -808,14 +816,15 @@ Frontend unit/browser tests:
 - `ChatComposer` cancellation clears only branch mode, not attached context.
 - `ForkStrip` keyboard behavior remains intact.
 - `ConversationForksPanel` tree behavior remains intact.
-- Branch switch handler scrolls to top and restores previous state on failure.
+- Branch switch handler preserves viewport context and restores the previous
+  viewport on failure.
 
 E2E tests:
 
 - create a conversation, fork from an older assistant answer, and verify the new
   branch becomes the selected path
-- switch between forks from inline strip and verify the transcript starts at the
-  top
+- switch between forks from inline strip and verify the transcript does not reset
+  to top
 - switch between forks from mobile drawer and verify drawer closes
 - fork from selected assistant quote and verify composer branch header includes
   the selected quote
@@ -827,7 +836,8 @@ E2E tests:
 - Remove old evidence badge CSS from `MessageRow.module.css`.
 - Remove branch-as-chip-only branch mode from `ChatComposer.tsx`.
 - Remove tests that assert always-expanded evidence.
-- Remove tests that assert branch switch scrolls to last shared message.
+- Remove tests that assert branch switch scrolls to top or to a last shared
+  message.
 - Remove snapshots that pin the old message row visual shape.
 - Remove unused imports and dead styles after component extraction.
 
@@ -848,7 +858,7 @@ E2E tests:
 
 - The old chat visual shape cannot be reached.
 - Branch switching feels like immediate navigation.
-- The transcript scrolls to top after branch switches.
+- The viewport remains anchored after branch switches.
 - User and assistant messages are unmistakably different.
 - Branch mode is explicit in the composer.
 - Evidence is inspectable without dominating the answer.

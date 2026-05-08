@@ -63,6 +63,14 @@ type Conversation = ConversationSummary;
 
 type ChatRunData = ChatRunResponse["data"];
 
+type BranchScroll = {
+  anchorMessageId: string | null;
+  anchorOffsetTop: number;
+  activationAnchorMessageId: string | null;
+  activationAnchorOffsetTop: number | null;
+  scrollTop: number;
+};
+
 // ============================================================================
 // ConversationPaneBody — chat view with inline linked-context surface
 // ============================================================================
@@ -109,6 +117,83 @@ export default function ConversationPaneBody() {
       onRunFinished={clearRunParam}
     />
   );
+}
+
+function captureBranchScroll(
+  scrollport: HTMLElement,
+  activationAnchorMessageId: string | null,
+): BranchScroll {
+  const scrollTop = scrollport.scrollTop;
+  const viewportBottom = scrollTop + scrollport.clientHeight;
+  let anchorMessageId: string | null = null;
+  let anchorOffsetTop = 0;
+  let activationAnchorOffsetTop: number | null = null;
+
+  for (const element of scrollport.querySelectorAll<HTMLElement>("[data-message-id]")) {
+    const messageId = element.dataset.messageId ?? null;
+    if (!messageId) continue;
+
+    const offsetTop = element.offsetTop - scrollTop;
+    if (messageId === activationAnchorMessageId) {
+      activationAnchorOffsetTop = offsetTop;
+    }
+    if (element.offsetTop + element.offsetHeight <= scrollTop) continue;
+    if (element.offsetTop >= viewportBottom) continue;
+
+    if (!anchorMessageId || (anchorOffsetTop < 0 && offsetTop >= 0)) {
+      anchorMessageId = messageId;
+      anchorOffsetTop = offsetTop;
+    }
+  }
+
+  return {
+    anchorMessageId,
+    anchorOffsetTop,
+    activationAnchorMessageId,
+    activationAnchorOffsetTop,
+    scrollTop,
+  };
+}
+
+function restoreBranchScroll(scrollport: HTMLElement, scroll: BranchScroll) {
+  if (
+    scroll.anchorMessageId &&
+    restoreMessageOffset(scrollport, scroll.anchorMessageId, scroll.anchorOffsetTop)
+  ) {
+    return;
+  }
+  if (
+    scroll.activationAnchorMessageId &&
+    scroll.activationAnchorOffsetTop !== null &&
+    restoreMessageOffset(
+      scrollport,
+      scroll.activationAnchorMessageId,
+      scroll.activationAnchorOffsetTop,
+    )
+  ) {
+    return;
+  }
+  scrollport.scrollTop = scroll.scrollTop;
+}
+
+function restoreMessageOffset(
+  scrollport: HTMLElement,
+  messageId: string,
+  offsetTop: number,
+) {
+  const target = findRenderedMessage(scrollport, messageId);
+  if (!target) return false;
+  scrollport.scrollTop = Math.max(0, target.offsetTop - offsetTop);
+  return true;
+}
+
+function findRenderedMessage(scrollport: HTMLElement, messageId: string) {
+  for (const element of scrollport.querySelectorAll<HTMLElement>("[data-message-id]")) {
+    if (element.dataset.messageId === messageId) {
+      return element;
+    }
+  }
+  return null;
 }
 
 // ============================================================================
@@ -171,7 +256,7 @@ function ChatView({
   const shouldScrollRef = useRef(true);
   const selectedPathIdsRef = useRef<Set<string>>(new Set());
   const activePathSwitchSeqRef = useRef(0);
-  const pendingScrollTopRef = useRef<number | null>(null);
+  const pendingBranchScrollRef = useRef<BranchScroll | null>(null);
   const pendingScrollRestoreRef = useRef<{
     scrollHeight: number;
     scrollTop: number;
@@ -385,9 +470,9 @@ function ChatView({
   useLayoutEffect(() => {
     const scrollport = scrollportRef.current;
     if (!scrollport) return;
-    if (pendingScrollTopRef.current !== null) {
-      scrollport.scrollTop = pendingScrollTopRef.current;
-      pendingScrollTopRef.current = null;
+    if (pendingBranchScrollRef.current) {
+      restoreBranchScroll(scrollport, pendingBranchScrollRef.current);
+      pendingBranchScrollRef.current = null;
       shouldScrollRef.current = false;
       return;
     }
@@ -503,16 +588,16 @@ function ChatView({
   );
 
   const jumpToMessage = useCallback((messageId: string) => {
-    const target = scrollportRef.current?.querySelector<HTMLElement>(
-      `[data-message-id="${messageId}"]`,
-    );
-    if (!target || !scrollportRef.current) return;
-    scrollportRef.current.scrollTop = Math.max(0, target.offsetTop - 16);
+    const scrollport = scrollportRef.current;
+    if (!scrollport) return;
+    const target = findRenderedMessage(scrollport, messageId);
+    if (!target) return;
+    scrollport.scrollTop = Math.max(0, target.offsetTop - 16);
     shouldScrollRef.current = false;
   }, []);
 
   const switchToLeaf = useCallback(
-    async (nextLeafId: string) => {
+    async (nextLeafId: string, activationAnchorMessageId: string | null) => {
       const nextPath = pathCacheByLeafId[nextLeafId];
       if (!nextPath) {
         setError({
@@ -524,15 +609,19 @@ function ChatView({
 
       const switchSeq = activePathSwitchSeqRef.current + 1;
       activePathSwitchSeqRef.current = switchSeq;
+      const branchScroll = scrollportRef.current
+        ? captureBranchScroll(scrollportRef.current, activationAnchorMessageId)
+        : null;
       const previous = {
         messages,
         activeLeafMessageId,
         forkOptionsByParentId,
         branchGraph,
         branchDraft,
-        scrollTop: scrollportRef.current?.scrollTop ?? 0,
+        scrollTop: branchScroll?.scrollTop ?? 0,
+        branchScroll,
       };
-      pendingScrollTopRef.current = 0;
+      pendingBranchScrollRef.current = branchScroll;
       pendingScrollRestoreRef.current = null;
       setMessages(nextPath);
       selectedPathIdsRef.current = messageIdsForPath(nextPath, nextLeafId);
@@ -557,7 +646,9 @@ function ChatView({
           },
         );
         if (activePathSwitchSeqRef.current !== switchSeq) return;
-        pendingScrollTopRef.current = 0;
+        pendingBranchScrollRef.current = scrollportRef.current
+          ? captureBranchScroll(scrollportRef.current, activationAnchorMessageId)
+          : branchScroll;
         applyConversationTree(response.data);
         void tailVisibleActiveRuns(
           messageIdsForPath(
@@ -568,8 +659,15 @@ function ChatView({
       } catch (err) {
         if (activePathSwitchSeqRef.current !== switchSeq) return;
         setError(toFeedback(err, { fallback: "Failed to switch fork" }));
+        pendingBranchScrollRef.current =
+          previous.branchScroll ?? {
+            anchorMessageId: null,
+            anchorOffsetTop: 0,
+            activationAnchorMessageId: null,
+            activationAnchorOffsetTop: null,
+            scrollTop: previous.scrollTop,
+          };
         setMessages(previous.messages);
-        pendingScrollTopRef.current = previous.scrollTop;
         selectedPathIdsRef.current = messageIdsForPath(
           previous.messages,
           previous.activeLeafMessageId,
@@ -596,9 +694,22 @@ function ChatView({
 
   const switchToFork = useCallback(
     async (fork: ForkOption) => {
-      await switchToLeaf(fork.leaf_message_id);
+      await switchToLeaf(fork.leaf_message_id, fork.parent_message_id);
     },
     [switchToLeaf],
+  );
+
+  const switchToGraphLeaf = useCallback(
+    async (leafMessageId: string) => {
+      const graphNode =
+        branchGraph.nodes.find((node) => node.leaf && node.leaf_message_id === leafMessageId) ??
+        branchGraph.nodes.find((node) => node.leaf_message_id === leafMessageId);
+      await switchToLeaf(
+        leafMessageId,
+        graphNode?.parent_message_id ?? graphNode?.message_id ?? null,
+      );
+    },
+    [branchGraph.nodes, switchToLeaf],
   );
 
   usePaneChromeOverride({
@@ -702,7 +813,7 @@ function ChatView({
                 void switchToFork(fork);
               }}
               onSelectGraphLeaf={(leafMessageId) => {
-                void switchToLeaf(leafMessageId);
+                void switchToGraphLeaf(leafMessageId);
               }}
               onForksChanged={() => {
                 void loadConversationTree();
@@ -728,7 +839,7 @@ function ChatView({
             void switchToFork(fork);
           }}
           onSelectGraphLeaf={(leafMessageId) => {
-            void switchToLeaf(leafMessageId);
+            void switchToGraphLeaf(leafMessageId);
           }}
           onForksChanged={() => {
             void loadConversationTree();

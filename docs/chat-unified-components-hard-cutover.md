@@ -23,6 +23,7 @@ The target is one shared chat spine with separate product shells:
 This document does not replace the product behavior specified by:
 
 - `docs/chat-workbench-hard-cutover.md`
+- `docs/chat-branch-switch-viewport-hard-cutover.md`
 - `docs/chat-reader-prose-hard-cutover.md`
 - `docs/chat-composer-bottom-dock-hard-cutover.md`
 - `docs/chat-streaming-hard-cutover.md`
@@ -30,10 +31,11 @@ This document does not replace the product behavior specified by:
 - `docs/reader-secondary-rail-hard-cutover.md`
 
 It resolves the component-ownership question across those documents. Where older
-docs imply route-specific chat renderers, duplicate state machines, or desktop
-quote-to-chat route handoff as the default behavior, this document follows the
-newer hard-cutover targets: shared chat spine, reader-local desktop Ask, explicit
-full-chat promotion, and no compatibility path.
+docs imply route-specific chat renderers, duplicate state machines, desktop
+quote-to-chat route handoff as the default behavior, or branch-switch
+scroll-to-top behavior, this document follows the newer hard-cutover targets:
+shared chat spine, reader-local desktop Ask, explicit full-chat promotion,
+stable branch-switch viewport anchoring, and no compatibility path.
 
 ## Hard-Cutover Policy
 
@@ -716,7 +718,8 @@ Primary tests:
 - Compare scroll-bottom and load-older restoration logic in full chat, new chat,
   and reader Ask.
 - Extract only the shared mechanics that have multiple real call sites.
-- Keep branch-switch scroll-to-top behavior in full chat.
+- Keep branch-switch viewport anchoring in full chat, owned by the branch-aware
+  conversation controller rather than generic bottom/load-older scroll intent.
 - Keep surface-specific load endpoints in their owning controllers.
 
 ### 4. Split Reader Chrome From Embedded Linear Chat

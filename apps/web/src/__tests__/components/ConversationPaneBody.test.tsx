@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import type {
@@ -301,6 +301,54 @@ function renderPane() {
   );
 }
 
+let restoreChatGeometry = () => undefined;
+
+function installChatGeometry(scrollport: HTMLElement) {
+  restoreChatGeometry();
+
+  let scrollTop = 0;
+  const messageTop: Record<string, number> = {
+    "root-user": 0,
+    "root-assistant": 80,
+    "branch-a-user": 200,
+    "branch-a-assistant": 300,
+    "branch-b-user": 200,
+    "branch-b-assistant": 300,
+  };
+  Object.defineProperty(scrollport, "clientHeight", {
+    configurable: true,
+    get: () => 220,
+  });
+  Object.defineProperty(scrollport, "scrollTop", {
+    configurable: true,
+    get: () => scrollTop,
+    set: (value) => {
+      scrollTop = Number(value);
+    },
+  });
+  Object.defineProperty(scrollport, "scrollHeight", {
+    configurable: true,
+    get: () => 520,
+  });
+
+  const topMock = vi
+    .spyOn(HTMLElement.prototype, "offsetTop", "get")
+    .mockImplementation(function (this: HTMLElement) {
+      return this.dataset.messageId ? messageTop[this.dataset.messageId] ?? 0 : 0;
+    });
+  const heightMock = vi
+    .spyOn(HTMLElement.prototype, "offsetHeight", "get")
+    .mockImplementation(function (this: HTMLElement) {
+      return this.dataset.messageId ? 80 : 0;
+    });
+
+  restoreChatGeometry = () => {
+    topMock.mockRestore();
+    heightMock.mockRestore();
+    restoreChatGeometry = () => undefined;
+  };
+}
+
 describe("ConversationPaneBody", () => {
   beforeEach(() => {
     tailMocks.tailChatRun.mockReset();
@@ -315,6 +363,10 @@ describe("ConversationPaneBody", () => {
       value: 320,
       writable: true,
     });
+  });
+
+  afterEach(() => {
+    restoreChatGeometry();
   });
 
   it("posts retry with an idempotency key and tails the returned run", async () => {
@@ -360,7 +412,7 @@ describe("ConversationPaneBody", () => {
     ).toEqual(expect.any(String));
   });
 
-  it("switches visible cached paths immediately and rolls back when active-path persistence fails", async () => {
+  it("preserves the chat viewport while switching cached paths and rolling back a failed active path", async () => {
     const user = userEvent.setup();
     let resolveActivePath: (response: Response) => void = () => undefined;
     const activePathPromise = new Promise<Response>((resolve) => {
@@ -393,11 +445,13 @@ describe("ConversationPaneBody", () => {
 
     expect(await screen.findByText("Answer A")).toBeVisible();
     const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    installChatGeometry(scrollport);
     const composerDock = screen.getByTestId("chat-composer-dock");
     const input = screen.getByRole("textbox", { name: "Ask anything" });
     expect(scrollport).not.toContainElement(input);
     expect(composerDock).toContainElement(input);
-    scrollport.scrollTop = 180;
+    scrollport.scrollTop = 60;
+    fireEvent.scroll(scrollport);
 
     await user.click(
       screen.getByRole("button", { name: /switch to fork\. title: branch b/i }),
@@ -407,7 +461,7 @@ describe("ConversationPaneBody", () => {
       expect(screen.getByText("Answer B")).toBeVisible();
     });
     expect(screen.queryByText("Answer A")).not.toBeInTheDocument();
-    expect(scrollport.scrollTop).toBe(0);
+    expect(scrollport.scrollTop).toBe(60);
 
     resolveActivePath(
       jsonResponse(
@@ -425,6 +479,7 @@ describe("ConversationPaneBody", () => {
       expect(screen.getByText("Answer A")).toBeVisible();
     });
     expect(screen.queryByText("Answer B")).not.toBeInTheDocument();
+    expect(scrollport.scrollTop).toBe(60);
   });
 
   it("tails an active sibling run as soon as that cached path becomes visible", async () => {
@@ -433,32 +488,34 @@ describe("ConversationPaneBody", () => {
     const activePathPromise = new Promise<Response>((resolve) => {
       resolveActivePath = resolve;
     });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const path = pathOf(input);
-        if (path === "/api/conversations/conversation-1/tree") {
-          return jsonResponse({ data: treeResponse({ branchBStatus: "pending" }) });
-        }
-        if (path === "/api/models") {
-          return jsonResponse({ data: MODELS });
-        }
-        if (path === "/api/chat-runs") {
-          return jsonResponse({ data: [activeBranchBRun()] });
-        }
-        if (
-          path === "/api/conversations/conversation-1/active-path" &&
-          init?.method === "POST"
-        ) {
-          return activePathPromise;
-        }
-        throw new Error(`Unexpected fetch call: ${path}`);
-      }),
-    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse({ data: treeResponse({ branchBStatus: "pending" }) });
+      }
+      if (path === "/api/models") {
+        return jsonResponse({ data: MODELS });
+      }
+      if (path === "/api/chat-runs") {
+        return jsonResponse({ data: [activeBranchBRun()] });
+      }
+      if (
+        path === "/api/conversations/conversation-1/active-path" &&
+        init?.method === "POST"
+      ) {
+        return activePathPromise;
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     renderPane();
 
     expect(await screen.findByText("Answer A")).toBeVisible();
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    installChatGeometry(scrollport);
+    scrollport.scrollTop = 60;
+    fireEvent.scroll(scrollport);
     expect(tailMocks.tailChatRun).not.toHaveBeenCalled();
 
     await user.click(
@@ -468,6 +525,7 @@ describe("ConversationPaneBody", () => {
     await waitFor(() => {
       expect(screen.getByTestId("streaming-cue")).toBeInTheDocument();
     });
+    expect(scrollport.scrollTop).toBe(60);
     await waitFor(() => {
       expect(tailMocks.tailChatRun).toHaveBeenCalledWith(activeBranchBRun());
     });
@@ -477,5 +535,11 @@ describe("ConversationPaneBody", () => {
         data: treeResponse({ selected: "b", branchBStatus: "pending" }),
       }),
     );
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.filter(([input]) => pathOf(input) === "/api/chat-runs"),
+      ).toHaveLength(3);
+    });
+    expect(scrollport.scrollTop).toBe(60);
   });
 });

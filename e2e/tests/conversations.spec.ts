@@ -360,6 +360,12 @@ test.describe("conversations", () => {
           response.url().includes(`/api/conversations/${conversationId}/active-path`) &&
           response.request().method() === "POST",
       );
+      const chatScrollport = page.getByRole("region", { name: "Chat conversation" });
+      const beforeForkSwitchScrollTop = await chatScrollport.evaluate((node) => {
+        node.scrollTop = Math.min(160, Math.max(0, node.scrollHeight - node.clientHeight));
+        return node.scrollTop;
+      });
+      expect(beforeForkSwitchScrollTop).toBeGreaterThan(0);
       await quoteForkButton.evaluate((button) => {
         button.click();
       });
@@ -369,7 +375,12 @@ test.describe("conversations", () => {
         quoteSwitchResponse.ok(),
         `POST /active-path failed: status=${quoteSwitchResponse.status()}; body=${quoteSwitchBody.slice(0, 500)}`,
       ).toBeTruthy();
-      await expect(page.getByText("Quote branch answer highlights the selected source phrase.")).toBeVisible();
+      await expect(
+        page.getByText("Quote branch answer highlights the selected source phrase."),
+      ).toBeVisible();
+      await expect
+        .poll(() => chatScrollport.evaluate((node) => node.scrollTop))
+        .toBeGreaterThan(0);
       await expect(
         page.getByRole("button", { name: /Current fork[\s\S]*Quote branch/i }),
       ).toBeVisible();
