@@ -2,6 +2,7 @@
 
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from llm_calling.types import LLMChunk, LLMRequest, LLMUsage
 from sqlalchemy import inspect, text
@@ -38,6 +39,23 @@ class _IncompleteChunk:
     provider_request_id = "resp_incomplete"
     status = "incomplete"
     incomplete_details = {"reason": "max_output_tokens"}
+
+
+class _UnreadStreamErrorRouter:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+
+    async def generate_stream(self, provider, req, api_key, timeout_s):
+        request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+        response = httpx.Response(self.status_code, request=request)
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as status_error:
+            error = httpx.ResponseNotRead()
+            error.__context__ = status_error
+            raise error from status_error
+        raise AssertionError("Expected stream response to raise")
+        yield
 
 
 def test_openai_catalog_exposes_default_separate_from_none():
@@ -301,3 +319,50 @@ async def test_incomplete_llm_result_finalizes_error_not_success(
     assert fetched_data["assistant_message"]["status"] == "error"
     assert fetched_data["assistant_message"]["error_code"] == "E_LLM_INCOMPLETE"
     assert "output tokens" in fetched_data["assistant_message"]["content"]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("status_code", "expected_error_code"),
+    [
+        (401, "E_LLM_INVALID_KEY"),
+        (429, "E_LLM_RATE_LIMIT"),
+        (500, "E_LLM_PROVIDER_DOWN"),
+    ],
+)
+async def test_unread_stream_http_errors_keep_provider_error_classification(
+    auth_client,
+    direct_db: DirectSessionManager,
+    chat_runs_schema,
+    status_code: int,
+    expected_error_code: str,
+):
+    user_id = create_test_user_id()
+    auth_client.get("/me", headers=auth_headers(user_id))
+    _seed_ai_plus_billing(direct_db, user_id)
+    with direct_db.session() as session:
+        model_id = create_test_model(session)
+
+    response = _post_chat_run(auth_client, user_id, model_id, reasoning="default")
+    assert response.status_code == 200, f"Create failed: {response.text}"
+    data = response.json()["data"]
+    run_id = UUID(data["run"]["id"])
+    conversation_id = UUID(data["conversation"]["id"])
+    _register_run_cleanup(direct_db, run_id, conversation_id)
+
+    with direct_db.session() as session:
+        result = await execute_chat_run(
+            session,
+            run_id=run_id,
+            llm_router=_UnreadStreamErrorRouter(status_code),
+            web_search_provider=None,
+        )
+
+    assert result == {"status": "error", "error_code": expected_error_code}
+    fetched = auth_client.get(f"/chat-runs/{run_id}", headers=auth_headers(user_id))
+    assert fetched.status_code == 200, (
+        f"Expected chat run fetch to succeed, got {fetched.status_code}: {fetched.text}"
+    )
+    fetched_data = fetched.json()["data"]
+    assert fetched_data["run"]["error_code"] == expected_error_code
+    assert fetched_data["assistant_message"]["error_code"] == expected_error_code

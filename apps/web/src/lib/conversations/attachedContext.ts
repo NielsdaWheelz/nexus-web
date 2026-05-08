@@ -86,6 +86,23 @@ export function getPendingContextSignature(items: ContextItem[]): string {
   return items.map(getContextIdentityKey).join("\u001e");
 }
 
+export function mergeContextItems(
+  current: ContextItem[],
+  incoming: ContextItem[],
+): ContextItem[] {
+  const seen = new Set(current.map(getContextIdentityKey));
+  const next = [...current];
+  for (const context of incoming) {
+    const key = getContextIdentityKey(context);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    next.push(context);
+  }
+  return next;
+}
+
 export function getConversationScopeSignature(scope: ConversationScope): string {
   if (scope.type === "general") {
     return "general";

@@ -15,13 +15,9 @@ reasoning workspace:
 - evidence available on demand through progressive disclosure
 - no leaked implementation/debug state in the default reading path
 
-This document supersedes the chat-specific UX guidance in
-`chat-branching-hard-cutover.md`,
-`chat-branching-sota-completion-hard-cutover.md`, and
-`visual-refactor-1b-hard-cutover.md` where they conflict. Branch-switch viewport
-behavior is superseded by `chat-branch-switch-viewport-hard-cutover.md`.
-Backend branch and evidence data contracts from those documents remain valid
-unless this document explicitly replaces them.
+This document owns the chat workbench UX. Branch-switch viewport behavior is
+owned by `chat-branch-switch-viewport-hard-cutover.md`. Shared chat component
+ownership is owned by `chat-unified-components-hard-cutover.md`.
 
 ## Hard-Cutover Policy
 
@@ -225,7 +221,8 @@ Lower layers must not visually dominate higher layers.
 ### Composer
 
 - There is exactly one primary composer per chat surface.
-- The composer is sticky at the bottom of the chat scrollport.
+- The composer is a reserved footer region in the composer dock outside the chat
+  scrollport.
 - The composer does not render inline under historical assistant messages.
 - Branch mode has a dedicated header, not only a chip.
 - The branch header shows:

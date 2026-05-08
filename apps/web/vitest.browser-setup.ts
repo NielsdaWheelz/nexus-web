@@ -26,14 +26,6 @@ vi.mock("next/image", () => ({
     }),
 }));
 
-if (typeof globalThis.process === "undefined") {
-  (globalThis as Record<string, unknown>).process = {
-    env: { NODE_ENV: "test" },
-    cwd: () => "/",
-    platform: "browser",
-  };
-}
-
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();

@@ -61,7 +61,6 @@ from nexus.responses import (
     unhandled_exception_handler,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.real_media_fixture_llm import RealMediaFixtureLLMRouter
 
 # Configure structured logging at import time
 configure_logging()
@@ -122,21 +121,13 @@ async def lifespan(app: FastAPI):
         limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
     )
 
-    if settings.real_media_provider_fixtures:
-        app.state.llm_router = RealMediaFixtureLLMRouter(
-            enable_openai=settings.enable_openai,
-            enable_anthropic=settings.enable_anthropic,
-            enable_gemini=settings.enable_gemini,
-            enable_deepseek=settings.enable_deepseek,
-        )
-    else:
-        app.state.llm_router = LLMRouter(
-            app.state.httpx_client,
-            enable_openai=settings.enable_openai,
-            enable_anthropic=settings.enable_anthropic,
-            enable_gemini=settings.enable_gemini,
-            enable_deepseek=settings.enable_deepseek,
-        )
+    app.state.llm_router = LLMRouter(
+        app.state.httpx_client,
+        enable_openai=settings.enable_openai,
+        enable_anthropic=settings.enable_anthropic,
+        enable_gemini=settings.enable_gemini,
+        enable_deepseek=settings.enable_deepseek,
+    )
     app.state.web_search_provider = (
         BraveSearchProvider(
             app.state.httpx_client,

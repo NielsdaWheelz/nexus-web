@@ -229,6 +229,7 @@ interface ViewerEventHandlers {
   pagechanging: (event: unknown) => void;
   pagesloaded: (event: unknown) => void;
   pagerendered: (event: unknown) => void;
+  textlayerrendered: (event: unknown) => void;
   annotationlayerrendered: (event: unknown) => void;
 }
 
@@ -240,6 +241,7 @@ const PDF_QUAD_EPSILON = 0.001;
 const PDF_VIEWER_TEXT_LAYER_MODE_ENABLE = 1;
 const PDF_LINK_TARGET_BLANK = 2;
 const PDF_GEOMETRY_ALIGNMENT_DELTA_THRESHOLD = 0.02;
+const PDF_TEXT_LAYER_REFRESH_FRAME_BUDGET = 12;
 const PDF_HIGHLIGHT_SCROLL_TARGET_FRACTION = 0.35;
 const PDF_PULSE_DURATION_MS = 1200;
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
@@ -687,6 +689,11 @@ export default function PdfReader({
   const selectionVisibleRef = useRef(false);
   const mobileSelectionTimerRef = useRef<number | null>(null);
   const pulseTimerRef = useRef<number | null>(null);
+  const textLayerRefreshFrameRef = useRef<{
+    pageNumber: number;
+    runId: number;
+    frameId: number | null;
+  } | null>(null);
 
   useEffect(() => {
     onPageHighlightsChangeRef.current = onPageHighlightsChange;
@@ -704,6 +711,9 @@ export default function PdfReader({
     return () => {
       if (pulseTimerRef.current != null) {
         window.clearTimeout(pulseTimerRef.current);
+      }
+      if (textLayerRefreshFrameRef.current?.frameId != null) {
+        window.cancelAnimationFrame(textLayerRefreshFrameRef.current.frameId);
       }
     };
   }, []);
@@ -988,6 +998,47 @@ export default function PdfReader({
     [getPageElement]
   );
 
+  const scheduleTextLayerStateRefresh = useCallback(
+    (targetPage: number, runId: number) => {
+      if (textLayerRefreshFrameRef.current?.frameId != null) {
+        window.cancelAnimationFrame(textLayerRefreshFrameRef.current.frameId);
+      }
+      textLayerRefreshFrameRef.current = {
+        pageNumber: targetPage,
+        runId,
+        frameId: null,
+      };
+      let attemptsRemaining = PDF_TEXT_LAYER_REFRESH_FRAME_BUDGET;
+      const refresh = () => {
+        const activeRefresh = textLayerRefreshFrameRef.current;
+        if (
+          !activeRefresh ||
+          activeRefresh.runId !== runId ||
+          activeRefresh.pageNumber !== targetPage
+        ) {
+          return;
+        }
+        activeRefresh.frameId = null;
+        if (runId !== runRef.current || targetPage !== pageNumberRef.current) {
+          textLayerRefreshFrameRef.current = null;
+          return;
+        }
+        const usable = isTextLayerUsableForPage(targetPage);
+        setTextLayerUsable(usable);
+        setTextGeometryReliable(evaluatePageGeometryReliability(targetPage));
+        setPageRenderEpoch((value) => value + 1);
+        if (usable || attemptsRemaining <= 0) {
+          textLayerRefreshFrameRef.current = null;
+          return;
+        }
+        attemptsRemaining -= 1;
+        activeRefresh.frameId = window.requestAnimationFrame(refresh);
+      };
+      textLayerRefreshFrameRef.current.frameId = window.requestAnimationFrame(refresh);
+    },
+    [evaluatePageGeometryReliability, isTextLayerUsableForPage]
+  );
+
   const clearPendingMobileSelectionPublish = useCallback(() => {
     if (mobileSelectionTimerRef.current == null) {
       return;
@@ -1098,6 +1149,7 @@ export default function PdfReader({
       eventBus.off("pagechanging", handlers.pagechanging);
       eventBus.off("pagesloaded", handlers.pagesloaded);
       eventBus.off("pagerendered", handlers.pagerendered);
+      eventBus.off("textlayerrendered", handlers.textlayerrendered);
       eventBus.off("annotationlayerrendered", handlers.annotationlayerrendered);
     }
     eventHandlersRef.current = null;
@@ -1175,6 +1227,7 @@ export default function PdfReader({
         setTextLayerUsable(isTextLayerUsableForPage(nextPage));
         setTextGeometryReliable(evaluatePageGeometryReliability(nextPage));
         setPageRenderEpoch((value) => value + 1);
+        scheduleTextLayerStateRefresh(nextPage, runId);
       };
 
       const handlePagesLoaded = (rawEvent: unknown) => {
@@ -1272,15 +1325,22 @@ export default function PdfReader({
         }
 
         if (renderedPage === pageNumberRef.current) {
-          window.requestAnimationFrame(() => {
-            if (runId !== runRef.current) {
-              return;
-            }
-            applyStartPageProgression();
-            setTextLayerUsable(isTextLayerUsableForPage(renderedPage));
-            setTextGeometryReliable(evaluatePageGeometryReliability(renderedPage));
-            setPageRenderEpoch((value) => value + 1);
-          });
+          applyStartPageProgression();
+          scheduleTextLayerStateRefresh(renderedPage, runId);
+        }
+      };
+
+      const handleTextLayerRendered = (rawEvent: unknown) => {
+        if (runId !== runRef.current) {
+          return;
+        }
+        const event = rawEvent as { pageNumber?: number };
+        const renderedPage =
+          Number.isFinite(event.pageNumber) && (event.pageNumber as number) > 0
+            ? Math.floor(event.pageNumber as number)
+            : pageNumberRef.current;
+        if (renderedPage === pageNumberRef.current) {
+          scheduleTextLayerStateRefresh(renderedPage, runId);
         }
       };
 
@@ -1314,6 +1374,7 @@ export default function PdfReader({
       eventBus.on("pagechanging", handlePageChanging);
       eventBus.on("pagesloaded", handlePagesLoaded);
       eventBus.on("pagerendered", handlePageRendered);
+      eventBus.on("textlayerrendered", handleTextLayerRendered);
       eventBus.on("annotationlayerrendered", handleAnnotationLayerRendered);
 
       eventBusRef.current = eventBus;
@@ -1323,6 +1384,7 @@ export default function PdfReader({
         pagechanging: handlePageChanging,
         pagesloaded: handlePagesLoaded,
         pagerendered: handlePageRendered,
+        textlayerrendered: handleTextLayerRendered,
         annotationlayerrendered: handleAnnotationLayerRendered,
       };
     },
@@ -1335,6 +1397,7 @@ export default function PdfReader({
       isTextLayerUsableForPage,
       markPageSurfaceForTesting,
       rememberPageScale,
+      scheduleTextLayerStateRefresh,
     ]
   );
 
@@ -1567,11 +1630,6 @@ export default function PdfReader({
   );
 
   const syncSelectionFromWindow = useCallback(() => {
-    if (!textLayerUsable) {
-      resetSelectionState();
-      return;
-    }
-
     const sel = getPdfSelection();
     if (!sel || sel.rangeCount === 0) {
       resetSelectionState(true);
@@ -1634,7 +1692,6 @@ export default function PdfReader({
     publishSelection,
     resetSelectionState,
     resolveTextLayerRootFromRange,
-    textLayerUsable,
   ]);
 
   const handleCreateHighlight = useCallback(
@@ -1645,14 +1702,6 @@ export default function PdfReader({
         lastOutcome: "attempted",
       }));
       const shouldUseAreaFallback = !textGeometryReliable;
-      if ((!(textLayerUsable || shouldUseAreaFallback)) || isCreating) {
-        updateCreateTelemetry((prev) => ({
-          ...prev,
-          lastOutcome: "skipped_not_usable_or_creating",
-        }));
-        return null;
-      }
-
       const fallbackSelection: SelectionState | null = (() => {
         const sel = getPdfSelection();
         if (!sel || sel.rangeCount === 0 || sel.toString().trim().length === 0) {
@@ -1671,6 +1720,14 @@ export default function PdfReader({
       })();
 
       const activeSelection = selection ?? selectionSnapshotRef.current ?? fallbackSelection;
+      if ((!(textLayerUsable || shouldUseAreaFallback || activeSelection)) || isCreating) {
+        updateCreateTelemetry((prev) => ({
+          ...prev,
+          lastOutcome: "skipped_not_usable_or_creating",
+        }));
+        return null;
+      }
+
       if (!activeSelection) {
         updateCreateTelemetry((prev) => ({
           ...prev,
@@ -2302,7 +2359,8 @@ export default function PdfReader({
   const canGoPrev = pageNumber > 1;
   const canGoNext = pageNumber < numPages;
   const usingAreaHighlightFallback = !textGeometryReliable;
-  const canCreateHighlight = textLayerUsable || usingAreaHighlightFallback;
+  const canCreateHighlight =
+    textLayerUsable || usingAreaHighlightFallback || selection !== null;
   const goToPreviousPage = useCallback(() => {
     void goToPage(pageNumberRef.current - 1);
   }, [goToPage]);
@@ -2500,7 +2558,7 @@ export default function PdfReader({
         </div>
       )}
 
-      {!loading && !error && !textLayerUsable && (
+      {!loading && !error && !textLayerUsable && !selection && (
         <div className={styles.notice}>Text selection is unavailable on this page.</div>
       )}
 

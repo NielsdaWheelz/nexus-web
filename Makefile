@@ -272,8 +272,8 @@ _test-e2e-raw:
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
 	echo "Running e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
 	cd e2e && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright install --with-deps chromium && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bun run test:e2e -- $(PLAYWRIGHT_ARGS)
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright install --with-deps chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=test E2E_REAL_MEDIA=0 bun run test:e2e -- $(PLAYWRIGHT_ARGS)
 
 _test-real-media-e2e-raw:
 	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
@@ -294,8 +294,8 @@ _test-e2e-ui-raw:
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
 	echo "Running e2e ui with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
 	cd e2e && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright install chromium && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright test --ui
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright install chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright test --ui
 
 verify:
 	make check

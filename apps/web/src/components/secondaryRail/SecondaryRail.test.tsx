@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import SecondaryRail from "./SecondaryRail";
 
@@ -49,6 +50,10 @@ describe("SecondaryRail", () => {
       "aria-selected",
       "true",
     );
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-labelledby",
+      screen.getByRole("tab", { name: "Highlights" }).id,
+    );
     await user.click(screen.getByRole("tab", { name: "Ask" }));
     expect(onActiveTabChange).toHaveBeenCalledWith("ask");
   });
@@ -70,5 +75,39 @@ describe("SecondaryRail", () => {
 
     await user.click(screen.getByRole("button", { name: "Collapse secondary rail" }));
     expect(onExpandedChange).toHaveBeenCalledWith(false);
+  });
+
+  it("moves focus with tab arrow keys", async () => {
+    const user = userEvent.setup();
+
+    function Harness() {
+      const [activeTabId, setActiveTabId] = useState("highlights");
+      return (
+        <SecondaryRail
+          ariaLabel="Reader tools"
+          expanded
+          onExpandedChange={() => {}}
+          collapsed={<button type="button">Open rail</button>}
+          tabs={[
+            { id: "highlights", label: "Highlights" },
+            { id: "ask", label: "Ask" },
+          ]}
+          activeTabId={activeTabId}
+          onActiveTabChange={setActiveTabId}
+        >
+          <div>Expanded body</div>
+        </SecondaryRail>
+      );
+    }
+
+    render(<Harness />);
+
+    const highlightsTab = screen.getByRole("tab", { name: "Highlights" });
+    highlightsTab.focus();
+    await user.keyboard("{ArrowRight}");
+
+    const askTab = screen.getByRole("tab", { name: "Ask" });
+    expect(askTab).toHaveFocus();
+    expect(askTab).toHaveAttribute("aria-selected", "true");
   });
 });

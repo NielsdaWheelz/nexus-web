@@ -60,11 +60,13 @@ export default function ConversationNewPaneBody() {
   const draft = searchParams.get("draft") ?? "";
   const scrollportRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
+  const resolveGenerationRef = useRef(0);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [contextRailExpanded, setContextRailExpanded] = useState(true);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [resolvingScopedConversation, setResolvingScopedConversation] = useState(false);
   const [resolveError, setResolveError] = useState<FeedbackContent | null>(null);
+  const [scopedContinuationBlocked, setScopedContinuationBlocked] = useState(false);
   const conversationScope = parseConversationScopeFromUrl(searchParams);
   const conversationScopeKey = getConversationScopeSignature(conversationScope);
   const scopeType = conversationScope.type;
@@ -102,10 +104,16 @@ export default function ConversationNewPaneBody() {
   }, [messages]);
 
   useEffect(() => {
+    const generation = resolveGenerationRef.current + 1;
+    resolveGenerationRef.current = generation;
     let cancelled = false;
+    const isCurrentResolution = () =>
+      !cancelled && resolveGenerationRef.current === generation;
+
     setMessages([]);
     setActiveConversationId(null);
     setResolveError(null);
+    setScopedContinuationBlocked(false);
 
     if (scopeType === "general") {
       setResolvingScopedConversation(false);
@@ -129,11 +137,11 @@ export default function ConversationNewPaneBody() {
       ),
     })
       .then(async (response) => {
-        if (cancelled || response.data.message_count === 0) return;
+        if (!isCurrentResolution() || response.data.message_count === 0) return;
         const messagesResponse = await apiFetch<ConversationMessagesResponse>(
           `/api/conversations/${response.data.id}/messages?limit=30`,
         );
-        if (cancelled) return;
+        if (!isCurrentResolution()) return;
         setMessages(messagesResponse.data);
         if (
           messagesResponse.data.some(
@@ -141,7 +149,9 @@ export default function ConversationNewPaneBody() {
           )
         ) {
           setActiveConversationId(response.data.id);
+          setScopedContinuationBlocked(false);
         } else {
+          setScopedContinuationBlocked(true);
           setResolveError({
             severity: "warning",
             title: "Scoped chat cannot be continued yet.",
@@ -149,11 +159,11 @@ export default function ConversationNewPaneBody() {
         }
       })
       .catch((err) => {
-        if (cancelled) return;
+        if (!isCurrentResolution()) return;
         setResolveError(toFeedback(err, { fallback: "Failed to load scoped chat" }));
       })
       .finally(() => {
-        if (!cancelled) {
+        if (isCurrentResolution()) {
           setResolvingScopedConversation(false);
         }
       });
@@ -162,6 +172,10 @@ export default function ConversationNewPaneBody() {
       cancelled = true;
     };
   }, [conversationScopeKey, scopeLibraryId, scopeMediaId, scopeType]);
+
+  const handleSendStarted = useCallback(() => {
+    setResolveError(null);
+  }, []);
 
   const handleChatScroll = useCallback(() => {
     const scrollport = scrollportRef.current;
@@ -172,6 +186,8 @@ export default function ConversationNewPaneBody() {
 
   const handleChatRunCreated = useCallback(
     (runData: ChatRunResponse["data"]) => {
+      resolveGenerationRef.current += 1;
+      setResolvingScopedConversation(false);
       shouldScrollRef.current = true;
       void tailChatRun(runData);
       const cleaned = stripAttachState();
@@ -192,6 +208,11 @@ export default function ConversationNewPaneBody() {
     const qs = cleaned.toString();
     router.replace(qs ? `/conversations/new?${qs}` : `/conversations/new`);
   }, [router, searchParams]);
+  const composerConversationId =
+    conversationScope.type === "general" ? activeConversationId : null;
+  const composerDisabledReason = scopedContinuationBlocked
+    ? "Scoped chat cannot be continued yet."
+    : undefined;
 
   return (
     <>
@@ -204,23 +225,24 @@ export default function ConversationNewPaneBody() {
               scrollportRef={scrollportRef}
               onScroll={handleChatScroll}
               composer={
-                resolvingScopedConversation || resolveError ? null : (
-                  <ChatComposer
-                    conversationId={activeConversationId}
-                    conversationScope={conversationScope}
-                    attachedContexts={attachedContexts}
-                    parentMessageId={activeReplyParentMessageId}
-                    onRemoveContext={removeContext}
-                    onChatRunCreated={handleChatRunCreated}
-                    onMessageSent={clearAttachState}
-                    initialContent={draft}
-                    onClearScope={
-                      conversationScope.type === "general"
-                        ? undefined
-                        : clearConversationScope
-                    }
-                  />
-                )
+                <ChatComposer
+                  conversationId={composerConversationId}
+                  conversationScope={conversationScope}
+                  attachedContexts={attachedContexts}
+                  parentMessageId={activeReplyParentMessageId}
+                  onRemoveContext={removeContext}
+                  onChatRunCreated={handleChatRunCreated}
+                  onMessageSent={clearAttachState}
+                  onSendStarted={handleSendStarted}
+                  initialContent={draft}
+                  draftKey="new-conversation"
+                  disabledReason={composerDisabledReason}
+                  onClearScope={
+                    conversationScope.type === "general"
+                      ? undefined
+                      : clearConversationScope
+                  }
+                />
               }
               emptyState={
                 resolveError ? (

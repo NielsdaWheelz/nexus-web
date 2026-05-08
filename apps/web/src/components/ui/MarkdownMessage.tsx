@@ -35,6 +35,7 @@ export interface ReaderCitationData {
   color: ReaderCitationColor;
   preview: ReaderCitationPreview;
   target: ReaderSourceTarget | null;
+  href?: string | null;
 }
 
 const CITATION_PLACEHOLDER = /<<cite:(\d+)>>/g;
@@ -194,6 +195,7 @@ function renderWithCitations(
         color={data.color}
         preview={data.preview}
         target={data.target}
+        href={data.href}
         onActivate={onActivate ?? (() => undefined)}
       />
     );

@@ -4,8 +4,11 @@ import hashlib
 from uuid import uuid4
 
 import pytest
+import respx
 from sqlalchemy import text
 
+from nexus.config import clear_settings_cache
+from nexus.errors import ApiErrorCode
 from nexus.services.agent_tools.app_search import (
     AppSearchCitation,
     execute_app_search,
@@ -23,6 +26,15 @@ from tests.helpers import create_test_user_id
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
+
+
+def _use_openai_embedding_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEXUS_ENV", "local")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+    monkeypatch.setenv("ENABLE_OPENAI", "true")
+    clear_settings_cache()
 
 
 def test_execute_app_search_persists_retrieval_metadata(
@@ -236,27 +248,23 @@ def test_execute_app_search_persists_normalized_executed_filters(
     direct_db.register_cleanup("users", "id", user_id)
 
 
-def test_execute_app_search_keeps_content_evidence_when_semantic_embedding_fails(
+@respx.mock
+def test_execute_app_search_preserves_typed_provider_error_code(
     direct_db: DirectSessionManager,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user_id = create_test_user_id()
-
-    def fail_embedding(_text: str) -> tuple[str, list[float]]:
-        raise RuntimeError("test embedding failure")
-
-    monkeypatch.setattr("nexus.services.search.build_text_embedding", fail_embedding)
+    _use_openai_embedding_provider(monkeypatch)
 
     with direct_db.session() as session:
         session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-        library_id = create_test_library(session, user_id, "Agent Content Search Library")
         conversation_id = create_test_conversation(session, user_id)
         user_message_id = create_test_message(
             session,
             conversation_id,
             seq=1,
             role="user",
-            content="Find lexical fallback needle",
+            content="Find typed provider failure",
         )
         assistant_message_id = create_test_message(
             session,
@@ -266,45 +274,49 @@ def test_execute_app_search_keeps_content_evidence_when_semantic_embedding_fails
             content="",
             status="pending",
         )
-        media_id = create_searchable_media_in_library(
-            session,
-            user_id,
-            library_id,
-            title="Lexical Fallback Needle",
-        )
+        session.commit()
 
+        route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
+            500,
+            json={"error": {"message": "provider unavailable"}},
+        )
         run = execute_app_search(
             session,
             viewer_id=user_id,
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            content="Find lexical fallback needle",
+            content="Find typed provider failure",
             has_user_context=False,
             scope="all",
             history=[],
             scope_metadata={"type": "general"},
-            planned_query="lexical fallback needle",
+            planned_query="typed provider failure",
             planned_types=["content_chunk"],
             force=True,
         )
 
         assert run is not None
-        assert run.status == "complete"
-        assert any(
-            citation.result_type == "content_chunk" and citation.media_id == str(media_id)
-            for citation in run.citations
-        )
-        assert "lexical fallback needle" in run.context_text.lower()
+        assert run.tool_call_id is not None
+        assert run.status == "error"
+        assert run.error_code == ApiErrorCode.E_LLM_PROVIDER_DOWN.value
+        assert route.call_count == 1
 
-    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
-    direct_db.register_cleanup("fragments", "media_id", media_id)
-    direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("media", "id", media_id)
+        tool_status, tool_error_code = session.execute(
+            text(
+                """
+                SELECT status, error_code
+                FROM message_tool_calls
+                WHERE id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).one()
+        assert tool_status == "error"
+        assert tool_error_code == ApiErrorCode.E_LLM_PROVIDER_DOWN.value
+
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
-    direct_db.register_cleanup("memberships", "library_id", library_id)
-    direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("users", "id", user_id)
 
 
@@ -381,16 +393,10 @@ def test_scoped_app_search_persists_no_indexed_evidence_status(
     direct_db.register_cleanup("users", "id", user_id)
 
 
-def test_scoped_app_search_persists_no_results_when_indexed_evidence_has_no_hits(
+def test_scoped_app_search_persists_no_results_when_requested_type_has_no_hits(
     direct_db: DirectSessionManager,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user_id = create_test_user_id()
-
-    def fail_embedding(_text: str) -> tuple[str, list[float]]:
-        raise RuntimeError("test embedding failure")
-
-    monkeypatch.setattr("nexus.services.search.build_text_embedding", fail_embedding)
 
     with direct_db.session() as session:
         session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
@@ -430,7 +436,7 @@ def test_scoped_app_search_persists_no_results_when_indexed_evidence_has_no_hits
             history=[],
             scope_metadata={"type": "library", "id": str(library_id)},
             planned_query="termthatdoesnotexist",
-            planned_types=["content_chunk"],
+            planned_types=["media"],
             force=True,
         )
 

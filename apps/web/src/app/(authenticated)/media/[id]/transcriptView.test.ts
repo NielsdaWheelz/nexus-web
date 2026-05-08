@@ -43,13 +43,13 @@ describe("formatTranscriptTimestampMs", () => {
 });
 
 describe("resolveActiveTranscriptFragment", () => {
-  it("prefers the active fragment when it is still present", () => {
+  it("prefers explicit requested fragments over stale active fragments", () => {
     expect(
       resolveActiveTranscriptFragment(FRAGMENTS, {
         activeFragmentId: "frag-2",
         requestedFragmentId: "frag-3",
       })?.id
-    ).toBe("frag-2");
+    ).toBe("frag-3");
   });
 
   it("resolves a requested start time to the containing fragment or nearest start", () => {

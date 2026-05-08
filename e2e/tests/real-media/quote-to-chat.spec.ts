@@ -1,83 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
-import { readRealMediaSeed, writeRealMediaTrace } from "./real-media-seed";
-
-async function selectFreshVisibleTextSnippet(
-  page: Page,
-  containerSelector: string,
-  blockedExacts: string[],
-): Promise<string> {
-  const selected = await page.evaluate(
-    ({ selector, blockedExacts: blockedValues }) => {
-      const container = document.querySelector(selector);
-      if (!(container instanceof HTMLElement)) {
-        return null;
-      }
-
-      const blocked = new Set(
-        blockedValues
-          .map((value) => value.replace(/\s+/g, " ").trim())
-          .filter(Boolean),
-      );
-      const fullText = container.innerText.replace(/\s+/g, " ").trim();
-      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-
-      while (walker.nextNode()) {
-        const textNode = walker.currentNode;
-        if (!(textNode instanceof Text)) {
-          continue;
-        }
-        const parent = textNode.parentElement;
-        if (!parent || parent.closest("[data-active-highlight-ids]")) {
-          continue;
-        }
-        const rect = parent.getBoundingClientRect();
-        const style = window.getComputedStyle(parent);
-        if (
-          rect.width <= 0 ||
-          rect.height <= 0 ||
-          style.display === "none" ||
-          style.visibility === "hidden"
-        ) {
-          continue;
-        }
-
-        const raw = textNode.textContent ?? "";
-        for (let start = 0; start < raw.length; start += 1) {
-          if (/\s/.test(raw[start] ?? "")) {
-            continue;
-          }
-          const exact = raw.slice(start, Math.min(raw.length, start + 48)).trim();
-          if (exact.length < 20 || blocked.has(exact)) {
-            continue;
-          }
-          if (fullText.indexOf(exact) !== fullText.lastIndexOf(exact)) {
-            continue;
-          }
-
-          const range = document.createRange();
-          range.setStart(textNode, start);
-          range.setEnd(textNode, start + exact.length);
-          const selection = window.getSelection();
-          if (!selection) {
-            return null;
-          }
-          selection.removeAllRanges();
-          selection.addRange(range);
-          document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
-          return selection.toString().replace(/\s+/g, " ").trim();
-        }
-      }
-
-      return null;
-    },
-    { selector: containerSelector, blockedExacts },
-  );
-
-  if (!selected) {
-    throw new Error(`Could not select fresh visible text in ${containerSelector}`);
-  }
-  return selected;
-}
+import {
+  readRealMediaSeed,
+  selectFreshVisibleTextSnippet,
+  writeRealMediaTrace,
+} from "./real-media-seed";
 
 async function existingHighlightExacts(page: Page, fragmentId: string): Promise<string[]> {
   const response = await page.request.get(`/api/fragments/${fragmentId}/highlights`);
@@ -114,13 +40,13 @@ test("@real-media desktop selected quote opens reader secondary rail Ask", async
   }
 
   await page.goto(`/media/${mediaId}`);
-  const contentPane = page.locator('div[class*="fragments"]');
+  const contentPane = page.locator("article");
   await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
   const beforeExacts = await existingHighlightExacts(page, fragmentId);
   const selectedText = await selectFreshVisibleTextSnippet(
     page,
-    'div[class*="fragments"]',
+    "article",
     beforeExacts,
   );
   const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
@@ -176,13 +102,13 @@ test("@real-media mobile selected quote opens reader assistant sheet", async ({
   }
 
   await page.goto(`/media/${mediaId}`);
-  const contentPane = page.locator('div[class*="fragments"]');
+  const contentPane = page.locator("article");
   await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
   const beforeExacts = await existingHighlightExacts(page, fragmentId);
   const selectedText = await selectFreshVisibleTextSnippet(
     page,
-    'div[class*="fragments"]',
+    "article",
     beforeExacts,
   );
 

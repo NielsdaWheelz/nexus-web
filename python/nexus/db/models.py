@@ -4063,7 +4063,9 @@ class MessageLLM(Base):
     prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
     prompt_plan_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     stable_prefix_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
-    provider_usage: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    provider_usage: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),

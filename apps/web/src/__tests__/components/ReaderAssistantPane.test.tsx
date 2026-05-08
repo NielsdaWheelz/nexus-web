@@ -4,13 +4,6 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import ReaderAssistantPane from "@/components/chat/ReaderAssistantPane";
 import type { ChatRunCreateRequest } from "@/lib/api/sse";
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({
-    replace: vi.fn(),
-    push: vi.fn(),
-  }),
-}));
-
 function pathOf(input: RequestInfo | URL): string {
   if (input instanceof Request) {
     return new URL(input.url).pathname;
@@ -195,7 +188,7 @@ describe("ReaderAssistantPane", () => {
     expect(screen.getByTestId("chat-composer-dock")).toContainElement(input);
     expect(input).toHaveFocus();
     expect(screen.getByRole("button", { name: /open full chat/i })).not.toBeDisabled();
-    expect(screen.getByText("Loading chat history...")).toBeInTheDocument();
+    expect(screen.getAllByText("Loading chat history...").length).toBeGreaterThan(0);
   });
 
   it("removes pending quote context from the pane and composer before send", async () => {
@@ -212,7 +205,7 @@ describe("ReaderAssistantPane", () => {
       if (path === "/api/stream-token") {
         return new Promise<Response>(() => {});
       }
-      return jsonResponse({ data: [] });
+      throw new Error(`Unexpected fetch call: ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -272,7 +265,7 @@ describe("ReaderAssistantPane", () => {
       if (path === "/api/stream-token") {
         return new Promise<Response>(() => {});
       }
-      return jsonResponse({ data: [] });
+      throw new Error(`Unexpected fetch call: ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -328,5 +321,235 @@ describe("ReaderAssistantPane", () => {
     await waitFor(() => expect(openFullChatButton).not.toBeDisabled());
     fireEvent.click(openFullChatButton);
     expect(onOpenFullChat).toHaveBeenCalledWith("conversation-2?run=run-1");
+  });
+
+  it("keeps scoped sends blocked while resolved history is still loading", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      if (path === "/api/models") {
+        return modelsResponse();
+      }
+      if (path === "/api/conversations/resolve" && init?.method === "POST") {
+        return jsonResponse({
+          data: {
+            id: "conversation-1",
+            title: "Reader source chat",
+            message_count: 2,
+            scope_type: "media",
+            scope_media_id: "media-1",
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        });
+      }
+      if (path === "/api/conversations/conversation-1/messages") {
+        return new Promise<Response>(() => {});
+      }
+      if (path === "/api/chat-runs" && init?.method === "POST") {
+        return jsonResponse(
+          chatRunResponse(JSON.parse(String(init.body)) as ChatRunCreateRequest),
+        );
+      }
+      if (path === "/api/stream-token") {
+        return new Promise<Response>(() => {});
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ReaderAssistantPane
+        contexts={[]}
+        conversationId={null}
+        conversationScope={{
+          type: "media",
+          media_id: "media-1",
+          title: "Reader source",
+        }}
+        targetLabel="Reader source"
+        onOpenFullChat={vi.fn()}
+      />,
+    );
+
+    expect((await screen.findAllByText("Loading chat history...")).length).toBeGreaterThan(0);
+    const input = screen.getByPlaceholderText("Ask anything...");
+    expect(input).toBeEnabled();
+    fireEvent.change(input, { target: { value: "Continue from the selected source" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(chatRunCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("does not send when a resolved scoped chat has no complete assistant parent", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      if (path === "/api/models") {
+        return modelsResponse();
+      }
+      if (path === "/api/conversations/resolve" && init?.method === "POST") {
+        return jsonResponse({
+          data: {
+            id: "conversation-1",
+            title: "Reader source chat",
+            message_count: 1,
+            scope_type: "media",
+            scope_media_id: "media-1",
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        });
+      }
+      if (path === "/api/conversations/conversation-1/messages") {
+        return jsonResponse({
+          data: [
+            {
+              id: "user-existing",
+              seq: 1,
+              role: "user",
+              content: "Existing prompt without an answer yet.",
+              contexts: [],
+              tool_calls: [],
+              status: "complete",
+              error_code: null,
+              created_at: "2026-01-01T00:00:00Z",
+              updated_at: "2026-01-01T00:00:00Z",
+            },
+          ],
+          page: { next_cursor: null },
+        });
+      }
+      if (path === "/api/chat-runs" && init?.method === "POST") {
+        throw new Error("Chat run should not be created for parentless scoped continuation");
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ReaderAssistantPane
+        contexts={[]}
+        conversationId={null}
+        conversationScope={{
+          type: "media",
+          media_id: "media-1",
+          title: "Reader source",
+        }}
+        targetLabel="Reader source"
+        onOpenFullChat={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("This scoped chat cannot be continued yet.");
+    const input = screen.getByPlaceholderText("Ask anything...");
+    expect(input).toBeEnabled();
+    fireEvent.change(input, { target: { value: "Do not send yet" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(chatRunCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("keeps a reader draft when scoped resolution loads an existing conversation", async () => {
+    let resolveConversation: (response: Response) => void = () => {};
+    const conversationResolvePromise = new Promise<Response>((resolve) => {
+      resolveConversation = resolve;
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      if (path === "/api/models") {
+        return modelsResponse();
+      }
+      if (path === "/api/conversations/resolve" && init?.method === "POST") {
+        return conversationResolvePromise;
+      }
+      if (path === "/api/conversations/conversation-1/messages") {
+        return jsonResponse({
+          data: [
+            {
+              id: "user-existing",
+              seq: 1,
+              role: "user",
+              content: "Earlier question",
+              contexts: [],
+              tool_calls: [],
+              status: "complete",
+              error_code: null,
+              created_at: "2026-01-01T00:00:00Z",
+              updated_at: "2026-01-01T00:00:00Z",
+            },
+            {
+              id: "assistant-existing",
+              seq: 2,
+              role: "assistant",
+              content: "Existing answer",
+              contexts: [],
+              tool_calls: [],
+              status: "complete",
+              error_code: null,
+              created_at: "2026-01-01T00:00:01Z",
+              updated_at: "2026-01-01T00:00:01Z",
+            },
+          ],
+          page: { next_cursor: null },
+        });
+      }
+      if (path === "/api/chat-runs" && init?.method === "POST") {
+        return jsonResponse(
+          chatRunResponse(JSON.parse(String(init.body)) as ChatRunCreateRequest),
+        );
+      }
+      if (path === "/api/stream-token") {
+        return new Promise<Response>(() => {});
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ReaderAssistantPane
+        contexts={[]}
+        conversationId={null}
+        conversationScope={{
+          type: "media",
+          media_id: "media-1",
+          title: "Reader source",
+        }}
+        targetLabel="Reader source"
+        onOpenFullChat={vi.fn()}
+      />,
+    );
+
+    await screen.findByText(/Test model/);
+    const input = screen.getByPlaceholderText("Ask anything...");
+    fireEvent.change(input, { target: { value: "Draft while resolving" } });
+
+    resolveConversation(
+      jsonResponse({
+        data: {
+          id: "conversation-1",
+          title: "Reader source chat",
+          message_count: 2,
+          scope_type: "media",
+          scope_media_id: "media-1",
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        },
+      }),
+    );
+
+    await screen.findByText("Existing answer");
+    expect(input).toHaveValue("Draft while resolving");
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(chatRunCalls(fetchMock)).toHaveLength(1);
+    });
+    const body = JSON.parse(String(chatRunCalls(fetchMock)[0]?.[1]?.body)) as
+      ChatRunCreateRequest & { conversation_id?: string };
+    expect(body.conversation_id).toBeUndefined();
+    expect(body.parent_message_id).toBeUndefined();
+    expect(body.conversation_scope).toEqual({ type: "media", media_id: "media-1" });
+    expect(body.content).toBe("Draft while resolving");
   });
 });

@@ -6,7 +6,7 @@ interface ApiKey {
   key_fingerprint?: string | null;
 }
 
-test.describe("api keys @legacy-synthetic", () => {
+test.describe("api keys", () => {
   const settingsChrome = (page: Page) => page.getByTestId("pane-shell-chrome");
 
   async function currentMaskedFingerprint(page: Page, provider: string): Promise<string> {

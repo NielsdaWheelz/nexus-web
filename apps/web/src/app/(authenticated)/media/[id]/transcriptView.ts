@@ -149,13 +149,6 @@ export function resolveActiveTranscriptFragment(
     return null;
   }
 
-  if (activeFragmentId) {
-    const activeFragment = fragments.find((fragment) => fragment.id === activeFragmentId);
-    if (activeFragment) {
-      return activeFragment;
-    }
-  }
-
   if (requestedFragmentId) {
     const requestedFragment = fragments.find(
       (fragment) => fragment.id === requestedFragmentId
@@ -172,6 +165,13 @@ export function resolveActiveTranscriptFragment(
     );
     if (nearestFragment) {
       return nearestFragment;
+    }
+  }
+
+  if (activeFragmentId) {
+    const activeFragment = fragments.find((fragment) => fragment.id === activeFragmentId);
+    if (activeFragment) {
+      return activeFragment;
     }
   }
 

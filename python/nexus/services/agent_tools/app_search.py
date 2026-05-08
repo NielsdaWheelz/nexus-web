@@ -21,7 +21,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_conversation, can_read_media, visible_media_ids_cte_sql
-from nexus.errors import NotFoundError
+from nexus.errors import ApiError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.conversation import MessageContextRef
 from nexus.schemas.search import SearchResultOut
@@ -323,20 +323,18 @@ def execute_app_search(
                 f'filters="{xml_escape(json.dumps(filters, sort_keys=True))}" />'
             )
             context_chars = len(context_text)
-    except Exception as exc:
-        try:
-            db.rollback()
-        except Exception:
-            pass
+    except ApiError as exc:
+        db.rollback()
         logger.warning(
-            "agent_app_search_failed",
+            "agent_app_search_api_error",
             query_hash=hash_query(query),
             scope=scope,
             filters=filters,
+            error_code=exc.code.value,
             error=str(exc),
         )
         status = "error"
-        error_code = "E_APP_SEARCH_FAILED"
+        error_code = exc.code.value
         citations = []
         selected = []
         result_refs = []

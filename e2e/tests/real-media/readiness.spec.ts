@@ -40,8 +40,16 @@ test("@real-media configured media are ready and open in the reader", async ({
     seed.fixtures.scanned_pdf.query,
     "pdf",
   );
-  expect(scannedSearch.results).toEqual([]);
-  await expect(page.getByText("No results found.")).toBeVisible();
+  expect(
+    scannedSearch.results.some(
+      (item: { source?: { media_id?: string } }) =>
+        item.source?.media_id === seed.fixtures.scanned_pdf.media_id,
+    ),
+    "OCR-required scanned PDF must not expose retrievable evidence",
+  ).toBe(false);
+  await expect(
+    page.locator(`a[href*="/media/${seed.fixtures.scanned_pdf.media_id}?"]`),
+  ).toHaveCount(0);
 
   writeRealMediaTrace(testInfo, "real-media-readiness-trace.json", {
     media: media.map(([kind, mediaId, retrievalStatus]) => ({

@@ -49,7 +49,7 @@ function distanceOutsideViewport(top: number, viewportHeight: number): number {
 }
 
 function rowAskInChatButton(row: Locator): Locator {
-  return row.getByRole("button", { name: /ask in chat|send to chat/i });
+  return row.getByRole("button", { name: "Ask in chat" });
 }
 
 function rowActionsButton(row: Locator): Locator {
@@ -136,7 +136,7 @@ async function scrollHighlightIntoView(contentPane: Locator, highlightId: string
   return segment;
 }
 
-test.describe("non-pdf linked-items @legacy-synthetic", () => {
+test.describe("non-pdf linked-items", () => {
   test("contextual highlights expand inline and keep row-local chat + source focus in sync", async ({
     page,
   }) => {
@@ -164,18 +164,13 @@ test.describe("non-pdf linked-items @legacy-synthetic", () => {
     await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
 
-    await focusRow.evaluate((element) => {
-      (element as HTMLElement).click();
-    });
+    await focusRow.click();
     await expectHighlightRowVisible(focusRow, focusNote);
     const focusRowChatButton = rowAskInChatButton(focusRow);
     const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
-    await focusRowChatButton.evaluate((element) => {
-      (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
-    });
-    await focusRowChatButton.evaluate((element) => {
-      (element as HTMLButtonElement).click();
-    });
+    await focusRowChatButton.scrollIntoViewIfNeeded();
+    await expect(focusRowChatButton).toBeEnabled();
+    await focusRowChatButton.click();
     await expectReaderAssistantContext(page, seeded.focus_exact);
     await expect
       .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
@@ -215,9 +210,7 @@ test.describe("non-pdf linked-items @legacy-synthetic", () => {
       "aria-selected",
       "true",
     );
-    await focusRow.evaluate((element) => {
-      (element as HTMLElement).click();
-    });
+    await focusRow.click();
 
     await expect
       .poll(
@@ -242,12 +235,9 @@ test.describe("non-pdf linked-items @legacy-synthetic", () => {
     await expectHighlightRowVisible(quoteRow, quoteNote);
 
     const quoteRowChatButton = rowAskInChatButton(quoteRow);
-    await quoteRowChatButton.evaluate((element) => {
-      (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
-    });
-    await quoteRowChatButton.evaluate((element) => {
-      (element as HTMLButtonElement).click();
-    });
+    await quoteRowChatButton.scrollIntoViewIfNeeded();
+    await expect(quoteRowChatButton).toBeEnabled();
+    await quoteRowChatButton.click();
     await expectReaderAssistantContext(page, seeded.quote_exact);
     await expect
       .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })

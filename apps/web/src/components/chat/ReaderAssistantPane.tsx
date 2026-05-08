@@ -26,6 +26,7 @@ import {
   getContextIdentityKey,
   getConversationScopeSignature,
   getPendingContextSignature,
+  mergeContextItems,
 } from "@/lib/conversations/attachedContext";
 import {
   formatContextMeta,
@@ -115,7 +116,7 @@ export default function ReaderAssistantPane({
   >(new Set());
   const [resolvingConversation, setResolvingConversation] = useState(false);
   const [pendingContexts, setPendingContexts] = useState<ContextItem[]>(() =>
-    dedupeContexts(contexts),
+    mergeContextItems([], contexts),
   );
   const openTelemetryBaseRef = useRef<Record<string, unknown> | null>(null);
   const activeReplyParentMessageId = useMemo(() => {
@@ -233,7 +234,7 @@ export default function ReaderAssistantPane({
   }, [activeConversationId]);
 
   useEffect(() => {
-    setPendingContexts((prev) => mergeContexts(prev, contexts));
+    setPendingContexts((prev) => mergeContextItems(prev, contexts));
   }, [contexts, incomingContextKey]);
 
   useEffect(() => {
@@ -500,6 +501,22 @@ export default function ReaderAssistantPane({
       (option) => getConversationScopeSignature(option.scope) === conversationScopeKey,
     )
       ?.id ?? "";
+  const canUseActiveConversation =
+    activeConversationId !== null &&
+    (locallyCreatedConversationIdsRef.current.has(activeConversationId) ||
+      activeReplyParentMessageId !== null);
+  const composerConversationId =
+    conversationScope.type === "general" && canUseActiveConversation
+      ? activeConversationId
+      : null;
+  const composerDisabledReason =
+    activeConversationId && !canUseActiveConversation && loadingMessages
+      ? "Loading chat history..."
+      : activeConversationId && !canUseActiveConversation && loadError
+        ? "Chat history could not be loaded."
+        : activeConversationId && !canUseActiveConversation && messages.length > 0
+        ? "This scoped chat cannot be continued yet."
+        : undefined;
 
   return (
     <section
@@ -630,10 +647,12 @@ export default function ReaderAssistantPane({
         }
         composer={
           <ChatComposer
-            conversationId={activeConversationId}
+            conversationId={composerConversationId}
             conversationScope={conversationScope}
             attachedContexts={pendingContexts}
+            draftKey="reader-assistant"
             parentMessageId={activeReplyParentMessageId}
+            disabledReason={composerDisabledReason}
             onRemoveContext={(index) =>
               setPendingContexts((prev) => prev.filter((_, i) => i !== index))
             }
@@ -716,24 +735,6 @@ function ReaderAssistantEmptyState({
       </p>
     </>
   );
-}
-
-function dedupeContexts(contexts: ContextItem[]): ContextItem[] {
-  return mergeContexts([], contexts);
-}
-
-function mergeContexts(prev: ContextItem[], incoming: ContextItem[]): ContextItem[] {
-  const seen = new Set(prev.map(getContextIdentityKey));
-  const next = [...prev];
-  for (const context of incoming) {
-    const key = getContextIdentityKey(context);
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    next.push(context);
-  }
-  return next;
 }
 
 function nowMs(): number {

@@ -31,7 +31,6 @@ const SEED_FILES = [
   READER_RESUME_SEED,
 ];
 const E2E_USER_EMAIL = process.env.E2E_USER_EMAIL ?? "e2e-test@nexus.local";
-const LEGACY_SYNTHETIC_ENABLED = process.env.E2E_LEGACY_SYNTHETIC === "1";
 
 function loadEnvFile(filePath) {
   if (!existsSync(filePath)) {
@@ -79,6 +78,35 @@ function run(label, command, cwd, envOverrides) {
 
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, "utf-8"));
+}
+
+function normalizePostgresUrl(dbUrl) {
+  return dbUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://");
+}
+
+function assertRealMediaE2eEnvironmentIsLocal(dbUrl) {
+  const nexusEnv = process.env.NEXUS_ENV ?? "local";
+  if (nexusEnv !== "local") {
+    throw new Error(
+      `[global-setup] Refusing real-media E2E with NEXUS_ENV=${nexusEnv}.`,
+    );
+  }
+
+  let databaseHost = "";
+  try {
+    databaseHost = new URL(normalizePostgresUrl(dbUrl)).hostname;
+  } catch (error) {
+    throw new Error(
+      `[global-setup] DATABASE_URL is not a valid PostgreSQL URL: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(databaseHost)) {
+    throw new Error(
+      `[global-setup] Refusing real-media E2E against non-local database host ${databaseHost}.`,
+    );
+  }
 }
 
 function seedArtifactsExist() {
@@ -407,7 +435,7 @@ function databaseHasReadyRealMediaSeed(dbUrl) {
     "postgresql://",
   );
   const seed = readJson(REAL_MEDIA_SEED);
-  const mediaIds = ["pdf", "epub", "web", "video", "podcast"].map(
+  const mediaIds = ["pdf", "epub", "web", "web_url", "video", "podcast"].map(
     (name) => seed.fixtures?.[name]?.media_id,
   );
   const scannedPdfMediaId = seed.fixtures?.scanned_pdf?.media_id;
@@ -474,10 +502,18 @@ export default function globalSetup() {
   // Mirror Makefile behavior so direct `bun test` runs work too.
   loadEnvFile(path.join(ROOT, ".env"));
   loadEnvFile(path.join(ROOT, ".dev-ports"));
+  const realMediaEnabled = process.env.E2E_REAL_MEDIA === "1";
+  if (!realMediaEnabled) {
+    delete process.env.E2E_REAL_MEDIA;
+  }
+  const requestedNexusEnv = process.env.NEXUS_ENV;
+  if (realMediaEnabled && requestedNexusEnv !== undefined && requestedNexusEnv !== "local") {
+    throw new Error(
+      `[global-setup] Refusing real-media E2E with NEXUS_ENV=${requestedNexusEnv}.`,
+    );
+  }
+  process.env.NEXUS_ENV = realMediaEnabled ? "local" : "test";
   applyResolvedSupabaseEnv(ROOT, process.env);
-
-  // Always ensure the auth bootstrap user exists before setup-project login runs.
-  run("Seed E2E user", "bunx tsx seed-e2e-user.ts", E2E_DIR);
 
   // Step 1: Ensure schema is up-to-date for feature E2E coverage.
   const dbUrl = process.env.DATABASE_URL;
@@ -487,17 +523,26 @@ export default function globalSetup() {
         "  Hint: source .env or run via `make test-e2e`.",
     );
   }
+  if (realMediaEnabled) {
+    assertRealMediaE2eEnvironmentIsLocal(dbUrl);
+  }
+
+  // Always ensure the auth bootstrap user exists before setup-project login runs.
+  run("Seed E2E user", "bunx tsx seed-e2e-user.ts", E2E_DIR, {
+    NEXUS_ENV: process.env.NEXUS_ENV,
+  });
+
   run(
     "Apply DB migrations",
     "uv run --project ../python alembic upgrade head",
     path.join(ROOT, "migrations"),
     {
       DATABASE_URL: dbUrl,
-      NEXUS_ENV: process.env.NEXUS_ENV ?? "test",
+      NEXUS_ENV: process.env.NEXUS_ENV,
     },
   );
 
-  if (process.env.E2E_REAL_MEDIA === "1") {
+  if (realMediaEnabled) {
     if (!databaseHasReadyRealMediaSeed(dbUrl)) {
       run(
         "Seed real-media E2E data",
@@ -513,13 +558,6 @@ export default function globalSetup() {
     }
     console.log(
       "[global-setup] Real-media E2E enabled - using .seed/real-media.json.",
-    );
-    return;
-  }
-
-  if (!LEGACY_SYNTHETIC_ENABLED) {
-    console.log(
-      "[global-setup] Legacy synthetic E2E seed disabled - default browser gate uses product-created data only.",
     );
     return;
   }
@@ -544,7 +582,7 @@ export default function globalSetup() {
     path.join(ROOT, "python"),
     {
       DATABASE_URL: dbUrl,
-      NEXUS_ENV: process.env.NEXUS_ENV ?? "test",
+      NEXUS_ENV: process.env.NEXUS_ENV,
     },
   );
 

@@ -1,6 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { selectFreshVisibleTextSnippet } from "./selection";
 
 interface SeededYoutubeMedia {
   media_id: string;
@@ -59,130 +60,9 @@ async function openHighlightsPane(page: Page): Promise<Locator> {
   return page.getByTestId("anchored-highlights-container").first();
 }
 
-async function selectFreshVisibleTextSnippet(
-  page: Page,
-  containerSelector: string,
-  existingExacts: string[],
-  {
-    minLength = 20,
-    maxLength = 48,
-  }: { minLength?: number; maxLength?: number } = {}
-): Promise<string> {
-  const selected = await page.evaluate(
-    ({ selector, blockedExacts, minLength, maxLength }) => {
-      const container = document.querySelector(selector);
-      if (!(container instanceof HTMLElement)) {
-        return null;
-      }
 
-      const blocked = new Set(
-        blockedExacts.map((value) => value.replace(/\s+/g, " ").trim()).filter(Boolean)
-      );
-
-      const countOccurrences = (haystack: string, needle: string) => {
-        let count = 0;
-        let fromIndex = 0;
-        while (fromIndex <= haystack.length - needle.length) {
-          const matchIndex = haystack.indexOf(needle, fromIndex);
-          if (matchIndex === -1) {
-            break;
-          }
-          count += 1;
-          fromIndex = matchIndex + 1;
-        }
-        return count;
-      };
-
-      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-      while (walker.nextNode()) {
-        const textNode = walker.currentNode;
-        if (!(textNode instanceof Text)) {
-          continue;
-        }
-
-        const parent = textNode.parentElement;
-        if (!parent || parent.closest("[data-active-highlight-ids]")) {
-          continue;
-        }
-
-        const style = window.getComputedStyle(parent);
-        const rect = parent.getBoundingClientRect();
-        const rawText = textNode.textContent ?? "";
-        if (
-          style.display === "none" ||
-          style.visibility === "hidden" ||
-          rect.width <= 0 ||
-          rect.height <= 0 ||
-          rect.bottom <= 0 ||
-          rect.top >= window.innerHeight ||
-          rawText.trim().length < minLength
-        ) {
-          continue;
-        }
-
-        for (let start = 0; start <= rawText.length - minLength; start += 1) {
-          const current = rawText[start] ?? "";
-          const previous = start > 0 ? rawText[start - 1] : " ";
-          if (!/\S/.test(current) || /\S/.test(previous)) {
-            continue;
-          }
-
-          for (
-            let end = Math.min(rawText.length, start + maxLength);
-            end >= start + minLength;
-            end -= 1
-          ) {
-            const last = rawText[end - 1] ?? "";
-            const next = end < rawText.length ? rawText[end] : " ";
-            if (!/\S/.test(last) || (/\w/.test(last) && /\w/.test(next))) {
-              continue;
-            }
-
-            const rawCandidate = rawText.slice(start, end);
-            if (countOccurrences(rawText, rawCandidate) !== 1) {
-              continue;
-            }
-
-            const normalizedCandidate = rawCandidate.replace(/\s+/g, " ").trim();
-            if (normalizedCandidate.length < minLength || blocked.has(normalizedCandidate)) {
-              continue;
-            }
-
-            const selection = window.getSelection();
-            if (!selection) {
-              return null;
-            }
-
-            const range = document.createRange();
-            range.setStart(textNode, start);
-            range.setEnd(textNode, end);
-            selection.removeAllRanges();
-            selection.addRange(range);
-            document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
-            return selection.toString().replace(/\s+/g, " ").trim();
-          }
-        }
-      }
-
-      return null;
-    },
-    {
-      selector: containerSelector,
-      blockedExacts: existingExacts,
-      minLength,
-      maxLength,
-    }
-  );
-
-  expect(selected).toBeTruthy();
-  if (!selected) {
-    throw new Error(`Expected to select visible text in ${containerSelector}.`);
-  }
-  return selected;
-}
-
-test.describe("youtube transcript media @legacy-synthetic", () => {
-  test("transcript-ready youtube flow renders embed, seeks by transcript click, and keeps fallback source action", async ({
+test.describe("youtube transcript media", () => {
+  test("transcript-ready youtube flow renders embed, seeks by transcript click, and keeps external source action", async ({
     page,
   }) => {
     const seed = readSeededYoutubeMedia();

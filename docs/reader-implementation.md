@@ -17,11 +17,28 @@ this records the current reader model and the constraints we actively ship.
 - focus mode: four states (`off`, `distraction_free`, `paragraph`,
   `sentence`) driven by `reader_profile.focus_mode`; toggle at
   Cmd/Ctrl+Shift+F; auto-suspends during active selection
-- mobile-safe reader layout and controls
-- mobile document-pane chrome policy lives in `docs/mobile-pane-chrome.md`
+- mobile-safe reader layout and controls; mobile document panes keep reader
+  controls local to the active pane and do not mount the persistent desktop rail
 - resume that survives reflow where possible
 
 ## architecture
+
+### anchored highlight projection
+
+Anchored projection is the reader-owned bridge from stored highlight anchors to
+visible rail rows.
+
+- Reflowable readers project highlights from rendered DOM segments tagged with
+  `data-active-highlight-ids`.
+- PDF readers project highlights from visible page geometry and the current PDF
+  viewport transform.
+- Projection remeasures after reader typography, active fragment/section,
+  rendered HTML, PDF zoom/page render epoch, rail mode, rail width, or highlight
+  data changes.
+- Missing targets are explicit projection state; they are not silently treated
+  as visible rows.
+- Projection state is never persisted. It is derived from current rendered
+  reader geometry.
 
 ### reader settings
 

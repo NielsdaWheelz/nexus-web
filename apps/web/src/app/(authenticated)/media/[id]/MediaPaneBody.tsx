@@ -98,8 +98,8 @@ import { useReaderResumeState } from "@/lib/reader/useReaderResumeState";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import type { ConversationScope } from "@/lib/conversations/types";
 import {
-  getContextIdentityKey,
   getConversationScopeSignature,
+  mergeContextItems,
 } from "@/lib/conversations/attachedContext";
 import {
   normalizeEpubNavigationToc,
@@ -969,6 +969,7 @@ export default function MediaPaneBody() {
   >(null);
   const [readerSourceTarget, setReaderSourceTarget] = useState<ReaderSourceTarget | null>(null);
   const [pdfRefreshToken, setPdfRefreshToken] = useState(0);
+  const suppressTranscriptUrlRequestRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!requestedEvidenceId) {
@@ -1024,9 +1025,20 @@ export default function MediaPaneBody() {
     resolvedEvidenceHighlight.t_end_ms >= 0
       ? resolvedEvidenceHighlight.t_end_ms
       : null);
-  const activeRequestedFragmentId = requestedFragmentId ?? resolvedEvidenceFragmentId;
+  const transcriptUrlRequestSignature = [
+    requestedEvidenceId ?? "",
+    requestedFragmentId ?? resolvedEvidenceFragmentId ?? "",
+    requestedStartMs ?? resolvedEvidenceStartMs ?? "",
+  ].join("\u001f");
+  const suppressingCurrentTranscriptUrlRequest =
+    suppressTranscriptUrlRequestRef.current === transcriptUrlRequestSignature;
+  const activeRequestedFragmentId = suppressingCurrentTranscriptUrlRequest
+    ? null
+    : requestedFragmentId ?? resolvedEvidenceFragmentId;
   const activeRequestedEpubLoc = requestedEpubLoc ?? resolvedEvidenceEpubLoc;
-  const activeRequestedStartMs = requestedStartMs ?? resolvedEvidenceStartMs;
+  const activeRequestedStartMs = suppressingCurrentTranscriptUrlRequest
+    ? null
+    : requestedStartMs ?? resolvedEvidenceStartMs;
   const activeRequestedPdfPageNumber =
     requestedPdfPageNumber ?? parsePositivePageNumber(resolvedEvidenceParams?.page);
 
@@ -1044,6 +1056,32 @@ export default function MediaPaneBody() {
   const railFocusScrollAppliedRef = useRef<string | null>(null);
   const mismatchToastFragmentRef = useRef<string | null>(null);
   const mismatchLoggedFragmentRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (
+      suppressTranscriptUrlRequestRef.current &&
+      suppressTranscriptUrlRequestRef.current !== transcriptUrlRequestSignature
+    ) {
+      suppressTranscriptUrlRequestRef.current = null;
+      return;
+    }
+    if (
+      !requestedFragmentId &&
+      requestedStartMs === null &&
+      !requestedEvidenceId &&
+      !resolvedEvidenceFragmentId &&
+      resolvedEvidenceStartMs === null
+    ) {
+      suppressTranscriptUrlRequestRef.current = null;
+    }
+  }, [
+    requestedEvidenceId,
+    requestedFragmentId,
+    requestedStartMs,
+    resolvedEvidenceFragmentId,
+    resolvedEvidenceStartMs,
+    transcriptUrlRequestSignature,
+  ]);
 
   // Retained canonical selection for highlight actions
   const [selection, setSelection] = useState<SelectionState | null>(null);
@@ -2846,7 +2884,7 @@ export default function MediaPaneBody() {
             return a.id.localeCompare(b.id);
           })
         );
-          focusHighlight(createdHighlight.id);
+        focusHighlight(createdHighlight.id);
         clearRetainedSelection(true);
 
         void fetchHighlights(activeContent.fragmentId)
@@ -2855,7 +2893,7 @@ export default function MediaPaneBody() {
               return;
             }
             setHighlights(newHighlights);
-                })
+          })
           .catch((err) => {
             console.error("Failed to refresh highlights after create:", err);
           });
@@ -2869,7 +2907,7 @@ export default function MediaPaneBody() {
               return null;
             }
             setHighlights(newHighlights);
-      
+
             const existing = newHighlights.find(
               (h) =>
                 h.anchor.start_offset === activeSelection.startOffset &&
@@ -2918,12 +2956,28 @@ export default function MediaPaneBody() {
   const handleTranscriptSegmentSelect = useCallback(
     (fragment: TranscriptFragment) => {
       cancelRestoreSession();
+      suppressTranscriptUrlRequestRef.current = transcriptUrlRequestSignature;
       setActiveTranscriptFragmentId(fragment.id);
       clearFocus();
       setHighlights([]);
       clearRetainedSelection(false);
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("fragment");
+      params.delete("t_start_ms");
+      params.delete("t_end_ms");
+      params.delete("evidence");
+      const query = params.toString();
+      router.replace(query ? `/media/${id}?${query}` : `/media/${id}`);
     },
-    [cancelRestoreSession, clearFocus, clearRetainedSelection]
+    [
+      cancelRestoreSession,
+      clearFocus,
+      clearRetainedSelection,
+      id,
+      router,
+      searchParams,
+      transcriptUrlRequestSignature,
+    ]
   );
 
   // ==========================================================================
@@ -3183,19 +3237,11 @@ export default function MediaPaneBody() {
           ? getConversationScopeSignature(current.conversationScope)
           : "";
         const nextScopeKey = getConversationScopeSignature(conversationScope);
-        const nextContexts =
-          current && currentScopeKey === nextScopeKey ? [...current.contexts] : [];
-        const seen = new Set(nextContexts.map(getContextIdentityKey));
-        for (const context of contexts) {
-          const key = getContextIdentityKey(context);
-          if (seen.has(key)) {
-            continue;
-          }
-          seen.add(key);
-          nextContexts.push(context);
-        }
         return {
-          contexts: nextContexts,
+          contexts:
+            current && currentScopeKey === nextScopeKey
+              ? mergeContextItems(current.contexts, contexts)
+              : mergeContextItems([], contexts),
           conversationId:
             current && currentScopeKey === nextScopeKey ? current.conversationId : null,
           conversationScope,
@@ -3271,14 +3317,18 @@ export default function MediaPaneBody() {
       });
 
       const focusedHighlightId = focusedHighlightIdRef.current;
+      const focusedHighlight = focusedHighlightId
+        ? pdfDocumentHighlights.find((highlight) => highlight.id === focusedHighlightId)
+        : null;
       if (
-        focusedHighlightId &&
-        !nextHighlights.some((highlight) => highlight.id === focusedHighlightId)
+        focusedHighlight &&
+        focusedHighlight.anchor.page_number === nextPage &&
+        !nextHighlights.some((highlight) => highlight.id === focusedHighlight.id)
       ) {
         clearFocus();
       }
     },
-    [clearFocus]
+    [clearFocus, pdfDocumentHighlights]
   );
 
   const pdfReaderResumeState = initialPdfResumeState;
@@ -4419,6 +4469,7 @@ export default function MediaPaneBody() {
       if (isMobileViewport) {
         setReaderAssistantState(null);
       }
+      suppressTranscriptUrlRequestRef.current = null;
 
       if (target.href === `/media/${id}` || target.href?.startsWith(`/media/${id}?`)) {
         router.push(target.href);

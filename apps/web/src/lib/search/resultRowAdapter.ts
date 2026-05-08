@@ -80,6 +80,7 @@ interface SearchNoteBlockResult extends SearchBaseResult {
   page_id: string;
   page_title: string;
   body_text: string;
+  highlight_excerpt: string | null;
 }
 
 interface SearchPageResult extends SearchBaseResult {
@@ -466,6 +467,8 @@ function normalizeSearchResult(result: unknown): SearchApiResult | null {
         page_id: row.page_id,
         page_title: row.page_title,
         body_text: row.body_text,
+        highlight_excerpt:
+          typeof row.highlight_excerpt === "string" ? row.highlight_excerpt : null,
       };
     case "message":
       if (
@@ -631,9 +634,7 @@ function buildPrimaryText(result: SearchApiResult): string {
     );
   }
   if (result.type === "note_block") {
-    if (result.source_label && result.source_label !== "note" && result.source_label !== result.title) {
-      return result.source_label;
-    }
+    if (result.highlight_excerpt) return result.highlight_excerpt;
     return result.body_text || sanitizeSnippet(result.snippet) || "Note";
   }
   if (result.type === "media" || result.type === "podcast") {

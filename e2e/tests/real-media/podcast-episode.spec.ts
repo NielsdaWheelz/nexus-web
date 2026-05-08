@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
+  cleanupRealMediaHighlight,
   createFragmentHighlightThroughVisibleSelection,
   expectVisibleTextEvidenceHighlight,
   openTranscriptEvidenceSegment,
@@ -65,6 +66,7 @@ test("@real-media podcast episode transcript opens seekable evidence", async ({
   await expectVisibleTextEvidenceHighlight(page);
 
   let savedHighlightId: string | null = null;
+  let productError: unknown = null;
   try {
     const savedHighlight = await createFragmentHighlightThroughVisibleSelection(
       page,
@@ -87,15 +89,12 @@ test("@real-media podcast episode transcript opens seekable evidence", async ({
       saved_highlight: savedHighlight,
       browser_url: page.url(),
     });
+  } catch (error) {
+    productError = error;
+    throw error;
   } finally {
     if (savedHighlightId) {
-      try {
-        await page.request.delete(`/api/highlights/${savedHighlightId}`, {
-          timeout: 5_000,
-        });
-      } catch {
-        // justify-ignore-error: cleanup must not mask the product assertion.
-      }
+      await cleanupRealMediaHighlight(page, savedHighlightId, productError);
     }
   }
 });

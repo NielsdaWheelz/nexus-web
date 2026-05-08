@@ -6,7 +6,6 @@ import hashlib
 from typing import Any, Literal
 from uuid import UUID
 
-import httpx
 from sqlalchemy import and_, delete, func, or_, select, text
 from sqlalchemy.orm import Session
 
@@ -18,18 +17,15 @@ from nexus.db.models import (
     Page,
 )
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.logging import get_logger
 from nexus.services.semantic_chunks import (
-    build_text_embedding,
     build_text_embeddings,
     current_transcript_embedding_model,
     to_pgvector_literal,
     transcript_embedding_dimensions,
 )
 
-logger = get_logger(__name__)
-
 OBJECT_SEARCH_INDEX_VERSION = 1
+OBJECT_SEARCH_MIN_SEMANTIC_SIMILARITY = 0.50
 
 
 def project_page(db: Session, viewer_id: UUID, page: Page) -> None:
@@ -190,7 +186,7 @@ def search_objects(
     viewer_id: UUID,
     object_type: Literal["page", "note_block"],
     query_text: str,
-    semantic: bool,
+    semantic_query_embedding: tuple[str, list[float]] | None,
     scope_type: str,
     scope_id: UUID | None,
     limit: int,
@@ -203,62 +199,65 @@ def search_objects(
         "index_version": OBJECT_SEARCH_INDEX_VERSION,
         "limit": limit,
     }
-    semantic_cte = ""
+    semantic_ctes = ""
     semantic_join = ""
     semantic_score = "0.0"
     semantic_match = "FALSE"
-    if semantic:
-        try:
-            embedding_model, query_embedding = build_text_embedding(query_text)
-            dimensions = transcript_embedding_dimensions()
-            if len(query_embedding) != dimensions:
-                raise ApiError(
-                    ApiErrorCode.E_INTERNAL,
-                    "Object-search query embedding has the wrong dimensionality.",
-                )
-            params["embedding_model"] = embedding_model
-            params["embedding_dimensions"] = dimensions
-            params["query_embedding"] = to_pgvector_literal(query_embedding)
-            params["semantic_limit"] = max(limit * 20, 100)
-            semantic_cte = f"""
-                query_embedding AS (
-                    SELECT CAST(:query_embedding AS vector({dimensions})) AS embedding
-                ),
-                semantic_matches AS (
-                    SELECT
-                        ose.search_document_id,
-                        (1 - (ose.embedding <=> qe.embedding)) AS semantic_score
-                    FROM object_search_embeddings ose
-                    JOIN query_embedding qe ON true
-                    WHERE ose.user_id = :viewer_id
-                      AND ose.embedding_model = :embedding_model
-                      AND ose.embedding_dimensions = :embedding_dimensions
-                      AND ose.index_version = :index_version
-                      AND ose.deleted_at IS NULL
-                      AND ose.embedding IS NOT NULL
-                    ORDER BY ose.embedding <=> qe.embedding ASC, ose.search_document_id ASC
-                    LIMIT :semantic_limit
-                ),
-            """
-            semantic_join = "LEFT JOIN semantic_matches sm ON sm.search_document_id = osd.id"
-            semantic_score = "COALESCE(sm.semantic_score, 0.0)"
-            semantic_match = "sm.search_document_id IS NOT NULL"
-        except (ApiError, ValueError, httpx.HTTPError) as exc:
-            logger.warning(
-                "object_search_query_embedding_failed",
-                query_hash=hashlib.sha256(query_text.encode("utf-8")).hexdigest()[:16],
-                error=str(exc),
+    if semantic_query_embedding is not None:
+        embedding_model, query_embedding = semantic_query_embedding
+        dimensions = transcript_embedding_dimensions()
+        if len(query_embedding) != dimensions:
+            raise ApiError(
+                ApiErrorCode.E_LLM_PROVIDER_DOWN,
+                "Embedding provider returned an invalid response.",
             )
+        params["embedding_model"] = embedding_model
+        params["embedding_dimensions"] = dimensions
+        params["query_embedding"] = to_pgvector_literal(query_embedding)
+        params["semantic_limit"] = max(limit * 20, 100)
+        params["min_semantic_similarity"] = OBJECT_SEARCH_MIN_SEMANTIC_SIMILARITY
+        semantic_ctes = f""",
+            query_embedding AS (
+                SELECT CAST(:query_embedding AS vector({dimensions})) AS embedding
+            ),
+            semantic_matches AS (
+                SELECT
+                    ose.search_document_id,
+                    (1 - (ose.embedding <=> qe.embedding)) AS semantic_score
+                FROM object_search_embeddings ose
+                JOIN eligible_documents osd ON osd.id = ose.search_document_id
+                JOIN query_embedding qe ON true
+                WHERE ose.embedding_model = :embedding_model
+                  AND ose.embedding_dimensions = :embedding_dimensions
+                  AND ose.index_version = :index_version
+                  AND ose.deleted_at IS NULL
+                  AND ose.embedding IS NOT NULL
+                ORDER BY ose.embedding <=> qe.embedding ASC, ose.search_document_id ASC
+                LIMIT :semantic_limit
+            )
+        """
+        semantic_join = "LEFT JOIN semantic_matches sm ON sm.search_document_id = osd.id"
+        semantic_score = "COALESCE(sm.semantic_score, 0.0)"
+        semantic_match = "COALESCE(sm.semantic_score, 0.0) >= :min_semantic_similarity"
 
     scope_filter = _scope_filter_sql(scope_type)
     if scope_type != "all":
         params["scope_id"] = scope_id
     sql = f"""
         WITH
-            {semantic_cte}
             query_terms AS (
                 SELECT websearch_to_tsquery('english', :query) AS tsq
+            ),
+            eligible_documents AS (
+                SELECT osd.*
+                FROM object_search_documents osd
+                WHERE osd.user_id = :viewer_id
+                  AND osd.object_type = :object_type
+                  AND osd.index_version = :index_version
+                  AND osd.deleted_at IS NULL
+                  {scope_filter}
             )
+            {semantic_ctes}
         SELECT
             osd.object_id,
             osd.parent_object_id,
@@ -287,19 +286,14 @@ def search_objects(
                 + (ts_rank_cd(osd.search_vector, qt.tsq) * 2.0)
                 + ({semantic_score} * 1.5)
             ) AS score
-        FROM object_search_documents osd
+        FROM eligible_documents osd
         CROSS JOIN query_terms qt
         {semantic_join}
-        WHERE osd.user_id = :viewer_id
-          AND osd.object_type = :object_type
-          AND osd.index_version = :index_version
-          AND osd.deleted_at IS NULL
-          AND (
+        WHERE (
                 osd.search_vector @@ qt.tsq
              OR osd.title_text ILIKE :contains_query
              OR {semantic_match}
           )
-          {scope_filter}
         ORDER BY score DESC, osd.object_id ASC
         LIMIT :limit
     """

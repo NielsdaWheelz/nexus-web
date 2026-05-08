@@ -11,9 +11,11 @@ import httpx
 
 from nexus.config import Environment, get_settings
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.logging import get_logger
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
+logger = get_logger(__name__)
 
 
 def transcript_embedding_dimensions() -> int:
@@ -44,7 +46,10 @@ def _normalize_and_validate_vector(vector: Any, *, dimensions: int) -> list[floa
         raise ValueError("Embedding payload must be a list")
     normalized: list[float] = []
     for value in vector:
-        normalized.append(float(value))
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            raise ValueError("Embedding payload values must be finite")
+        normalized.append(numeric)
     if len(normalized) != dimensions:
         raise ValueError(f"Expected embedding dimension {dimensions}, got {len(normalized)}")
     return normalized
@@ -70,12 +75,68 @@ def _build_test_embedding(text: str, *, dimensions: int) -> list[float]:
     return [component / norm for component in vector]
 
 
+def _embedding_provider_error(status_code: int) -> ApiErrorCode:
+    if status_code in {401, 403}:
+        return ApiErrorCode.E_LLM_INVALID_KEY
+    if status_code == 429:
+        return ApiErrorCode.E_LLM_RATE_LIMIT
+    if status_code in {408, 504}:
+        return ApiErrorCode.E_LLM_TIMEOUT
+    if status_code == 404:
+        return ApiErrorCode.E_MODEL_NOT_AVAILABLE
+    if status_code >= 500:
+        return ApiErrorCode.E_LLM_PROVIDER_DOWN
+    if 400 <= status_code < 500:
+        return ApiErrorCode.E_LLM_BAD_REQUEST
+    return ApiErrorCode.E_LLM_PROVIDER_DOWN
+
+
+def _parse_embedding_response_data(
+    body: Any, *, dimensions: int, expected_count: int
+) -> list[list[float]]:
+    try:
+        if not isinstance(body, dict):
+            raise ValueError("Embedding provider response must be an object")
+        data = body.get("data")
+        if not isinstance(data, list):
+            raise ValueError("Embedding provider response missing data list")
+        vectors_by_index: dict[int, list[float]] = {}
+        for item in data:
+            if not isinstance(item, dict):
+                raise ValueError("Embedding provider data item must be an object")
+            index = item.get("index")
+            if (
+                not isinstance(index, int)
+                or isinstance(index, bool)
+                or index < 0
+                or index >= expected_count
+                or index in vectors_by_index
+            ):
+                raise ValueError("Embedding provider returned invalid indexes")
+            vectors_by_index[index] = _normalize_and_validate_vector(
+                item.get("embedding"), dimensions=dimensions
+            )
+        if set(vectors_by_index) != set(range(expected_count)):
+            raise ValueError("Embedding provider returned incomplete indexes")
+        return [vectors_by_index[index] for index in range(expected_count)]
+    except (TypeError, ValueError) as exc:
+        raise ApiError(
+            ApiErrorCode.E_LLM_PROVIDER_DOWN,
+            "Embedding provider returned an invalid response.",
+        ) from exc
+
+
 def _embed_with_openai(texts: list[str], *, dimensions: int) -> list[list[float]]:
     settings = get_settings()
     api_key = settings.openai_api_key
-    if not settings.enable_openai or not api_key:
+    if not settings.enable_openai:
         raise ApiError(
-            ApiErrorCode.E_INTERNAL,
+            ApiErrorCode.E_MODEL_NOT_AVAILABLE,
+            "OpenAI embeddings are disabled.",
+        )
+    if not api_key:
+        raise ApiError(
+            ApiErrorCode.E_LLM_NO_KEY,
             "OPENAI_API_KEY is required for transcript semantic embeddings.",
         )
 
@@ -87,39 +148,50 @@ def _embed_with_openai(texts: list[str], *, dimensions: int) -> list[list[float]
     vectors: list[list[float]] = []
     for start in range(0, len(texts), 64):
         batch = texts[start : start + 64]
-        response = httpx.post(
-            _OPENAI_EMBEDDINGS_URL,
-            headers=headers,
-            json={
-                "model": settings.transcript_embedding_model_openai,
-                "input": batch,
-                "dimensions": dimensions,
-            },
-            timeout=httpx.Timeout(settings.transcript_embedding_timeout_seconds, connect=10.0),
-        )
+        try:
+            response = httpx.post(
+                _OPENAI_EMBEDDINGS_URL,
+                headers=headers,
+                json={
+                    "model": settings.transcript_embedding_model_openai,
+                    "input": batch,
+                    "dimensions": dimensions,
+                },
+                timeout=httpx.Timeout(settings.transcript_embedding_timeout_seconds, connect=10.0),
+            )
+        except httpx.TimeoutException as exc:
+            raise ApiError(
+                ApiErrorCode.E_LLM_TIMEOUT,
+                "Embedding provider request timed out.",
+            ) from exc
+        except httpx.RequestError as exc:
+            raise ApiError(
+                ApiErrorCode.E_LLM_PROVIDER_DOWN,
+                "Embedding provider request failed.",
+            ) from exc
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            error_code = _embedding_provider_error(response.status_code)
+            logger.warning(
+                "embedding_provider_request_failed",
+                status_code=response.status_code,
+                error_code=error_code.value,
+                response_chars=len(response.text),
+            )
             raise ApiError(
-                ApiErrorCode.E_INTERNAL,
-                f"Embedding provider request failed: {response.text[:500]}",
+                error_code,
+                "Embedding provider request failed.",
             ) from exc
-        body = response.json()
-        data = body.get("data")
-        if not isinstance(data, list):
+        try:
+            body = response.json()
+        except ValueError as exc:
             raise ApiError(
-                ApiErrorCode.E_INTERNAL, "Embedding provider response missing data list."
-            )
-
-        ordered = sorted(data, key=lambda item: int(item.get("index", 0)))
-        for item in ordered:
-            vectors.append(
-                _normalize_and_validate_vector(item.get("embedding"), dimensions=dimensions)
-            )
-    if len(vectors) != len(texts):
-        raise ApiError(
-            ApiErrorCode.E_INTERNAL,
-            f"Embedding provider returned {len(vectors)} vectors for {len(texts)} inputs.",
+                ApiErrorCode.E_LLM_PROVIDER_DOWN,
+                "Embedding provider returned invalid JSON.",
+            ) from exc
+        vectors.extend(
+            _parse_embedding_response_data(body, dimensions=dimensions, expected_count=len(batch))
         )
     return vectors
 

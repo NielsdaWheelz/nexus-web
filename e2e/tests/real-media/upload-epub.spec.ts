@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import path from "node:path";
 import {
+  cleanupRealMediaHighlight,
   createFragmentHighlightThroughVisibleSelection,
   expectVisibleTextEvidenceHighlight,
   readRealMediaSeed,
@@ -77,11 +78,12 @@ test("@real-media real EPUB opens from upload-backed media and projects evidence
   await expectVisibleTextEvidenceHighlight(page);
 
   let savedHighlightId: string | null = null;
+  let productError: unknown = null;
   try {
     const savedHighlight = await createFragmentHighlightThroughVisibleSelection(
       page,
       mediaId,
-      '[class*="fragments"]',
+      '[data-testid="html-renderer"]',
     );
     savedHighlightId = savedHighlight.id;
 
@@ -98,15 +100,12 @@ test("@real-media real EPUB opens from upload-backed media and projects evidence
       saved_highlight: savedHighlight,
       browser_url: page.url(),
     });
+  } catch (error) {
+    productError = error;
+    throw error;
   } finally {
     if (savedHighlightId) {
-      try {
-        await page.request.delete(`/api/highlights/${savedHighlightId}`, {
-          timeout: 5_000,
-        });
-      } catch {
-        // justify-ignore-error: cleanup must not mask the product assertion.
-      }
+      await cleanupRealMediaHighlight(page, savedHighlightId, productError);
     }
   }
 });

@@ -67,12 +67,16 @@ export default function AssistantEvidenceDisclosure({
       <div ref={answerRef} className={`${styles.assistantBody} ${styles.claimAnswer}`}>
         <MarkdownMessage
           content={placeholderContent}
-          citations={citations.list.map((entry) => ({
-            index: entry.index,
-            color: entry.color,
-            preview: entry.preview,
-            target: entry.target,
-          }))}
+          citations={citations.list.map((entry) => {
+            const target = hasReaderActivator ? entry.target : null;
+            return {
+              index: entry.index,
+              color: entry.color,
+              preview: entry.preview,
+              target,
+              href: target ? null : entry.href,
+            };
+          })}
           onCitationActivate={onActivateTarget}
         />
       </div>
@@ -121,10 +125,10 @@ export default function AssistantEvidenceDisclosure({
 
 interface ClaimCitationEntry {
   index: number;
-  claimId: string;
   color: ReaderCitationColor;
   preview: { title?: string; excerpt?: string; meta?: string[] };
   target: ReaderSourceTarget | null;
+  href: string | null;
 }
 
 function buildClaimCitations(
@@ -140,7 +144,10 @@ function buildClaimCitations(
     const primary = supporting ?? evidence.find((item) => item.claim_id === claim.id);
     const isWeb = primary ? isWebEvidence(primary) : false;
     const label = primary ? evidenceLabel(primary, isWeb) : claim.claim_text;
+    const resolverStatus = primary ? resolverStatusFromEvidence(primary) : null;
+    const unavailable = Boolean(primary && !isWeb && resolverStatus && resolverStatus !== "resolved");
     const target = primary ? readerTargetFromEvidence(primary, label) : null;
+    const href = primary && !unavailable ? evidenceHref(primary) : null;
     const meta: string[] = [];
     if (primary?.locator?.type === "web_url" && primary.locator.display_url) {
       meta.push(primary.locator.display_url);
@@ -149,7 +156,6 @@ function buildClaimCitations(
     }
     list.push({
       index: position + 1,
-      claimId: claim.id,
       color: "neutral",
       preview: {
         title: label,
@@ -157,6 +163,7 @@ function buildClaimCitations(
         meta,
       },
       target,
+      href,
     });
     byClaimId.set(claim.id, position + 1);
   });
@@ -298,8 +305,8 @@ function EvidenceItem({
   const label = evidenceLabel(evidence, isWeb);
   const readerTarget =
     !isWeb && hasReaderActivator ? readerTargetFromEvidence(evidence, label) : null;
-  const sourceUnavailable =
-    hasReaderActivator && !isWeb && readerTarget === null;
+  const status = resolverStatusFromEvidence(evidence);
+  const sourceUnavailable = !isWeb && Boolean(status && status !== "resolved");
   const hasBackendLabel = Boolean(
     evidence.citation_label || textField(evidence.result_ref, "citation_label"),
   );

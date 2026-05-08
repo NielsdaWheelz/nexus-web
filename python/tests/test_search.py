@@ -18,11 +18,15 @@ Tests cover:
 - Response shape preservation
 """
 
+import base64
+import json
 from uuid import UUID, uuid4
 
 import pytest
+import respx
 from sqlalchemy import select, text
 
+from nexus.config import clear_settings_cache
 from nexus.db.models import Fragment, ObjectSearchDocument, Page
 from nexus.schemas.notes import CreatePageRequest
 from nexus.services import notes, object_search
@@ -50,6 +54,8 @@ from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
 
 
 # =============================================================================
@@ -1023,6 +1029,82 @@ class TestSearchPagination:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
 
+    @pytest.mark.parametrize("offset", ["1", 1.2, True])
+    def test_invalid_cursor_offset_type(self, auth_client, offset):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        cursor = (
+            base64.urlsafe_b64encode(json.dumps({"offset": offset}).encode("utf-8"))
+            .decode("ascii")
+            .rstrip("=")
+        )
+
+        response = auth_client.get(
+            f"/search?q=the+and&cursor={cursor}",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
+
+    @respx.mock
+    def test_invalid_cursor_does_not_call_embedding_provider(
+        self,
+        auth_client,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        monkeypatch.setenv("NEXUS_ENV", "local")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+        monkeypatch.setenv("ENABLE_OPENAI", "true")
+        clear_settings_cache()
+        try:
+            route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
+                200,
+                json={"data": [{"index": 0, "embedding": [0.1] * 256}]},
+            )
+
+            response = auth_client.get(
+                "/search?q=cursor+check&types=content_chunk&cursor=invalid!!!cursor",
+                headers=auth_headers(user_id),
+            )
+
+            assert response.status_code == 400
+            assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
+            assert route.call_count == 0
+        finally:
+            clear_settings_cache()
+
+    @respx.mock
+    def test_all_stopword_query_does_not_call_embedding_provider(
+        self,
+        auth_client,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        monkeypatch.setenv("NEXUS_ENV", "local")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+        monkeypatch.setenv("ENABLE_OPENAI", "true")
+        clear_settings_cache()
+        try:
+            route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
+                200,
+                json={"data": [{"index": 0, "embedding": [0.1] * 256}]},
+            )
+
+            response = auth_client.get(
+                "/search?q=the+and&types=content_chunk",
+                headers=auth_headers(user_id),
+            )
+
+            assert response.status_code == 200
+            assert response.json()["results"] == []
+            assert route.call_count == 0
+        finally:
+            clear_settings_cache()
+
 
 # =============================================================================
 # Result Format Tests
@@ -1363,7 +1445,8 @@ class TestSearchResultFormat:
 
         assert result["type"] == "note_block"
         assert result["page_title"] == "Notes"
-        assert result["source_label"] == "test exact"
+        assert result["source_label"] == "note"
+        assert result["highlight_excerpt"] == "test exact"
         assert result["body_text"] == note_body
         assert result["deep_link"] == f"/notes/{note_block_id}"
         assert result["media_id"] is None
@@ -1475,7 +1558,32 @@ class TestSearchResultFormat:
             headers=auth_headers(user_id),
         )
         assert default_response.status_code == 200, default_response.text
-        assert default_response.json()["results"] == []
+        default_result_ids = {row["id"] for row in default_response.json()["results"]}
+        assert str(page.id) in default_result_ids
+
+        _model, unrelated_vector = build_text_embedding("unrelatedobjectmiss")
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE object_search_embeddings
+                    SET embedding = CAST(:embedding AS vector(256))
+                    WHERE search_document_id = :document_id
+                    """
+                ),
+                {
+                    "document_id": document_id,
+                    "embedding": to_pgvector_literal([-value for value in unrelated_vector]),
+                },
+            )
+            session.commit()
+
+        unrelated_response = auth_client.get(
+            "/search?q=unrelatedobjectmiss&types=page",
+            headers=auth_headers(user_id),
+        )
+        assert unrelated_response.status_code == 200, unrelated_response.text
+        assert unrelated_response.json()["results"] == []
 
 
 # =============================================================================
@@ -2063,6 +2171,12 @@ class TestSearchS4ScopeMasking:
 class TestSemanticTranscriptChunkSearch:
     """Semantic transcript search over shared content chunks."""
 
+    def _use_openai_embedding_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NEXUS_ENV", "local")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+        monkeypatch.setenv("ENABLE_OPENAI", "true")
+        clear_settings_cache()
+
     def _seed_transcript_chunk_media(
         self,
         auth_client,
@@ -2303,7 +2417,7 @@ class TestSemanticTranscriptChunkSearch:
         )
 
         response = auth_client.get(
-            "/search?q=transformer+attention&types=content_chunk",
+            "/search?q=transformer+attention&types=content_chunk&semantic=false",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
@@ -2354,7 +2468,7 @@ class TestSemanticTranscriptChunkSearch:
         assert state[5] is not None
 
         response = auth_client.get(
-            "/search?q=transformer+attention&types=content_chunk",
+            "/search?q=transformer+attention&types=content_chunk&semantic=false",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
@@ -2366,42 +2480,176 @@ class TestSemanticTranscriptChunkSearch:
             "content chunk search must gate on the active ready run, not the latest state status"
         )
 
-    @pytest.mark.parametrize("embedding_mode", ["raises", "wrong_dimensions"])
-    def test_semantic_search_falls_back_to_lexical_when_query_embedding_unusable(
+    @pytest.mark.parametrize(
+        ("provider_status", "provider_body"),
+        [
+            (500, {"error": {"message": "provider unavailable"}}),
+            (200, {"data": [{"index": 0, "embedding": [0.1]}]}),
+        ],
+    )
+    @respx.mock
+    def test_semantic_search_reports_query_embedding_failures(
         self,
         auth_client,
         direct_db: DirectSessionManager,
         monkeypatch: pytest.MonkeyPatch,
-        embedding_mode: str,
+        provider_status: int,
+        provider_body: dict[str, object],
     ):
-        user_id, media_id = self._seed_transcript_chunk_media(
+        user_id, _media_id = self._seed_transcript_chunk_media(
             auth_client,
             direct_db,
             semantic_status="ready",
         )
-
-        def fail_embedding(_text: str) -> tuple[str, list[float]]:
-            raise RuntimeError("test embedding failure")
-
-        def wrong_dimension_embedding(_text: str) -> tuple[str, list[float]]:
-            return ("test_wrong_dimensions", [0.1])
-
-        monkeypatch.setattr(
-            "nexus.services.search.build_text_embedding",
-            fail_embedding if embedding_mode == "raises" else wrong_dimension_embedding,
+        self._use_openai_embedding_provider(monkeypatch)
+        route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
+            provider_status,
+            json=provider_body,
         )
 
         response = auth_client.get(
             "/search?q=transformer+attention&types=content_chunk&semantic=true",
             headers=auth_headers(user_id),
         )
-        assert response.status_code == 200, (
-            f"expected semantic search to fall back to lexical, got "
+        assert response.status_code == 503, (
+            f"expected semantic provider failure to surface, got "
             f"{response.status_code}: {response.text}"
         )
-        chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
-        assert any(row["source"]["media_id"] == str(media_id) for row in chunk_results)
-        assert any("transformer" in row["snippet"].lower() for row in chunk_results)
+        assert response.json()["error"]["code"] == "E_LLM_PROVIDER_DOWN"
+        assert route.call_count == 1
+
+    @respx.mock
+    def test_default_semantic_search_builds_one_query_embedding(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        user_id, _media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+        self._use_openai_embedding_provider(monkeypatch)
+        route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
+            200,
+            json={"data": [{"index": 0, "embedding": [0.1] * 256}]},
+        )
+
+        response = auth_client.get(
+            "/search?q=transformer+attention",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"expected default semantic search to succeed, got "
+            f"{response.status_code}: {response.text}"
+        )
+        assert route.call_count == 1
+
+    def test_default_semantic_search_filters_unrelated_content_chunks(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id, _media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+
+        response = auth_client.get(
+            "/search?q=astronomy+nebula&types=content_chunk",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"expected default semantic search to succeed, got "
+            f"{response.status_code}: {response.text}"
+        )
+        assert response.json()["results"] == []
+
+    def test_semantic_search_supports_single_token_content_chunk_queries(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id, media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+        _model, vector = build_text_embedding("xyznonexistent12345")
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE content_embeddings ce
+                    SET embedding_vector = CAST(:embedding AS vector(256))
+                    FROM content_chunks cc
+                    WHERE cc.id = ce.chunk_id
+                      AND cc.media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id, "embedding": to_pgvector_literal(vector)},
+            )
+            session.commit()
+
+        response = auth_client.get(
+            "/search?q=xyznonexistent12345&types=content_chunk&semantic=true",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"expected single-token semantic search to succeed, got "
+            f"{response.status_code}: {response.text}"
+        )
+        assert any(
+            row["source"]["media_id"] == str(media_id) for row in response.json()["results"]
+        ), "single-token semantic search should use vector relevance when lexical search has no hit"
+
+    def test_semantic_search_ignores_embeddings_from_different_active_model(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id, media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+        _model, vector = build_text_embedding("xyznonexistent12345")
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE media_content_index_states
+                    SET active_embedding_model = 'other_model',
+                        active_embedding_version = 'other_model'
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE content_embeddings ce
+                    SET embedding_model = 'other_model',
+                        embedding_version = 'other_model',
+                        embedding_vector = CAST(:embedding AS vector)
+                    FROM content_chunks cc
+                    WHERE ce.chunk_id = cc.id
+                      AND cc.media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id, "embedding": to_pgvector_literal(vector)},
+            )
+            session.commit()
+
+        response = auth_client.get(
+            "/search?q=xyznonexistent12345&types=content_chunk&semantic=true",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["results"] == []
 
     def test_semantic_search_scans_corpus_not_just_newest_chunks(
         self, auth_client, direct_db: DirectSessionManager

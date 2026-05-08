@@ -117,7 +117,7 @@ async function expectVisibleEvidenceHighlight(page: Page, expectedText: string):
   await expect(page.getByText(new RegExp(escapeRegExp(expectedText), "i")).first()).toBeVisible();
 }
 
-test.describe("search @legacy-synthetic", () => {
+test.describe("search", () => {
   test("search returns results", async ({ page }) => {
     const seed = readSeed<NonPdfSeed>("non-pdf-media.json");
 

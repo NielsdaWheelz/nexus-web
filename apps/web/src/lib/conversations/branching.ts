@@ -23,6 +23,10 @@ export function selectedPathAfterRun(
   ]);
   const parentMessageId = runData.user_message.parent_message_id ?? null;
 
+  if (path.length === 0) {
+    return [runData.user_message, runData.assistant_message];
+  }
+
   if (parentMessageId) {
     const parentIndex = path.findIndex((message) => message.id === parentMessageId);
     if (parentIndex >= 0) {
@@ -33,10 +37,6 @@ export function selectedPathAfterRun(
       ];
     }
     return path;
-  }
-
-  if (path.length === 0) {
-    return [runData.user_message, runData.assistant_message];
   }
 
   if (!path.some((message) => replaceIds.has(message.id))) {

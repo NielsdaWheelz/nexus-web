@@ -229,8 +229,10 @@ describe("MessageRow", () => {
 
     render(<MessageRow message={message} />);
 
-    const citation = screen.getByLabelText(/^(Open citation 1|Citation 1)$/);
-    expect(citation.tagName).toBe("SUP");
+    const citation = screen.getByRole("link", { name: "Open citation 1" });
+    expect(citation).toHaveAttribute("href", "https://example.com/story");
+    expect(citation).toHaveAttribute("target", "_blank");
+    expect(citation).toHaveAttribute("rel", "noopener noreferrer");
     expect(screen.queryByRole("link", { name: /example result/i })).toBeNull();
     expect(screen.queryByText(/support_status: supported/i)).toBeNull();
 
@@ -536,6 +538,9 @@ describe("MessageRow", () => {
         onReaderSourceActivate={onReaderSourceActivate}
       />
     );
+
+    expect(screen.getByLabelText("Citation 1")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open citation 1" })).toBeNull();
 
     openEvidence();
 

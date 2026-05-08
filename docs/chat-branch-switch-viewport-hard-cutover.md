@@ -15,16 +15,13 @@ legacy scroll-to-top path, and no parallel branch-switch implementation.
 
 ## Supersession
 
-This document supersedes the branch-switch scroll guidance in:
+This document owns frontend viewport behavior during branch switches. It
+complements:
 
-- `docs/chat-workbench-hard-cutover.md`
+- `docs/chat-workbench-hard-cutover.md` for branch-aware workbench UX
 - `docs/chat-unified-components-hard-cutover.md`
-- `docs/chat-branching-hard-cutover.md`
-- `docs/chat-branching-sota-completion-hard-cutover.md`
 
-Backend branch data contracts from those documents remain valid unless this
-document explicitly replaces them. The replacement is limited to frontend
-viewport behavior during branch switches.
+This ownership is limited to frontend viewport behavior during branch switches.
 
 ## Problem
 

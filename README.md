@@ -87,9 +87,8 @@ Real-media gates are strict. `make test-real-media` runs deterministic backend
 and Playwright acceptance coverage, requires Supabase local plus real OpenAI
 embeddings, and seeds the browser corpus through the product paths. `make
 test-live-providers` additionally requires real Podcast Index and Deepgram
-credentials. Legacy generated-media E2E smoke tests are opt-in through direct
-Playwright project selection with `E2E_LEGACY_SYNTHETIC=1`; they are not part of
-the real-media acceptance gates.
+credentials. The default Playwright project covers deterministic seeded feature
+flows; the real-media project covers deterministic real-media acceptance flows.
 
 ## Repository Map
 
@@ -98,27 +97,17 @@ the real-media acceptance gates.
 - `python/` -> backend package + tests: see `python/README.md`
 - `apps/worker/` -> worker entrypoint: see `apps/worker/README.md`
 - `docs/rules/` -> repository rules and boundaries: start at `docs/rules/index.md`
-- `docs/feedback-layer-hard-cutover.md` -> unified frontend feedback layer hard-cutover plan
-- `docs/evidence-layer-hard-cutover.md` -> unified evidence indexing and citation hard-cutover plan
-- `docs/real-media-test-hard-cutover.md` -> real-media evidence test hard-cutover plan
-- `docs/notes-layer-hard-cutover.md` -> ProseMirror notes, object links, and annotation hard-cutover plan
-- `docs/anchored-projection-hard-cutover.md` -> visible reader highlight projection and secondary-pane hard-cutover plan
-- `docs/reader-gutter-marginal-rail-hard-cutover.md` -> scanline-aligned collapsed reader highlight gutter hard-cutover plan
-- `docs/reader-secondary-rail-hard-cutover.md` -> shared desktop secondary rail hard-cutover plan for media highlights, media Ask, and chat context
-- `docs/authors-layer-hard-cutover.md` -> contributor identity and author surface hard-cutover plan
 - `docs/reader-implementation.md` -> current reader behavior contract
-- `docs/black-forest-oracle-hard-cutover.md` -> hybrid public-domain + library divination feature hard-cutover plan
-- `docs/black-forest-oracle-eternal.md` -> current Oracle product contract that supersedes parts of the hard-cutover plan
+- `docs/reader-protected-width-outward-rail-hard-cutover.md` -> desktop reader protected-width and rail target-state contract
+- `docs/chat-unified-components-hard-cutover.md` -> shared chat component spine and reader Ask target-state contract
+- `docs/chat-workbench-hard-cutover.md` -> branch-aware full chat workbench target-state contract
+- `docs/chat-branch-switch-viewport-hard-cutover.md` -> stable chat branch-switch viewport target-state contract
+- `docs/chat-response-retry-hard-cutover.md` -> chat response retry target-state contract
+- `docs/real-media-test-target-state.md` -> deterministic real-media test and fixture contract
 
 ## Documentation Rules
 
-Documentation in this repo follows single ownership:
-
-- Put a rule in exactly one owner document.
-- Link to owner docs instead of restating them.
-- Keep top-level docs short and navigational.
-
-See `docs/rules/index.md`.
+Documentation placement and rule-shape rules are owned by `docs/rules/index.md`.
 
 ## License
 

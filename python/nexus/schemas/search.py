@@ -193,6 +193,7 @@ class SearchResultNoteBlockOut(BaseModel):
     page_id: UUID
     page_title: str
     body_text: str
+    highlight_excerpt: str | None = None
     title: str
     source_label: str | None = None
     media_id: UUID | None = None

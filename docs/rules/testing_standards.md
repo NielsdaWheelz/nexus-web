@@ -34,6 +34,7 @@ Definitions used throughout this document:
 - `make check-workflows` validates GitHub Actions files.
 - `make audit` is the dependency/security gate.
 - `make test-unit`, `make test`, `make test-e2e`, `make test-real-media`, `make test-live-providers`, `make verify`, and `make verify-full` are the main local quality gates.
+- `make test-real-media` follows the deterministic fixture contract in `docs/real-media-test-target-state.md`.
 - `make test-back-unit` runs backend unit tests with `pytest-xdist`.
 - `make test-e2e` stays a single local command; CI shards Playwright across jobs.
 
@@ -321,13 +322,7 @@ Rule:
 ### E2E Determinism and Pane-Aware Assertions
 
 - Normalize persisted per-media state before asserting initial reader UI (for example, reset reader state and explicitly select chapter/page where applicable)
-- Quote-to-chat assertions must be deterministic:
-  - Desktop: Assert quote-to-chat opens the media secondary rail in `Ask` mode and does not open or activate a full chat pane by default
-  - Desktop: Assert the reader assistant shows the attached quote context in the rail before send
-  - Desktop: Assert explicit full-chat promotion opens or reuses `/conversations/:id`, preserving `run` while streaming
-  - Mobile: Assert quote-to-chat opens the local reader assistant sheet instead of navigating away immediately
-  - Mobile: Assert the sheet shows the attached quote context and keeps the reader pane active until explicit full-chat promotion
-  - Mobile: After explicit full-chat promotion, assert the sheet closes and the app opens or reuses the promoted full chat pane
+- Quote-to-chat acceptance details are owned by `docs/chat-unified-components-hard-cutover.md`; E2E tests must assert those user-visible contracts without implementation mocks.
 - Prefer explicit action-menu interactions (`Actions` -> `menuitem`) over styling-dependent selectors
 - Keep single-flow E2E tests focused on one behavior; use API setup for prerequisites already covered by separate UI stress/interaction tests
 

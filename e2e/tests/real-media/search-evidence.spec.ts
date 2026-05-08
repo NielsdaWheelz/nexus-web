@@ -142,11 +142,8 @@ test("@real-media search returns resolver-backed evidence for every configured m
     });
   }
 
-  const noResults = await searchEvidenceThroughUi(
-    page,
-    "zzzz-real-media-no-result",
-    "web_article",
-  );
+  const noResultsQuery = "qzxqzxqzxqzx missingterm";
+  const noResults = await searchEvidenceThroughUi(page, noResultsQuery, "web_article");
   expect(noResults.results).toEqual([]);
   await expect(page.getByText("No results found.")).toBeVisible();
 
@@ -154,7 +151,7 @@ test("@real-media search returns resolver-backed evidence for every configured m
     results: traces,
     no_results: {
       media_id: seed.fixtures.web.media_id,
-      query: "zzzz-real-media-no-result",
+      query: noResultsQuery,
       result_count: noResults.results.length,
     },
   });

@@ -72,6 +72,8 @@ export interface ChatComposerProps {
    * conversations); the rail then renders the scope chip without an X.
    */
   onClearScope?: () => void;
+  /** Blocks sending while caller-owned conversation state is not safe to continue. */
+  disabledReason?: string;
 }
 
 type ComposerModel = ConversationModel;
@@ -112,9 +114,9 @@ function loadComposerModels(): Promise<ComposerModel[]> {
         cachedModels = response.data;
         return response.data;
       })
-      .catch((err) => {
+      .catch((error) => {
         modelLoadPromise = null;
-        throw err;
+        throw error;
       });
   }
   return modelLoadPromise;
@@ -179,6 +181,7 @@ export default function ChatComposer({
   onClearBranchDraft,
   onJumpToBranchParent,
   onClearScope,
+  disabledReason,
 }: ChatComposerProps) {
   const [content, setContent] = useState(initialContent);
   const [sending, setSending] = useState(false);
@@ -352,7 +355,7 @@ export default function ChatComposer({
 
   const handleSend = useCallback(async () => {
     const trimmed = content.trim();
-    if (!trimmed || sending || !selectedModelId) return;
+    if (!trimmed || sending || disabledReason || !selectedModelId) return;
 
     setSending(true);
     setError(null);
@@ -430,6 +433,7 @@ export default function ChatComposer({
     attachedContexts,
     conversationId,
     conversationScope,
+    disabledReason,
     sendChatRun,
     branchDraft,
     parentMessageId,
@@ -488,11 +492,18 @@ export default function ChatComposer({
   // --------------------------------------------------------------------------
 
   const sendLabel = branchDraft ? "Send fork reply" : "Send message";
+  const composerDisabled = sending;
+  const sendDisabled = sending || Boolean(disabledReason);
 
   return (
     <div className={styles.composer}>
       <div className={styles.composerShell}>
         {error && <div className={styles.composerError}>{error}</div>}
+        {disabledReason && (
+          <div className={styles.composerError} role="status">
+            {disabledReason}
+          </div>
+        )}
 
         {branchDraft ? (
           <BranchComposerHeader
@@ -520,7 +531,7 @@ export default function ChatComposer({
           onKeyDown={handleKeyDown}
           aria-label="Ask anything"
           placeholder="Ask anything..."
-          disabled={sending}
+          disabled={composerDisabled}
         />
 
         <div className={styles.composerActionRow}>
@@ -545,7 +556,7 @@ export default function ChatComposer({
               size="sm"
               value={webSearchMode}
               onChange={(e) => setWebSearchMode(e.target.value as WebSearchMode)}
-              disabled={sending}
+              disabled={composerDisabled}
               aria-label="Web search mode"
             >
               {WEB_SEARCH_MODES.map((mode) => (
@@ -567,7 +578,7 @@ export default function ChatComposer({
               onClick={handleSend}
               aria-label={sending ? "Sending fork reply" : sendLabel}
               disabled={
-                sending ||
+                sendDisabled ||
                 !content.trim() ||
                 !selectedProvider ||
                 !selectedModelId
@@ -584,7 +595,7 @@ export default function ChatComposer({
               onClick={handleSend}
               aria-label={sending ? "Sending message" : sendLabel}
               disabled={
-                sending ||
+                sendDisabled ||
                 !content.trim() ||
                 !selectedProvider ||
                 !selectedModelId
@@ -632,7 +643,7 @@ export default function ChatComposer({
                     handleProviderChange(e.target.value);
                     if (!isMobile) setSettingsOpen(false);
                   }}
-                  disabled={sending || providerOptions.length === 0}
+                  disabled={composerDisabled || providerOptions.length === 0}
                 >
                   {availableModels.length === 0 && (
                     <option value="">No providers available</option>
@@ -656,7 +667,7 @@ export default function ChatComposer({
                     handleModelChange(e.target.value);
                     if (!isMobile) setSettingsOpen(false);
                   }}
-                  disabled={sending || availableModels.length === 0}
+                  disabled={composerDisabled || availableModels.length === 0}
                 >
                   {availableModels.length === 0 && <option value="">No models available</option>}
                   {availableModels
@@ -678,7 +689,7 @@ export default function ChatComposer({
                     setSelectedReasoning(e.target.value as ReasoningMode);
                     if (!isMobile) setSettingsOpen(false);
                   }}
-                  disabled={sending || !selectedModel}
+                  disabled={composerDisabled || !selectedModel}
                 >
                   {!selectedModel && <option value="">No reasoning modes</option>}
                   {reasoningOptions.map((mode) => (
@@ -695,7 +706,7 @@ export default function ChatComposer({
                   setOnlyUseMyKeys(next);
                   if (!isMobile) setSettingsOpen(false);
                 }}
-                disabled={sending}
+                disabled={composerDisabled}
                 label="Use my keys only"
               />
             </div>

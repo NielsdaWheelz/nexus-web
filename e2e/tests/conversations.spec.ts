@@ -3,6 +3,7 @@ import {
   seedBranchingConversation,
   seedScrollConversation,
 } from "./conversation-tree-seed";
+import { selectExactVisibleText } from "./selection";
 
 async function ensureAppContext(page: Page) {
   if (page.url() === "about:blank") {
@@ -79,25 +80,7 @@ function messageRow(page: Page, messageId: string) {
 async function selectTextInMessage(page: Page, messageId: string, exact: string) {
   const row = messageRow(page, messageId);
   await expect(row).toContainText(exact);
-  await row.evaluate((element, selectedText) => {
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-    while (walker.nextNode()) {
-      const node = walker.currentNode;
-      const text = node.textContent ?? "";
-      const index = text.indexOf(selectedText);
-      if (index >= 0) {
-        const range = document.createRange();
-        range.setStart(node, index);
-        range.setEnd(node, index + selectedText.length);
-        const selection = window.getSelection();
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-        element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-        return;
-      }
-    }
-    throw new Error(`Could not find selected text: ${selectedText}`);
-  }, exact);
+  await selectExactVisibleText(page, `[data-message-id="${messageId}"]`, exact);
 }
 
 async function openForksPanel(page: Page) {

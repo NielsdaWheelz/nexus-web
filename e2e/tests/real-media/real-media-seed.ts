@@ -1,6 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { expect, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { selectFreshVisibleTextSnippet } from "../selection";
+
+export { selectFreshVisibleTextSnippet };
 
 const CONTENT_KIND_LABELS = {
   epub: "EPUBs",
@@ -9,6 +13,12 @@ const CONTENT_KIND_LABELS = {
   video: "Videos",
   web_article: "Articles",
 } as const;
+
+const ROOT_DIR = path.resolve(__dirname, "..", "..", "..");
+const REAL_MEDIA_FIXTURE_DIR = path.join(ROOT_DIR, "python/tests/fixtures/real_media");
+const REAL_MEDIA_WORKER_DRAIN_TIMEOUT_MS = 120_000;
+const REAL_MEDIA_WORKER_POLL_MS = 200;
+const REAL_MEDIA_WORKER_ITERATION_TIMEOUT_MS = 30_000;
 
 export type RealMediaContentKind = keyof typeof CONTENT_KIND_LABELS;
 
@@ -35,6 +45,17 @@ export interface RealMediaSavedHighlightTrace {
   request_url: string;
 }
 
+interface RealMediaWorkerResult {
+  status?: string;
+  error_code?: string | null;
+  retrieval_status?: string;
+  processing_status?: string;
+  worker_iterations?: number;
+  last?: unknown;
+  stdout: string;
+  stderr: string;
+}
+
 interface RealMediaSearchResponseBody {
   results: RealMediaSearchResult[];
   api_url: string;
@@ -57,6 +78,194 @@ export function writeRealMediaTrace(
   const outputPath = testInfo.outputPath(name);
   mkdirSync(path.dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, JSON.stringify(payload, null, 2) + "\n", "utf-8");
+}
+
+function runRealMediaWorkerOnce(): RealMediaWorkerResult {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error("DATABASE_URL is required to drain the real-media worker.");
+  }
+  const nexusEnv = process.env.NEXUS_ENV ?? "local";
+  if (nexusEnv !== "local") {
+    throw new Error(`Refusing to run real-media fixture worker with NEXUS_ENV=${nexusEnv}.`);
+  }
+  let databaseHost = "";
+  try {
+    databaseHost = new URL(
+      databaseUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://"),
+    ).hostname;
+  } catch (error) {
+    throw new Error(
+      `DATABASE_URL is not a valid PostgreSQL URL: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(databaseHost)) {
+    throw new Error(
+      `Refusing to run real-media fixture worker against non-local database host ${databaseHost}.`,
+    );
+  }
+
+  const child = spawnSync(
+    "uv",
+    [
+      "run",
+      "--project",
+      "python",
+      "python",
+      "-c",
+      `
+import json
+
+from apps.worker.main import create_worker
+
+print(json.dumps({"processed": bool(create_worker().run_once())}, sort_keys=True))
+`,
+    ],
+    {
+      cwd: ROOT_DIR,
+      env: {
+        ...process.env,
+        DATABASE_URL: databaseUrl,
+        NEXUS_ENV: nexusEnv,
+        REAL_MEDIA_PROVIDER_FIXTURES: "1",
+        REAL_MEDIA_FIXTURE_DIR: process.env.REAL_MEDIA_FIXTURE_DIR ?? REAL_MEDIA_FIXTURE_DIR,
+      },
+      encoding: "utf-8",
+      timeout: REAL_MEDIA_WORKER_ITERATION_TIMEOUT_MS,
+    },
+  );
+
+  if (child.error) {
+    throw child.error;
+  }
+  if (child.status !== 0) {
+    throw new Error(child.stderr || child.stdout);
+  }
+
+  const lines = child.stdout.trim().split(/\r?\n/).filter(Boolean);
+  const result = JSON.parse(lines[lines.length - 1] ?? "{}") as Record<string, unknown>;
+  return {
+    worker_iterations: result.processed === true ? 1 : 0,
+    last: result.last,
+    stdout: child.stdout.slice(-4000),
+    stderr: child.stderr.slice(-4000),
+  };
+}
+
+export async function drainRealMediaWorkerForChatRun(page: Page, runId: string) {
+  const deadline = Date.now() + REAL_MEDIA_WORKER_DRAIN_TIMEOUT_MS;
+  let workerIterations = 0;
+  let last: unknown = null;
+  let stdout = "";
+  let stderr = "";
+
+  // justify-polling: Playwright cannot subscribe to the Python worker queue. Each
+  // 200ms pass drives one real worker iteration, then observes terminal state
+  // through the public API until the 120s fixture budget expires.
+  while (Date.now() < deadline) {
+    const workerResult = runRealMediaWorkerOnce();
+    workerIterations += workerResult.worker_iterations ?? 0;
+    stdout = workerResult.stdout;
+    stderr = workerResult.stderr;
+
+    const response = await page.request.get(`/api/chat-runs/${runId}`);
+    if (response.ok()) {
+      const payload = (await response.json()) as {
+        data: { run: { status: string; error_code: string | null } };
+      };
+      last = payload.data.run;
+      if (["complete", "error", "cancelled"].includes(payload.data.run.status)) {
+        return {
+          status: payload.data.run.status,
+          error_code: payload.data.run.error_code,
+          worker_iterations: workerIterations,
+          last,
+          stdout,
+          stderr,
+        };
+      }
+    } else {
+      last = `${response.status()} ${await response.text()}`;
+    }
+    await page.waitForTimeout(REAL_MEDIA_WORKER_POLL_MS);
+  }
+
+  return {
+    status: "timeout",
+    worker_iterations: workerIterations,
+    last,
+    stdout,
+    stderr,
+  };
+}
+
+export async function drainRealMediaWorkerForMediaReady(page: Page, mediaId: string) {
+  const deadline = Date.now() + REAL_MEDIA_WORKER_DRAIN_TIMEOUT_MS;
+  let workerIterations = 0;
+  let last: unknown = null;
+  let stdout = "";
+  let stderr = "";
+
+  // justify-polling: media refresh completion is produced by the external worker
+  // loop. Each 200ms pass drives one real worker iteration, then observes the
+  // supported media API until the 120s fixture budget expires.
+  while (Date.now() < deadline) {
+    const workerResult = runRealMediaWorkerOnce();
+    workerIterations += workerResult.worker_iterations ?? 0;
+    stdout = workerResult.stdout;
+    stderr = workerResult.stderr;
+
+    const response = await page.request.get(`/api/media/${mediaId}`);
+    if (response.ok()) {
+      const payload = (await response.json()) as {
+        data: { processing_status: string; retrieval_status?: string | null };
+      };
+      const processingStatus = payload.data.processing_status;
+      const retrievalStatus = payload.data.retrieval_status ?? "pending";
+      last = { processing_status: processingStatus, retrieval_status: retrievalStatus };
+      if (
+        retrievalStatus === "ready" &&
+        ["ready_for_reading", "embedding", "ready"].includes(processingStatus)
+      ) {
+        return {
+          status: "success",
+          retrieval_status: retrievalStatus,
+          processing_status: processingStatus,
+          worker_iterations: workerIterations,
+          last,
+          stdout,
+          stderr,
+        };
+      }
+      if (
+        processingStatus === "failed" ||
+        ["failed", "no_text", "ocr_required"].includes(retrievalStatus)
+      ) {
+        return {
+          status: "failed",
+          retrieval_status: retrievalStatus,
+          processing_status: processingStatus,
+          worker_iterations: workerIterations,
+          last,
+          stdout,
+          stderr,
+        };
+      }
+    } else {
+      last = `${response.status()} ${await response.text()}`;
+    }
+    await page.waitForTimeout(REAL_MEDIA_WORKER_POLL_MS);
+  }
+
+  return {
+    status: "timeout",
+    worker_iterations: workerIterations,
+    last,
+    stdout,
+    stderr,
+  };
 }
 
 export async function searchRealMediaEvidenceThroughUi(
@@ -115,6 +324,31 @@ export async function expectVisiblePdfEvidenceHighlight(page: Page) {
   ).toBeVisible({ timeout: 15_000 });
 }
 
+export async function cleanupRealMediaHighlight(
+  page: Page,
+  highlightId: string,
+  primaryError: unknown,
+) {
+  try {
+    const response = await page.request.delete(`/api/highlights/${highlightId}`, {
+      timeout: 5_000,
+    });
+    if (response.status() !== 204 && response.status() !== 404) {
+      throw new Error(
+        `Highlight cleanup failed for ${highlightId}: ${response.status()} ${response.statusText()} ${await response.text()}`,
+      );
+    }
+  } catch (cleanupError) {
+    if (primaryError) {
+      throw new AggregateError(
+        [primaryError, cleanupError],
+        `Product assertion and highlight cleanup failed for ${highlightId}`,
+      );
+    }
+    throw cleanupError;
+  }
+}
+
 export async function openTranscriptEvidenceSegment(
   page: Page,
   query: string,
@@ -137,7 +371,6 @@ export async function openTranscriptEvidenceSegment(
     .getByRole("button", { name: new RegExp(`^${escapeRegExp(timestamp)}\\b`) })
     .first();
   await expect(segment).toBeVisible({ timeout: 15_000 });
-  await segment.click();
   await expect(segment).toHaveAttribute("aria-current", "true", { timeout: 10_000 });
   const renderer = page.getByTestId("html-renderer");
   await expect(renderer).toBeVisible({ timeout: 10_000 });
@@ -153,185 +386,95 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export async function selectFreshVisibleTextSnippet(
+export async function createPdfHighlightThroughVisibleSelection(
   page: Page,
-  containerSelector: string,
-  existingExacts: string[],
-  {
-    minLength = 20,
-    maxLength = 48,
-  }: { minLength?: number; maxLength?: number } = {},
-): Promise<string> {
-  const selected = await page.evaluate(
-    ({ selector, blockedExacts, minLength, maxLength }) => {
-      const containers = Array.from(document.querySelectorAll(selector)).filter(
-        (node): node is HTMLElement => node instanceof HTMLElement,
-      );
-      if (containers.length === 0) {
-        return null;
-      }
+  mediaId: string,
+): Promise<RealMediaSavedHighlightTrace> {
+  await expect(
+    page.locator('[aria-label="PDF document"] .textLayer').filter({ hasText: /\S/ }).first(),
+  ).toBeVisible({ timeout: 15_000 });
 
-      const blocked = new Set(
-        blockedExacts
-          .map((value) => value.replace(/\s+/g, " ").trim())
-          .filter(Boolean),
-      );
+  const pageNumber = await page.evaluate(() => {
+    const selectionRoot = document.querySelector('[aria-label="PDF document"]');
+    const visiblePages = Array.from(
+      selectionRoot?.querySelectorAll<HTMLElement>(".page[data-page-number]") ?? [],
+    )
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          element,
+          visibleHeight: Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0),
+        };
+      })
+      .filter((entry) => entry.visibleHeight > 0)
+      .sort((a, b) => b.visibleHeight - a.visibleHeight);
+    return Number(visiblePages[0]?.element.dataset.pageNumber ?? "1");
+  });
+  const textLayerSelector = `.page[data-page-number="${pageNumber}"] .textLayer`;
+  await expect(page.locator(textLayerSelector).filter({ hasText: /\S/ })).toBeVisible({
+    timeout: 15_000,
+  });
 
-      const countOccurrences = (haystack: string, needle: string) => {
-        let count = 0;
-        let fromIndex = 0;
-        while (fromIndex <= haystack.length - needle.length) {
-          const matchIndex = haystack.indexOf(needle, fromIndex);
-          if (matchIndex === -1) {
-            break;
-          }
-          count += 1;
-          fromIndex = matchIndex + 1;
-        }
-        return count;
-      };
-
-      for (const container of containers) {
-        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-        while (walker.nextNode()) {
-          const textNode = walker.currentNode;
-          if (!(textNode instanceof Text)) {
-            continue;
-          }
-
-          const parent = textNode.parentElement;
-          if (!parent) {
-            continue;
-          }
-          const style = window.getComputedStyle(parent);
-          const rawText = textNode.textContent ?? "";
-          if (
-            style.display === "none" ||
-            style.visibility === "hidden" ||
-            rawText.trim().length < minLength
-          ) {
-            continue;
-          }
-
-          for (let start = 0; start <= rawText.length - minLength; start += 1) {
-            const current = rawText[start] ?? "";
-            const previous = start > 0 ? rawText[start - 1] : " ";
-            if (!/\S/.test(current) || /\S/.test(previous)) {
-              continue;
-            }
-
-            for (
-              let end = Math.min(rawText.length, start + maxLength);
-              end >= start + minLength;
-              end -= 1
-            ) {
-              const last = rawText[end - 1] ?? "";
-              const next = end < rawText.length ? rawText[end] : " ";
-              if (!/\S/.test(last) || (/\w/.test(last) && /\w/.test(next))) {
-                continue;
-              }
-
-              const rawCandidate = rawText.slice(start, end);
-              if (countOccurrences(rawText, rawCandidate) !== 1) {
-                continue;
-              }
-
-              const normalizedCandidate = rawCandidate.replace(/\s+/g, " ").trim();
-              if (normalizedCandidate.length < minLength || blocked.has(normalizedCandidate)) {
-                continue;
-              }
-
-              const selection = window.getSelection();
-              if (!selection) {
-                return null;
-              }
-
-              const range = document.createRange();
-              range.setStart(textNode, start);
-              range.setEnd(textNode, end);
-              const rect = range.getBoundingClientRect();
-              if (
-                rect.width <= 0 ||
-                rect.height <= 0 ||
-                rect.bottom <= 0 ||
-                rect.top >= window.innerHeight
-              ) {
-                continue;
-              }
-              selection.removeAllRanges();
-              selection.addRange(range);
-              document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
-              return selection.toString().replace(/\s+/g, " ").trim();
-            }
-          }
-        }
-      }
-
-      return null;
-    },
-    {
-      selector: containerSelector,
-      blockedExacts: existingExacts,
-      minLength,
-      maxLength,
-    },
+  const existingHighlightResponse = await page.request.get(
+    `/api/media/${mediaId}/pdf-highlights?page_number=${pageNumber}&mine_only=false`,
+  );
+  expect(existingHighlightResponse.ok()).toBeTruthy();
+  const existingHighlights = (await existingHighlightResponse.json()) as {
+    data: { highlights: Array<{ exact?: string | null }> };
+  };
+  const selectedText = await selectFreshVisibleTextSnippet(
+    page,
+    textLayerSelector,
+    existingHighlights.data.highlights.flatMap((highlight) =>
+      highlight.exact ? [highlight.exact] : [],
+    ),
   );
 
-  if (!selected) {
-    const debug = await page.evaluate(({ selector }) => {
-      const containers = Array.from(document.querySelectorAll(selector)).filter(
-        (node): node is HTMLElement => node instanceof HTMLElement,
-      );
-      return {
-        containerCount: containers.length,
-        viewport: { width: window.innerWidth, height: window.innerHeight },
-        containers: containers.slice(0, 3).map((container) => {
-          const rect = container.getBoundingClientRect();
-          const textNodes = [];
-          const walker = document.createTreeWalker(
-            container,
-            NodeFilter.SHOW_TEXT,
-          );
-          while (walker.nextNode() && textNodes.length < 8) {
-            const textNode = walker.currentNode;
-            if (!(textNode instanceof Text) || !textNode.textContent?.trim()) {
-              continue;
-            }
-            const range = document.createRange();
-            range.selectNodeContents(textNode);
-            const textRect = range.getBoundingClientRect();
-            textNodes.push({
-              text: textNode.textContent.replace(/\s+/g, " ").trim().slice(0, 120),
-              rect: {
-                top: textRect.top,
-                bottom: textRect.bottom,
-                width: textRect.width,
-                height: textRect.height,
-              },
-            });
-          }
-          return {
-            text: container.innerText.replace(/\s+/g, " ").trim().slice(0, 300),
-            rect: {
-              top: rect.top,
-              bottom: rect.bottom,
-              width: rect.width,
-              height: rect.height,
-            },
-            textNodes,
-          };
-        }),
-      };
-    }, { selector: containerSelector });
-    throw new Error(
-      `Expected to select visible text in ${containerSelector}. Selection debug: ${JSON.stringify({
-        blockedExactCount: existingExacts.length,
-        blockedExactSamples: existingExacts.slice(0, 5),
-        ...debug,
-      })}`,
-    );
+  const highlightActions = page.getByRole("dialog", { name: /highlight actions/i });
+  await expect(highlightActions).toBeVisible({ timeout: 5_000 });
+  const [createdHighlightResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/api/media/${mediaId}/pdf-highlights`),
+    ),
+    highlightActions.getByRole("button", { name: /^Yellow/ }).first().click(),
+  ]);
+  const createdHighlightBody = await createdHighlightResponse.text();
+  expect(
+    createdHighlightResponse.ok(),
+    `PDF highlight create failed with ${createdHighlightResponse.status()} ${createdHighlightResponse.statusText()}: ${createdHighlightBody}`,
+  ).toBeTruthy();
+  const createdHighlight = JSON.parse(createdHighlightBody) as {
+    data: {
+      id: string;
+      exact: string;
+      anchor: { page_number: number };
+    };
+  };
+  expect(createdHighlight.data.exact.replace(/\s+/g, " ").trim()).toBe(selectedText);
+
+  const highlightIdSelectorValue = createdHighlight.data.id
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
+  try {
+    await expect(
+      page.locator(`[data-testid^="pdf-highlight-${highlightIdSelectorValue}-"]`).first(),
+    ).toBeVisible({ timeout: 15_000 });
+  } catch (error) {
+    await cleanupRealMediaHighlight(page, createdHighlight.data.id, error);
+    throw error;
   }
-  return selected;
+
+  return {
+    id: createdHighlight.data.id,
+    page_number: createdHighlight.data.anchor.page_number,
+    exact: createdHighlight.data.exact,
+    selected_text: selectedText,
+    container_selector: textLayerSelector,
+    action_selector: 'dialog[aria-label="Highlight actions"] button[aria-label^="Yellow"]',
+    request_url: createdHighlightResponse.url(),
+  };
 }
 
 export async function createFragmentHighlightThroughVisibleSelection(
@@ -369,14 +512,15 @@ export async function createFragmentHighlightThroughVisibleSelection(
     name: /highlight actions/i,
   });
   await expect(highlightActions).toBeVisible({ timeout: 5_000 });
-  const createHighlightResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      response.url().includes("/api/fragments/") &&
-      response.url().includes("/highlights"),
-  );
-  await highlightActions.getByRole("button", { name: /^Green/ }).first().click();
-  const createdHighlightResponse = await createHighlightResponse;
+  const [createdHighlightResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes("/api/fragments/") &&
+        response.url().includes("/highlights"),
+    ),
+    highlightActions.getByRole("button", { name: /^Green/ }).first().click(),
+  ]);
   expect(createdHighlightResponse.ok()).toBeTruthy();
   const createdHighlight = (await createdHighlightResponse.json()) as {
     data: {
@@ -385,6 +529,7 @@ export async function createFragmentHighlightThroughVisibleSelection(
       anchor: { fragment_id: string };
     };
   };
+  expect(createdHighlight.data.exact.replace(/\s+/g, " ").trim()).toBe(selectedText);
   const highlightIdSelectorValue = createdHighlight.data.id
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"');
@@ -454,13 +599,7 @@ export async function createFragmentHighlightThroughVisibleSelection(
       );
     }
   } catch (error) {
-    try {
-      await page.request.delete(`/api/highlights/${createdHighlight.data.id}`, {
-        timeout: 5_000,
-      });
-    } catch {
-      // justify-ignore-error: cleanup must not mask the product assertion.
-    }
+    await cleanupRealMediaHighlight(page, createdHighlight.data.id, error);
     throw error;
   }
 

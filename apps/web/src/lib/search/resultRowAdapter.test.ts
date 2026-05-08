@@ -105,7 +105,7 @@ describe("fetchSearchResultPage", () => {
             score: 0.91,
             snippet: "note <b>match</b>",
             title: "Deep Work Notes",
-            source_label: "Deep Work Notes",
+            source_label: "note",
             media_id: null,
             media_kind: null,
             deep_link: "/notes/note-1",
@@ -113,6 +113,7 @@ describe("fetchSearchResultPage", () => {
             page_id: "page-1",
             page_title: "Deep Work Notes",
             body_text: "note body text",
+            highlight_excerpt: null,
           },
           {
             type: "page",

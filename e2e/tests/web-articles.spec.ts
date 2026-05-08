@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { selectTextFromElementStart } from "./selection";
 
 interface SeededNonPdfMedia {
   media_id: string;
@@ -27,7 +28,7 @@ function workspacePaneButton(page: Page, name: RegExp | string) {
     .getByRole("button", { name });
 }
 
-test.describe("web articles @legacy-synthetic", () => {
+test.describe("web articles", () => {
   test("add article from URL", async ({ page }) => {
     await page.goto("/libraries");
     const addContentDialog = await openAddContentDialog(page);
@@ -62,7 +63,7 @@ test.describe("web articles @legacy-synthetic", () => {
     ).toBeVisible({ timeout: 10_000 });
   });
 
-  test("creates highlight from paragraph-start element boundary without OUTSIDE_CONTENT warning", async ({
+  test("creates highlight from paragraph text selection without OUTSIDE_CONTENT warning", async ({
     page,
   }) => {
     test.slow();
@@ -113,35 +114,13 @@ test.describe("web articles @legacy-synthetic", () => {
     }
     expect(paragraphIndex).toBeGreaterThanOrEqual(0);
 
-    const selectionApplied = await page.evaluate(({ index, len }) => {
-      const paragraphNode = document.querySelectorAll('[class*="fragments"] p')[index];
-      if (!(paragraphNode instanceof HTMLParagraphElement)) {
-        return false;
-      }
-      let textNode: Text | null =
-        paragraphNode.firstChild instanceof Text ? paragraphNode.firstChild : null;
-      if (!textNode) {
-        const walker = document.createTreeWalker(paragraphNode, NodeFilter.SHOW_TEXT);
-        const firstText = walker.nextNode();
-        textNode = firstText instanceof Text ? firstText : null;
-      }
-      if (!textNode) {
-        return false;
-      }
-      const maxLen = Math.max(2, Math.min(len, textNode.textContent?.length ?? 0));
-      const range = document.createRange();
-      range.setStart(paragraphNode, 0); // Element boundary at paragraph start
-      range.setEnd(textNode, maxLen);
-      const selection = window.getSelection();
-      if (!selection) {
-        return false;
-      }
-      selection.removeAllRanges();
-      selection.addRange(range);
-      document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
-      return selection.toString().trim().length >= 2;
-    }, { index: paragraphIndex, len: selectionLength });
-    expect(selectionApplied).toBe(true);
+    const selectedText = await selectTextFromElementStart(
+      page,
+      '[class*="fragments"] p',
+      paragraphIndex,
+      selectionLength,
+    );
+    expect(selectedText.trim().length).toBeGreaterThanOrEqual(2);
 
     await expect(
       page.getByRole("dialog", { name: /highlight actions/i })
@@ -158,6 +137,12 @@ test.describe("web articles @legacy-synthetic", () => {
     await greenButton.click();
     const createdHighlightResponse = await createHighlightResponse;
     expect(createdHighlightResponse.ok()).toBeTruthy();
+    const createdHighlight = (await createdHighlightResponse.json()) as {
+      data: { exact: string };
+    };
+    expect(createdHighlight.data.exact.replace(/\s+/g, " ").trim()).toBe(
+      selectedText.replace(/\s+/g, " ").trim(),
+    );
 
     await expect
       .poll(

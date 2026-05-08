@@ -34,6 +34,7 @@ export default function ReaderCitation({
   color,
   preview,
   target,
+  href,
   onActivate,
   ariaLabel,
 }: {
@@ -41,16 +42,17 @@ export default function ReaderCitation({
   color: ReaderCitationColor;
   preview: ReaderCitationPreview;
   target: ReaderSourceTarget | null;
+  href?: string | null;
   onActivate: (target: ReaderSourceTarget) => void;
   ariaLabel?: string;
 }) {
   const [showPreview, setShowPreview] = useState(false);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   const hoverTimerRef = useRef<number | null>(null);
-  const supRef = useRef<HTMLElement | null>(null);
+  const citationRef = useRef<HTMLElement | null>(null);
 
   const captureAnchor = useCallback(() => {
-    const element = supRef.current;
+    const element = citationRef.current;
     if (!element) return null;
     const rect = element.getBoundingClientRect();
     return { x: rect.left + rect.width / 2, y: rect.top };
@@ -109,16 +111,47 @@ export default function ReaderCitation({
     ) : null;
 
   const className = `${styles.citation} ${colorClass[color]} ${
-    target ? "" : styles.unavailable
+    target || href ? "" : styles.unavailable
   }`.trim();
+
+  const label = ariaLabel ?? (target || href ? `Open citation ${index}` : `Citation ${index}`);
+  const externalHref = href?.startsWith("http://") || href?.startsWith("https://");
+  const previewNode =
+    showPreview && anchor && previewBody ? (
+      <HoverPreview anchor={anchor} onClose={closePreview}>
+        {previewBody}
+      </HoverPreview>
+    ) : null;
+
+  if (href && !target) {
+    return (
+      <a
+        ref={(element) => {
+          citationRef.current = element;
+        }}
+        className={className}
+        href={href}
+        target={externalHref ? "_blank" : undefined}
+        rel={externalHref ? "noopener noreferrer" : undefined}
+        aria-label={label}
+        onPointerEnter={openWithDelay}
+        onPointerLeave={closePreview}
+        onFocus={openWithDelay}
+        onBlur={closePreview}
+      >
+        {index}
+        {previewNode}
+      </a>
+    );
+  }
 
   return (
     <sup
-      ref={supRef}
+      ref={citationRef}
       className={className}
       role={target ? "button" : undefined}
       tabIndex={target ? 0 : -1}
-      aria-label={ariaLabel ?? (target ? `Open citation ${index}` : `Citation ${index}`)}
+      aria-label={label}
       onPointerEnter={openWithDelay}
       onPointerLeave={closePreview}
       onFocus={openWithDelay}
@@ -127,11 +160,7 @@ export default function ReaderCitation({
       onKeyDown={handleKeyDown}
     >
       {index}
-      {showPreview && anchor && previewBody ? (
-        <HoverPreview anchor={anchor} onClose={closePreview}>
-          {previewBody}
-        </HoverPreview>
-      ) : null}
+      {previewNode}
     </sup>
   );
 }

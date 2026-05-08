@@ -17,7 +17,7 @@ from typing import Any, Literal, Protocol, cast
 from uuid import UUID
 
 import httpx
-from llm_calling.errors import LLMError, LLMErrorCode
+from llm_calling.errors import LLMError, LLMErrorCode, classify_provider_error
 from llm_calling.types import LLMChunk, LLMRequest, LLMUsage
 from sqlalchemy import bindparam, func, or_, select, text
 from sqlalchemy.dialects.postgresql import JSONB
@@ -48,6 +48,7 @@ from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.conversation import (
     MAX_CONTEXTS,
     MAX_MESSAGE_CONTENT_LENGTH,
+    AssistantMessageBranchAnchorRequest,
     BranchAnchorRequest,
     ChatRunEventOut,
     ChatRunOut,
@@ -81,8 +82,10 @@ from nexus.services.context_lookup import ContextLookupError
 from nexus.services.context_rendering import PROMPT_VERSION
 from nexus.services.contexts import insert_contexts_batch
 from nexus.services.conversation_branches import (
+    active_leaf_for_viewer,
     branch_anchor_for_message,
     ensure_branch_metadata,
+    load_leaf_message_path,
     load_message_path,
     persist_active_leaf,
 )
@@ -180,6 +183,25 @@ def _api_error_code_for_llm_error(error_code: LLMErrorCode) -> ApiErrorCode:
 
 def _llm_error_code_value(exc: LLMError) -> str:
     return _api_error_code_for_llm_error(exc.error_code).value
+
+
+def _llm_error_from_unread_stream_response(
+    exc: httpx.ResponseNotRead,
+    provider: str,
+) -> LLMError:
+    context = exc.__context__
+    if isinstance(context, httpx.HTTPStatusError):
+        status_code = context.response.status_code
+        return LLMError(
+            classify_provider_error(provider, status_code, None, None),
+            f"Provider returned HTTP {status_code}",
+            provider=provider,
+        )
+    return LLMError(
+        LLMErrorCode.PROVIDER_DOWN,
+        "Provider stream error response was not readable",
+        provider=provider,
+    )
 
 
 def _max_output_tokens_for_reasoning(model: Model, reasoning: str) -> int:
@@ -871,17 +893,19 @@ async def _execute_chat_run(
                     "media",
                     "library",
                 }:
+                    error_code = app_search_run.error_code or ApiErrorCode.E_APP_SEARCH_FAILED.value
                     latency_ms = int((time.monotonic() - start_time) * 1000)
                     _finalize_run(
                         db,
                         run_id=run.id,
-                        assistant_content=ERROR_CODE_TO_MESSAGE[
-                            ApiErrorCode.E_APP_SEARCH_FAILED.value
-                        ],
+                        assistant_content=ERROR_CODE_TO_MESSAGE.get(
+                            error_code,
+                            ERROR_CODE_TO_MESSAGE[ApiErrorCode.E_APP_SEARCH_FAILED.value],
+                        ),
                         assistant_status="error",
                         run_status="error",
                         done_status="error",
-                        error_code=ApiErrorCode.E_APP_SEARCH_FAILED.value,
+                        error_code=error_code,
                         model=model,
                         resolved_key=resolved_key,
                         key_mode=run.key_mode,
@@ -892,7 +916,7 @@ async def _execute_chat_run(
                     )
                     return {
                         "status": "error",
-                        "error_code": ApiErrorCode.E_APP_SEARCH_FAILED.value,
+                        "error_code": error_code,
                     }
 
         if _is_cancel_requested(db, run.id):
@@ -1076,9 +1100,14 @@ async def _execute_chat_run(
                         int((time.monotonic() - start_time) * 1000),
                     )
                     return {"status": "cancelled"}
-        except LLMError as exc:
+        except (LLMError, httpx.ResponseNotRead) as exc:
+            llm_error = (
+                _llm_error_from_unread_stream_response(exc, model.provider)
+                if isinstance(exc, httpx.ResponseNotRead)
+                else exc
+            )
             latency_ms = int((time.monotonic() - start_time) * 1000)
-            error_code = _llm_error_code_value(exc)
+            error_code = _llm_error_code_value(llm_error)
             logger.error(
                 "llm.request.failed",
                 **safe_kv(
@@ -1095,36 +1124,6 @@ async def _execute_chat_run(
                     error_code,
                     "An unexpected error occurred. Please try again.",
                 ),
-                assistant_status="error",
-                run_status="error",
-                done_status="error",
-                error_code=error_code,
-                model=model,
-                resolved_key=resolved_key,
-                key_mode=run.key_mode,
-                latency_ms=latency_ms,
-                usage=usage,
-                provider_request_id=provider_request_id,
-                viewer_id=run.owner_user_id,
-            )
-            return {"status": "error", "error_code": error_code}
-        except httpx.ResponseNotRead:
-            latency_ms = int((time.monotonic() - start_time) * 1000)
-            error_code = ApiErrorCode.E_LLM_PROVIDER_DOWN.value
-            logger.error(
-                "llm.request.failed",
-                **safe_kv(
-                    **llm_log_fields,
-                    outcome="error",
-                    error_class=error_code,
-                    unread_provider_error_response=True,
-                    latency_ms=int((time.monotonic() - llm_start) * 1000),
-                ),
-            )
-            _finalize_run(
-                db,
-                run_id=run.id,
-                assistant_content=ERROR_CODE_TO_MESSAGE[error_code],
                 assistant_status="error",
                 run_status="error",
                 done_status="error",
@@ -1348,59 +1347,9 @@ def validate_pre_phase(
         if parent_message_id is not None or branch_anchor.kind != "none":
             raise ApiError(
                 ApiErrorCode.E_INVALID_REQUEST,
-                "New root conversations cannot include a branch parent",
+                "conversation_scope sends cannot include a branch parent",
             )
         authorize_conversation_scope(db, viewer_id, conversation_scope)
-        if conversation_scope.type == "media":
-            existing_conversation = (
-                db.execute(
-                    select(Conversation).where(
-                        Conversation.owner_user_id == viewer_id,
-                        Conversation.scope_type == "media",
-                        Conversation.scope_media_id == conversation_scope.media_id,
-                    )
-                )
-                .scalars()
-                .first()
-            )
-            if existing_conversation is not None:
-                existing_message_count = db.scalar(
-                    select(func.count())
-                    .select_from(Message)
-                    .where(Message.conversation_id == existing_conversation.id)
-                )
-                if existing_message_count:
-                    raise ApiError(
-                        ApiErrorCode.E_INVALID_REQUEST,
-                        "Existing scoped conversations require conversation_id and parent_message_id",
-                    )
-        elif conversation_scope.type == "library":
-            existing_conversation = (
-                db.execute(
-                    select(Conversation).where(
-                        Conversation.owner_user_id == viewer_id,
-                        Conversation.scope_type == "library",
-                        Conversation.scope_library_id == conversation_scope.library_id,
-                    )
-                )
-                .scalars()
-                .first()
-            )
-            if existing_conversation is not None:
-                existing_message_count = db.scalar(
-                    select(func.count())
-                    .select_from(Message)
-                    .where(Message.conversation_id == existing_conversation.id)
-                )
-                if existing_message_count:
-                    raise ApiError(
-                        ApiErrorCode.E_INVALID_REQUEST,
-                        "Existing scoped conversations require conversation_id and parent_message_id",
-                    )
-        elif conversation_scope.type == "general":
-            pass
-        else:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid conversation scope")
 
     return model
 
@@ -1424,11 +1373,22 @@ def prepare_messages(
             .where(Message.conversation_id == conversation.id)
         )
         if existing_message_count:
-            raise ApiError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Existing scoped conversations require conversation_id and parent_message_id",
+            parent_message = _selected_path_reply_parent(
+                db,
+                viewer_id=viewer_id,
+                conversation_id=conversation.id,
             )
-        parent_message = None
+            if parent_message is None:
+                raise ApiError(
+                    ApiErrorCode.E_BRANCH_PATH_INVALID,
+                    "Existing scoped conversation has no complete assistant parent",
+                )
+            branch_anchor = AssistantMessageBranchAnchorRequest(
+                kind="assistant_message",
+                message_id=parent_message.id,
+            )
+        else:
+            parent_message = None
     elif conversation_id is not None and conversation_scope is None:
         conversation = db.get(Conversation, conversation_id)
         if conversation is None or conversation.owner_user_id != viewer_id:
@@ -1503,6 +1463,43 @@ def prepare_messages(
         user_message=user_message,
         assistant_message=assistant_message,
     )
+
+
+def _selected_path_reply_parent(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    conversation_id: UUID,
+) -> Message | None:
+    active_leaf_id = active_leaf_for_viewer(
+        db,
+        viewer_id=viewer_id,
+        conversation_id=conversation_id,
+    )
+    if active_leaf_id is None:
+        return None
+    active_leaf = db.get(Message, active_leaf_id)
+    if active_leaf is not None and active_leaf.role == "assistant":
+        if active_leaf.status == "pending":
+            raise ApiError(
+                ApiErrorCode.E_CONVERSATION_BUSY,
+                "Conversation already has a pending assistant response",
+            )
+        if active_leaf.status not in {"complete", "error"}:
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                f"Unsupported assistant message status: {active_leaf.status}",
+            )
+
+    path = load_leaf_message_path(
+        db,
+        conversation_id=conversation_id,
+        leaf_message_id=active_leaf_id,
+    )
+    for message in reversed(path):
+        if message.role == "assistant" and message.status == "complete":
+            return message
+    return None
 
 
 def append_run_event(db: Session, run: ChatRun, event_type: str, payload: dict[str, Any]) -> None:

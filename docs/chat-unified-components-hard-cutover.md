@@ -24,16 +24,14 @@ This document does not replace the product behavior specified by:
 
 - `docs/chat-workbench-hard-cutover.md`
 - `docs/chat-branch-switch-viewport-hard-cutover.md`
-- `docs/chat-reader-prose-hard-cutover.md`
-- `docs/chat-composer-bottom-dock-hard-cutover.md`
-- `docs/chat-streaming-hard-cutover.md`
-- `docs/quote-to-chat-hard-cutover.md`
-- `docs/reader-secondary-rail-hard-cutover.md`
+- `docs/chat-response-retry-hard-cutover.md`
+- `docs/reader-protected-width-outward-rail-hard-cutover.md`
+- `docs/reader-implementation.md`
 
-It resolves the component-ownership question across those documents. Where older
-docs imply route-specific chat renderers, duplicate state machines, desktop
-quote-to-chat route handoff as the default behavior, or branch-switch
-scroll-to-top behavior, this document follows the newer hard-cutover targets:
+It resolves the component-ownership question across those documents. Where
+previous plans implied route-specific chat renderers, duplicate state machines,
+desktop quote-to-chat route handoff as the default behavior, or branch-switch
+scroll-to-top behavior, this document follows the current hard-cutover targets:
 shared chat spine, reader-local desktop Ask, explicit full-chat promotion,
 stable branch-switch viewport anchoring, and no compatibility path.
 
@@ -517,8 +515,8 @@ a conversation id exists.
 ### Bottom Dock Wins
 
 The composer is a reserved footer region outside the transcript scrollport.
-Older wording that says "sticky inside the scrollport" is superseded by the
-bottom-dock hard cutover.
+The Bottom Dock contract in this document owns the reader Ask composer
+placement.
 
 ### `ChatComposer` Submits, Callers Route
 
@@ -575,8 +573,8 @@ product behavior.
 ### Page Sizes And Constants
 
 Message page sizes may differ by surface when the surface has a real product
-reason. Each timing value, page size, threshold, and retry value introduced or
-moved by this cutover must have a named constant.
+reason. Timing and constant naming rules are owned by `docs/rules/timing.md`
+and `docs/rules/conventions.md`.
 
 ### Model Catalog Loading
 

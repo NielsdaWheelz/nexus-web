@@ -4,12 +4,11 @@
  * Styling for the media content pane and highlights pane.
  * EPUB chapter navigation and TOC styles added in S5 PR-05.
  *
- * Reader scope (preserved verbatim per visual-foundation-1a-hard-cutover.md §5
- * rule 14): the `.readerThemeLight` and `.readerThemeDark` blocks below define
- * `--reader-*` overrides with literal hex values. They are independent of the
- * app theme and must not be migrated to semantic tokens. Same applies to the
- * `.readerThemeDark :global(.hl-*)` overrides which scope highlight colors to
- * the dark reader theme.
+ * Reader scope: the `.readerThemeLight` and `.readerThemeDark` blocks below
+ * define `--reader-*` overrides with literal hex values. They are independent
+ * of the app theme and must not be migrated to semantic tokens. Same applies to
+ * the `.readerThemeDark :global(.hl-*)` overrides which scope highlight colors
+ * to the dark reader theme.
  */
 
 .content {

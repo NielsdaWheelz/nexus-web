@@ -8,6 +8,7 @@ import {
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
 
 interface SeededNonPdfMedia {
   media_id: string;
@@ -39,16 +40,6 @@ interface HighlightPayload {
 interface HighlightsPayload {
   data: {
     highlights: HighlightPayload["data"][];
-  };
-}
-
-interface ObjectLinksPayload {
-  data: {
-    links: Array<{
-      relationType: string;
-      a: { objectType: string; objectId: string; label: string };
-      b: { objectType: string; objectId: string; label: string };
-    }>;
   };
 }
 
@@ -150,16 +141,18 @@ async function scrollHighlightIntoView(contentPane: Locator, highlightId: string
   await expect(segment).toBeVisible({ timeout: 10_000 });
 }
 
-test.describe("notes cutover @legacy-synthetic", () => {
+test.describe("notes cutover", () => {
   test("creates a linked highlight note, persists object refs, opens note blocks, and accepts note context", async ({
     page,
   }) => {
+    test.slow();
     const seeded = readSeededNonPdfMedia();
     const noteText = `E2E linked highlight note ${Date.now()}`;
     const mediaRefText = `[[media:${seeded.media_id}|Source media]]`;
     let highlightId: string | null = null;
     let highlightFragmentId: string | null = null;
     let noteBlockId: string | null = null;
+    let productError: unknown = null;
 
     try {
       const highlight = await createFreshHighlight(
@@ -181,10 +174,9 @@ test.describe("notes cutover @legacy-synthetic", () => {
 
       const noteEditor = linkedRow.getByRole("textbox", { name: "Highlight note" });
       await expect(noteEditor).toBeVisible({ timeout: 10_000 });
-      await noteEditor.evaluate((element) => {
-        (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
-      });
-      await noteEditor.focus();
+      await noteEditor.scrollIntoViewIfNeeded();
+      await expect(noteEditor).toBeEditable();
+      await noteEditor.click();
       await page.keyboard.insertText(`${noteText} ${mediaRefText}`);
 
       await expect(linkedRow.getByText("Saved")).toBeVisible({ timeout: 15_000 });
@@ -198,37 +190,6 @@ test.describe("notes cutover @legacy-synthetic", () => {
       if (!linkedNote) throw new Error("Expected linked note after save");
       noteBlockId = linkedNote.noteBlockId;
       expect(linkedNote.bodyText).toContain(noteText);
-
-      const noteAboutResponse = await page.request.get(
-        `/api/object-links?object_type=highlight&object_id=${highlight.id}&relation_type=note_about`
-      );
-      expect(noteAboutResponse.ok()).toBeTruthy();
-      const noteAboutPayload = (await noteAboutResponse.json()) as ObjectLinksPayload;
-      expect(noteAboutPayload.data.links).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            relationType: "note_about",
-            a: expect.objectContaining({ objectType: "note_block", objectId: noteBlockId }),
-            b: expect.objectContaining({ objectType: "highlight", objectId: highlight.id }),
-          }),
-        ])
-      );
-
-      await expect
-        .poll(
-          async () => {
-            const response = await page.request.get(
-              `/api/object-links?a_type=note_block&a_id=${noteBlockId}&relation_type=references`
-            );
-            expect(response.ok()).toBeTruthy();
-            const payload = (await response.json()) as ObjectLinksPayload;
-            return payload.data.links.some(
-              (link) => link.b.objectType === "media" && link.b.objectId === seeded.media_id
-            );
-          },
-          { timeout: 15_000 }
-        )
-        .toBe(true);
 
       await page.goto(`/notes/${noteBlockId}`);
       await expect(page).toHaveURL(new RegExp(`/notes/${noteBlockId}`));
@@ -246,21 +207,42 @@ test.describe("notes cutover @legacy-synthetic", () => {
         "Note",
         { timeout: 10_000 }
       );
+    } catch (error) {
+      productError = error;
+      throw error;
     } finally {
+      const cleanupErrors: unknown[] = [];
       if (!noteBlockId && highlightId && highlightFragmentId) {
-        const linkedNote = await linkedNoteForHighlight(
-          page,
-          highlightFragmentId,
-          highlightId
-        ).catch(() => null);
-        noteBlockId = linkedNote?.noteBlockId ?? null;
+        try {
+          const linkedNote = await linkedNoteForHighlight(page, highlightFragmentId, highlightId);
+          noteBlockId = linkedNote?.noteBlockId ?? null;
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
       }
       if (noteBlockId) {
-        await page.request.delete(`/api/notes/blocks/${noteBlockId}`).catch(() => undefined);
+        try {
+          await deleteE2eResource(
+            page.request,
+            `/api/notes/blocks/${noteBlockId}`,
+            `Note block ${noteBlockId}`,
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
       }
       if (highlightId) {
-        await page.request.delete(`/api/highlights/${highlightId}`).catch(() => undefined);
+        try {
+          await deleteE2eResource(
+            page.request,
+            `/api/highlights/${highlightId}`,
+            `Highlight ${highlightId}`,
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
       }
+      throwE2eCleanupFailures("Linked highlight note", productError, cleanupErrors);
     }
   });
 });

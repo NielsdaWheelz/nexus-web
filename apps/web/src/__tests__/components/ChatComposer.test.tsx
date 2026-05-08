@@ -5,16 +5,6 @@ import ChatComposer from "@/components/ChatComposer";
 import type { ChatRunCreateRequest, ContextItem } from "@/lib/api/sse";
 import type { BranchDraft } from "@/lib/conversations/types";
 
-const routerMocks = vi.hoisted(() => ({
-  replace: vi.fn(),
-}));
-
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({
-    replace: routerMocks.replace,
-  }),
-}));
-
 const MODELS = [
   {
     id: "gpt-5.5",
@@ -172,7 +162,6 @@ function horizontallyScrollableElements(root: HTMLElement): string[] {
 describe("ChatComposer", () => {
   beforeEach(() => {
     document.body.style.margin = "";
-    routerMocks.replace.mockClear();
     setViewportWidth(1024);
   });
 
@@ -494,6 +483,29 @@ describe("ChatComposer", () => {
     expect(body.conversation_id).toBeUndefined();
     expect(body.parent_message_id).toBeUndefined();
     expect(body.branch_anchor).toEqual({ kind: "none" });
+    expect(body.conversation_scope).toEqual({ type: "general" });
+  });
+
+  it("keeps a stable-key draft when conversation identity changes", async () => {
+    const user = userEvent.setup();
+    installChatComposerFetchMock();
+
+    const { rerender } = render(
+      <ChatComposer conversationId={null} draftKey="new-conversation" />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+    ).toBeInTheDocument();
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("Draft during resolution");
+
+    rerender(
+      <ChatComposer conversationId="conversation-1" draftKey="new-conversation" />,
+    );
+
+    expect(message).toHaveValue("Draft during resolution");
   });
 
   it("removes attached context chips from the composer surface", async () => {

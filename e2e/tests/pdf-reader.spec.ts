@@ -1,6 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
 
 interface SeededPdfMedia {
   media_id: string;
@@ -92,7 +93,7 @@ async function clickToolbarButtonByAriaLabel(page: Page, ariaLabel: string): Pro
 }
 
 function rowAskInChatButton(row: Locator): Locator {
-  return row.getByRole("button", { name: /ask in chat|send to chat/i });
+  return row.getByRole("button", { name: "Ask in chat" });
 }
 
 function rowActionsButton(row: Locator): Locator {
@@ -219,7 +220,7 @@ async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
   }
 }
 
-test.describe("pdf reader @legacy-synthetic", () => {
+test.describe("pdf reader", () => {
   test.describe.configure({ mode: "serial" });
 
   test.beforeEach(async ({ page }) => {
@@ -234,6 +235,7 @@ test.describe("pdf reader @legacy-synthetic", () => {
     const expectedPageCount = seeded.page_count;
     const expectedMediaId = seeded.media_id;
     let createdHighlightId: string | null = null;
+    let productError: unknown = null;
 
     try {
       await page.goto("/libraries");
@@ -298,32 +300,36 @@ test.describe("pdf reader @legacy-synthetic", () => {
       await openHighlightsPane(page);
       const linkedRow = page.getByTestId(`anchored-highlight-row-${createdHighlightId}`);
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
-      await linkedRow.evaluate((element) => {
-        (element as HTMLElement).click();
-      });
+      await linkedRow.click();
       await expectHighlightRowToBeExpanded(linkedRow);
       await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
       await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
       const chatButton = rowAskInChatButton(linkedRow);
       const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
-      await chatButton.evaluate((element) => {
-        (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
-      });
-      await chatButton.evaluate((element) => {
-        (element as HTMLButtonElement).click();
-      });
+      await chatButton.scrollIntoViewIfNeeded();
+      await expect(chatButton).toBeEnabled();
+      await chatButton.click();
       await expectReaderAssistantContext(page, exact);
       await expect
         .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
         .toBe(chatPaneCountBefore);
+    } catch (error) {
+      productError = error;
+      throw error;
     } finally {
+      const cleanupErrors: unknown[] = [];
       if (createdHighlightId) {
         try {
-          await page.request.delete(`/api/highlights/${createdHighlightId}`, { timeout: 5_000 });
-        } catch {
-          // Cleanup should never mask the real assertion failure.
+          await deleteE2eResource(
+            page.request,
+            `/api/highlights/${createdHighlightId}`,
+            `Highlight ${createdHighlightId}`,
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
         }
       }
+      throwE2eCleanupFailures("PDF highlight chat flow", productError, cleanupErrors);
     }
   });
 
@@ -343,6 +349,7 @@ test.describe("pdf reader @legacy-synthetic", () => {
     const pageTwoExact = `e2e-page-2-${nonce}`;
     let pageOneHighlightId: string | null = null;
     let pageTwoHighlightId: string | null = null;
+    let productError: unknown = null;
 
     try {
       const createPageOne = await page.request.post(`/api/media/${mediaId}/pdf-highlights`, {
@@ -413,13 +420,34 @@ test.describe("pdf reader @legacy-synthetic", () => {
           { timeout: 10_000 },
         )
         .toBeGreaterThan(0);
+    } catch (error) {
+      productError = error;
+      throw error;
     } finally {
+      const cleanupErrors: unknown[] = [];
       if (pageOneHighlightId) {
-        await page.request.delete(`/api/highlights/${pageOneHighlightId}`).catch(() => undefined);
+        try {
+          await deleteE2eResource(
+            page.request,
+            `/api/highlights/${pageOneHighlightId}`,
+            `Highlight ${pageOneHighlightId}`,
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
       }
       if (pageTwoHighlightId) {
-        await page.request.delete(`/api/highlights/${pageTwoHighlightId}`).catch(() => undefined);
+        try {
+          await deleteE2eResource(
+            page.request,
+            `/api/highlights/${pageTwoHighlightId}`,
+            `Highlight ${pageTwoHighlightId}`,
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
       }
+      throwE2eCleanupFailures("PDF active-page highlight flow", productError, cleanupErrors);
     }
   });
 

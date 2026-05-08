@@ -11,6 +11,7 @@ from sqlalchemy.engine import Engine
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import ChatRun
+from nexus.services.conversation_branches import ensure_branch_metadata, persist_active_leaf
 from tests.factories import (
     create_searchable_media,
     create_test_conversation,
@@ -246,6 +247,266 @@ class TestChatRunCreate:
         assert [(row.seq, row.event_type) for row in event_rows] == [(1, "meta")]
         assert event_rows[0].payload["conversation_id"] == str(conversation_id)
         assert job_count == 1, f"Expected one chat_run background job for run {run_id}"
+
+    def test_scoped_create_run_continues_existing_scoped_conversation_selected_path(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id = create_searchable_media(session, user_id, title="Scoped Run Source")
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+
+        resolve = auth_client.post(
+            "/conversations/resolve",
+            headers=auth_headers(user_id),
+            json={"type": "media", "media_id": str(media_id)},
+        )
+        assert resolve.status_code == 200, (
+            f"Expected scoped conversation resolve to succeed, got {resolve.status_code}: "
+            f"{resolve.text}"
+        )
+        conversation_id = UUID(resolve.json()["data"]["id"])
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversation_active_paths", "conversation_id", conversation_id)
+
+        with direct_db.session() as session:
+            root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
+            first_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "First answer",
+                parent_message_id=root_user_id,
+            )
+            selected_user_id = create_test_message(
+                session,
+                conversation_id,
+                3,
+                "user",
+                "Selected branch",
+                parent_message_id=first_assistant_id,
+            )
+            selected_parent_id = create_test_message(
+                session,
+                conversation_id,
+                4,
+                "assistant",
+                "Selected answer",
+                parent_message_id=selected_user_id,
+            )
+            sibling_user_id = create_test_message(
+                session,
+                conversation_id,
+                5,
+                "user",
+                "Other branch",
+                parent_message_id=first_assistant_id,
+            )
+            sibling_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                6,
+                "assistant",
+                "Other answer",
+                parent_message_id=sibling_user_id,
+            )
+            ensure_branch_metadata(
+                session,
+                conversation_id=conversation_id,
+                branch_user_message_id=selected_user_id,
+            )
+            ensure_branch_metadata(
+                session,
+                conversation_id=conversation_id,
+                branch_user_message_id=sibling_user_id,
+            )
+            session.commit()
+
+        active_path_response = auth_client.post(
+            f"/conversations/{conversation_id}/active-path",
+            headers=auth_headers(user_id),
+            json={"active_leaf_message_id": str(selected_parent_id)},
+        )
+        assert active_path_response.status_code == 200, (
+            f"Expected active path update to succeed, got "
+            f"{active_path_response.status_code}: {active_path_response.text}"
+        )
+
+        response = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                conversation_scope={"type": "media", "media_id": str(media_id)},
+            ),
+            idempotency_key="chat-run-existing-scoped-selected-path",
+        )
+
+        assert response.status_code == 200, (
+            f"Expected scoped chat run create to succeed, got {response.status_code}: "
+            f"{response.text}"
+        )
+        data = response.json()["data"]
+        run_id = UUID(data["run"]["id"])
+        _register_run_cleanup(direct_db, run_id)
+        assert data["conversation"]["id"] == str(conversation_id)
+        assert data["user_message"]["parent_message_id"] == str(selected_parent_id)
+        assert data["user_message"]["branch_anchor_kind"] == "assistant_message"
+        assert data["assistant_message"]["parent_message_id"] == data["user_message"]["id"]
+
+        messages_response = auth_client.get(
+            f"/conversations/{conversation_id}/messages",
+            headers=auth_headers(user_id),
+        )
+        assert messages_response.status_code == 200, (
+            f"Expected selected-path messages to load, got "
+            f"{messages_response.status_code}: {messages_response.text}"
+        )
+        visible_message_ids = [item["id"] for item in messages_response.json()["data"]]
+        assert visible_message_ids == [
+            str(root_user_id),
+            str(first_assistant_id),
+            str(selected_user_id),
+            str(selected_parent_id),
+            data["user_message"]["id"],
+            data["assistant_message"]["id"],
+        ]
+        assert str(sibling_user_id) not in visible_message_ids
+        assert str(sibling_assistant_id) not in visible_message_ids
+
+    def test_scoped_create_run_rejects_pending_active_leaf(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id = create_searchable_media(session, user_id, title="Busy Scoped Source")
+
+        first = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                conversation_scope={"type": "media", "media_id": str(media_id)},
+            ),
+            idempotency_key="chat-run-busy-scoped-first",
+        )
+        assert first.status_code == 200, (
+            f"Expected first scoped chat run to create pending assistant, got "
+            f"{first.status_code}: {first.text}"
+        )
+        first_data = first.json()["data"]
+        run_id = UUID(first_data["run"]["id"])
+        conversation_id = UUID(first_data["conversation"]["id"])
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        _register_run_cleanup(direct_db, run_id, conversation_id)
+
+        second = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                content="Second send while assistant is pending.",
+                conversation_scope={"type": "media", "media_id": str(media_id)},
+            ),
+            idempotency_key="chat-run-busy-scoped-second",
+        )
+
+        assert second.status_code == 409, (
+            f"Expected scoped chat with pending active assistant to be busy, got "
+            f"{second.status_code}: {second.text}"
+        )
+        assert second.json()["error"]["code"] == "E_CONVERSATION_BUSY"
+
+    def test_scoped_create_run_uses_previous_complete_parent_after_error_leaf(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id = create_searchable_media(session, user_id, title="Errored Scoped Source")
+
+        resolve = auth_client.post(
+            "/conversations/resolve",
+            headers=auth_headers(user_id),
+            json={"type": "media", "media_id": str(media_id)},
+        )
+        assert resolve.status_code == 200, resolve.text
+        conversation_id = UUID(resolve.json()["data"]["id"])
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversation_active_paths", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        with direct_db.session() as session:
+            root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
+            complete_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "First answer",
+                parent_message_id=root_user_id,
+            )
+            failed_user_id = create_test_message(
+                session,
+                conversation_id,
+                3,
+                "user",
+                "Failed follow-up",
+                parent_message_id=complete_assistant_id,
+            )
+            failed_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                4,
+                "assistant",
+                "Provider failed.",
+                status="error",
+                parent_message_id=failed_user_id,
+            )
+            persist_active_leaf(
+                session,
+                viewer_id=user_id,
+                conversation_id=conversation_id,
+                active_leaf_message_id=failed_assistant_id,
+            )
+            session.commit()
+
+        response = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                content="Continue after failed answer.",
+                conversation_scope={"type": "media", "media_id": str(media_id)},
+            ),
+            idempotency_key="chat-run-error-leaf-scoped",
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        _register_run_cleanup(direct_db, UUID(data["run"]["id"]), conversation_id)
+        assert data["user_message"]["parent_message_id"] == str(complete_assistant_id)
 
     def test_create_run_for_existing_conversation_requires_parent(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
@@ -802,6 +1063,109 @@ class TestChatRunCreate:
             "message_id",
             UUID(first_data["user_message"]["id"]),
         )
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+    def test_stale_content_chunk_evidence_context_returns_invalid_request(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        replacement_run_id = uuid4()
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id = create_searchable_media(session, user_id, title="Stale Context Source")
+            chunk_id, active_run_id, evidence_span_id = session.execute(
+                text(
+                    """
+                    SELECT cc.id, cc.index_run_id, cc.primary_evidence_span_id
+                    FROM content_chunks cc
+                    WHERE cc.media_id = :media_id
+                    ORDER BY cc.chunk_idx ASC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id},
+            ).one()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO content_index_runs (
+                        id,
+                        media_id,
+                        state,
+                        source_version,
+                        extractor_version,
+                        chunker_version,
+                        embedding_provider,
+                        embedding_model,
+                        embedding_version,
+                        embedding_config_hash,
+                        started_at,
+                        finished_at,
+                        activated_at
+                    )
+                    SELECT
+                        :replacement_run_id,
+                        media_id,
+                        'ready',
+                        source_version || '-replacement',
+                        extractor_version,
+                        chunker_version,
+                        embedding_provider,
+                        embedding_model,
+                        embedding_version,
+                        embedding_config_hash,
+                        now(),
+                        now(),
+                        now()
+                    FROM content_index_runs
+                    WHERE id = :active_run_id
+                    """
+                ),
+                {"replacement_run_id": replacement_run_id, "active_run_id": active_run_id},
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE media_content_index_states
+                    SET active_run_id = :replacement_run_id,
+                        latest_run_id = :replacement_run_id,
+                        updated_at = now()
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"replacement_run_id": replacement_run_id, "media_id": media_id},
+            )
+            session.commit()
+
+        response = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                conversation_scope={"type": "media", "media_id": str(media_id)},
+                contexts=[
+                    {
+                        "kind": "object_ref",
+                        "type": "content_chunk",
+                        "id": str(chunk_id),
+                        "evidence_span_ids": [str(evidence_span_id)],
+                    }
+                ],
+            ),
+            "chat-run-stale-content-context",
+        )
+
+        assert response.status_code == 400, (
+            f"Expected stale evidence context to be rejected, got "
+            f"{response.status_code}: {response.text}"
+        )
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)

@@ -20,6 +20,7 @@ Key design decisions:
 """
 
 import base64
+import binascii
 import hashlib
 import json
 import time
@@ -37,7 +38,7 @@ from nexus.auth.permissions import (
     is_library_member,
     visible_media_ids_cte_sql,
 )
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.contributors import ContributorCreditOut, ContributorOut
 from nexus.schemas.search import (
@@ -79,6 +80,8 @@ MIN_QUERY_LENGTH = 2
 CANDIDATES_PER_TYPE = 200
 CONTENT_CHUNK_MIN_ANN_CANDIDATES = 200
 CONTENT_CHUNK_ANN_CANDIDATE_MULTIPLIER = 20
+# Cosine similarity must clear a relevance floor; ANN nearest neighbors alone are not matches.
+CONTENT_CHUNK_MIN_SEMANTIC_SIMILARITY = 0.50
 
 # Supported search result types (ordered for deterministic behavior).
 # Omitted type filters must mean "search everything the caller can ask for".
@@ -142,7 +145,7 @@ class _RankedNoteBlockResult:
     page_title: str
     body_text: str
     score: _SearchScore
-    source_label: str | None = None
+    highlight_excerpt: str | None = None
     result_type: Literal["note_block"] = "note_block"
 
 
@@ -279,11 +282,15 @@ def decode_search_cursor(cursor: str) -> int:
         json_bytes = base64.urlsafe_b64decode(cursor)
         payload = json.loads(json_bytes.decode("utf-8"))
 
-        offset = int(payload["offset"])
+        if not isinstance(payload, dict):
+            raise ValueError("Cursor payload must be an object")
+        offset = payload["offset"]
+        if type(offset) is not int:
+            raise ValueError("Cursor offset must be an integer")
         if offset < 0:
             raise ValueError("Offset must be non-negative")
         return offset
-    except Exception:
+    except (binascii.Error, KeyError, TypeError, UnicodeDecodeError, ValueError):
         raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
 
 
@@ -299,6 +306,15 @@ def hash_query(q: str) -> str:
     """
     q_normalized = q.strip().lower()
     return hashlib.sha256(q_normalized.encode("utf-8")).hexdigest()[:16]
+
+
+def _query_has_full_text_terms(db: Session, q: str) -> bool:
+    return bool(
+        db.scalar(
+            text("SELECT numnode(websearch_to_tsquery('english', :query)) > 0"),
+            {"query": q},
+        )
+    )
 
 
 # =============================================================================
@@ -597,7 +613,7 @@ def search(
     contributor_handles: list[str] | None = None,
     roles: list[str] | None = None,
     content_kinds: list[str] | None = None,
-    semantic: bool = False,
+    semantic: bool = True,
     cursor: str | None = None,
     limit: int = DEFAULT_LIMIT,
 ) -> SearchResponse:
@@ -623,11 +639,13 @@ def search(
         InvalidRequestError: If cursor is invalid.
     """
     start_time = time.time()
+    transaction_active_at_entry = db.in_transaction()
 
     # Clamp limit
     limit = min(max(1, limit), MAX_LIMIT)
 
     q = q.strip()
+    offset = decode_search_cursor(cursor) if cursor else 0
     normalized_types = _normalize_result_types(types)
     normalized_contributor_handles = _normalize_contributor_handles(contributor_handles)
     normalized_roles = _normalize_credit_roles(roles)
@@ -648,10 +666,32 @@ def search(
         _log_search(viewer_id, q, scope, normalized_types, 0, start_time)
         return SearchResponse()
 
-    # Decode cursor
-    offset = 0
-    if cursor:
-        offset = decode_search_cursor(cursor)
+    if has_query and not _query_has_full_text_terms(db, q):
+        _log_search(viewer_id, q, scope, normalized_types, 0, start_time)
+        return SearchResponse()
+
+    semantic_query_embedding: tuple[str, list[float]] | None = None
+    if (
+        semantic
+        and has_query
+        and (
+            "content_chunk" in normalized_types
+            or (
+                not normalized_contributor_handles
+                and not normalized_roles
+                and not normalized_content_kinds
+                and ("page" in normalized_types or "note_block" in normalized_types)
+            )
+        )
+    ):
+        if not transaction_active_at_entry and db.in_transaction():
+            db.rollback()
+        semantic_query_embedding = build_text_embedding(q)
+        if len(semantic_query_embedding[1]) != transcript_embedding_dimensions():
+            raise ApiError(
+                ApiErrorCode.E_LLM_PROVIDER_DOWN,
+                "Embedding provider returned an invalid response.",
+            )
 
     # Execute search queries per type and collect results
     all_results: list[InternalSearchResult] = []
@@ -663,7 +703,7 @@ def search(
             q,
             has_query,
             result_type,
-            semantic,
+            semantic_query_embedding,
             scope_type,
             scope_id,
             normalized_contributor_handles,
@@ -717,7 +757,7 @@ def _search_type(
     q: str,
     has_query: bool,
     result_type: str,
-    semantic: bool,
+    semantic_query_embedding: tuple[str, list[float]] | None,
     scope_type: str,
     scope_id: UUID | None,
     contributor_handles: list[str],
@@ -760,7 +800,7 @@ def _search_type(
             db,
             viewer_id,
             q,
-            semantic,
+            semantic_query_embedding,
             has_query,
             scope_type,
             scope_id,
@@ -785,11 +825,27 @@ def _search_type(
     if result_type == "page":
         if contributor_handles or roles or content_kinds:
             return []
-        return _search_pages(db, viewer_id, q, semantic, scope_type, scope_id, limit)
+        return _search_pages(
+            db,
+            viewer_id,
+            q,
+            semantic_query_embedding,
+            scope_type,
+            scope_id,
+            limit,
+        )
     if result_type == "note_block":
         if contributor_handles or roles or content_kinds:
             return []
-        return _search_note_blocks(db, viewer_id, q, semantic, scope_type, scope_id, limit)
+        return _search_note_blocks(
+            db,
+            viewer_id,
+            q,
+            semantic_query_embedding,
+            scope_type,
+            scope_id,
+            limit,
+        )
     if result_type == "message":
         if contributor_handles or roles or content_kinds:
             return []
@@ -1082,7 +1138,7 @@ def _search_content_chunks(
     db: Session,
     viewer_id: UUID,
     q: str,
-    semantic: bool,
+    semantic_query_embedding: tuple[str, list[float]] | None,
     has_query: bool,
     scope_type: str,
     scope_id: UUID | None,
@@ -1092,7 +1148,6 @@ def _search_content_chunks(
     limit: int,
 ) -> list[InternalSearchResult]:
     """Search active content chunks with lexical or hybrid semantic ranking."""
-    semantic = semantic and has_query
     scope_filter = ""
     embedding_dims = transcript_embedding_dimensions()
     ann_limit = max(
@@ -1105,6 +1160,7 @@ def _search_content_chunks(
         "has_query": has_query,
         "limit": limit,
         "ann_limit": ann_limit,
+        "min_semantic_similarity": CONTENT_CHUNK_MIN_SEMANTIC_SIMILARITY,
     }
     content_kind_filter = ""
     contributor_credit_filter = ""
@@ -1128,48 +1184,13 @@ def _search_content_chunks(
                   AND c_filter.status NOT IN ('merged', 'tombstoned')
             )
         """
-    semantic_select = "0.0 AS semantic_similarity"
-    semantic_join = ""
-    semantic_order = "lexical_score DESC, cc.id ASC"
-    semantic_where = (
-        "(:has_query IS FALSE OR cc.chunk_text_tsv @@ websearch_to_tsquery('english', :query))"
-    )
-    if semantic:
-        try:
-            embedding_model, query_embedding = build_text_embedding(q)
-        except Exception as exc:
-            logger.warning(
-                "semantic_query_embedding_failed",
-                error=str(exc),
-                query_hash=hash_query(q),
-                user_id=str(viewer_id),
-            )
-            semantic = False
-        else:
-            if len(query_embedding) != embedding_dims:
-                logger.warning(
-                    "semantic_query_embedding_dimension_mismatch",
-                    expected_dimensions=embedding_dims,
-                    actual_dimensions=len(query_embedding),
-                    embedding_model=embedding_model,
-                    query_hash=hash_query(q),
-                    user_id=str(viewer_id),
-                )
-                semantic = False
-    if semantic:
+    if semantic_query_embedding is not None:
+        embedding_model, query_embedding = semantic_query_embedding
         params["query_embedding"] = to_pgvector_literal(query_embedding)
-        semantic_join = f"""
-            JOIN query_embedding qe ON true
-            JOIN content_embeddings ce ON ce.chunk_id = cc.id
-                AND ce.embedding_provider = mcis.active_embedding_provider
-                AND ce.embedding_model = mcis.active_embedding_model
-                AND ce.embedding_version = mcis.active_embedding_version
-                AND ce.embedding_config_hash = mcis.active_embedding_config_hash
-                AND ce.embedding_dimensions = {embedding_dims}
-        """
-        semantic_select = "(1 - (ce.embedding_vector <=> qe.embedding)) AS semantic_similarity"
-        semantic_order = "ce.embedding_vector <=> qe.embedding ASC, cc.id ASC"
-        semantic_where = "TRUE"
+        params["query_embedding_provider"] = (
+            "test" if embedding_model.startswith("test_") else "openai"
+        )
+        params["query_embedding_model"] = embedding_model
 
     if scope_type == "all":
         pass
@@ -1198,109 +1219,221 @@ def _search_content_chunks(
     else:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
 
-    query_embedding_cte = ""
-    if semantic:
-        query_embedding_cte = f"""
-            query_embedding AS (
-                SELECT CAST(:query_embedding AS vector({embedding_dims})) AS embedding
-            ),
-        """
-
-    query = f"""
-        WITH
-            visible_media AS ({visible_media_ids_cte_sql()}),
-            media_contributor_credits AS ({media_contributor_credits_rollup_cte_sql()}),
-            {query_embedding_cte}
-            ann_candidates AS (
-                SELECT
-                    cc.id,
-                    cc.media_id,
-                    m.kind,
-                    m.title,
-                    m.published_date,
-                    mcc.contributor_credits,
-                    cc.chunk_text,
-                    CASE WHEN :has_query THEN ts_headline(
-                        'english',
+    if semantic_query_embedding is not None:
+        query = f"""
+            WITH
+                visible_media AS ({visible_media_ids_cte_sql()}),
+                media_contributor_credits AS ({media_contributor_credits_rollup_cte_sql()}),
+                query_embedding AS (
+                    SELECT CAST(:query_embedding AS vector({embedding_dims})) AS embedding
+                ),
+                eligible_chunks AS (
+                    SELECT
+                        cc.id,
+                        cc.media_id,
+                        m.kind,
+                        m.title,
+                        m.published_date,
+                        mcc.contributor_credits,
                         cc.chunk_text,
-                        websearch_to_tsquery('english', :query),
-                        'MaxWords=50, MinWords=10, MaxFragments=1'
-                    ) ELSE left(cc.chunk_text, 300) END AS snippet,
-                    cc.source_kind,
-                    cc.primary_evidence_span_id,
-                    cc.index_run_id,
-                    cc.summary_locator,
-                    cc.created_at,
-                    {semantic_select},
-                    CASE WHEN :has_query THEN
-                        ts_rank_cd(cc.chunk_text_tsv, websearch_to_tsquery('english', :query))
-                    ELSE 0.0 END AS lexical_score
-                FROM content_chunks cc
-                JOIN media m ON m.id = cc.media_id
-                JOIN visible_media vm ON vm.media_id = cc.media_id
-                JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
-                    AND mcis.active_run_id = cc.index_run_id
-                JOIN content_index_runs active_run ON active_run.id = cc.index_run_id
-                    AND active_run.state = 'ready'
-                    AND active_run.deactivated_at IS NULL
-                LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
-                {semantic_join}
-                WHERE {semantic_where}
-                {scope_filter}
-                {content_kind_filter}
-                {contributor_credit_filter}
-                ORDER BY {semantic_order}
-                LIMIT :ann_limit
-            )
-        SELECT
-            id,
-            media_id,
-            kind,
-            title,
-            published_date,
-            contributor_credits,
-            chunk_text,
-            snippet,
-            source_kind,
-            primary_evidence_span_id,
-            index_run_id,
-            summary_locator,
-            (
-                (0.75 * GREATEST(semantic_similarity, 0.0))
-                + (0.20 * GREATEST(lexical_score, 0.0))
-                + (
-                    0.05 * GREATEST(
-                        0.0,
-                        1.0 - LEAST(EXTRACT(EPOCH FROM (now() - created_at)) / 604800.0, 1.0)
-                    )
+                        ts_headline(
+                            'english',
+                            cc.chunk_text,
+                            websearch_to_tsquery('english', :query),
+                            'MaxWords=50, MinWords=10, MaxFragments=1'
+                        ) AS snippet,
+                        cc.source_kind,
+                        cc.primary_evidence_span_id,
+                        cc.index_run_id,
+                        cc.summary_locator,
+                        cc.created_at,
+                        cc.chunk_text_tsv,
+                        mcis.active_embedding_provider,
+                        mcis.active_embedding_model,
+                        mcis.active_embedding_version,
+                        mcis.active_embedding_config_hash
+                    FROM content_chunks cc
+                    JOIN media m ON m.id = cc.media_id
+                    JOIN visible_media vm ON vm.media_id = cc.media_id
+                    JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
+                        AND mcis.active_run_id = cc.index_run_id
+                    JOIN content_index_runs active_run ON active_run.id = cc.index_run_id
+                        AND active_run.state = 'ready'
+                        AND active_run.deactivated_at IS NULL
+                    LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
+                    WHERE TRUE
+                    {scope_filter}
+                    {content_kind_filter}
+                    {contributor_credit_filter}
+                ),
+                semantic_candidates AS (
+                    SELECT ec.id
+                    FROM eligible_chunks ec
+                    JOIN content_embeddings ce ON ce.chunk_id = ec.id
+                        AND ce.embedding_provider = ec.active_embedding_provider
+                        AND ce.embedding_model = ec.active_embedding_model
+                        AND ce.embedding_version = ec.active_embedding_version
+                        AND ce.embedding_config_hash = ec.active_embedding_config_hash
+                        AND ce.embedding_dimensions = {embedding_dims}
+                    JOIN query_embedding qe ON true
+                    WHERE ec.active_embedding_provider = :query_embedding_provider
+                      AND ec.active_embedding_model = :query_embedding_model
+                      AND ec.active_embedding_version = :query_embedding_model
+                    ORDER BY ce.embedding_vector <=> qe.embedding ASC, ec.id ASC
+                    LIMIT :ann_limit
+                ),
+                lexical_candidates AS (
+                    SELECT ec.id
+                    FROM eligible_chunks ec
+                    WHERE ec.chunk_text_tsv @@ websearch_to_tsquery('english', :query)
+                    ORDER BY
+                        ts_rank_cd(ec.chunk_text_tsv, websearch_to_tsquery('english', :query)) DESC,
+                        ec.id ASC
+                    LIMIT :ann_limit
+                ),
+                candidate_ids AS (
+                    SELECT id FROM semantic_candidates
+                    UNION
+                    SELECT id FROM lexical_candidates
+                ),
+                scored_candidates AS (
+                    SELECT
+                        ec.id,
+                        ec.media_id,
+                        ec.kind,
+                        ec.title,
+                        ec.published_date,
+                        ec.contributor_credits,
+                        ec.chunk_text,
+                        ec.snippet,
+                        ec.source_kind,
+                        ec.primary_evidence_span_id,
+                        ec.index_run_id,
+                        ec.summary_locator,
+                        ec.created_at,
+                        CASE
+                            WHEN ce.chunk_id IS NULL THEN 0.0
+                            ELSE (1 - (ce.embedding_vector <=> qe.embedding))
+                        END AS semantic_similarity,
+                        ts_rank_cd(ec.chunk_text_tsv, websearch_to_tsquery('english', :query))
+                            AS lexical_score
+                    FROM candidate_ids ci
+                    JOIN eligible_chunks ec ON ec.id = ci.id
+                    JOIN query_embedding qe ON true
+                    LEFT JOIN content_embeddings ce ON ce.chunk_id = ec.id
+                        AND ce.embedding_provider = ec.active_embedding_provider
+                        AND ce.embedding_model = ec.active_embedding_model
+                        AND ce.embedding_version = ec.active_embedding_version
+                        AND ce.embedding_config_hash = ec.active_embedding_config_hash
+                        AND ce.embedding_dimensions = {embedding_dims}
+                        AND ec.active_embedding_provider = :query_embedding_provider
+                        AND ec.active_embedding_model = :query_embedding_model
+                        AND ec.active_embedding_version = :query_embedding_model
                 )
-            ) AS raw_score
-        FROM ann_candidates
-        WHERE :has_query IS FALSE OR semantic_similarity > 0.0 OR lexical_score > 0.0
-        ORDER BY raw_score DESC, id ASC
-        LIMIT :limit
-    """
-    if semantic:
-        probes = max(10, min(100, ann_limit))
-        try:
-            db.execute(text(f"SET LOCAL ivfflat.probes = {probes}"))
-        except Exception:
-            db.rollback()
+            SELECT
+                id,
+                media_id,
+                kind,
+                title,
+                published_date,
+                contributor_credits,
+                chunk_text,
+                snippet,
+                source_kind,
+                primary_evidence_span_id,
+                index_run_id,
+                summary_locator,
+                (
+                    (0.45 * CASE WHEN lexical_score > 0.0 THEN 1.0 ELSE 0.0 END)
+                    + (0.35 * GREATEST(semantic_similarity, 0.0))
+                    + (0.15 * GREATEST(lexical_score, 0.0))
+                    + (
+                        0.05 * GREATEST(
+                            0.0,
+                            1.0 - LEAST(EXTRACT(EPOCH FROM (now() - created_at)) / 604800.0, 1.0)
+                        )
+                    )
+                ) AS raw_score
+            FROM scored_candidates
+            WHERE
+                lexical_score > 0.0
+                OR semantic_similarity >= :min_semantic_similarity
+            ORDER BY raw_score DESC, id ASC
+            LIMIT :limit
+        """
+    else:
+        query = f"""
+            WITH
+                visible_media AS ({visible_media_ids_cte_sql()}),
+                media_contributor_credits AS ({media_contributor_credits_rollup_cte_sql()}),
+                lexical_candidates AS (
+                    SELECT
+                        cc.id,
+                        cc.media_id,
+                        m.kind,
+                        m.title,
+                        m.published_date,
+                        mcc.contributor_credits,
+                        cc.chunk_text,
+                        CASE WHEN :has_query THEN ts_headline(
+                            'english',
+                            cc.chunk_text,
+                            websearch_to_tsquery('english', :query),
+                            'MaxWords=50, MinWords=10, MaxFragments=1'
+                        ) ELSE left(cc.chunk_text, 300) END AS snippet,
+                        cc.source_kind,
+                        cc.primary_evidence_span_id,
+                        cc.index_run_id,
+                        cc.summary_locator,
+                        cc.created_at,
+                        CASE WHEN :has_query THEN
+                            ts_rank_cd(cc.chunk_text_tsv, websearch_to_tsquery('english', :query))
+                        ELSE 0.0 END AS lexical_score
+                    FROM content_chunks cc
+                    JOIN media m ON m.id = cc.media_id
+                    JOIN visible_media vm ON vm.media_id = cc.media_id
+                    JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
+                        AND mcis.active_run_id = cc.index_run_id
+                    JOIN content_index_runs active_run ON active_run.id = cc.index_run_id
+                        AND active_run.state = 'ready'
+                        AND active_run.deactivated_at IS NULL
+                    LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
+                    WHERE
+                        (:has_query IS FALSE OR cc.chunk_text_tsv @@ websearch_to_tsquery('english', :query))
+                    {scope_filter}
+                    {content_kind_filter}
+                    {contributor_credit_filter}
+                    ORDER BY lexical_score DESC, cc.id ASC
+                    LIMIT :ann_limit
+                )
+            SELECT
+                id,
+                media_id,
+                kind,
+                title,
+                published_date,
+                contributor_credits,
+                chunk_text,
+                snippet,
+                source_kind,
+                primary_evidence_span_id,
+                index_run_id,
+                summary_locator,
+                (
+                    (0.20 * GREATEST(lexical_score, 0.0))
+                    + (
+                        0.05 * GREATEST(
+                            0.0,
+                            1.0 - LEAST(EXTRACT(EPOCH FROM (now() - created_at)) / 604800.0, 1.0)
+                        )
+                    )
+                ) AS raw_score
+            FROM lexical_candidates
+            WHERE :has_query IS FALSE OR lexical_score > 0.0
+            ORDER BY raw_score DESC, id ASC
+            LIMIT :limit
+        """
     rows = db.execute(text(query), params).fetchall()
-    if semantic and not rows:
-        return _search_content_chunks(
-            db,
-            viewer_id,
-            q,
-            False,
-            has_query,
-            scope_type,
-            scope_id,
-            contributor_handles,
-            roles,
-            content_kinds,
-            limit,
-        )
     results: list[InternalSearchResult] = []
     for row in rows:
         if row[9] is None:
@@ -1573,7 +1706,7 @@ def _search_pages(
     db: Session,
     viewer_id: UUID,
     q: str,
-    semantic: bool,
+    semantic_query_embedding: tuple[str, list[float]] | None,
     scope_type: str,
     scope_id: UUID | None,
     limit: int,
@@ -1583,7 +1716,7 @@ def _search_pages(
         viewer_id=viewer_id,
         object_type="page",
         query_text=q,
-        semantic=semantic,
+        semantic_query_embedding=semantic_query_embedding,
         scope_type=scope_type,
         scope_id=scope_id,
         limit=limit,
@@ -1604,7 +1737,7 @@ def _search_note_blocks(
     db: Session,
     viewer_id: UUID,
     q: str,
-    semantic: bool,
+    semantic_query_embedding: tuple[str, list[float]] | None,
     scope_type: str,
     scope_id: UUID | None,
     limit: int,
@@ -1614,13 +1747,13 @@ def _search_note_blocks(
         viewer_id=viewer_id,
         object_type="note_block",
         query_text=q,
-        semantic=semantic,
+        semantic_query_embedding=semantic_query_embedding,
         scope_type=scope_type,
         scope_id=scope_id,
         limit=limit,
     )
     note_ids = [row["object_id"] for row in rows]
-    highlight_labels: dict[UUID, str] = {}
+    highlight_excerpts: dict[UUID, str] = {}
     if note_ids:
         for row in db.execute(
             text(
@@ -1648,7 +1781,10 @@ def _search_note_blocks(
             ),
             {"viewer_id": viewer_id, "note_ids": note_ids},
         ).mappings():
-            highlight_labels.setdefault(row["note_block_id"], row["exact"])
+            highlight_excerpts.setdefault(
+                row["note_block_id"],
+                _truncate_snippet(str(row["exact"] or "")),
+            )
     return [
         _RankedNoteBlockResult(
             id=row["object_id"],
@@ -1657,7 +1793,7 @@ def _search_note_blocks(
             page_title=row["title_text"],
             body_text=row["body_text"],
             score=_build_search_score(row["score"]),
-            source_label=highlight_labels.get(row["object_id"]),
+            highlight_excerpt=highlight_excerpts.get(row["object_id"]),
         )
         for row in rows
     ]
@@ -1867,7 +2003,7 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
     if isinstance(result, _RankedNoteBlockResult):
         return {
             "title": result.page_title,
-            "source_label": result.source_label or "note",
+            "source_label": "note",
             "media_id": None,
             "media_kind": None,
             "deep_link": deep_link,
@@ -1951,6 +2087,7 @@ def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
             page_id=result.page_id,
             page_title=result.page_title,
             body_text=result.body_text,
+            highlight_excerpt=result.highlight_excerpt,
             **base_payload,
         )
 

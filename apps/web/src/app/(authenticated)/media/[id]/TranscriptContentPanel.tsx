@@ -160,6 +160,14 @@ export default function TranscriptContentPanel({
                     ? segmentStartMs < evidenceEndMs && segmentEndMs > evidenceStartMs
                     : segmentStartMs === evidenceStartMs),
               );
+              const segmentLabel = [
+                timestamp ?? "Transcript segment",
+                entry.fragment.speaker_label,
+                hasEvidence ? "Evidence source" : null,
+                entry.fragment.canonical_text,
+              ]
+                .filter(Boolean)
+                .join(" ");
 
               return (
                 <Button
@@ -170,6 +178,7 @@ export default function TranscriptContentPanel({
                     isActive ? styles.segmentButtonActive : ""
                   } ${hasEvidence ? "hl-blue hl-evidence" : ""}`}
                   aria-current={isActive ? "true" : undefined}
+                  aria-label={segmentLabel}
                   data-active-highlight-ids={
                     hasEvidence ? (evidenceHighlightId ?? undefined) : undefined
                   }

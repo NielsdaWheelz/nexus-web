@@ -106,6 +106,12 @@ describe("conversation branching helpers", () => {
     expect(next).toBe(path);
   });
 
+  it("shows a parented scoped run when history has not loaded yet", () => {
+    const next = selectedPathAfterRun([], runData("assistant-1"));
+
+    expect(next.map((item) => item.id)).toEqual(["fork-user", "fork-assistant"]);
+  });
+
   it("adds a visible active fork option for a newly created branch run", () => {
     const options = upsertForkOptionForRun(
       {

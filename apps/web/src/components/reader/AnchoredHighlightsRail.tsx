@@ -166,10 +166,10 @@ export default function AnchoredHighlightsRail({
       );
     });
 
-    let previousBottom = Number.NEGATIVE_INFINITY;
+    let previousBottom = -ROW_GAP;
     const nextAlignedRows: Array<{ id: string; top: number }> = [];
     for (const row of rows) {
-      const top = Math.max(row.desiredTop, previousBottom + ROW_GAP);
+      const top = Math.max(0, row.desiredTop, previousBottom + ROW_GAP);
       nextAlignedRows.push({ id: row.highlight.id, top });
       previousBottom =
         top + (rowHeights.get(row.highlight.id) ?? COLLAPSED_ROW_HEIGHT);
