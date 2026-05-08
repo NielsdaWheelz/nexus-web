@@ -17,13 +17,16 @@ import "prosemirror-view/style/prosemirror.css";
 import styles from "./ProseMirrorOutlineEditor.module.css";
 
 interface ProseMirrorOutlineEditorProps {
-  doc: ProseMirrorNode;
+  resourceKey: string;
+  initialDoc: ProseMirrorNode;
   editable?: boolean;
   ariaLabel?: string;
   createBlockId?: () => string;
   singleBlock?: boolean;
   searchObjects?: (query: string) => Promise<HydratedObjectRef[]>;
   onDocChange?: (doc: ProseMirrorNode) => void;
+  onFocusChange?: (focused: boolean) => void;
+  onBlurFlush?: (doc: ProseMirrorNode) => void;
   onOpenBlock?: (blockId: string, openInNewPane: boolean) => void;
   onOpenObject?: (objectType: string, objectId: string, openInNewPane: boolean) => void;
 }
@@ -44,20 +47,27 @@ interface ObjectRefMenuState extends ObjectRefTextRange {
 const OBJECT_REF_SEARCH_QUERY_MAX_LENGTH = 200;
 
 export default function ProseMirrorOutlineEditor({
-  doc,
+  resourceKey,
+  initialDoc,
   editable = true,
   ariaLabel = "Notes outline",
   createBlockId,
   singleBlock = false,
   searchObjects = searchObjectRefs,
   onDocChange,
+  onFocusChange,
+  onBlurFlush,
   onOpenBlock,
   onOpenObject,
 }: ProseMirrorOutlineEditorProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const initialDocRef = useRef(initialDoc);
+  const initialDocResourceKeyRef = useRef(resourceKey);
   const onDocChangeRef = useRef(onDocChange);
+  const onFocusChangeRef = useRef(onFocusChange);
+  const onBlurFlushRef = useRef(onBlurFlush);
   const onOpenBlockRef = useRef(onOpenBlock);
   const onOpenObjectRef = useRef(onOpenObject);
   const editableRef = useRef(editable);
@@ -66,9 +76,19 @@ export default function ProseMirrorOutlineEditor({
   const [objectRefMenu, setObjectRefMenu] = useState<ObjectRefMenuState | null>(null);
   const objectRefMenuRef = useRef<ObjectRefMenuState | null>(null);
 
+  if (initialDocResourceKeyRef.current !== resourceKey) {
+    initialDocResourceKeyRef.current = resourceKey;
+    initialDocRef.current = initialDoc;
+  }
+
   useEffect(() => {
     onDocChangeRef.current = onDocChange;
   }, [onDocChange]);
+
+  useEffect(() => {
+    onFocusChangeRef.current = onFocusChange;
+    onBlurFlushRef.current = onBlurFlush;
+  }, [onBlurFlush, onFocusChange]);
 
   useEffect(() => {
     onOpenBlockRef.current = onOpenBlock;
@@ -183,7 +203,7 @@ export default function ProseMirrorOutlineEditor({
     const view = new EditorView(host, {
       state: EditorState.create({
         schema: outlineSchema,
-        doc,
+        doc: initialDocRef.current,
         plugins: [
           history(),
           createOutlineKeymap(createBlockId, singleBlock),
@@ -199,6 +219,15 @@ export default function ProseMirrorOutlineEditor({
       },
       editable: () => editableRef.current,
       handleDOMEvents: {
+        focus() {
+          onFocusChangeRef.current?.(true);
+          return false;
+        },
+        blur(view) {
+          onFocusChangeRef.current?.(false);
+          onBlurFlushRef.current?.(view.state.doc);
+          return false;
+        },
         click(_view, event) {
           if (!(event.target instanceof HTMLElement)) {
             return false;
@@ -282,7 +311,7 @@ export default function ProseMirrorOutlineEditor({
         viewRef.current = null;
       }
     };
-  }, [ariaLabel, createBlockId, doc, singleBlock]);
+  }, [ariaLabel, createBlockId, resourceKey, singleBlock]);
 
   return (
     <div ref={shellRef} className={styles.editorShell}>

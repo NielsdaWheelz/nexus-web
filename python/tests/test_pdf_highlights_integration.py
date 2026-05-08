@@ -985,9 +985,12 @@ class TestGenericPdfHighlightCoverage:
         linked_notes = get_resp.json()["data"]["linked_note_blocks"]
         assert linked_notes[0]["note_block_id"] == note_id
         assert linked_notes[0]["body_text"] == "My note"
+        assert linked_notes[0]["revision"] == note_resp.json()["data"]["revision"]
 
-        del_note = auth_client.delete(
+        del_note = auth_client.request(
+            "DELETE",
             f"/notes/blocks/{note_id}",
             headers=auth_headers(user_id),
+            json={"base_revision": note_resp.json()["data"]["revision"]},
         )
         assert del_note.status_code == 204

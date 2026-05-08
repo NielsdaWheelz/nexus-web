@@ -43,5 +43,5 @@ export default function DailyNotePaneBody() {
 
   if (feedback) return <FeedbackNotice {...feedback} />;
   if (!page) return <FeedbackNotice severity="info" title="Loading daily note..." />;
-  return <PagePaneBody pageIdOverride={page.id} />;
+  return <PagePaneBody pageIdOverride={page.id} initialPage={page} />;
 }

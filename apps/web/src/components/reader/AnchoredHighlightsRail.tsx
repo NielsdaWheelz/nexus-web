@@ -16,11 +16,14 @@ import {
   toFeedback,
   useFeedback,
 } from "@/components/feedback/Feedback";
-import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
+import HighlightNoteEditor, {
+  type HighlightLinkedNoteBlock,
+} from "@/components/notes/HighlightNoteEditor";
 import Button from "@/components/ui/Button";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import HighlightActionsMenu from "./HighlightActionsMenu";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
+import { NOTE_LAYOUT_MEASURE_DELAY_MS } from "@/lib/notes/useNoteEditorSession";
 import Pill from "@/components/ui/Pill";
 import {
   escapeAttrValue,
@@ -55,8 +58,13 @@ interface AnchoredHighlightsRailProps {
     noteBlockId: string | null,
     createBlockId: string,
     bodyPmJson: Record<string, unknown>,
+    baseRevision: number | null,
+  ) => Promise<HighlightLinkedNoteBlock>;
+  onNoteDelete: (
+    noteBlockId: string,
+    baseRevision: number,
+    shouldApply: () => boolean
   ) => Promise<void>;
-  onNoteDelete: (noteBlockId: string) => Promise<void>;
   onOpenConversation: (conversationId: string, title: string) => void;
 }
 
@@ -84,6 +92,7 @@ export default function AnchoredHighlightsRail({
   const feedback = useFeedback();
   const containerRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
+  const noteLayoutTimerRef = useRef<number | null>(null);
   const [alignedRows, setAlignedRows] = useState<
     Array<{ id: string; top: number }>
   >([]);
@@ -93,6 +102,8 @@ export default function AnchoredHighlightsRail({
   const [noteLayoutVersion, setNoteLayoutVersion] = useState(0);
   const [changingColor, setChangingColor] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const draftNoteEditorKeysRef = useRef(new Map<string, string>());
+  const noteEditorKeysByBlockIdRef = useRef(new Map<string, string>());
 
   const {
     orderedHighlights,
@@ -107,6 +118,14 @@ export default function AnchoredHighlightsRail({
       orderedHighlights.find((highlight) => highlight.id === focusedId) ?? null,
     [focusedId, orderedHighlights],
   );
+
+  useEffect(() => {
+    return () => {
+      if (noteLayoutTimerRef.current !== null) {
+        window.clearTimeout(noteLayoutTimerRef.current);
+      }
+    };
+  }, []);
 
   const findHighlightAnchorElement = useCallback(
     (highlightId: string) => {
@@ -245,6 +264,28 @@ export default function AnchoredHighlightsRail({
     focusedHighlight?.linked_note_blocks,
     focusedHighlight?.updated_at,
   ]);
+
+  useEffect(() => {
+    const renderedHighlightIds = new Set<string>();
+    const renderedNoteBlockIds = new Set<string>();
+    for (const highlight of highlights) {
+      renderedHighlightIds.add(highlight.id);
+      for (const noteBlock of highlight.linked_note_blocks ?? []) {
+        renderedNoteBlockIds.add(noteBlock.note_block_id);
+      }
+    }
+
+    for (const highlightId of draftNoteEditorKeysRef.current.keys()) {
+      if (!renderedHighlightIds.has(highlightId)) {
+        draftNoteEditorKeysRef.current.delete(highlightId);
+      }
+    }
+    for (const noteBlockId of noteEditorKeysByBlockIdRef.current.keys()) {
+      if (!renderedNoteBlockIds.has(noteBlockId)) {
+        noteEditorKeysByBlockIdRef.current.delete(noteBlockId);
+      }
+    }
+  }, [highlights]);
 
   useEffect(() => {
     if (isMobile || !containerRef.current) {
@@ -400,6 +441,65 @@ export default function AnchoredHighlightsRail({
     [],
   );
 
+  const scheduleNoteLayoutMeasure = useCallback(() => {
+    if (noteLayoutTimerRef.current !== null) {
+      window.clearTimeout(noteLayoutTimerRef.current);
+    }
+    noteLayoutTimerRef.current = window.setTimeout(() => {
+      noteLayoutTimerRef.current = null;
+      setNoteLayoutVersion((version) => version + 1);
+    }, NOTE_LAYOUT_MEASURE_DELAY_MS);
+  }, []);
+
+  const getDraftNoteEditorKey = useCallback((highlightId: string) => {
+    const existingKey = draftNoteEditorKeysRef.current.get(highlightId);
+    if (existingKey) {
+      return existingKey;
+    }
+
+    const nextKey = `draft-note-${highlightId}`;
+    draftNoteEditorKeysRef.current.set(highlightId, nextKey);
+    return nextKey;
+  }, []);
+
+  const getNoteEditorKey = useCallback(
+    (
+      highlightId: string,
+      note: NonNullable<AnchoredHighlightRow["linked_note_blocks"]>[number] | null,
+    ) => {
+      if (!note) {
+        return getDraftNoteEditorKey(highlightId);
+      }
+      const noteKey =
+        noteEditorKeysByBlockIdRef.current.get(note.note_block_id) ??
+        `note-${note.note_block_id}`;
+      if (!draftNoteEditorKeysRef.current.has(highlightId)) {
+        draftNoteEditorKeysRef.current.set(highlightId, noteKey);
+      }
+      return noteKey;
+    },
+    [getDraftNoteEditorKey],
+  );
+
+  const handleNoteSave = useCallback(
+    async (
+      highlightId: string,
+      noteBlockId: string | null,
+      createBlockId: string,
+      bodyPmJson: Record<string, unknown>,
+      baseRevision: number | null,
+    ) => {
+      if (!noteBlockId) {
+        noteEditorKeysByBlockIdRef.current.set(
+          createBlockId,
+          getDraftNoteEditorKey(highlightId),
+        );
+      }
+      return onNoteSave(highlightId, noteBlockId, createBlockId, bodyPmJson, baseRevision);
+    },
+    [getDraftNoteEditorKey, onNoteSave],
+  );
+
   const handleDelete = useCallback(
     async (highlight: AnchoredHighlightRow) => {
       if (highlight.is_owner === false || deleting) {
@@ -543,25 +643,26 @@ export default function AnchoredHighlightsRail({
           ) : null}
 
           <div className={styles.noteEditorList}>
-            {notesToRender.map((note, index) => (
-              <div
-                key={
-                  note?.note_block_id ?? `new-note-${highlight.id}-${index}`
-                }
-                className={styles.noteEditor}
-              >
-                <HighlightNoteEditor
-                  highlightId={highlight.id}
-                  note={note}
-                  editable={true}
-                  onSave={onNoteSave}
-                  onDelete={onNoteDelete}
-                  onLocalChange={() =>
-                    setNoteLayoutVersion((version) => version + 1)
-                  }
-                />
-              </div>
-            ))}
+            {notesToRender.map((note) => {
+              const noteEditorKey = getNoteEditorKey(highlight.id, note);
+              return (
+                <div
+                  key={noteEditorKey}
+                  data-note-editor-key={noteEditorKey}
+                  data-testid={`highlight-note-editor-${noteEditorKey}`}
+                  className={styles.noteEditor}
+                >
+                  <HighlightNoteEditor
+                    highlightId={highlight.id}
+                    note={note}
+                    editable={true}
+                    onSave={handleNoteSave}
+                    onDelete={onNoteDelete}
+                    onLocalChange={scheduleNoteLayoutMeasure}
+                  />
+                </div>
+              );
+            })}
           </div>
 
           {highlight.linked_conversations &&
@@ -599,14 +700,16 @@ export default function AnchoredHighlightsRail({
       handleRowClick,
       handleRowMouseEnter,
       handleRowMouseLeave,
+      handleNoteSave,
       isEditingBounds,
+      getNoteEditorKey,
       onCancelEditBounds,
       onFocusHighlight,
       onNoteDelete,
-      onNoteSave,
       onOpenConversation,
       onSendToChat,
       onStartEditBounds,
+      scheduleNoteLayoutMeasure,
       setRowRef,
     ],
   );

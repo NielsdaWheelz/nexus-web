@@ -16,3 +16,9 @@
   font-size: var(--text-xs);
   min-height: 14px;
 }
+
+.conflictActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

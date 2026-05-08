@@ -102,6 +102,7 @@ class TestErrorCodeToStatus:
             (ApiErrorCode.E_SANITIZATION_FAILED, 500),
             (ApiErrorCode.E_HIGHLIGHT_INVALID_RANGE, 400),
             (ApiErrorCode.E_HIGHLIGHT_CONFLICT, 409),
+            (ApiErrorCode.E_NOTE_CONFLICT, 409),
             (ApiErrorCode.E_MEDIA_NOT_READY, 409),
             # S4 error codes
             (ApiErrorCode.E_USER_NOT_FOUND, 404),

@@ -23,6 +23,7 @@ describe("notes ProseMirror schema", () => {
       bodyMarkdown: "",
       bodyText: "Embedded page",
       collapsed: false,
+      revision: 1,
       children: [],
     };
 

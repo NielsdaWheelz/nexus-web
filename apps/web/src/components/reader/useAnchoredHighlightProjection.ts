@@ -27,6 +27,7 @@ export interface AnchoredHighlightRow {
     body_pm_json?: Record<string, unknown>;
     body_markdown?: string;
     body_text: string;
+    revision: number;
   }[];
   anchor?: {
     fragment_id?: string;

@@ -40,7 +40,16 @@ export default function NotesPaneBody() {
     const nextTitle = title.trim() || "Untitled";
     try {
       const page = await createNotePage({ title: nextTitle });
-      setPages((current) => [{ id: page.id, title: page.title, description: page.description, updatedAt: page.updatedAt }, ...current]);
+      setPages((current) => [
+        {
+          id: page.id,
+          title: page.title,
+          description: page.description,
+          revision: page.revision,
+          updatedAt: page.updatedAt,
+        },
+        ...current,
+      ]);
       setTitle("");
       router.push(`/pages/${page.id}`);
     } catch (error: unknown) {

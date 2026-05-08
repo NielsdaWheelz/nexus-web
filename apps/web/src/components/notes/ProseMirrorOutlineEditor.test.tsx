@@ -10,7 +10,13 @@ describe("ProseMirrorOutlineEditor object refs", () => {
     const objectId = "11111111-1111-4111-8111-111111111111";
     const onOpenObject = vi.fn();
 
-    render(<ProseMirrorOutlineEditor doc={noteDoc(objectId)} onOpenObject={onOpenObject} />);
+    render(
+      <ProseMirrorOutlineEditor
+        resourceKey="test:object-ref"
+        initialDoc={noteDoc(objectId)}
+        onOpenObject={onOpenObject}
+      />
+    );
 
     const objectRef = await screen.findByRole("link", { name: "Open Source media" });
     objectRef.focus();
@@ -31,7 +37,13 @@ describe("ProseMirrorOutlineEditor object refs", () => {
       },
     ]);
 
-    render(<ProseMirrorOutlineEditor doc={emptyDoc()} searchObjects={searchObjects} />);
+    render(
+      <ProseMirrorOutlineEditor
+        resourceKey="test:autocomplete"
+        initialDoc={emptyDoc()}
+        searchObjects={searchObjects}
+      />
+    );
 
     const editor = screen.getByRole("textbox", { name: "Notes outline" });
     await user.click(editor);
@@ -71,7 +83,13 @@ describe("ProseMirrorOutlineEditor object refs", () => {
       },
     ]);
 
-    render(<ProseMirrorOutlineEditor doc={emptyDoc()} searchObjects={searchObjects} />);
+    render(
+      <ProseMirrorOutlineEditor
+        resourceKey="test:page-autocomplete"
+        initialDoc={emptyDoc()}
+        searchObjects={searchObjects}
+      />
+    );
 
     const editor = screen.getByRole("textbox", { name: "Notes outline" });
     await user.click(editor);
@@ -100,7 +118,13 @@ describe("ProseMirrorOutlineEditor object refs", () => {
       },
     ]);
 
-    render(<ProseMirrorOutlineEditor doc={emptyDoc()} searchObjects={searchObjects} />);
+    render(
+      <ProseMirrorOutlineEditor
+        resourceKey="test:selection-autocomplete"
+        initialDoc={emptyDoc()}
+        searchObjects={searchObjects}
+      />
+    );
 
     const editor = screen.getByRole("textbox", { name: "Notes outline" });
     await user.click(editor);
@@ -119,6 +143,27 @@ describe("ProseMirrorOutlineEditor object refs", () => {
     await waitFor(() => {
       expect(searchObjects).toHaveBeenLastCalledWith("Evergreen");
     });
+  });
+
+  it("keeps the live editor doc when parent props echo a new snapshot for the same resource", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ProseMirrorOutlineEditor resourceKey="page:stable" initialDoc={emptyDoc()} />
+    );
+
+    const editor = screen.getByRole("textbox", { name: "Notes outline" });
+    await user.click(editor);
+    await user.keyboard("local draft");
+
+    rerender(
+      <ProseMirrorOutlineEditor
+        resourceKey="page:stable"
+        initialDoc={textDoc("server echo")}
+      />
+    );
+
+    expect(editor).toHaveTextContent("local draft");
+    expect(editor).not.toHaveTextContent("server echo");
   });
 });
 
@@ -139,10 +184,15 @@ function noteDoc(objectId: string) {
 }
 
 function emptyDoc() {
+  return textDoc("");
+}
+
+function textDoc(text: string) {
   const paragraph = outlineSchema.nodes.paragraph!.create();
+  const body = text ? outlineSchema.nodes.paragraph!.create(null, outlineSchema.text(text)) : paragraph;
   const block = outlineSchema.nodes.outline_block!.create(
     { id: "block-1", kind: "bullet", collapsed: false },
-    [paragraph]
+    [body]
   );
   return outlineSchema.nodes.outline_doc!.create(null, [block]);
 }

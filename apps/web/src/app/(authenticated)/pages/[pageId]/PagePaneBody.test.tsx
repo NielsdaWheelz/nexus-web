@@ -67,6 +67,7 @@ describe("readDraftBlocksForPersistence", () => {
         bodyMarkdown: "const answer = 42;",
         bodyText: "const answer = 42;",
         collapsed: false,
+        revision: 1,
         children: [],
       },
     ]);

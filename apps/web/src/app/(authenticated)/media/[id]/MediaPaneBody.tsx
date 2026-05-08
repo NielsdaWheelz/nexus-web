@@ -129,8 +129,12 @@ import {
   createHighlight,
   updateHighlight,
   deleteHighlight,
+  saveHighlightNote,
+  deleteHighlightNote,
+  patchHighlightLinkedNoteBlock,
+  removeHighlightLinkedNoteBlock,
+  type HighlightLinkedNoteBlock,
 } from "./mediaHighlights";
-import { createNoteBlock, deleteNoteBlock, updateNoteBlock } from "@/lib/notes/api";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { buildCompactMediaPaneTitle, formatResumeTime } from "./mediaFormatting";
@@ -3121,65 +3125,86 @@ export default function MediaPaneBody() {
     [activeContent, clearFocus, isPdf]
   );
 
+  const patchLocalHighlightNote = useCallback(
+    (highlightId: string, linkedNoteBlock: HighlightLinkedNoteBlock) => {
+      if (isPdf) {
+        setPdfHighlightsPaneState((current) => {
+          const nextHighlights = patchHighlightLinkedNoteBlock(
+            current.highlights,
+            highlightId,
+            linkedNoteBlock
+          );
+          return nextHighlights === current.highlights
+            ? current
+            : { ...current, highlights: nextHighlights };
+        });
+        setPdfDocumentHighlights((current) =>
+          patchHighlightLinkedNoteBlock(current, highlightId, linkedNoteBlock)
+        );
+        return;
+      }
+
+      setHighlights((current) =>
+        patchHighlightLinkedNoteBlock(current, highlightId, linkedNoteBlock)
+      );
+    },
+    [isPdf]
+  );
+
+  const removeLocalHighlightNote = useCallback(
+    (noteBlockId: string) => {
+      if (isPdf) {
+        setPdfHighlightsPaneState((current) => {
+          const nextHighlights = removeHighlightLinkedNoteBlock(
+            current.highlights,
+            noteBlockId
+          );
+          return nextHighlights === current.highlights
+            ? current
+            : { ...current, highlights: nextHighlights };
+        });
+        setPdfDocumentHighlights((current) =>
+          removeHighlightLinkedNoteBlock(current, noteBlockId)
+        );
+        return;
+      }
+
+      setHighlights((current) =>
+        removeHighlightLinkedNoteBlock(current, noteBlockId)
+      );
+    },
+    [isPdf]
+  );
+
   const handleNoteSave = useCallback(
     async (
       highlightId: string,
       noteBlockId: string | null,
       createBlockId: string,
-      bodyPmJson: Record<string, unknown>
+      bodyPmJson: Record<string, unknown>,
+      baseRevision: number | null
     ) => {
-      if (isPdf) {
-        if (noteBlockId) {
-          await updateNoteBlock(noteBlockId, { bodyPmJson });
-        } else {
-          await createNoteBlock({
-            id: createBlockId,
-            bodyPmJson,
-            linkedObject: { objectType: "highlight", objectId: highlightId },
-            relationType: "note_about",
-          });
-        }
-        setPdfRefreshToken((v) => v + 1);
-        return;
-      }
-      if (!activeContent) return;
-      const requestVersion = ++highlightVersionRef.current;
-      if (noteBlockId) {
-        await updateNoteBlock(noteBlockId, { bodyPmJson });
-      } else {
-        await createNoteBlock({
-          id: createBlockId,
-          bodyPmJson,
-          linkedObject: { objectType: "highlight", objectId: highlightId },
-          relationType: "note_about",
-        });
-      }
-      const newHighlights = await fetchHighlights(activeContent.fragmentId);
-      if (requestVersion !== highlightVersionRef.current) {
-        return;
-      }
-      setHighlights(newHighlights);
+      const linkedNoteBlock = await saveHighlightNote(
+        highlightId,
+        noteBlockId,
+        createBlockId,
+        bodyPmJson,
+        baseRevision
+      );
+      patchLocalHighlightNote(highlightId, linkedNoteBlock);
+      return linkedNoteBlock;
     },
-    [activeContent, isPdf]
+    [patchLocalHighlightNote]
   );
 
   const handleNoteDelete = useCallback(
-    async (noteBlockId: string) => {
-      if (isPdf) {
-        await deleteNoteBlock(noteBlockId);
-        setPdfRefreshToken((v) => v + 1);
-        return;
+    async (noteBlockId: string, baseRevision: number, shouldApply: () => boolean) => {
+      await deleteHighlightNote(noteBlockId, baseRevision);
+      if (shouldApply()) {
+        removeLocalHighlightNote(noteBlockId);
       }
-      if (!activeContent) return;
-      const requestVersion = ++highlightVersionRef.current;
-      await deleteNoteBlock(noteBlockId);
-      const newHighlights = await fetchHighlights(activeContent.fragmentId);
-      if (requestVersion !== highlightVersionRef.current) {
-        return;
-      }
-      setHighlights(newHighlights);
     },
-    [activeContent, isPdf]
+    [removeLocalHighlightNote]
   );
 
   // ==========================================================================

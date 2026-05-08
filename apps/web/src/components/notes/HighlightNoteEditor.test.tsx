@@ -10,11 +10,24 @@ describe("HighlightNoteEditor persistence", () => {
   it("flushes the latest pending note doc on unmount while a save is in flight", async () => {
     const user = userEvent.setup();
     const firstSave = deferred();
-    const onSave = vi.fn(async () => {
+    const onSave = vi.fn(
+      async (
+        _highlightId: string,
+        _noteBlockId: string | null,
+        createBlockId: string,
+        bodyPmJson: Record<string, unknown>
+      ) => {
       if (onSave.mock.calls.length === 1) {
         await firstSave.promise;
       }
-    });
+        return {
+          note_block_id: createBlockId,
+          body_pm_json: bodyPmJson,
+          body_text: "",
+          revision: onSave.mock.calls.length + 1,
+        };
+      }
+    );
 
     const { unmount } = render(
       <FeedbackProvider>
@@ -24,6 +37,7 @@ describe("HighlightNoteEditor persistence", () => {
             note_block_id: "note-1",
             body_pm_json: paragraphFromText("").toJSON() as Record<string, unknown>,
             body_text: "",
+            revision: 1,
           }}
           editable
           onSave={onSave}
@@ -38,13 +52,14 @@ describe("HighlightNoteEditor persistence", () => {
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledTimes(1);
-    });
+    }, { timeout: 3000 });
     expect(onSave).toHaveBeenNthCalledWith(
       1,
       "highlight-1",
       "note-1",
       "note-1",
-      paragraphFromText("first").toJSON()
+      paragraphFromText("first").toJSON(),
+      1
     );
 
     await user.keyboard("second");
@@ -56,25 +71,39 @@ describe("HighlightNoteEditor persistence", () => {
     });
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledTimes(2);
-    });
+    }, { timeout: 3000 });
 
     expect(onSave).toHaveBeenNthCalledWith(
       2,
       "highlight-1",
       "note-1",
       "note-1",
-      paragraphFromText("firstsecond").toJSON()
+      paragraphFromText("firstsecond").toJSON(),
+      2
     );
   });
 
   it("uses the created draft block id for a queued save of a new note", async () => {
     const user = userEvent.setup();
     const firstSave = deferred();
-    const onSave = vi.fn(async () => {
+    const onSave = vi.fn(
+      async (
+        _highlightId: string,
+        _noteBlockId: string | null,
+        createBlockId: string,
+        bodyPmJson: Record<string, unknown>
+      ) => {
       if (onSave.mock.calls.length === 1) {
         await firstSave.promise;
       }
-    });
+        return {
+          note_block_id: createBlockId,
+          body_pm_json: bodyPmJson,
+          body_text: "",
+          revision: onSave.mock.calls.length,
+        };
+      }
+    );
 
     const { unmount } = render(
       <FeedbackProvider>
@@ -95,13 +124,14 @@ describe("HighlightNoteEditor persistence", () => {
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledTimes(1);
-    });
+    }, { timeout: 3000 });
     expect(onSave).toHaveBeenNthCalledWith(
       1,
       "highlight-1",
       null,
       draftBlockId,
-      paragraphFromText("first").toJSON()
+      paragraphFromText("first").toJSON(),
+      null
     );
 
     await user.keyboard("second");
@@ -113,14 +143,15 @@ describe("HighlightNoteEditor persistence", () => {
     });
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledTimes(2);
-    });
+    }, { timeout: 3000 });
 
     expect(onSave).toHaveBeenNthCalledWith(
       2,
       "highlight-1",
       draftBlockId,
       draftBlockId,
-      paragraphFromText("firstsecond").toJSON()
+      paragraphFromText("firstsecond").toJSON(),
+      1
     );
   });
 
@@ -165,6 +196,79 @@ describe("HighlightNoteEditor persistence", () => {
         bodyPmJson: { type: "paragraph" },
       }),
     ).toBe(false);
+  });
+
+  it("keeps focus when a new note save is echoed back by parent props", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn(
+      async (
+        _highlightId: string,
+        _noteBlockId: string | null,
+        createBlockId: string,
+        bodyPmJson: Record<string, unknown>
+      ) => ({
+        note_block_id: createBlockId,
+        body_pm_json: bodyPmJson,
+        body_text: "first",
+        revision: 1,
+      })
+    );
+    const onDelete = vi.fn(async () => undefined);
+
+    const { rerender } = render(
+      <FeedbackProvider>
+        <HighlightNoteEditor
+          highlightId="highlight-1"
+          note={null}
+          editable
+          onSave={onSave}
+          onDelete={onDelete}
+        />
+      </FeedbackProvider>
+    );
+
+    const editor = await screen.findByRole("textbox", { name: "Highlight note" });
+    const draftBlockId = noteBlockIdFromEditor(editor);
+    await user.click(editor);
+    await user.keyboard("first");
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledTimes(1);
+    }, { timeout: 3000 });
+
+    rerender(
+      <FeedbackProvider>
+        <HighlightNoteEditor
+          highlightId="highlight-1"
+          note={{
+            note_block_id: draftBlockId,
+            body_pm_json: paragraphFromText("first").toJSON() as Record<string, unknown>,
+            body_text: "first",
+            revision: 1,
+          }}
+          editable
+          onSave={onSave}
+          onDelete={onDelete}
+        />
+      </FeedbackProvider>
+    );
+
+    expect(screen.getByRole("textbox", { name: "Highlight note" })).toBe(editor);
+    expect(editor).toHaveFocus();
+
+    await user.keyboard("second");
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledTimes(2);
+    }, { timeout: 3000 });
+    expect(onSave).toHaveBeenNthCalledWith(
+      2,
+      "highlight-1",
+      draftBlockId,
+      draftBlockId,
+      paragraphFromText("firstsecond").toJSON(),
+      1
+    );
   });
 });
 

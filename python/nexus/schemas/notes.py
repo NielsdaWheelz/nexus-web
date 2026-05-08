@@ -85,6 +85,7 @@ class NoteBlockOut(BaseModel):
     body_markdown: str = Field(serialization_alias="bodyMarkdown")
     body_text: str = Field(serialization_alias="bodyText")
     collapsed: bool
+    revision: int
     children: list["NoteBlockOut"] = Field(default_factory=list)
     created_at: datetime = Field(serialization_alias="createdAt")
     updated_at: datetime = Field(serialization_alias="updatedAt")
@@ -96,6 +97,7 @@ class NotePageSummaryOut(BaseModel):
     id: UUID
     title: str
     description: str | None = None
+    revision: int
     updated_at: datetime = Field(serialization_alias="updatedAt")
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
@@ -125,6 +127,124 @@ class UpdatePageRequest(BaseModel):
     description: str | None = None
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+
+class PageDocumentBlockRequest(BaseModel):
+    id: UUID
+    parent_block_id: UUID | None = Field(
+        ...,
+        validation_alias=AliasChoices("parent_block_id", "parentBlockId"),
+        serialization_alias="parentBlockId",
+    )
+    before_block_id: UUID | None = Field(
+        ...,
+        validation_alias=AliasChoices("before_block_id", "beforeBlockId"),
+        serialization_alias="beforeBlockId",
+    )
+    after_block_id: UUID | None = Field(
+        ...,
+        validation_alias=AliasChoices("after_block_id", "afterBlockId"),
+        serialization_alias="afterBlockId",
+    )
+    block_kind: NOTE_BLOCK_KINDS = Field(
+        ...,
+        validation_alias=AliasChoices("block_kind", "blockKind"),
+        serialization_alias="blockKind",
+    )
+    body_pm_json: dict[str, Any] = Field(
+        ...,
+        validation_alias=AliasChoices("body_pm_json", "bodyPmJson"),
+        serialization_alias="bodyPmJson",
+    )
+    collapsed: bool
+    base_revision: int | None = Field(
+        None,
+        ge=1,
+        validation_alias=AliasChoices("base_revision", "baseRevision"),
+        serialization_alias="baseRevision",
+    )
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    @field_validator("body_pm_json")
+    @classmethod
+    def validate_body_pm_json(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return validate_note_body_pm_json(value)
+
+    @model_validator(mode="after")
+    def validate_position(self) -> "PageDocumentBlockRequest":
+        if self.before_block_id is not None and self.after_block_id is not None:
+            raise ValueError("Specify only one of before_block_id or after_block_id")
+        return self
+
+
+class PageDocumentDeletedBlockRequest(BaseModel):
+    id: UUID
+    base_revision: int = Field(
+        ...,
+        ge=1,
+        validation_alias=AliasChoices("base_revision", "baseRevision"),
+        serialization_alias="baseRevision",
+    )
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class PatchPageDocumentRequest(BaseModel):
+    client_mutation_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=120,
+        validation_alias=AliasChoices("client_mutation_id", "clientMutationId"),
+        serialization_alias="clientMutationId",
+    )
+    base_page_revision: int = Field(
+        ...,
+        ge=1,
+        validation_alias=AliasChoices("base_page_revision", "basePageRevision"),
+        serialization_alias="basePageRevision",
+    )
+    focus_block_id: UUID | None = Field(
+        None,
+        validation_alias=AliasChoices("focus_block_id", "focusBlockId"),
+        serialization_alias="focusBlockId",
+    )
+    top_level_parent_block_id: UUID | None = Field(
+        None,
+        validation_alias=AliasChoices("top_level_parent_block_id", "topLevelParentBlockId"),
+        serialization_alias="topLevelParentBlockId",
+    )
+    blocks: list[PageDocumentBlockRequest] = Field(
+        default_factory=list,
+    )
+    deleted_blocks: list[PageDocumentDeletedBlockRequest] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("deleted_blocks", "deletedBlocks"),
+        serialization_alias="deletedBlocks",
+    )
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_document_operations(self) -> "PatchPageDocumentRequest":
+        block_ids = [block.id for block in self.blocks]
+        deleted_ids = [block.id for block in self.deleted_blocks]
+        if len(block_ids) != len(set(block_ids)):
+            raise ValueError("blocks contains duplicate block ids")
+        if len(deleted_ids) != len(set(deleted_ids)):
+            raise ValueError("deleted_blocks contains duplicate block ids")
+        block_set = set(block_ids)
+        deleted_set = set(deleted_ids)
+        if block_set & deleted_set:
+            raise ValueError("A block cannot be changed or created and deleted")
+        return self
+
+
+class PatchPageDocumentResponse(BaseModel):
+    client_mutation_id: str = Field(serialization_alias="clientMutationId")
+    page: NotePageOut
+    focused_block: NoteBlockOut | None = Field(None, serialization_alias="focusedBlock")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class LinkedObjectRequest(BaseModel):
@@ -306,6 +426,7 @@ class UpdateNoteBlockRequest(BaseModel):
     block_kind: NOTE_BLOCK_KINDS | None = None
     body_pm_json: dict[str, Any] | None = None
     collapsed: bool | None = None
+    base_revision: int = Field(..., ge=1)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -313,6 +434,12 @@ class UpdateNoteBlockRequest(BaseModel):
     @classmethod
     def validate_body_pm_json(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         return validate_note_body_pm_json(value)
+
+
+class DeleteNoteBlockRequest(BaseModel):
+    base_revision: int = Field(..., ge=1)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class MoveNoteBlockRequest(BaseModel):

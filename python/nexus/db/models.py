@@ -223,6 +223,12 @@ class Page(Base):
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    revision: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("1"),
+        default=1,
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -236,6 +242,7 @@ class Page(Base):
 
     __table_args__ = (
         CheckConstraint("char_length(title) BETWEEN 1 AND 200", name="ck_pages_title_length"),
+        CheckConstraint("revision >= 1", name="ck_pages_revision_positive"),
     )
 
 
@@ -314,6 +321,12 @@ class NoteBlock(Base):
     body_markdown: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     body_text: Mapped[str] = mapped_column(Text, nullable=False)
     collapsed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    revision: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("1"),
+        default=1,
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -337,6 +350,7 @@ class NoteBlock(Base):
             "char_length(order_key) BETWEEN 1 AND 64",
             name="ck_note_blocks_order_key_length",
         ),
+        CheckConstraint("revision >= 1", name="ck_note_blocks_revision_positive"),
     )
 
 

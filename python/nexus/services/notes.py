@@ -22,7 +22,7 @@ from nexus.db.models import (
     Page,
     PinnedObjectRef,
 )
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.notes import (
     NOTE_BLOCK_KINDS,
     OBJECT_TYPE_VALUES,
@@ -36,6 +36,8 @@ from nexus.schemas.notes import (
     NotePageOut,
     NotePageSummaryOut,
     ObjectRef,
+    PatchPageDocumentRequest,
+    PatchPageDocumentResponse,
     QuickCaptureRequest,
     SplitNoteBlockRequest,
     UpdateNoteBlockRequest,
@@ -48,6 +50,14 @@ _OBJECT_REF_MARKDOWN_RE = re.compile(
     r"\[\[([a-z_]+):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:\|([^\]\n]*))?\]\]"
 )
+
+
+def _bump_page_revision(page: Page) -> None:
+    page.revision = int(page.revision or 0) + 1
+
+
+def _bump_block_revision(block: NoteBlock) -> None:
+    block.revision = int(block.revision or 0) + 1
 
 
 def pm_doc_from_text(text: str) -> dict[str, Any]:
@@ -228,15 +238,315 @@ def update_page(
     request: UpdatePageRequest,
 ) -> NotePageOut:
     page = get_page_for_owner_or_404(db, viewer_id, page_id)
-    if request.title is not None:
+    changed = False
+    if request.title is not None and request.title != page.title:
         page.title = request.title
-    if "description" in request.model_fields_set:
+        changed = True
+    if "description" in request.model_fields_set and request.description != page.description:
         page.description = request.description
-    page.updated_at = func.now()
-    object_search.project_page(db, viewer_id, page)
+        changed = True
+    if changed:
+        _bump_page_revision(page)
+        page.updated_at = func.now()
+        object_search.project_page(db, viewer_id, page)
     db.commit()
     db.refresh(page)
     return _page_out(db, page)
+
+
+def patch_page_document(
+    db: Session,
+    viewer_id: UUID,
+    page_id: UUID,
+    request: PatchPageDocumentRequest,
+) -> PatchPageDocumentResponse:
+    for attempt in range(3):
+        _use_serializable_if_available(db)
+        try:
+            return _patch_page_document_once(db, viewer_id, page_id, request)
+        except OperationalError as exc:
+            db.rollback()
+            if not _is_serialization_failure(exc):
+                raise
+            if attempt == 2:
+                raise AssertionError("Note document retry loop exhausted") from exc
+    raise AssertionError("Note document retry loop exhausted")
+
+
+def _patch_page_document_once(
+    db: Session,
+    viewer_id: UUID,
+    page_id: UUID,
+    request: PatchPageDocumentRequest,
+) -> PatchPageDocumentResponse:
+    page = db.scalar(select(Page).where(Page.id == page_id, Page.user_id == viewer_id))
+    if page is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Page not found")
+
+    existing_blocks = {
+        block.id: block
+        for block in db.scalars(
+            select(NoteBlock).where(NoteBlock.page_id == page.id, NoteBlock.user_id == viewer_id)
+        )
+    }
+    requested_by_id = {block.id: block for block in request.blocks}
+    deleted_revision_by_id = {block.id: block.base_revision for block in request.deleted_blocks}
+    deleted_ids = set(deleted_revision_by_id)
+
+    if request.focus_block_id is not None:
+        focused = existing_blocks.get(request.focus_block_id)
+        if focused is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
+
+    for block_id in deleted_ids:
+        block = existing_blocks.get(block_id)
+        if block is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
+        base_revision = deleted_revision_by_id[block_id]
+        if block.revision != base_revision:
+            raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block revision conflict")
+
+    for block_id in list(deleted_ids):
+        deleted_ids.update(
+            descendant_id
+            for descendant_id in _descendant_ids(db, block_id)
+            if descendant_id in existing_blocks
+        )
+
+    for patch in request.blocks:
+        block = existing_blocks.get(patch.id)
+        if block is not None:
+            if patch.base_revision is None:
+                raise ConflictError(
+                    ApiErrorCode.E_NOTE_CONFLICT,
+                    "Existing note block requires a base revision",
+                )
+            if block.revision != patch.base_revision:
+                raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block revision conflict")
+        else:
+            if patch.base_revision is not None:
+                raise ApiError(
+                    ApiErrorCode.E_INVALID_REQUEST, "New block cannot have a base revision"
+                )
+            if db.get(NoteBlock, patch.id) is not None:
+                raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists")
+
+    final_parent_by_id = {
+        block_id: block.parent_block_id
+        for block_id, block in existing_blocks.items()
+        if block_id not in deleted_ids
+    }
+    for patch in request.blocks:
+        if patch.id in existing_blocks and patch.id == request.focus_block_id:
+            continue
+        final_parent_by_id[patch.id] = patch.parent_block_id
+
+    final_order_by_id = {
+        block_id: block.order_key
+        for block_id, block in existing_blocks.items()
+        if block_id not in deleted_ids
+    }
+
+    for patch in request.blocks:
+        parent_id = final_parent_by_id[patch.id]
+        if parent_id is None:
+            continue
+        if parent_id == patch.id:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Block cannot be moved under itself")
+        if parent_id in deleted_ids or parent_id not in final_parent_by_id:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Parent must be on the same page")
+
+    for block_id in final_parent_by_id:
+        seen: set[UUID] = set()
+        parent_id = final_parent_by_id[block_id]
+        while parent_id is not None:
+            if parent_id == block_id or parent_id in seen:
+                raise ApiError(
+                    ApiErrorCode.E_INVALID_REQUEST,
+                    "Block cannot be moved under one of its descendants",
+                )
+            seen.add(parent_id)
+            parent_id = final_parent_by_id.get(parent_id)
+
+    requested_ids_by_parent: dict[UUID | None, list[UUID]] = {}
+    for patch in request.blocks:
+        if patch.id in existing_blocks and patch.id == request.focus_block_id:
+            continue
+        requested_ids_by_parent.setdefault(final_parent_by_id[patch.id], []).append(patch.id)
+
+    touched_existing_order_ids: set[UUID] = set()
+    for parent_id, requested_ids in requested_ids_by_parent.items():
+        siblings = [
+            block.id
+            for block in _siblings(db, page.id, parent_id)
+            if block.id not in deleted_ids and final_parent_by_id.get(block.id) == parent_id
+        ]
+        for block_id in requested_ids:
+            patch = requested_by_id[block_id]
+            if (
+                block_id in siblings
+                and patch.before_block_id is None
+                and patch.after_block_id is None
+            ):
+                continue
+            if block_id in siblings:
+                siblings.remove(block_id)
+            insert_at = len(siblings)
+            if patch.before_block_id is not None and patch.before_block_id in siblings:
+                insert_at = siblings.index(patch.before_block_id)
+            elif patch.after_block_id is not None and patch.after_block_id in siblings:
+                insert_at = siblings.index(patch.after_block_id) + 1
+            siblings.insert(insert_at, block_id)
+        for index, block_id in enumerate(siblings):
+            final_order_by_id[block_id] = f"{index + 1:010d}"
+            if block_id in existing_blocks:
+                touched_existing_order_ids.add(block_id)
+
+    structure_changed = bool(deleted_ids)
+    for patch in request.blocks:
+        block = existing_blocks.get(patch.id)
+        if block is None:
+            structure_changed = True
+            continue
+        if final_parent_by_id[patch.id] != block.parent_block_id:
+            structure_changed = True
+        if final_order_by_id[patch.id] != block.order_key:
+            structure_changed = True
+    for block_id in touched_existing_order_ids:
+        block = existing_blocks[block_id]
+        if final_order_by_id[block_id] != block.order_key:
+            structure_changed = True
+
+    if structure_changed and page.revision != request.base_page_revision:
+        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Page revision conflict")
+
+    def requested_parent_depth(block_id: UUID) -> int:
+        depth = 0
+        parent_id = final_parent_by_id.get(block_id)
+        while parent_id is not None and parent_id in requested_by_id:
+            depth += 1
+            parent_id = final_parent_by_id.get(parent_id)
+        return depth
+
+    changed = False
+    created_blocks: dict[UUID, NoteBlock] = {}
+
+    try:
+        for block_id in sorted(
+            (block_id for block_id in requested_by_id if block_id not in existing_blocks),
+            key=requested_parent_depth,
+        ):
+            patch = requested_by_id[block_id]
+            block = NoteBlock(
+                id=patch.id,
+                user_id=viewer_id,
+                page_id=page.id,
+                parent_block_id=final_parent_by_id[patch.id],
+                order_key=final_order_by_id[patch.id],
+                block_kind=patch.block_kind,
+                body_pm_json=patch.body_pm_json,
+                body_markdown=markdown_from_pm_json(patch.body_pm_json),
+                body_text=text_from_pm_json(patch.body_pm_json),
+                collapsed=patch.collapsed,
+            )
+            db.add(block)
+            db.flush()
+            _sync_inline_reference_links(db, viewer_id, block)
+            object_search.project_note_block(db, viewer_id, block)
+            created_blocks[block.id] = block
+            changed = True
+
+        for block_id, patch in requested_by_id.items():
+            if block_id not in existing_blocks:
+                continue
+            block = existing_blocks[block_id]
+            block_changed = False
+            body_changed = False
+            if patch.body_pm_json != block.body_pm_json:
+                _set_block_body_pm_json(block, patch.body_pm_json)
+                block_changed = True
+                body_changed = True
+            if patch.block_kind != block.block_kind:
+                block.block_kind = patch.block_kind
+                block_changed = True
+            if patch.collapsed != block.collapsed:
+                block.collapsed = patch.collapsed
+                block_changed = True
+            next_parent_id = final_parent_by_id[block_id]
+            if next_parent_id != block.parent_block_id:
+                block.parent_block_id = next_parent_id
+                block_changed = True
+            next_order_key = final_order_by_id[block_id]
+            if next_order_key != block.order_key:
+                block.order_key = next_order_key
+                block_changed = True
+
+            if not block_changed:
+                continue
+            if body_changed:
+                _sync_inline_reference_links(db, viewer_id, block)
+            _bump_block_revision(block)
+            block.updated_at = func.now()
+            object_search.project_note_block(db, viewer_id, block)
+            changed = True
+
+        for block_id in touched_existing_order_ids:
+            if block_id in requested_by_id or block_id in deleted_ids:
+                continue
+            block = existing_blocks[block_id]
+            if final_order_by_id[block_id] == block.order_key:
+                continue
+            block.order_key = final_order_by_id[block_id]
+            _bump_block_revision(block)
+            block.updated_at = func.now()
+            object_search.project_note_block(db, viewer_id, block)
+            changed = True
+
+        for block_id in _document_delete_order(existing_blocks, deleted_ids):
+            _delete_object_edges(db, "note_block", block_id)
+            db.execute(
+                delete(PinnedObjectRef).where(
+                    PinnedObjectRef.user_id == viewer_id,
+                    PinnedObjectRef.object_type == "note_block",
+                    PinnedObjectRef.object_id == block_id,
+                )
+            )
+            object_search.delete_document(
+                db, viewer_id, object_type="note_block", object_id=block_id
+            )
+            db.delete(existing_blocks[block_id])
+            changed = True
+
+        if changed:
+            _bump_page_revision(page)
+            page.updated_at = func.now()
+            object_search.project_page(db, viewer_id, page)
+
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if _is_note_block_id_conflict(exc):
+            raise ConflictError(
+                ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists"
+            ) from exc
+        raise
+
+    db.refresh(page)
+    focused_block = None
+    if request.focus_block_id is not None:
+        focused = created_blocks.get(request.focus_block_id) or db.get(
+            NoteBlock, request.focus_block_id
+        )
+        if focused is not None and focused.user_id == viewer_id and focused.page_id == page.id:
+            focused_page_id = focused.page_id
+            assert focused_page_id is not None
+            focused_block = _block_out(focused, _child_tree(db, focused_page_id, focused.id))
+
+    return PatchPageDocumentResponse(
+        client_mutation_id=request.client_mutation_id,
+        page=_page_out(db, page),
+        focused_block=focused_block,
+    )
 
 
 def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
@@ -379,7 +689,11 @@ def create_note_block(
         collapsed=False,
     )
     db.add(block)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists") from exc
     _insert_block_in_order(db, block, request.before_block_id, request.after_block_id)
 
     if request.linked_object is not None:
@@ -407,6 +721,7 @@ def create_note_block(
     _sync_inline_reference_links(db, viewer_id, block)
     object_search.project_note_block(db, viewer_id, block)
 
+    _bump_page_revision(page)
     page.updated_at = func.now()
     object_search.project_page(db, viewer_id, page)
     db.commit()
@@ -434,24 +749,53 @@ def update_note_block(
     block_id: UUID,
     request: UpdateNoteBlockRequest,
 ) -> NoteBlockOut:
+    for attempt in range(3):
+        _use_serializable_if_available(db)
+        try:
+            return _update_note_block_once(db, viewer_id, block_id, request)
+        except OperationalError as exc:
+            db.rollback()
+            if not _is_serialization_failure(exc):
+                raise
+            if attempt == 2:
+                raise AssertionError("Note block update retry loop exhausted") from exc
+    raise AssertionError("Note block update retry loop exhausted")
+
+
+def _update_note_block_once(
+    db: Session,
+    viewer_id: UUID,
+    block_id: UUID,
+    request: UpdateNoteBlockRequest,
+) -> NoteBlockOut:
     block = get_note_block_for_owner_or_404(db, viewer_id, block_id)
+    if block.revision != request.base_revision:
+        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block revision conflict")
     page_id = block.page_id
     assert page_id is not None
-    if request.body_pm_json is not None:
-        block.body_pm_json = request.body_pm_json
-        block.body_text = text_from_pm_json(request.body_pm_json)
-        block.body_markdown = markdown_from_pm_json(request.body_pm_json)
-        _sync_inline_reference_links(db, viewer_id, block)
-    if request.block_kind is not None:
+    changed = False
+    body_changed = False
+    if request.body_pm_json is not None and request.body_pm_json != block.body_pm_json:
+        _set_block_body_pm_json(block, request.body_pm_json)
+        changed = True
+        body_changed = True
+    if request.block_kind is not None and request.block_kind != block.block_kind:
         block.block_kind = request.block_kind
-    if request.collapsed is not None:
+        changed = True
+    if request.collapsed is not None and request.collapsed != block.collapsed:
         block.collapsed = request.collapsed
-    block.updated_at = func.now()
-    page = db.get(Page, page_id)
-    if page is not None:
-        page.updated_at = func.now()
-        object_search.project_page(db, viewer_id, page)
-    object_search.project_note_block(db, viewer_id, block)
+        changed = True
+    if changed:
+        if body_changed:
+            _sync_inline_reference_links(db, viewer_id, block)
+        _bump_block_revision(block)
+        block.updated_at = func.now()
+        page = db.get(Page, page_id)
+        if page is not None:
+            _bump_page_revision(page)
+            page.updated_at = func.now()
+            object_search.project_page(db, viewer_id, page)
+        object_search.project_note_block(db, viewer_id, block)
     db.commit()
     db.refresh(block)
     return _block_out(block, _child_tree(db, page_id, block.id))
@@ -465,10 +809,13 @@ def set_note_block_plain_text_body_without_commit(
 ) -> None:
     if block.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
-    _set_block_body_pm_json(block, pm_doc_from_text(body))
-    block.updated_at = func.now()
-    _sync_inline_reference_links(db, viewer_id, block)
-    object_search.project_note_block(db, viewer_id, block)
+    body_pm_json = pm_doc_from_text(body)
+    if body_pm_json != block.body_pm_json:
+        _set_block_body_pm_json(block, body_pm_json)
+        _bump_block_revision(block)
+        block.updated_at = func.now()
+        _sync_inline_reference_links(db, viewer_id, block)
+        object_search.project_note_block(db, viewer_id, block)
 
 
 def set_note_block_markdown_body_without_commit(
@@ -480,12 +827,14 @@ def set_note_block_markdown_body_without_commit(
     if block.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
     body_pm_json = pm_doc_from_markdown_projection(body_markdown)
-    block.body_pm_json = body_pm_json
-    block.body_markdown = markdown_from_pm_json(body_pm_json)
-    block.body_text = text_from_pm_json(body_pm_json)
-    block.updated_at = func.now()
-    _sync_inline_reference_links(db, viewer_id, block)
-    object_search.project_note_block(db, viewer_id, block)
+    if body_pm_json != block.body_pm_json:
+        block.body_pm_json = body_pm_json
+        block.body_markdown = markdown_from_pm_json(body_pm_json)
+        block.body_text = text_from_pm_json(body_pm_json)
+        _bump_block_revision(block)
+        block.updated_at = func.now()
+        _sync_inline_reference_links(db, viewer_id, block)
+        object_search.project_note_block(db, viewer_id, block)
 
 
 def move_note_block(
@@ -521,9 +870,11 @@ def move_note_block(
     )
     block.parent_block_id = parent.id if parent is not None else None
     _insert_block_in_order(db, block, request.before_block_id, request.after_block_id)
+    _bump_block_revision(block)
     block.updated_at = func.now()
     page = db.get(Page, page_id)
     if page is not None:
+        _bump_page_revision(page)
         page.updated_at = func.now()
         object_search.project_page(db, viewer_id, page)
     object_search.project_note_block(db, viewer_id, block)
@@ -543,6 +894,7 @@ def split_note_block(
     assert page_id is not None
     before_pm_json, after_pm_json = _split_pm_json(block.body_pm_json, request.offset)
     _set_block_body_pm_json(block, before_pm_json)
+    _bump_block_revision(block)
     block.updated_at = func.now()
     new_block = NoteBlock(
         user_id=viewer_id,
@@ -565,6 +917,7 @@ def split_note_block(
     _sync_inline_reference_links(db, viewer_id, new_block)
     page = db.get(Page, page_id)
     if page is not None:
+        _bump_page_revision(page)
         page.updated_at = func.now()
         object_search.project_page(db, viewer_id, page)
     object_search.project_note_block(db, viewer_id, block)
@@ -587,6 +940,7 @@ def merge_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockO
         previous,
         _merge_pm_json(previous.body_pm_json, block.body_pm_json),
     )
+    _bump_block_revision(previous)
     previous.updated_at = func.now()
     for child in _children(db, page_id, block.id):
         child.parent_block_id = previous.id
@@ -604,6 +958,7 @@ def merge_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockO
     _renumber_siblings(db, previous_page_id, previous.parent_block_id)
     page = db.get(Page, previous_page_id)
     if page is not None:
+        _bump_page_revision(page)
         page.updated_at = func.now()
         object_search.project_page(db, viewer_id, page)
     object_search.project_note_block(db, viewer_id, previous)
@@ -612,8 +967,27 @@ def merge_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockO
     return _block_out(previous, _child_tree(db, previous_page_id, previous.id))
 
 
-def delete_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> None:
+def delete_note_block(db: Session, viewer_id: UUID, block_id: UUID, base_revision: int) -> None:
+    for attempt in range(3):
+        _use_serializable_if_available(db)
+        try:
+            _delete_note_block_once(db, viewer_id, block_id, base_revision)
+            return
+        except OperationalError as exc:
+            db.rollback()
+            if not _is_serialization_failure(exc):
+                raise
+            if attempt == 2:
+                raise AssertionError("Note block delete retry loop exhausted") from exc
+    raise AssertionError("Note block delete retry loop exhausted")
+
+
+def _delete_note_block_once(
+    db: Session, viewer_id: UUID, block_id: UUID, base_revision: int
+) -> None:
     block = get_note_block_for_owner_or_404(db, viewer_id, block_id)
+    if block.revision != base_revision:
+        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block revision conflict")
     page_id = block.page_id
     assert page_id is not None
     descendant_ids = _descendant_ids(db, block.id)
@@ -642,6 +1016,7 @@ def delete_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> None:
     _renumber_siblings(db, page_id, block.parent_block_id)
     page = db.get(Page, page_id)
     if page is not None:
+        _bump_page_revision(page)
         page.updated_at = func.now()
         object_search.project_page(db, viewer_id, page)
     db.commit()
@@ -718,11 +1093,16 @@ def set_highlight_note_body(
     normalized = body.strip()
     if not normalized:
         if existing is not None:
+            page = db.get(Page, existing.page_id) if existing.page_id is not None else None
             _delete_object_edges(db, "note_block", existing.id)
             object_search.delete_document(
                 db, viewer_id, object_type="note_block", object_id=existing.id
             )
             db.delete(existing)
+            if page is not None:
+                _bump_page_revision(page)
+                page.updated_at = func.now()
+                object_search.project_page(db, viewer_id, page)
             if commit:
                 db.commit()
         return None
@@ -742,12 +1122,20 @@ def set_highlight_note_body(
             db.refresh(block)
         return block
 
-    existing.body_pm_json = pm_doc_from_text(normalized)
-    existing.body_markdown = normalized
-    existing.body_text = normalized
-    existing.updated_at = func.now()
-    _sync_inline_reference_links(db, viewer_id, existing)
-    object_search.project_note_block(db, viewer_id, existing)
+    body_pm_json = pm_doc_from_text(normalized)
+    if body_pm_json != existing.body_pm_json:
+        existing.body_pm_json = body_pm_json
+        existing.body_markdown = normalized
+        existing.body_text = normalized
+        _bump_block_revision(existing)
+        existing.updated_at = func.now()
+        _sync_inline_reference_links(db, viewer_id, existing)
+        object_search.project_note_block(db, viewer_id, existing)
+        page = db.get(Page, existing.page_id) if existing.page_id is not None else None
+        if page is not None:
+            _bump_page_revision(page)
+            page.updated_at = func.now()
+            object_search.project_page(db, viewer_id, page)
     if commit:
         db.commit()
         db.refresh(existing)
@@ -792,7 +1180,11 @@ def _create_note_block_without_commit(
         collapsed=False,
     )
     db.add(block)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Note block id already exists") from exc
     _insert_block_in_order(db, block, request.before_block_id, request.after_block_id)
     if request.linked_object is not None:
         linked = request.linked_object
@@ -814,6 +1206,7 @@ def _create_note_block_without_commit(
         )
     _sync_inline_reference_links(db, viewer_id, block)
     object_search.project_note_block(db, viewer_id, block)
+    _bump_page_revision(page)
     page.updated_at = func.now()
     object_search.project_page(db, viewer_id, page)
     return block
@@ -863,8 +1256,10 @@ def _resolve_daily_page_with_retry(
             return page, stored_time_zone
         except OperationalError as exc:
             db.rollback()
-            if not _is_serialization_failure(exc) or attempt == 2:
+            if not _is_serialization_failure(exc):
                 raise
+            if attempt == 2:
+                raise AssertionError("Daily note retry loop exhausted") from exc
         except IntegrityError as exc:
             db.rollback()
             if not _is_daily_unique_conflict(exc) or attempt == 2:
@@ -890,6 +1285,11 @@ def _is_daily_unique_conflict(exc: IntegrityError) -> bool:
         "uix_daily_note_pages_user_date",
         "uix_daily_note_pages_user_page",
     }
+
+
+def _is_note_block_id_conflict(exc: IntegrityError) -> bool:
+    constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+    return constraint_name == "note_blocks_pkey"
 
 
 def _resolve_daily_page_once(
@@ -1338,6 +1738,7 @@ def _page_out(db: Session, page: Page) -> NotePageOut:
         id=page.id,
         title=page.title,
         description=page.description,
+        revision=page.revision,
         updated_at=page.updated_at,
         blocks=_child_tree(db, page.id, None),
     )
@@ -1356,6 +1757,7 @@ def _block_out(block: NoteBlock, children: list[NoteBlockOut]) -> NoteBlockOut:
         body_markdown=block.body_markdown,
         body_text=block.body_text,
         collapsed=block.collapsed,
+        revision=block.revision,
         children=children,
         created_at=block.created_at,
         updated_at=block.updated_at,
@@ -1454,6 +1856,26 @@ def _validate_position_anchor(
     )
     if anchor is None or anchor.parent_block_id != parent_id:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Position anchor must be a sibling")
+
+
+def _document_delete_order(
+    existing_blocks: dict[UUID, NoteBlock],
+    deleted_ids: set[UUID],
+) -> list[UUID]:
+    return sorted(
+        deleted_ids,
+        key=lambda block_id: _existing_block_depth(existing_blocks, block_id),
+        reverse=True,
+    )
+
+
+def _existing_block_depth(existing_blocks: dict[UUID, NoteBlock], block_id: UUID) -> int:
+    depth = 0
+    parent_id = existing_blocks[block_id].parent_block_id
+    while parent_id is not None and parent_id in existing_blocks:
+        depth += 1
+        parent_id = existing_blocks[parent_id].parent_block_id
+    return depth
 
 
 def _renumber_siblings(db: Session, page_id: UUID, parent_id: UUID | None) -> None:

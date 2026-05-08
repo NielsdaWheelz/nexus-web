@@ -13,7 +13,9 @@ from nexus.responses import success_response
 from nexus.schemas.notes import (
     CreateNoteBlockRequest,
     CreatePageRequest,
+    DeleteNoteBlockRequest,
     MoveNoteBlockRequest,
+    PatchPageDocumentRequest,
     QuickCaptureRequest,
     SplitNoteBlockRequest,
     UpdateNoteBlockRequest,
@@ -64,6 +66,17 @@ def update_page(
 ) -> dict:
     page = notes_service.update_page(db, viewer.user_id, page_id, request)
     return success_response(page.model_dump(mode="json", by_alias=True))
+
+
+@router.patch("/pages/{page_id}/document")
+def patch_page_document(
+    page_id: UUID,
+    request: PatchPageDocumentRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    result = notes_service.patch_page_document(db, viewer.user_id, page_id, request)
+    return success_response(result.model_dump(mode="json", by_alias=True))
 
 
 @router.delete("/pages/{page_id}", status_code=204)
@@ -153,10 +166,11 @@ def update_note_block(
 @router.delete("/blocks/{block_id}", status_code=204)
 def delete_note_block(
     block_id: UUID,
+    request: DeleteNoteBlockRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    notes_service.delete_note_block(db, viewer.user_id, block_id)
+    notes_service.delete_note_block(db, viewer.user_id, block_id, request.base_revision)
     return Response(status_code=204)
 
 
