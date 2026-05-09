@@ -11,6 +11,14 @@ SSH_KEY="${HCLOUD_SSH_KEY:-}"
 FIREWALL_NAME="${HCLOUD_FIREWALL_NAME:-nexus-web}"
 SSH_ALLOWED_IPS="${HCLOUD_SSH_ALLOWED_IPS:-0.0.0.0/0,::/0}"
 CLOUD_INIT="${ROOT_DIR}/deploy/hetzner/cloud-init.yml"
+TEMP_FILES=()
+
+cleanup() {
+  if [ "${#TEMP_FILES[@]}" -gt 0 ]; then
+    rm -f "${TEMP_FILES[@]}"
+  fi
+}
+trap cleanup EXIT
 
 die() {
   echo "error: $*" >&2
@@ -18,7 +26,24 @@ die() {
 }
 
 command -v hcloud >/dev/null 2>&1 || die "hcloud CLI is not installed"
+command -v python3 >/dev/null 2>&1 || die "python3 is required to render cloud-init"
 [ -n "$SSH_KEY" ] || die "set HCLOUD_SSH_KEY to an existing Hetzner SSH key name"
+
+ssh_public_key="$(
+  hcloud ssh-key describe "$SSH_KEY" --output json |
+    python3 -c 'import json, sys; print(json.load(sys.stdin)["public_key"].strip())'
+)"
+[ -n "$ssh_public_key" ] || die "could not read public key for HCLOUD_SSH_KEY=${SSH_KEY}"
+
+rendered_cloud_init="$(mktemp)"
+TEMP_FILES+=("$rendered_cloud_init")
+python3 - "$CLOUD_INIT" "$rendered_cloud_init" "$ssh_public_key" <<'PY'
+from pathlib import Path
+import sys
+
+template = Path(sys.argv[1]).read_text()
+Path(sys.argv[2]).write_text(template.replace("__NEXUS_SSH_PUBLIC_KEY__", sys.argv[3]))
+PY
 
 if hcloud server describe "$SERVER_NAME" >/dev/null 2>&1; then
   echo "server already exists: ${SERVER_NAME}"
@@ -28,7 +53,7 @@ fi
 
 if ! hcloud firewall describe "$FIREWALL_NAME" >/dev/null 2>&1; then
   rules_file="$(mktemp)"
-  trap 'rm -f "$rules_file"' EXIT
+  TEMP_FILES+=("$rules_file")
 
   IFS=',' read -r -a ssh_sources <<<"$SSH_ALLOWED_IPS"
   {
@@ -54,7 +79,7 @@ hcloud server create \
   --location "$LOCATION" \
   --ssh-key "$SSH_KEY" \
   --firewall "$FIREWALL_NAME" \
-  --user-data-from-file "$CLOUD_INIT" \
+  --user-data-from-file "$rendered_cloud_init" \
   --label app=nexus \
   --label role=api-worker
 

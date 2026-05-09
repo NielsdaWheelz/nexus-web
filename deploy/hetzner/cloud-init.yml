@@ -19,6 +19,8 @@ users:
     groups: sudo
     shell: /bin/bash
     sudo: "ALL=(ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      - __NEXUS_SSH_PUBLIC_KEY__
 
 runcmd:
   - install -m 0755 -d /etc/apt/keyrings
