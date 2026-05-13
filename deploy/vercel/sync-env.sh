@@ -27,7 +27,7 @@ trap 'rm -f "$tmp_file"' EXIT
   cat "$FRONTEND_ENV"
 } >"$tmp_file"
 
-if grep -Eq '[<>]|example\.com|=changeme$|=CHANGEME$' "$tmp_file"; then
+if grep -Ev '^[[:space:]]*#' "$tmp_file" | grep -Eq '[<>]|example\.com|=changeme$|=CHANGEME$'; then
   die "env files still contain placeholder values"
 fi
 
