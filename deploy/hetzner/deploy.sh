@@ -59,7 +59,7 @@ compose() {
 }
 
 compose build --pull
-compose run --rm --no-deps api sh -c 'cd /app/migrations && /app/.venv/bin/alembic upgrade head'
+compose run -T --rm --no-deps api sh -c 'cd /app/migrations && /app/.venv/bin/alembic upgrade head'
 compose up -d --remove-orphans
 compose ps
 REMOTE
