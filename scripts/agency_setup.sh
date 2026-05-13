@@ -144,7 +144,7 @@ DATABASE_URL_TEST_MIGRATIONS="postgresql+psycopg://postgres:postgres@localhost:$
 SUPABASE_ISSUER="${SUPABASE_URL}/auth/v1"
 SUPABASE_JWKS_URL="${SUPABASE_URL}/auth/v1/.well-known/jwks.json"
 SUPABASE_AUDIENCES="authenticated"
-AUTH_ALLOWED_REDIRECT_ORIGINS="http://localhost:3000,http://localhost:3001"
+AUTH_ALLOWED_REDIRECT_ORIGINS="http://localhost:3000,http://127.0.0.1:3000,http://10.0.2.2:3000,http://localhost:3001,http://127.0.0.1:3001"
 
 # Run migrations on dev database (using default 'postgres' db)
 echo "Running migrations on dev database..."

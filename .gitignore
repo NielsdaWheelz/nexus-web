@@ -78,6 +78,16 @@ yarn-error.log*
 next-env.d.ts
 !apps/web/src/css.d.ts
 
+# Android
+apps/android/.idea/
+apps/android/.gradle/
+apps/android/**/build/
+apps/android/local.properties
+apps/android/**/*.apk
+apps/android/**/*.aab
+apps/android/**/*.jks
+apps/android/**/*.keystore
+
 # Local development
 .turbo/
 .dev-ports

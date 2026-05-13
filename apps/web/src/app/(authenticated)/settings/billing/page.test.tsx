@@ -140,4 +140,5 @@ describe("SettingsBillingPaneBody", () => {
     expect(screen.getByText(/^Ends /)).toBeInTheDocument();
     expect(screen.queryByText(/^Renews /)).not.toBeInTheDocument();
   });
+
 });

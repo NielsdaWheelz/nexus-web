@@ -18,6 +18,7 @@ import SettingsKeysPaneBody from "@/app/(authenticated)/settings/keys/SettingsKe
 import SettingsLocalVaultPaneBody from "@/app/(authenticated)/settings/local-vault/SettingsLocalVaultPaneBody";
 import SettingsIdentitiesPaneBody from "@/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody";
 import KeybindingsPaneBody from "@/app/(authenticated)/settings/keybindings/KeybindingsPaneBody";
+import { isAndroidShell } from "@/lib/androidShell";
 
 type RouteParamValue = string;
 type RouteParams = Record<string, RouteParamValue>;
@@ -292,10 +293,17 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
-    getChrome: () => ({
-      title: "Local Vault",
-      subtitle: "Connect a real local folder and sync Markdown highlights and pages.",
-    }),
+    getChrome: () =>
+      isAndroidShell()
+        ? {
+            title: "Local Vault",
+            subtitle:
+              "Not available in the Android app. Use a supported desktop browser for Local Vault.",
+          }
+        : {
+            title: "Local Vault",
+            subtitle: "Connect a real local folder and sync Markdown highlights and pages.",
+          },
   },
   {
     id: "settingsIdentities",

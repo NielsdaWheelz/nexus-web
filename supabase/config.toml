@@ -152,8 +152,14 @@ site_url = "http://localhost:3000"
 additional_redirect_urls = [
   "http://localhost:3000/auth/callback",
   "http://localhost:3000/libraries",
+  "http://127.0.0.1:3000/auth/callback",
+  "http://127.0.0.1:3000/libraries",
+  # Debug-only Android shell callback for local OAuth. Release callbacks use verified HTTPS App Links.
+  "nexus-dev://auth/callback**",
   "http://localhost:3001/auth/callback",
   "http://localhost:3001/libraries",
+  "http://127.0.0.1:3001/auth/callback",
+  "http://127.0.0.1:3001/libraries",
 ]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
@@ -307,7 +313,7 @@ max_frequency = "5s"
 enabled = true
 client_id = "env(SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID)"
 secret = "env(SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_SECRET)"
-redirect_uri = "http://localhost:54321/auth/v1/callback"
+redirect_uri = "http://127.0.0.1:54321/auth/v1/callback"
 skip_nonce_check = false
 email_optional = false
 
@@ -315,7 +321,7 @@ email_optional = false
 enabled = true
 client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"
 secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_SECRET)"
-redirect_uri = "http://localhost:54321/auth/v1/callback"
+redirect_uri = "http://127.0.0.1:54321/auth/v1/callback"
 skip_nonce_check = false
 email_optional = false
 

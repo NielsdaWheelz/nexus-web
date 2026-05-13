@@ -2,10 +2,10 @@
 # Run `make help` for available commands.
 
 .PHONY: help setup dev down logs clean api web worker migrate migrate-test migrate-down seed \
-	check check-back type-back check-front check-workflows format format-back fix-front build audit \
+	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
-	test-migrations test-supabase test-network test-real test-e2e test-e2e-ui \
-	verify verify-full \
+	test-android test-migrations test-supabase test-network test-real test-e2e test-e2e-ui \
+	verify verify-android verify-android-release verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw \
 	_test-supabase-raw _test-network-raw _test-real-raw
@@ -16,7 +16,7 @@ export
 
 SUPABASE_DB_PORT ?= 54322
 SUPABASE_URL ?= http://127.0.0.1:54321
-AUTH_ALLOWED_REDIRECT_ORIGINS ?= http://localhost:3000,http://localhost:3001
+AUTH_ALLOWED_REDIRECT_ORIGINS ?= http://localhost:3000,http://127.0.0.1:3000,http://10.0.2.2:3000,http://localhost:3001,http://127.0.0.1:3001
 
 DATABASE_URL ?= postgresql+psycopg://postgres:postgres@localhost:$(SUPABASE_DB_PORT)/postgres
 DATABASE_URL_TEST ?= postgresql+psycopg://postgres:postgres@localhost:$(SUPABASE_DB_PORT)/nexus_test
@@ -41,7 +41,12 @@ help:
 	@echo "  make check              - Static checks only"
 	@echo "  make type-back          - Backend type checking"
 	@echo "  make check-workflows    - GitHub Actions lint/security checks"
+	@echo "  make check-android      - Android lint"
 	@echo "  make audit              - Dependency vulnerability audits"
+	@echo "  make build-android      - Build Android debug and instrumentation APKs"
+	@echo "  make build-android-release - Build signed Android release APK"
+	@echo "  make verify-android     - Android lint + debug/test APK build"
+	@echo "  make verify-android-release - Build and verify signed Android release APK"
 	@echo "  make test-unit          - Fast backend and frontend unit tests"
 	@echo "  make test               - All non-E2E automated tests"
 	@echo "  make verify             - check + build + test"
@@ -52,6 +57,7 @@ help:
 	@echo "  make test-back-integration - Backend DB/API integration tests"
 	@echo "  make test-front-unit       - Frontend unit tests"
 	@echo "  make test-front-browser    - Frontend browser component tests"
+	@echo "  make test-android          - Android instrumentation tests on a connected device"
 	@echo "  make test-migrations       - Alembic migration tests"
 	@echo "  make test-supabase         - Supabase auth/storage integration tests"
 	@echo "  make test-network          - Backend tests requiring internet"
@@ -146,6 +152,9 @@ check-front:
 	cd apps/web && bun run lint
 	cd apps/web && bun run typecheck
 
+check-android:
+	cd apps/android && ./gradlew :app:lintDebug
+
 check-workflows:
 	actionlint .github/workflows/*.yml
 	cd python && uv run zizmor ../.github/workflows
@@ -162,6 +171,12 @@ fix-front:
 
 build:
 	cd apps/web && bun run build
+
+build-android:
+	cd apps/android && ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+
+build-android-release:
+	cd apps/android && ./gradlew :app:lintRelease :app:assembleRelease
 
 audit:
 	cd python && uv sync --all-extras --locked
@@ -204,6 +219,9 @@ test-front-browser:
 		cd apps/web && bunx playwright install chromium; \
 	fi
 	cd apps/web && bun run test:browser
+
+test-android:
+	cd apps/android && ./gradlew :app:connectedDebugAndroidTest
 
 test-migrations:
 	./scripts/with_test_services.sh make _test-migrations-raw
@@ -255,8 +273,31 @@ verify:
 	make test
 	@echo "=== verification passed ==="
 
+verify-android:
+	make check-android
+	make build-android
+	@echo "=== android verification passed ==="
+
+verify-android-release:
+	make build-android-release
+	@set -eu; \
+		sdk_root="$${ANDROID_HOME:-$${ANDROID_SDK_ROOT:-}}"; \
+		if [ -z "$$sdk_root" ]; then \
+			echo "Set ANDROID_HOME or ANDROID_SDK_ROOT to verify the release APK."; \
+			exit 1; \
+		fi; \
+		apksigner="$${ANDROID_APK_SIGNER:-$$(find "$$sdk_root/build-tools" -name apksigner -type f | sort | tail -n 1)}"; \
+		if [ -z "$$apksigner" ] || [ ! -x "$$apksigner" ]; then \
+			echo "Could not find apksigner. Install Android SDK build-tools or set ANDROID_APK_SIGNER."; \
+			exit 1; \
+		fi; \
+		"$$apksigner" verify --verbose --print-certs apps/android/app/build/outputs/apk/release/app-release.apk; \
+		shasum -a 256 apps/android/app/build/outputs/apk/release/app-release.apk
+	@echo "=== android release verification passed ==="
+
 verify-full:
 	make verify
+	make verify-android
 	make test-e2e
 	@echo "=== full verification passed ==="
 

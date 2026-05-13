@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ANDROID_SHELL_USER_AGENT_TOKEN } from "@/lib/androidShell";
 
 const { mockGetUserIdentities, mockLinkIdentity, mockUnlinkIdentity } = vi.hoisted(
   () => ({
@@ -22,11 +23,21 @@ vi.mock("@/lib/supabase/client", () => ({
 
 import LinkedIdentitiesPage from "./page";
 
+const DEFAULT_USER_AGENT = navigator.userAgent;
+
+function setUserAgent(userAgent: string) {
+  Object.defineProperty(window.navigator, "userAgent", {
+    value: userAgent,
+    configurable: true,
+  });
+}
+
 describe("LinkedIdentitiesPage", () => {
   beforeEach(() => {
     mockGetUserIdentities.mockReset();
     mockLinkIdentity.mockReset().mockResolvedValue({ error: null });
     mockUnlinkIdentity.mockReset().mockResolvedValue({ error: null });
+    setUserAgent(DEFAULT_USER_AGENT);
     window.history.replaceState(null, "", "/settings/identities");
   });
 
@@ -58,6 +69,39 @@ describe("LinkedIdentitiesPage", () => {
       provider: "google",
       options: {
         redirectTo: expectedRedirect,
+      },
+    });
+  });
+
+  it("uses the debug Android callback scheme for local shell identity linking", async () => {
+    const user = userEvent.setup();
+    setUserAgent(`${DEFAULT_USER_AGENT} ${ANDROID_SHELL_USER_AGENT_TOKEN}`);
+    mockGetUserIdentities.mockResolvedValue({
+      data: {
+        identities: [
+          {
+            identity_id: "github-id",
+            provider: "github",
+            identity_data: { email: "owner+github@example.com" },
+            created_at: "2026-03-21T00:00:00Z",
+          },
+        ],
+      },
+      error: null,
+    });
+
+    render(<LinkedIdentitiesPage />);
+
+    const connectGoogle = await screen.findByRole("button", {
+      name: /connect google/i,
+    });
+    await user.click(connectGoogle);
+
+    expect(mockLinkIdentity).toHaveBeenCalledWith({
+      provider: "google",
+      options: {
+        redirectTo:
+          "nexus-dev://auth/callback?next=%2Fsettings%2Fidentities",
       },
     });
   });

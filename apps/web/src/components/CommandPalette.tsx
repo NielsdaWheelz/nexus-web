@@ -42,6 +42,7 @@ import {
   matchesKeyEvent,
   formatKeyCombo,
 } from "@/lib/keybindings";
+import { isAndroidShell, isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import styles from "./CommandPalette.module.css";
@@ -146,6 +147,7 @@ export {
 export type { AddContentMode };
 
 export default function CommandPalette() {
+  const androidShell = isAndroidShell();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -316,40 +318,51 @@ export default function CommandPalette() {
   // Build recent actions (only when no query)
   const recentActions = useMemo(() => {
     if (query) return [];
-    return recentRows.map((row) => {
+    return recentRows.flatMap((row) => {
       const route = resolvePaneRoute(row.href);
+      if (androidShell && isAndroidShellRestrictedRouteId(route.id)) {
+        return [];
+      }
       const label = row.title_snapshot?.trim() || route.staticTitle;
-      return {
-        id: `recent-${encodeURIComponent(row.href)}`,
-        label,
-        keywords: [row.href],
-        section: "Recent" as Section,
-        icon: getRecentDestinationIcon(route.id),
-        execute: () =>
-          requestOpenInAppPane(row.href, {
-            titleHint: row.title_snapshot ?? undefined,
-          }),
-      };
+      return [
+        {
+          id: `recent-${encodeURIComponent(row.href)}`,
+          label,
+          keywords: [row.href],
+          section: "Recent" as Section,
+          icon: getRecentDestinationIcon(route.id),
+          execute: () =>
+            requestOpenInAppPane(row.href, {
+              titleHint: row.title_snapshot ?? undefined,
+            }),
+        },
+      ];
     });
-  }, [query, recentRows]);
+  }, [androidShell, query, recentRows]);
 
   // Build pane-switching actions from workspace state
   const paneActions: Action[] = useMemo(() => {
-    const panes = workspaceState.panes.map((pane) => {
+    const panes = workspaceState.panes.flatMap((pane) => {
+      const route = resolvePaneRoute(pane.href);
+      if (androidShell && isAndroidShellRestrictedRouteId(route.id)) {
+        return [];
+      }
       const descriptor = resolvePaneDescriptor(pane, {
         nowMs: Date.now(),
         runtimeTitleByPaneId,
         openHintByPaneId,
         resourceTitleByRef,
       });
-      return {
-        id: `pane-${pane.id}`,
-        label: descriptor.resolvedTitle,
-        keywords: ["tab", "pane", "switch"],
-        section: "Panes" as Section,
-        icon: PanelLeft,
-        execute: () => activatePane(pane.id),
-      };
+      return [
+        {
+          id: `pane-${pane.id}`,
+          label: descriptor.resolvedTitle,
+          keywords: ["tab", "pane", "switch"],
+          section: "Panes" as Section,
+          icon: PanelLeft,
+          execute: () => activatePane(pane.id),
+        },
+      ];
     });
     if (!query) return panes;
     const q = query.toLowerCase();
@@ -358,7 +371,15 @@ export default function CommandPalette() {
         a.label.toLowerCase().includes(q) ||
         a.keywords.some((k) => k.includes(q)),
     );
-  }, [workspaceState.panes, runtimeTitleByPaneId, openHintByPaneId, resourceTitleByRef, activatePane, query]);
+  }, [
+    androidShell,
+    workspaceState.panes,
+    runtimeTitleByPaneId,
+    openHintByPaneId,
+    resourceTitleByRef,
+    activatePane,
+    query,
+  ]);
 
   // Build search result actions
   const searchActions: Action[] = useMemo(

@@ -64,7 +64,7 @@ describe("handleAuthCallback", () => {
     );
   });
 
-  it("ignores non-allowlisted forwarded headers and falls back to configured app origin", async () => {
+  it("rejects non-allowlisted callback origins before exchanging the code", async () => {
     process.env[AUTH_ALLOWED_REDIRECT_ORIGINS] = "https://app.example.com";
     const exchangeCodeForSession = vi.fn().mockResolvedValue({ error: null });
     const request = new Request(
@@ -77,13 +77,12 @@ describe("handleAuthCallback", () => {
       }
     );
 
-    const response = await handleAuthCallback(request, {
-      exchangeCodeForSession,
-    });
-
-    expect(response.headers.get("location")).toBe(
-      "https://app.example.com/browse"
-    );
+    await expect(
+      handleAuthCallback(request, {
+        exchangeCodeForSession,
+      })
+    ).rejects.toThrow(AUTH_ALLOWED_REDIRECT_ORIGINS);
+    expect(exchangeCodeForSession).not.toHaveBeenCalled();
   });
 
   it("falls back to request origin in test mode when no allowlist is configured", async () => {

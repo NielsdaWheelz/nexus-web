@@ -43,18 +43,24 @@ vi.mock("@/lib/api/client", () => ({
   isApiError: () => false,
 }));
 
-import SettingsLocalVaultPage from "./page";
+import SettingsLocalVaultPaneBody from "./SettingsLocalVaultPaneBody";
 
-describe("SettingsLocalVaultPage", () => {
+describe("SettingsLocalVaultPaneBody", () => {
   beforeEach(() => {
     mockIsLocalVaultSupported.mockReturnValue(true);
+    mockLoadVaultDirectoryHandle.mockReset();
     mockLoadVaultDirectoryHandle.mockResolvedValue(null);
+    mockPickVaultDirectory.mockReset();
     mockPickVaultDirectory.mockResolvedValue({ name: "Vault" });
+    mockHasVaultPermission.mockReset();
     mockHasVaultPermission.mockResolvedValue(true);
+    mockSaveVaultDirectoryHandle.mockReset();
     mockSaveVaultDirectoryHandle.mockResolvedValue(undefined);
     mockGetVaultAutoSync.mockReturnValue(false);
     mockSetVaultAutoSync.mockReset();
+    mockReadEditableVaultFiles.mockReset();
     mockReadEditableVaultFiles.mockResolvedValue([]);
+    mockWriteVaultPayload.mockReset();
     mockWriteVaultPayload.mockResolvedValue(undefined);
     mockApiFetch.mockReset().mockResolvedValue({
       data: { files: [], delete_paths: [], conflicts: [] },
@@ -63,7 +69,7 @@ describe("SettingsLocalVaultPage", () => {
 
   it("connects a folder and exports the vault", async () => {
     const user = userEvent.setup();
-    render(<SettingsLocalVaultPage />);
+    render(<SettingsLocalVaultPaneBody />);
 
     expect(screen.queryByRole("heading", { name: "Local Vault" })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: /connect folder/i }));
@@ -77,9 +83,22 @@ describe("SettingsLocalVaultPage", () => {
 
   it("stores the auto-sync preference", async () => {
     const user = userEvent.setup();
-    render(<SettingsLocalVaultPage />);
+    render(<SettingsLocalVaultPaneBody />);
 
     await user.click(await screen.findByRole("checkbox"));
     expect(mockSetVaultAutoSync).toHaveBeenCalledWith(true);
+  });
+
+  it("shows an unsupported message and skips local vault APIs in the android shell", () => {
+    render(<SettingsLocalVaultPaneBody initialAndroidShell />);
+
+    expect(
+      screen.getByText(
+        "Local Vault is not available in the Android app. Use a supported desktop browser to connect and sync a local folder."
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /connect folder/i })).not.toBeInTheDocument();
+    expect(mockLoadVaultDirectoryHandle).not.toHaveBeenCalled();
+    expect(mockApiFetch).not.toHaveBeenCalled();
   });
 });

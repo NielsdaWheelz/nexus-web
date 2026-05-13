@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { isAndroidShell } from "@/lib/androidShell";
 import {
   getVaultAutoSync,
   hasVaultPermission,
@@ -21,7 +22,7 @@ export default function LocalVaultAutoSync() {
   const { toast } = useToast();
 
   useEffect(() => {
-    if (!isLocalVaultSupported() || !getVaultAutoSync()) {
+    if (isAndroidShell() || !isLocalVaultSupported() || !getVaultAutoSync()) {
       return;
     }
 

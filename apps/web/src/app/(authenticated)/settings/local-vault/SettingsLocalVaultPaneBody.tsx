@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { FolderOpen, RefreshCcw, UploadCloud } from "lucide-react";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { isAndroidShell } from "@/lib/androidShell";
 import {
   getVaultAutoSync,
   hasVaultPermission,
@@ -43,7 +44,12 @@ function statusVariant(status: VaultStatus) {
   return "neutral" as const;
 }
 
-export default function SettingsLocalVaultPaneBody() {
+export default function SettingsLocalVaultPaneBody({
+  initialAndroidShell = false,
+}: {
+  initialAndroidShell?: boolean;
+}) {
+  const androidShell = initialAndroidShell || isAndroidShell();
   const [supported, setSupported] = useState(true);
   const [directoryHandle, setDirectoryHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [autoSync, setAutoSyncState] = useState(false);
@@ -52,6 +58,9 @@ export default function SettingsLocalVaultPaneBody() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    if (androidShell) {
+      return;
+    }
     setSupported(isLocalVaultSupported());
     setAutoSyncState(getVaultAutoSync());
     loadVaultDirectoryHandle().then(async (handle) => {
@@ -67,7 +76,7 @@ export default function SettingsLocalVaultPaneBody() {
           : "Reconnect folder access to keep this vault current."
       );
     });
-  }, []);
+  }, [androidShell]);
 
   const showError = useCallback((error: unknown, fallback: string) => {
     setStatus("error");
@@ -168,6 +177,17 @@ export default function SettingsLocalVaultPaneBody() {
     setVaultAutoSync(checked);
     setAutoSyncState(checked);
   }, []);
+
+  if (androidShell) {
+    return (
+      <SectionCard>
+        <StateMessage variant="info">
+          Local Vault is not available in the Android app. Use a supported desktop browser to
+          connect and sync a local folder.
+        </StateMessage>
+      </SectionCard>
+    );
+  }
 
   if (!supported) {
     return (

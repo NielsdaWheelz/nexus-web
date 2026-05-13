@@ -100,6 +100,5 @@ export function resolveCallbackRedirectOrigin(
     return forwardedOrigin;
   }
 
-  // Fallback to the canonical app origin (first allowlist entry).
-  return allowlistedOrigins[0];
+  throw new Error(`${AUTH_ALLOWED_REDIRECT_ORIGINS} rejected auth callback origin`);
 }

@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { buildAuthCallbackUrl } from "@/lib/auth/redirects";
+import { shouldUseAndroidDebugAuthCallback } from "@/lib/androidShell";
+import {
+  buildAndroidDebugAuthCallbackUrl,
+  buildAuthCallbackUrl,
+} from "@/lib/auth/redirects";
 import { createClient } from "@/lib/supabase/client";
 import styles from "./page.module.css";
 
@@ -68,10 +72,18 @@ export default function LoginPageClient({
 
     try {
       const supabase = createClient();
+      const useAndroidDebugCallback = shouldUseAndroidDebugAuthCallback(
+        window.location.protocol,
+        window.location.hostname,
+        navigator.userAgent
+      );
+
       const { error: oauthError } = await supabase.auth.signInWithOAuth({
         provider,
         options: {
-          redirectTo: buildAuthCallbackUrl(window.location.origin, nextPath),
+          redirectTo: useAndroidDebugCallback
+            ? buildAndroidDebugAuthCallbackUrl(nextPath)
+            : buildAuthCallbackUrl(window.location.origin, nextPath),
         },
       });
 

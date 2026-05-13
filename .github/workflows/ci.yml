@@ -212,6 +212,32 @@ jobs:
       - name: Build frontend
         run: make build
 
+  test-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: static-checks
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-android-${{ hashFiles('apps/android/**/*.gradle*', 'apps/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-android-
+
+      - name: Verify Android shell
+        run: make verify-android
+
   test-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 45

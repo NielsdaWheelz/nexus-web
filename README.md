@@ -1,6 +1,6 @@
 # Nexus
 
-Nexus is a reading and annotation platform with a Next.js frontend, a FastAPI backend, and a Postgres-backed worker.
+Nexus is a reading and annotation platform with a Next.js web app, a first-party Android shell, a FastAPI backend, and a Postgres-backed worker.
 
 ## Architecture
 
@@ -16,6 +16,7 @@ Nexus is a reading and annotation platform with a Next.js frontend, a FastAPI ba
 - Python 3.12+
 - Node.js 22+
 - Bun
+- Android Studio + Android SDK (only if working in `apps/android/`)
 - Docker (running)
 - `uv`
 - Supabase CLI
@@ -74,6 +75,9 @@ make test-migrations
 make test-supabase
 make test-network
 make test-real
+make verify-android
+# Requires Android release signing inputs.
+# make verify-android-release
 ```
 
 ## Environment
@@ -83,6 +87,7 @@ make test-real
 
 ## Repository Map
 
+- `apps/android/` -> Android shell app. Debug builds default to `http://10.0.2.2:3000`; local OAuth callbacks use the debug-only `nexus-dev://auth/callback` return path. Release APKs require explicit host, version, release keystore, and release certificate fingerprint inputs. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
 - `apps/web/` -> frontend + BFF: see `apps/web/README.md`
 - `apps/extension/` -> browser extension for article, PDF/EPUB, and supported video capture
 - `python/` -> backend package + tests: see `python/README.md`

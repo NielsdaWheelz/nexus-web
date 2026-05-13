@@ -6,8 +6,9 @@ This document covers the top-level runtime and tooling stack.
 
 ## Stack
 
-- Frontend: Next.js (React), TypeScript, Vitest.
+- Web app: Next.js (React), TypeScript, Vitest.
+- Android shell: Kotlin, Android SDK, WebView, Custom Tabs.
 - Backend: FastAPI, Python, SQLAlchemy, Pydantic, pytest.
 - Database: PostgreSQL (via Supabase local).
 - Auth: Supabase Auth (JWKS token verification).
-- Package management: bun (frontend), uv (backend).
+- Build and package tooling: bun (web and e2e), uv (backend), Gradle (android).

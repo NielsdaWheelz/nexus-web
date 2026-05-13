@@ -4,6 +4,7 @@ import type { ComponentType } from "react";
 import { ArrowRight, BookOpen, CreditCard, FolderOpen, KeyRound, Link2 } from "lucide-react";
 import SectionCard from "@/components/ui/SectionCard";
 import { AppList, AppListItem } from "@/components/ui/AppList";
+import { isAndroidShell, isAndroidShellRestrictedHref } from "@/lib/androidShell";
 import styles from "./page.module.css";
 
 const SETTINGS_ITEMS: {
@@ -44,11 +45,23 @@ const SETTINGS_ITEMS: {
   },
 ];
 
-export default function SettingsPaneBody() {
+export default function SettingsPaneBody({
+  initialAndroidShell = false,
+}: {
+  initialAndroidShell?: boolean;
+}) {
+  const androidShell = initialAndroidShell || isAndroidShell();
+  const settingsItems = SETTINGS_ITEMS.filter(({ href }) => {
+    if (!androidShell) {
+      return true;
+    }
+    return !isAndroidShellRestrictedHref(href);
+  });
+
   return (
     <SectionCard>
       <AppList>
-        {SETTINGS_ITEMS.map(({ href, title, description, Icon }) => (
+        {settingsItems.map(({ href, title, description, Icon }) => (
           <AppListItem
             key={href}
             href={href}

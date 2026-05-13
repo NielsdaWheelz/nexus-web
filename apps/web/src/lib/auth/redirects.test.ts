@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_AUTH_REDIRECT,
+  buildAndroidDebugAuthCallbackUrl,
   buildAuthCallbackUrl,
   buildLoginRedirectUrl,
   buildLoginUrlWithError,
@@ -42,6 +43,10 @@ describe("auth redirect helpers", () => {
       "http://localhost:3000/auth/callback?next=%2Fsearch%3Fq%3D1"
     );
 
+    expect(buildAndroidDebugAuthCallbackUrl("https://evil.example.com")).toBe(
+      "nexus-dev://auth/callback?next=%2Flibraries"
+    );
+
     expect(
       buildLoginUrlWithError(
         "https://app.example.com",
@@ -52,5 +57,4 @@ describe("auth redirect helpers", () => {
       "https://app.example.com/login?next=%2Flibraries&error_description=Denied"
     );
   });
-
 });
