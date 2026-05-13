@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session
 from nexus.app import create_app
 from nexus.auth.middleware import AuthMiddleware
 from nexus.db.session import create_session_factory
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.bootstrap import ensure_user_and_default_library
 from tests.helpers import (
     auth_headers,
@@ -109,6 +111,40 @@ class TestAuthBoundary:
         assert response.status_code == 401
         data = response.json()
         assert data["error"]["code"] == "E_UNAUTHENTICATED"
+
+    def test_auth_unavailable_fails_closed(self):
+        """JWKS infrastructure failures return 503 and do not reach app handlers."""
+
+        class UnavailableVerifier:
+            def verify(self, token: str) -> dict[str, object]:
+                raise ApiError(
+                    ApiErrorCode.E_AUTH_UNAVAILABLE,
+                    "Authentication service unavailable",
+                )
+
+        def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
+            raise AssertionError("bootstrap must not run when auth verification fails")
+
+        app = FastAPI()
+
+        @app.get("/private")
+        def private_route() -> dict[str, bool]:
+            return {"ok": True}
+
+        app.add_middleware(
+            AuthMiddleware,
+            verifier=UnavailableVerifier(),
+            requires_internal_header=False,
+            internal_secret=None,
+            bootstrap_callback=bootstrap_callback,
+        )
+        client = TestClient(app)
+
+        response = client.get("/private", headers={"Authorization": "Bearer token"})
+
+        assert response.status_code == 503
+        data = response.json()
+        assert data["error"]["code"] == "E_AUTH_UNAVAILABLE"
 
 
 class TestInternalHeaderEnforcement:

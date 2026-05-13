@@ -14,9 +14,14 @@
  */
 
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import {
+  parseCookieHeader,
+  readSupabaseSessionCookie,
+  type SessionCookieResult,
+} from "@/lib/auth/session-cookie";
 
 const REQUEST_ID_HEADER = "x-request-id";
+const FASTAPI_FETCH_TIMEOUT_MS = 30_000;
 
 /**
  * Request headers allowed to be forwarded from browser to FastAPI.
@@ -70,7 +75,7 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
 ]);
 
 interface ProxyDeps {
-  getSession: () => Promise<{ access_token: string } | null>;
+  readSession: (request: Request) => SessionCookieResult;
   fetch: typeof fetch;
   generateRequestId: () => string;
   config: {
@@ -168,15 +173,11 @@ function getDefaultConfig() {
 }
 
 async function createDefaultDeps(): Promise<ProxyDeps> {
-  const supabase = await createClient();
-
   return {
-    getSession: async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      return session;
-    },
+    readSession: (request) =>
+      readSupabaseSessionCookie(
+        parseCookieHeader(request.headers.get("cookie"))
+      ),
     fetch: globalThis.fetch,
     generateRequestId,
     config: getDefaultConfig(),
@@ -218,31 +219,9 @@ export async function proxyToFastAPIWithDeps(
     );
   }
 
-  let session: { access_token: string } | null;
-  try {
-    session = await deps.getSession();
-  } catch (error) {
-    console.error("Supabase session lookup failed:", error);
-    return NextResponse.json(
-      {
-        error: {
-          code: "E_INTERNAL",
-          message: "Authentication service unavailable",
-          request_id: requestId,
-        },
-      },
-      {
-        status: 503,
-        headers: {
-          [REQUEST_ID_HEADER]: requestId,
-        },
-      }
-    );
-  }
-
-  if (!session?.access_token) {
-    // No session - return 401 with standard error envelope
-    return NextResponse.json(
+  const session = deps.readSession(request);
+  if (!session.ok) {
+    const response = NextResponse.json(
       {
         error: {
           code: "E_UNAUTHENTICATED",
@@ -257,6 +236,10 @@ export async function proxyToFastAPIWithDeps(
         },
       }
     );
+    for (const name of session.cookieNames) {
+      response.cookies.set(name, "", { maxAge: 0, path: "/" });
+    }
+    return response;
   }
 
   // Extract query string from request URL
@@ -277,7 +260,7 @@ export async function proxyToFastAPIWithDeps(
   });
 
   // Always set/override these headers
-  headers.set("Authorization", `Bearer ${session.access_token}`);
+  headers.set("Authorization", `Bearer ${session.accessToken}`);
   headers.set(REQUEST_ID_HEADER, requestId);
 
   // Add internal header if configured
@@ -291,13 +274,25 @@ export async function proxyToFastAPIWithDeps(
     body = await request.arrayBuffer();
   }
 
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, FASTAPI_FETCH_TIMEOUT_MS);
+  const abortFromClient = () => controller.abort();
+  if (request.signal.aborted) {
+    controller.abort();
+  } else {
+    request.signal.addEventListener("abort", abortFromClient, { once: true });
+  }
+
   try {
-    // Make request to FastAPI with abort signal propagation
     const response = await deps.fetch(url, {
       method: request.method,
       headers,
       body,
-      signal: request.signal,
+      signal: controller.signal,
     });
 
     // Build filtered response headers (non-streaming path)
@@ -352,28 +347,46 @@ export async function proxyToFastAPIWithDeps(
       });
     }
   } catch (error) {
-    // Abort errors are expected on client disconnect — do not log as server errors
     if (isAbortLikeError(error)) {
+      if (timedOut) {
+        return NextResponse.json(
+          {
+            error: {
+              code: "E_UPSTREAM_TIMEOUT",
+              message: "Backend service timed out",
+              request_id: requestId,
+            },
+          },
+          {
+            status: 504,
+            headers: {
+              [REQUEST_ID_HEADER]: requestId,
+            },
+          }
+        );
+      }
       return new Response(null, { status: 499 });
     }
 
-    // Network error or FastAPI unavailable
     console.error("FastAPI proxy error:", error);
     return NextResponse.json(
       {
         error: {
-          code: "E_INTERNAL",
+          code: "E_UPSTREAM",
           message: "Backend service unavailable",
           request_id: requestId,
         },
       },
       {
-        status: 503,
+        status: 502,
         headers: {
           [REQUEST_ID_HEADER]: requestId,
         },
       }
     );
+  } finally {
+    clearTimeout(timeout);
+    request.signal.removeEventListener("abort", abortFromClient);
   }
 }
 
@@ -458,12 +471,25 @@ export async function proxyExtensionToFastAPI(
     body = await request.arrayBuffer();
   }
 
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, FASTAPI_FETCH_TIMEOUT_MS);
+  const abortFromClient = () => controller.abort();
+  if (request.signal.aborted) {
+    controller.abort();
+  } else {
+    request.signal.addEventListener("abort", abortFromClient, { once: true });
+  }
+
   try {
     const response = await fetch(`${fastApiBaseUrl}${path}`, {
       method: request.method,
       headers,
       body,
-      signal: request.signal,
+      signal: controller.signal,
     });
     const backendRequestId = response.headers.get(REQUEST_ID_HEADER);
     const responseHeaders = new Headers({
@@ -505,6 +531,21 @@ export async function proxyExtensionToFastAPI(
     });
   } catch (error) {
     if (isAbortLikeError(error)) {
+      if (timedOut) {
+        return NextResponse.json(
+          {
+            error: {
+              code: "E_UPSTREAM_TIMEOUT",
+              message: "Backend service timed out",
+              request_id: requestId,
+            },
+          },
+          {
+            status: 504,
+            headers: { [REQUEST_ID_HEADER]: requestId },
+          }
+        );
+      }
       return new Response(null, { status: 499 });
     }
 
@@ -512,15 +553,18 @@ export async function proxyExtensionToFastAPI(
     return NextResponse.json(
       {
         error: {
-          code: "E_INTERNAL",
+          code: "E_UPSTREAM",
           message: "Backend service unavailable",
           request_id: requestId,
         },
       },
       {
-        status: 503,
+        status: 502,
         headers: { [REQUEST_ID_HEADER]: requestId },
       }
     );
+  } finally {
+    clearTimeout(timeout);
+    request.signal.removeEventListener("abort", abortFromClient);
   }
 }

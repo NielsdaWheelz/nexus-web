@@ -1,21 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/supabase/server", () => ({
-  createClient: vi.fn(async () => ({
-    auth: {
-      getSession: vi.fn(async () => ({
-        data: {
-          session: {
-            access_token: "test-access-token",
-          },
-        },
-      })),
-    },
-  })),
-}));
+const SUPABASE_URL = "https://project-ref.supabase.co";
+const COOKIE_NAME = "sb-project-ref-auth-token";
+
+function encodeSessionCookie(session: Record<string, unknown>): string {
+  return `base64-${Buffer.from(JSON.stringify(session), "utf8").toString(
+    "base64url"
+  )}`;
+}
+
+function sessionCookie(): string {
+  return `${COOKIE_NAME}=${encodeSessionCookie({
+    access_token: "test-access-token",
+    expires_at: Math.floor(Date.now() / 1000) + 60,
+    token_type: "bearer",
+  })}`;
+}
 
 describe("GET /api/media/:id/assets/:assetKey*", () => {
   beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", SUPABASE_URL);
     vi.stubEnv("FASTAPI_BASE_URL", "http://fastapi.test");
     vi.stubEnv("NEXUS_INTERNAL_SECRET", "test-internal-secret");
   });
@@ -31,7 +35,12 @@ describe("GET /api/media/:id/assets/:assetKey*", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const req = new Request(
-      "http://localhost:3000/api/media/media-123/assets/OEBPS/images/cover image.png"
+      "http://localhost:3000/api/media/media-123/assets/OEBPS/images/cover image.png",
+      {
+        headers: {
+          cookie: sessionCookie(),
+        },
+      }
     );
     const { GET } = await import("./route");
 
@@ -49,6 +58,10 @@ describe("GET /api/media/:id/assets/:assetKey*", () => {
       expect.objectContaining({
         method: "GET",
       })
+    );
+    const [, init] = fetchMock.mock.calls[0] as [RequestInfo, RequestInit];
+    expect(new Headers(init.headers).get("authorization")).toBe(
+      "Bearer test-access-token"
     );
   });
 
@@ -77,6 +90,7 @@ describe("GET /api/media/:id/assets/:assetKey*", () => {
       "http://localhost:3000/api/media/media-123/assets/asset.svg",
       {
         headers: {
+          cookie: sessionCookie(),
           Range: "bytes=0-2",
         },
       }
@@ -125,7 +139,12 @@ describe("GET /api/media/:id/assets/:assetKey*", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const req = new Request(
-      "http://localhost:3000/api/media/media-123/assets/asset.png"
+      "http://localhost:3000/api/media/media-123/assets/asset.png",
+      {
+        headers: {
+          cookie: sessionCookie(),
+        },
+      }
     );
     const { GET } = await import("./route");
 
@@ -158,7 +177,12 @@ describe("GET /api/media/:id/assets/:assetKey*", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const req = new Request(
-      "http://localhost:3000/api/media/media-123/assets/asset.json"
+      "http://localhost:3000/api/media/media-123/assets/asset.json",
+      {
+        headers: {
+          cookie: sessionCookie(),
+        },
+      }
     );
     const { GET } = await import("./route");
 

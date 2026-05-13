@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AUTH_CALLBACK_FAILURE_MESSAGE } from "@/lib/auth/messages";
 
 const mockCookieStore = {
@@ -36,11 +36,19 @@ vi.mock("@supabase/ssr", () => ({
             }>
           ) => void;
         };
+        global: {
+          fetch: typeof fetch;
+        };
       }
     ) => ({
       auth: {
         exchangeCodeForSession: async (code: string) => {
           const result = await mockExchangeCodeForSession(code);
+          for (let index = 0; index < (result.fetchCount ?? 0); index += 1) {
+            await options.global.fetch(
+              `https://supabase.example/auth/v1/callback-${index}`
+            );
+          }
           if (result.cookiesToSet) {
             options.cookies.setAll(result.cookiesToSet);
           }
@@ -65,6 +73,11 @@ describe("GET /auth/callback", () => {
     mockCookieStore.getAll.mockClear();
     mockCookieStore.set.mockClear();
     mockExchangeCodeForSession.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("returns the auth cookies on the redirect response after a successful exchange", async () => {
@@ -142,5 +155,72 @@ describe("GET /auth/callback", () => {
         process.env.AUTH_ALLOWED_REDIRECT_ORIGINS = previousAllowedOrigins;
       }
     }
+  });
+
+  it("applies one total deadline across Supabase callback fetches", async () => {
+    vi.useFakeTimers();
+    let fetchCallCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+      fetchCallCount += 1;
+      const signal = init?.signal;
+
+      return new Promise<Response>((resolve, reject) => {
+        const abort = () => {
+          reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        };
+
+        if (signal?.aborted) {
+          abort();
+          return;
+        }
+
+        signal?.addEventListener("abort", abort, { once: true });
+
+        if (fetchCallCount === 1) {
+          setTimeout(() => {
+            resolve(new Response(null, { status: 200 }));
+          }, 4_900);
+        }
+      });
+    });
+
+    mockExchangeCodeForSession.mockResolvedValue({
+      fetchCount: 2,
+      returnValue: { error: null },
+    });
+
+    const { GET } = await import("./route");
+    const responsePromise = GET(
+      new Request("http://localhost:3000/auth/callback?code=test-code&next=%2Flibraries")
+    );
+    let settled = false;
+    responsePromise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
+    );
+
+    await vi.advanceTimersByTimeAsync(4_900);
+    await Promise.resolve();
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(99);
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    const response = await responsePromise;
+    const location = new URL(response.headers.get("location")!);
+
+    expect(location.pathname).toBe("/login");
+    expect(location.searchParams.get("error_description")).toBe(
+      AUTH_CALLBACK_FAILURE_MESSAGE
+    );
   });
 });

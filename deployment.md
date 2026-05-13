@@ -7,8 +7,8 @@ Nexus production is intended to run with:
 - One Hetzner Cloud VPS for the FastAPI API and Postgres-backed worker.
 - Caddy on the VPS for HTTPS at the API domain.
 
-The goal is to avoid Render free-tier cold starts while keeping the operational
-surface small.
+The goal is to keep the operational surface small while avoiding background
+workers or APIs running in more than one production location.
 
 ## Current Production
 
@@ -19,11 +19,6 @@ surface small.
 - Hetzner location/type: `hil` / `cpx11`
 - Vercel project: `niels-erik-nandals-projects/nexus-web`
 - Supabase project URL: `https://jiaozhsisiphjtomoamy.supabase.co`
-
-Render `nexus-web-worker` should stay suspended after the Hetzner worker is
-running, otherwise two workers can claim jobs from the same Postgres queue.
-Render `nexus-web-api` is no longer the production API, but is currently left as
-a free-tier fallback.
 
 ## Runtime Shape
 
@@ -56,7 +51,9 @@ cp deploy/env/env-prod-backend.example deploy/env/env-prod-backend
 cp deploy/env/env-prod-worker.example deploy/env/env-prod-worker
 ```
 
-Important: `NEXUS_INTERNAL_SECRET` must match between Vercel and the VPS.
+Important: `NEXUS_INTERNAL_SECRET` must match between Vercel and the VPS. The
+sync scripts fail before uploading if required production env values are empty
+or still contain placeholders.
 
 ## Hetzner Provisioning
 
@@ -131,6 +128,11 @@ Push production frontend env:
 ```bash
 ./deploy/vercel/sync-env.sh
 ```
+
+The Vercel sync script validates required production keys locally, writes the
+configured production env to Vercel as CLI-readable values, then pulls the
+Vercel production env into a temporary file and verifies required keys without
+printing secret values.
 
 Key Vercel values:
 

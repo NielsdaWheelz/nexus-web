@@ -3,14 +3,20 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { type CookieToSet } from "./types";
 
-const SUPABASE_FETCH_TIMEOUT_MS = 5_000;
+const SUPABASE_AUTH_OPERATION_DEADLINE_MS = 5_000;
 
 function isNextResponse(response: Response): response is NextResponse {
   return "cookies" in response;
 }
 
+function makeAuthOperationTimeoutError() {
+  return new DOMException("Supabase auth operation timed out", "AbortError");
+}
+
 export async function createRouteHandlerClient() {
   const cookieStore = await cookies();
+  const operationDeadlineAt =
+    Date.now() + SUPABASE_AUTH_OPERATION_DEADLINE_MS;
 
   // Force Next to materialize incoming cookies before PKCE code exchange.
   cookieStore.getAll();
@@ -43,11 +49,15 @@ export async function createRouteHandlerClient() {
       },
       global: {
         fetch(input, init) {
+          const remainingMs = operationDeadlineAt - Date.now();
+          if (remainingMs <= 0) {
+            return Promise.reject(makeAuthOperationTimeoutError());
+          }
+
           const controller = new AbortController();
-          const timeout = setTimeout(
-            () => controller.abort(),
-            SUPABASE_FETCH_TIMEOUT_MS
-          );
+          const timeout = setTimeout(() => {
+            controller.abort(makeAuthOperationTimeoutError());
+          }, remainingMs);
 
           return fetch(input, { ...init, signal: controller.signal }).finally(
             () => clearTimeout(timeout)

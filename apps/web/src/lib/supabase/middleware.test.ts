@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mockGetUser = vi.fn();
+const NOW_SECONDS = 1_900_000_000;
+const AUTH_COOKIE_NAME = "sb-project-ref-auth-token";
 
 vi.mock("@supabase/ssr", () => ({
   createServerClient: vi.fn(() => ({
@@ -11,13 +13,31 @@ vi.mock("@supabase/ssr", () => ({
   })),
 }));
 
+function encodeSessionCookie(session: Record<string, unknown>): string {
+  return `base64-${Buffer.from(JSON.stringify(session), "utf8").toString(
+    "base64url"
+  )}`;
+}
+
+function authCookie(overrides: Record<string, unknown> = {}): string {
+  return `${AUTH_COOKIE_NAME}=${encodeSessionCookie({
+    access_token: "access-token",
+    expires_at: NOW_SECONDS + 60,
+    token_type: "bearer",
+    ...overrides,
+  })}`;
+}
+
 describe("updateSession", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     mockGetUser.mockReset();
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://project-ref.supabase.co";
+    vi.setSystemTime(NOW_SECONDS * 1000);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -62,24 +82,21 @@ describe("updateSession", () => {
     expect(mockGetUser).not.toHaveBeenCalled();
   });
 
-  it("allows authenticated protected requests through", async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
-
+  it("allows protected requests with a valid-shaped unexpired auth cookie without Supabase network", async () => {
     const { updateSession } = await import("./middleware");
     const response = await updateSession(
       new NextRequest("http://localhost:3000/libraries", {
         headers: {
-          cookie: "sb-project-ref-auth-token=base64-session",
+          cookie: authCookie(),
         },
       })
     );
 
     expect(response.headers.get("location")).toBeNull();
+    expect(mockGetUser).not.toHaveBeenCalled();
   });
 
   it("redirects protected requests with a stale or fake auth cookie", async () => {
-    mockGetUser.mockResolvedValue({ data: { user: null } });
-
     const { updateSession } = await import("./middleware");
     const request = new NextRequest("http://localhost:3000/libraries", {
       headers: {
@@ -91,17 +108,18 @@ describe("updateSession", () => {
     expect(response.headers.get("location")).toBe(
       "http://localhost:3000/login?next=%2Flibraries"
     );
+    expect(response.headers.get("set-cookie")).toContain(AUTH_COOKIE_NAME);
+    expect(mockGetUser).not.toHaveBeenCalled();
   });
 
-  it("redirects protected requests when Supabase Auth fails", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    mockGetUser.mockRejectedValue(new Error("auth unavailable"));
+  it("redirects an expired valid-shaped auth cookie without Supabase network", async () => {
+    mockGetUser.mockReturnValue(new Promise(() => {}));
 
     const { updateSession } = await import("./middleware");
     const response = await updateSession(
       new NextRequest("http://localhost:3000/libraries", {
         headers: {
-          cookie: "sb-project-ref-auth-token=base64-session",
+          cookie: authCookie({ expires_at: NOW_SECONDS }),
         },
       })
     );
@@ -109,5 +127,7 @@ describe("updateSession", () => {
     expect(response.headers.get("location")).toBe(
       "http://localhost:3000/login?next=%2Flibraries"
     );
+    expect(response.headers.get("set-cookie")).toContain(AUTH_COOKIE_NAME);
+    expect(mockGetUser).not.toHaveBeenCalled();
   });
 });
