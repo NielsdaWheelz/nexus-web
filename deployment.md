@@ -55,6 +55,10 @@ Important: `NEXUS_INTERNAL_SECRET` must match between Vercel and the VPS. The
 sync scripts fail before uploading if required production env values are empty
 or still contain placeholders.
 
+Use Supabase's transaction-pooler `DATABASE_URL` on port `6543` for the VPS
+runtime. The session pooler on port `5432` is too easy to exhaust on the current
+free-tier Supabase project.
+
 ## Hetzner Provisioning
 
 Install and authenticate the Hetzner CLI:

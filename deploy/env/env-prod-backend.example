@@ -5,8 +5,8 @@
 CADDY_SITE=api.example.com
 CADDY_ACME_EMAIL=you@example.com
 
-# Supabase Postgres. For a persistent VPS backend, prefer the session pooler on port 5432.
-DATABASE_URL=postgresql+psycopg://postgres.<project-ref>:<password>@<supabase-pooler-host>:5432/postgres?sslmode=require
+# Supabase Postgres. Use the transaction pooler on port 6543 on small VPS/free-tier Supabase.
+DATABASE_URL=postgresql+psycopg://postgres.<project-ref>:<password>@<supabase-pooler-host>:6543/postgres?sslmode=require
 
 # Supabase Storage service-role key.
 SUPABASE_SERVICE_KEY=<supabase-service-role-key>

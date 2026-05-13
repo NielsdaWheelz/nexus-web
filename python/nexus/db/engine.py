@@ -11,6 +11,10 @@ from sqlalchemy.engine import Engine
 
 from nexus.config import get_settings
 
+DATABASE_POOL_SIZE = 1
+DATABASE_MAX_OVERFLOW = 0
+DATABASE_POOL_TIMEOUT_SECONDS = 10
+
 
 def create_db_engine(database_url: str | None = None) -> Engine:
     """Create a SQLAlchemy engine with the given URL.
@@ -31,6 +35,9 @@ def create_db_engine(database_url: str | None = None) -> Engine:
 
     return create_engine(
         database_url,
+        pool_size=DATABASE_POOL_SIZE,
+        max_overflow=DATABASE_MAX_OVERFLOW,
+        pool_timeout=DATABASE_POOL_TIMEOUT_SECONDS,
         pool_pre_ping=True,
         echo=False,
         # Disable psycopg3 server-side prepared statements — they are
