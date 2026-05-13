@@ -31,6 +31,10 @@ rsync -az --delete \
   --exclude ".claude/" \
   --exclude ".env" \
   --exclude ".env.*" \
+  --exclude "deploy/env/env-prod" \
+  --exclude "deploy/env/env-prod-backend" \
+  --exclude "deploy/env/env-prod-frontend" \
+  --exclude "deploy/env/env-prod-worker" \
   --exclude ".dev-ports" \
   --exclude ".DS_Store" \
   --exclude "node_modules/" \
