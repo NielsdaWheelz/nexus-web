@@ -23,6 +23,7 @@ export default function ChatContextDrawer({
   forkOptionsByParentId,
   branchGraph,
   switchableLeafIds,
+  activeLeafMessageId,
   selectedPathMessageIds,
   onSelectFork,
   onSelectGraphLeaf,
@@ -41,6 +42,7 @@ export default function ChatContextDrawer({
   forkOptionsByParentId?: Record<string, ForkOption[]>;
   branchGraph?: BranchGraph;
   switchableLeafIds?: Set<string>;
+  activeLeafMessageId?: string | null;
   selectedPathMessageIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
   onSelectGraphLeaf?: (leafMessageId: string) => void;
@@ -129,6 +131,7 @@ export default function ChatContextDrawer({
                 forkOptionsByParentId={forkOptionsByParentId}
                 branchGraph={branchGraph}
                 switchableLeafIds={switchableLeafIds}
+                activeLeafMessageId={activeLeafMessageId}
                 selectedPathMessageIds={selectedPathMessageIds}
                 onSelectFork={(fork) => {
                   setOpen(false);

@@ -4,9 +4,13 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from nexus.schemas.contributors import ContributorCreditIn, ContributorCreditOut
+from nexus.schemas.contributors import (
+    ContributorCreditIn,
+    ContributorCreditOut,
+    contributor_credit_write_payload,
+)
 
 
 class PodcastDiscoveryOut(BaseModel):
@@ -29,6 +33,13 @@ class PodcastEnsureRequest(BaseModel):
     image_url: str | None = None
     description: str | None = None
 
+    @field_validator("contributors", mode="before")
+    @classmethod
+    def normalize_contributors(cls, value: object) -> object:
+        if not isinstance(value, list):
+            return value
+        return [contributor_credit_write_payload(item) for item in value]
+
     model_config = ConfigDict(extra="forbid")
 
 
@@ -46,6 +57,13 @@ class PodcastSubscribeRequest(BaseModel):
     description: str | None = None
     auto_queue: bool = False
     library_id: UUID | None = None
+
+    @field_validator("contributors", mode="before")
+    @classmethod
+    def normalize_contributors(cls, value: object) -> object:
+        if not isinstance(value, list):
+            return value
+        return [contributor_credit_write_payload(item) for item in value]
 
     model_config = ConfigDict(extra="forbid")
 

@@ -10,12 +10,13 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.jobs.queue import (
     claim_next_job,
     complete_job,
-    enqueue_unique_job,
+    enqueue_job,
     fail_job,
     heartbeat_job,
 )
@@ -40,17 +41,29 @@ class JobWorker:
         worker_id: str,
         registry: Mapping[str, JobDefinition] | None = None,
         poll_interval_seconds: float = 2.0,
+        idle_backoff_max_seconds: float = 300.0,
         scheduler_interval_seconds: float = 30.0,
         heartbeat_interval_seconds: float = 60.0,
         default_lease_seconds: int = 300,
+        db_failure_backoff_seconds: float = 60.0,
+        db_failure_backoff_max_seconds: float = 900.0,
+        allowed_kinds: tuple[str, ...] | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.worker_id = worker_id
-        self.registry = dict(registry or get_default_registry())
+        self.registry = dict(get_default_registry() if registry is None else registry)
         self.poll_interval_seconds = float(max(poll_interval_seconds, 0.1))
+        self.idle_backoff_max_seconds = float(
+            max(idle_backoff_max_seconds, self.poll_interval_seconds)
+        )
         self.scheduler_interval_seconds = float(max(scheduler_interval_seconds, 1.0))
         self.heartbeat_interval_seconds = float(max(heartbeat_interval_seconds, 1.0))
         self.default_lease_seconds = int(max(default_lease_seconds, 1))
+        self.db_failure_backoff_seconds = float(max(db_failure_backoff_seconds, 0.1))
+        self.db_failure_backoff_max_seconds = float(
+            max(db_failure_backoff_max_seconds, self.db_failure_backoff_seconds)
+        )
+        self.allowed_kinds = allowed_kinds
 
     def run_once(self) -> bool:
         """Claim and execute exactly one due job row."""
@@ -59,6 +72,7 @@ class JobWorker:
                 db,
                 worker_id=self.worker_id,
                 lease_seconds=self.default_lease_seconds,
+                allowed_kinds=self.allowed_kinds,
             )
             db.commit()
 
@@ -157,42 +171,90 @@ class JobWorker:
     def run_scheduler_once(self, *, now: datetime | None = None) -> int:
         """Enqueue due periodic jobs with deterministic per-slot dedupe."""
         now_value = now or datetime.now(UTC)
-        inserted = 0
+        definitions = []
+        for definition in self.registry.values():
+            interval_seconds = definition.periodic_interval_seconds
+            if interval_seconds is None or interval_seconds <= 0:
+                continue
+            if self.allowed_kinds is not None and definition.kind not in self.allowed_kinds:
+                continue
+            definitions.append(definition)
 
-        with self.session_factory() as db:
-            for definition in self.registry.values():
-                interval_seconds = definition.periodic_interval_seconds
-                if interval_seconds is None:
-                    continue
+        if not definitions:
+            return 0
 
-                slot_start = periodic_slot_start(now=now_value, interval_seconds=interval_seconds)
-                dedupe_key = periodic_dedupe_key(kind=definition.kind, slot_start=slot_start)
+        for attempt in range(3):
+            try:
+                with self.session_factory() as db:
+                    bind = db.get_bind()
+                    in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
+                    if not db.in_transaction() and not in_outer_transaction:
+                        db.connection(execution_options={"isolation_level": "SERIALIZABLE"})
 
-                before_count = _count_dedupe_key(db, dedupe_key=dedupe_key)
-                enqueue_unique_job(
-                    db,
-                    kind=definition.kind,
-                    payload={
-                        "request_id": f"periodic:{definition.kind}:{slot_start.isoformat()}",
-                        "scheduler_identity": self.worker_id,
-                    },
-                    dedupe_key=dedupe_key,
-                    priority=100,
-                    max_attempts=definition.max_attempts,
-                    available_at=slot_start,
-                )
-                after_count = _count_dedupe_key(db, dedupe_key=dedupe_key)
-                if after_count > before_count:
-                    inserted += 1
+                    inserted = 0
+                    for definition in definitions:
+                        slot_start = periodic_slot_start(
+                            now=now_value,
+                            interval_seconds=int(definition.periodic_interval_seconds or 0),
+                        )
+                        dedupe_key = periodic_dedupe_key(
+                            kind=definition.kind,
+                            slot_start=slot_start,
+                        )
 
-            db.commit()
+                        existing = db.execute(
+                            text("SELECT id FROM background_jobs WHERE dedupe_key = :dedupe_key"),
+                            {"dedupe_key": dedupe_key},
+                        ).first()
+                        if existing is not None:
+                            continue
 
-        return inserted
+                        enqueue_job(
+                            db,
+                            kind=definition.kind,
+                            payload={
+                                "request_id": (
+                                    f"periodic:{definition.kind}:{slot_start.isoformat()}"
+                                ),
+                                "scheduler_identity": self.worker_id,
+                            },
+                            priority=100,
+                            max_attempts=definition.max_attempts,
+                            available_at=slot_start,
+                            dedupe_key=dedupe_key,
+                        )
+                        inserted += 1
+
+                    db.commit()
+                    return inserted
+            except OperationalError as exc:
+                if attempt < 2:
+                    sqlstate = getattr(exc.orig, "sqlstate", None)
+                    if sqlstate == "40001" or "could not serialize access" in str(exc.orig).lower():
+                        continue
+                raise
+            except IntegrityError as exc:
+                if attempt < 2:
+                    constraint_name = getattr(
+                        getattr(exc.orig, "diag", None),
+                        "constraint_name",
+                        None,
+                    )
+                    if (
+                        constraint_name == "idx_background_jobs_dedupe_key_unique"
+                        or "idx_background_jobs_dedupe_key_unique" in str(exc.orig)
+                    ):
+                        continue
+                raise
+
+        raise AssertionError("Worker scheduler retry loop exhausted")
 
     def run_forever(self, *, stop_event: threading.Event | None = None) -> None:
         """Run polling + scheduler loops until stop_event is set."""
         stop = stop_event or threading.Event()
         next_scheduler_at = time.monotonic()
+        idle_wait_seconds = self.poll_interval_seconds
+        db_failure_wait_seconds = self.db_failure_backoff_seconds
 
         while not stop.is_set():
             now_monotonic = time.monotonic()
@@ -205,15 +267,48 @@ class JobWorker:
                             worker_id=self.worker_id,
                             inserted=inserted,
                         )
-                except Exception:
-                    logger.exception("worker_scheduler_failed", worker_id=self.worker_id)
+                    db_failure_wait_seconds = self.db_failure_backoff_seconds
+                except SQLAlchemyError:
+                    logger.exception(
+                        "worker_scheduler_db_failed",
+                        worker_id=self.worker_id,
+                        sleep_seconds=db_failure_wait_seconds,
+                    )
+                    stop.wait(db_failure_wait_seconds)
+                    db_failure_wait_seconds = min(
+                        db_failure_wait_seconds * 2,
+                        self.db_failure_backoff_max_seconds,
+                    )
+                    next_scheduler_at = time.monotonic() + self.scheduler_interval_seconds
+                    continue
                 next_scheduler_at = now_monotonic + self.scheduler_interval_seconds
 
-            processed = self.run_once()
-            if processed:
+            try:
+                processed = self.run_once()
+                db_failure_wait_seconds = self.db_failure_backoff_seconds
+            except SQLAlchemyError:
+                logger.exception(
+                    "worker_claim_or_transition_db_failed",
+                    worker_id=self.worker_id,
+                    sleep_seconds=db_failure_wait_seconds,
+                )
+                stop.wait(db_failure_wait_seconds)
+                db_failure_wait_seconds = min(
+                    db_failure_wait_seconds * 2,
+                    self.db_failure_backoff_max_seconds,
+                )
+                idle_wait_seconds = self.poll_interval_seconds
                 continue
 
-            stop.wait(self.poll_interval_seconds)
+            if processed:
+                idle_wait_seconds = self.poll_interval_seconds
+                continue
+
+            # justify-polling: production uses Supabase's transaction pooler, so a
+            # session-scoped LISTEN/NOTIFY worker is not dependable here. Idle
+            # workers fall back to one bounded claim query after each backoff window.
+            stop.wait(idle_wait_seconds)
+            idle_wait_seconds = min(idle_wait_seconds * 2, self.idle_backoff_max_seconds)
 
     def _start_heartbeat_thread(
         self, *, job_id: UUID, lease_seconds: int
@@ -234,7 +329,7 @@ class JobWorker:
                         db.commit()
                         if not updated:
                             return
-                except Exception:
+                except SQLAlchemyError:
                     logger.exception(
                         "worker_heartbeat_failed",
                         worker_id=self.worker_id,
@@ -258,11 +353,3 @@ def _normalize_result_payload(result: Mapping[str, Any] | None) -> dict[str, Any
     if result is None:
         return {}
     return dict(result)
-
-
-def _count_dedupe_key(db: Session, *, dedupe_key: str) -> int:
-    count = db.execute(
-        text("SELECT COUNT(*) FROM background_jobs WHERE dedupe_key = :dedupe_key"),
-        {"dedupe_key": dedupe_key},
-    ).scalar_one()
-    return int(count)

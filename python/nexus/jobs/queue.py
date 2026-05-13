@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -126,7 +126,7 @@ def enqueue_unique_job(
     max_attempts: int = 3,
     available_at: datetime | None = None,
 ) -> JobRow:
-    """Insert one deduped job by dedupe_key, returning the existing row on conflict."""
+    """Insert one deduped job by dedupe_key, returning the existing row when present."""
     inserted = (
         db.execute(
             text(
@@ -195,9 +195,12 @@ def enqueue_unique_job(
             {"dedupe_key": dedupe_key},
         )
         .mappings()
-        .one()
+        .first()
     )
-    return _row_to_job(existing)
+    if existing is not None:
+        return _row_to_job(existing)
+
+    raise RuntimeError(f"Concurrent enqueue for dedupe_key={dedupe_key!r} did not commit.")
 
 
 def claim_next_job(
@@ -206,36 +209,46 @@ def claim_next_job(
     worker_id: str,
     lease_seconds: int,
     allowed_kinds: Sequence[str] | None = None,
-    now: datetime | None = None,
 ) -> JobRow | None:
     """Claim one due job atomically using FOR UPDATE SKIP LOCKED."""
     if allowed_kinds is not None and len(allowed_kinds) == 0:
         return None
 
-    now_value = now or datetime.now(UTC)
     claimed = (
         db.execute(
             text(
                 """
                 WITH candidate AS (
                     SELECT id
-                    FROM background_jobs
-                    WHERE
-                        (
-                            (status = 'pending' AND available_at <= :now)
-                            OR (status = 'failed' AND available_at <= :now)
-                            OR (
-                                status = 'running'
-                                AND lease_expires_at IS NOT NULL
-                                AND lease_expires_at < :now
-                            )
-                        )
-                        AND (
-                            :allow_all_kinds
-                            OR kind = ANY(:allowed_kinds)
-                        )
-                    ORDER BY priority ASC, available_at ASC, created_at ASC
-                    FOR UPDATE SKIP LOCKED
+                    FROM (
+                        SELECT id, priority, ready_at, created_at
+                        FROM (
+                            SELECT id, priority, available_at AS ready_at, created_at
+                            FROM background_jobs
+                            WHERE status IN ('pending', 'failed')
+                              AND available_at <= now()
+                              AND (:allow_all_kinds OR kind = ANY(:allowed_kinds))
+                            ORDER BY priority ASC, available_at ASC, created_at ASC, id ASC
+                            FOR UPDATE SKIP LOCKED
+                            LIMIT 1
+                        ) due
+
+                        UNION ALL
+
+                        SELECT id, priority, ready_at, created_at
+                        FROM (
+                            SELECT id, priority, lease_expires_at AS ready_at, created_at
+                            FROM background_jobs
+                            WHERE status = 'running'
+                              AND lease_expires_at IS NOT NULL
+                              AND lease_expires_at <= now()
+                              AND (:allow_all_kinds OR kind = ANY(:allowed_kinds))
+                            ORDER BY priority ASC, lease_expires_at ASC, created_at ASC, id ASC
+                            FOR UPDATE SKIP LOCKED
+                            LIMIT 1
+                        ) expired
+                    ) candidates
+                    ORDER BY priority ASC, ready_at ASC, created_at ASC, id ASC
                     LIMIT 1
                 )
                 UPDATE background_jobs j
@@ -243,18 +256,17 @@ def claim_next_job(
                     status = 'running',
                     attempts = j.attempts + 1,
                     claimed_by = :worker_id,
-                    started_at = COALESCE(j.started_at, :now),
-                    lease_expires_at = :lease_expires_at,
-                    updated_at = :now
+                    started_at = COALESCE(j.started_at, now()),
+                    lease_expires_at = now() + (CAST(:lease_seconds AS integer) * interval '1 second'),
+                    updated_at = now()
                 FROM candidate
                 WHERE j.id = candidate.id
                 RETURNING j.*
                 """
             ),
             {
-                "now": now_value,
                 "worker_id": worker_id,
-                "lease_expires_at": now_value + timedelta(seconds=max(int(lease_seconds), 1)),
+                "lease_seconds": max(int(lease_seconds), 1),
                 "allow_all_kinds": allowed_kinds is None,
                 "allowed_kinds": list(allowed_kinds or []),
             },
@@ -273,30 +285,28 @@ def heartbeat_job(
     job_id: UUID,
     worker_id: str,
     lease_seconds: int,
-    now: datetime | None = None,
 ) -> bool:
     """Extend lease for one running row owned by worker_id."""
-    now_value = now or datetime.now(UTC)
-    result = db.execute(
+    updated = db.execute(
         text(
             """
-            UPDATE background_jobs
-            SET
-                lease_expires_at = :lease_expires_at,
-                updated_at = :now
-            WHERE id = :job_id
-              AND status = 'running'
-              AND claimed_by = :worker_id
-            """
+                UPDATE background_jobs
+                SET
+                    lease_expires_at = now() + (CAST(:lease_seconds AS integer) * interval '1 second'),
+                    updated_at = now()
+                WHERE id = :job_id
+                  AND status = 'running'
+                  AND claimed_by = :worker_id
+                RETURNING id
+                """
         ),
         {
             "job_id": job_id,
             "worker_id": worker_id,
-            "lease_expires_at": now_value + timedelta(seconds=max(int(lease_seconds), 1)),
-            "now": now_value,
+            "lease_seconds": max(int(lease_seconds), 1),
         },
-    )
-    return result.rowcount > 0
+    ).first()
+    return updated is not None
 
 
 def complete_job(
@@ -305,25 +315,24 @@ def complete_job(
     job_id: UUID,
     worker_id: str,
     result_payload: Mapping[str, Any] | None = None,
-    now: datetime | None = None,
 ) -> bool:
     """Mark one running row as succeeded when owned by worker_id."""
-    now_value = now or datetime.now(UTC)
     updated = db.execute(
         text(
             """
-            UPDATE background_jobs
-            SET
-                status = 'succeeded',
-                result = CAST(:result_payload AS jsonb),
-                lease_expires_at = NULL,
-                claimed_by = NULL,
-                finished_at = :now,
-                updated_at = :now
-            WHERE id = :job_id
-              AND status = 'running'
-              AND claimed_by = :worker_id
-            """
+                UPDATE background_jobs
+                SET
+                    status = 'succeeded',
+                    result = CAST(:result_payload AS jsonb),
+                    lease_expires_at = NULL,
+                    claimed_by = NULL,
+                    finished_at = now(),
+                    updated_at = now()
+                WHERE id = :job_id
+                  AND status = 'running'
+                  AND claimed_by = :worker_id
+                RETURNING id
+                """
         ),
         {
             "job_id": job_id,
@@ -331,10 +340,9 @@ def complete_job(
             "result_payload": (
                 json.dumps(dict(result_payload)) if result_payload is not None else None
             ),
-            "now": now_value,
         },
-    )
-    return updated.rowcount > 0
+    ).first()
+    return updated is not None
 
 
 def fail_job(
@@ -345,10 +353,8 @@ def fail_job(
     error_code: str,
     error_message: str,
     retry_delays_seconds: Sequence[int],
-    now: datetime | None = None,
 ) -> str | None:
     """Apply retry/dead transition for a failed running job owned by worker_id."""
-    now_value = now or datetime.now(UTC)
     row = (
         db.execute(
             text(
@@ -375,13 +381,10 @@ def fail_job(
 
     if should_dead_letter:
         new_status = DEAD
-        available_at = now_value
-        finished_at = now_value
+        retry_delay_seconds = 0
     else:
         retry_delay_seconds = _retry_delay_for_attempt(attempts, retry_delays_seconds)
         new_status = FAILED
-        available_at = now_value + timedelta(seconds=retry_delay_seconds)
-        finished_at = None
 
     db.execute(
         text(
@@ -389,24 +392,23 @@ def fail_job(
             UPDATE background_jobs
             SET
                 status = :status,
-                available_at = :available_at,
+                available_at = now() + (CAST(:retry_delay_seconds AS integer) * interval '1 second'),
                 lease_expires_at = NULL,
                 claimed_by = NULL,
                 error_code = :error_code,
                 last_error = :last_error,
-                finished_at = :finished_at,
-                updated_at = :now
+                finished_at = CASE WHEN :is_dead THEN now() ELSE NULL END,
+                updated_at = now()
             WHERE id = :job_id
             """
         ),
         {
             "job_id": job_id,
             "status": new_status,
-            "available_at": available_at,
             "error_code": error_code,
             "last_error": error_message[:1000],
-            "finished_at": finished_at,
-            "now": now_value,
+            "retry_delay_seconds": retry_delay_seconds,
+            "is_dead": should_dead_letter,
         },
     )
     return new_status
@@ -417,34 +419,77 @@ def requeue_job(
     *,
     job_id: UUID,
     delay_seconds: int = 0,
-    now: datetime | None = None,
 ) -> bool:
     """Move failed/dead row back to pending for operator-initiated replay."""
-    now_value = now or datetime.now(UTC)
-    result = db.execute(
+    updated = db.execute(
         text(
             """
-            UPDATE background_jobs
-            SET
-                status = 'pending',
-                available_at = :available_at,
-                lease_expires_at = NULL,
-                claimed_by = NULL,
-                error_code = NULL,
-                last_error = NULL,
-                finished_at = NULL,
-                updated_at = :now
-            WHERE id = :job_id
-              AND status IN ('failed', 'dead')
-            """
+                UPDATE background_jobs
+                SET
+                    status = 'pending',
+                    available_at = now() + (CAST(:delay_seconds AS integer) * interval '1 second'),
+                    lease_expires_at = NULL,
+                    claimed_by = NULL,
+                    error_code = NULL,
+                    last_error = NULL,
+                    finished_at = NULL,
+                    updated_at = now()
+                WHERE id = :job_id
+                  AND status IN ('failed', 'dead')
+                RETURNING id
+                """
         ),
         {
             "job_id": job_id,
-            "available_at": now_value + timedelta(seconds=max(int(delay_seconds), 0)),
-            "now": now_value,
+            "delay_seconds": max(int(delay_seconds), 0),
         },
+    ).first()
+    return updated is not None
+
+
+def prune_terminal_jobs(
+    db: Session,
+    *,
+    succeeded_after_days: int,
+    dead_after_days: int,
+    limit: int,
+) -> int:
+    """Delete old terminal queue rows from the hot background_jobs table."""
+    deleted = (
+        db.execute(
+            text(
+                """
+                DELETE FROM background_jobs
+                WHERE id IN (
+                    SELECT id
+                    FROM background_jobs
+                    WHERE (
+                        status = 'succeeded'
+                        AND finished_at IS NOT NULL
+                        AND finished_at < now() - (CAST(:succeeded_after_days AS integer) * interval '1 day')
+                    )
+                    OR (
+                        status = 'dead'
+                        AND finished_at IS NOT NULL
+                        AND finished_at < now() - (CAST(:dead_after_days AS integer) * interval '1 day')
+                    )
+                    ORDER BY finished_at ASC, id ASC
+                    LIMIT :limit
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "succeeded_after_days": max(int(succeeded_after_days), 1),
+                "dead_after_days": max(int(dead_after_days), 1),
+                "limit": max(int(limit), 1),
+            },
+        )
+        .mappings()
+        .all()
     )
-    return result.rowcount > 0
+    return len(deleted)
 
 
 def _retry_delay_for_attempt(attempt_number: int, retry_delays_seconds: Sequence[int]) -> int:
@@ -454,7 +499,7 @@ def _retry_delay_for_attempt(attempt_number: int, retry_delays_seconds: Sequence
     return max(int(retry_delays_seconds[index]), 0)
 
 
-def _row_to_job(row: Mapping[str, Any]) -> JobRow:
+def _row_to_job(row: Mapping[Any, Any]) -> JobRow:
     return JobRow(
         id=UUID(str(row["id"])),
         kind=str(row["kind"]),

@@ -88,6 +88,11 @@ NEXUS_HOST=<server-ip-or-api-domain> ./deploy/hetzner/deploy.sh
 
 The deploy script syncs the current working tree to `/opt/nexus-web`, builds both
 images on the VPS, runs Alembic migrations, and starts the Compose stack.
+If Supabase reports Disk I/O exhaustion, follow the main
+[Supabase Disk I/O runbook](../../deployment.md#supabase-disk-io-runbook);
+deploy may recreate/start the worker.
+The env sync rejects maintenance worker settings unless
+`NEXUS_ALLOW_WORKER_MAINTENANCE=1` is set for a bounded maintenance sync.
 
 To upload env and deploy in one command:
 

@@ -155,6 +155,28 @@ class ContributorCreditIn(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
 
 
+def contributor_credit_write_payload(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+
+    return {
+        key: item
+        for key, item in value.items()
+        if key
+        not in {
+            "id",
+            "contributor",
+            "contributor_handle",
+            "contributorHandle",
+            "contributor_display_name",
+            "contributorDisplayName",
+            "href",
+            "resolution_status",
+            "resolutionStatus",
+        }
+    }
+
+
 class ContributorCreditOut(BaseModel):
     id: UUID | None = None
     contributor_handle: str = Field(

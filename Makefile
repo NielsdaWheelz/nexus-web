@@ -238,7 +238,8 @@ test-supabase:
 	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-back-db-ready _test-supabase-raw
 
 _test-supabase-raw:
-	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m supabase
+	cd python && NEXUS_ENV=test uv run pytest -v --tb=short \
+		-m "supabase and not real_media and not live_provider"
 
 test-real-media: _ensure-e2e-deps
 	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-back-db-ready _test-real-media-backend-raw

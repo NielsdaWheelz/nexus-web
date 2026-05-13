@@ -124,6 +124,82 @@ class TestPodcastProviderConfiguration:
         assert settings.podcast_index_api_secret is None
 
 
+class TestWorkerMaintenanceConfiguration:
+    def test_database_pool_settings_are_validated(self):
+        with pytest.raises(ValidationError, match="DATABASE_POOL_SIZE"):
+            _make_settings(DATABASE_POOL_SIZE=0)
+        with pytest.raises(ValidationError, match="DATABASE_MAX_OVERFLOW"):
+            _make_settings(DATABASE_MAX_OVERFLOW=-1)
+        with pytest.raises(ValidationError, match="DATABASE_POOL_TIMEOUT_SECONDS"):
+            _make_settings(DATABASE_POOL_TIMEOUT_SECONDS=0)
+
+    def test_periodic_maintenance_schedules_default_disabled(self):
+        settings = _make_settings()
+        assert settings.podcast_active_poll_schedule_seconds == 0
+        assert settings.ingest_reconcile_schedule_seconds == 0
+        assert settings.sync_gutenberg_catalog_schedule_seconds == 0
+        assert settings.background_job_prune_schedule_seconds == 0
+        assert settings.worker_allowed_job_kinds == (
+            "ingest_web_article,ingest_epub,ingest_pdf,ingest_youtube_video,"
+            "enrich_metadata,chat_run,library_intelligence_build_job,"
+            "podcast_sync_subscription_job,podcast_transcribe_episode_job,"
+            "podcast_reindex_semantic_job,backfill_default_library_closure_job,"
+            "oracle_reading_generate"
+        )
+
+    def test_zero_schedule_values_are_valid_disabled_state(self):
+        settings = _make_settings(
+            PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS=0,
+            INGEST_RECONCILE_SCHEDULE_SECONDS=0,
+            SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS=0,
+            BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS=0,
+        )
+        assert settings.podcast_active_poll_schedule_seconds == 0
+        assert settings.ingest_reconcile_schedule_seconds == 0
+        assert settings.sync_gutenberg_catalog_schedule_seconds == 0
+        assert settings.background_job_prune_schedule_seconds == 0
+
+    def test_negative_schedule_values_are_rejected(self):
+        with pytest.raises(ValidationError, match="PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS"):
+            _make_settings(PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS=-1)
+        with pytest.raises(ValidationError, match="INGEST_RECONCILE_SCHEDULE_SECONDS"):
+            _make_settings(INGEST_RECONCILE_SCHEDULE_SECONDS=-1)
+        with pytest.raises(ValidationError, match="SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS"):
+            _make_settings(SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS=-1)
+        with pytest.raises(ValidationError, match="BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS"):
+            _make_settings(BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS=-1)
+
+    def test_worker_backoff_settings_are_validated(self):
+        with pytest.raises(ValidationError, match="WORKER_ALLOWED_JOB_KINDS"):
+            _make_settings(WORKER_ALLOWED_JOB_KINDS="")
+        with pytest.raises(ValidationError, match="WORKER_IDLE_BACKOFF_MAX_SECONDS"):
+            _make_settings(WORKER_POLL_INTERVAL_SECONDS=10, WORKER_IDLE_BACKOFF_MAX_SECONDS=5)
+        with pytest.raises(ValidationError, match="WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS"):
+            _make_settings(
+                WORKER_DB_FAILURE_BACKOFF_SECONDS=60,
+                WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS=30,
+            )
+
+    @pytest.mark.parametrize(
+        ("setting_name", "invalid_value"),
+        [
+            ("WORKER_SCHEDULER_INTERVAL_SECONDS", 0),
+            ("WORKER_HEARTBEAT_INTERVAL_SECONDS", 0),
+            ("WORKER_LEASE_SECONDS", 0),
+            ("BACKGROUND_JOB_PRUNE_SUCCEEDED_AFTER_DAYS", 0),
+            ("BACKGROUND_JOB_PRUNE_DEAD_AFTER_DAYS", 0),
+            ("BACKGROUND_JOB_PRUNE_BATCH_SIZE", 0),
+        ],
+    )
+    def test_worker_runtime_numeric_guardrails_are_validated(
+        self,
+        setting_name: str,
+        invalid_value: int,
+    ):
+        with pytest.raises(ValidationError, match=setting_name):
+            _make_settings(**{setting_name: invalid_value})
+
+
 class TestBrowseProviderConfiguration:
     def test_staging_requires_youtube_data_credentials(self):
         with pytest.raises(ValidationError, match="YOUTUBE_DATA_API_KEY"):

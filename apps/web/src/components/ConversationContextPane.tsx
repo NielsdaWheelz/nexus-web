@@ -58,6 +58,7 @@ interface ConversationContextPaneProps {
   forkOptionsByParentId?: Record<string, ForkOption[]>;
   branchGraph?: BranchGraph;
   switchableLeafIds?: Set<string>;
+  activeLeafMessageId?: string | null;
   selectedPathMessageIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
   onSelectGraphLeaf?: (leafMessageId: string) => void;
@@ -75,6 +76,7 @@ export default function ConversationContextPane({
   forkOptionsByParentId = {},
   branchGraph = { nodes: [], edges: [], root_message_id: null },
   switchableLeafIds,
+  activeLeafMessageId = null,
   selectedPathMessageIds = new Set(),
   onSelectFork,
   onSelectGraphLeaf,
@@ -119,6 +121,7 @@ export default function ConversationContextPane({
               forkOptionsByParentId={forkOptionsByParentId}
               branchGraph={branchGraph}
               switchableLeafIds={switchableLeafIds}
+              activeLeafMessageId={activeLeafMessageId}
               selectedPathMessageIds={selectedPathMessageIds}
               onSelectFork={onSelectFork}
               onSelectGraphLeaf={onSelectGraphLeaf ?? (() => undefined)}

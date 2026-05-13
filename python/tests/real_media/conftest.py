@@ -188,7 +188,15 @@ def create_nasa_captioned_video(
             request_id="real-media-youtube-caption-fixture",
         )
         session.commit()
-    assert result["status"] == "success", result
+    if result["status"] == "skipped":
+        assert result.get("reason") == "already_ready", result
+        with direct_db.session() as session:
+            result["segment_count"] = session.execute(
+                text("SELECT count(*) FROM transcript_segments WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar_one()
+    else:
+        assert result["status"] == "success", result
     assert result["segment_count"] >= 20, result
     return media_id, result
 

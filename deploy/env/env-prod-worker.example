@@ -1,10 +1,27 @@
 # Worker-only env for the Hetzner VPS.
+# Safe production default for Supabase free/Nano: explicit user/domain jobs only.
 # Merged after env-prod-backend, so values here can override API defaults.
 
-WORKER_POLL_INTERVAL_SECONDS=2
-WORKER_SCHEDULER_INTERVAL_SECONDS=30
-WORKER_HEARTBEAT_INTERVAL_SECONDS=30
+WORKER_ALLOWED_JOB_KINDS=ingest_web_article,ingest_epub,ingest_pdf,ingest_youtube_video,enrich_metadata,chat_run,library_intelligence_build_job,podcast_sync_subscription_job,podcast_transcribe_episode_job,podcast_reindex_semantic_job,backfill_default_library_closure_job,oracle_reading_generate
+WORKER_POLL_INTERVAL_SECONDS=5
+WORKER_IDLE_BACKOFF_MAX_SECONDS=300
+WORKER_SCHEDULER_INTERVAL_SECONDS=300
+WORKER_HEARTBEAT_INTERVAL_SECONDS=60
 WORKER_LEASE_SECONDS=300
+WORKER_DB_FAILURE_BACKOFF_SECONDS=60
+WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS=900
+
+# 0 means disabled. For maintenance, add only the specific job kind needed to
+# WORKER_ALLOWED_JOB_KINDS and set only its schedule for a bounded operator window.
+PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS=0
+PODCAST_ACTIVE_POLL_LIMIT=10
+INGEST_RECONCILE_SCHEDULE_SECONDS=0
+INGEST_SEMANTIC_REPAIR_BATCH_LIMIT=10
+SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS=0
+BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS=0
+BACKGROUND_JOB_PRUNE_SUCCEEDED_AFTER_DAYS=7
+BACKGROUND_JOB_PRUNE_DEAD_AFTER_DAYS=30
+BACKGROUND_JOB_PRUNE_BATCH_SIZE=100
 
 # The worker image sets NODE_INGEST_SCRIPT for production. Override only if needed.
 # NODE_INGEST_SCRIPT=/app/node/ingest/ingest.mjs
