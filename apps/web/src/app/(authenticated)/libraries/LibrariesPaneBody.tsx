@@ -2,12 +2,19 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { FolderOpen, Library as LibraryIcon } from "lucide-react";
-import { apiFetch, isApiError } from "@/lib/api/client";
-import StateMessage from "@/components/ui/StateMessage";
-import StatusPill from "@/components/ui/StatusPill";
+import { apiFetch } from "@/lib/api/client";
+import { libraryResourceOptions } from "@/lib/actions/resourceActions";
+import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
+import Pill from "@/components/ui/Pill";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
 import { AppList, AppListItem } from "@/components/ui/AppList";
 import SectionCard from "@/components/ui/SectionCard";
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
 import type {
   LibraryForEdit,
@@ -30,7 +37,7 @@ interface Library {
 export default function LibrariesPaneBody() {
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FeedbackContent | null>(null);
   const [newLibraryName, setNewLibraryName] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -45,11 +52,11 @@ export default function LibrariesPaneBody() {
       setLibraries(libsResponse.data);
       setError(null);
     } catch (err) {
-      if (isApiError(err)) {
-        setError(err.message);
-      } else {
-        setError("Failed to load libraries");
-      }
+      setError(
+        toFeedback(err, {
+          fallback: "Failed to load libraries",
+        })
+      );
     } finally {
       setLoading(false);
     }
@@ -72,9 +79,11 @@ export default function LibrariesPaneBody() {
       setNewLibraryName("");
       await fetchLibraries();
     } catch (err) {
-      if (isApiError(err)) {
-        setError(err.message);
-      }
+      setError(
+        toFeedback(err, {
+          fallback: "Failed to create library",
+        })
+      );
     } finally {
       setCreating(false);
     }
@@ -89,11 +98,35 @@ export default function LibrariesPaneBody() {
       });
       await fetchLibraries();
     } catch (err) {
-      if (isApiError(err)) {
-        setError(err.message);
-      }
+      setError(
+        toFeedback(err, {
+          fallback: "Failed to delete library",
+        })
+      );
     }
   };
+
+  const handleOpenLibraryChat = useCallback(async (library: Library) => {
+    try {
+      const response = await apiFetch<{ data: { id: string; title: string } }>(
+        "/api/conversations/resolve",
+        {
+          method: "POST",
+          body: JSON.stringify({ type: "library", library_id: library.id }),
+        }
+      );
+      const route = `/conversations/${response.data.id}`;
+      if (!requestOpenInAppPane(route, { titleHint: response.data.title || library.name })) {
+        window.location.assign(route);
+      }
+    } catch (err) {
+      setError(
+        toFeedback(err, {
+          fallback: "Failed to open library chat",
+        })
+      );
+    }
+  }, []);
 
   /* ---- Edit dialog handlers ---- */
 
@@ -115,9 +148,11 @@ export default function LibrariesPaneBody() {
       setEditMembers(membersResp.data);
       setEditInvites(invitesResp.data);
     } catch (err) {
-      if (isApiError(err)) {
-        setError(err.message);
-      }
+      setError(
+        toFeedback(err, {
+          fallback: "Failed to load library sharing",
+        })
+      );
     }
   }, []);
 
@@ -222,29 +257,6 @@ export default function LibrariesPaneBody() {
     await fetchLibraries();
   }, [editLibrary, closeEditDialog]);
 
-  /* ---- Build options for list items ---- */
-
-  const buildOptions = (library: Library): ActionMenuOption[] => {
-    if (library.is_default) return [];
-
-    const opts: ActionMenuOption[] = [
-      {
-        id: "edit-library",
-        label: "Edit library",
-        onSelect: () => void openEditDialog(library),
-      },
-    ];
-    if (library.role === "admin") {
-      opts.push({
-        id: "delete-library",
-        label: "Delete library",
-        tone: "danger",
-        onSelect: () => void handleDeleteLibrary(library),
-      });
-    }
-    return opts;
-  };
-
   /* ---- Edit dialog library data ---- */
 
   const editLibraryForDialog: LibraryForEdit | null = editLibrary
@@ -262,31 +274,33 @@ export default function LibrariesPaneBody() {
       <SectionCard>
         <div className={styles.content}>
           <form className={styles.createForm} onSubmit={handleCreateLibrary}>
-            <input
-              type="text"
+            <Input
               value={newLibraryName}
               onChange={(e) => setNewLibraryName(e.target.value)}
               placeholder="New library name..."
-              className={styles.input}
+              className={styles.inputField}
               disabled={creating}
             />
-            <button
+            <Button
               type="submit"
-              className={styles.createBtn}
+              variant="primary"
+              size="md"
               disabled={creating || !newLibraryName.trim()}
             >
               {creating ? "Creating..." : "Create"}
-            </button>
+            </Button>
           </form>
 
-          {error && <StateMessage variant="error">{error}</StateMessage>}
+          {error && <FeedbackNotice {...error} />}
 
           {loading ? (
-            <StateMessage variant="loading">Loading libraries...</StateMessage>
+            <FeedbackNotice severity="info" title="Loading libraries..." />
           ) : libraries.length === 0 ? (
-            <StateMessage variant="empty">
-              No libraries yet. Create your first library above.
-            </StateMessage>
+            <FeedbackNotice
+              severity="neutral"
+              title="No libraries yet."
+              message="Create your first library above."
+            />
           ) : (
             <AppList>
               {libraries.map((library) => (
@@ -294,7 +308,6 @@ export default function LibrariesPaneBody() {
                   key={library.id}
                   href={`/libraries/${library.id}`}
                   paneTitleHint={library.name}
-                  paneResourceRef={`library:${library.id}`}
                   icon={
                     library.is_default ? (
                       <FolderOpen size={18} />
@@ -310,10 +323,21 @@ export default function LibrariesPaneBody() {
                   }
                   trailing={
                     library.is_default ? (
-                      <StatusPill variant="info">default</StatusPill>
+                      <Pill tone="info">default</Pill>
                     ) : null
                   }
-                  options={buildOptions(library)}
+                  options={libraryResourceOptions({
+                    library,
+                    onOpenChat: () => void handleOpenLibraryChat(library),
+                    onViewIntelligence: () => {
+                      const route = `/libraries/${library.id}?view=intelligence`;
+                      if (!requestOpenInAppPane(route, { titleHint: library.name })) {
+                        window.location.assign(route);
+                      }
+                    },
+                    onEdit: () => void openEditDialog(library),
+                    onDelete: () => void handleDeleteLibrary(library),
+                  })}
                 />
               ))}
             </AppList>

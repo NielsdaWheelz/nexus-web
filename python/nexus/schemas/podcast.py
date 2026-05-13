@@ -6,12 +6,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nexus.schemas.contributors import ContributorCreditIn, ContributorCreditOut
+
 
 class PodcastDiscoveryOut(BaseModel):
     podcast_id: UUID | None = None
     provider_podcast_id: str
     title: str
-    author: str | None = None
+    contributors: list[ContributorCreditOut] = Field(default_factory=list)
     feed_url: str
     website_url: str | None = None
     image_url: str | None = None
@@ -21,11 +23,13 @@ class PodcastDiscoveryOut(BaseModel):
 class PodcastEnsureRequest(BaseModel):
     provider_podcast_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
-    author: str | None = None
+    contributors: list[ContributorCreditIn] = Field(default_factory=list)
     feed_url: str = Field(min_length=1)
     website_url: str | None = None
     image_url: str | None = None
     description: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class PodcastEnsureOut(BaseModel):
@@ -35,13 +39,15 @@ class PodcastEnsureOut(BaseModel):
 class PodcastSubscribeRequest(BaseModel):
     provider_podcast_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
-    author: str | None = None
+    contributors: list[ContributorCreditIn] = Field(default_factory=list)
     feed_url: str = Field(min_length=1)
     website_url: str | None = None
     image_url: str | None = None
     description: str | None = None
     auto_queue: bool = False
     library_id: UUID | None = None
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class PodcastSubscribeOut(BaseModel):
@@ -115,7 +121,7 @@ class PodcastListItemOut(BaseModel):
     provider: str
     provider_podcast_id: str
     title: str
-    author: str | None = None
+    contributors: list[ContributorCreditOut] = Field(default_factory=list)
     feed_url: str
     website_url: str | None = None
     image_url: str | None = None

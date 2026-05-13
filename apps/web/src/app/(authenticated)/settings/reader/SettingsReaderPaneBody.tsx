@@ -1,14 +1,25 @@
 "use client";
 
-import { useReaderContext } from "@/lib/reader";
+import { useReaderContext } from "@/lib/reader/ReaderContext";
 import {
   DEFAULT_READER_PROFILE,
+  type ReaderFocusMode,
   type ReaderFontFamily,
   type ReaderTheme,
 } from "@/lib/reader/types";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
 import SectionCard from "@/components/ui/SectionCard";
-import StateMessage from "@/components/ui/StateMessage";
+import Select from "@/components/ui/Select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
+import Toggle from "@/components/ui/Toggle";
 import styles from "./page.module.css";
+
+const FOCUS_MODE_OPTIONS: ReadonlyArray<{ value: ReaderFocusMode; label: string }> = [
+  { value: "off", label: "Off" },
+  { value: "distraction_free", label: "Distraction-free" },
+  { value: "paragraph", label: "Paragraph" },
+  { value: "sentence", label: "Sentence" },
+];
 
 export default function SettingsReaderPaneBody() {
   const {
@@ -16,20 +27,20 @@ export default function SettingsReaderPaneBody() {
     loading,
     error,
     saving,
+    save,
     updateTheme,
     updateFontFamily,
     updateFontSize,
     updateLineHeight,
     updateColumnWidth,
-    updateFocusMode,
   } = useReaderContext();
 
   const p = profile ?? DEFAULT_READER_PROFILE;
 
   return (
     <SectionCard title="Appearance">
-      {loading && <StateMessage variant="loading">Loading...</StateMessage>}
-      {error && <StateMessage variant="error">{error}</StateMessage>}
+      {loading && <FeedbackNotice severity="info">Loading...</FeedbackNotice>}
+      {error && <FeedbackNotice severity="error">{error}</FeedbackNotice>}
 
       {!loading && (
         <div className={styles.form}>
@@ -38,25 +49,23 @@ export default function SettingsReaderPaneBody() {
               <label className={styles.formLabel} htmlFor="theme">
                 Theme
               </label>
-              <select
+              <Select
                 id="theme"
-                className={styles.select}
                 value={p.theme}
                 onChange={(e) => updateTheme(e.target.value as ReaderTheme)}
                 disabled={saving}
               >
                 <option value="light">Light</option>
                 <option value="dark">Dark</option>
-              </select>
+              </Select>
             </div>
 
             <div className={styles.formField}>
               <label className={styles.formLabel} htmlFor="fontFamily">
                 Font
               </label>
-              <select
+              <Select
                 id="fontFamily"
-                className={styles.select}
                 value={p.font_family}
                 onChange={(e) =>
                   updateFontFamily(e.target.value as ReaderFontFamily)
@@ -65,7 +74,7 @@ export default function SettingsReaderPaneBody() {
               >
                 <option value="serif">Serif</option>
                 <option value="sans">Sans-serif</option>
-              </select>
+              </Select>
             </div>
           </div>
 
@@ -132,15 +141,39 @@ export default function SettingsReaderPaneBody() {
 
           <div className={styles.formRow}>
             <div className={styles.formField}>
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={p.focus_mode}
-                  onChange={(e) => updateFocusMode(e.target.checked)}
-                  disabled={saving}
-                />
-                Focus mode (hide distractions)
-              </label>
+              <span className={styles.formLabel}>Focus mode</span>
+              <Tabs
+                value={p.focus_mode}
+                onValueChange={(next) =>
+                  save({ focus_mode: next as ReaderFocusMode })
+                }
+                variant="segmented"
+              >
+                <TabsList aria-label="Focus mode">
+                  {FOCUS_MODE_OPTIONS.map((option) => (
+                    <TabsTrigger
+                      key={option.value}
+                      value={option.value}
+                      disabled={saving}
+                    >
+                      {option.label}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            </div>
+          </div>
+
+          <div className={styles.formRow}>
+            <div className={styles.formField}>
+              <Toggle
+                checked={p.hyphenation === "auto"}
+                onCheckedChange={(checked) =>
+                  save({ hyphenation: checked ? "auto" : "off" })
+                }
+                disabled={saving}
+                label="Hyphenation on narrow screens"
+              />
             </div>
           </div>
 

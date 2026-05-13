@@ -64,14 +64,14 @@ def _create_non_default_library(db: Session, owner_id=None):
     return lib_id
 
 
-def _create_media(db: Session, title: str = "Test") -> "UUID":
+def _create_media(db: Session, title: str = "Test", kind: str = "web_article") -> "UUID":
     mid = uuid4()
     db.execute(
         text("""
             INSERT INTO media (id, kind, title, processing_status)
-            VALUES (:id, 'web_article', :title, 'pending')
+            VALUES (:id, :kind, :title, 'pending')
         """),
-        {"id": mid, "title": title},
+        {"id": mid, "kind": kind, "title": title},
     )
     db.flush()
     return mid
@@ -109,6 +109,17 @@ def _add_closure_edge(db: Session, default_library_id, media_id, source_library_
             ON CONFLICT DO NOTHING
         """),
         {"dl": default_library_id, "m": media_id, "sl": source_library_id},
+    )
+    db.flush()
+
+
+def _add_tombstone(db: Session, user_id, media_id) -> None:
+    db.execute(
+        text("""
+            INSERT INTO user_media_deletions (user_id, media_id)
+            VALUES (:uid, :mid)
+        """),
+        {"uid": user_id, "mid": media_id},
     )
     db.flush()
 
@@ -274,6 +285,32 @@ class TestCanReadMedia:
         # Immediately not readable
         assert can_read_media(db_session, user_id, media_id) is False
 
+    def test_can_read_media_false_for_tombstoned_media_across_s4_paths(self, db_session: Session):
+        user_id = uuid4()
+        default_lib = ensure_user_and_default_library(db_session, user_id)
+
+        non_default_lib = _create_non_default_library(db_session, user_id)
+        non_default_media = _create_media(db_session, "non-default")
+        _add_media_to_library(db_session, non_default_lib, non_default_media)
+
+        intrinsic_media = _create_media(db_session, "intrinsic")
+        _add_media_to_library(db_session, default_lib, intrinsic_media)
+        _add_intrinsic(db_session, default_lib, intrinsic_media)
+
+        owner_id = uuid4()
+        ensure_user_and_default_library(db_session, owner_id)
+        source_lib = _create_non_default_library(db_session, owner_id)
+        _add_membership(db_session, source_lib, user_id)
+        closure_media = _create_media(db_session, "closure")
+        _add_media_to_library(db_session, source_lib, closure_media)
+        _add_media_to_library(db_session, default_lib, closure_media)
+        _add_closure_edge(db_session, default_lib, closure_media, source_lib)
+
+        for media_id in (non_default_media, intrinsic_media, closure_media):
+            assert can_read_media(db_session, user_id, media_id) is True
+            _add_tombstone(db_session, user_id, media_id)
+            assert can_read_media(db_session, user_id, media_id) is False
+
 
 # =============================================================================
 # can_read_media_bulk - S4 Provenance
@@ -298,7 +335,7 @@ class TestCanReadMediaBulk:
         _add_media_to_library(db_session, default_lib, media_intr)
         _add_intrinsic(db_session, default_lib, media_intr)
 
-        # Closure path
+        # Closure path, then hidden by viewer tombstone.
         other_id = uuid4()
         ensure_user_and_default_library(db_session, other_id)
         source_lib = _create_non_default_library(db_session, other_id)
@@ -307,6 +344,7 @@ class TestCanReadMediaBulk:
         _add_media_to_library(db_session, source_lib, media_closure)
         _add_media_to_library(db_session, default_lib, media_closure)
         _add_closure_edge(db_session, default_lib, media_closure, source_lib)
+        _add_tombstone(db_session, user_id, media_closure)
 
         # Unreadable (default library_entries only, no provenance)
         media_unreadable = _create_media(db_session, "no provenance")
@@ -324,7 +362,7 @@ class TestCanReadMediaBulk:
         assert len(result) == 5
         assert result[media_nd] is True
         assert result[media_intr] is True
-        assert result[media_closure] is True
+        assert result[media_closure] is False
         assert result[media_unreadable] is False
         assert result[media_nonexist] is False
 
@@ -442,12 +480,12 @@ class TestIsLibraryMember:
 
 
 # =============================================================================
-# S6 PR-02: can_read_highlight — anchor-kind-aware via kernel
+# S6 PR-02: can_read_highlight — anchor-kind-aware visibility
 # =============================================================================
 
 
-class TestCanReadHighlightKernelAware:
-    """PR-02: can_read_highlight uses highlight_kernel for media resolution."""
+class TestCanReadHighlightAnchorAware:
+    """Typed-anchor highlight visibility."""
 
     def test_can_read_highlight_normalized_fragment_true(self, db_session: Session):
         """Normalized fragment highlight is readable by author with library access."""
@@ -467,26 +505,81 @@ class TestCanReadHighlightKernelAware:
         hl_id = create_normalized_fragment_highlight(db_session, user_id, frag_id, media_id, 0, 10)
         assert can_read_highlight(db_session, user_id, hl_id) is True
 
-    def test_can_read_highlight_dormant_fragment_true(self, db_session: Session):
-        """Dormant-window fragment highlight is still readable (resolver resolves media)."""
+    def test_can_read_highlight_pdf_page_geometry_true(self, db_session: Session):
+        """PDF highlight with canonical typed anchor is readable by author."""
         from nexus.auth.permissions import can_read_highlight
-        from tests.factories import (
-            create_dormant_fragment_highlight,
-            create_test_fragment,
-            create_test_media_in_library,
-            get_user_default_library,
-        )
 
         user_id = uuid4()
-        ensure_user_and_default_library(db_session, user_id)
-        lib_id = get_user_default_library(db_session, user_id)
-        media_id = create_test_media_in_library(db_session, user_id, lib_id)
-        frag_id = create_test_fragment(db_session, media_id, content="y" * 30)
-        hl_id = create_dormant_fragment_highlight(db_session, user_id, frag_id, 0, 10)
-        assert can_read_highlight(db_session, user_id, hl_id) is True
+        default_lib = ensure_user_and_default_library(db_session, user_id)
+        media_id = _create_media(db_session, title="PDF", kind="pdf")
+        _add_media_to_library(db_session, default_lib, media_id)
+        _add_intrinsic(db_session, default_lib, media_id)
+
+        highlight_id = uuid4()
+        db_session.execute(
+            text("""
+                INSERT INTO highlights (
+                    id,
+                    user_id,
+                    anchor_kind,
+                    anchor_media_id,
+                    color,
+                    exact,
+                    prefix,
+                    suffix
+                )
+                VALUES (
+                    :id,
+                    :user_id,
+                    'pdf_page_geometry',
+                    :media_id,
+                    'yellow',
+                    'pdf quote',
+                    '',
+                    ''
+                )
+            """),
+            {"id": highlight_id, "user_id": user_id, "media_id": media_id},
+        )
+        db_session.execute(
+            text("""
+                INSERT INTO highlight_pdf_anchors (
+                    highlight_id,
+                    media_id,
+                    page_number,
+                    geometry_version,
+                    geometry_fingerprint,
+                    sort_top,
+                    sort_left,
+                    plain_text_match_version,
+                    plain_text_match_status,
+                    plain_text_start_offset,
+                    plain_text_end_offset,
+                    rect_count
+                )
+                VALUES (
+                    :highlight_id,
+                    :media_id,
+                    1,
+                    1,
+                    'fingerprint',
+                    0,
+                    0,
+                    1,
+                    'unique',
+                    0,
+                    9,
+                    1
+                )
+            """),
+            {"highlight_id": highlight_id, "media_id": media_id},
+        )
+        db_session.flush()
+
+        assert can_read_highlight(db_session, user_id, highlight_id) is True
 
     def test_can_read_highlight_mismatch_returns_false(self, db_session: Session):
-        """Mismatched highlight returns False (bool_fail_closed), no existence leak."""
+        """Typed anchor mismatch returns False without leaking existence."""
         from nexus.auth.permissions import can_read_highlight
         from tests.factories import (
             create_mismatched_fragment_highlight,

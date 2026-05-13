@@ -1,0 +1,109 @@
+.root {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--tabsbar-height);
+  border-bottom: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
+}
+
+.switcher {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+}
+
+.item {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  max-width: 260px;
+  border-right: 1px solid var(--edge-subtle);
+  background: transparent;
+}
+
+.active {
+  background: var(--surface-canvas);
+}
+
+.minimized {
+  background: var(--surface-1);
+}
+
+.primary {
+  display: flex;
+  align-items: center;
+  min-width: 96px;
+  max-width: 180px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  padding: 0 var(--space-3);
+  font: inherit;
+  cursor: pointer;
+}
+
+.active .primary {
+  color: var(--ink);
+}
+
+.minimized .primary {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+.primary:hover,
+.primary:focus-visible,
+.action:hover,
+.action:focus-visible {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+.primary:focus-visible,
+.action:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
+.title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-md);
+  min-width: var(--size-md);
+  border: 0;
+  border-left: 1px solid var(--edge-subtle);
+  background: transparent;
+  color: var(--ink-faint);
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.action:disabled {
+  color: var(--ink-faint);
+  background: transparent;
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.sronly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}

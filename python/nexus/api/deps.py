@@ -4,11 +4,12 @@ Common dependencies like database sessions, authentication, etc.
 """
 
 from fastapi import Request
+from llm_calling.router import LLMRouter
+from web_search_tool.types import WebSearchProvider
 
 from nexus.db.session import get_db, get_session_factory
-from nexus.services.llm import LLMRouter
 
-__all__ = ["get_db", "get_llm_router", "get_session_factory"]
+__all__ = ["get_db", "get_llm_router", "get_session_factory", "get_web_search_provider"]
 
 
 def get_llm_router(request: Request) -> LLMRouter:
@@ -25,3 +26,9 @@ def get_llm_router(request: Request) -> LLMRouter:
         The shared LLMRouter instance.
     """
     return request.app.state.llm_router
+
+
+def get_web_search_provider(request: Request) -> WebSearchProvider | None:
+    """Get the configured public web-search provider from app state."""
+
+    return getattr(request.app.state, "web_search_provider", None)

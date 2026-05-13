@@ -1,6 +1,6 @@
 # Nexus
 
-Nexus is a reading and annotation platform with a Next.js web app, a first-party Android shell, a FastAPI backend, and a Postgres-backed worker.
+Nexus is a reading and notes platform with a Next.js frontend, a first-party Android shell, a FastAPI backend, and a Postgres-backed worker.
 
 ## Architecture
 
@@ -14,6 +14,7 @@ Nexus is a reading and annotation platform with a Next.js web app, a first-party
 ### Prerequisites
 
 - Python 3.12+
+- Git
 - Node.js 22+
 - Bun
 - Android Studio + Android SDK (only if working in `apps/android/`)
@@ -53,37 +54,45 @@ Core:
 
 ```bash
 make check
-make type-back
-make check-workflows
 make audit
 make test-unit
 make test
+make test-e2e
+make test-real-media
+make test-live-providers
 make verify
 make verify-full
-make test-e2e
-make test-e2e-ui
 ```
 
-Narrow tiers:
+Focused targets:
 
 ```bash
+make type-back
+make check-workflows
 make test-back-unit
 make test-back-integration
 make test-front-unit
 make test-front-browser
 make test-migrations
 make test-supabase
-make test-network
-make test-real
 make verify-android
 # Requires Android release signing inputs.
 # make verify-android-release
+make test-e2e-ui
+make seed-real-media-e2e
 ```
 
 ## Environment
 
 - `.env.example` is the source of truth for environment variables and defaults.
 - `make setup` generates local `.env` and `apps/web/.env.local`.
+
+Real-media gates are strict. `make test-real-media` runs deterministic backend
+and Playwright acceptance coverage, requires Supabase local plus real OpenAI
+embeddings, and seeds the browser corpus through the product paths. `make
+test-live-providers` additionally requires real Podcast Index and Deepgram
+credentials. The default Playwright project covers deterministic seeded feature
+flows; the real-media project covers deterministic real-media acceptance flows.
 
 ## Repository Map
 
@@ -93,20 +102,17 @@ make verify-android
 - `python/` -> backend package + tests: see `python/README.md`
 - `apps/worker/` -> worker entrypoint: see `apps/worker/README.md`
 - `docs/rules/` -> repository rules and boundaries: start at `docs/rules/index.md`
-- `docs/sdlc/` -> planning and execution workflow: `docs/sdlc/README.md`
 - `docs/reader-implementation.md` -> current reader behavior contract
-- `docs/mobile-command-palette.md` -> mobile command launcher behavior contract
-- `docs/podcast-detail-episode-pane-cutover.md` -> podcast detail split-pane cutover contract
+- `docs/reader-protected-width-outward-rail-hard-cutover.md` -> desktop reader protected-width and rail target-state contract
+- `docs/chat-unified-components-hard-cutover.md` -> shared chat component spine and reader Ask target-state contract
+- `docs/chat-workbench-hard-cutover.md` -> branch-aware full chat workbench target-state contract
+- `docs/chat-branch-switch-viewport-hard-cutover.md` -> stable chat branch-switch viewport target-state contract
+- `docs/chat-response-retry-hard-cutover.md` -> chat response retry target-state contract
+- `docs/real-media-test-target-state.md` -> deterministic real-media test and fixture contract
 
 ## Documentation Rules
 
-Documentation in this repo follows single ownership:
-
-- Put a rule in exactly one owner document.
-- Link to owner docs instead of restating them.
-- Keep top-level docs short and navigational.
-
-See `docs/rules/index.md`.
+Documentation placement and rule-shape rules are owned by `docs/rules/index.md`.
 
 ## License
 

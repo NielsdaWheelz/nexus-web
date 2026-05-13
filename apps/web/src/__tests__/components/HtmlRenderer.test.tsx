@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import type { CSSProperties } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 
 describe("HtmlRenderer", () => {
   it("renders sanitized HTML content", () => {
@@ -17,6 +18,40 @@ describe("HtmlRenderer", () => {
     render(<HtmlRenderer htmlSanitized={html} className="custom-class" />);
 
     expect(screen.getByTestId("html-renderer")).toHaveClass("custom-class");
+  });
+
+  it("pulses only the requested highlight id", async () => {
+    render(
+      <HtmlRenderer
+        mediaId="media-1"
+        htmlSanitized={`
+          <p data-fragment-id="fragment-1">
+            <span data-active-highlight-ids="h1">First quote</span>
+            <span data-active-highlight-ids="h2">Second quote</span>
+          </p>
+        `}
+      />,
+    );
+
+    const first = screen.getByText("First quote");
+    const second = screen.getByText("Second quote");
+
+    dispatchReaderPulse({
+      mediaId: "media-1",
+      highlightId: "h2",
+      locator: {
+        type: "reader_text_offsets",
+        fragment_id: "fragment-1",
+        start_offset: 20,
+        end_offset: 32,
+      },
+      snippet: "Second quote",
+    });
+
+    await waitFor(() => {
+      expect(Array.from(second.classList).some((name) => name.includes("pulsing"))).toBe(true);
+    });
+    expect(Array.from(first.classList).some((name) => name.includes("pulsing"))).toBe(false);
   });
 
   it("renders links with proper attributes", () => {
@@ -68,13 +103,12 @@ describe("HtmlRenderer", () => {
       "--reader-border": "rgb(130, 140, 150)",
       "--reader-accent": "rgb(160, 170, 180)",
       "--reader-accent-hover": "rgb(190, 200, 210)",
-      "--color-text": "rgb(210, 0, 0)",
-      "--color-text-secondary": "rgb(0, 210, 0)",
-      "--color-bg-secondary": "rgb(0, 0, 210)",
-      "--color-surface": "rgb(210, 210, 0)",
-      "--color-border": "rgb(210, 0, 210)",
-      "--color-accent": "rgb(0, 210, 210)",
-      "--color-accent-hover": "rgb(140, 140, 140)",
+      "--ink": "rgb(210, 0, 0)",
+      "--ink-muted": "rgb(0, 210, 0)",
+      "--surface-2": "rgb(0, 0, 210)",
+      "--edge": "rgb(210, 0, 210)",
+      "--accent": "rgb(0, 210, 210)",
+      "--accent-hover": "rgb(140, 140, 140)",
     } as CSSProperties;
 
     render(
@@ -113,7 +147,7 @@ describe("HtmlRenderer", () => {
     expect(getComputedStyle(renderer).overflowWrap).toBe("break-word");
   });
 
-  it("lets wide content overflow so DocumentViewport can scroll it", () => {
+  it("lets wide content overflow so the document scroll container can handle it", () => {
     const html = '<div style="width: 9999px; height: 10px;">wide</div>';
     render(
       <div style={{ width: "320px" }}>
@@ -132,10 +166,10 @@ describe("HtmlRenderer", () => {
       <a href="https://example.com">Fallback link</a>
     `;
     const style = {
-      "--color-text": "rgb(11, 22, 33)",
-      "--color-text-secondary": "rgb(44, 55, 66)",
-      "--color-bg-secondary": "rgb(77, 88, 99)",
-      "--color-accent": "rgb(111, 122, 133)",
+      "--ink": "rgb(11, 22, 33)",
+      "--ink-muted": "rgb(44, 55, 66)",
+      "--surface-2": "rgb(77, 88, 99)",
+      "--accent": "rgb(111, 122, 133)",
     } as CSSProperties;
 
     render(

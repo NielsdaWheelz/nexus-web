@@ -10,6 +10,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nexus.schemas.contributors import ContributorCreditOut
+
 
 class CapabilitiesOut(BaseModel):
     """Derived capabilities for a media item.
@@ -24,6 +26,9 @@ class CapabilitiesOut(BaseModel):
     can_search: bool
     can_play: bool
     can_download_file: bool
+    can_delete: bool = False
+    can_retry: bool = False
+    can_refresh_source: bool = False
 
 
 class PlaybackSourceOut(BaseModel):
@@ -58,16 +63,6 @@ class PodcastEpisodeChapterOut(BaseModel):
     image_url: str | None = None
 
 
-class MediaAuthorOut(BaseModel):
-    """Response schema for a media author."""
-
-    id: UUID
-    name: str
-    role: str | None = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class MediaOut(BaseModel):
     """Response schema for media."""
 
@@ -78,6 +73,8 @@ class MediaOut(BaseModel):
     processing_status: str  # "pending", "extracting", "ready_for_reading", etc.
     transcript_state: str | None = None
     transcript_coverage: str | None = None
+    retrieval_status: str | None = None
+    retrieval_status_reason: str | None = None
     failure_stage: str | None = None
     last_error_code: str | None = None
     playback_source: PlaybackSourceOut | None = None
@@ -86,7 +83,7 @@ class MediaOut(BaseModel):
     episode_state: Literal["unplayed", "in_progress", "played"] | None = None
     chapters: list[PodcastEpisodeChapterOut] = []
     capabilities: CapabilitiesOut
-    authors: list[MediaAuthorOut] = []
+    contributors: list[ContributorCreditOut] = Field(default_factory=list)
     published_date: str | None = None
     publisher: str | None = None
     language: str | None = None
@@ -97,6 +94,19 @@ class MediaOut(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+DeleteDocumentStatus = Literal["deleted", "removed", "hidden"]
+
+
+class DeleteDocumentResponse(BaseModel):
+    """Response for document delete and scoped library removal."""
+
+    status: DeleteDocumentStatus
+    hard_deleted: bool
+    removed_from_library_ids: list[UUID]
+    hidden_for_viewer: bool
+    remaining_reference_count: int
 
 
 class FragmentOut(BaseModel):
@@ -143,12 +153,7 @@ class UploadInitResponse(BaseModel):
 
 
 class IngestResponse(BaseModel):
-    """Response schema for POST /media/{id}/ingest.
-
-    Extended in S5 PR-03 with processing_status and ingest_enqueued.
-    Defaults preserve backward compatibility: clients reading only
-    media_id and duplicate remain valid.
-    """
+    """Response schema for POST /media/{id}/ingest."""
 
     media_id: str
     duplicate: bool
@@ -361,11 +366,22 @@ class EpubNavigationTocNodeOut(BaseModel):
     children: list["EpubNavigationTocNodeOut"]
 
 
+class EpubNavigationLocationOut(BaseModel):
+    """Non-TOC EPUB navigation target."""
+
+    label: str
+    href: str | None
+    fragment_idx: int | None
+    section_id: str | None
+
+
 class EpubNavigationOut(BaseModel):
     """Unified EPUB navigation payload for reader UI."""
 
     sections: list[EpubNavigationSectionOut]
     toc_nodes: list[EpubNavigationTocNodeOut]
+    landmarks: list[EpubNavigationLocationOut]
+    page_list: list[EpubNavigationLocationOut]
 
 
 class EpubSectionOut(BaseModel):

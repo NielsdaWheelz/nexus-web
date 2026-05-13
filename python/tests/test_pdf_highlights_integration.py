@@ -1,14 +1,6 @@
-"""Integration tests for PDF highlight API endpoints (S6 PR-04).
+"""Integration tests for PDF highlight API endpoints.
 
-Covers:
-- POST /media/{media_id}/pdf-highlights (create with geometry + match metadata)
-- GET  /media/{media_id}/pdf-highlights (page-scoped list)
-- PATCH /highlights/{id} with pdf_bounds (geometry replacement)
-- PATCH /highlights/{id} color-only on PDF
-- D16: anchor-kind mismatch rejection
-- D17: duplicate detection (create and update)
-- D20: no-op short-circuit
-- Generic GET/DELETE compat for PDF highlights
+Covers create, list, update, and delete behavior for typed PDF highlights.
 """
 
 from uuid import UUID, uuid4
@@ -170,7 +162,7 @@ class TestCreatePdfHighlight:
         assert data["exact"] == "page one"
         assert data["author_user_id"] == str(user_id)
         assert data["is_owner"] is True
-        assert data["annotation"] is None
+        assert data["linked_note_blocks"] == []
 
     def test_create_empty_exact_pending_match(self, auth_client, direct_db: DirectSessionManager):
         """Empty exact → match_status=empty_exact, prefix/suffix empty."""
@@ -405,6 +397,33 @@ class TestListPdfHighlights:
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "E_INVALID_REQUEST"
 
+    def test_list_existing_highlights_when_media_not_ready(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = _setup_pdf_media(auth_client, direct_db, user_id)
+
+        create_resp = auth_client.post(
+            f"/media/{media_id}/pdf-highlights",
+            json={"page_number": 1, "quads": SAMPLE_QUADS, "exact": "saved", "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert create_resp.status_code == 201
+
+        with direct_db.session() as session:
+            session.execute(
+                text("UPDATE media SET processing_status = 'pending' WHERE id = :media_id"),
+                {"media_id": media_id},
+            )
+            session.commit()
+
+        resp = auth_client.get(
+            f"/media/{media_id}/pdf-highlights?page_number=1",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["highlights"][0]["exact"] == "saved"
+
     def test_list_deterministic_ordering(self, auth_client, direct_db: DirectSessionManager):
         """Highlights ordered by sort_top ASC, sort_left ASC."""
         user_id = create_test_user_id()
@@ -471,7 +490,6 @@ class TestListPdfHighlights:
 
         conversation_id = uuid4()
         message_id = uuid4()
-        context_id = uuid4()
         with direct_db.session() as session:
             session.execute(
                 text("""
@@ -487,20 +505,25 @@ class TestListPdfHighlights:
                 """),
                 {"id": message_id, "conversation_id": conversation_id},
             )
-            session.execute(
-                text("""
-                    INSERT INTO message_contexts (id, message_id, ordinal, target_type, highlight_id)
-                    VALUES (:id, :message_id, 0, 'highlight', :highlight_id)
-                """),
-                {
-                    "id": context_id,
-                    "message_id": message_id,
-                    "highlight_id": highlight_id,
-                },
-            )
             session.commit()
 
-        direct_db.register_cleanup("message_contexts", "id", context_id)
+        context_resp = auth_client.post(
+            "/message-context-items",
+            json={
+                "message_id": str(message_id),
+                "object_type": "highlight",
+                "object_id": str(highlight_id),
+                "ordinal": 0,
+            },
+            headers=auth_headers(user_id),
+        )
+        assert context_resp.status_code == 201, (
+            f"expected context item creation to succeed, got {context_resp.status_code}: "
+            f"{context_resp.text}"
+        )
+        context_id = context_resp.json()["data"]["id"]
+
+        direct_db.register_cleanup("message_context_items", "id", context_id)
         direct_db.register_cleanup("messages", "id", message_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
@@ -666,10 +689,10 @@ class TestPdfHighlightVisibilityRegression:
 
 
 class TestUpdatePdfHighlight:
-    """Tests for PATCH /highlights/{id} with pdf_bounds or color-only."""
+    """Tests for PATCH /highlights/{id} with typed anchor updates or color-only."""
 
-    def test_update_pdf_bounds_success(self, auth_client, direct_db: DirectSessionManager):
-        """Replace geometry via pdf_bounds → new anchor data."""
+    def test_update_pdf_anchor_success(self, auth_client, direct_db: DirectSessionManager):
+        """Replace geometry via typed PDF anchor update."""
         user_id = create_test_user_id()
         media_id = _setup_pdf_media(auth_client, direct_db, user_id)
 
@@ -683,10 +706,11 @@ class TestUpdatePdfHighlight:
         update_resp = auth_client.patch(
             f"/highlights/{h_id}",
             json={
-                "pdf_bounds": {
+                "exact": "page one",
+                "anchor": {
+                    "type": "pdf_page_geometry",
                     "page_number": 1,
                     "quads": DIFFERENT_QUADS,
-                    "exact": "page one",
                 },
             },
             headers=auth_headers(user_id),
@@ -717,10 +741,10 @@ class TestUpdatePdfHighlight:
         assert update_resp.status_code == 200
         assert update_resp.json()["data"]["color"] == "green"
 
-    def test_d16_pdf_bounds_on_fragment_rejected(
+    def test_d16_pdf_anchor_on_fragment_rejected(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """pdf_bounds on fragment highlight → 400."""
+        """PDF anchor updates on fragment highlights are rejected."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -747,7 +771,7 @@ class TestUpdatePdfHighlight:
         direct_db.register_cleanup("library_entries", "media_id", mid)
         direct_db.register_cleanup("fragments", "id", fid)
         direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fid)
-        direct_db.register_cleanup("highlights", "fragment_id", fid)
+        direct_db.register_cleanup("highlights", "anchor_media_id", mid)
 
         _add_media_to_library(auth_client, user_id, mid)
 
@@ -762,10 +786,11 @@ class TestUpdatePdfHighlight:
         update_resp = auth_client.patch(
             f"/highlights/{h_id}",
             json={
-                "pdf_bounds": {
+                "exact": "test",
+                "anchor": {
+                    "type": "pdf_page_geometry",
                     "page_number": 1,
                     "quads": SAMPLE_QUADS,
-                    "exact": "test",
                 },
             },
             headers=auth_headers(user_id),
@@ -775,7 +800,7 @@ class TestUpdatePdfHighlight:
     def test_d16_fragment_offsets_on_pdf_rejected(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Fragment offsets on PDF highlight → 400."""
+        """Fragment anchor updates on PDF highlights are rejected."""
         user_id = create_test_user_id()
         media_id = _setup_pdf_media(auth_client, direct_db, user_id)
 
@@ -788,7 +813,13 @@ class TestUpdatePdfHighlight:
 
         update_resp = auth_client.patch(
             f"/highlights/{h_id}",
-            json={"start_offset": 0, "end_offset": 5},
+            json={
+                "anchor": {
+                    "type": "fragment_offsets",
+                    "start_offset": 0,
+                    "end_offset": 5,
+                }
+            },
             headers=auth_headers(user_id),
         )
         assert update_resp.status_code == 400
@@ -808,10 +839,11 @@ class TestUpdatePdfHighlight:
         update_resp = auth_client.patch(
             f"/highlights/{h_id}",
             json={
-                "pdf_bounds": {
+                "exact": "page one",
+                "anchor": {
+                    "type": "pdf_page_geometry",
                     "page_number": 1,
                     "quads": SAMPLE_QUADS,
-                    "exact": "page one",
                 },
             },
             headers=auth_headers(user_id),
@@ -841,10 +873,11 @@ class TestUpdatePdfHighlight:
         update_resp = auth_client.patch(
             f"/highlights/{h_id2}",
             json={
-                "pdf_bounds": {
+                "exact": "conflict",
+                "anchor": {
+                    "type": "pdf_page_geometry",
                     "page_number": 1,
                     "quads": SAMPLE_QUADS,
-                    "exact": "conflict",
                 },
             },
             headers=auth_headers(user_id),
@@ -854,11 +887,11 @@ class TestUpdatePdfHighlight:
 
 
 # ---------------------------------------------------------------------------
-# Generic GET/DELETE compat
+# Generic GET/DELETE coverage
 # ---------------------------------------------------------------------------
 
 
-class TestGenericPdfHighlightCompat:
+class TestGenericPdfHighlightCoverage:
     """Generic routes work correctly with PDF highlights."""
 
     def test_get_returns_typed_pdf_anchor(self, auth_client, direct_db: DirectSessionManager):
@@ -920,8 +953,8 @@ class TestGenericPdfHighlightCompat:
             ).fetchone()
             assert quads is None
 
-    def test_annotation_on_pdf_highlight(self, auth_client, direct_db: DirectSessionManager):
-        """PUT/DELETE annotation works on PDF highlight."""
+    def test_linked_note_on_pdf_highlight(self, auth_client, direct_db: DirectSessionManager):
+        """Linked note blocks work on PDF highlights."""
         user_id = create_test_user_id()
         media_id = _setup_pdf_media(auth_client, direct_db, user_id)
 
@@ -932,16 +965,32 @@ class TestGenericPdfHighlightCompat:
         )
         h_id = create_resp.json()["data"]["id"]
 
-        ann_resp = auth_client.put(
-            f"/highlights/{h_id}/annotation",
-            json={"body": "My note"},
+        note_resp = auth_client.post(
+            "/notes/blocks",
+            json={
+                "body_markdown": "My note",
+                "linked_object": {
+                    "object_type": "highlight",
+                    "object_id": h_id,
+                    "relation_type": "note_about",
+                },
+            },
             headers=auth_headers(user_id),
         )
-        assert ann_resp.status_code == 201
-        assert ann_resp.json()["data"]["body"] == "My note"
+        assert note_resp.status_code == 201
+        note_id = note_resp.json()["data"]["id"]
 
-        del_ann = auth_client.delete(
-            f"/highlights/{h_id}/annotation",
+        get_resp = auth_client.get(f"/highlights/{h_id}", headers=auth_headers(user_id))
+        assert get_resp.status_code == 200
+        linked_notes = get_resp.json()["data"]["linked_note_blocks"]
+        assert linked_notes[0]["note_block_id"] == note_id
+        assert linked_notes[0]["body_text"] == "My note"
+        assert linked_notes[0]["revision"] == note_resp.json()["data"]["revision"]
+
+        del_note = auth_client.request(
+            "DELETE",
+            f"/notes/blocks/{note_id}",
             headers=auth_headers(user_id),
+            json={"base_revision": note_resp.json()["data"]["revision"]},
         )
-        assert del_ann.status_code == 204
+        assert del_note.status_code == 204

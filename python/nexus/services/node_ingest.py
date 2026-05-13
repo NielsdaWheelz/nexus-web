@@ -16,6 +16,7 @@ Exit codes from Node script:
     12 - Readability extraction failed
 """
 
+import hashlib
 import json
 import os
 import signal
@@ -53,6 +54,7 @@ class IngestResult:
     excerpt: str = ""
     site_name: str = ""
     published_time: str = ""
+    provider_fixture: dict[str, object] | None = None
 
 
 @dataclass
@@ -83,6 +85,13 @@ def run_node_ingest(
         It returns IngestError instead, allowing the caller to handle
         failures consistently.
     """
+    from nexus.config import get_settings, real_media_provider_fixtures_requested
+
+    if real_media_provider_fixtures_requested():
+        settings = get_settings()
+        if settings.real_media_provider_fixtures:
+            return _run_real_media_fixture_ingest(url, settings.real_media_fixture_dir)
+
     # Verify script exists
     if not NODE_INGEST_SCRIPT.exists():
         return IngestError(
@@ -205,3 +214,52 @@ def _extract_error_message(stderr: bytes, stdout: bytes) -> str:
         return decoded[:500] if len(decoded) > 500 else decoded
 
     return ""
+
+
+def _run_real_media_fixture_ingest(url: str, fixture_dir: str | None) -> IngestResult | IngestError:
+    requested_url = str(url or "").strip()
+    if requested_url != "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/":
+        return IngestError(
+            error_code=ApiErrorCode.E_INGEST_FAILED,
+            message=f"No real-media web article fixture for {requested_url}",
+        )
+    if fixture_dir is None:
+        return IngestError(
+            error_code=ApiErrorCode.E_INGEST_FAILED,
+            message="REAL_MEDIA_FIXTURE_DIR is required for web article fixtures",
+        )
+
+    path = Path(fixture_dir) / "nasa-water-on-moon-capture.html"
+    try:
+        content_html = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return IngestError(
+            error_code=ApiErrorCode.E_INGEST_FAILED,
+            message=f"Web article fixture unavailable: {exc}",
+        )
+
+    payload = content_html.encode("utf-8")
+    if len(payload) != 1_019 or hashlib.sha256(payload).hexdigest() != (
+        "cedefaeab3c7fb3fab6be4aba68a23db58280e65b71c3914af2c8023e30e4e7a"
+    ):
+        return IngestError(
+            error_code=ApiErrorCode.E_INGEST_FAILED,
+            message="Web article fixture hash mismatch",
+        )
+
+    return IngestResult(
+        final_url=requested_url,
+        base_url="https://science.nasa.gov/",
+        title="There's Water on the Moon?",
+        content_html=content_html,
+        byline="Molly Wasser",
+        excerpt="NASA Science captured article fixture.",
+        site_name="NASA Science",
+        published_time="2020-11-05T00:00:00Z",
+        provider_fixture={
+            "path": str(path),
+            "byte_length": len(payload),
+            "sha256": "cedefaeab3c7fb3fab6be4aba68a23db58280e65b71c3914af2c8023e30e4e7a",
+            "source_url": requested_url,
+        },
+    )

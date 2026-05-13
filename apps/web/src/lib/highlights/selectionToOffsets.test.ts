@@ -6,7 +6,6 @@
  * - Whitespace trimming
  * - Length validation
  * - Code block rejection
- * - Duplicate highlight detection
  *
  * Note: Some tests that require full Range API behavior are skipped in
  * the Vitest Browser Mode environment. Integration tests cover these scenarios.
@@ -18,7 +17,6 @@ import { describe, it, expect } from "vitest";
 import {
   selectionToOffsets,
   selectionIntersectsCodeBlock,
-  findDuplicateHighlight,
   utf16ToCodepoint,
   codepointToUtf16,
   codepointLength,
@@ -52,6 +50,17 @@ function cleanupDOM(container: HTMLDivElement): void {
   if (container.parentNode) {
     document.body.removeChild(container);
   }
+}
+
+/**
+ * Find a substring's codepoint offset inside canonical text.
+ */
+function codepointIndexOf(haystack: string, needle: string): number {
+  const utf16Index = haystack.indexOf(needle);
+  if (utf16Index === -1) {
+    throw new Error(`Expected to find substring: ${needle}`);
+  }
+  return utf16ToCodepoint(haystack, utf16Index);
 }
 
 // =============================================================================
@@ -194,52 +203,6 @@ describe("selectionIntersectsCodeBlock", () => {
 });
 
 // =============================================================================
-// Tests: findDuplicateHighlight
-// =============================================================================
-
-describe("findDuplicateHighlight", () => {
-  const highlights = [
-    { id: "h1", start_offset: 0, end_offset: 10 },
-    { id: "h2", start_offset: 20, end_offset: 30 },
-    { id: "h3", start_offset: 15, end_offset: 25 },
-  ];
-
-  it("finds exact duplicate", () => {
-    const result = findDuplicateHighlight(highlights, 0, 10);
-    expect(result).toBe("h1");
-  });
-
-  it("returns null for non-duplicate", () => {
-    const result = findDuplicateHighlight(highlights, 5, 15);
-    expect(result).toBeNull();
-  });
-
-  it("returns null for partial overlap", () => {
-    // Same start, different end
-    const result = findDuplicateHighlight(highlights, 0, 5);
-    expect(result).toBeNull();
-  });
-
-  it("returns null for empty array", () => {
-    const result = findDuplicateHighlight([], 0, 10);
-    expect(result).toBeNull();
-  });
-
-  it("finds duplicate in the middle of array", () => {
-    const result = findDuplicateHighlight(highlights, 20, 30);
-    expect(result).toBe("h2");
-  });
-
-  it("handles large offset values", () => {
-    const largeHighlights = [
-      { id: "h1", start_offset: 1000000, end_offset: 1000100 },
-    ];
-    const result = findDuplicateHighlight(largeHighlights, 1000000, 1000100);
-    expect(result).toBe("h1");
-  });
-});
-
-// =============================================================================
 // Tests: Whitespace Trimming Logic (unit tests without Range)
 // =============================================================================
 
@@ -358,6 +321,33 @@ describe("selection validation logic", () => {
 // =============================================================================
 
 describe("selectionToOffsets integration", () => {
+  it("maps decorated inline selections when both boundaries land on paragraph child offsets", () => {
+    const { container, cursor } = setupDOM(
+      "<p>Alpha <strong>beta</strong><span> gamma</span><em> delta</em></p>"
+    );
+    const paragraph = container.querySelector("p");
+    if (!paragraph) {
+      throw new Error("Expected paragraph element");
+    }
+
+    const range = document.createRange();
+    range.setStart(paragraph, 1); // Before <strong>beta</strong>
+    range.setEnd(paragraph, 3); // After <span> gamma</span>
+
+    const result = selectionToOffsets(range, cursor, cursor.emitted, false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const expectedText = "beta gamma";
+      const expectedStart = codepointIndexOf(cursor.emitted, expectedText);
+
+      expect(result.startOffset).toBe(expectedStart);
+      expect(result.endOffset).toBe(expectedStart + codepointLength(expectedText));
+      expect(result.selectedText).toBe(expectedText);
+    }
+
+    cleanupDOM(container);
+  });
+
   it("maps paragraph-start selection when startContainer is an element boundary", () => {
     const { container, cursor } = setupDOM("<p>Alpha beta</p>");
     const paragraph = container.querySelector("p");
@@ -423,6 +413,78 @@ describe("selectionToOffsets integration", () => {
       expect(result.startOffset).toBe(6);
       expect(result.endOffset).toBe(10);
       expect(result.selectedText).toBe("beta");
+    }
+
+    cleanupDOM(container);
+  });
+
+  it("maps a later paragraph in a long document from paragraph element boundaries", () => {
+    const paragraphCount = 48;
+    const targetIndex = 36;
+    const html = Array.from({ length: paragraphCount }, (_, idx) => {
+      const label = String(idx).padStart(2, "0");
+      return `<p data-paragraph="${idx}">Paragraph ${label} carries its own stable selection target.</p>`;
+    }).join("");
+    const { container, cursor } = setupDOM(html);
+    const paragraph = container.querySelector(
+      `p[data-paragraph="${targetIndex}"]`
+    );
+    const expectedText = `Paragraph ${String(targetIndex).padStart(2, "0")} carries its own stable selection target.`;
+    if (!paragraph) {
+      throw new Error("Expected target paragraph element");
+    }
+
+    const range = document.createRange();
+    range.setStart(paragraph, 0);
+    range.setEnd(paragraph, paragraph.childNodes.length);
+
+    const result = selectionToOffsets(range, cursor, cursor.emitted, false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const expectedStart = codepointIndexOf(cursor.emitted, expectedText);
+
+      expect(result.startOffset).toBe(expectedStart);
+      expect(result.endOffset).toBe(expectedStart + codepointLength(expectedText));
+      expect(result.selectedText).toBe(expectedText);
+    }
+
+    cleanupDOM(container);
+  });
+
+  it("maps later decorated content when the selection ends on the paragraph boundary", () => {
+    const html = Array.from({ length: 28 }, (_, idx) => {
+      if (idx === 21) {
+        return [
+          `<p data-paragraph="${idx}">`,
+          "Lead ",
+          '<span class="decorated"><strong>target</strong></span>',
+          "<span> phrase</span>",
+          '<em> ending</em>',
+          "</p>",
+        ].join("");
+      }
+      return `<p data-paragraph="${idx}">Paragraph ${String(idx).padStart(2, "0")} filler text.</p>`;
+    }).join("");
+    const { container, cursor } = setupDOM(html);
+    const paragraph = container.querySelector('p[data-paragraph="21"]');
+    const strong = paragraph?.querySelector("strong");
+    if (!paragraph || !strong) {
+      throw new Error("Expected decorated target paragraph");
+    }
+
+    const range = document.createRange();
+    range.setStart(strong, 0); // Before "target" inside decorated inline markup
+    range.setEnd(paragraph, paragraph.childNodes.length); // End at paragraph boundary
+
+    const result = selectionToOffsets(range, cursor, cursor.emitted, false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const expectedText = "target phrase ending";
+      const expectedStart = codepointIndexOf(cursor.emitted, expectedText);
+
+      expect(result.startOffset).toBe(expectedStart);
+      expect(result.endOffset).toBe(expectedStart + codepointLength(expectedText));
+      expect(result.selectedText).toBe(expectedText);
     }
 
     cleanupDOM(container);

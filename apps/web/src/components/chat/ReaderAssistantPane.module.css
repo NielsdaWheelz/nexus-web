@@ -1,0 +1,156 @@
+.pane {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-canvas);
+  color: var(--ink);
+}
+
+.header {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--edge-subtle);
+  background: color-mix(in srgb, var(--surface-canvas) 94%, transparent);
+}
+
+.titleBlock {
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+}
+
+.target {
+  margin: 2px 0 0;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scopePicker {
+  width: min(260px, 100%);
+  margin-top: var(--space-1);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.scopePickerLabel {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+}
+
+.headerActions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.contextStack {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) 0;
+}
+
+.contextCard {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: start;
+  padding: var(--space-3);
+  border: 1px solid var(--edge-subtle);
+  border-left: 3px solid var(--ink-faint);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+}
+
+.contextCard[data-color="yellow"] {
+  border-left-color: var(--highlight-yellow);
+}
+
+.contextCard[data-color="green"] {
+  border-left-color: var(--highlight-green);
+}
+
+.contextCard[data-color="blue"] {
+  border-left-color: var(--highlight-blue);
+}
+
+.contextCard[data-color="pink"] {
+  border-left-color: var(--highlight-pink);
+}
+
+.contextCard[data-color="purple"] {
+  border-left-color: var(--highlight-purple);
+}
+
+.contextTextBlock {
+  min-width: 0;
+}
+
+.quoteText {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  overflow-wrap: anywhere;
+}
+
+.quoteMeta {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status {
+  flex: 0 0 auto;
+  padding: var(--space-3) var(--space-3) 0;
+}
+
+.emptyTitle {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.emptyCopy {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+@media (max-width: 520px) {
+  .header {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+
+  .headerActions {
+    justify-content: flex-end;
+  }
+}

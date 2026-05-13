@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.media import MediaOut
 
 LibraryRole = Literal["admin", "member"]
@@ -110,7 +111,7 @@ class LibraryPodcastOut(BaseModel):
     provider: str
     provider_podcast_id: str
     title: str
-    author: str | None = None
+    contributors: list[ContributorCreditOut] = Field(default_factory=list)
     feed_url: str
     website_url: str | None = None
     image_url: str | None = None

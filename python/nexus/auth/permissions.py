@@ -43,6 +43,7 @@ from nexus.db.models import (
     Library,
     LibraryEntry,
     Membership,
+    UserMediaDeletion,
 )
 
 
@@ -85,7 +86,12 @@ def can_read_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bo
         Membership.user_id == viewer_user_id,
     )
 
-    query = select(non_default | default_intrinsic | default_closure)
+    not_deleted = ~exists().where(
+        UserMediaDeletion.user_id == viewer_user_id,
+        UserMediaDeletion.media_id == media_id,
+    )
+
+    query = select((non_default | default_intrinsic | default_closure) & not_deleted)
     result = session.execute(query)
     return bool(result.scalar())
 
@@ -145,12 +151,59 @@ def can_read_media_bulk(
 
     # Union all three paths and get distinct readable ids
     combined = union_all(non_default_q, intrinsic_q, closure_q).subquery()
-    query = select(combined.c.media_id).distinct()
+    query = (
+        select(combined.c.media_id)
+        .where(
+            ~exists().where(
+                UserMediaDeletion.user_id == viewer_user_id,
+                UserMediaDeletion.media_id == combined.c.media_id,
+            )
+        )
+        .distinct()
+    )
 
     result = session.execute(query)
     readable_ids = {row[0] for row in result.fetchall()}
 
     return {mid: mid in readable_ids for mid in media_ids}
+
+
+def visible_media_ids_cte_sql() -> str:
+    """Return SQL for the canonical visible-media CTE."""
+    return """
+        SELECT visible.media_id
+        FROM (
+            SELECT le.media_id
+            FROM library_entries le
+            JOIN memberships m ON m.library_id = le.library_id
+            JOIN libraries l ON l.id = le.library_id
+            WHERE m.user_id = :viewer_id
+              AND l.is_default = false
+              AND le.media_id IS NOT NULL
+
+            UNION
+
+            SELECT dli.media_id
+            FROM default_library_intrinsics dli
+            JOIN libraries l ON l.id = dli.default_library_id
+            WHERE l.owner_user_id = :viewer_id AND l.is_default = true
+
+            UNION
+
+            SELECT dlce.media_id
+            FROM default_library_closure_edges dlce
+            JOIN libraries l ON l.id = dlce.default_library_id
+            JOIN memberships m ON m.library_id = dlce.source_library_id
+                               AND m.user_id = :viewer_id
+            WHERE l.owner_user_id = :viewer_id AND l.is_default = true
+        ) visible
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM user_media_deletions umd
+            WHERE umd.user_id = :viewer_id
+              AND umd.media_id = visible.media_id
+        )
+    """
 
 
 def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_id: UUID) -> bool:
@@ -249,6 +302,25 @@ def _highlight_library_intersection_exists(
     )
 
 
+def _resolve_typed_highlight_media_id(highlight: Highlight) -> UUID | None:
+    """Resolve the media id for a canonical typed highlight."""
+    if highlight.anchor_media_id is None:
+        return None
+
+    if highlight.anchor_kind == "fragment_offsets":
+        fragment_anchor = highlight.fragment_anchor
+        fragment = fragment_anchor.fragment if fragment_anchor is not None else None
+        if fragment is not None and fragment.media_id == highlight.anchor_media_id:
+            return highlight.anchor_media_id
+
+    if highlight.anchor_kind == "pdf_page_geometry":
+        pdf_anchor = highlight.pdf_anchor
+        if pdf_anchor is not None and pdf_anchor.media_id == highlight.anchor_media_id:
+            return highlight.anchor_media_id
+
+    return None
+
+
 def highlight_visibility_filter(viewer_user_id: UUID, media_id: UUID):
     """SQL filter expression for visible highlights in list queries.
 
@@ -276,29 +348,15 @@ def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUI
     - Exists a library containing that media where both viewer and highlight author are members.
 
     Returns False if highlight_id does not exist (no existence leak).
-    Returns False (fail closed) on irreconcilable anchor state (D03 bool_fail_closed).
+    Returns False on irreconcilable typed-anchor state.
 
     Consumes canonical _highlight_library_intersection_exists helper.
-    Uses highlight_kernel for anchor-kind-aware media resolution (S6 PR-02).
     """
-    from nexus.services.highlight_kernel import (
-        MappingClass,
-        ResolverState,
-        map_mismatch,
-        resolve_highlight,
-    )
-
     highlight = session.get(Highlight, highlight_id)
     if highlight is None:
         return False
 
-    resolution = resolve_highlight(highlight)
-
-    if resolution.state == ResolverState.mismatch:
-        map_mismatch(resolution, MappingClass.bool_fail_closed, "can_read_highlight")
-        return False
-
-    media_id = resolution.anchor_media_id
+    media_id = _resolve_typed_highlight_media_id(highlight)
     if media_id is None:
         return False
 

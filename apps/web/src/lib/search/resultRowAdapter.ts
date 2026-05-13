@@ -1,288 +1,549 @@
+import { apiFetch } from "@/lib/api/client";
+import type { ContributorCredit } from "@/lib/contributors/types";
+
 export const ALL_SEARCH_TYPES = [
+  "contributor",
   "media",
-  "fragment",
-  "annotation",
+  "podcast",
+  "content_chunk",
+  "page",
+  "note_block",
   "message",
-  "transcript_chunk",
 ] as const;
 
 export type SearchType = (typeof ALL_SEARCH_TYPES)[number];
 
-export interface SearchSourceMetadata {
+interface SearchSourceMetadata {
   media_id: string;
   media_kind: string;
   title: string;
-  authors: string[];
+  contributors: ContributorCredit[];
   published_date: string | null;
 }
 
-export interface SearchHighlightContext {
-  exact: string;
-  prefix: string;
-  suffix: string;
+interface SearchResolver {
+  kind: "web" | "epub" | "pdf" | "transcript";
+  route: string;
+  params: Record<string, string>;
+  status?: string;
+  selector?: Record<string, unknown>;
+  highlight?: unknown;
 }
 
 interface SearchBaseResult {
   id: string;
   score: number;
   snippet: string;
+  title: string;
+  source_label: string | null;
+  media_id: string | null;
+  media_kind: string | null;
+  deep_link: string;
+  context_ref: {
+    type: SearchType;
+    id: string;
+    evidence_span_ids?: string[];
+  };
 }
 
-export interface SearchMediaResult extends SearchBaseResult {
+interface SearchMediaResult extends SearchBaseResult {
   type: "media";
   source: SearchSourceMetadata;
 }
 
-export interface SearchFragmentResult extends SearchBaseResult {
-  type: "fragment";
-  fragment_idx: number;
-  section_id: string | null;
-  source: SearchSourceMetadata;
+interface SearchPodcastResult extends SearchBaseResult {
+  type: "podcast";
+  contributors: ContributorCredit[];
 }
 
-export interface SearchAnnotationResult extends SearchBaseResult {
-  type: "annotation";
-  highlight_id: string;
-  fragment_id: string;
-  fragment_idx: number;
-  section_id: string | null;
-  annotation_body: string;
-  highlight: SearchHighlightContext;
-  source: SearchSourceMetadata;
+interface SearchContributorResult extends SearchBaseResult {
+  type: "contributor";
+  contributor_handle: string;
+  contributor: {
+    handle: string;
+    display_name: string;
+    status: string | null;
+  };
 }
 
-export interface SearchMessageResult extends SearchBaseResult {
+interface SearchContentChunkResult extends SearchBaseResult {
+  type: "content_chunk";
+  media_id: string;
+  media_kind: string;
+  citation_label: string;
+  source: SearchSourceMetadata;
+  resolver: SearchResolver;
+}
+
+interface SearchNoteBlockResult extends SearchBaseResult {
+  type: "note_block";
+  page_id: string;
+  page_title: string;
+  body_text: string;
+  highlight_excerpt: string | null;
+}
+
+interface SearchPageResult extends SearchBaseResult {
+  type: "page";
+  description: string | null;
+}
+
+interface SearchMessageResult extends SearchBaseResult {
   type: "message";
   conversation_id: string;
   seq: number;
 }
 
-export interface SearchTranscriptChunkResult extends SearchBaseResult {
-  type: "transcript_chunk";
-  t_start_ms: number;
-  t_end_ms: number;
-  source: SearchSourceMetadata;
-}
-
-export type SearchApiResult =
+type SearchApiResult =
   | SearchMediaResult
-  | SearchFragmentResult
-  | SearchAnnotationResult
-  | SearchMessageResult
-  | SearchTranscriptChunkResult;
+  | SearchPodcastResult
+  | SearchContributorResult
+  | SearchContentChunkResult
+  | SearchPageResult
+  | SearchNoteBlockResult
+  | SearchMessageResult;
 
-/** Result types that carry source metadata. */
-export type SearchResultWithSource =
-  | SearchMediaResult
-  | SearchFragmentResult
-  | SearchAnnotationResult
-  | SearchTranscriptChunkResult;
-
-export interface SearchResponseShape {
-  results: SearchApiResult[];
-  page: {
-    has_more: boolean;
-    next_cursor: string | null;
-  };
-}
-
-export interface SnippetSegment {
-  text: string;
-  emphasized: boolean;
+interface SearchResponseShape {
+  results: unknown[];
+  page?: {
+    next_cursor?: string | null;
+  } | null;
 }
 
 export interface SearchResultRowViewModel {
   key: string;
   href: string;
   type: SearchType;
+  mediaId: string | null;
+  contextRef: {
+    type: SearchType;
+    id: string;
+    evidenceSpanIds: string[];
+  } | null;
   typeLabel: string;
   primaryText: string;
-  snippetSegments: SnippetSegment[];
+  snippetSegments: Array<{
+    text: string;
+    emphasized: boolean;
+  }>;
   sourceMeta: string | null;
-  annotationBody: string | null;
-  highlightSnippet: {
-    prefix: string;
-    exact: string;
-    suffix: string;
-  } | null;
+  contributorCredits: ContributorCredit[];
+  noteBody: string | null;
   scoreLabel: string;
 }
 
-// ---------------------------------------------------------------------------
-// Runtime validation & normalization – Layer 1
-//
-// Contract is strict: result rows must use canonical nested source metadata.
-// Legacy flat shapes are intentionally rejected after cutover.
-// ---------------------------------------------------------------------------
+interface FetchSearchResultPageInput {
+  query: string;
+  selectedTypes: ReadonlySet<SearchType>;
+  contributorHandles?: readonly string[];
+  roles?: readonly string[];
+  contentKinds?: readonly string[];
+  limit: number;
+  cursor?: string | null;
+  signal?: AbortSignal;
+}
 
-/** Runtime check that a source object has the required shape. */
+export interface SearchResultPage {
+  rows: SearchResultRowViewModel[];
+  nextCursor: string | null;
+}
+
 function isValidSource(value: unknown): value is SearchSourceMetadata {
-  if (typeof value !== "object" || value === null) return false;
-  const s = value as Record<string, unknown>;
-  return (
-    typeof s.media_id === "string" &&
-    typeof s.media_kind === "string" &&
-    typeof s.title === "string" &&
-    Array.isArray(s.authors)
-  );
-}
-
-/**
- * Resolve nested source metadata from canonical `source` field.
- */
-function resolveSource(r: Record<string, unknown>): SearchSourceMetadata | null {
-  if (isValidSource(r.source)) {
-    return r.source as SearchSourceMetadata;
+  if (typeof value !== "object" || value === null) {
+    return false;
   }
-  return null;
-}
 
-/** Runtime check that a highlight object has the required shape. */
-function isValidHighlight(value: unknown): value is SearchHighlightContext {
-  if (typeof value !== "object" || value === null) return false;
-  const h = value as Record<string, unknown>;
+  const source = value as Record<string, unknown>;
   return (
-    typeof h.exact === "string" &&
-    typeof h.prefix === "string" &&
-    typeof h.suffix === "string"
+    typeof source.media_id === "string" &&
+    typeof source.media_kind === "string" &&
+    typeof source.title === "string" &&
+    Array.isArray(source.contributors)
   );
 }
 
-/**
- * Normalize a raw API result object into the canonical SearchApiResult type.
- *
- * Returns null for any result that violates the canonical nested contract.
- */
-export function normalizeSearchResult(
-  result: unknown,
-): SearchApiResult | null {
-  if (typeof result !== "object" || result === null) return null;
-  const r = result as Record<string, unknown>;
+function resolveSource(
+  result: Record<string, unknown>,
+): SearchSourceMetadata | null {
+  if (!isValidSource(result.source)) {
+    return null;
+  }
+  return result.source;
+}
 
-  // Common required fields
-  if (typeof r.id !== "string") return null;
-  if (typeof r.score !== "number") return null;
-  if (typeof r.snippet !== "string") return null;
+function isValidResolver(value: unknown): value is SearchResolver {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
 
-  const base = { id: r.id, score: r.score, snippet: r.snippet };
+  const resolver = value as Record<string, unknown>;
+  if (
+    resolver.kind !== "web" &&
+    resolver.kind !== "epub" &&
+    resolver.kind !== "pdf" &&
+    resolver.kind !== "transcript"
+  ) {
+    return false;
+  }
+  if (typeof resolver.route !== "string") {
+    return false;
+  }
+  if (
+    typeof resolver.params !== "object" ||
+    resolver.params === null ||
+    Array.isArray(resolver.params)
+  ) {
+    return false;
+  }
 
-  switch (r.type) {
+  return Object.values(resolver.params).every(
+    (value) => typeof value === "string",
+  );
+}
+
+function stringField(
+  record: Record<string, unknown>,
+  ...keys: string[]
+): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+  return "";
+}
+
+function nullableStringField(
+  record: Record<string, unknown>,
+  ...keys: string[]
+): string | null {
+  const value = stringField(record, ...keys);
+  return value || null;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeContributorCredit(value: unknown): ContributorCredit | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const credit = value as Record<string, unknown>;
+  const sourceRef = credit.source_ref ?? credit.sourceRef;
+  const contributorHandle = stringField(
+    credit,
+    "contributor_handle",
+    "contributorHandle",
+  );
+  const contributorDisplayName = stringField(
+    credit,
+    "contributor_display_name",
+    "contributorDisplayName",
+  );
+  const creditedName = stringField(credit, "credited_name", "creditedName");
+  const role = stringField(credit, "role");
+  const href = stringField(credit, "href");
+  const source = stringField(credit, "source");
+  let nestedDisplayName = "";
+  if (typeof credit.contributor === "object" && credit.contributor !== null) {
+    const contributor = credit.contributor as Record<string, unknown>;
+    nestedDisplayName = stringField(contributor, "display_name", "displayName");
+  }
+  const displayName = contributorDisplayName || nestedDisplayName;
+  if (
+    !contributorHandle ||
+    !displayName ||
+    !creditedName ||
+    !role ||
+    !href ||
+    !source
+  ) {
+    return null;
+  }
+  return {
+    contributor_handle: contributorHandle,
+    contributor_display_name: displayName,
+    credited_name: creditedName,
+    role,
+    raw_role: nullableStringField(credit, "raw_role", "rawRole"),
+    ordinal: typeof credit.ordinal === "number" ? credit.ordinal : null,
+    source,
+    source_ref: isPlainRecord(sourceRef) ? sourceRef : null,
+    confidence:
+      typeof credit.confidence === "string" ||
+      typeof credit.confidence === "number"
+        ? credit.confidence
+        : null,
+    href,
+  };
+}
+
+function normalizeContributorCredits(
+  value: unknown,
+): ContributorCredit[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const credits: ContributorCredit[] = [];
+  for (const item of value) {
+    const credit = normalizeContributorCredit(item);
+    if (!credit) {
+      return null;
+    }
+    credits.push(credit);
+  }
+  return credits;
+}
+
+function normalizeSearchResult(result: unknown): SearchApiResult | null {
+  if (typeof result !== "object" || result === null) {
+    return null;
+  }
+
+  const row = result as Record<string, unknown>;
+  if (typeof row.id !== "string") {
+    return null;
+  }
+  if (typeof row.score !== "number") {
+    return null;
+  }
+  if (typeof row.snippet !== "string") {
+    return null;
+  }
+  if (typeof row.title !== "string") {
+    return null;
+  }
+  if (typeof row.deep_link !== "string") {
+    return null;
+  }
+  if (typeof row.context_ref !== "object" || row.context_ref === null) {
+    return null;
+  }
+  const contextRef = row.context_ref as Record<string, unknown>;
+  if (
+    typeof contextRef.type !== "string" ||
+    !ALL_SEARCH_TYPES.includes(contextRef.type as SearchType) ||
+    typeof contextRef.id !== "string"
+  ) {
+    return null;
+  }
+  let evidenceSpanIds: string[] | undefined;
+  if (contextRef.evidence_span_ids !== undefined) {
+    if (
+      !Array.isArray(contextRef.evidence_span_ids) ||
+      !contextRef.evidence_span_ids.every((id) => typeof id === "string")
+    ) {
+      return null;
+    }
+    evidenceSpanIds = contextRef.evidence_span_ids;
+  }
+
+  const base = {
+    id: row.id,
+    score: row.score,
+    snippet: row.snippet,
+    title: row.title,
+    source_label:
+      typeof row.source_label === "string" ? row.source_label : null,
+    media_id: typeof row.media_id === "string" ? row.media_id : null,
+    media_kind: typeof row.media_kind === "string" ? row.media_kind : null,
+    deep_link: row.deep_link,
+    context_ref: {
+      type: contextRef.type as SearchType,
+      id: contextRef.id,
+      ...(evidenceSpanIds ? { evidence_span_ids: evidenceSpanIds } : {}),
+    },
+  };
+
+  switch (row.type) {
     case "media": {
-      const source = resolveSource(r);
-      if (!source) return null;
-      return { ...base, type: "media", source };
-    }
-    case "fragment": {
-      const source = resolveSource(r);
-      if (!source) return null;
-      if (typeof r.fragment_idx !== "number") return null;
-      const fragment_idx = r.fragment_idx;
-      const section_id =
-        typeof r.section_id === "string" && r.section_id.length > 0
-          ? r.section_id
-          : source.media_kind === "epub"
-            ? null
-            : null;
-      if (source.media_kind === "epub" && section_id === null) return null;
-      return { ...base, type: "fragment", fragment_idx, section_id, source };
-    }
-    case "annotation": {
-      const source = resolveSource(r);
-      if (!source) return null;
-      if (typeof r.fragment_idx !== "number") return null;
-      const fragment_idx = r.fragment_idx;
-      const section_id =
-        typeof r.section_id === "string" && r.section_id.length > 0
-          ? r.section_id
-          : source.media_kind === "epub"
-            ? null
-            : null;
-      if (
-        typeof r.highlight_id !== "string" ||
-        typeof r.fragment_id !== "string" ||
-        typeof r.annotation_body !== "string" ||
-        !isValidHighlight(r.highlight) ||
-        (source.media_kind === "epub" && section_id === null)
-      )
+      const source = resolveSource(row);
+      if (!source) {
         return null;
+      }
+      const contributors = normalizeContributorCredits(source.contributors);
+      if (!contributors) {
+        return null;
+      }
       return {
         ...base,
-        type: "annotation",
-        highlight_id: r.highlight_id,
-        fragment_id: r.fragment_id,
-        fragment_idx,
-        section_id,
-        annotation_body: r.annotation_body,
-        highlight: r.highlight,
-        source,
+        type: "media",
+        source: {
+          ...source,
+          contributors,
+        },
       };
     }
-    case "message": {
-      if (
-        typeof r.conversation_id !== "string" ||
-        typeof r.seq !== "number"
-      )
+    case "podcast": {
+      const contributors = normalizeContributorCredits(row.contributors);
+      if (!contributors) {
         return null;
+      }
       return {
         ...base,
-        type: "message",
-        conversation_id: r.conversation_id,
-        seq: r.seq,
+        type: "podcast",
+        contributors,
       };
     }
-    case "transcript_chunk": {
-      const source = resolveSource(r);
-      if (!source) return null;
+    case "contributor": {
+      const contributor = row.contributor as Record<string, unknown> | null;
+      const contributorHandle = stringField(
+        row,
+        "contributor_handle",
+        "contributorHandle",
+      );
       if (
-        typeof r.t_start_ms !== "number" ||
-        typeof r.t_end_ms !== "number"
+        !contributorHandle ||
+        typeof contributor !== "object" ||
+        contributor === null ||
+        typeof contributor.handle !== "string" ||
+        !stringField(contributor, "display_name", "displayName") ||
+        base.context_ref.type !== "contributor"
       ) {
         return null;
       }
       return {
         ...base,
-        type: "transcript_chunk",
-        t_start_ms: r.t_start_ms,
-        t_end_ms: r.t_end_ms,
-        source,
+        type: "contributor",
+        contributor_handle: contributorHandle,
+        contributor: {
+          handle: contributor.handle,
+          display_name: stringField(contributor, "display_name", "displayName"),
+          status: nullableStringField(contributor, "status"),
+        },
       };
     }
+    case "content_chunk": {
+      if (
+        typeof row.media_id !== "string" ||
+        typeof row.media_kind !== "string" ||
+        typeof row.citation_label !== "string" ||
+        base.context_ref.type !== "content_chunk" ||
+        !base.context_ref.evidence_span_ids ||
+        base.context_ref.evidence_span_ids.length === 0 ||
+        !isValidSource(row.source) ||
+        !isValidResolver(row.resolver)
+      ) {
+        return null;
+      }
+      const contributors = normalizeContributorCredits(row.source.contributors);
+      if (!contributors) {
+        return null;
+      }
+
+      return {
+        ...base,
+        type: "content_chunk",
+        media_id: row.media_id,
+        media_kind: row.media_kind,
+        citation_label: row.citation_label,
+        source: {
+          ...row.source,
+          contributors,
+        },
+        resolver: row.resolver,
+      };
+    }
+    case "page":
+      return {
+        ...base,
+        type: "page",
+        description:
+          typeof row.description === "string" ? row.description : null,
+      };
+    case "note_block":
+      if (
+        typeof row.page_id !== "string" ||
+        typeof row.page_title !== "string" ||
+        typeof row.body_text !== "string"
+      ) {
+        return null;
+      }
+      return {
+        ...base,
+        type: "note_block",
+        page_id: row.page_id,
+        page_title: row.page_title,
+        body_text: row.body_text,
+        highlight_excerpt:
+          typeof row.highlight_excerpt === "string" ? row.highlight_excerpt : null,
+      };
+    case "message":
+      if (
+        typeof row.conversation_id !== "string" ||
+        typeof row.seq !== "number"
+      ) {
+        return null;
+      }
+
+      return {
+        ...base,
+        type: "message",
+        conversation_id: row.conversation_id,
+        seq: row.seq,
+      };
     default:
       return null;
   }
 }
 
-/**
- * Runtime validation for a single search result.
- *
- * Returns true if the result matches the canonical nested SearchApiResult shape.
- */
-export function isValidSearchResult(
-  result: unknown,
-): result is SearchApiResult {
-  return normalizeSearchResult(result) !== null;
+function buildSearchQueryParams({
+  query,
+  selectedTypes,
+  contributorHandles = [],
+  roles = [],
+  contentKinds = [],
+  limit,
+  cursor = null,
+}: FetchSearchResultPageInput): URLSearchParams {
+  const params = new URLSearchParams({
+    q: query.trim(),
+    limit: String(limit),
+  });
+
+  const orderedSelectedTypes = ALL_SEARCH_TYPES.filter((type) =>
+    selectedTypes.has(type),
+  );
+  if (orderedSelectedTypes.length === 0) {
+    params.set("types", "");
+  } else {
+    params.set("types", orderedSelectedTypes.join(","));
+  }
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+  const handles = contributorHandles
+    .map((handle) => handle.trim())
+    .filter(Boolean);
+  if (handles.length > 0) {
+    params.set("contributor_handles", handles.join(","));
+  }
+  const normalizedRoles = roles.map((role) => role.trim()).filter(Boolean);
+  if (normalizedRoles.length > 0) {
+    params.set("roles", normalizedRoles.join(","));
+  }
+  const normalizedContentKinds = contentKinds
+    .map((contentKind) => contentKind.trim())
+    .filter(Boolean);
+  if (normalizedContentKinds.length > 0) {
+    params.set("content_kinds", normalizedContentKinds.join(","));
+  }
+
+  return params;
 }
 
-// ---------------------------------------------------------------------------
-// Query helpers
-// ---------------------------------------------------------------------------
-
-interface BuildSearchQueryParamsInput {
-  query: string;
-  selectedTypes: Set<SearchType>;
-  limit: number;
-  cursor?: string | null;
-}
-
-function sanitizeSnippet(snippet: string | null | undefined): string {
-  if (!snippet) return "";
+function sanitizeSnippet(snippet: string): string {
   return snippet.replace(/<\/?b>/gi, "");
 }
 
-function parseSnippetSegments(snippet: string): SnippetSegment[] {
-  if (!snippet) return [];
+function parseSnippetSegments(snippet: string) {
+  if (!snippet) {
+    return [];
+  }
 
-  const segments: SnippetSegment[] = [];
+  const segments: SearchResultRowViewModel["snippetSegments"] = [];
   const parts = snippet.split(/(<\/?b>)/gi);
   let emphasized = false;
 
@@ -305,79 +566,82 @@ function parseSnippetSegments(snippet: string): SnippetSegment[] {
   return segments;
 }
 
-function formatMediaKind(kind: string): string {
-  return kind.replace(/_/g, " ");
-}
-
 function buildSourceMeta(result: SearchApiResult): string | null {
+  if (result.type === "contributor") {
+    return result.contributor.status;
+  }
+
   if (result.type === "message") {
-    return `message #${result.seq}`;
+    return result.source_label ?? `message #${result.seq}`;
   }
 
-  // After eliminating "message", TS narrows to SearchResultWithSource —
-  // all remaining variants carry `source: SearchSourceMetadata`.
-  const { source } = result;
-
-  const parts: string[] = [];
-  if (source.title) {
-    parts.push(source.title);
-  }
-  if (source.authors.length > 0) {
-    parts.push(source.authors.join(", "));
-  }
-  if (source.published_date) {
-    parts.push(source.published_date);
-  }
-  if (source.media_kind) {
-    parts.push(formatMediaKind(source.media_kind));
+  if (result.type === "podcast") {
+    return result.source_label;
   }
 
-  return parts.length > 0 ? parts.join(" — ") : null;
+  if (result.type === "page") {
+    return result.source_label;
+  }
+
+  if (result.type === "note_block") {
+    return result.page_title;
+  }
+
+  if (result.source_label) {
+    return result.source_label;
+  }
+
+  if (result.type === "content_chunk") {
+    const parts = [result.title, result.media_kind.replace(/_/g, " ")];
+    return parts.filter(Boolean).join(" — ") || null;
+  }
+
+  const parts = [result.source.title];
+  if (result.source.published_date) {
+    parts.push(result.source.published_date);
+  }
+  if (result.source.media_kind) {
+    parts.push(result.source.media_kind.replace(/_/g, " "));
+  }
+
+  return parts.filter(Boolean).join(" — ") || null;
 }
 
 function buildResultHref(result: SearchApiResult): string {
-  switch (result.type) {
-    case "media":
-      return `/media/${result.id}`;
-    case "fragment": {
-      const params = new URLSearchParams();
-      if (result.source.media_kind === "epub") {
-        params.set("loc", result.section_id ?? "");
+  if (result.type === "content_chunk") {
+    const params = new URLSearchParams();
+    const evidence = result.resolver.params.evidence;
+    if (evidence) {
+      params.set("evidence", evidence);
+    }
+    for (const [key, value] of Object.entries(result.resolver.params)) {
+      if (key !== "evidence") {
+        params.set(key, value);
       }
-      params.set("fragment", result.id);
-      const query = params.toString();
-      return query
-        ? `/media/${result.source.media_id}?${query}`
-        : `/media/${result.source.media_id}`;
     }
-    case "annotation": {
-      const params = new URLSearchParams();
-      if (result.source.media_kind === "epub") {
-        params.set("loc", result.section_id ?? "");
-      }
-      params.set("fragment", result.fragment_id);
-      params.set("highlight", result.highlight_id);
-      const query = params.toString();
-      return query
-        ? `/media/${result.source.media_id}?${query}`
-        : `/media/${result.source.media_id}`;
-    }
-    case "message":
-      return `/conversations/${result.conversation_id}`;
-    case "transcript_chunk": {
-      const params = new URLSearchParams();
-      params.set("t_start_ms", String(result.t_start_ms));
-      return `/media/${result.source.media_id}?${params.toString()}`;
-    }
+    const query = params.toString();
+    return query ? `${result.resolver.route}?${query}` : result.resolver.route;
   }
+  return result.deep_link;
 }
 
 function buildPrimaryText(result: SearchApiResult): string {
-  if (result.type === "annotation") {
-    return result.highlight.exact;
+  if (result.type === "contributor") {
+    return (
+      result.contributor.display_name ||
+      sanitizeSnippet(result.snippet) ||
+      "Author"
+    );
   }
-  if (result.type === "media") {
-    return result.source.title || sanitizeSnippet(result.snippet) || "Untitled";
+  if (result.type === "note_block") {
+    if (result.highlight_excerpt) return result.highlight_excerpt;
+    return result.body_text || sanitizeSnippet(result.snippet) || "Note";
+  }
+  if (result.type === "media" || result.type === "podcast") {
+    return result.title || sanitizeSnippet(result.snippet) || "Untitled";
+  }
+  if (result.type === "page") {
+    return result.title || sanitizeSnippet(result.snippet) || "Untitled page";
   }
   if (result.type === "message") {
     return sanitizeSnippet(result.snippet) || `Message #${result.seq}`;
@@ -385,59 +649,90 @@ function buildPrimaryText(result: SearchApiResult): string {
   return sanitizeSnippet(result.snippet);
 }
 
-function formatTypeLabel(type: SearchType): string {
-  return type === "transcript_chunk" ? "transcript chunk" : type;
+function getContributorCredits(result: SearchApiResult): ContributorCredit[] {
+  if (result.type === "media") {
+    return result.source.contributors;
+  }
+  if (result.type === "podcast") {
+    return result.contributors;
+  }
+  if (result.type === "content_chunk") {
+    return result.source.contributors;
+  }
+  return [];
 }
 
-export function buildSearchQueryParams({
-  query,
-  selectedTypes,
-  limit,
-  cursor = null,
-}: BuildSearchQueryParamsInput): URLSearchParams {
-  const params = new URLSearchParams({
-    q: query.trim(),
-    limit: String(limit),
-  });
-
-  const orderedSelected = ALL_SEARCH_TYPES.filter((type) => selectedTypes.has(type));
-  if (orderedSelected.length === 0) {
-    // Explicitly differentiate from omitted types (which means "all").
-    params.set("types", "");
-  } else {
-    params.set("types", orderedSelected.join(","));
-  }
-  if (orderedSelected.includes("transcript_chunk")) {
-    params.set("semantic", "true");
-  }
-
-  if (cursor) {
-    params.set("cursor", cursor);
-  }
-
-  return params;
-}
-
-export function adaptSearchResultRow(result: SearchApiResult): SearchResultRowViewModel {
-  const highlightSnippet =
-    result.type === "annotation"
-      ? {
-          prefix: result.highlight.prefix,
-          exact: result.highlight.exact,
-          suffix: result.highlight.suffix,
-        }
-      : null;
-
+function adaptSearchResultRow(
+  result: SearchApiResult,
+): SearchResultRowViewModel {
   return {
     key: `${result.type}-${result.id}`,
     href: buildResultHref(result),
     type: result.type,
-    typeLabel: formatTypeLabel(result.type),
+    mediaId: result.media_id,
+    contextRef: {
+      type: result.context_ref.type,
+      id: result.context_ref.id,
+      evidenceSpanIds: result.context_ref.evidence_span_ids ?? [],
+    },
+    typeLabel:
+      result.type === "content_chunk"
+        ? result.citation_label
+        : result.type === "contributor"
+          ? "author"
+          : result.type === "page"
+            ? "page"
+            : result.type,
     primaryText: buildPrimaryText(result),
     snippetSegments: parseSnippetSegments(result.snippet),
     sourceMeta: buildSourceMeta(result),
-    annotationBody: result.type === "annotation" ? result.annotation_body : null,
-    highlightSnippet,
+    contributorCredits: getContributorCredits(result),
+    noteBody: result.type === "note_block" ? result.body_text : null,
     scoreLabel: `score ${result.score.toFixed(2)}`,
+  };
+}
+
+function adaptSearchResults(results: unknown[]): SearchResultRowViewModel[] {
+  return results.flatMap((result) => {
+    const normalized = normalizeSearchResult(result);
+    if (!normalized) {
+      console.warn("[search] dropping invalid result", result);
+      return [];
+    }
+    return [adaptSearchResultRow(normalized)];
+  });
+}
+
+export async function fetchSearchResultPage({
+  query,
+  selectedTypes,
+  contributorHandles = [],
+  roles = [],
+  contentKinds = [],
+  limit,
+  cursor = null,
+  signal,
+}: FetchSearchResultPageInput): Promise<SearchResultPage> {
+  const response = await apiFetch<SearchResponseShape>(
+    `/api/search?${buildSearchQueryParams({
+      query,
+      selectedTypes,
+      contributorHandles,
+      roles,
+      contentKinds,
+      limit,
+      cursor,
+    }).toString()}`,
+    { signal },
+  );
+
+  return {
+    rows: adaptSearchResults(
+      Array.isArray(response.results) ? response.results : [],
+    ),
+    nextCursor:
+      typeof response.page?.next_cursor === "string"
+        ? response.page.next_cursor
+        : null,
   };
 }

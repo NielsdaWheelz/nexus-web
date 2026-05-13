@@ -1,0 +1,10 @@
+# Worker-only env for the Hetzner VPS.
+# Merged after env-prod-backend, so values here can override API defaults.
+
+WORKER_POLL_INTERVAL_SECONDS=2
+WORKER_SCHEDULER_INTERVAL_SECONDS=30
+WORKER_HEARTBEAT_INTERVAL_SECONDS=30
+WORKER_LEASE_SECONDS=300
+
+# The worker image sets NODE_INGEST_SCRIPT for production. Override only if needed.
+# NODE_INGEST_SCRIPT=/app/node/ingest/ingest.mjs

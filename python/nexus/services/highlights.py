@@ -1,68 +1,38 @@
-"""Highlight and Annotation service layer.
-
-Read visibility: shared read allowed under canonical highlight visibility predicate
-(media readable + library intersection between author and viewer per S4 spec §5.2).
-Write boundary: author-only for all mutation operations.
-
-Error masking: E_MEDIA_NOT_FOUND consistently for all 404s (prevent probing attacks).
-Mutation guard: media ready status required for create/update/upsert; list/get/delete
-allowed even if media status drifts.
-
-Helper split (S4):
-- get_highlight_for_visible_read_or_404: read path (visibility predicate)
-- get_highlight_for_author_write_or_404: write path (author-only)
-
-S6 PR-02 adoption:
-- Fragment create/update uses transactional dual-write (canonical subtype + legacy bridge)
-- Read paths use highlight_kernel for anchor-kind-aware media resolution
-- Dormant-window fragment rows are repaired in explicit write-capable paths
-- Mismatch handling follows D03 path-specific mapping via highlight_kernel
-
-Service functions correspond 1:1 with route handlers.
-Routes are transport-only and call exactly one service function.
-"""
+"""Highlight service layer."""
 
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, exists, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_highlight, can_read_media, highlight_visibility_filter
+from nexus.auth.permissions import can_read_media, highlight_visibility_filter
 from nexus.db.models import (
-    Annotation,
     Conversation,
     Fragment,
     Highlight,
     HighlightFragmentAnchor,
-    HighlightTranscriptAnchor,
+    LibraryEntry,
     Media,
+    Membership,
     Message,
-    MessageContext,
+    MessageContextItem,
+    ObjectLink,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
-    AnnotationOut,
     CreateHighlightRequest,
     FragmentAnchorOut,
-    HighlightOut,
     LinkedConversationRef,
+    LinkedNoteBlockRef,
     PdfAnchorOut,
+    PdfBoundsUpdate,
     PdfQuadOut,
     TypedHighlightOut,
     UpdateHighlightRequest,
-    UpsertAnnotationRequest,
 )
-from nexus.services.highlight_kernel import (
-    HighlightKernelIntegrityError,
-    MappingClass,
-    ResolverState,
-    build_internal_view,
-    map_mismatch,
-    repair_fragment_highlight,
-    resolve_highlight,
-)
+from nexus.services.notes import linked_note_blocks_for_highlights
 
 logger = get_logger(__name__)
 
@@ -91,6 +61,16 @@ def get_fragment_for_viewer_or_404(db: Session, viewer_id: UUID, fragment_id: UU
     if not can_read_media(db, viewer_id, fragment.media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     return fragment  # fragment.media available via relationship
+
+
+def _lock_fragment_row_for_highlight_write_or_404(db: Session, fragment_id: UUID) -> None:
+    """Serialize fragment highlight mutations on the target fragment row."""
+
+    locked_fragment_id = db.execute(
+        select(Fragment.id).where(Fragment.id == fragment_id).with_for_update()
+    ).scalar_one_or_none()
+    if locked_fragment_id is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
 
 def require_media_ready_or_409(processing_status: str) -> None:
@@ -137,29 +117,53 @@ def map_integrity_error(e: IntegrityError) -> ApiError:
         # Fallback: search exception message
         msg = str(e.orig) if e.orig else str(e)
         for name in (
-            "uix_highlights_user_fragment_offsets",
-            "ck_highlights_offsets_valid",
             "ck_highlights_color",
-            "ck_highlights_fragment_bridge",
             "ck_hfa_offsets_valid",
         ):
             if name in msg:
                 constraint_name = name
                 break
 
-    if constraint_name == "uix_highlights_user_fragment_offsets":
-        return ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range")
-    if constraint_name in (
-        "ck_highlights_offsets_valid",
-        "ck_highlights_color",
-        "ck_highlights_fragment_bridge",
-        "ck_hfa_offsets_valid",
-    ):
+    if constraint_name in ("ck_highlights_color", "ck_hfa_offsets_valid"):
         return ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid highlight data")
 
     # Unknown constraint — internal error
     logger.error("unknown_integrity_error", constraint=constraint_name, error=str(e))
     return ApiError(ApiErrorCode.E_INTERNAL, "Database constraint violation")
+
+
+def _highlight_library_intersection_exists(
+    db: Session,
+    viewer_id: UUID,
+    author_id: UUID,
+    media_id: UUID,
+) -> bool:
+    """Return whether viewer and author share a library containing the media."""
+
+    viewer_membership = Membership.__table__.alias("highlight_viewer_membership")
+    author_membership = Membership.__table__.alias("highlight_author_membership")
+    statement = select(
+        exists().where(
+            LibraryEntry.media_id == media_id,
+            LibraryEntry.library_id == viewer_membership.c.library_id,
+            viewer_membership.c.user_id == viewer_id,
+            LibraryEntry.library_id == author_membership.c.library_id,
+            author_membership.c.user_id == author_id,
+        )
+    )
+    return bool(db.execute(statement).scalar_one())
+
+
+def _require_typed_highlight_or_404(highlight: Highlight) -> None:
+    """Require a highlight to carry a canonical typed anchor row."""
+
+    if highlight.anchor_kind == "fragment_offsets":
+        if highlight.fragment_anchor is not None and highlight.anchor_media_id is not None:
+            return
+    elif highlight.anchor_kind == "pdf_page_geometry":
+        if highlight.pdf_anchor is not None and highlight.anchor_media_id is not None:
+            return
+    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
 
 def get_highlight_for_visible_read_or_404(
@@ -176,18 +180,37 @@ def get_highlight_for_visible_read_or_404(
     highlight = db.get(Highlight, highlight_id)
     if highlight is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    if not can_read_highlight(db, viewer_id, highlight_id):
+    _require_typed_highlight_or_404(highlight)
+    media_id = highlight.anchor_media_id
+    if media_id is None or not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    if not _highlight_library_intersection_exists(db, viewer_id, highlight.user_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     return highlight
+
+
+def _require_fragment_highlight_or_404(highlight: Highlight) -> HighlightFragmentAnchor:
+    """Require a highlight to be a canonical fragment highlight."""
+
+    _require_typed_highlight_or_404(highlight)
+    if highlight.anchor_kind != "fragment_offsets" or highlight.fragment_anchor is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    return highlight.fragment_anchor
+
+
+def _require_pdf_highlight_or_404(highlight: Highlight):
+    """Require a highlight to be a canonical PDF highlight."""
+
+    _require_typed_highlight_or_404(highlight)
+    if highlight.anchor_kind != "pdf_page_geometry" or highlight.pdf_anchor is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    return highlight.pdf_anchor
 
 
 def get_highlight_for_author_write_or_404(
     db: Session, viewer_id: UUID, highlight_id: UUID
 ) -> Highlight:
     """Load highlight with relationships, enforce author-only write access.
-
-    Uses highlight_kernel for anchor-kind-aware media resolution (S6 PR-02).
-    Repairs dormant-window fragment highlights transactionally before returning.
 
     Raises:
         NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not authored by viewer,
@@ -197,48 +220,25 @@ def get_highlight_for_author_write_or_404(
     if highlight is None or highlight.user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
-    resolution = resolve_highlight(highlight)
-
-    if resolution.state == ResolverState.mismatch:
-        map_mismatch(resolution, MappingClass.masked_not_found, "get_highlight_for_author_write")
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-
-    if resolution.state == ResolverState.dormant_repairable:
-        try:
-            resolution = repair_fragment_highlight(db, highlight)
-        except HighlightKernelIntegrityError:
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found") from None
-
-    media_id = resolution.anchor_media_id
+    _require_typed_highlight_or_404(highlight)
+    media_id = highlight.anchor_media_id
     if media_id is None or not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     return highlight
 
 
 def _require_media_ready_for_highlight(db: Session, highlight: Highlight) -> None:
-    """Resolve media for a highlight via kernel and check processing status."""
+    """Resolve media for a highlight and check processing status."""
 
-    resolution = resolve_highlight(highlight)
-    media_id = resolution.anchor_media_id
+    _require_typed_highlight_or_404(highlight)
+    media_id = highlight.anchor_media_id
+    if media_id is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
-    if highlight.fragment and highlight.fragment.media:
-        require_media_ready_or_409(highlight.fragment.media.processing_status.value)
-    elif media_id:
-        media_obj = db.get(Media, media_id)
-        if media_obj:
-            require_media_ready_or_409(media_obj.processing_status.value)
-
-
-def _annotation_to_out(annotation: Annotation | None) -> AnnotationOut | None:
-    if annotation is None:
-        return None
-    return AnnotationOut(
-        id=annotation.id,
-        highlight_id=annotation.highlight_id,
-        body=annotation.body,
-        created_at=annotation.created_at,
-        updated_at=annotation.updated_at,
-    )
+    media_obj = db.get(Media, media_id)
+    if media_obj is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    require_media_ready_or_409(media_obj.processing_status.value)
 
 
 def _batch_linked_conversations(
@@ -249,18 +249,18 @@ def _batch_linked_conversations(
         return {}
     rows = db.execute(
         select(
-            MessageContext.highlight_id,
+            MessageContextItem.object_id,
             Conversation.id,
             Conversation.title,
         )
-        .join(Message, Message.id == MessageContext.message_id)
+        .join(Message, Message.id == MessageContextItem.message_id)
         .join(Conversation, Conversation.id == Message.conversation_id)
         .where(
-            MessageContext.target_type == "highlight",
-            MessageContext.highlight_id.in_(highlight_ids),
+            MessageContextItem.object_type == "highlight",
+            MessageContextItem.object_id.in_(highlight_ids),
             Conversation.owner_user_id == viewer_id,
         )
-        .group_by(MessageContext.highlight_id, Conversation.id, Conversation.title)
+        .group_by(MessageContextItem.object_id, Conversation.id, Conversation.title)
     ).all()
     result: dict[UUID, list[LinkedConversationRef]] = {}
     for hl_id, conv_id, title in rows:
@@ -270,31 +270,32 @@ def _batch_linked_conversations(
     return result
 
 
-def _highlight_fields(highlight: Highlight, viewer_id: UUID) -> dict:
-    """Common ORM-to-schema fields shared by highlight read responses."""
-    return dict(
-        id=highlight.id,
-        fragment_id=highlight.fragment_id,
-        start_offset=highlight.start_offset,
-        end_offset=highlight.end_offset,
-        color=highlight.color,
-        exact=highlight.exact,
-        prefix=highlight.prefix,
-        suffix=highlight.suffix,
-        created_at=highlight.created_at,
-        updated_at=highlight.updated_at,
-        annotation=_annotation_to_out(highlight.annotation),
-        author_user_id=highlight.user_id,
-        is_owner=(highlight.user_id == viewer_id),
-    )
+def _batch_linked_note_blocks(
+    db: Session, highlight_ids: list[UUID], viewer_id: UUID
+) -> dict[UUID, list[LinkedNoteBlockRef]]:
+    return {
+        highlight_id: [
+            LinkedNoteBlockRef(
+                note_block_id=block.id,
+                body_pm_json=block.body_pm_json,
+                body_markdown=block.body_markdown,
+                body_text=block.body_text,
+                revision=block.revision,
+            )
+            for block in blocks
+        ]
+        for highlight_id, blocks in linked_note_blocks_for_highlights(
+            db, viewer_id, highlight_ids
+        ).items()
+    }
 
 
 def _highlight_to_typed_out(highlight: Highlight, viewer_id: UUID) -> TypedHighlightOut:
     """Convert Highlight ORM model to anchor-discriminated TypedHighlightOut."""
-    resolution = resolve_highlight(highlight)
-    view = build_internal_view(highlight, resolution)
+    _require_typed_highlight_or_404(highlight)
 
-    if view.anchor_kind == "pdf_page_geometry" and view.pdf_anchor is not None:
+    if highlight.anchor_kind == "pdf_page_geometry":
+        pdf_anchor = _require_pdf_highlight_or_404(highlight)
         quads_out = []
         if highlight.pdf_quads:
             sorted_quads = sorted(highlight.pdf_quads, key=lambda q: q.quad_idx)
@@ -313,26 +314,21 @@ def _highlight_to_typed_out(highlight: Highlight, viewer_id: UUID) -> TypedHighl
             ]
         anchor = PdfAnchorOut(
             type="pdf_page_geometry",
-            media_id=view.pdf_anchor.media_id,
-            page_number=view.pdf_anchor.page_number,
+            media_id=pdf_anchor.media_id,
+            page_number=pdf_anchor.page_number,
             quads=quads_out,
         )
-    elif view.fragment_anchor is not None:
+    elif highlight.anchor_kind == "fragment_offsets":
+        fragment_anchor = _require_fragment_highlight_or_404(highlight)
         anchor = FragmentAnchorOut(
             type="fragment_offsets",
-            media_id=view.fragment_anchor.media_id,
-            fragment_id=view.fragment_anchor.fragment_id,
-            start_offset=view.fragment_anchor.start_offset,
-            end_offset=view.fragment_anchor.end_offset,
+            media_id=highlight.anchor_media_id,
+            fragment_id=fragment_anchor.fragment_id,
+            start_offset=fragment_anchor.start_offset,
+            end_offset=fragment_anchor.end_offset,
         )
     else:
-        anchor = FragmentAnchorOut(
-            type="fragment_offsets",
-            media_id=view.anchor_media_id,
-            fragment_id=highlight.fragment_id or view.anchor_media_id,
-            start_offset=highlight.start_offset or 0,
-            end_offset=highlight.end_offset or 0,
-        )
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
     return TypedHighlightOut(
         id=highlight.id,
@@ -343,10 +339,35 @@ def _highlight_to_typed_out(highlight: Highlight, viewer_id: UUID) -> TypedHighl
         suffix=highlight.suffix,
         created_at=highlight.created_at,
         updated_at=highlight.updated_at,
-        annotation=_annotation_to_out(highlight.annotation),
         author_user_id=highlight.user_id,
         is_owner=(highlight.user_id == viewer_id),
     )
+
+
+def _fragment_highlight_span_conflict_exists(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    fragment_id: UUID,
+    start_offset: int,
+    end_offset: int,
+    highlight_id: UUID | None = None,
+) -> bool:
+    statement = (
+        select(Highlight.id)
+        .join(HighlightFragmentAnchor, Highlight.id == HighlightFragmentAnchor.highlight_id)
+        .where(
+            Highlight.user_id == viewer_id,
+            Highlight.anchor_kind == "fragment_offsets",
+            HighlightFragmentAnchor.fragment_id == fragment_id,
+            HighlightFragmentAnchor.start_offset == start_offset,
+            HighlightFragmentAnchor.end_offset == end_offset,
+        )
+        .limit(1)
+    )
+    if highlight_id is not None:
+        statement = statement.where(Highlight.id != highlight_id)
+    return db.execute(statement).scalar_one_or_none() is not None
 
 
 # =============================================================================
@@ -356,7 +377,7 @@ def _highlight_to_typed_out(highlight: Highlight, viewer_id: UUID) -> TypedHighl
 
 def create_highlight_for_fragment(
     db: Session, viewer_id: UUID, fragment_id: UUID, req: CreateHighlightRequest
-) -> HighlightOut:
+) -> TypedHighlightOut:
     """Create a highlight for a fragment.
 
     Args:
@@ -366,7 +387,7 @@ def create_highlight_for_fragment(
         req: The highlight creation request.
 
     Returns:
-        The created highlight with annotation=None.
+        The created highlight with a canonical fragment anchor payload.
 
     Raises:
         NotFoundError(E_MEDIA_NOT_FOUND): If fragment doesn't exist or not readable.
@@ -380,20 +401,30 @@ def create_highlight_for_fragment(
     # 2. Require media ready
     require_media_ready_or_409(fragment.media.processing_status.value)
 
+    # Serialize duplicate-span checks on the fragment row now that runtime
+    # storage no longer relies on the legacy highlight residue columns.
+    _lock_fragment_row_for_highlight_write_or_404(db, fragment_id)
+
     # 3. Validate offsets
     validate_offsets_or_400(fragment.canonical_text, req.start_offset, req.end_offset)
+
+    if _fragment_highlight_span_conflict_exists(
+        db,
+        viewer_id=viewer_id,
+        fragment_id=fragment_id,
+        start_offset=req.start_offset,
+        end_offset=req.end_offset,
+    ):
+        raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range")
 
     # 4. Derive exact/prefix/suffix
     exact, prefix, suffix = derive_exact_prefix_suffix(
         fragment.canonical_text, req.start_offset, req.end_offset
     )
 
-    # 5. Create highlight with typed logical fields (S6 PR-02 dual-write)
+    # 5. Create highlight row plus canonical fragment anchor
     highlight = Highlight(
         user_id=viewer_id,
-        fragment_id=fragment_id,
-        start_offset=req.start_offset,
-        end_offset=req.end_offset,
         anchor_kind="fragment_offsets",
         anchor_media_id=fragment.media_id,
         color=req.color,
@@ -402,7 +433,7 @@ def create_highlight_for_fragment(
         suffix=suffix,
     )
 
-    # 6. Persist with integrity error handling + fragment anchor subtype
+    # 6. Persist with integrity error handling
     try:
         db.add(highlight)
         db.flush()
@@ -415,69 +446,18 @@ def create_highlight_for_fragment(
         )
         db.add(fragment_anchor)
         db.flush()
-
-        if (
-            fragment.transcript_version_id is not None
-            and fragment.t_start_ms is not None
-            and fragment.t_end_ms is not None
-            and fragment.t_end_ms > fragment.t_start_ms
-        ):
-            transcript_segment_row = db.execute(
-                text(
-                    """
-                    SELECT id
-                    FROM podcast_transcript_segments
-                    WHERE transcript_version_id = :transcript_version_id
-                      AND segment_idx = :segment_idx
-                    LIMIT 1
-                    """
-                ),
-                {
-                    "transcript_version_id": fragment.transcript_version_id,
-                    "segment_idx": fragment.idx,
-                },
-            ).fetchone()
-
-            db.add(
-                HighlightTranscriptAnchor(
-                    highlight_id=highlight.id,
-                    transcript_version_id=fragment.transcript_version_id,
-                    transcript_segment_id=(
-                        transcript_segment_row[0] if transcript_segment_row is not None else None
-                    ),
-                    t_start_ms=fragment.t_start_ms,
-                    t_end_ms=fragment.t_end_ms,
-                    start_offset=req.start_offset,
-                    end_offset=req.end_offset,
-                )
-            )
-            db.flush()
         db.commit()
     except IntegrityError as e:
         db.rollback()
         raise map_integrity_error(e) from e
 
-    # 7. Return HighlightOut with annotation=None
-    return HighlightOut(
-        id=highlight.id,
-        fragment_id=highlight.fragment_id,
-        start_offset=highlight.start_offset,
-        end_offset=highlight.end_offset,
-        color=highlight.color,
-        exact=highlight.exact,
-        prefix=highlight.prefix,
-        suffix=highlight.suffix,
-        created_at=highlight.created_at,
-        updated_at=highlight.updated_at,
-        annotation=None,
-        author_user_id=highlight.user_id,
-        is_owner=True,
-    )
+    db.refresh(highlight)
+    return _highlight_to_typed_out(highlight, viewer_id)
 
 
 def list_highlights_for_fragment(
     db: Session, viewer_id: UUID, fragment_id: UUID, mine_only: bool = True
-) -> list[HighlightOut]:
+) -> list[TypedHighlightOut]:
     """List highlights for a fragment.
 
     NO ready check - read-only operation.
@@ -490,14 +470,21 @@ def list_highlights_for_fragment(
             If False, return all highlights visible under s4 canonical predicate.
 
     Returns:
-        List of highlights ordered by start_offset ASC, created_at ASC, id ASC.
+        List of canonical typed highlights ordered by start_offset ASC, created_at ASC, id ASC.
 
     Raises:
         NotFoundError(E_MEDIA_NOT_FOUND): If fragment doesn't exist or not readable.
     """
     fragment = get_fragment_for_viewer_or_404(db, viewer_id, fragment_id)
 
-    query = db.query(Highlight).filter(Highlight.fragment_id == fragment_id)
+    query = (
+        db.query(Highlight)
+        .join(HighlightFragmentAnchor, Highlight.id == HighlightFragmentAnchor.highlight_id)
+        .filter(
+            Highlight.anchor_kind == "fragment_offsets",
+            HighlightFragmentAnchor.fragment_id == fragment_id,
+        )
+    )
 
     if mine_only:
         query = query.filter(Highlight.user_id == viewer_id)
@@ -505,16 +492,20 @@ def list_highlights_for_fragment(
         query = query.filter(highlight_visibility_filter(viewer_id, fragment.media_id))
 
     highlights = query.order_by(
-        Highlight.start_offset.asc(),
+        HighlightFragmentAnchor.start_offset.asc(),
         Highlight.created_at.asc(),
         Highlight.id.asc(),
     ).all()
 
-    conv_map = _batch_linked_conversations(db, [h.id for h in highlights], viewer_id)
+    highlight_ids = [h.id for h in highlights]
+    conv_map = _batch_linked_conversations(db, highlight_ids, viewer_id)
+    note_map = _batch_linked_note_blocks(db, highlight_ids, viewer_id)
     return [
-        HighlightOut(
-            **_highlight_fields(h, viewer_id),
-            linked_conversations=conv_map.get(h.id, []),
+        _highlight_to_typed_out(h, viewer_id).model_copy(
+            update={
+                "linked_conversations": conv_map.get(h.id, []),
+                "linked_note_blocks": note_map.get(h.id, []),
+            }
         )
         for h in highlights
     ]
@@ -530,7 +521,16 @@ def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHigh
         TypedHighlightOut with anchor discriminator for both fragment and PDF highlights.
     """
     highlight = get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
-    return _highlight_to_typed_out(highlight, viewer_id)
+    return _highlight_to_typed_out(highlight, viewer_id).model_copy(
+        update={
+            "linked_conversations": _batch_linked_conversations(db, [highlight.id], viewer_id).get(
+                highlight.id, []
+            ),
+            "linked_note_blocks": _batch_linked_note_blocks(db, [highlight.id], viewer_id).get(
+                highlight.id, []
+            ),
+        }
+    )
 
 
 def update_highlight(
@@ -541,39 +541,37 @@ def update_highlight(
     Returns TypedHighlightOut with anchor discriminator.
     """
     highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
+    anchor_kind = highlight.anchor_kind
+    anchor_update = req.anchor
 
-    # D16: anchor-kind mismatch rejection
-    resolution = resolve_highlight(highlight)
-    anchor_kind = resolution.anchor_kind or "fragment_offsets"
-
-    has_fragment_offsets = req.start_offset is not None or req.end_offset is not None
-    has_pdf_bounds = req.pdf_bounds is not None
-
-    if has_pdf_bounds and anchor_kind != "pdf_page_geometry":
+    if anchor_update is not None and anchor_update.type != anchor_kind:
+        if anchor_update.type == "pdf_page_geometry":
+            raise ApiError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "pdf_page_geometry anchor updates are not valid for non-PDF highlights",
+            )
         raise ApiError(
             ApiErrorCode.E_INVALID_REQUEST,
-            "pdf_bounds is not valid for non-PDF highlights",
-        )
-    if has_fragment_offsets and anchor_kind == "pdf_page_geometry":
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Fragment offset fields are not valid for PDF highlights",
+            "fragment_offsets anchor updates are not valid for PDF highlights",
         )
 
-    # PDF bounds update: delegate to pdf_highlights
-    if has_pdf_bounds and anchor_kind == "pdf_page_geometry":
+    if anchor_update is not None and anchor_kind == "pdf_page_geometry":
         from nexus.services.pdf_highlights import update_pdf_highlight_bounds
 
         return update_pdf_highlight_bounds(
             db,
             viewer_id,
             highlight,
-            req.pdf_bounds,
+            PdfBoundsUpdate(
+                page_number=anchor_update.page_number,
+                quads=anchor_update.quads,
+                exact=req.exact or "",
+            ),
             req.color,
         )
 
     # PDF color-only update
-    if anchor_kind == "pdf_page_geometry" and not has_pdf_bounds and not has_fragment_offsets:
+    if anchor_kind == "pdf_page_geometry" and anchor_update is None:
         if req.color is not None and req.color != highlight.color:
             _require_media_ready_for_highlight(db, highlight)
             stmt = (
@@ -587,14 +585,17 @@ def update_highlight(
             db.refresh(highlight)
         return _highlight_to_typed_out(highlight, viewer_id)
 
-    # Fragment update path (unchanged logic)
+    fragment_anchor = _require_fragment_highlight_or_404(highlight)
+
     _require_media_ready_for_highlight(db, highlight)
 
-    final_start = req.start_offset if req.start_offset is not None else highlight.start_offset
-    final_end = req.end_offset if req.end_offset is not None else highlight.end_offset
+    current_start = fragment_anchor.start_offset
+    current_end = fragment_anchor.end_offset
+    final_start = anchor_update.start_offset if anchor_update is not None else current_start
+    final_end = anchor_update.end_offset if anchor_update is not None else current_end
     final_color = req.color if req.color is not None else highlight.color
 
-    offsets_changed = final_start != highlight.start_offset or final_end != highlight.end_offset
+    offsets_changed = final_start != current_start or final_end != current_end
     color_changed = final_color != highlight.color
 
     if not offsets_changed and not color_changed:
@@ -603,14 +604,16 @@ def update_highlight(
     update_values: dict = {"updated_at": func.now()}
 
     if offsets_changed:
-        validate_offsets_or_400(highlight.fragment.canonical_text, final_start, final_end)
+        fragment = db.get(Fragment, fragment_anchor.fragment_id)
+        if fragment is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+        _lock_fragment_row_for_highlight_write_or_404(db, fragment.id)
+        validate_offsets_or_400(fragment.canonical_text, final_start, final_end)
         exact, prefix, suffix = derive_exact_prefix_suffix(
-            highlight.fragment.canonical_text, final_start, final_end
+            fragment.canonical_text, final_start, final_end
         )
         update_values.update(
             {
-                "start_offset": final_start,
-                "end_offset": final_end,
                 "exact": exact,
                 "prefix": prefix,
                 "suffix": suffix,
@@ -620,26 +623,23 @@ def update_highlight(
     if color_changed:
         update_values["color"] = final_color
 
+    if offsets_changed and _fragment_highlight_span_conflict_exists(
+        db,
+        viewer_id=viewer_id,
+        fragment_id=fragment_anchor.fragment_id,
+        start_offset=final_start,
+        end_offset=final_end,
+        highlight_id=highlight_id,
+    ):
+        raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range")
+
     try:
         stmt = update(Highlight).where(Highlight.id == highlight_id).values(**update_values)
         db.execute(stmt)
 
-        if offsets_changed and highlight.fragment_id is not None:
-            fa = highlight.fragment_anchor
-            if fa is not None:
-                fa.start_offset = final_start
-                fa.end_offset = final_end
-            else:
-                new_fa = HighlightFragmentAnchor(
-                    highlight_id=highlight_id,
-                    fragment_id=highlight.fragment_id,
-                    start_offset=final_start,
-                    end_offset=final_end,
-                )
-                db.add(new_fa)
-            if highlight.transcript_anchor is not None:
-                highlight.transcript_anchor.start_offset = final_start
-                highlight.transcript_anchor.end_offset = final_end
+        if offsets_changed:
+            fragment_anchor.start_offset = final_start
+            fragment_anchor.end_offset = final_end
 
         db.flush()
         db.commit()
@@ -655,7 +655,6 @@ def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
     """Delete a highlight.
 
     NO ready check - allows cleanup even if media status drifts.
-    Annotation is cascaded via FK ON DELETE CASCADE.
 
     Args:
         db: Database session.
@@ -668,104 +667,18 @@ def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
     # Verify highlight exists and is owned by viewer
     get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
 
-    # Use raw DELETE to let the database handle ON DELETE CASCADE properly
-    # This avoids SQLAlchemy ORM trying to manage the annotation relationship
+    db.execute(
+        delete(ObjectLink).where(
+            ((ObjectLink.a_type == "highlight") & (ObjectLink.a_id == highlight_id))
+            | ((ObjectLink.b_type == "highlight") & (ObjectLink.b_id == highlight_id))
+        )
+    )
+    db.execute(
+        delete(MessageContextItem).where(
+            MessageContextItem.object_type == "highlight",
+            MessageContextItem.object_id == highlight_id,
+        )
+    )
     db.execute(delete(Highlight).where(Highlight.id == highlight_id))
-    db.flush()
-    db.commit()
-
-
-def upsert_annotation_for_highlight(
-    db: Session, viewer_id: UUID, highlight_id: UUID, req: UpsertAnnotationRequest
-) -> tuple[AnnotationOut, bool]:
-    """Create or update the annotation for a highlight.
-
-    Requires media ready.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        highlight_id: The ID of the highlight.
-        req: The annotation upsert request.
-
-    Returns:
-        Tuple of (annotation, created) where created=True if inserted, False if updated.
-
-    Raises:
-        NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not owned, or not readable.
-        ApiError(E_MEDIA_NOT_READY): If media not in ready state.
-    """
-    # 1. Get highlight with ownership and readability check
-    highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
-
-    # 2. Require media ready via kernel-resolved media
-    _require_media_ready_for_highlight(db, highlight)
-
-    # 3. Check for existing annotation
-    existing = db.query(Annotation).filter(Annotation.highlight_id == highlight_id).first()
-
-    if existing:
-        # Update existing
-        stmt = (
-            update(Annotation)
-            .where(Annotation.highlight_id == highlight_id)
-            .values(body=req.body, updated_at=func.now())
-        )
-        db.execute(stmt)
-        db.flush()
-        db.commit()
-        db.refresh(existing)
-
-        return (
-            AnnotationOut(
-                id=existing.id,
-                highlight_id=existing.highlight_id,
-                body=existing.body,
-                created_at=existing.created_at,
-                updated_at=existing.updated_at,
-            ),
-            False,
-        )
-    else:
-        # Create new
-        annotation = Annotation(
-            highlight_id=highlight_id,
-            body=req.body,
-        )
-        db.add(annotation)
-        db.flush()
-        db.commit()
-
-        return (
-            AnnotationOut(
-                id=annotation.id,
-                highlight_id=annotation.highlight_id,
-                body=annotation.body,
-                created_at=annotation.created_at,
-                updated_at=annotation.updated_at,
-            ),
-            True,
-        )
-
-
-def delete_annotation_for_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
-    """Delete the annotation for a highlight.
-
-    NO ready check - allows cleanup even if media status drifts.
-    Idempotent: returns 204 even if annotation doesn't exist.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        highlight_id: The ID of the highlight.
-
-    Raises:
-        NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not owned, or not readable.
-    """
-    # Verify highlight ownership and readability (no ready check)
-    get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
-
-    # Delete annotation if exists (idempotent)
-    db.execute(delete(Annotation).where(Annotation.highlight_id == highlight_id))
     db.flush()
     db.commit()

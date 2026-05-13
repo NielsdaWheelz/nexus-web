@@ -2,52 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   isReadableStatus,
   normalizeEpubNavigationToc,
-  resolveInitialEpubSectionId,
-  type EpubNavigationSection,
+  type EpubNavigationResponse,
   type EpubNavigationTocNode,
 } from "./epubReader";
-
-describe("resolveInitialEpubSectionId", () => {
-  const sections: EpubNavigationSection[] = [
-    {
-      section_id: "OPS/nav/intro",
-      label: "Introduction",
-      fragment_idx: 0,
-      href_path: "OPS/text/intro.xhtml",
-      anchor_id: null,
-      source_node_id: "node-1",
-      source: "toc",
-      ordinal: 0,
-      char_count: 1200,
-    },
-    {
-      section_id: "OPS/nav/chapter-2",
-      label: "Chapter 2",
-      fragment_idx: 1,
-      href_path: "OPS/text/chapter-2.xhtml",
-      anchor_id: "anchor-2",
-      source_node_id: "node-2",
-      source: "toc",
-      ordinal: 1,
-      char_count: 1800,
-    },
-  ];
-
-  it("prefers a valid loc query param", () => {
-    expect(resolveInitialEpubSectionId(sections, "OPS/nav/chapter-2")).toBe(
-      "OPS/nav/chapter-2"
-    );
-  });
-
-  it("falls back to the first section for invalid or missing loc values", () => {
-    expect(resolveInitialEpubSectionId(sections, "missing")).toBe("OPS/nav/intro");
-    expect(resolveInitialEpubSectionId(sections, null)).toBe("OPS/nav/intro");
-  });
-
-  it("returns null when no sections are available", () => {
-    expect(resolveInitialEpubSectionId([], null)).toBeNull();
-  });
-});
 
 describe("normalizeEpubNavigationToc", () => {
   it("marks TOC nodes navigable only when section_id is valid", () => {
@@ -93,6 +50,22 @@ describe("normalizeEpubNavigationToc", () => {
     expect(out[0].navigable).toBe(false);
     expect(out[0].children[0].navigable).toBe(true);
     expect(out[0].children[1].navigable).toBe(false);
+  });
+});
+
+describe("EpubNavigationResponse", () => {
+  it("accepts the final navigation payload shape", () => {
+    const payload: EpubNavigationResponse = {
+      data: {
+        sections: [],
+        toc_nodes: [],
+        landmarks: [],
+        page_list: [],
+      },
+    };
+
+    expect(payload.data.landmarks).toEqual([]);
+    expect(payload.data.page_list).toEqual([]);
   });
 });
 

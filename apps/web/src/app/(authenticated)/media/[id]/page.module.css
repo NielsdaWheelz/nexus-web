@@ -3,6 +3,12 @@
  *
  * Styling for the media content pane and highlights pane.
  * EPUB chapter navigation and TOC styles added in S5 PR-05.
+ *
+ * Reader scope: the `.readerThemeLight` and `.readerThemeDark` blocks below
+ * define `--reader-*` overrides with literal hex values. They are independent
+ * of the app theme and must not be migrated to semantic tokens. Same applies to
+ * the `.readerThemeDark :global(.hl-*)` overrides which scope highlight colors
+ * to the dark reader theme.
  */
 
 .content {
@@ -15,30 +21,35 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
+  overflow: hidden;
 }
 
 .kind {
   padding: var(--space-1) var(--space-2);
-  background-color: var(--color-surface);
-  border-radius: 4px;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
+  background-color: var(--surface-2);
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
   text-transform: uppercase;
 }
 
 .authorMeta {
   min-width: 0;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-  overflow-wrap: anywhere;
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sourceLink {
-  font-size: var(--font-size-sm);
-  color: var(--color-accent);
+  flex: 0 0 auto;
+  font-size: var(--text-sm);
+  color: var(--accent);
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .sourceLink:hover {
@@ -57,61 +68,24 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
-}
-
-.mediaToolbarButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 28px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  padding: 0 var(--space-2);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.mediaToolbarButton:hover:not(:disabled) {
-  border-color: var(--color-border-subtle);
-  color: var(--color-text-primary);
-}
-
-.mediaToolbarButton:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 .mediaToolbarStatus {
   flex: 1 1 auto;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mediaToolbarSelect {
-  width: 100%;
-  min-width: 0;
-  height: 28px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  padding: 0 var(--space-2);
-}
-
 .loading {
   padding: var(--space-4);
   text-align: center;
-  color: var(--reader-text-muted, var(--color-text-muted));
+  color: var(--reader-text-muted, var(--ink-faint));
 }
 
 .errorContainer {
@@ -122,30 +96,39 @@
 
 .error {
   padding: var(--space-3);
-  background-color: var(--reader-bg-secondary, var(--color-bg-secondary));
-  border: 1px solid var(--reader-border, var(--color-border));
-  border-radius: 6px;
-  color: var(--reader-text-secondary, var(--color-text-secondary));
-  font-size: var(--font-size-sm);
+  background-color: var(--reader-bg-secondary, var(--surface-2));
+  border: 1px solid var(--reader-border, var(--edge));
+  border-radius: var(--radius-md);
+  color: var(--reader-text-secondary, var(--ink-muted));
+  font-size: var(--text-sm);
 }
 
 .mismatchBanner {
   padding: var(--space-3);
-  background-color: rgba(255, 184, 108, 0.1);
-  border: 1px solid var(--color-warning, #ffb86c);
-  border-radius: 6px;
-  color: var(--color-warning, #ffb86c);
-  font-size: var(--font-size-sm);
+  background-color: color-mix(in srgb, var(--warning) 10%, transparent);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-md);
+  color: var(--warning);
+  font-size: var(--text-sm);
 }
 
 .focusModeBanner {
   margin-bottom: var(--space-1);
 }
 
+.retrievalBanner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+}
+
 .notReady {
   padding: var(--space-6);
   text-align: center;
-  color: var(--color-text-muted);
+  color: var(--ink-faint);
 }
 
 .notReady p {
@@ -155,13 +138,188 @@
 .empty {
   padding: var(--space-8);
   text-align: center;
-  color: var(--reader-text-muted, var(--color-text-muted));
+  color: var(--reader-text-muted, var(--ink-faint));
 }
 
 .fragments {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
+}
+
+.documentViewport {
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.readerContentRoot {
+  font-family: var(--reader-font-family, var(--font-mono));
+  font-size: var(--reader-font-size-px, var(--text-md));
+  line-height: var(--reader-line-height, var(--leading-normal));
+  width: 100%;
+  min-height: 100%;
+  padding: var(--space-4);
+}
+
+.readerContentInner {
+  max-width: var(--reader-column-width-ch, 65ch);
+  margin: 0 auto;
+}
+
+.readerProtectedWidthProbe {
+  position: fixed;
+  top: -10000px;
+  left: -10000px;
+  visibility: hidden;
+  pointer-events: none;
+  box-sizing: content-box;
+  width: var(--reader-column-width-ch, 65ch);
+  height: 0;
+  overflow: hidden;
+  padding-inline: var(--space-4);
+  font-family: var(--reader-font-family, var(--font-mono));
+  font-size: var(--reader-font-size-px, var(--text-md));
+  line-height: var(--reader-line-height, var(--leading-normal));
+}
+
+/* === Reader scope (preserved literal hex per spec §5 rule 14) === */
+.readerThemeLight {
+  --reader-bg: #faf8f3;
+  --reader-bg-secondary: #f3efe6;
+  --reader-surface: #ece8df;
+  --reader-text: #1a1916;
+  --reader-text-secondary: #4a463e;
+  --reader-text-muted: #7a7468;
+  --reader-border: #d8d3c9;
+  --reader-border-subtle: #ece8df;
+  --reader-accent: #7d5e35;
+  --reader-accent-hover: #634a29;
+  background-color: var(--reader-bg);
+  color: var(--reader-text);
+}
+
+.readerThemeDark {
+  --reader-bg: #15140f;
+  --reader-bg-secondary: #1f1d18;
+  --reader-surface: #2e2c25;
+  --reader-text: #ebe5d6;
+  --reader-text-secondary: #c2baa7;
+  --reader-text-muted: #8a8270;
+  --reader-border: #2e2c25;
+  --reader-border-subtle: #1f1d18;
+  --reader-accent: #c4a472;
+  --reader-accent-hover: #d4b687;
+  background-color: var(--reader-bg);
+  color: var(--reader-text);
+}
+
+/* ===== Focus mode dimming =====
+ * Driven by data-focus-mode on the reader root. While text is selected
+ * (data-selection-active="true"), dimming auto-suspends so annotation flow
+ * is uninterrupted. */
+.readerContentRoot[data-focus-mode="paragraph"]:not([data-selection-active="true"])
+  [data-paragraph]:not([data-paragraph-current="true"]) {
+  opacity: 0.4;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+.readerContentRoot[data-focus-mode="sentence"]:not([data-selection-active="true"])
+  [data-paragraph]:not([data-paragraph-current="true"]) {
+  opacity: 0.3;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+.readerContentRoot[data-focus-mode="sentence"]:not([data-selection-active="true"])
+  [data-paragraph][data-paragraph-current="true"] {
+  opacity: 0.7;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+.readerContentRoot[data-focus-mode="sentence"]:not([data-selection-active="true"])
+  [data-paragraph][data-paragraph-current="true"] [data-sentence-current="true"] {
+  opacity: 1;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .readerContentRoot[data-focus-mode="paragraph"]
+    [data-paragraph],
+  .readerContentRoot[data-focus-mode="sentence"]
+    [data-paragraph],
+  .readerContentRoot[data-focus-mode="sentence"]
+    [data-paragraph]
+    [data-sentence-current] {
+    transition: none;
+  }
+}
+
+/* ===== Hyphenation =====
+ * Auto hyphenation only when opted-in AND viewport is narrow. Set on the
+ * reader root so HtmlRenderer descendants inherit the property. */
+@media (max-width: 600px) {
+  .readerContentRoot[data-hyphenation="auto"] {
+    hyphens: auto;
+    hyphenate-limit-chars: 6 3 3;
+    hyphenate-limit-lines: 2;
+  }
+}
+
+/* ===== Distraction-free chrome reveal =====
+ * Distraction-free fades pane chrome (mismatch banner, retrieval banner,
+ * focus-mode banner, secondary column). Pointer movement temporarily reveals
+ * chrome via data-chrome-revealed on the same shell node. The shell mirrors
+ * data-focus-mode from the reader root. */
+.splitLayout[data-focus-mode="distraction_free"]:not([data-chrome-revealed="true"]) .mismatchBanner,
+.splitLayout[data-focus-mode="distraction_free"]:not([data-chrome-revealed="true"]) .retrievalBanner,
+.splitLayout[data-focus-mode="distraction_free"]:not([data-chrome-revealed="true"]) .focusModeBanner {
+  opacity: 0;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+.splitLayout[data-focus-mode="distraction_free"][data-chrome-revealed="true"] .mismatchBanner,
+.splitLayout[data-focus-mode="distraction_free"][data-chrome-revealed="true"] .retrievalBanner,
+.splitLayout[data-focus-mode="distraction_free"][data-chrome-revealed="true"] .focusModeBanner {
+  opacity: 1;
+  transition: opacity 180ms var(--ease-glide);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splitLayout[data-focus-mode="distraction_free"] .mismatchBanner,
+  .splitLayout[data-focus-mode="distraction_free"] .retrievalBanner,
+  .splitLayout[data-focus-mode="distraction_free"] .focusModeBanner {
+    transition: none;
+  }
+}
+
+/*
+ * Reader-dark highlight overrides (preserved literal rgba per spec §5 rule 14).
+ * These tune the highlight inks for the dark reader theme specifically;
+ * the global `--highlight-*` tokens are theme-invariant defaults.
+ */
+.readerThemeDark [data-active-highlight-ids],
+.readerThemeDark :global(.hl-yellow) {
+  background: rgba(249, 226, 175, 0.4);
+}
+
+.readerThemeDark :global(.hl-green) {
+  background: rgba(166, 227, 161, 0.35);
+}
+
+.readerThemeDark :global(.hl-blue) {
+  background: rgba(137, 180, 250, 0.35);
+}
+
+.readerThemeDark :global(.hl-pink) {
+  background: rgba(243, 139, 168, 0.35);
+}
+
+.readerThemeDark :global(.hl-purple) {
+  background: rgba(203, 166, 247, 0.35);
 }
 
 .transcriptPane {
@@ -172,11 +330,11 @@
 
 .partialCoverageWarning {
   padding: var(--space-3);
-  border: 1px solid var(--color-warning, #ffb86c);
-  background: rgba(255, 184, 108, 0.1);
-  border-radius: 8px;
-  color: var(--color-warning, #ffb86c);
-  font-size: var(--font-size-sm);
+  border: 1px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  border-radius: var(--radius-lg);
+  color: var(--warning);
+  font-size: var(--text-sm);
 }
 
 .partialCoverageWarning p {
@@ -188,7 +346,7 @@
   flex-direction: column;
   gap: var(--space-2);
   padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--edge-subtle);
 }
 
 .playerFrame {
@@ -203,25 +361,15 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
   padding: var(--space-3);
 }
 
 .globalPlayerPrompt p {
   margin: 0;
-  color: var(--color-text-muted);
-}
-
-.globalPlayerButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
+  color: var(--ink-faint);
 }
 
 .podcastPlaybackActions {
@@ -235,20 +383,20 @@
 .queueBadge {
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--color-border-subtle);
-  background: var(--color-surface);
-  color: var(--color-text-muted);
-  border-radius: 999px;
-  padding: 4px 8px;
-  font-size: var(--font-size-xs);
+  border: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
+  color: var(--ink-faint);
+  border-radius: var(--radius-full);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
 }
 
 .playbackFallback {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  color: var(--ink-faint);
 }
 
 .playbackFallback p {
@@ -266,15 +414,15 @@
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 10px;
-  background: var(--color-surface);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
 }
 
 .chapterHeading {
   margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
 }
 
 .chapterList {
@@ -297,58 +445,51 @@
 .chapterThumbnail {
   width: 40px;
   height: 40px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   object-fit: cover;
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--edge-subtle);
   flex-shrink: 0;
 }
 
 .chapterBody {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
   flex: 1;
 }
 
 .chapterSeekButton {
-  display: flex;
   align-items: baseline;
-  gap: var(--space-2);
+  justify-content: flex-start;
   width: 100%;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-bg-panel);
-  color: var(--color-text-primary);
+  height: auto;
   padding: var(--space-2);
   text-align: left;
-  cursor: pointer;
-}
-
-.chapterSeekButton:hover {
-  border-color: var(--color-border);
+  white-space: normal;
+  border-color: var(--edge-subtle);
 }
 
 .chapterSeekButtonActive {
-  border-color: var(--color-accent);
+  border-color: var(--accent);
 }
 
 .chapterTimestamp {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
   white-space: nowrap;
 }
 
 .chapterTitle {
-  font-size: var(--font-size-sm);
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .chapterExternalLink {
-  font-size: var(--font-size-xs);
-  color: var(--color-accent);
+  font-size: var(--text-xs);
+  color: var(--accent);
   text-decoration: none;
 }
 
@@ -361,26 +502,26 @@
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 10px;
-  background: var(--color-surface);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
 }
 
 .showNotesHeading {
   margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
 }
 
 .showNotesBody {
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-bg-panel);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
   padding: var(--space-3);
 }
 
 .showNotesContent {
-  line-height: 1.5;
+  line-height: var(--leading-normal);
 }
 
 .showNotesContent :global(p) {
@@ -392,20 +533,20 @@
 }
 
 .showNotesContent :global(a) {
-  color: var(--color-accent);
+  color: var(--accent);
 }
 
 .showNotesContent :global(img) {
   max-width: 100%;
   height: auto;
-  border-radius: 6px;
-  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--edge-subtle);
 }
 
 .showNotesTimestampButton {
   border: none;
   background: none;
-  color: var(--color-accent);
+  color: var(--accent);
   text-decoration: underline;
   cursor: pointer;
   padding: 0;
@@ -422,36 +563,31 @@
 }
 
 .segmentButton {
-  display: flex;
   flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
   gap: var(--space-1);
-  text-align: left;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-surface);
-  color: var(--color-text-primary);
+  height: auto;
   padding: var(--space-3);
-  cursor: pointer;
-}
-
-.segmentButton:hover {
-  border-color: var(--color-border);
+  text-align: left;
+  white-space: normal;
+  border-color: var(--edge-subtle);
 }
 
 .segmentButtonActive {
-  border-color: var(--color-accent);
+  border-color: var(--accent);
 }
 
 .segmentMeta {
   display: flex;
   gap: var(--space-2);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
 }
 
 .segmentText {
-  font-size: var(--font-size-sm);
-  line-height: 1.45;
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
 }
 
 .inlineChapterDivider {
@@ -460,96 +596,18 @@
   justify-content: space-between;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-1);
-  border-top: 1px solid var(--color-border-subtle);
-  border-bottom: 1px solid var(--color-border-subtle);
-  color: var(--color-text-muted);
+  border-top: 1px solid var(--edge-subtle);
+  border-bottom: 1px solid var(--edge-subtle);
+  color: var(--ink-faint);
 }
 
 .inlineChapterTitle {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
 }
 
 .inlineChapterTimestamp {
-  font-size: var(--font-size-xs);
-}
-
-/* =============================================================================
-   Highlights Pane
-   ============================================================================= */
-
-.loadMoreBtn {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  padding: var(--space-1) var(--space-2);
-  cursor: pointer;
-}
-
-.loadMoreBtn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.paneActionButton {
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  padding: 6px 10px;
-  cursor: pointer;
-}
-
-.paneActionGroup {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.paneActionButton:hover {
-  border-color: var(--color-border-subtle);
-  color: var(--color-text-primary);
-}
-
-.pdfPagePill {
-  flex: 0 0 auto;
-}
-
-.highlightsPaneRoot {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--space-4);
-  min-height: 0;
-}
-
-.highlightsPaneHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.highlightsPaneHeader h2 {
-  margin: 0;
-  font-size: var(--font-size-lg);
-  color: var(--color-text);
-}
-
-.highlightsPaneHeader p {
-  margin: var(--space-1) 0 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
-}
-
-.highlightsPaneBody {
-  flex: 1;
-  min-height: 0;
+  font-size: var(--text-xs);
 }
 
 /* =============================================================================
@@ -567,7 +625,7 @@
    ============================================================================= */
 
 .tocSection {
-  border-bottom: 1px solid var(--reader-border-subtle, var(--color-border-subtle));
+  border-bottom: 1px solid var(--reader-border-subtle, var(--edge-subtle));
   padding-bottom: var(--space-3);
 }
 
@@ -578,18 +636,18 @@
   padding: var(--space-1) 0;
   border: none;
   background: none;
-  color: var(--reader-text-secondary, var(--color-text-secondary));
-  font-size: var(--font-size-sm);
+  color: var(--reader-text-secondary, var(--ink-muted));
+  font-size: var(--text-sm);
   cursor: pointer;
-  transition: color var(--transition-fast);
+  transition: color var(--duration-fast) var(--ease-glide);
 }
 
 .tocToggle:hover {
-  color: var(--reader-text, var(--color-text));
+  color: var(--reader-text, var(--ink));
 }
 
 .tocWarning {
-  color: var(--reader-text-muted, var(--color-text-muted));
+  color: var(--reader-text-muted, var(--ink-faint));
   font-style: italic;
 }
 
@@ -618,35 +676,44 @@
   display: block;
   padding: var(--space-1) var(--space-2);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: none;
-  color: var(--reader-accent, var(--color-accent));
-  font-size: var(--font-size-sm);
+  color: var(--reader-accent, var(--accent));
+  font-size: var(--text-sm);
   text-align: left;
   cursor: pointer;
   width: 100%;
-  transition: background var(--transition-fast);
+  transition: background var(--duration-fast) var(--ease-glide);
 }
 
 .tocLink:hover {
-  background: var(--reader-surface, var(--color-surface));
+  background: var(--reader-surface, var(--surface-2));
 }
 
 .tocLink.tocActive {
-  background: var(--reader-bg-secondary, var(--color-bg-secondary));
-  color: var(--reader-text, var(--color-text));
-  font-weight: 600;
+  background: var(--reader-bg-secondary, var(--surface-2));
+  color: var(--reader-text, var(--ink));
+  font-weight: var(--weight-semibold);
 }
 
 .tocLabel {
   display: block;
   padding: var(--space-1) var(--space-2);
-  color: var(--reader-text-muted, var(--color-text-muted));
-  font-size: var(--font-size-sm);
+  color: var(--reader-text-muted, var(--ink-faint));
+  font-size: var(--text-sm);
   cursor: default;
 }
 
 @media (max-width: 768px) {
+  .documentViewport {
+    padding-top: calc(
+      env(safe-area-inset-top) + var(--mobile-pane-chrome-height, 0px) + var(--space-2)
+    );
+    scroll-padding-top: calc(
+      env(safe-area-inset-top) + var(--mobile-pane-chrome-height, 0px) + var(--space-2)
+    );
+  }
+
   .tocTree {
     max-height: 200px;
   }
@@ -655,15 +722,12 @@
     max-height: 50vh; /* fallback for browsers without dvh support */
     max-height: 50dvh; /* adapt to mobile screen size instead of hardcoded 320px */
   }
-
-  .highlightsColumn {
-    display: none;
-  }
 }
 
-/* --- Split layout: reader + highlights side by side --- */
+/* --- Split layout: reader column plus stable secondary rail --- */
 
 .splitLayout {
+  position: relative;
   display: flex;
   flex-direction: row;
   min-height: 0;
@@ -673,102 +737,98 @@
 
 .readerColumn {
   flex: 1 1 0%;
-  min-width: 0;
+  min-width: var(--reader-protected-width-px, 0);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-.highlightsColumn {
-  border-left: 1px solid var(--color-border-subtle);
-  min-width: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: var(--space-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
+/* --- Reader-with-gutter layout (Phase 1B P5) --- */
+
+.readerWithGutter {
+  flex: 1 1 0%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 36px;
+  position: relative;
 }
 
-/* --- Mobile highlights drawer --- */
+.readerWithoutGutter {
+  grid-template-columns: 1fr;
+}
+
+.readerSecondaryRailBody {
+  overflow: hidden;
+}
+
+.readerSecondaryRailCollapsedButton.readerSecondaryRailCollapsedButton {
+  width: 100%;
+  height: var(--size-md);
+  border-radius: 0;
+}
+
+.readerSecondaryRailEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--space-6);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+  text-align: center;
+}
 
 .highlightsBackdrop {
   position: fixed;
   inset: 0;
-  z-index: 200;
-  background: rgba(0, 0, 0, 0.4);
+  z-index: var(--z-overlay);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgb(0 0 0 / 0.24);
 }
 
 .highlightsDrawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(92vw, 440px);
-  background: var(--color-surface);
+  width: 100%;
+  max-height: min(80vh, 640px);
+  max-height: min(80dvh, 640px);
   display: flex;
   flex-direction: column;
-  z-index: 201;
+  border-top: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--surface-canvas);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
 }
 
 .highlightsDrawerHeader {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--color-border-subtle);
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
 }
 
 .highlightsDrawerHeader h2 {
-  font-size: var(--font-size-base);
-  font-weight: 600;
   margin: 0;
+  font-size: var(--text-base);
 }
 
 .highlightsDrawerBody {
-  flex: 1;
-  overflow-y: auto;
-}
-
-/* --- Mobile quote drawer --- */
-
-.quoteBackdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 220;
-  background: rgba(0, 0, 0, 0.4);
-}
-
-.quoteDrawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(92vw, 440px);
-  background: var(--color-surface);
-  display: flex;
-  flex-direction: column;
-  z-index: 221;
-}
-
-.quoteDrawerHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--color-border-subtle);
-}
-
-.quoteDrawerHeader h2 {
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  margin: 0;
-}
-
-.quoteDrawerBody {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
-  padding: var(--space-4);
+  overflow: auto;
+}
+
+@media (max-width: 600px) {
+  .readerWithGutter {
+    grid-template-columns: 1fr 24px;
+  }
+
+  .readerWithoutGutter {
+    grid-template-columns: 1fr;
+  }
 }

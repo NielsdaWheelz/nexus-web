@@ -32,12 +32,13 @@ from nexus.schemas.media import (
     UploadInitRequest,
 )
 from nexus.schemas.reader import ReaderResumeState
-from nexus.services import epub_lifecycle, epub_read, image_proxy
+from nexus.services import epub_lifecycle, epub_read, image_proxy, locator_resolver
 from nexus.services import libraries as libraries_service
 from nexus.services import media as media_service
-from nexus.services import podcasts as podcast_service
+from nexus.services import media_deletion as media_deletion_service
 from nexus.services import reader as reader_service
 from nexus.services import upload as upload_service
+from nexus.services.podcasts import transcripts as podcast_transcript_service
 
 router = APIRouter()
 
@@ -240,6 +241,38 @@ def get_media(
     return success_response(result.model_dump(mode="json"))
 
 
+@router.delete("/media/{media_id}")
+def remove_media(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    library_id: Annotated[UUID | None, Query()] = None,
+) -> dict:
+    if library_id is None:
+        result = media_deletion_service.delete_document_for_viewer(db, viewer.user_id, media_id)
+    else:
+        result = media_deletion_service.remove_document_from_library(
+            db, viewer.user_id, media_id, library_id
+        )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.get("/media/{media_id}/evidence/{evidence_span_id}")
+def resolve_media_evidence(
+    media_id: UUID,
+    evidence_span_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    result = locator_resolver.resolve_evidence_span(
+        db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+        evidence_span_id=evidence_span_id,
+    )
+    return success_response(result)
+
+
 @router.get("/media/{media_id}/libraries")
 def get_media_libraries(
     media_id: UUID,
@@ -417,6 +450,23 @@ def retry_ingest(
     return success_response(result)
 
 
+@router.post("/media/{media_id}/refresh", status_code=202)
+def refresh_media_source(
+    media_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    request: Request,
+) -> dict:
+    """Refresh source-backed media by requeueing source acquisition."""
+    result = media_service.refresh_source_for_viewer(
+        db=db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return success_response(result)
+
+
 @router.post("/media/transcript/request/batch")
 def request_podcast_transcript_batch(
     body: TranscriptRequestBatchRequest,
@@ -424,7 +474,7 @@ def request_podcast_transcript_batch(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Admit transcript requests for multiple podcast episodes sequentially."""
-    result = podcast_service.request_podcast_transcripts_batch_for_viewer(
+    result = podcast_transcript_service.request_podcast_transcripts_batch_for_viewer(
         db=db,
         viewer_id=viewer.user_id,
         media_ids=body.media_ids,
@@ -437,12 +487,12 @@ def request_podcast_transcript_batch(
 @router.post("/media/{media_id}/transcript/request")
 def request_podcast_transcript(
     media_id: UUID,
-    body: TranscriptRequestRequest,
+    body: Annotated[TranscriptRequestRequest, Body(default_factory=TranscriptRequestRequest)],
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     """Admit (or forecast) an explicit transcript request for a podcast episode."""
-    result = podcast_service.request_podcast_transcript_for_viewer(
+    result = podcast_transcript_service.request_podcast_transcript_for_viewer(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,
@@ -461,7 +511,7 @@ def forecast_podcast_transcripts(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Return dry-run transcript forecasts for many visible podcast episodes."""
-    result = podcast_service.forecast_podcast_transcripts_for_viewer(
+    result = podcast_transcript_service.forecast_podcast_transcripts_for_viewer(
         db=db,
         viewer_id=viewer.user_id,
         requests=[(item.media_id, item.reason) for item in body.requests],
@@ -479,18 +529,26 @@ def get_epub_asset(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    """Serve an EPUB-internal asset (image, font, css) through canonical safe fetch path.
+    """Serve an EPUB reader image asset through the canonical safe fetch path.
 
     Returns binary payload with resolved content type and cache headers.
     Visibility, kind, readiness, and key-format guards enforced by service layer.
     """
     result = media_service.get_epub_asset_for_viewer(db, viewer.user_id, media_id, asset_key)
+    headers = {
+        "Cache-Control": "private, max-age=86400, immutable",
+        "Content-Length": str(len(result.data)),
+        "X-Content-Type-Options": "nosniff",
+    }
+    if result.content_type == "image/svg+xml":
+        headers["Content-Security-Policy"] = (
+            "default-src 'none'; img-src 'self' data:; script-src 'none'; "
+            "object-src 'none'; base-uri 'none'"
+        )
     return Response(
         content=result.data,
         media_type=result.content_type,
-        headers={
-            "Cache-Control": "private, max-age=86400, immutable",
-        },
+        headers=headers,
     )
 
 

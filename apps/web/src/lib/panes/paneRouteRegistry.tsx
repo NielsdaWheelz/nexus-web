@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { MAX_MEDIA_PANE_WIDTH_PX, parseWorkspaceHref } from "@/lib/workspace/schema";
 import LibrariesPaneBody from "@/app/(authenticated)/libraries/LibrariesPaneBody";
 import LibraryPaneBody from "@/app/(authenticated)/libraries/[id]/LibraryPaneBody";
 import MediaPaneBody from "@/app/(authenticated)/media/[id]/MediaPaneBody";
@@ -11,9 +12,15 @@ import BrowsePaneBody from "@/app/(authenticated)/browse/BrowsePaneBody";
 import PodcastsPaneBody from "@/app/(authenticated)/podcasts/PodcastsPaneBody";
 import PodcastDetailPaneBody from "@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody";
 import SearchPaneBody from "@/app/(authenticated)/search/SearchPaneBody";
+import AuthorPaneBody from "@/app/(authenticated)/authors/[handle]/AuthorPaneBody";
+import NotesPaneBody from "@/app/(authenticated)/notes/NotesPaneBody";
+import PagePaneBody from "@/app/(authenticated)/pages/[pageId]/PagePaneBody";
+import NotePaneBody from "@/app/(authenticated)/notes/[blockId]/NotePaneBody";
+import DailyNotePaneBody from "@/app/(authenticated)/daily/DailyNotePaneBody";
 import SettingsPaneBody from "@/app/(authenticated)/settings/SettingsPaneBody";
 import SettingsBillingPaneBody from "@/app/(authenticated)/settings/billing/SettingsBillingPaneBody";
 import SettingsReaderPaneBody from "@/app/(authenticated)/settings/reader/SettingsReaderPaneBody";
+import SettingsAppearancePaneBody from "@/app/(authenticated)/settings/appearance/SettingsAppearancePaneBody";
 import SettingsKeysPaneBody from "@/app/(authenticated)/settings/keys/SettingsKeysPaneBody";
 import SettingsLocalVaultPaneBody from "@/app/(authenticated)/settings/local-vault/SettingsLocalVaultPaneBody";
 import SettingsIdentitiesPaneBody from "@/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody";
@@ -23,7 +30,7 @@ import { isAndroidShell } from "@/lib/androidShell";
 type RouteParamValue = string;
 type RouteParams = Record<string, RouteParamValue>;
 type RoutePattern = readonly string[];
-export type PaneBodyMode = "standard" | "document";
+export type PaneBodyMode = "standard" | "document" | "contained";
 
 export interface PaneRouteContext {
   href: string;
@@ -48,9 +55,16 @@ export type PaneRouteId =
   | "podcasts"
   | "podcastDetail"
   | "search"
+  | "author"
+  | "notes"
+  | "page"
+  | "note"
+  | "daily"
+  | "dailyDate"
   | "settings"
   | "settingsBilling"
   | "settingsReader"
+  | "settingsAppearance"
   | "settingsKeys"
   | "settingsLocalVault"
   | "settingsIdentities"
@@ -125,7 +139,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     bodyMode: "document",
     defaultWidthPx: 1280,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: 1800,
+    maxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Media" }),
   },
   {
@@ -147,7 +161,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     pattern: ["conversations", "new"],
     staticTitle: "New chat",
     render: () => <ConversationNewPaneBody />,
-    bodyMode: "standard",
+    bodyMode: "contained",
     defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
@@ -162,7 +176,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
       return id ? `conversation:${id}` : null;
     },
     render: () => <ConversationPaneBody />,
-    bodyMode: "standard",
+    bodyMode: "contained",
     defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
     minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
@@ -225,8 +239,81 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Search",
-      subtitle: "Search across media, fragments, annotations, chat, and transcript chunks.",
+      subtitle: "Search across authors, media, podcasts, evidence, notes, and chat.",
     }),
+  },
+  {
+    id: "author",
+    pattern: ["authors", ":handle"],
+    staticTitle: "Author",
+    resourceRef: (params) => {
+      const handle = params.handle;
+      return handle ? `contributor:${handle}` : null;
+    },
+    render: () => <AuthorPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Author" }),
+  },
+  {
+    id: "notes",
+    pattern: ["notes"],
+    staticTitle: "Notes",
+    render: () => <NotesPaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Notes" }),
+  },
+  {
+    id: "page",
+    pattern: ["pages", ":pageId"],
+    staticTitle: "Page",
+    resourceRef: (params) => (params.pageId ? `page:${params.pageId}` : null),
+    render: () => <PagePaneBody />,
+    bodyMode: "document",
+    defaultWidthPx: 760,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Page" }),
+  },
+  {
+    id: "note",
+    pattern: ["notes", ":blockId"],
+    staticTitle: "Note",
+    resourceRef: (params) => (params.blockId ? `note_block:${params.blockId}` : null),
+    render: () => <NotePaneBody />,
+    bodyMode: "document",
+    defaultWidthPx: 760,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Note" }),
+  },
+  {
+    id: "daily",
+    pattern: ["daily"],
+    staticTitle: "Today",
+    render: () => <DailyNotePaneBody />,
+    bodyMode: "document",
+    defaultWidthPx: 760,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Today" }),
+  },
+  {
+    id: "dailyDate",
+    pattern: ["daily", ":localDate"],
+    staticTitle: "Daily note",
+    resourceRef: (params) => (params.localDate ? `daily:${params.localDate}` : null),
+    render: () => <DailyNotePaneBody />,
+    bodyMode: "document",
+    defaultWidthPx: 760,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({ title: "Daily note" }),
   },
   {
     id: "settings",
@@ -271,9 +358,23 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     }),
   },
   {
+    id: "settingsAppearance",
+    pattern: ["settings", "appearance"],
+    staticTitle: "Appearance",
+    render: () => <SettingsAppearancePaneBody />,
+    bodyMode: "standard",
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    getChrome: () => ({
+      title: "Appearance",
+      subtitle: "Light, dark, or follow your operating system.",
+    }),
+  },
+  {
     id: "settingsKeys",
     pattern: ["settings", "keys"],
-    staticTitle: "API keys",
+    staticTitle: "API Keys",
     render: () => <SettingsKeysPaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
@@ -281,7 +382,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "API Keys",
-      subtitle: "BYOK credentials for model providers. keys never leave server-side flows.",
+      subtitle: "Connect provider keys without storing plaintext in the browser.",
     }),
   },
   {
@@ -371,13 +472,7 @@ function matchPattern(pathname: string, pattern: RoutePattern): RouteParams | nu
 }
 
 function parseHrefPathname(href: string): string {
-  const baseOrigin =
-    typeof window !== "undefined" &&
-    window.location.origin &&
-    window.location.origin !== "null"
-      ? window.location.origin
-      : "http://localhost";
-  return new URL(href, baseOrigin).pathname;
+  return parseWorkspaceHref(href)?.pathname ?? "/";
 }
 
 /**
@@ -404,23 +499,6 @@ export function getParentHref(resolved: ResolvedPaneRoute): string | null {
 
 export function resolvePaneRoute(href: string): ResolvedPaneRoute {
   const pathname = parseHrefPathname(href);
-  if (
-    pathname === "/discover" ||
-    pathname === "/discover/podcasts" ||
-    pathname === "/documents" ||
-    pathname === "/videos" ||
-    pathname === "/podcasts/subscriptions"
-  ) {
-    return {
-      id: "unsupported",
-      pathname,
-      params: {},
-      staticTitle: "Tab",
-      resourceRef: null,
-      render: null,
-      definition: null,
-    };
-  }
   for (const definition of ROUTE_DEFINITIONS) {
     const params = matchPattern(pathname, definition.pattern);
     if (!params) {

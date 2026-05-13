@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
+import { toFeedback } from "@/components/feedback/Feedback";
 
 export type BillingPlanTier = "free" | "plus" | "ai_plus" | "ai_pro";
 
@@ -44,11 +45,7 @@ export function useBillingAccount() {
       const response = await apiFetch<BillingAccountResponse>("/api/billing/account");
       setAccount(response.data);
     } catch (loadError) {
-      if (isApiError(loadError)) {
-        setError(loadError.message);
-      } else {
-        setError("Failed to load billing account");
-      }
+      setError(toFeedback(loadError, { fallback: "Failed to load billing account" }).title);
       setAccount(null);
     } finally {
       setLoading(false);

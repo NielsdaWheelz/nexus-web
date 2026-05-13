@@ -81,6 +81,7 @@ class TestIngestYoutubeVideo:
         assert media_response.status_code == 200
         media = media_response.json()["data"]
         assert media["processing_status"] == "ready_for_reading"
+        assert media["retrieval_status"] == "ready"
         assert media["last_error_code"] is None
         caps = media["capabilities"]
         assert caps["can_play"] is True
@@ -88,6 +89,24 @@ class TestIngestYoutubeVideo:
         assert caps["can_highlight"] is True
         assert caps["can_quote"] is True
         assert caps["can_search"] is True
+
+        with direct_db.session() as session:
+            artifact_counts = session.execute(
+                text(
+                    """
+                    SELECT
+                        (SELECT COUNT(*) FROM podcast_transcript_versions WHERE media_id = :media_id),
+                        (SELECT COUNT(*) FROM podcast_transcript_segments WHERE media_id = :media_id),
+                        (SELECT COUNT(*) FROM content_chunks WHERE media_id = :media_id),
+                        (SELECT COUNT(*) FROM evidence_spans WHERE media_id = :media_id)
+                    """
+                ),
+                {"media_id": media_id},
+            ).one()
+        assert artifact_counts[0] == 1
+        assert artifact_counts[1] == 2
+        assert artifact_counts[2] > 0
+        assert artifact_counts[3] == artifact_counts[2]
 
     def test_transcript_unavailable_is_playback_only_and_terminal(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
@@ -150,7 +169,6 @@ class TestIngestYoutubeVideo:
         assert create_response.status_code == 202
         media_id = UUID(create_response.json()["data"]["media_id"])
 
-        direct_db.register_cleanup("media_authors", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -218,7 +236,7 @@ class TestIngestYoutubeVideo:
         assert media["publisher"] == "Nexus Channel"
         assert media["published_date"] == "2026-04-01T12:00:00Z"
         assert media["language"] == "en-US"
-        assert [author["name"] for author in media["authors"]] == ["Nexus Channel"]
+        assert [credit["credited_name"] for credit in media["contributors"]] == ["Nexus Channel"]
 
     def test_ingest_is_idempotent_after_success_and_does_not_refetch_transcript(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch

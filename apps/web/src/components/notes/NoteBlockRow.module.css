@@ -1,0 +1,26 @@
+.row {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: 16px minmax(0, 1fr);
+}
+
+.bullet {
+  border-radius: var(--radius-full);
+  height: 8px;
+  margin-top: 9px;
+  width: 8px;
+}
+
+.bullet::before {
+  background: currentColor;
+  border-radius: inherit;
+  content: "";
+  display: block;
+  height: 6px;
+  opacity: 0.72;
+  width: 6px;
+}
+
+.content {
+  min-width: 0;
+}

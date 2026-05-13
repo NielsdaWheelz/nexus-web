@@ -26,7 +26,7 @@ from nexus.services.highlights import (
     get_highlight_for_author_write_or_404,
     get_highlight_for_visible_read_or_404,
 )
-from tests.factories import add_media_to_library
+from tests.factories import add_media_to_library, create_normalized_fragment_highlight
 
 pytestmark = pytest.mark.integration
 
@@ -122,17 +122,19 @@ def _add_media_to_library(db: Session, library_id, media_id):
 
 
 def _create_highlight(db: Session, user_id, fragment_id):
-    highlight_id = uuid4()
-    db.execute(
-        text("""
-            INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
-                                    color, exact, prefix, suffix)
-            VALUES (:hid, :uid, :fid, 0, 4, 'yellow', 'test', '', ' content here')
-        """),
-        {"hid": highlight_id, "uid": user_id, "fid": fragment_id},
+    media_id = db.execute(
+        text("SELECT media_id FROM fragments WHERE id = :fragment_id"),
+        {"fragment_id": fragment_id},
+    ).scalar_one()
+    return create_normalized_fragment_highlight(
+        db,
+        user_id,
+        fragment_id,
+        media_id,
+        start_offset=0,
+        end_offset=4,
+        exact="test",
     )
-    db.flush()
-    return highlight_id
 
 
 # =============================================================================

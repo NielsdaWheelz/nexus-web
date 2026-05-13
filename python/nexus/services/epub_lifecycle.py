@@ -14,11 +14,15 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
+    EpubFragmentSource,
     EpubNavLocation,
+    EpubResource,
     EpubTocNode,
     FailureStage,
     Fragment,
     FragmentBlock,
+    Highlight,
+    HighlightFragmentAnchor,
     Media,
     MediaFile,
     ProcessingStatus,
@@ -317,6 +321,14 @@ def retry_epub_ingest_for_viewer(
 
 def _delete_extraction_artifacts(db: Session, media_id: UUID) -> None:
     """Delete all extraction and chunk/embedding artifacts for a media row."""
+    storage_paths = (
+        db.execute(select(EpubResource.storage_path).where(EpubResource.media_id == media_id))
+        .scalars()
+        .all()
+    )
+
+    db.execute(delete(EpubResource).where(EpubResource.media_id == media_id))
+    db.execute(delete(EpubFragmentSource).where(EpubFragmentSource.media_id == media_id))
     db.execute(delete(EpubNavLocation).where(EpubNavLocation.media_id == media_id))
     db.execute(delete(EpubTocNode).where(EpubTocNode.media_id == media_id))
 
@@ -325,11 +337,24 @@ def _delete_extraction_artifacts(db: Session, media_id: UUID) -> None:
     )
 
     if fragment_ids:
+        db.execute(
+            delete(Highlight).where(
+                Highlight.id.in_(
+                    select(HighlightFragmentAnchor.highlight_id).where(
+                        HighlightFragmentAnchor.fragment_id.in_(fragment_ids)
+                    )
+                )
+            )
+        )
         db.execute(delete(FragmentBlock).where(FragmentBlock.fragment_id.in_(fragment_ids)))
 
     db.execute(delete(Fragment).where(Fragment.media_id == media_id))
 
     db.flush()
+
+    storage_client = get_storage_client()
+    for path in storage_paths:
+        storage_client.delete_object(path)
 
 
 def _mark_epub_failed(

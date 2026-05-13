@@ -104,6 +104,20 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(0,),
             lease_seconds=120,
         ),
+        "chat_run": JobDefinition(
+            kind="chat_run",
+            handler=_run_chat_run,
+            max_attempts=3,
+            retry_delays_seconds=(30, 120, 300),
+            lease_seconds=900,
+        ),
+        "library_intelligence_build_job": JobDefinition(
+            kind="library_intelligence_build_job",
+            handler=_run_library_intelligence_build,
+            max_attempts=3,
+            retry_delays_seconds=(60, 300, 900),
+            lease_seconds=900,
+        ),
         "podcast_sync_subscription_job": JobDefinition(
             kind="podcast_sync_subscription_job",
             handler=_run_podcast_sync_subscription,
@@ -156,6 +170,13 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(60, 300, 900, 3600, 21600),
             lease_seconds=900,
         ),
+        "oracle_reading_generate": JobDefinition(
+            kind="oracle_reading_generate",
+            handler=_run_oracle_reading_generate,
+            max_attempts=1,
+            retry_delays_seconds=(0,),
+            lease_seconds=120,
+        ),
     }
 
 
@@ -205,6 +226,18 @@ def _run_enrich_metadata(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | N
         media_id=str(payload["media_id"]),
         request_id=_optional_str(payload.get("request_id")),
     )
+
+
+def _run_chat_run(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.chat_run import chat_run
+
+    return chat_run(run_id=str(payload["run_id"]))
+
+
+def _run_library_intelligence_build(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.library_intelligence import library_intelligence_build_job
+
+    return library_intelligence_build_job(build_id=str(payload["build_id"]))
 
 
 def _run_podcast_sync_subscription(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
@@ -277,6 +310,12 @@ def _run_backfill_default_library_closure(
         user_id=str(payload["user_id"]),
         request_id=_optional_str(payload.get("request_id")),
     )
+
+
+def _run_oracle_reading_generate(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.oracle_reading import oracle_reading_generate
+
+    return oracle_reading_generate(reading_id=str(payload["reading_id"]))
 
 
 def _optional_str(value: Any) -> str | None:

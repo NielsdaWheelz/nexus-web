@@ -1,145 +1,86 @@
 .container {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at top left, rgba(122, 162, 247, 0.2), transparent 36%),
-    radial-gradient(circle at bottom right, rgba(158, 206, 106, 0.16), transparent 34%),
-    linear-gradient(160deg, var(--color-bg) 0%, color-mix(in srgb, var(--color-bg) 78%, #0f172a 22%) 100%);
+  background: var(--surface-canvas);
 }
 
-.shell {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-12);
   min-height: 100vh;
-  padding: var(--space-6);
+  max-width: 1280px;
+  margin: 0 auto;
 }
 
-.card {
-  width: min(100%, 28rem);
-  padding: var(--space-8);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 1.5rem;
-  background:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.86), rgba(15, 23, 42, 0.72)),
-    var(--color-surface);
-  box-shadow:
-    0 28px 80px rgba(15, 23, 42, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(16px);
+.editorial {
+  padding: var(--space-16) var(--space-10);
 }
 
-.header {
-  margin-bottom: var(--space-7);
-}
-
-.eyebrow {
-  margin: 0 0 var(--space-3);
-  color: var(--color-accent);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
+.signin {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: var(--space-16) var(--space-10);
 }
 
 .title {
-  margin: 0 0 var(--space-3);
-  font-size: clamp(2rem, 4vw, 2.6rem);
-  line-height: 1.02;
-  letter-spacing: -0.04em;
-}
-
-.subtitle {
   margin: 0;
-  color: var(--color-text-secondary);
-  line-height: 1.6;
+  color: var(--ink);
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
 }
 
-.form {
+.deck {
+  margin: var(--space-4) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--text-lg);
+  line-height: var(--leading-snug);
+}
+
+.body {
+  margin: var(--space-6) 0 0;
+  color: var(--ink-muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+}
+
+.providers {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-}
-
-.error {
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid rgba(247, 118, 142, 0.55);
-  border-radius: 0.9rem;
-  background: rgba(247, 118, 142, 0.14);
-  color: #fecdd3;
-  font-size: var(--font-size-sm);
-  line-height: 1.5;
-}
-
-.providerButton {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   gap: var(--space-3);
-  width: 100%;
-  min-height: 3.5rem;
-  padding: 0 var(--space-4);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.65);
-  color: var(--color-text);
-  font-size: 0.98rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    transform var(--transition-fast),
-    border-color var(--transition-fast),
-    background-color var(--transition-fast),
-    box-shadow var(--transition-fast);
+  max-width: 24rem;
 }
 
-.providerButton:hover:not(:disabled) {
-  transform: translateY(-1px);
-  border-color: rgba(122, 162, 247, 0.45);
-  background: rgba(30, 41, 59, 0.9);
-  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.28);
-}
-
-.providerButton:focus-visible {
-  outline: none;
-  border-color: rgba(122, 162, 247, 0.75);
-  box-shadow: 0 0 0 4px rgba(122, 162, 247, 0.18);
-}
-
-.providerButton:disabled {
-  opacity: 0.72;
-  cursor: wait;
-}
-
-.providerIcon {
-  width: 1.25rem;
-  height: 1.25rem;
-  flex: 0 0 auto;
-}
-
-.legalCopy {
-  margin: var(--space-2) 0 0;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  line-height: 1.6;
-  text-align: center;
+.legal {
+  margin: var(--space-6) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  text-align: left;
+  max-width: 24rem;
 }
 
 .legalLink {
-  color: var(--color-accent);
-  text-decoration: none;
-}
-
-.legalLink:hover {
+  color: var(--accent);
   text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
-@media (max-width: 640px) {
-  .shell {
-    align-items: stretch;
-    padding: var(--space-4);
+@media (max-width: 900px) {
+  .split {
+    grid-template-columns: 1fr;
+    gap: var(--space-8);
+    min-height: auto;
   }
 
-  .card {
-    padding: var(--space-7);
+  .editorial {
+    padding: var(--space-10) var(--space-6) 0;
+  }
+
+  .signin {
+    padding: var(--space-6) var(--space-6) var(--space-10);
   }
 }

@@ -1,11 +1,9 @@
-import { redirect } from "next/navigation";
 import {
   DEFAULT_AUTH_REDIRECT,
   getFirstSearchParamValue,
   normalizeAuthRedirect,
 } from "@/lib/auth/redirects";
 import { toPublicAuthErrorMessage } from "@/lib/auth/messages";
-import { createClient } from "@/lib/supabase/server";
 import LoginPageClient from "./LoginPageClient";
 
 interface LoginPageProps {
@@ -26,15 +24,6 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     getFirstSearchParamValue(params.error_description) ??
       getFirstSearchParamValue(params.error)
   );
-
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (user) {
-    redirect(nextPath);
-  }
 
   return <LoginPageClient initialError={initialError} nextPath={nextPath} />;
 }

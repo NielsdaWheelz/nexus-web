@@ -4,21 +4,28 @@ All schemas are re-exported here for convenient imports.
 """
 
 from nexus.schemas.conversation import (
+    ChatRunCreateRequest,
+    ChatRunEventOut,
+    ChatRunOut,
+    ChatRunResponse,
     ConversationListResponse,
     ConversationOut,
     ConversationSharesOut,
     ConversationShareTargetOut,
+    MessageClaimEvidenceOut,
+    MessageClaimOut,
+    MessageEvidenceSummaryOut,
     MessageListResponse,
     MessageOut,
+    MessageRetrievalOut,
+    MessageToolCallOut,
     PageInfo,
     SetConversationSharesRequest,
 )
 from nexus.schemas.highlights import (
-    AnnotationOut,
     CreateHighlightRequest,
-    HighlightOut,
+    TypedHighlightOut,
     UpdateHighlightRequest,
-    UpsertAnnotationRequest,
 )
 from nexus.schemas.ingest import IngestReconcileEnqueueOut, IngestRecoveryHealthOut
 from nexus.schemas.library import (
@@ -80,17 +87,24 @@ __all__ = [
     "MediaOut",
     "FragmentOut",
     # Highlight schemas (Slice 2)
-    "HighlightOut",
-    "AnnotationOut",
+    "TypedHighlightOut",
     "CreateHighlightRequest",
     "UpdateHighlightRequest",
-    "UpsertAnnotationRequest",
     # Conversation schemas (Slice 3)
     "ConversationOut",
     "MessageOut",
+    "MessageEvidenceSummaryOut",
+    "MessageClaimOut",
+    "MessageClaimEvidenceOut",
+    "MessageToolCallOut",
+    "MessageRetrievalOut",
     "ConversationListResponse",
     "MessageListResponse",
     "PageInfo",
+    "ChatRunCreateRequest",
+    "ChatRunOut",
+    "ChatRunResponse",
+    "ChatRunEventOut",
     # S4 PR-06 conversation share schemas
     "SetConversationSharesRequest",
     "ConversationShareTargetOut",

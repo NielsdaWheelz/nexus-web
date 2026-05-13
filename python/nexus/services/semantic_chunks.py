@@ -1,4 +1,4 @@
-"""Transcript chunking + production semantic embedding helpers."""
+"""Content chunking and semantic embedding helpers."""
 
 from __future__ import annotations
 
@@ -11,9 +11,11 @@ import httpx
 
 from nexus.config import Environment, get_settings
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.logging import get_logger
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
+logger = get_logger(__name__)
 
 
 def transcript_embedding_dimensions() -> int:
@@ -44,7 +46,10 @@ def _normalize_and_validate_vector(vector: Any, *, dimensions: int) -> list[floa
         raise ValueError("Embedding payload must be a list")
     normalized: list[float] = []
     for value in vector:
-        normalized.append(float(value))
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            raise ValueError("Embedding payload values must be finite")
+        normalized.append(numeric)
     if len(normalized) != dimensions:
         raise ValueError(f"Expected embedding dimension {dimensions}, got {len(normalized)}")
     return normalized
@@ -70,45 +75,123 @@ def _build_test_embedding(text: str, *, dimensions: int) -> list[float]:
     return [component / norm for component in vector]
 
 
+def _embedding_provider_error(status_code: int) -> ApiErrorCode:
+    if status_code in {401, 403}:
+        return ApiErrorCode.E_LLM_INVALID_KEY
+    if status_code == 429:
+        return ApiErrorCode.E_LLM_RATE_LIMIT
+    if status_code in {408, 504}:
+        return ApiErrorCode.E_LLM_TIMEOUT
+    if status_code == 404:
+        return ApiErrorCode.E_MODEL_NOT_AVAILABLE
+    if status_code >= 500:
+        return ApiErrorCode.E_LLM_PROVIDER_DOWN
+    if 400 <= status_code < 500:
+        return ApiErrorCode.E_LLM_BAD_REQUEST
+    return ApiErrorCode.E_LLM_PROVIDER_DOWN
+
+
+def _parse_embedding_response_data(
+    body: Any, *, dimensions: int, expected_count: int
+) -> list[list[float]]:
+    try:
+        if not isinstance(body, dict):
+            raise ValueError("Embedding provider response must be an object")
+        data = body.get("data")
+        if not isinstance(data, list):
+            raise ValueError("Embedding provider response missing data list")
+        vectors_by_index: dict[int, list[float]] = {}
+        for item in data:
+            if not isinstance(item, dict):
+                raise ValueError("Embedding provider data item must be an object")
+            index = item.get("index")
+            if (
+                not isinstance(index, int)
+                or isinstance(index, bool)
+                or index < 0
+                or index >= expected_count
+                or index in vectors_by_index
+            ):
+                raise ValueError("Embedding provider returned invalid indexes")
+            vectors_by_index[index] = _normalize_and_validate_vector(
+                item.get("embedding"), dimensions=dimensions
+            )
+        if set(vectors_by_index) != set(range(expected_count)):
+            raise ValueError("Embedding provider returned incomplete indexes")
+        return [vectors_by_index[index] for index in range(expected_count)]
+    except (TypeError, ValueError) as exc:
+        raise ApiError(
+            ApiErrorCode.E_LLM_PROVIDER_DOWN,
+            "Embedding provider returned an invalid response.",
+        ) from exc
+
+
 def _embed_with_openai(texts: list[str], *, dimensions: int) -> list[list[float]]:
     settings = get_settings()
     api_key = settings.openai_api_key
-    if not settings.enable_openai or not api_key:
+    if not settings.enable_openai:
         raise ApiError(
-            ApiErrorCode.E_INTERNAL,
+            ApiErrorCode.E_MODEL_NOT_AVAILABLE,
+            "OpenAI embeddings are disabled.",
+        )
+    if not api_key:
+        raise ApiError(
+            ApiErrorCode.E_LLM_NO_KEY,
             "OPENAI_API_KEY is required for transcript semantic embeddings.",
         )
 
-    payload = {
-        "model": settings.transcript_embedding_model_openai,
-        "input": texts,
-        "dimensions": dimensions,
-    }
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
-    response = httpx.post(
-        _OPENAI_EMBEDDINGS_URL,
-        headers=headers,
-        json=payload,
-        timeout=httpx.Timeout(settings.transcript_embedding_timeout_seconds, connect=10.0),
-    )
-    response.raise_for_status()
-    body = response.json()
-    data = body.get("data")
-    if not isinstance(data, list):
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Embedding provider response missing data list.")
-
-    ordered = sorted(data, key=lambda item: int(item.get("index", 0)))
     vectors: list[list[float]] = []
-    for item in ordered:
-        vectors.append(_normalize_and_validate_vector(item.get("embedding"), dimensions=dimensions))
-    if len(vectors) != len(texts):
-        raise ApiError(
-            ApiErrorCode.E_INTERNAL,
-            f"Embedding provider returned {len(vectors)} vectors for {len(texts)} inputs.",
+    for start in range(0, len(texts), 64):
+        batch = texts[start : start + 64]
+        try:
+            response = httpx.post(
+                _OPENAI_EMBEDDINGS_URL,
+                headers=headers,
+                json={
+                    "model": settings.transcript_embedding_model_openai,
+                    "input": batch,
+                    "dimensions": dimensions,
+                },
+                timeout=httpx.Timeout(settings.transcript_embedding_timeout_seconds, connect=10.0),
+            )
+        except httpx.TimeoutException as exc:
+            raise ApiError(
+                ApiErrorCode.E_LLM_TIMEOUT,
+                "Embedding provider request timed out.",
+            ) from exc
+        except httpx.RequestError as exc:
+            raise ApiError(
+                ApiErrorCode.E_LLM_PROVIDER_DOWN,
+                "Embedding provider request failed.",
+            ) from exc
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            error_code = _embedding_provider_error(response.status_code)
+            logger.warning(
+                "embedding_provider_request_failed",
+                status_code=response.status_code,
+                error_code=error_code.value,
+                response_chars=len(response.text),
+            )
+            raise ApiError(
+                error_code,
+                "Embedding provider request failed.",
+            ) from exc
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise ApiError(
+                ApiErrorCode.E_LLM_PROVIDER_DOWN,
+                "Embedding provider returned invalid JSON.",
+            ) from exc
+        vectors.extend(
+            _parse_embedding_response_data(body, dimensions=dimensions, expected_count=len(batch))
         )
     return vectors
 
@@ -133,33 +216,3 @@ def build_text_embeddings(texts: list[str]) -> tuple[str, list[list[float]]]:
 def build_text_embedding(text: str) -> tuple[str, list[float]]:
     model_name, vectors = build_text_embeddings([text])
     return model_name, (vectors[0] if vectors else [0.0] * transcript_embedding_dimensions())
-
-
-def chunk_transcript_segments(transcript_segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Build one semantic chunk per normalized transcript segment."""
-    chunks: list[dict[str, Any]] = []
-    for idx, segment in enumerate(transcript_segments):
-        chunk_text = str(segment.get("text") or "").strip()
-        if not chunk_text:
-            continue
-        t_start_ms = int(segment.get("t_start_ms") or 0)
-        t_end_ms = int(segment.get("t_end_ms") or 0)
-        if t_end_ms <= t_start_ms:
-            continue
-        chunks.append(
-            {
-                "chunk_idx": idx,
-                "chunk_text": chunk_text,
-                "t_start_ms": t_start_ms,
-                "t_end_ms": t_end_ms,
-            }
-        )
-
-    if not chunks:
-        return []
-
-    model_name, embeddings = build_text_embeddings([chunk["chunk_text"] for chunk in chunks])
-    for chunk, embedding in zip(chunks, embeddings, strict=True):
-        chunk["embedding_model"] = model_name
-        chunk["embedding"] = embedding
-    return chunks

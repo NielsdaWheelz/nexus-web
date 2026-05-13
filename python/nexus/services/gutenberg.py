@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import csv
 import gzip
+import re
 from datetime import UTC, date, datetime
 from io import StringIO
 from typing import Any
 
 import httpx
-from sqlalchemy import delete
+from sqlalchemy import delete, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ProjectGutenbergCatalogEntry
+from nexus.services.contributor_credits import replace_gutenberg_contributor_credits
 
 _CATALOG_FEED_URLS: tuple[str, ...] = (
     "https://www.gutenberg.org/cache/epub/feeds/pg_catalog.csv.gz",
@@ -35,12 +37,27 @@ def sync_project_gutenberg_catalog(
     rows = parse_project_gutenberg_catalog_feed(payload, synced_at=synced_at)
 
     try:
+        db.execute(
+            text(
+                """
+                DELETE FROM contributor_credits
+                WHERE project_gutenberg_catalog_ebook_id IS NOT NULL
+                """
+            )
+        )
         db.execute(delete(ProjectGutenbergCatalogEntry))
         for start in range(0, len(rows), _UPSERT_BATCH_SIZE):
             batch = rows[start : start + _UPSERT_BATCH_SIZE]
             if not batch:
                 continue
             db.execute(insert(ProjectGutenbergCatalogEntry), batch)
+        for row in rows:
+            replace_gutenberg_contributor_credits(
+                db,
+                ebook_id=int(row["ebook_id"]),
+                credits=_gutenberg_author_credits(row),
+                source="project_gutenberg_catalog",
+            )
         db.commit()
     except Exception:
         db.rollback()
@@ -95,7 +112,6 @@ def parse_project_gutenberg_catalog_feed(
                 "gutenberg_type": _row_value(raw_row, "Type"),
                 "issued": _parse_optional_date(_row_value(raw_row, "Issued")),
                 "language": _row_value(raw_row, "Language"),
-                "authors": _row_value(raw_row, "Authors", "Author"),
                 "subjects": _row_value(raw_row, "Subjects", "Subject"),
                 "locc": _row_value(raw_row, "LoCC"),
                 "bookshelves": _row_value(raw_row, "Bookshelves", "Bookshelf"),
@@ -137,6 +153,32 @@ def _parse_required_int(value: str | None) -> int:
     if parsed is None:
         raise ValueError("Project Gutenberg catalog row is missing a valid ebook id")
     return parsed
+
+
+def _gutenberg_author_credits(row: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_metadata = row.get("raw_metadata")
+    if not isinstance(raw_metadata, dict):
+        return []
+    raw_authors = str(raw_metadata.get("Authors") or raw_metadata.get("Author") or "").strip()
+    if not raw_authors:
+        return []
+
+    credits: list[dict[str, Any]] = []
+    for raw_name in re.split(r"\s*;\s*|\s+and\s+", raw_authors):
+        credited_name = " ".join(raw_name.split()).strip()
+        if not credited_name:
+            continue
+        credits.append(
+            {
+                "credited_name": credited_name,
+                "role": "author",
+                "raw_role": "author",
+                "ordinal": len(credits),
+                "source": "project_gutenberg_catalog",
+                "source_ref": {"ebook_id": int(row["ebook_id"])},
+            }
+        )
+    return credits
 
 
 def _parse_optional_int(value: str | None) -> int | None:

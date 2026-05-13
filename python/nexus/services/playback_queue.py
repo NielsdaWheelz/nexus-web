@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media as _can_read_media
+from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import PlaybackQueueItem
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
@@ -18,7 +19,6 @@ from nexus.schemas.playback import (
     PlaybackQueueOrderRequest,
 )
 from nexus.services.playback_source import derive_playback_source
-from nexus.services.search import visible_media_ids_cte_sql
 
 QUEUE_SOURCE_MANUAL = "manual"
 QUEUE_SOURCE_AUTO_SUBSCRIPTION = "auto_subscription"

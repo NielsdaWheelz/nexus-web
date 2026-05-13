@@ -7,9 +7,6 @@ Per PR-02 spec:
 - Conversations: GET/POST/DELETE
 - Messages: GET (list), DELETE
 
-Per PR-05 spec:
-- Message creation: POST /conversations/{id}/messages (send message + LLM response)
-
 All routes require authentication.
 Response envelope: {"data": ...} or {"data": [...], "page": {...}}
 Error envelope: {"error": {"code": "...", "message": "...", "request_id": "..."}}
@@ -19,20 +16,22 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Response
-from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_db, get_llm_router
+from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.config import get_settings
-from nexus.errors import ApiError, ApiErrorCode
+from nexus.errors import ApiErrorCode
 from nexus.responses import success_response
-from nexus.schemas.conversation import SendMessageRequest, SetConversationSharesRequest
+from nexus.schemas.conversation import (
+    ConversationScopeRequest,
+    RenameBranchRequest,
+    SetActivePathRequest,
+    SetConversationSharesRequest,
+)
+from nexus.services import chat_runs as chat_runs_service
+from nexus.services import conversation_branches as conversation_branches_service
 from nexus.services import conversations as conversations_service
-from nexus.services import send_message as send_message_service
-from nexus.services import send_message_stream
 from nexus.services import shares as shares_service
-from nexus.services.llm import LLMRouter
 
 router = APIRouter(tags=["conversations"])
 
@@ -103,6 +102,21 @@ def create_conversation(
     return success_response(result.model_dump(mode="json"))
 
 
+@router.post("/conversations/resolve", status_code=200)
+def resolve_conversation(
+    body: ConversationScopeRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Resolve the canonical conversation for a durable scope."""
+    result = conversations_service.resolve_conversation(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_scope=body,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
 @router.get("/conversations/{conversation_id}")
 def get_conversation(
     conversation_id: UUID,
@@ -122,6 +136,86 @@ def get_conversation(
     return success_response(result.model_dump(mode="json"))
 
 
+@router.get("/conversations/{conversation_id}/tree")
+def get_conversation_tree(
+    conversation_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    result = conversation_branches_service.get_conversation_tree(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.post("/conversations/{conversation_id}/active-path")
+def set_conversation_active_path(
+    conversation_id: UUID,
+    body: SetActivePathRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    result = conversation_branches_service.set_active_path(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        active_leaf_message_id=body.active_leaf_message_id,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.get("/conversations/{conversation_id}/forks")
+def list_conversation_forks(
+    conversation_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    search: str | None = Query(default=None, description="Fork search query"),
+) -> dict:
+    result = conversation_branches_service.list_forks(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        search=search,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.patch("/conversations/{conversation_id}/forks/{branch_id}")
+def rename_conversation_fork(
+    conversation_id: UUID,
+    branch_id: UUID,
+    body: RenameBranchRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    result = conversation_branches_service.rename_branch(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        branch_id=branch_id,
+        title=body.title,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.delete("/conversations/{conversation_id}/forks/{branch_id}", status_code=204)
+def delete_conversation_fork(
+    conversation_id: UUID,
+    branch_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    conversation_branches_service.delete_branch(
+        db=db,
+        viewer_id=viewer.user_id,
+        conversation_id=conversation_id,
+        branch_id=branch_id,
+    )
+    return Response(status_code=204)
+
+
 @router.delete("/conversations/{conversation_id}", status_code=204)
 def delete_conversation(
     conversation_id: UUID,
@@ -130,7 +224,7 @@ def delete_conversation(
 ) -> Response:
     """Delete a conversation.
 
-    Cascades to messages, message_context, conversation_media, conversation_shares.
+    Cascades to messages, message_context, conversation_media, conversation_shares, and chat runs.
 
     Errors:
         E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.
@@ -231,6 +325,22 @@ def list_messages(
     }
 
 
+@router.post("/messages/{assistant_message_id}/retry", status_code=200)
+def retry_failed_assistant_response(
+    assistant_message_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> dict:
+    result = chat_runs_service.retry_failed_assistant_response(
+        db=db,
+        viewer_id=viewer.user_id,
+        assistant_message_id=assistant_message_id,
+        idempotency_key=idempotency_key,
+    )
+    return success_response(result.model_dump(mode="json"))
+
+
 @router.delete("/messages/{message_id}", status_code=204)
 def delete_message(
     message_id: UUID,
@@ -251,207 +361,3 @@ def delete_message(
         message_id=message_id,
     )
     return Response(status_code=204)
-
-
-# =============================================================================
-# Send Message Endpoints (PR-05)
-# =============================================================================
-
-
-@router.post("/conversations/messages", status_code=200)
-async def send_message_new_conversation(
-    body: SendMessageRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    llm_router: Annotated[LLMRouter, Depends(get_llm_router)],
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-) -> dict:
-    """Send a message and create a new conversation.
-
-    Creates a new conversation, sends the user message, and returns the
-    assistant response from the selected LLM model.
-
-    Per PR-05 spec, this endpoint:
-    - Creates conversation + user message + assistant message atomically
-    - Executes LLM call outside DB transaction
-    - Supports idempotency via Idempotency-Key header
-    - Enforces rate limits and token budgets
-
-    Errors:
-        E_MESSAGE_TOO_LONG (400): Message exceeds 20,000 char limit.
-        E_CONTEXT_TOO_LARGE (400): Context exceeds limits.
-        E_MODEL_NOT_AVAILABLE (400): Model not found or not available.
-        E_LLM_NO_KEY (400): No API key available for provider.
-        E_RATE_LIMITED (429): Per-user rate limit exceeded.
-        E_TOKEN_BUDGET_EXCEEDED (429): Platform token budget exceeded.
-        E_IDEMPOTENCY_KEY_REPLAY_MISMATCH (409): Key reused with different payload.
-    """
-    contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
-
-    result = await send_message_service.send_message(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=None,
-        content=body.content,
-        model_id=body.model_id,
-        reasoning=body.reasoning,
-        key_mode=body.key_mode,
-        contexts=contexts,
-        idempotency_key=idempotency_key,
-        router=llm_router,
-    )
-
-    return success_response(result.model_dump(mode="json"))
-
-
-@router.post("/conversations/{conversation_id}/messages", status_code=200)
-async def send_message_existing_conversation(
-    conversation_id: UUID,
-    body: SendMessageRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    llm_router: Annotated[LLMRouter, Depends(get_llm_router)],
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-) -> dict:
-    """Send a message in an existing conversation.
-
-    Sends the user message in the specified conversation and returns the
-    assistant response from the selected LLM model.
-
-    Per PR-05 spec, this endpoint:
-    - Locks conversation and assigns seq atomically
-    - Executes LLM call outside DB transaction
-    - Supports idempotency via Idempotency-Key header
-    - Enforces rate limits and token budgets
-
-    Errors:
-        E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.
-        E_CONVERSATION_BUSY (409): Pending assistant already exists.
-        E_MESSAGE_TOO_LONG (400): Message exceeds 20,000 char limit.
-        E_CONTEXT_TOO_LARGE (400): Context exceeds limits.
-        E_MODEL_NOT_AVAILABLE (400): Model not found or not available.
-        E_LLM_NO_KEY (400): No API key available for provider.
-        E_RATE_LIMITED (429): Per-user rate limit exceeded.
-        E_TOKEN_BUDGET_EXCEEDED (429): Platform token budget exceeded.
-        E_IDEMPOTENCY_KEY_REPLAY_MISMATCH (409): Key reused with different payload.
-    """
-    contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
-
-    result = await send_message_service.send_message(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
-        content=body.content,
-        model_id=body.model_id,
-        reasoning=body.reasoning,
-        key_mode=body.key_mode,
-        contexts=contexts,
-        idempotency_key=idempotency_key,
-        router=llm_router,
-    )
-
-    return success_response(result.model_dump(mode="json"))
-
-
-# =============================================================================
-# Streaming Endpoints (Feature-Flagged)
-# =============================================================================
-
-
-@router.post("/conversations/messages/stream")
-def send_message_stream_new(
-    body: SendMessageRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-) -> StreamingResponse:
-    """Send a message with streaming response (new conversation).
-
-    Creates a new conversation and streams the assistant response via SSE.
-
-    Requires ENABLE_STREAMING=true in environment.
-
-    SSE Events:
-    - meta: Initial metadata (conversation_id, message IDs, model, provider)
-    - delta: Incremental content chunks
-    - done: Final status and usage
-
-    Errors:
-        E_FORBIDDEN (403): Streaming is disabled.
-        (Same errors as non-streaming endpoint)
-    """
-    settings = get_settings()
-    if not settings.enable_streaming:
-        raise ApiError(ApiErrorCode.E_FORBIDDEN, "Streaming is disabled")
-
-    contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
-
-    return StreamingResponse(
-        send_message_stream.stream_send_message(
-            db=db,
-            viewer_id=viewer.user_id,
-            conversation_id=None,
-            content=body.content,
-            model_id=body.model_id,
-            reasoning=body.reasoning,
-            key_mode=body.key_mode,
-            contexts=contexts,
-            idempotency_key=idempotency_key,
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
-        },
-    )
-
-
-@router.post("/conversations/{conversation_id}/messages/stream")
-def send_message_stream_existing(
-    conversation_id: UUID,
-    body: SendMessageRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-) -> StreamingResponse:
-    """Send a message with streaming response (existing conversation).
-
-    Streams the assistant response via SSE in an existing conversation.
-
-    Requires ENABLE_STREAMING=true in environment.
-
-    SSE Events:
-    - meta: Initial metadata (conversation_id, message IDs, model, provider)
-    - delta: Incremental content chunks
-    - done: Final status and usage
-
-    Errors:
-        E_FORBIDDEN (403): Streaming is disabled.
-        (Same errors as non-streaming endpoint)
-    """
-    settings = get_settings()
-    if not settings.enable_streaming:
-        raise ApiError(ApiErrorCode.E_FORBIDDEN, "Streaming is disabled")
-
-    contexts = [{"type": c.type, "id": c.id} for c in body.contexts]
-
-    return StreamingResponse(
-        send_message_stream.stream_send_message(
-            db=db,
-            viewer_id=viewer.user_id,
-            conversation_id=conversation_id,
-            content=body.content,
-            model_id=body.model_id,
-            reasoning=body.reasoning,
-            key_mode=body.key_mode,
-            contexts=contexts,
-            idempotency_key=idempotency_key,
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )

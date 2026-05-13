@@ -20,34 +20,9 @@
   min-width: min(360px, 100%);
 }
 
-.searchInput {
+.searchInputField {
   flex: 1;
   min-width: 220px;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  font: inherit;
-}
-
-.searchInput:focus,
-.selectField select:focus,
-.settingsSelect:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
-.searchButton,
-.primaryAction {
-  border: 1px solid var(--color-accent);
-  background: var(--color-accent);
-  color: var(--color-bg);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  cursor: pointer;
 }
 
 .toolbarControls {
@@ -62,44 +37,9 @@
   flex-direction: column;
   gap: 6px;
   min-width: 140px;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-}
-
-.selectField select,
-.settingsSelect {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: var(--font-size-sm);
-}
-
-.secondaryAction {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-
-.rowActionButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.rowActionButton:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
 }
 
 .summaryRow {
@@ -110,25 +50,22 @@
 }
 
 .summaryCount {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
 }
 
 .inlineButton {
-  border: none;
+  height: auto;
   padding: 0;
   background: transparent;
-  color: var(--color-accent);
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
+  color: var(--accent);
 }
 
 .podcastArtwork,
 .thumbnailFallback {
   width: 100%;
   height: 100%;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -140,8 +77,8 @@
 }
 
 .thumbnailFallback {
-  font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
 }
 
 .rowDescription {
@@ -152,7 +89,7 @@
 }
 
 .rowSummary {
-  color: var(--color-text);
+  color: var(--ink);
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -161,7 +98,7 @@
 }
 
 .rowAuthor {
-  color: var(--color-text-secondary);
+  color: var(--ink-muted);
 }
 
 .metaRow {
@@ -178,26 +115,26 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
   padding: 2px 8px;
-  font-size: var(--font-size-xs);
-  color: var(--color-text);
-  background: var(--color-bg-panel);
+  font-size: var(--text-xs);
+  color: var(--ink);
+  background: var(--surface-2);
 }
 
 .metaBadge {
-  color: var(--color-text-muted);
+  color: var(--ink-faint);
 }
 
 .syncBadge {
-  color: var(--color-warning);
+  color: var(--warning);
 }
 
 .colorDot {
   width: 8px;
   height: 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   flex-shrink: 0;
 }
 
@@ -209,13 +146,6 @@
 
 .loadMoreButton {
   align-self: flex-start;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
 }
 
 .modalBackdrop {
@@ -235,21 +165,21 @@
   flex-direction: column;
   gap: 10px;
   padding: 16px;
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  background: var(--color-bg-elevated);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-xl);
+  background: var(--surface-2);
 }
 
 .modalTitle {
   margin: 0;
-  font-size: var(--font-size-lg);
-  color: var(--color-text);
+  font-size: var(--text-lg);
+  color: var(--ink);
 }
 
 .modalDescription {
   margin: 0;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
 }
 
 .modalActions {
@@ -261,16 +191,16 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
 }
 
 .settingsToggleLabel {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
+  color: var(--ink);
+  font-size: var(--text-sm);
 }
 
 @media (max-width: 900px) {

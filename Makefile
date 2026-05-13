@@ -1,14 +1,15 @@
 # Nexus Development Makefile
 # Run `make help` for available commands.
 
-.PHONY: help setup dev down logs clean api web worker migrate migrate-test migrate-down seed \
+.PHONY: help setup dev down logs clean api web worker migrate migrate-test migrate-down seed seed-real-media-e2e \
 	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
-	test-android test-migrations test-supabase test-network test-real test-e2e test-e2e-ui \
+	test-android test-migrations test-supabase test-real-media test-live-providers test-e2e test-e2e-ui \
 	verify verify-android verify-android-release verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw \
-	_test-supabase-raw _test-network-raw _test-real-raw
+	_test-supabase-raw _test-real-media-backend-raw _test-live-providers-raw \
+	_seed-real-media-e2e-raw _test-e2e-raw _test-real-media-e2e-raw _test-e2e-ui-raw
 
 -include .env
 -include .dev-ports
@@ -17,6 +18,8 @@ export
 SUPABASE_DB_PORT ?= 54322
 SUPABASE_URL ?= http://127.0.0.1:54321
 AUTH_ALLOWED_REDIRECT_ORIGINS ?= http://localhost:3000,http://127.0.0.1:3000,http://10.0.2.2:3000,http://localhost:3001,http://127.0.0.1:3001
+STREAM_BASE_URL ?= http://localhost:$(API_PORT)
+STREAM_CORS_ORIGINS ?= http://localhost:$(WEB_PORT),http://localhost:3000,http://localhost:3001
 
 DATABASE_URL ?= postgresql+psycopg://postgres:postgres@localhost:$(SUPABASE_DB_PORT)/postgres
 DATABASE_URL_TEST ?= postgresql+psycopg://postgres:postgres@localhost:$(SUPABASE_DB_PORT)/nexus_test
@@ -37,7 +40,7 @@ help:
 	@echo "  make web                - Start Next.js on WEB_PORT (default 3000)"
 	@echo "  make worker             - Start the Postgres queue worker"
 	@echo ""
-	@echo "Core verification:"
+	@echo "Routine gates:"
 	@echo "  make check              - Static checks only"
 	@echo "  make type-back          - Backend type checking"
 	@echo "  make check-workflows    - GitHub Actions lint/security checks"
@@ -49,10 +52,15 @@ help:
 	@echo "  make verify-android-release - Build and verify signed Android release APK"
 	@echo "  make test-unit          - Fast backend and frontend unit tests"
 	@echo "  make test               - All non-E2E automated tests"
+	@echo "  make test-e2e           - Default Playwright E2E tests"
+	@echo "  make test-real-media    - Strict deterministic real-media backend + Playwright gates"
+	@echo "  make test-live-providers  - Strict live-provider backend gate"
 	@echo "  make verify             - check + build + test"
-	@echo "  make verify-full        - verify + real-stack Playwright E2E"
+	@echo "  make verify-full        - verify + real-media + live-provider + default E2E gates"
 	@echo ""
-	@echo "Narrow test tiers:"
+	@echo "Focused targets:"
+	@echo "  make type-back             - Backend type checking"
+	@echo "  make check-workflows       - GitHub Actions lint/security checks"
 	@echo "  make test-back-unit        - Backend unit tests only"
 	@echo "  make test-back-integration - Backend DB/API integration tests"
 	@echo "  make test-front-unit       - Frontend unit tests"
@@ -60,9 +68,6 @@ help:
 	@echo "  make test-android          - Android instrumentation tests on a connected device"
 	@echo "  make test-migrations       - Alembic migration tests"
 	@echo "  make test-supabase         - Supabase auth/storage integration tests"
-	@echo "  make test-network          - Backend tests requiring internet"
-	@echo "  make test-real             - Slow real-content backend tests"
-	@echo "  make test-e2e              - Playwright E2E tests"
 	@echo "  make test-e2e-ui           - Playwright E2E in UI mode"
 	@echo ""
 	@echo "Formatting:"
@@ -75,6 +80,7 @@ help:
 	@echo "  make migrate-test       - Run migrations on the test database"
 	@echo "  make migrate-down       - Roll back one dev migration"
 	@echo "  make seed               - Seed development data"
+	@echo "  make seed-real-media-e2e - Seed real-media E2E corpus through product paths"
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  make logs               - Show Supabase logs"
@@ -102,6 +108,8 @@ clean:
 
 api:
 	cd apps/api && PYTHONPATH=$$PWD/../../python DATABASE_URL=$(DATABASE_URL) \
+		STREAM_BASE_URL=$(STREAM_BASE_URL) \
+		STREAM_CORS_ORIGINS=$(STREAM_CORS_ORIGINS) \
 		uv run --project ../../python uvicorn main:app --reload --port $(API_PORT)
 
 web:
@@ -134,6 +142,18 @@ seed:
 		SUPABASE_URL=$(SUPABASE_URL) \
 		SUPABASE_SERVICE_KEY=$(SUPABASE_SERVICE_KEY) \
 		uv run python ../scripts/seed_dev.py
+
+seed-real-media-e2e: _ensure-e2e-deps
+	./scripts/with_supabase_services.sh make _seed-real-media-e2e-raw
+
+_seed-real-media-e2e-raw:
+	cd e2e && bunx tsx seed-e2e-user.ts
+	cd migrations && DATABASE_URL=$(DATABASE_URL) NEXUS_ENV=local \
+		uv run --project ../python alembic upgrade head
+	cd python && DATABASE_URL=$(DATABASE_URL) NEXUS_ENV=local \
+		REAL_MEDIA_PROVIDER_FIXTURES=1 \
+		REAL_MEDIA_FIXTURE_DIR=$$PWD/tests/fixtures/real_media \
+		uv run python scripts/seed_real_media_e2e.py
 
 check:
 	make check-back
@@ -180,7 +200,11 @@ build-android-release:
 
 audit:
 	cd python && uv sync --all-extras --locked
-	cd python && uv run pip-audit --strict
+	cd python && uv export --locked --all-extras --no-emit-project \
+		--no-emit-package llm-calling --no-emit-package web-search-tool \
+		--format requirements.txt > /tmp/nexus-python-audit-requirements.txt
+	cd python && uv run pip-audit --strict --no-deps --disable-pip \
+		--requirement /tmp/nexus-python-audit-requirements.txt
 	cd apps/web && bun audit --audit-level=high
 	cd e2e && bun audit --audit-level=high
 	cd node/ingest && bun audit --audit-level=high
@@ -236,36 +260,62 @@ test-supabase:
 _test-supabase-raw:
 	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m supabase
 
-test-network:
-	./scripts/with_test_services.sh make _test-back-db-ready _test-network-raw
+test-real-media: _ensure-e2e-deps
+	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-back-db-ready _test-real-media-backend-raw
+	./scripts/with_supabase_services.sh make _test-real-media-e2e-raw
 
-_test-network-raw:
+_test-real-media-backend-raw:
 	make _ensure-node-ingest
-	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m network
+	mkdir -p test-results
+	cd python && NEXUS_ENV=local \
+		REAL_MEDIA_PROVIDER_FIXTURES=1 \
+		REAL_MEDIA_FIXTURE_DIR=$$PWD/tests/fixtures/real_media \
+		uv run pytest -v --tb=short \
+		--basetemp=../test-results/real-media-backend \
+		-m real_media
 
-test-real:
-	./scripts/with_test_services.sh make _test-back-db-ready _test-real-raw
+test-live-providers:
+	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-back-db-ready _test-live-providers-raw
 
-_test-real-raw:
+_test-live-providers-raw:
 	make _ensure-node-ingest
-	cd python && NEXUS_ENV=test uv run pytest -v --tb=short \
-		-m "slow and not network and not supabase"
+	mkdir -p test-results
+	cd python && NEXUS_ENV=local PODCAST_INITIAL_EPISODE_WINDOW=1 uv run pytest -v --tb=short \
+		--basetemp=../test-results/live-providers \
+		-m live_provider
 
 test-e2e: _ensure-e2e-deps
+	./scripts/with_supabase_services.sh make _test-e2e-raw
+
+_test-e2e-raw:
 	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
 	echo "Running e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
 	cd e2e && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright install --with-deps chromium && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bun run test:e2e -- $(PLAYWRIGHT_ARGS)
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright install --with-deps chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=test E2E_REAL_MEDIA=0 bun run test:e2e -- $(PLAYWRIGHT_ARGS)
+
+_test-real-media-e2e-raw:
+	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
+	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
+	echo "Running real-media e2e with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
+	cd e2e && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=local E2E_REAL_MEDIA=1 bunx playwright install --with-deps chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=local E2E_REAL_MEDIA=1 \
+	REAL_MEDIA_PROVIDER_FIXTURES=1 \
+	REAL_MEDIA_FIXTURE_DIR=$$PWD/../python/tests/fixtures/real_media \
+	bun run test:e2e -- --project=real-media $(PLAYWRIGHT_ARGS)
 
 test-e2e-ui: _ensure-e2e-deps
+	./scripts/with_supabase_services.sh make _test-e2e-ui-raw
+
+_test-e2e-ui-raw:
 	@API_PORT=$$(./scripts/find_port.sh $(API_PORT) api) && \
 	WEB_PORT=$$(./scripts/find_port.sh $(WEB_PORT) web) && \
 	echo "Running e2e ui with API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT" && \
 	cd e2e && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright install chromium && \
-	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT bunx playwright test --ui
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright install chromium && \
+	API_PORT=$$API_PORT WEB_PORT=$$WEB_PORT NEXUS_ENV=test E2E_REAL_MEDIA=0 bunx playwright test --ui
 
 verify:
 	make check
@@ -297,7 +347,8 @@ verify-android-release:
 
 verify-full:
 	make verify
-	make verify-android
+	make test-real-media
+	make test-live-providers
 	make test-e2e
 	@echo "=== full verification passed ==="
 

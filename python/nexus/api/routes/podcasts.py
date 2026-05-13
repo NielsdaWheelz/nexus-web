@@ -16,7 +16,9 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionSettingsPatchRequest,
 )
 from nexus.services import libraries as libraries_service
-from nexus.services import podcasts as podcast_service
+from nexus.services.podcasts import catalog as podcast_catalog_service
+from nexus.services.podcasts import subscriptions as podcast_subscription_service
+from nexus.services.podcasts import sync as podcast_sync_service
 
 router = APIRouter()
 
@@ -30,7 +32,7 @@ def discover_podcasts(
 ) -> dict:
     """Discover podcasts globally (not library-scoped)."""
     _ = viewer
-    rows = podcast_service.discover_podcasts(db, q, limit=limit)
+    rows = podcast_catalog_service.discover_podcasts(db, q, limit=limit)
     return success_response([row.model_dump(mode="json") for row in rows])
 
 
@@ -42,7 +44,7 @@ def ensure_podcast(
 ) -> dict:
     """Ensure one discovered podcast exists locally and return its local id."""
     _ = viewer
-    out = podcast_service.ensure_podcast(db, body)
+    out = podcast_catalog_service.ensure_podcast(db, body)
     return success_response(out.model_dump(mode="json"))
 
 
@@ -53,7 +55,7 @@ def subscribe_to_podcast(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Subscribe viewer and enqueue async data-plane podcast sync."""
-    out = podcast_service.subscribe_to_podcast(db, viewer.user_id, body)
+    out = podcast_subscription_service.subscribe_to_podcast(db, viewer.user_id, body)
     return success_response(out.model_dump(mode="json"))
 
 
@@ -75,7 +77,7 @@ def list_subscriptions(
     library_id: Annotated[UUID | None, Query()] = None,
 ) -> dict:
     """List active podcast subscriptions for the viewer."""
-    rows = podcast_service.list_subscriptions(
+    rows = podcast_catalog_service.list_subscriptions(
         db,
         viewer.user_id,
         limit=limit,
@@ -96,7 +98,7 @@ def import_subscriptions_from_opml(
 ) -> dict:
     """Import podcast subscriptions from an uploaded OPML file."""
     payload = file.file.read()
-    out = podcast_service.import_subscriptions_from_opml(
+    out = podcast_subscription_service.import_subscriptions_from_opml(
         db,
         viewer.user_id,
         file_name=file.filename,
@@ -112,7 +114,7 @@ def export_subscriptions_as_opml(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     """Export active podcast subscriptions as an OPML file download."""
-    opml_bytes = podcast_service.export_subscriptions_as_opml(db, viewer.user_id)
+    opml_bytes = podcast_subscription_service.export_subscriptions_as_opml(db, viewer.user_id)
     return Response(
         content=opml_bytes,
         media_type="application/xml",
@@ -127,7 +129,7 @@ def get_subscription_status(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Read viewer-visible sync status for one podcast subscription."""
-    out = podcast_service.get_subscription_status(db, viewer.user_id, podcast_id)
+    out = podcast_subscription_service.get_subscription_status(db, viewer.user_id, podcast_id)
     return success_response(out.model_dump(mode="json"))
 
 
@@ -149,7 +151,7 @@ def patch_subscription_settings(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Patch per-subscription playback settings for the authenticated viewer."""
-    out = podcast_service.update_subscription_settings_for_viewer(
+    out = podcast_subscription_service.update_subscription_settings_for_viewer(
         db,
         viewer_id=viewer.user_id,
         podcast_id=podcast_id,
@@ -165,7 +167,7 @@ def refresh_subscription_sync(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     """Queue a manual subscription sync refresh for the viewer."""
-    out = podcast_service.refresh_subscription_sync_for_viewer(
+    out = podcast_sync_service.refresh_subscription_sync_for_viewer(
         db,
         viewer_id=viewer.user_id,
         podcast_id=podcast_id,
@@ -180,7 +182,7 @@ def unsubscribe_from_podcast(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Unsubscribe viewer and remove removable podcast library entries."""
-    out = podcast_service.unsubscribe_from_podcast(
+    out = podcast_subscription_service.unsubscribe_from_podcast(
         db,
         viewer.user_id,
         podcast_id,
@@ -195,7 +197,7 @@ def get_podcast_detail(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Get podcast detail, even if the viewer is not actively subscribed."""
-    out = podcast_service.get_podcast_detail_for_viewer(db, viewer.user_id, podcast_id)
+    out = podcast_catalog_service.get_podcast_detail_for_viewer(db, viewer.user_id, podcast_id)
     return success_response(out.model_dump(mode="json"))
 
 
@@ -211,7 +213,7 @@ def list_podcast_episodes(
     q: str | None = Query(default=None),
 ) -> dict:
     """List viewer-visible episodes for one podcast."""
-    rows = podcast_service.list_podcast_episodes_for_viewer(
+    rows = podcast_catalog_service.list_podcast_episodes_for_viewer(
         db,
         viewer.user_id,
         podcast_id,

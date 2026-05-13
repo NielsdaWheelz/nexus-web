@@ -55,12 +55,10 @@ describe("TranscriptStatePanel android shell billing", () => {
 
     render(
       <TranscriptStatePanel
-        processingStatus="pending"
-        transcriptState="not_requested"
+        mediaId="media-1"
+        transcriptState="queued"
         transcriptCoverage="none"
-        transcriptRequestInFlight={false}
-        transcriptRequestForecast={null}
-        onRequestTranscript={() => {}}
+        onTranscriptStateChange={() => {}}
       />
     );
 

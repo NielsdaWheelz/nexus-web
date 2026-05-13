@@ -1,4 +1,4 @@
-"""Integration tests for highlight and annotation endpoints.
+"""Integration tests for highlight and linked-note endpoints.
 
 Tests cover scenarios from PR-06 spec (retained) and PR-07 spec (s4 shared-read):
 
@@ -14,7 +14,7 @@ PR-07 (s4 highlight shared-read contract):
 - test_get_highlight_shared_reader_revoked_membership_masked_404
 - test_update_highlight_non_author_masked_404
 - test_delete_highlight_non_author_masked_404
-- test_annotation_upsert_non_author_masked_404
+- test_shared_reader_can_link_own_note_to_readable_highlight
 - test_highlight_out_includes_author_fields
 - test_list_highlights_order_is_deterministic_with_created_at_ties
 """
@@ -108,6 +108,34 @@ def add_media_to_library(client: TestClient, user_id: UUID, media_id: UUID) -> N
     )
 
 
+def register_fragment_highlight_cleanup(
+    direct_db: DirectSessionManager,
+    fragment_id: UUID,
+) -> None:
+    """Clean up fragment highlights through canonical anchor rows."""
+    direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
+
+
+def create_linked_highlight_note(
+    client: TestClient,
+    user_id: UUID,
+    highlight_id: str,
+    body: str,
+):
+    return client.post(
+        "/notes/blocks",
+        json={
+            "body_markdown": body,
+            "linked_object": {
+                "object_type": "highlight",
+                "object_id": highlight_id,
+                "relation_type": "note_about",
+            },
+        },
+        headers=auth_headers(user_id),
+    )
+
+
 # =============================================================================
 # Test 1: create_highlight_success
 # =============================================================================
@@ -123,7 +151,7 @@ class TestCreateHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -139,14 +167,15 @@ class TestCreateHighlight:
 
         assert response.status_code == 201
         data = response.json()["data"]
-        assert data["fragment_id"] == str(fragment_id)
-        assert data["start_offset"] == 0
-        assert data["end_offset"] == 5
+        assert data["anchor"]["type"] == "fragment_offsets"
+        assert data["anchor"]["fragment_id"] == str(fragment_id)
+        assert data["anchor"]["start_offset"] == 0
+        assert data["anchor"]["end_offset"] == 5
         assert data["color"] == "yellow"
         assert data["exact"] == "Hello"
         assert data["prefix"] == ""
         assert "suffix" in data
-        assert data["annotation"] is None
+        assert data["linked_note_blocks"] == []
 
     def test_create_highlight_out_of_bounds(self, auth_client, direct_db: DirectSessionManager):
         """Test #2: end_offset > len(canonical_text) returns 400."""
@@ -155,7 +184,7 @@ class TestCreateHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -181,7 +210,7 @@ class TestCreateHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -213,7 +242,7 @@ class TestCreateHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -245,24 +274,26 @@ class TestCreateHighlight:
 
 
 # =============================================================================
-# Test 5: list_highlights_includes_annotations
+# Test 5: list_highlights_includes_linked_notes
 # =============================================================================
 
 
 class TestListHighlights:
     """Tests for GET /fragments/{fragment_id}/highlights"""
 
-    def test_list_highlights_includes_annotations(
+    def test_list_highlights_includes_linked_notes(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Test #5: List returns highlight with embedded annotation."""
+        """Test #5: List returns highlight with linked note blocks."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("annotations", "highlight_id", None)  # will clean by FK
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        direct_db.register_cleanup("note_blocks", "user_id", user_id)
+        direct_db.register_cleanup("object_links", "user_id", user_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -277,12 +308,9 @@ class TestListHighlights:
         )
         highlight_id = create_resp.json()["data"]["id"]
 
-        # Add annotation
-        auth_client.put(
-            f"/highlights/{highlight_id}/annotation",
-            json={"body": "My note"},
-            headers=auth_headers(user_id),
-        )
+        note_resp = create_linked_highlight_note(auth_client, user_id, highlight_id, "My note")
+        assert note_resp.status_code == 201
+        note_id = note_resp.json()["data"]["id"]
 
         # List highlights
         list_resp = auth_client.get(
@@ -293,8 +321,8 @@ class TestListHighlights:
         assert list_resp.status_code == 200
         highlights = list_resp.json()["data"]["highlights"]
         assert len(highlights) == 1
-        assert highlights[0]["annotation"] is not None
-        assert highlights[0]["annotation"]["body"] == "My note"
+        assert highlights[0]["linked_note_blocks"][0]["note_block_id"] == note_id
+        assert highlights[0]["linked_note_blocks"][0]["body_text"] == "My note"
 
 
 # =============================================================================
@@ -313,7 +341,7 @@ class TestGetHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -359,7 +387,7 @@ class TestUpdateHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -400,7 +428,7 @@ class TestUpdateHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -419,7 +447,13 @@ class TestUpdateHighlight:
         # Update to "World"
         update_resp = auth_client.patch(
             f"/highlights/{highlight_id}",
-            json={"start_offset": 6, "end_offset": 11},
+            json={
+                "anchor": {
+                    "type": "fragment_offsets",
+                    "start_offset": 6,
+                    "end_offset": 11,
+                }
+            },
             headers=auth_headers(user_id),
         )
 
@@ -436,7 +470,7 @@ class TestUpdateHighlight:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -460,7 +494,13 @@ class TestUpdateHighlight:
         # Try to update highlight2 to same range as highlight1
         update_resp = auth_client.patch(
             f"/highlights/{highlight2_id}",
-            json={"start_offset": 0, "end_offset": 5},
+            json={
+                "anchor": {
+                    "type": "fragment_offsets",
+                    "start_offset": 0,
+                    "end_offset": 5,
+                }
+            },
             headers=auth_headers(user_id),
         )
 
@@ -476,24 +516,26 @@ class TestUpdateHighlight:
 class TestDeleteHighlight:
     """Tests for DELETE /highlights/{highlight_id}"""
 
-    def test_delete_highlight_cascades_annotation(
+    def test_delete_highlight_removes_link_edges(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Test #9: Delete highlight removes annotation."""
+        """Test #9: Delete highlight removes generic links to that highlight."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        # Note: No need to register cleanup for highlights/annotations since we delete them
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        direct_db.register_cleanup("note_blocks", "user_id", user_id)
+        direct_db.register_cleanup("object_links", "user_id", user_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
 
-        # Create highlight with annotation
+        # Create highlight with linked note
         create_resp = auth_client.post(
             f"/fragments/{fragment_id}/highlights",
             json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
@@ -501,11 +543,8 @@ class TestDeleteHighlight:
         )
         highlight_id = create_resp.json()["data"]["id"]
 
-        auth_client.put(
-            f"/highlights/{highlight_id}/annotation",
-            json={"body": "My note"},
-            headers=auth_headers(user_id),
-        )
+        note_resp = create_linked_highlight_note(auth_client, user_id, highlight_id, "My note")
+        assert note_resp.status_code == 201
 
         # Delete highlight
         delete_resp = auth_client.delete(
@@ -521,25 +560,37 @@ class TestDeleteHighlight:
         )
         assert get_resp.status_code == 404
 
+        with direct_db.session() as session:
+            link_count = session.execute(
+                text("""
+                    SELECT COUNT(*)
+                    FROM object_links
+                    WHERE (a_type = 'highlight' AND a_id = :highlight_id)
+                       OR (b_type = 'highlight' AND b_id = :highlight_id)
+                """),
+                {"highlight_id": UUID(highlight_id)},
+            ).scalar_one()
+        assert link_count == 0
 
-class TestDeleteAnnotation:
-    """Tests for DELETE /highlights/{highlight_id}/annotation"""
 
-    def test_delete_annotation_idempotent(self, auth_client, direct_db: DirectSessionManager):
-        """Test #10: Delete annotation when missing returns 204."""
+class TestLegacyAnnotationRouteRemoved:
+    """Legacy annotation routes are not part of the hard cutover."""
+
+    def test_annotation_routes_are_gone(self, auth_client, direct_db: DirectSessionManager):
+        """Test #10: Removed annotation routes return normal not-found responses."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
 
-        # Create highlight WITHOUT annotation
+        # Create a highlight and verify removed routes stay removed.
         create_resp = auth_client.post(
             f"/fragments/{fragment_id}/highlights",
             json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
@@ -547,12 +598,17 @@ class TestDeleteAnnotation:
         )
         highlight_id = create_resp.json()["data"]["id"]
 
-        # Delete annotation (which doesn't exist) - should still return 204
+        put_resp = auth_client.put(
+            f"/highlights/{highlight_id}/annotation",
+            json={"body": "No legacy route"},
+            headers=auth_headers(user_id),
+        )
         delete_resp = auth_client.delete(
             f"/highlights/{highlight_id}/annotation",
             headers=auth_headers(user_id),
         )
-        assert delete_resp.status_code == 204
+        assert put_resp.status_code == 404
+        assert delete_resp.status_code == 404
 
 
 # =============================================================================
@@ -573,7 +629,7 @@ class TestMediaReadiness:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session, processing_status="pending")
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -601,7 +657,7 @@ class TestMediaReadiness:
                 session, processing_status="ready_for_reading"
             )
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -670,7 +726,7 @@ class TestEmojiCodepointSlicing:
                 html_sanitized=EMOJI_HTML_SANITIZED,
             )
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -718,7 +774,7 @@ class TestLibraryMembership:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -748,24 +804,24 @@ class TestLibraryMembership:
 
 
 # =============================================================================
-# Test 15: annotation_upsert_returns_correct_status
+# Test 15: linked note creation and update
 # =============================================================================
 
 
-class TestAnnotationUpsert:
-    """Tests for PUT /highlights/{highlight_id}/annotation"""
+class TestLinkedHighlightNotes:
+    """Tests for note blocks linked to highlights."""
 
-    def test_annotation_upsert_returns_correct_status(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Test #15: First PUT returns 201, second PUT returns 200."""
+    def test_linked_note_create_update_delete(self, auth_client, direct_db: DirectSessionManager):
+        """Test #15: Note blocks replace legacy annotation upsert/delete."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("annotations", "highlight_id", None)
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        direct_db.register_cleanup("note_blocks", "user_id", user_id)
+        direct_db.register_cleanup("object_links", "user_id", user_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -780,32 +836,43 @@ class TestAnnotationUpsert:
         )
         highlight_id = create_resp.json()["data"]["id"]
 
-        # First PUT - create annotation
-        upsert_resp1 = auth_client.put(
-            f"/highlights/{highlight_id}/annotation",
-            json={"body": "First note"},
+        create_note_resp = create_linked_highlight_note(
+            auth_client, user_id, highlight_id, "First note"
+        )
+        assert create_note_resp.status_code == 201
+        note = create_note_resp.json()["data"]
+        assert note["bodyText"] == "First note"
+
+        update_note_resp = auth_client.patch(
+            f"/notes/blocks/{note['id']}",
+            json={
+                "base_revision": note["revision"],
+                "body_pm_json": {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": "Updated note"}],
+                },
+            },
             headers=auth_headers(user_id),
         )
-        assert upsert_resp1.status_code == 201
-        assert upsert_resp1.json()["data"]["body"] == "First note"
+        assert update_note_resp.status_code == 200
+        assert update_note_resp.json()["data"]["bodyText"] == "Updated note"
 
-        # Second PUT - update annotation
-        upsert_resp2 = auth_client.put(
-            f"/highlights/{highlight_id}/annotation",
-            json={"body": "Updated note"},
+        delete_note_resp = auth_client.request(
+            "DELETE",
+            f"/notes/blocks/{note['id']}",
             headers=auth_headers(user_id),
+            json={"base_revision": update_note_resp.json()["data"]["revision"]},
         )
-        assert upsert_resp2.status_code == 200
-        assert upsert_resp2.json()["data"]["body"] == "Updated note"
+        assert delete_note_resp.status_code == 204
 
-    def test_annotation_upsert_requires_body(self, auth_client, direct_db: DirectSessionManager):
-        """Test that empty body is rejected."""
+    def test_linked_note_empty_body_is_allowed(self, auth_client, direct_db: DirectSessionManager):
+        """Empty note blocks are legal while users are composing."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -820,13 +887,13 @@ class TestAnnotationUpsert:
         )
         highlight_id = create_resp.json()["data"]["id"]
 
-        # Try to create annotation with empty body
-        upsert_resp = auth_client.put(
-            f"/highlights/{highlight_id}/annotation",
-            json={"body": ""},
-            headers=auth_headers(user_id),
-        )
-        assert upsert_resp.status_code == 400
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        direct_db.register_cleanup("note_blocks", "user_id", user_id)
+        direct_db.register_cleanup("object_links", "user_id", user_id)
+
+        note_resp = create_linked_highlight_note(auth_client, user_id, highlight_id, "")
+        assert note_resp.status_code == 201
+        assert note_resp.json()["data"]["bodyText"] == ""
 
 
 # =============================================================================
@@ -852,7 +919,7 @@ class TestEdgeCases:
                 html_sanitized=f"<p>{short_text}</p>",
             )
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -879,7 +946,7 @@ class TestEdgeCases:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -911,9 +978,9 @@ class TestEdgeCases:
 
         highlights = list_resp.json()["data"]["highlights"]
         assert len(highlights) == 3
-        assert highlights[0]["start_offset"] == 0
-        assert highlights[1]["start_offset"] == 6
-        assert highlights[2]["start_offset"] == 12
+        assert highlights[0]["anchor"]["start_offset"] == 0
+        assert highlights[1]["anchor"]["start_offset"] == 6
+        assert highlights[2]["anchor"]["start_offset"] == 12
 
     def test_nonexistent_highlight_returns_404(self, auth_client, direct_db: DirectSessionManager):
         """Test that nonexistent highlight_id returns 404."""
@@ -996,41 +1063,6 @@ def create_shared_library_with_media(
     return lib_id
 
 
-def create_highlight_directly(
-    session: Session,
-    user_id: UUID,
-    fragment_id: UUID,
-    start_offset: int = 0,
-    end_offset: int = 5,
-    color: str = "yellow",
-) -> UUID:
-    """Insert a highlight row directly and return its id."""
-    h_id = uuid4()
-    session.execute(
-        text("""
-            INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
-                                    color, exact, prefix, suffix)
-            VALUES (:id, :user_id, :fragment_id, :start_offset, :end_offset,
-                    :color, 'Hello', '', ' World')
-        """),
-        {
-            "id": h_id,
-            "user_id": user_id,
-            "fragment_id": fragment_id,
-            "start_offset": start_offset,
-            "end_offset": end_offset,
-            "color": color,
-        },
-    )
-    session.commit()
-    return h_id
-
-
-# =============================================================================
-# PR-07 Tests: Highlight Shared-Read Contract
-# =============================================================================
-
-
 class TestHighlightSharedRead:
     """PR-07: Shared-read tests for highlights across shared library members."""
 
@@ -1056,7 +1088,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1086,7 +1118,7 @@ class TestHighlightSharedRead:
         assert list_resp.status_code == 200
         highlights = list_resp.json()["data"]["highlights"]
         assert len(highlights) == 1
-        assert highlights[0]["start_offset"] == 6  # User B's highlight only
+        assert highlights[0]["anchor"]["start_offset"] == 6  # User B's highlight only
 
     def test_list_highlights_mine_only_false_returns_visible_shared(
         self, auth_client, direct_db: DirectSessionManager
@@ -1107,7 +1139,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1164,7 +1196,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1265,7 +1297,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1309,7 +1341,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1361,7 +1393,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1404,7 +1436,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1427,10 +1459,10 @@ class TestHighlightSharedRead:
         assert del_resp.status_code == 404
         assert del_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
 
-    def test_annotation_upsert_non_author_masked_404(
+    def test_shared_reader_can_link_own_note_to_readable_highlight(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Shared reader cannot PUT annotation on highlight they don't author -> masked 404."""
+        """Shared readers can create their own notes about readable highlights."""
         user_a = create_test_user_id()
         user_b = create_test_user_id()
 
@@ -1446,8 +1478,10 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
 
-        direct_db.register_cleanup("annotations", "highlight_id", None)
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("pages", "user_id", user_b)
+        direct_db.register_cleanup("note_blocks", "user_id", user_b)
+        direct_db.register_cleanup("object_links", "user_id", user_b)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("library_entries", "library_id", lib_id)
         direct_db.register_cleanup("memberships", "library_id", lib_id)
         direct_db.register_cleanup("libraries", "id", lib_id)
@@ -1462,14 +1496,14 @@ class TestHighlightSharedRead:
         )
         hl_id = resp.json()["data"]["id"]
 
-        # B tries to upsert annotation on A's highlight
-        put_resp = auth_client.put(
-            f"/highlights/{hl_id}/annotation",
-            json={"body": "Not my highlight"},
-            headers=auth_headers(user_b),
+        note_resp = create_linked_highlight_note(
+            auth_client,
+            user_b,
+            hl_id,
+            "My note about a shared highlight",
         )
-        assert put_resp.status_code == 404
-        assert put_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+        assert note_resp.status_code == 201
+        assert note_resp.json()["data"]["bodyText"] == "My note about a shared highlight"
 
     def test_highlight_out_includes_author_fields(
         self, auth_client, direct_db: DirectSessionManager
@@ -1480,7 +1514,7 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1536,15 +1570,14 @@ class TestHighlightSharedRead:
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         add_media_to_library(auth_client, user_id, media_id)
 
-        # Insert highlights with forced identical start_offset and created_at
-        # but different end_offset to satisfy uniqueness constraint
+        # Insert canonical fragment highlights with tied start_offset and created_at.
         with direct_db.session() as session:
             ids = sorted([uuid4() for _ in range(3)])
             for i, h_id in enumerate(ids):
@@ -1552,13 +1585,32 @@ class TestHighlightSharedRead:
                 session.execute(
                     text("""
                         INSERT INTO highlights
-                            (id, user_id, fragment_id, start_offset, end_offset,
+                            (id, user_id, anchor_kind, anchor_media_id,
                              color, exact, prefix, suffix, created_at)
                         VALUES
-                            (:id, :uid, :fid, 0, :end_offset, 'yellow', 'Hello', '', ' World',
+                            (:id, :uid,
+                             'fragment_offsets', :media_id,
+                             'yellow', 'Hello', '', ' World',
                              '2026-01-01 00:00:00+00')
                     """),
-                    {"id": h_id, "uid": user_id, "fid": fragment_id, "end_offset": end},
+                    {
+                        "id": h_id,
+                        "uid": user_id,
+                        "media_id": media_id,
+                    },
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO highlight_fragment_anchors
+                            (highlight_id, fragment_id, start_offset, end_offset)
+                        VALUES
+                            (:highlight_id, :fragment_id, 0, :end_offset)
+                    """),
+                    {
+                        "highlight_id": h_id,
+                        "fragment_id": fragment_id,
+                        "end_offset": end,
+                    },
                 )
             session.commit()
 
@@ -1608,7 +1660,7 @@ class TestEpubHighlightCompatibility:
             media_id, frag_ids = self._setup_epub(session, user_id)
 
         for fid in frag_ids:
-            direct_db.register_cleanup("highlights", "fragment_id", fid)
+            register_fragment_highlight_cleanup(direct_db, fid)
             direct_db.register_cleanup("fragments", "id", fid)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1621,7 +1673,7 @@ class TestEpubHighlightCompatibility:
         )
         assert resp.status_code == 201
         hl_data = resp.json()["data"]
-        assert hl_data["fragment_id"] == str(ch1_frag)
+        assert hl_data["anchor"]["fragment_id"] == str(ch1_frag)
         assert hl_data["exact"] == "SENTINEL_ONE"
 
         for other_idx in [0, 2]:
@@ -1646,7 +1698,7 @@ class TestEpubHighlightCompatibility:
             media_id, frag_ids = self._setup_epub(session, user_id)
 
         for fid in frag_ids:
-            direct_db.register_cleanup("highlights", "fragment_id", fid)
+            register_fragment_highlight_cleanup(direct_db, fid)
             direct_db.register_cleanup("fragments", "id", fid)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1664,8 +1716,8 @@ class TestEpubHighlightCompatibility:
         assert resp.status_code == 201
         data = resp.json()["data"]
         assert data["exact"] == "café"
-        assert data["start_offset"] == cafe_start
-        assert data["end_offset"] == cafe_end
+        assert data["anchor"]["start_offset"] == cafe_start
+        assert data["anchor"]["end_offset"] == cafe_end
         assert len(data["prefix"]) <= 64
         assert len(data["suffix"]) <= 64
         # prefix/suffix must come from EPUB_CH1_TEXT, not other chapters
@@ -1685,7 +1737,7 @@ class TestEpubHighlightCompatibility:
             media_id, frag_ids = self._setup_epub(session, user_id)
 
         for fid in frag_ids:
-            direct_db.register_cleanup("highlights", "fragment_id", fid)
+            register_fragment_highlight_cleanup(direct_db, fid)
             direct_db.register_cleanup("fragments", "id", fid)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1714,18 +1766,18 @@ class TestEpubHighlightCompatibility:
 
 
 class TestS6PR01FragmentHighlightRouteSmoke:
-    """Confirms fragment-highlight route behavior is unchanged after S6 pr-01 schema."""
+    """Confirms fragment-highlight route exposes the canonical typed-anchor contract."""
 
     def test_pr01_fragment_highlight_route_smoke_unchanged(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Create, fetch, list a fragment highlight — same contract as pre-pr-01."""
+        """Create, fetch, list a fragment highlight with the canonical anchor payload."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1741,20 +1793,26 @@ class TestS6PR01FragmentHighlightRouteSmoke:
         assert resp.status_code == 201
         data = resp.json()["data"]
         h_id = data["id"]
-        assert data["fragment_id"] == str(fragment_id)
-        assert data["start_offset"] == 0
-        assert data["end_offset"] == 5
+        assert data["anchor"]["type"] == "fragment_offsets"
+        assert data["anchor"]["media_id"] == str(media_id)
+        assert data["anchor"]["fragment_id"] == str(fragment_id)
+        assert data["anchor"]["start_offset"] == 0
+        assert data["anchor"]["end_offset"] == 5
         assert data["color"] == "yellow"
         assert data["exact"] == "Hello"
 
-        # Typed-anchor fields must NOT leak into response
+        # Internal storage fields must NOT leak into response.
         assert "anchor_kind" not in data
         assert "anchor_media_id" not in data
+        assert "fragment_id" not in data
+        assert "start_offset" not in data
+        assert "end_offset" not in data
 
         # Get
         resp2 = auth_client.get(f"/highlights/{h_id}", headers=auth_headers(user_id))
         assert resp2.status_code == 200
         assert resp2.json()["data"]["id"] == h_id
+        assert resp2.json()["data"]["anchor"]["fragment_id"] == str(fragment_id)
 
         # List
         resp3 = auth_client.get(
@@ -1762,7 +1820,7 @@ class TestS6PR01FragmentHighlightRouteSmoke:
             headers=auth_headers(user_id),
         )
         assert resp3.status_code == 200
-        assert len(resp3.json()["data"]) == 1
+        assert len(resp3.json()["data"]["highlights"]) == 1
 
 
 # =============================================================================
@@ -1770,21 +1828,19 @@ class TestS6PR01FragmentHighlightRouteSmoke:
 # =============================================================================
 
 
-class TestS6PR02DualWrite:
-    """PR-02: Verify dual-write populates logical fields and subtype row."""
+class TestS6PR02CanonicalStorage:
+    """PR-02: Fragment highlights persist through the canonical anchor rows only."""
 
-    def test_pr02_create_highlight_dual_writes_logical_and_subtype(
+    def test_pr02_create_highlight_persists_canonical_anchor_without_legacy_offsets(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """POST /fragments/{fid}/highlights populates anchor_kind, anchor_media_id,
-        and creates a highlight_fragment_anchors subtype row."""
+        """POST /fragments/{fid}/highlights stores anchor metadata on canonical rows only."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1801,7 +1857,13 @@ class TestS6PR02DualWrite:
 
         with direct_db.session() as session:
             row = session.execute(
-                text("SELECT anchor_kind, anchor_media_id FROM highlights WHERE id = :id"),
+                text(
+                    """
+                    SELECT anchor_kind, anchor_media_id
+                    FROM highlights
+                    WHERE id = :id
+                    """
+                ),
                 {"id": h_id},
             ).fetchone()
             assert row is not None
@@ -1820,17 +1882,16 @@ class TestS6PR02DualWrite:
             assert fa_row[1] == 0
             assert fa_row[2] == 5
 
-    def test_pr02_update_highlight_offsets_syncs_subtype_row(
+    def test_pr02_update_highlight_offsets_syncs_canonical_rows_only(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """PATCH offsets updates both legacy bridge and fragment_anchor subtype."""
+        """PATCH offsets updates the canonical fragment anchor without legacy residue."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1846,12 +1907,28 @@ class TestS6PR02DualWrite:
 
         update_resp = auth_client.patch(
             f"/highlights/{h_id}",
-            json={"start_offset": 6, "end_offset": 11},
+            json={
+                "anchor": {
+                    "type": "fragment_offsets",
+                    "start_offset": 6,
+                    "end_offset": 11,
+                }
+            },
             headers=auth_headers(user_id),
         )
         assert update_resp.status_code == 200
 
         with direct_db.session() as session:
+            core_row = session.execute(
+                text(
+                    """
+                    SELECT anchor_kind, anchor_media_id
+                    FROM highlights
+                    WHERE id = :id
+                    """
+                ),
+                {"id": h_id},
+            ).fetchone()
             fa_row = session.execute(
                 text(
                     "SELECT start_offset, end_offset "
@@ -1859,25 +1936,27 @@ class TestS6PR02DualWrite:
                 ),
                 {"id": h_id},
             ).fetchone()
+            assert core_row is not None
+            assert core_row[0] == "fragment_offsets"
+            assert str(core_row[1]) == str(media_id)
             assert fa_row is not None
             assert fa_row[0] == 6
             assert fa_row[1] == 11
 
 
 class TestS6PR02ResponseContract:
-    """PR-02: Public response must not expose internal typed-anchor fields."""
+    """PR-02: Public response uses only the canonical typed anchor contract."""
 
-    def test_pr02_response_excludes_typed_anchor_fields(
+    def test_pr02_response_uses_canonical_anchor_shape(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Create, get, list, update — anchor_kind/anchor_media_id never in response."""
+        """Create, get, list, update — public responses expose `anchor`, not flat residue."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
             media_id, fragment_id = create_media_and_fragment(session)
 
-        direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1905,65 +1984,16 @@ class TestS6PR02ResponseContract:
             data = endpoint_resp.json().get("data", {})
             if isinstance(data, dict) and "highlights" in data:
                 for h in data["highlights"]:
+                    assert h["anchor"]["type"] == "fragment_offsets"
                     assert "anchor_kind" not in h
                     assert "anchor_media_id" not in h
+                    assert "fragment_id" not in h
+                    assert "start_offset" not in h
+                    assert "end_offset" not in h
             elif isinstance(data, dict):
+                assert data["anchor"]["type"] == "fragment_offsets"
                 assert "anchor_kind" not in data
                 assert "anchor_media_id" not in data
-
-
-class TestS6PR02DormantWindowRepair:
-    """PR-02: Dormant-window highlights are repaired on author-write paths."""
-
-    def test_pr02_dormant_highlight_repaired_on_update(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """PATCH on a dormant-window highlight repairs it before applying update."""
-        user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id, fragment_id = create_media_and_fragment(session)
-
-        add_media_to_library(auth_client, user_id, media_id)
-
-        # Insert dormant-window highlight directly (pr-01 shape)
-        h_id = uuid4()
-        with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO highlights (id, user_id, fragment_id, start_offset, end_offset,
-                                            color, exact, prefix, suffix)
-                    VALUES (:id, :uid, :fid, 0, 5, 'yellow', 'Hello', '', ' World')
-                """),
-                {"id": h_id, "uid": user_id, "fid": fragment_id},
-            )
-            session.commit()
-
-        direct_db.register_cleanup("highlight_fragment_anchors", "highlight_id", h_id)
-        direct_db.register_cleanup("highlights", "id", h_id)
-        direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        # Patch color — should trigger dormant repair
-        update_resp = auth_client.patch(
-            f"/highlights/{h_id}",
-            json={"color": "green"},
-            headers=auth_headers(user_id),
-        )
-        assert update_resp.status_code == 200
-
-        # Verify repair occurred
-        with direct_db.session() as session:
-            row = session.execute(
-                text("SELECT anchor_kind, anchor_media_id FROM highlights WHERE id = :id"),
-                {"id": h_id},
-            ).fetchone()
-            assert row[0] == "fragment_offsets"
-            assert str(row[1]) == str(media_id)
-
-            fa_row = session.execute(
-                text("SELECT 1 FROM highlight_fragment_anchors WHERE highlight_id = :id"),
-                {"id": h_id},
-            ).fetchone()
-            assert fa_row is not None
+                assert "fragment_id" not in data
+                assert "start_offset" not in data
+                assert "end_offset" not in data

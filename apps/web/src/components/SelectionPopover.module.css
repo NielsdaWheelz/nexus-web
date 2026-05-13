@@ -10,12 +10,12 @@
   align-items: stretch;
   gap: var(--space-2);
   padding: var(--space-2);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  z-index: 1000;
-  animation: popoverFadeIn 150ms ease-out;
+  background: var(--surface-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+  z-index: var(--z-modal);
+  animation: popoverFadeIn var(--duration-fast) var(--ease-snap);
 }
 
 .mobilePopover {
@@ -23,8 +23,8 @@
   align-items: center;
   gap: var(--space-1);
   padding: var(--space-1);
-  border-radius: 999px;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.34);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-3);
   width: max-content;
   min-width: 0;
   max-width: min(
@@ -48,89 +48,40 @@
 }
 
 .colorPicker {
-  display: flex;
-  gap: var(--space-1);
-  justify-content: center;
+  --highlight-color-picker-gap: var(--space-1);
+  --highlight-color-picker-button-size: var(--size-xs);
 }
 
 .mobilePopover .colorPicker {
-  gap: 6px;
+  --highlight-color-picker-gap: var(--space-2);
+  --highlight-color-picker-button-size: var(--size-sm);
 }
 
-.chatButton {
+.askButton {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: var(--size-xs);
+  height: var(--size-xs);
   padding: 0;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-bg-secondary);
-  color: var(--color-text);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--ink);
   cursor: pointer;
 }
 
-.mobilePopover .chatButton {
-  width: 28px;
-  height: 28px;
+.mobilePopover .askButton {
+  width: 42px;
+  height: var(--size-sm);
   flex: 0 0 auto;
 }
 
-.chatButton:hover:not(:disabled) {
-  background: var(--color-bg);
+.askButton:hover:not(:disabled) {
+  background: var(--surface-canvas);
 }
 
-.chatButton:disabled {
+.askButton:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-}
-
-.colorButton {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  cursor: pointer;
-  transition: transform 100ms ease, border-color 100ms ease;
-}
-
-.mobilePopover .colorButton {
-  width: 28px;
-  height: 28px;
-}
-
-.colorButton:hover:not(:disabled) {
-  transform: scale(1.1);
-}
-
-.colorButton.selected {
-  border-color: var(--color-text);
-  box-shadow: 0 0 0 2px var(--color-surface);
-}
-
-.colorButton:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Color-specific backgrounds */
-.color-yellow {
-  background: var(--highlight-yellow);
-}
-
-.color-green {
-  background: var(--highlight-green);
-}
-
-.color-blue {
-  background: var(--highlight-blue);
-}
-
-.color-pink {
-  background: var(--highlight-pink);
-}
-
-.color-purple {
-  background: var(--highlight-purple);
 }

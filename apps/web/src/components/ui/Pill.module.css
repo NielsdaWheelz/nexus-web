@@ -1,0 +1,72 @@
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: 1px solid transparent;
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wider);
+  white-space: nowrap;
+}
+
+.shapePill {
+  border-radius: var(--radius-full);
+  padding: 2px var(--space-2);
+}
+
+.shapeSquare {
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+}
+
+.sizeSm {
+  font-size: var(--text-xs);
+}
+
+.sizeMd {
+  font-size: var(--text-sm);
+}
+
+.uppercase {
+  text-transform: uppercase;
+}
+
+.toneNeutral {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink-muted);
+}
+
+.toneInfo {
+  background: color-mix(in srgb, var(--info) 18%, transparent);
+  color: var(--info);
+  border-color: color-mix(in srgb, var(--info) 30%, transparent);
+}
+
+.toneSuccess {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 30%, transparent);
+}
+
+.toneWarning {
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+}
+
+.toneDanger {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+.toneAccent {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.toneSubtle {
+  background: var(--surface-2);
+  color: var(--ink-muted);
+  border-color: var(--edge-subtle);
+}

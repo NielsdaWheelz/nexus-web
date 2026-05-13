@@ -1,0 +1,65 @@
+.textarea {
+  font-family: inherit;
+  color: var(--ink);
+  width: 100%;
+  resize: vertical;
+  line-height: var(--leading-normal);
+  transition: border-color var(--duration-fast) var(--ease-glide),
+    box-shadow var(--duration-fast) var(--ease-glide);
+}
+
+.textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.textarea::placeholder {
+  color: var(--ink-faint);
+}
+
+.autoGrow {
+  resize: none;
+  overflow: hidden;
+}
+
+/* Sizes (match Button font-size scale) */
+.sm {
+  font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+.md {
+  font-size: var(--text-base);
+  padding: var(--space-2) var(--space-3);
+}
+
+.lg {
+  font-size: var(--text-base);
+  padding: var(--space-3) var(--space-3);
+}
+
+/* Default variant */
+.default {
+  background: var(--surface-sunken);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+}
+
+.default:focus,
+.default:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* Bare variant — parent owns visual surface */
+.bare {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.bare:focus,
+.bare:focus-visible {
+  outline: none;
+}

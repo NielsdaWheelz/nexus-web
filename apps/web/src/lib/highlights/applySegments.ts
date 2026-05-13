@@ -161,7 +161,9 @@ function createHighlightSpan(
   // Space-delimited for efficient ~= selector (PR-10)
   span.setAttribute("data-active-highlight-ids", segment.activeIds.join(" "));
   span.setAttribute("data-highlight-top", segment.topmostId);
-  span.className = COLOR_CLASSES[segment.topmostColor];
+  span.className = segment.activeIds.some((id) => id.startsWith("evidence-"))
+    ? `${COLOR_CLASSES[segment.topmostColor]} hl-evidence`
+    : COLOR_CLASSES[segment.topmostColor];
   return span;
 }
 

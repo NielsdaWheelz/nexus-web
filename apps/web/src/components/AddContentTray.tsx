@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  CalendarDays,
   CircleCheck,
   CircleX,
   FileText,
   Link,
+  Plus,
   RotateCcw,
   Upload,
   X,
@@ -13,12 +15,17 @@ import {
 import {
   OPEN_ADD_CONTENT_EVENT,
   type AddContentMode,
-} from "@/components/CommandPalette";
+} from "@/components/addContentEvents";
 import LibraryTargetPicker, {
   type LibraryTargetPickerItem,
 } from "@/components/LibraryTargetPicker";
-import StateMessage from "@/components/ui/StateMessage";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
+import { apiFetch, apiPostFormData } from "@/lib/api/client";
+import { createNotePage, quickCaptureDailyNote } from "@/lib/notes/api";
 import {
   addMediaFromUrl,
   getFileUploadError,
@@ -28,6 +35,9 @@ import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { getFocusableElements } from "@/lib/ui/getFocusableElements";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import Button from "@/components/ui/Button";
+import Textarea from "@/components/ui/Textarea";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import styles from "./AddContentTray.module.css";
 
 type QueueItem = {
@@ -106,12 +116,15 @@ export default function AddContentTray() {
   const [libraries, setLibraries] = useState<LibraryTargetPickerItem[]>([]);
   const [librariesLoading, setLibrariesLoading] = useState(false);
   const [librariesLoaded, setLibrariesLoaded] = useState(false);
-  const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [libraryError, setLibraryError] = useState<FeedbackContent | null>(null);
   const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importBusy, setImportBusy] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
+  const [importError, setImportError] = useState<FeedbackContent | null>(null);
   const [importResult, setImportResult] = useState<PodcastOpmlImportResult | null>(null);
+  const [noteBusy, setNoteBusy] = useState(false);
+  const [noteFeedback, setNoteFeedback] = useState<FeedbackContent | null>(null);
+  const [quickNoteText, setQuickNoteText] = useState("");
   const nextIdRef = useRef(1);
   const activeIdsRef = useRef<Set<number>>(new Set());
   const dragDepthRef = useRef(0);
@@ -142,11 +155,7 @@ export default function AddContentTray() {
       );
       setLibrariesLoaded(true);
     } catch (error) {
-      if (isApiError(error)) {
-        setLibraryError(error.message);
-      } else {
-        setLibraryError("Failed to load libraries");
-      }
+      setLibraryError(toFeedback(error, { fallback: "Failed to load libraries" }));
       setLibraries([]);
     } finally {
       setLibrariesLoading(false);
@@ -275,7 +284,10 @@ export default function AddContentTray() {
 
   const handleImportOpml = useCallback(async () => {
     if (!importFile) {
-      setImportError("Select an OPML/XML file to import.");
+      setImportError({
+        severity: "error",
+        title: "Select an OPML/XML file to import.",
+      });
       return;
     }
     setImportBusy(true);
@@ -284,26 +296,16 @@ export default function AddContentTray() {
     try {
       const formData = new FormData();
       formData.append("file", importFile);
-      const response = await fetch("/api/podcasts/import/opml", {
-        method: "POST",
-        body: formData,
-      });
-      const responseBody = (await response.json().catch(() => null)) as
-        | { data?: PodcastOpmlImportResult; error?: { message?: string } }
-        | null;
-      if (!response.ok) {
-        throw new Error(responseBody?.error?.message || "Failed to import OPML file");
-      }
+      const responseBody = await apiPostFormData<{ data?: PodcastOpmlImportResult }>(
+        "/api/podcasts/import/opml",
+        formData
+      );
       if (!responseBody?.data) {
         throw new Error("Import response missing summary payload");
       }
       setImportResult(responseBody.data);
     } catch (error) {
-      if (error instanceof Error && error.message) {
-        setImportError(error.message);
-      } else {
-        setImportError("Failed to import OPML file");
-      }
+      setImportError(toFeedback(error, { fallback: "Failed to import OPML file" }));
     } finally {
       setImportBusy(false);
     }
@@ -325,11 +327,15 @@ export default function AddContentTray() {
         event instanceof CustomEvent
           ? ((event as CustomEvent<{ mode?: AddContentMode }>).detail?.mode ?? "content")
           : "content";
-      setMode(requestedMode === "opml" ? "opml" : "content");
+      setMode(requestedMode === "opml" || requestedMode === "quick-note" ? requestedMode : "content");
       if (requestedMode === "opml") {
         setImportError(null);
         setImportResult(null);
         setImportFile(null);
+      }
+      if (requestedMode === "quick-note") {
+        setNoteFeedback(null);
+        setQuickNoteText("");
       }
       setOpen(true);
     };
@@ -487,9 +493,55 @@ export default function AddContentTray() {
     setQueue((current) => current.filter((row) => row.id !== id));
   }, []);
 
+  const createPage = useCallback(async () => {
+    setNoteBusy(true);
+    setNoteFeedback(null);
+    try {
+      const page = await createNotePage({ title: "Untitled" });
+      setOpen(false);
+      requestOpenInAppPane(`/pages/${page.id}`, { titleHint: page.title });
+    } catch (error: unknown) {
+      setNoteFeedback(toFeedback(error, { fallback: "Page could not be created." }));
+    } finally {
+      setNoteBusy(false);
+    }
+  }, []);
+
+  const openToday = useCallback(() => {
+    setOpen(false);
+    requestOpenInAppPane("/daily", { titleHint: "Today" });
+  }, []);
+
+  const quickCapture = useCallback(async () => {
+    const bodyMarkdown = quickNoteText.trim();
+    if (!bodyMarkdown) {
+      setNoteFeedback({
+        severity: "error",
+        title: "Write a quick note first.",
+      });
+      return;
+    }
+    setNoteBusy(true);
+    setNoteFeedback(null);
+    try {
+      await quickCaptureDailyNote({ bodyMarkdown });
+      setQuickNoteText("");
+      setNoteFeedback({
+        severity: "success",
+        title: "Added to today.",
+      });
+    } catch (error: unknown) {
+      setNoteFeedback(toFeedback(error, { fallback: "Quick note could not be added." }));
+    } finally {
+      setNoteBusy(false);
+    }
+  }, [quickNoteText]);
+
   const modeDescription =
     mode === "opml"
       ? "Import podcast subscriptions from an OPML file."
+      : mode === "quick-note"
+        ? "Capture a note on today's page."
       : "Upload files or paste links.";
 
   if (!open) {
@@ -517,48 +569,74 @@ export default function AddContentTray() {
             <h2>Add content</h2>
             <p>{modeDescription}</p>
           </div>
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="md"
+            iconOnly
             className={styles.iconButton}
             onClick={() => setOpen(false)}
             aria-label="Close"
           >
             <X size={16} aria-hidden="true" />
-          </button>
+          </Button>
         </header>
 
-        <div className={styles.modeTabs} role="tablist" aria-label="Add content mode">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === "content"}
-            className={mode === "content" ? styles.modeTabActive : styles.modeTab}
-            onClick={() => setMode("content")}
-          >
-            Content
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === "opml"}
-            className={mode === "opml" ? styles.modeTabActive : styles.modeTab}
-            onClick={() => setMode("opml")}
-          >
-            OPML
-          </button>
-        </div>
+        <Tabs
+          variant="tabs"
+          value={mode}
+          onValueChange={(next) => setMode(next as AddContentMode)}
+          className={styles.modeTabs}
+        >
+          <TabsList aria-label="Add content mode">
+            <TabsTrigger value="content">Content</TabsTrigger>
+            <TabsTrigger value="quick-note">Quick note</TabsTrigger>
+            <TabsTrigger value="opml">OPML</TabsTrigger>
+          </TabsList>
+        </Tabs>
 
         <div className={styles.body}>
           {mode === "content" ? (
             <>
+              <div className={styles.knowledgeActions} aria-label="Notes actions">
+                <Button
+                  variant="secondary"
+                  size="md"
+                  className={styles.knowledgeAction}
+                  onClick={() => void createPage()}
+                  disabled={noteBusy}
+                  leadingIcon={<Plus size={16} aria-hidden="true" />}
+                >
+                  New page
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="md"
+                  className={styles.knowledgeAction}
+                  onClick={openToday}
+                  leadingIcon={<CalendarDays size={16} aria-hidden="true" />}
+                >
+                  Today
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="md"
+                  className={styles.knowledgeAction}
+                  onClick={() => setMode("quick-note")}
+                  leadingIcon={<FileText size={16} aria-hidden="true" />}
+                >
+                  Quick note to today
+                </Button>
+              </div>
+              {noteFeedback ? <FeedbackNotice feedback={noteFeedback} /> : null}
+
               <div className={styles.libraryField}>
                 <label className={styles.libraryLabel}>Library</label>
                 <LibraryTargetPicker
-                  label="Choose library"
+                  label="My Library only"
                   libraries={libraries}
                   loading={librariesLoading}
                   allowNoLibrary
-                  noLibraryLabel="No library"
+                  noLibraryLabel="My Library only"
                   selectedLibraryId={selectedLibraryId}
                   onOpen={() => {
                     void loadLibraries();
@@ -567,19 +645,22 @@ export default function AddContentTray() {
                   emptyMessage="No non-default libraries available."
                 />
                 <small className={styles.libraryHelp}>
-                  {libraryError ?? "Pick one library to target new uploads, or leave it empty."}
+                  {libraryError?.title ??
+                    "Pick one non-default library to add there too, or use My Library only."}
                 </small>
               </div>
 
-              <button
-                type="button"
+              <Button
+                variant="secondary"
                 className={styles.dropzone}
                 onClick={() => fileInputRef.current?.click()}
               >
-                <Upload size={22} aria-hidden="true" />
-                <span>Upload file</span>
-                <small>PDF up to 100 MB, EPUB up to 50 MB. Select or drop many at once.</small>
-              </button>
+                <span className={styles.dropzoneInner}>
+                  <Upload size={22} aria-hidden="true" />
+                  <span>Upload file</span>
+                  <small>PDF up to 100 MB, EPUB up to 50 MB. Select or drop many at once.</small>
+                </span>
+              </Button>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -595,8 +676,10 @@ export default function AddContentTray() {
 
               <form className={styles.urlForm} onSubmit={submitUrls}>
                 <label htmlFor="ingestion-url-input">URLs</label>
-                <textarea
+                <Textarea
                   id="ingestion-url-input"
+                  size="sm"
+                  className={styles.urlTextarea}
                   value={urlText}
                   onChange={(event) => {
                     setUrlText(event.target.value);
@@ -610,9 +693,9 @@ export default function AddContentTray() {
                     {urlError ??
                       "One per line, or paste a block of text containing PDF, EPUB, article, or video links."}
                   </span>
-                  <button type="submit" disabled={!urlText.trim()}>
+                  <Button type="submit" variant="primary" size="md" disabled={!urlText.trim()}>
                     Add
-                  </button>
+                  </Button>
                 </div>
               </form>
 
@@ -632,7 +715,7 @@ export default function AddContentTray() {
                         <div className={styles.itemText}>
                           <span title={item.label}>{item.label}</span>
                           <small>
-                            {item.libraryName ? `Library: ${item.libraryName} · ` : "No library · "}
+                            {item.libraryName ? `Library: ${item.libraryName} · ` : "My Library · "}
                             {item.status === "queued" ? "Queued" : null}
                             {item.status === "working"
                               ? item.source === "file"
@@ -649,18 +732,24 @@ export default function AddContentTray() {
                         </div>
                         <div className={styles.itemActions}>
                           {item.status === "success" && href ? (
-                            <button type="button" onClick={() => requestOpenInAppPane(href)}>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => requestOpenInAppPane(href)}
+                            >
                               Open
-                            </button>
+                            </Button>
                           ) : null}
                           {item.status === "error" ? (
-                            <button
-                              type="button"
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              iconOnly
                               onClick={() => retryItem(item)}
                               aria-label={`Retry ${item.label}`}
                             >
                               <RotateCcw size={14} aria-hidden="true" />
-                            </button>
+                            </Button>
                           ) : null}
                           {item.status === "success" ? (
                             <CircleCheck
@@ -677,13 +766,15 @@ export default function AddContentTray() {
                             />
                           ) : null}
                           {item.status === "queued" ? (
-                            <button
-                              type="button"
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              iconOnly
                               onClick={() => removeItem(item.id)}
                               aria-label={`Remove ${item.label}`}
                             >
                               <X size={14} aria-hidden="true" />
-                            </button>
+                            </Button>
                           ) : null}
                         </div>
                       </div>
@@ -691,6 +782,44 @@ export default function AddContentTray() {
                   })}
                 </div>
               ) : null}
+            </>
+          ) : mode === "quick-note" ? (
+            <>
+              <form
+                className={styles.quickNoteForm}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void quickCapture();
+                }}
+              >
+                <label htmlFor="quick-note-input">Quick note to today</label>
+                <Textarea
+                  id="quick-note-input"
+                  size="sm"
+                  className={styles.quickNoteTextarea}
+                  value={quickNoteText}
+                  onChange={(event) => {
+                    setQuickNoteText(event.currentTarget.value);
+                    setNoteFeedback(null);
+                  }}
+                  rows={5}
+                  placeholder="Capture a thought..."
+                />
+                <div className={styles.quickNoteActions}>
+                  <Button variant="secondary" size="md" onClick={openToday}>
+                    Open today
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="md"
+                    disabled={noteBusy || !quickNoteText.trim()}
+                  >
+                    {noteBusy ? "Adding..." : "Add note"}
+                  </Button>
+                </div>
+              </form>
+              {noteFeedback ? <FeedbackNotice feedback={noteFeedback} /> : null}
             </>
           ) : (
             <>
@@ -712,13 +841,13 @@ export default function AddContentTray() {
                       setImportResult(null);
                     }}
                   />
-                  <button
-                    type="button"
-                    className={styles.opmlBrowseButton}
+                  <Button
+                    variant="secondary"
+                    size="md"
                     onClick={() => opmlInputRef.current?.click()}
                   >
                     Choose file
-                  </button>
+                  </Button>
                   <span className={styles.opmlInputLabel}>
                     {importFile?.name ?? "No file selected"}
                   </span>
@@ -729,12 +858,17 @@ export default function AddContentTray() {
               </div>
 
               <div className={styles.importActions}>
-                <button type="button" onClick={handleImportOpml} disabled={importBusy}>
+                <Button
+                  variant="primary"
+                  size="md"
+                  onClick={handleImportOpml}
+                  disabled={importBusy}
+                >
                   {importBusy ? "Importing..." : "Import OPML"}
-                </button>
+                </Button>
               </div>
 
-              {importError ? <StateMessage variant="error">{importError}</StateMessage> : null}
+              {importError ? <FeedbackNotice feedback={importError} /> : null}
 
               {importResult ? (
                 <div className={styles.importSummary}>

@@ -9,7 +9,6 @@ Note: Test-only verifiers are in tests/support/test_verifier.py
 
 import logging
 import threading
-import time
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -29,8 +28,10 @@ from nexus.errors import ApiError, ApiErrorCode
 
 logger = logging.getLogger(__name__)
 
-# Clock skew allowance in seconds
+# Clock skew allowance in seconds.
 CLOCK_SKEW_SECONDS = 60
+DEFAULT_JWKS_CACHE_TTL_SECONDS = 3600
+DEFAULT_JWKS_FETCH_TIMEOUT_SECONDS = 5.0
 
 
 class TokenVerifier(Protocol):
@@ -72,7 +73,8 @@ class SupabaseJwksVerifier:
         jwks_url: str,
         issuer: str,
         audiences: list[str],
-        cache_ttl: int = 3600,  # 1 hour
+        cache_ttl: int = DEFAULT_JWKS_CACHE_TTL_SECONDS,
+        fetch_timeout: float = DEFAULT_JWKS_FETCH_TIMEOUT_SECONDS,
     ):
         """Initialize the Supabase JWKS verifier.
 
@@ -81,16 +83,17 @@ class SupabaseJwksVerifier:
             issuer: Expected issuer (trailing slash will be stripped).
             audiences: List of allowed audience values.
             cache_ttl: How long to cache JWKS keys in seconds.
+            fetch_timeout: Maximum seconds to wait for a JWKS fetch.
         """
         self.jwks_url = jwks_url
         self.issuer = issuer.rstrip("/")
         self.audiences = audiences
         self.cache_ttl = cache_ttl
+        self.fetch_timeout = fetch_timeout
 
-        # Thread-safe JWKS client with caching
+        # Thread-safe JWKS client with TTL-bounded JWK-set caching.
         self._jwks_client: PyJWKClient | None = None
         self._jwks_lock = threading.Lock()
-        self._last_refresh: float = 0
 
     def _get_jwks_client(self) -> PyJWKClient:
         """Get or create the JWKS client with lazy initialization."""
@@ -98,21 +101,12 @@ class SupabaseJwksVerifier:
             if self._jwks_client is None:
                 self._jwks_client = PyJWKClient(
                     self.jwks_url,
-                    cache_keys=True,
+                    cache_keys=False,
+                    cache_jwk_set=True,
                     lifespan=self.cache_ttl,
+                    timeout=self.fetch_timeout,
                 )
             return self._jwks_client
-
-    def _refresh_jwks(self) -> None:
-        """Force refresh of JWKS keys (called on kid miss)."""
-        with self._jwks_lock:
-            # Create a fresh client to force cache refresh
-            self._jwks_client = PyJWKClient(
-                self.jwks_url,
-                cache_keys=True,
-                lifespan=self.cache_ttl,
-            )
-            self._last_refresh = time.time()
 
     def verify(self, token: str) -> dict[str, Any]:
         """Verify a Supabase JWT token.
@@ -195,7 +189,7 @@ class SupabaseJwksVerifier:
         return payload
 
     def _get_signing_key(self, token: str) -> Any:
-        """Get the signing key for the token, with retry on kid miss.
+        """Get the signing key for the token.
 
         Args:
             token: The JWT token string.
@@ -205,7 +199,7 @@ class SupabaseJwksVerifier:
 
         Raises:
             PyJWKClientError: If JWKS fetch fails.
-            ApiError(E_UNAUTHENTICATED): If token is malformed or kid not found after refresh.
+            ApiError(E_UNAUTHENTICATED): If token is malformed or kid not found.
         """
         client = self._get_jwks_client()
 
@@ -214,20 +208,10 @@ class SupabaseJwksVerifier:
         except DecodeError as e:
             raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Invalid token format") from e
         except PyJWKClientError as e:
-            # Check if this is a "kid not found" error
             if "Unable to find" in str(e) or "kid" in str(e).lower():
-                # Refresh JWKS and retry once
-                logger.info("Refreshing JWKS due to kid miss")
-                self._refresh_jwks()
-                client = self._get_jwks_client()
-
-                try:
-                    return client.get_signing_key_from_jwt(token)
-                except PyJWKClientError as retry_e:
-                    logger.warning("auth_failure", extra={"reason": "kid_not_found"})
-                    raise ApiError(
-                        ApiErrorCode.E_UNAUTHENTICATED,
-                        "Invalid token: signing key not found",
-                    ) from retry_e
-            # Re-raise for other errors (network issues, etc.)
+                logger.warning("auth_failure", extra={"reason": "kid_not_found"})
+                raise ApiError(
+                    ApiErrorCode.E_UNAUTHENTICATED,
+                    "Invalid token: signing key not found",
+                ) from e
             raise

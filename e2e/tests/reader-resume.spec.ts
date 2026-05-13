@@ -18,7 +18,8 @@ interface ReaderProfileResponse {
     font_size_px: number;
     line_height: number;
     column_width_ch: number;
-    focus_mode: boolean;
+    focus_mode: "off" | "distraction_free" | "paragraph" | "sentence";
+    hyphenation: "auto" | "off";
   };
 }
 
@@ -249,6 +250,7 @@ test.describe("reader settings + resume", () => {
     const targetFontSize = baseline.font_size_px === 24 ? 20 : 24;
 
     try {
+      await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(`/media/${mediaId}`);
       await expect(page.getByText("reader resume paragraph 001")).toBeVisible({
         timeout: 15_000,
@@ -260,9 +262,9 @@ test.describe("reader settings + resume", () => {
       await expect
         .poll(async () => {
           const locator = await fetchReaderState(page.request, mediaId);
-          return isWebReaderResumeState(locator) ? locator.locations.text_offset ?? null : null;
+          return isWebReaderResumeState(locator) ? locator.locations.text_offset ?? 0 : 0;
         })
-        .not.toBeNull();
+        .toBeGreaterThan(0);
 
       const savedLocator = await fetchReaderState(page.request, mediaId);
       expect(isWebReaderResumeState(savedLocator)).toBe(true);
@@ -278,6 +280,74 @@ test.describe("reader settings + resume", () => {
         timeout: 15_000,
       });
       await expect(anchor).toBeInViewport();
+      const chrome = page.locator('[data-testid="pane-shell-chrome"]').first();
+      await expect(chrome).toBeVisible();
+      const anchorBox = await anchor.boundingBox();
+      const chromeBox = await chrome.boundingBox();
+      expect(anchorBox).not.toBeNull();
+      expect(chromeBox).not.toBeNull();
+      if (anchorBox && chromeBox) {
+        expect(anchorBox.y).toBeGreaterThanOrEqual(chromeBox.y + chromeBox.height - 8);
+      }
+
+      const documentViewport = page.getByTestId("document-viewport");
+      await documentViewport.evaluate((element) => {
+        if (!(element instanceof HTMLElement)) {
+          return;
+        }
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await expect(page.locator('[data-pane-shell="true"]').first()).toHaveAttribute(
+        "data-mobile-chrome-hidden",
+        "false"
+      );
+      const chromeHeight = Math.ceil(
+        await chrome.evaluate((element) => element.getBoundingClientRect().height)
+      );
+      await documentViewport.evaluate((element, scrollTop) => {
+        if (!(element instanceof HTMLElement)) {
+          return;
+        }
+        element.scrollTop = scrollTop;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }, chromeHeight + 12);
+      await documentViewport.evaluate((element, scrollTop) => {
+        if (!(element instanceof HTMLElement)) {
+          return;
+        }
+        element.scrollTop = scrollTop;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }, chromeHeight + 40);
+      await expect(page.locator('[data-pane-shell="true"]').first()).toHaveAttribute(
+        "data-mobile-chrome-hidden",
+        "true"
+      );
+      await documentViewport.evaluate((element, scrollTop) => {
+        if (!(element instanceof HTMLElement)) {
+          return;
+        }
+        element.scrollTop = scrollTop;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }, chromeHeight + 34);
+      await documentViewport.evaluate((element, scrollTop) => {
+        if (!(element instanceof HTMLElement)) {
+          return;
+        }
+        element.scrollTop = scrollTop;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }, chromeHeight + 22);
+      await documentViewport.evaluate((element, scrollTop) => {
+        if (!(element instanceof HTMLElement)) {
+          return;
+        }
+        element.scrollTop = scrollTop;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }, chromeHeight + 18);
+      await expect(page.locator('[data-pane-shell="true"]').first()).toHaveAttribute(
+        "data-mobile-chrome-hidden",
+        "false"
+      );
     } finally {
       await patchReaderProfile(page.request, {
         font_size_px: baseline.font_size_px,

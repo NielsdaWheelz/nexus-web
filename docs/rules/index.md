@@ -20,6 +20,35 @@ This directory is the canonical home for repository documentation.
 - [concurrency.md](concurrency.md): locking, TOCTOU handling, and cross-system mutation ordering
 - [errors.md](errors.md): error and defect modeling
 
+## Rule Documents
+
+- [codebase.md](codebase.md)
+- [concurrency.md](concurrency.md)
+- [control-flow.md](control-flow.md)
+- [conventions.md](conventions.md)
+- [correctness.md](correctness.md)
+- [database.md](database.md)
+- [entrypoints.md](entrypoints.md)
+- [environment.md](environment.md)
+- [errors.md](errors.md)
+- [function-parameters.md](function-parameters.md)
+- [generated-text.md](generated-text.md)
+- [json-values.md](json-values.md)
+- [keep-alive.md](keep-alive.md)
+- [keys-and-identities.md](keys-and-identities.md)
+- [layers.md](layers.md)
+- [module-apis.md](module-apis.md)
+- [naming.md](naming.md)
+- [overrides.md](overrides.md)
+- [polling.md](polling.md)
+- [retries.md](retries.md)
+- [simplicity.md](simplicity.md)
+- [tech-stack.md](tech-stack.md)
+- [testing_standards.md](testing_standards.md)
+- [timing.md](timing.md)
+- [transport.md](transport.md)
+- [typescript.md](typescript.md)
+
 ## Placement Rules
 
 - Each rule lives in exactly one document.

@@ -1,11 +1,12 @@
 "use client";
 
 import {
+  parseWorkspaceHref,
   WORKSPACE_SCHEMA_VERSION,
   WORKSPACE_STATE_PARAM,
   WORKSPACE_VERSION_PARAM,
   WORKSPACE_DEFAULT_FALLBACK_HREF,
-  type WorkspaceStateV3,
+  type WorkspaceStateV4,
   sanitizeWorkspaceState,
 } from "@/lib/workspace/schema";
 
@@ -14,7 +15,7 @@ export const MAX_WORKSPACE_STATE_PARAM_LENGTH = 1800;
 type DecodeSource = "query" | "inferred" | "fallback";
 
 export interface WorkspaceDecodeResult {
-  state: WorkspaceStateV3;
+  state: WorkspaceStateV4;
   source: DecodeSource;
   errorCode:
     | null
@@ -86,7 +87,7 @@ export function buildWorkspaceFallbackHref(
   return `${pathname}${qs ? `?${qs}` : ""}${hash}`;
 }
 
-export function encodeWorkspaceStateParam(state: WorkspaceStateV3): WorkspaceEncodeResult {
+export function encodeWorkspaceStateParam(state: WorkspaceStateV4): WorkspaceEncodeResult {
   try {
     const payload = encodeUtf8(JSON.stringify(state));
     if (payload.length > MAX_WORKSPACE_STATE_PARAM_LENGTH) {
@@ -179,10 +180,12 @@ export function decodeWorkspaceStateFromUrl(
 }
 
 export function buildWorkspaceUrl(
-  state: WorkspaceStateV3,
+  state: WorkspaceStateV4,
   options?: { baseOrigin?: string }
 ): { href: string; errorCode: WorkspaceEncodeResult["errorCode"] } {
-  const activePane = state.panes.find((p) => p.id === state.activePaneId);
+  const activePane = state.panes.find(
+    (p) => p.id === state.activePaneId && p.visibility === "visible"
+  );
   const primaryHref = activePane?.href ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
   const baseOrigin =
     options?.baseOrigin ??
@@ -192,7 +195,15 @@ export function buildWorkspaceUrl(
       ? window.location.origin
       : "http://localhost");
 
-  const parsed = new URL(primaryHref, baseOrigin);
+  const parsed =
+    parseWorkspaceHref(primaryHref, { baseOrigin }) ??
+    parseWorkspaceHref(WORKSPACE_DEFAULT_FALLBACK_HREF, { baseOrigin });
+  if (!parsed) {
+    return {
+      href: WORKSPACE_DEFAULT_FALLBACK_HREF,
+      errorCode: "encode_failed",
+    };
+  }
   const params = stripWorkspaceParams(new URLSearchParams(parsed.search));
 
   // Single pane → omit workspace params from URL

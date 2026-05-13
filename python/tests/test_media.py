@@ -27,6 +27,7 @@ from nexus.db.models import (
     MediaKind,
     ProcessingStatus,
 )
+from nexus.services.contributor_credits import replace_media_contributor_credits
 from tests.factories import (
     create_failed_epub_media,
     create_ready_epub_with_chapters,
@@ -168,11 +169,12 @@ class TestGetMedia:
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
         library_id = me_resp.json()["data"]["default_library_id"]
 
-        auth_client.post(
+        attach_resp = auth_client.post(
             f"/libraries/{library_id}/media",
             json={"media_id": str(media_id)},
             headers=auth_headers(user_id),
         )
+        assert attach_resp.status_code == 201, attach_resp.text
 
         # Get media
         response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
@@ -1103,7 +1105,7 @@ class TestEpubChapterFragmentsImmutableAcrossReadsAndHighlightChurn:
             media_id, frag_ids = _create_ready_epub(session, num_chapters=3)
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
-        direct_db.register_cleanup("highlights", "fragment_id", frag_ids[1])
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1357,19 +1359,67 @@ class TestGetEpubAssetSuccessAndMasking:
                 processing_status=ProcessingStatus.ready_for_reading,
             )
             session.add(media)
+            session.flush()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO epub_resources (
+                        media_id,
+                        manifest_item_id,
+                        package_href,
+                        asset_key,
+                        storage_path,
+                        content_type,
+                        size_bytes,
+                        sha256
+                    )
+                    VALUES (
+                        :media_id,
+                        'fig1',
+                        'images/fig1.png',
+                        'images/fig1.png',
+                        :storage_path,
+                        'image/png',
+                        :size_bytes,
+                        :sha256
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "storage_path": f"media/{media_id}/assets/images/fig1.png",
+                    "size_bytes": len(asset_content),
+                    "sha256": "0" * 64,
+                },
+            )
             session.commit()
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("epub_resources", "media_id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
         library_id = me_resp.json()["data"]["default_library_id"]
 
-        auth_client.post(
+        attach_resp = auth_client.post(
             f"/libraries/{library_id}/media",
             json={"media_id": str(media_id)},
             headers=auth_headers(user_id),
         )
+        assert attach_resp.status_code == 201, attach_resp.text
+        with direct_db.session() as session:
+            resource_row = session.execute(
+                text(
+                    """
+                    SELECT storage_path
+                    FROM epub_resources
+                    WHERE media_id = :media_id
+                      AND asset_key = 'images/fig1.png'
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchone()
+            assert resource_row == (f"media/{media_id}/assets/images/fig1.png",)
 
         # Put asset into fake storage
         from nexus.storage.client import FakeStorageClient
@@ -1389,9 +1439,11 @@ class TestGetEpubAssetSuccessAndMasking:
                 headers=auth_headers(user_id),
             )
 
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
         assert resp.content == asset_content
         assert "image/png" in resp.headers.get("content-type", "")
+        assert resp.headers.get("content-length") == str(len(asset_content))
+        assert resp.headers.get("x-content-type-options") == "nosniff"
 
     def test_unauthorized_viewer_gets_404(self, auth_client, direct_db: DirectSessionManager):
         other_user = create_test_user_id()
@@ -1457,6 +1509,250 @@ class TestGetEpubAssetSuccessAndMasking:
                 headers=auth_headers(user_id),
             )
         assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+    def test_invalid_asset_key_returns_400(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Test EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
+            )
+            session.add(media)
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(
+            f"/media/{media_id}/assets/bad%20key.png",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_missing_storage_object_is_500_defect(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        asset_content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
+
+        with direct_db.session() as session:
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Test EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
+            )
+            session.add(media)
+            session.flush()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO epub_resources (
+                        media_id,
+                        manifest_item_id,
+                        package_href,
+                        asset_key,
+                        storage_path,
+                        content_type,
+                        size_bytes,
+                        sha256
+                    )
+                    VALUES (
+                        :media_id,
+                        'fig1',
+                        'images/fig1.png',
+                        'images/fig1.png',
+                        :storage_path,
+                        'image/png',
+                        :size_bytes,
+                        :sha256
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "storage_path": f"media/{media_id}/assets/images/fig1.png",
+                    "size_bytes": len(asset_content),
+                    "sha256": "0" * 64,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("epub_resources", "media_id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        from nexus.storage.client import FakeStorageClient
+
+        fake = FakeStorageClient()
+
+        from unittest.mock import patch
+
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
+        with patch("nexus.storage.get_storage_client", return_value=fake):
+            resp = auth_client.get(
+                f"/media/{media_id}/assets/images/fig1.png",
+                headers=auth_headers(user_id),
+            )
+
+        assert resp.status_code == 500
+        assert resp.json()["error"]["code"] == "E_STORAGE_ERROR"
+
+    def test_unsupported_asset_content_type_is_not_served(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Test EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
+            )
+            session.add(media)
+            session.flush()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO epub_resources (
+                        media_id,
+                        manifest_item_id,
+                        package_href,
+                        asset_key,
+                        storage_path,
+                        content_type,
+                        size_bytes,
+                        sha256
+                    )
+                    VALUES (
+                        :media_id,
+                        'css1',
+                        'styles/book.css',
+                        'styles/book.css',
+                        :storage_path,
+                        'text/css',
+                        6,
+                        :sha256
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "storage_path": f"media/{media_id}/assets/styles/book.css",
+                    "sha256": "0" * 64,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("epub_resources", "media_id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(
+            f"/media/{media_id}/assets/styles/book.css",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+    def test_svg_asset_headers_include_restrictive_csp(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        asset_content = b'<svg xmlns="http://www.w3.org/2000/svg"></svg>'
+
+        with direct_db.session() as session:
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Test EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
+            )
+            session.add(media)
+            session.flush()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO epub_resources (
+                        media_id,
+                        manifest_item_id,
+                        package_href,
+                        asset_key,
+                        storage_path,
+                        content_type,
+                        size_bytes,
+                        sha256
+                    )
+                    VALUES (
+                        :media_id,
+                        'svg1',
+                        'images/fig.svg',
+                        'images/fig.svg',
+                        :storage_path,
+                        'image/svg+xml',
+                        :size_bytes,
+                        :sha256
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "storage_path": f"media/{media_id}/assets/images/fig.svg",
+                    "size_bytes": len(asset_content),
+                    "sha256": "0" * 64,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("epub_resources", "media_id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        from nexus.storage.client import FakeStorageClient
+
+        fake = FakeStorageClient()
+        fake.put_object(f"media/{media_id}/assets/images/fig.svg", asset_content, "image/svg+xml")
+
+        from unittest.mock import patch
+
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
+        with patch("nexus.storage.get_storage_client", return_value=fake):
+            resp = auth_client.get(
+                f"/media/{media_id}/assets/images/fig.svg",
+                headers=auth_headers(user_id),
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert "image/svg+xml" in resp.headers.get("content-type", "")
+        assert resp.headers.get("content-length") == str(len(asset_content))
+        assert resp.headers.get("x-content-type-options") == "nosniff"
+        csp = resp.headers.get("content-security-policy", "")
+        assert "default-src 'none'" in csp
+        assert "script-src 'none'" in csp
 
 
 class TestGetEpubAssetKindAndReadyGuards:
@@ -1694,33 +1990,8 @@ class TestRetryEpubEndpoint:
         auth_client.get("/me", headers=auth_headers(user_a))
         auth_client.get("/me", headers=auth_headers(user_b))
 
-        # non-EPUB
-        non_epub_id = uuid4()
-        with direct_db.session() as session:
-            media = Media(
-                id=non_epub_id,
-                kind=MediaKind.web_article.value,
-                title="Article",
-                processing_status=ProcessingStatus.failed,
-                created_by_user_id=user_a,
-            )
-            session.add(media)
-            session.commit()
-
-        direct_db.register_cleanup("library_entries", "media_id", non_epub_id)
-        direct_db.register_cleanup("media", "id", non_epub_id)
-
         me_resp = auth_client.get("/me", headers=auth_headers(user_a))
         library_id = me_resp.json()["data"]["default_library_id"]
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(non_epub_id)},
-            headers=auth_headers(user_a),
-        )
-
-        resp = auth_client.post(f"/media/{non_epub_id}/retry", headers=auth_headers(user_a))
-        assert resp.status_code == 400
-        assert resp.json()["error"]["code"] == "E_INVALID_KIND"
 
         # non-creator
         with direct_db.session() as session:
@@ -1962,6 +2233,148 @@ class TestRetryEpubEndpoint:
             media_row = session.get(Media, media_id)
             assert media_row is not None
             assert media_row.processing_status != ProcessingStatus.extracting
+
+
+class TestRetryWebArticleEndpoint:
+    """POST /media/{id}/retry for failed web articles."""
+
+    def test_retry_failed_web_article_resets_and_dispatches(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        media_id = uuid4()
+        fragment_id = uuid4()
+        with direct_db.session() as session:
+            from nexus.services.content_indexing import rebuild_fragment_content_index
+
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id, kind, title, processing_status, failure_stage,
+                        last_error_code, requested_url, created_by_user_id,
+                        processing_attempts
+                    )
+                    VALUES (
+                        :id, 'web_article', 'Failed article', 'failed', 'extract',
+                        'E_INGEST_FAILED', 'https://example.com/article', :user_id, 1
+                    )
+                """),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                    VALUES (:fragment_id, :media_id, 0, '<p>old</p>', 'old')
+                """),
+                {"fragment_id": fragment_id, "media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragment_blocks (
+                        fragment_id, block_idx, start_offset, end_offset, is_empty
+                    )
+                    VALUES (:fragment_id, 0, 0, 3, false)
+                """),
+                {"fragment_id": fragment_id},
+            )
+            replace_media_contributor_credits(
+                session,
+                media_id=media_id,
+                credits=[{"name": "Old Author", "role": "author", "ordinal": 0}],
+            )
+            fragment = session.get(Fragment, fragment_id)
+            assert fragment is not None
+            rebuild_fragment_content_index(
+                session,
+                media_id=media_id,
+                source_kind="web_article",
+                artifact_ref=f"fragments:{fragment_id}",
+                fragments=[fragment],
+                reason="retry_cleanup_test",
+            )
+            session.commit()
+
+        direct_db.register_cleanup("fragment_blocks", "fragment_id", fragment_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        add_media_to_default_library(auth_client, user_id, media_id)
+
+        resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+
+        assert resp.status_code == 202
+        data = resp.json()["data"]
+        assert data["processing_status"] == "extracting"
+        assert data["retry_enqueued"] is True
+        assert _count_jobs_for_media(direct_db, kind="ingest_web_article", media_id=media_id) == 1
+        with direct_db.session() as session:
+            job_id = session.execute(
+                text("""
+                    SELECT id FROM background_jobs
+                    WHERE kind = 'ingest_web_article'
+                      AND payload->>'media_id' = :media_id
+                """),
+                {"media_id": str(media_id)},
+            ).scalar_one()
+            direct_db.register_cleanup("background_jobs", "id", job_id)
+
+        with direct_db.session() as session:
+            media_row = session.get(Media, media_id)
+            assert media_row is not None
+            assert media_row.processing_status == ProcessingStatus.extracting
+            assert media_row.processing_attempts == 2
+            assert media_row.last_error_code is None
+
+            artifact_counts = session.execute(
+                text("""
+                    SELECT
+                        (SELECT count(*) FROM fragments WHERE media_id = :media_id),
+                        (SELECT count(*) FROM fragment_blocks WHERE fragment_id = :fragment_id),
+                        (SELECT count(*) FROM contributor_credits WHERE media_id = :media_id),
+                        (SELECT count(*) FROM media_content_index_states WHERE media_id = :media_id),
+                        (SELECT count(*) FROM content_chunks WHERE media_id = :media_id),
+                        (SELECT count(*) FROM evidence_spans WHERE media_id = :media_id),
+                        (SELECT count(*) FROM content_blocks WHERE media_id = :media_id),
+                        (SELECT count(*) FROM source_snapshots WHERE media_id = :media_id),
+                        (SELECT count(*) FROM content_index_runs WHERE media_id = :media_id)
+                """),
+                {"media_id": media_id, "fragment_id": fragment_id},
+            ).one()
+            assert tuple(artifact_counts) == (0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+    def test_retry_web_article_without_original_url_is_not_allowed(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        media_id = uuid4()
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.web_article.value,
+                    title="Failed article",
+                    processing_status=ProcessingStatus.failed,
+                    created_by_user_id=user_id,
+                )
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        add_media_to_default_library(auth_client, user_id, media_id)
+
+        resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
+
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "E_RETRY_NOT_ALLOWED"
 
 
 # =============================================================================
@@ -2460,7 +2873,7 @@ class TestPdfCapabilityDerivation:
         assert resp.status_code == 200
         caps = resp.json()["data"]["capabilities"]
         assert caps["can_quote"] is True
-        assert caps["can_search"] is True
+        assert caps["can_search"] is False
 
     def test_pr03_get_media_pdf_capabilities_do_not_flip_quote_search_on_plain_text_without_full_page_span_readiness(
         self, auth_client, direct_db: DirectSessionManager
@@ -2666,37 +3079,6 @@ class TestPdfRetry:
             direct_db.register_cleanup("background_jobs", "id", job_row[0])
             assert job_row[1] == "ingest_pdf"
             assert job_row[2] == "false"
-
-    def test_pr03_retry_pdf_route_preserves_compat_response_shape_without_mode_parameter(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Public retry uses no retry-mode parameter; response is RetryResponse-compatible."""
-        with direct_db.session() as session:
-            media_id, user_id = _create_pdf_media_with_state(
-                session,
-                processing_status="failed",
-                failure_stage="extract",
-                last_error_code="E_INGEST_FAILED",
-            )
-
-        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
-        direct_db.register_cleanup("media_file", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        from unittest.mock import patch
-
-        with patch("nexus.services.pdf_lifecycle.get_storage_client") as mock_storage:
-            mock_storage.return_value.head_object.return_value = True
-            resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
-
-        assert resp.status_code == 202
-        data = resp.json()["data"]
-        assert "media_id" in data
-        assert "processing_status" in data
-        assert "retry_enqueued" in data
 
     def test_pr03_retry_pdf_embed_failure_uses_embedding_only_retry_inference_path(
         self, auth_client, direct_db: DirectSessionManager

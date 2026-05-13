@@ -31,6 +31,21 @@ vi.mock("@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody", () =
 vi.mock("@/app/(authenticated)/search/SearchPaneBody", () => ({
   default: () => null,
 }));
+vi.mock("@/app/(authenticated)/authors/[handle]/AuthorPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/notes/NotesPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/pages/[pageId]/PagePaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/notes/[blockId]/NotePaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/daily/DailyNotePaneBody", () => ({
+  default: () => null,
+}));
 vi.mock("@/app/(authenticated)/settings/SettingsPaneBody", () => ({
   default: () => null,
 }));
@@ -38,6 +53,9 @@ vi.mock("@/app/(authenticated)/settings/billing/SettingsBillingPaneBody", () => 
   default: () => null,
 }));
 vi.mock("@/app/(authenticated)/settings/reader/SettingsReaderPaneBody", () => ({
+  default: () => null,
+}));
+vi.mock("@/app/(authenticated)/settings/appearance/SettingsAppearancePaneBody", () => ({
   default: () => null,
 }));
 vi.mock("@/app/(authenticated)/settings/keys/SettingsKeysPaneBody", () => ({
@@ -72,11 +90,15 @@ describe("pane route registry android shell chrome", () => {
   it("keeps billing normal and marks local vault as restricted", () => {
     setUserAgent(`${DEFAULT_USER_AGENT} ${ANDROID_SHELL_USER_AGENT_TOKEN}`);
 
-    expect(resolvePaneRoute("/settings/billing").definition?.getChrome?.({ href: "/settings/billing", params: {} }))
-      .toMatchObject({
-        title: "Billing",
-        subtitle: "Plan, usage, and Stripe subscription management.",
-      });
+    expect(
+      resolvePaneRoute("/settings/billing").definition?.getChrome?.({
+        href: "/settings/billing",
+        params: {},
+      })
+    ).toMatchObject({
+      title: "Billing",
+      subtitle: "Plan, usage, and Stripe subscription management.",
+    });
     expect(
       resolvePaneRoute("/settings/local-vault").definition?.getChrome?.({
         href: "/settings/local-vault",

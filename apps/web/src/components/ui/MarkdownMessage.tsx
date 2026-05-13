@@ -8,20 +8,58 @@
 "use client";
 
 import {
+  Fragment,
   memo,
   useState,
   useCallback,
+  useRef,
   type ReactNode,
   type HTMLAttributes,
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import ReaderCitation, {
+  type ReaderCitationColor,
+  type ReaderCitationPreview,
+} from "@/components/ui/ReaderCitation";
+import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import "./hljs-theme.css";
 import styles from "./MarkdownMessage.module.css";
 
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeHighlight];
+
+export interface ReaderCitationData {
+  index: number;
+  color: ReaderCitationColor;
+  preview: ReaderCitationPreview;
+  target: ReaderSourceTarget | null;
+  href?: string | null;
+}
+
+const CITATION_PLACEHOLDER = /<<cite:(\d+)>>/g;
+
+function splitContentIntoSegments(
+  content: string,
+): Array<{ kind: "text"; value: string } | { kind: "citation"; index: number }> {
+  const segments: Array<
+    { kind: "text"; value: string } | { kind: "citation"; index: number }
+  > = [];
+  let cursor = 0;
+  for (const match of content.matchAll(CITATION_PLACEHOLDER)) {
+    const start = match.index ?? 0;
+    if (start > cursor) {
+      segments.push({ kind: "text", value: content.slice(cursor, start) });
+    }
+    segments.push({ kind: "citation", index: Number(match[1]) });
+    cursor = start + match[0].length;
+  }
+  if (cursor < content.length) {
+    segments.push({ kind: "text", value: content.slice(cursor) });
+  }
+  return segments;
+}
 
 // ---------------------------------------------------------------------------
 // Code block with language label + copy button
@@ -34,13 +72,24 @@ function CodeBlock({
   ...rest
 }: HTMLAttributes<HTMLElement> & { children?: ReactNode; node?: unknown }) {
   const match = /language-(\w+)/.exec(className ?? "");
+  const position = (
+    _node as
+      | { position?: { start?: { line?: number }; end?: { line?: number } } }
+      | undefined
+  )?.position;
+  const startLine = position?.start?.line;
+  const endLine = position?.end?.line;
+  const isBlock =
+    typeof startLine === "number" &&
+    typeof endLine === "number" &&
+    endLine > startLine;
 
-  if (!match) {
+  if (!match && !isBlock) {
     return <code className={styles.inlineCode} {...rest}>{children}</code>;
   }
 
   return (
-    <CodeBlockWrapper language={match[1]}>
+    <CodeBlockWrapper language={match?.[1] ?? "text"}>
       <code className={className} {...rest}>{children}</code>
     </CodeBlockWrapper>
   );
@@ -54,15 +103,15 @@ function CodeBlockWrapper({
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const handleCopy = useCallback(() => {
-    const el = document.querySelector(`[data-lang="${language}"]`);
-    const text = el?.textContent ?? "";
+    const text = contentRef.current?.textContent ?? "";
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
-  }, [language]);
+  }, []);
 
   return (
     <div className={styles.codeBlock}>
@@ -72,7 +121,11 @@ function CodeBlockWrapper({
           {copied ? "copied" : "copy"}
         </button>
       </div>
-      <div className={styles.codeBlockContent} data-lang={language}>
+      <div
+        ref={contentRef}
+        className={styles.codeBlockContent}
+        data-lang={language}
+      >
         {children}
       </div>
     </div>
@@ -84,15 +137,31 @@ function PreBlock({ children }: { children?: ReactNode }) {
   return <>{children}</>;
 }
 
-const components = { code: CodeBlock, pre: PreBlock };
+function TableBlock({
+  children,
+  node: _node,
+  ...rest
+}: HTMLAttributes<HTMLTableElement> & { children?: ReactNode; node?: unknown }) {
+  return (
+    <div className={styles.tableScroll} data-testid="markdown-table-scroll">
+      <table {...rest}>{children}</table>
+    </div>
+  );
+}
+
+const components = { code: CodeBlock, pre: PreBlock, table: TableBlock };
 
 // ---------------------------------------------------------------------------
 // Full render (completed messages)
 // ---------------------------------------------------------------------------
 
-function MarkdownMessageInner({ content }: { content: string }) {
-  return (
-    <div className={styles.markdown}>
+function renderWithCitations(
+  content: string,
+  citations: ReaderCitationData[] | undefined,
+  onActivate: ((target: ReaderSourceTarget) => void) | undefined,
+): ReactNode {
+  if (!citations || citations.length === 0 || !content.includes("<<cite:")) {
+    return (
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}
@@ -100,6 +169,51 @@ function MarkdownMessageInner({ content }: { content: string }) {
       >
         {content}
       </ReactMarkdown>
+    );
+  }
+  const byIndex = new Map(citations.map((entry) => [entry.index, entry]));
+  const segments = splitContentIntoSegments(content);
+  return segments.map((segment, position) => {
+    if (segment.kind === "text") {
+      return (
+        <ReactMarkdown
+          key={position}
+          remarkPlugins={remarkPlugins}
+          rehypePlugins={rehypePlugins}
+          components={components}
+        >
+          {segment.value}
+        </ReactMarkdown>
+      );
+    }
+    const data = byIndex.get(segment.index);
+    if (!data) return <Fragment key={position} />;
+    return (
+      <ReaderCitation
+        key={position}
+        index={data.index}
+        color={data.color}
+        preview={data.preview}
+        target={data.target}
+        href={data.href}
+        onActivate={onActivate ?? (() => undefined)}
+      />
+    );
+  });
+}
+
+function MarkdownMessageInner({
+  content,
+  citations,
+  onCitationActivate,
+}: {
+  content: string;
+  citations?: ReaderCitationData[];
+  onCitationActivate?: (target: ReaderSourceTarget) => void;
+}) {
+  return (
+    <div className={styles.markdown}>
+      {renderWithCitations(content, citations, onCitationActivate)}
     </div>
   );
 }

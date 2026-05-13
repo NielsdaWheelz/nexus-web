@@ -32,13 +32,16 @@ LLM Client Lifecycle (PR-04 spec):
 
 import json
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from llm_calling.router import LLMRouter
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from web_search_tool.brave import BraveSearchProvider
 
 from nexus.api.routes import create_api_router
 from nexus.api.routes.stream import router as stream_router
@@ -58,7 +61,6 @@ from nexus.responses import (
     unhandled_exception_handler,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.llm import LLMRouter
 
 # Configure structured logging at import time
 configure_logging()
@@ -119,7 +121,6 @@ async def lifespan(app: FastAPI):
         limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
     )
 
-    # Create LLM router with shared client
     app.state.llm_router = LLMRouter(
         app.state.httpx_client,
         enable_openai=settings.enable_openai,
@@ -127,12 +128,23 @@ async def lifespan(app: FastAPI):
         enable_gemini=settings.enable_gemini,
         enable_deepseek=settings.enable_deepseek,
     )
+    app.state.web_search_provider = (
+        BraveSearchProvider(
+            app.state.httpx_client,
+            api_key=settings.brave_search_api_key,
+            base_url=settings.brave_search_base_url,
+            timeout_seconds=settings.brave_search_timeout_seconds,
+        )
+        if settings.brave_search_api_key
+        else None
+    )
 
     logger.info(
         "llm_router_initialized",
         enable_openai=settings.enable_openai,
         enable_anthropic=settings.enable_anthropic,
         enable_gemini=settings.enable_gemini,
+        web_search_provider="brave" if settings.brave_search_api_key else None,
     )
 
     # Initialize Postgres-backed rate limiter runtime state.
@@ -169,7 +181,7 @@ def create_app(
 
     app = FastAPI(
         title="Nexus API",
-        description="Backend API for Nexus - a reading and annotation platform",
+        description="Backend API for Nexus - a reading and notes platform",
         version="0.1.0",
         docs_url="/docs",
         redoc_url="/redoc",
@@ -248,6 +260,27 @@ def create_app(
     if cors_origins:
         app.add_middleware(StreamCORSMiddleware, allowed_origins=cors_origins)
         logger.info("stream_cors_middleware_enabled", origins=cors_origins)
+    else:
+        app_url = urlparse(settings.app_public_url)
+        stream_url = urlparse(settings.effective_stream_base_url)
+        if (
+            app_url.scheme,
+            app_url.hostname,
+            app_url.port,
+        ) != (
+            stream_url.scheme,
+            stream_url.hostname,
+            stream_url.port,
+        ):
+            if settings.nexus_env in (Environment.STAGING, Environment.PROD):
+                raise RuntimeError(
+                    "STREAM_CORS_ORIGINS is required when STREAM_BASE_URL is cross-origin"
+                )
+            logger.warning(
+                "stream_cors_middleware_disabled_for_cross_origin_stream",
+                app_public_url=settings.app_public_url,
+                stream_base_url=settings.effective_stream_base_url,
+            )
 
     return app
 

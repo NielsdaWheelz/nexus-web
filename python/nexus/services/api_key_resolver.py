@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
+from llm_calling.errors import LLMError, LLMErrorCode
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
@@ -25,7 +26,6 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.billing import get_entitlements
 from nexus.services.crypto import decrypt_api_key
-from nexus.services.llm.errors import LLMError, LLMErrorClass
 
 logger = get_logger(__name__)
 
@@ -38,6 +38,20 @@ class ResolvedKey:
     mode: Literal["platform", "byok"]
     provider: str
     user_key_id: str | None = None  # Set if BYOK
+
+
+def is_provider_enabled(provider: str) -> bool:
+    """Return whether a provider is enabled for serving user requests."""
+    settings = get_settings()
+    if provider == "openai":
+        return settings.enable_openai
+    if provider == "anthropic":
+        return settings.enable_anthropic
+    if provider == "gemini":
+        return settings.enable_gemini
+    if provider == "deepseek":
+        return settings.enable_deepseek
+    return False
 
 
 def resolve_api_key(
@@ -66,6 +80,12 @@ def resolve_api_key(
         LLMError: If no key is available.
     """
     settings = get_settings()
+
+    if not is_provider_enabled(provider):
+        raise ApiError(
+            ApiErrorCode.E_MODEL_NOT_AVAILABLE,
+            f"Provider is disabled: {provider}",
+        )
 
     # Get platform key if exists
     platform_key = None
@@ -120,7 +140,7 @@ def resolve_api_key(
                 user_key_id=user_key_id,
             )
         raise LLMError(
-            error_class=LLMErrorClass.INVALID_KEY,
+            error_code=LLMErrorCode.INVALID_KEY,
             message=f"No BYOK key available for {provider}",
         )
 
@@ -137,7 +157,7 @@ def resolve_api_key(
                 provider=provider,
             )
         raise LLMError(
-            error_class=LLMErrorClass.INVALID_KEY,
+            error_code=LLMErrorCode.INVALID_KEY,
             message=f"No platform key configured for {provider}",
         )
 
@@ -163,7 +183,7 @@ def resolve_api_key(
                 provider=provider,
             )
         raise LLMError(
-            error_class=LLMErrorClass.INVALID_KEY,
+            error_code=LLMErrorCode.INVALID_KEY,
             message=f"No API key available for {provider}",
         )
 
@@ -193,8 +213,10 @@ def update_user_key_status(
 
         key = db.get(UserApiKey, UUIDType(user_key_id))
         if key and key.status not in ("revoked",):
+            now = datetime.now(UTC)
             key.status = status
-            key.last_tested_at = datetime.now(UTC)
+            key.last_tested_at = now
+            key.last_used_at = now
             db.flush()
     except Exception as e:
         logger.warning(

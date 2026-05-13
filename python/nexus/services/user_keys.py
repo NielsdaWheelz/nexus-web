@@ -19,26 +19,93 @@ Security invariants:
 - encrypted_key, key_nonce, master_key_version never returned to clients
 """
 
+import time
 from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID
 
+from llm_calling.errors import LLMError, LLMErrorCode
+from llm_calling.router import LLMRouter
+from llm_calling.types import LLMRequest, Turn
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from nexus.config import get_settings
 from nexus.db.models import UserApiKey
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.schemas.keys import UserApiKeyOut
-from nexus.services.crypto import encrypt_api_key
+from nexus.schemas.keys import KeyProviderStateStatus, UserApiKeyOut
+from nexus.services.crypto import decrypt_api_key, encrypt_api_key
+from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
 
 # Valid providers (lowercase only)
 VALID_PROVIDERS = frozenset({"openai", "anthropic", "gemini", "deepseek"})
+PROVIDER_ORDER = ("openai", "anthropic", "gemini", "deepseek")
+PROVIDER_DISPLAY_NAMES = {
+    "openai": "OpenAI",
+    "anthropic": "Anthropic",
+    "gemini": "Google",
+    "deepseek": "DeepSeek",
+}
+KEY_TEST_MODELS = {
+    "openai": "gpt-5.4-mini",
+    "anthropic": "claude-haiku-4-5-20251001",
+    "gemini": "gemini-3-flash-preview",
+    "deepseek": "deepseek-v4-flash",
+}
+
+LLM_ERROR_CODE_TO_API_ERROR_CODE = {
+    LLMErrorCode.INVALID_KEY: ApiErrorCode.E_LLM_INVALID_KEY,
+    LLMErrorCode.RATE_LIMIT: ApiErrorCode.E_LLM_RATE_LIMIT,
+    LLMErrorCode.CONTEXT_TOO_LARGE: ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE,
+    LLMErrorCode.TIMEOUT: ApiErrorCode.E_LLM_TIMEOUT,
+    LLMErrorCode.PROVIDER_DOWN: ApiErrorCode.E_LLM_PROVIDER_DOWN,
+    LLMErrorCode.BAD_REQUEST: ApiErrorCode.E_LLM_BAD_REQUEST,
+    LLMErrorCode.MODEL_NOT_AVAILABLE: ApiErrorCode.E_MODEL_NOT_AVAILABLE,
+}
+
+
+def _enabled_providers() -> tuple[str, ...]:
+    settings = get_settings()
+    enabled: list[str] = []
+    if settings.enable_openai:
+        enabled.append("openai")
+    if settings.enable_anthropic:
+        enabled.append("anthropic")
+    if settings.enable_gemini:
+        enabled.append("gemini")
+    if settings.enable_deepseek:
+        enabled.append("deepseek")
+    return tuple(enabled)
+
+
+def _key_to_out(key: UserApiKey) -> UserApiKeyOut:
+    fingerprint = key.key_fingerprint
+    return UserApiKeyOut(
+        id=key.id,
+        provider=key.provider,
+        provider_display_name=PROVIDER_DISPLAY_NAMES[key.provider],
+        fingerprint=fingerprint,
+        key_fingerprint=fingerprint,
+        status=cast(KeyProviderStateStatus, key.status),
+        created_at=key.created_at,
+        last_tested_at=key.last_tested_at,
+        last_used_at=key.last_used_at,
+    )
+
+
+def _missing_provider_out(provider: str) -> UserApiKeyOut:
+    return UserApiKeyOut(
+        provider=provider,
+        provider_display_name=PROVIDER_DISPLAY_NAMES[provider],
+        status="missing",
+    )
 
 
 def list_user_keys(db: Session, user_id: UUID) -> list[UserApiKeyOut]:
-    """List all API keys for a user.
+    """List enabled provider states for a user.
 
     Returns only safe fields - never includes encrypted_key, nonce, or version.
 
@@ -47,25 +114,23 @@ def list_user_keys(db: Session, user_id: UUID) -> list[UserApiKeyOut]:
         user_id: The user's ID.
 
     Returns:
-        List of UserApiKeyOut with safe fields only.
+        List of provider states with safe fields only.
     """
+    enabled_providers = _enabled_providers()
     stmt = (
         select(UserApiKey)
         .where(UserApiKey.user_id == user_id)
-        .order_by(UserApiKey.created_at.desc())
+        .where(UserApiKey.provider.in_(enabled_providers))
     )
     keys = db.scalars(stmt).all()
+    keys_by_provider = {key.provider: key for key in keys}
 
     return [
-        UserApiKeyOut(
-            id=key.id,
-            provider=key.provider,
-            key_fingerprint=key.key_fingerprint,
-            status=key.status,
-            created_at=key.created_at,
-            last_tested_at=key.last_tested_at,
-        )
-        for key in keys
+        _key_to_out(keys_by_provider[provider])
+        if provider in keys_by_provider
+        else _missing_provider_out(provider)
+        for provider in PROVIDER_ORDER
+        if provider in enabled_providers
     ]
 
 
@@ -136,6 +201,7 @@ def upsert_user_key(
         existing_key.key_fingerprint = fingerprint
         existing_key.status = "untested"
         existing_key.last_tested_at = None
+        existing_key.last_used_at = None
         existing_key.revoked_at = None
 
         db.flush()
@@ -149,14 +215,7 @@ def upsert_user_key(
         )
 
         return (
-            UserApiKeyOut(
-                id=existing_key.id,
-                provider=existing_key.provider,
-                key_fingerprint=existing_key.key_fingerprint,
-                status=existing_key.status,
-                created_at=existing_key.created_at,
-                last_tested_at=existing_key.last_tested_at,
-            ),
+            _key_to_out(existing_key),
             False,  # Not created (updated)
         )
 
@@ -182,16 +241,133 @@ def upsert_user_key(
     )
 
     return (
-        UserApiKeyOut(
-            id=new_key.id,
-            provider=new_key.provider,
-            key_fingerprint=new_key.key_fingerprint,
-            status=new_key.status,
-            created_at=new_key.created_at,
-            last_tested_at=new_key.last_tested_at,
-        ),
+        _key_to_out(new_key),
         True,  # Created
     )
+
+
+async def test_user_key(
+    db: Session,
+    user_id: UUID,
+    key_id: UUID,
+    router: LLMRouter,
+) -> UserApiKeyOut:
+    """Validate a saved BYOK key and update its status.
+
+    The plaintext key is decrypted only for the outbound provider validation call
+    and is never logged or returned.
+    """
+    stmt = select(UserApiKey).where(
+        UserApiKey.id == key_id,
+        UserApiKey.user_id == user_id,
+    )
+    key = db.scalars(stmt).first()
+    if not key or key.status == "revoked" or not key.encrypted_key or not key.key_nonce:
+        raise ApiError(ApiErrorCode.E_KEY_NOT_FOUND, "API key not found")
+
+    try:
+        api_key = decrypt_api_key(
+            key.encrypted_key,
+            key.key_nonce,
+            key.master_key_version or 1,
+        )
+    except Exception as e:
+        logger.warning(
+            "user_key_decrypt_failed",
+            user_id=str(user_id),
+            key_id=str(key_id),
+            provider=key.provider,
+            error=type(e).__name__,
+        )
+        key.status = "invalid"
+        key.last_tested_at = datetime.now(UTC)
+        db.commit()
+        return _key_to_out(key)
+
+    req = LLMRequest(
+        model_name=KEY_TEST_MODELS[key.provider],
+        messages=[Turn(role="user", content="Reply with ok.")],
+        max_tokens=8,
+        reasoning_effort="none",
+    )
+
+    llm_start = time.monotonic()
+    llm_log_fields = safe_kv(
+        provider=key.provider,
+        model_name=req.model_name,
+        reasoning_effort=req.reasoning_effort,
+        key_mode="byok",
+        streaming=False,
+        llm_operation="key_test",
+        message_chars=sum(len(message.content) for message in req.messages),
+    )
+    logger.info("llm.request.started", **llm_log_fields)
+    try:
+        response = await router.generate(
+            key.provider,
+            req,
+            api_key,
+            timeout_s=15,
+        )
+        if response.status == "incomplete":
+            logger.error(
+                "llm.request.failed",
+                **safe_kv(
+                    **llm_log_fields,
+                    outcome="error",
+                    error_class=ApiErrorCode.E_LLM_INCOMPLETE.value,
+                    latency_ms=int((time.monotonic() - llm_start) * 1000),
+                    provider_request_id=response.provider_request_id,
+                ),
+            )
+            raise ApiError(
+                ApiErrorCode.E_LLM_INCOMPLETE,
+                "The provider returned an incomplete key-test response.",
+            )
+    except LLMError as e:
+        error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[e.error_code]
+        logger.error(
+            "llm.request.failed",
+            **safe_kv(
+                **llm_log_fields,
+                outcome="error",
+                error_class=error_code.value,
+                latency_ms=int((time.monotonic() - llm_start) * 1000),
+            ),
+        )
+        if e.error_code == LLMErrorCode.INVALID_KEY:
+            key.status = "invalid"
+            key.last_tested_at = datetime.now(UTC)
+            db.commit()
+            return _key_to_out(key)
+
+        raise ApiError(error_code, e.message) from e
+    finally:
+        api_key = ""
+
+    logger.info(
+        "llm.request.finished",
+        **safe_kv(
+            **llm_log_fields,
+            outcome="success",
+            latency_ms=int((time.monotonic() - llm_start) * 1000),
+        ),
+    )
+
+    key.status = "valid"
+    key.last_tested_at = datetime.now(UTC)
+    db.commit()
+
+    logger.info(
+        "user_key_tested",
+        user_id=str(user_id),
+        key_id=str(key_id),
+        provider=key.provider,
+        status=key.status,
+        fingerprint=key.key_fingerprint,
+    )
+
+    return _key_to_out(key)
 
 
 def revoke_user_key(db: Session, user_id: UUID, key_id: UUID) -> None:
@@ -273,6 +449,8 @@ def get_usable_key_providers(db: Session, user_id: UUID) -> set[str]:
     stmt = select(UserApiKey.provider).where(
         UserApiKey.user_id == user_id,
         UserApiKey.status.in_(["untested", "valid"]),
+        UserApiKey.encrypted_key.is_not(None),
+        UserApiKey.key_nonce.is_not(None),
     )
     providers = db.scalars(stmt).all()
     return set(providers)

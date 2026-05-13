@@ -11,33 +11,17 @@
  * - Request headers are filtered via allowlist/blocklist
  * - X-Request-ID is generated/forwarded for tracing
  * - Cookie and Set-Cookie are never forwarded
- *
- * Streaming (SSE) support (S3):
- * - `expectStream` option enables SSE passthrough without buffering
- * - SSE responses pipe upstream ReadableStream directly to browser
- * - Transport headers (cache-control, x-accel-buffering, connection) set for SSE correctness
- * - Abort propagation: client disconnect cancels upstream fetch
- *
- * @see docs/v1/s2/s2_prs/s2_pr00.md for full specification
- * @see docs/v1/s3/s3_prs/s3_pr07.md §4.1 for SSE streaming spec
  */
 
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import {
+  parseCookieHeader,
+  readSupabaseSessionCookie,
+  type SessionCookieResult,
+} from "@/lib/auth/session-cookie";
 
-/**
- * Header name for request correlation.
- */
-export const REQUEST_ID_HEADER = "x-request-id";
-
-/**
- * Options for proxy behavior.
- */
-export interface ProxyOptions {
-  /** Hint that the upstream response will be SSE. Forces streaming path
-      even if upstream content-type is mislabeled. */
-  expectStream?: boolean;
-}
+const REQUEST_ID_HEADER = "x-request-id";
+const FASTAPI_FETCH_TIMEOUT_MS = 30_000;
 
 /**
  * Request headers allowed to be forwarded from browser to FastAPI.
@@ -73,6 +57,10 @@ const ALLOWED_RESPONSE_HEADERS = new Set([
   "etag",
   "vary",
   "content-disposition",
+  "x-content-type-options",
+  "content-security-policy",
+  "accept-ranges",
+  "content-range",
   "location",
 ]);
 
@@ -86,59 +74,41 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
   "set-cookie",
 ]);
 
-/**
- * Dependencies that can be injected for testing.
- */
-export interface ProxyDeps {
-  /**
-   * Function to get the Supabase session.
-   * Returns null if no session exists.
-   */
-  getSession: () => Promise<{ access_token: string } | null>;
-
-  /**
-   * Function to make HTTP requests.
-   */
+interface ProxyDeps {
+  readSession: (request: Request) => SessionCookieResult;
   fetch: typeof fetch;
-
-  /**
-   * Function to generate a request ID.
-   */
   generateRequestId: () => string;
-
-  /**
-   * Environment configuration.
-   */
   config: {
     fastApiBaseUrl: string;
     internalSecret: string;
   };
 }
 
-/**
- * Generate a UUID v4 string for request correlation.
- */
+interface ExtensionProxyOptions {
+  defaultAccept?: string;
+  defaultContentType?: string;
+  forwardHeaders?: readonly string[];
+}
+
 function generateRequestId(): string {
   return crypto.randomUUID();
 }
 
-/**
- * Get the request ID from incoming request or generate a new one.
- */
+function isValidRequestId(value: string | null): value is string {
+  return Boolean(value && /^[A-Za-z0-9._:-]{1,128}$/.test(value));
+}
+
 function getOrGenerateRequestId(
   request: Request,
   generateFn: () => string
 ): string {
   const existing = request.headers.get(REQUEST_ID_HEADER);
-  if (existing && existing.length <= 128) {
+  if (isValidRequestId(existing)) {
     return existing;
   }
   return generateFn();
 }
 
-/**
- * Check if a response header should be forwarded to the browser.
- */
 function shouldForwardResponseHeader(headerName: string): boolean {
   const lowerName = headerName.toLowerCase();
 
@@ -156,9 +126,6 @@ function shouldForwardResponseHeader(headerName: string): boolean {
   return ALLOWED_RESPONSE_HEADERS.has(lowerName);
 }
 
-/**
- * Check if a request header should be forwarded to FastAPI.
- */
 function shouldForwardRequestHeader(headerName: string): boolean {
   const lowerName = headerName.toLowerCase();
 
@@ -171,36 +138,20 @@ function shouldForwardRequestHeader(headerName: string): boolean {
   return ALLOWED_REQUEST_HEADERS.has(lowerName);
 }
 
-/**
- * Check if a content type represents text/JSON data.
- */
 function isTextContentType(contentType: string | null): boolean {
   if (!contentType) return false;
   const lower = contentType.toLowerCase();
-  // SSE is text/ but must NOT be buffered — handled separately
-  if (lower.startsWith("text/event-stream")) return false;
   return lower.includes("application/json") || lower.includes("text/");
 }
 
-/**
- * Check if a response should be treated as SSE streaming.
- */
-function isStreamingResponse(
-  contentType: string | null,
-  expectStream?: boolean
-): boolean {
-  if (expectStream) return true;
-  if (!contentType) return false;
-  return contentType.toLowerCase().startsWith("text/event-stream");
+function setBodyContentLength(headers: Headers, body: string | ArrayBuffer) {
+  const byteLength =
+    typeof body === "string"
+      ? new TextEncoder().encode(body).byteLength
+      : body.byteLength;
+  headers.set("content-length", String(byteLength));
 }
 
-/**
- * Detect transport-level abort/cancel errors across runtimes.
- *
- * Next.js/undici may surface aborted requests as either:
- * - DOMException("AbortError")
- * - Error-like objects named "ResponseAborted"
- */
 function isAbortLikeError(error: unknown): boolean {
   if (error instanceof DOMException && error.name === "AbortError") {
     return true;
@@ -212,52 +163,31 @@ function isAbortLikeError(error: unknown): boolean {
   return false;
 }
 
-/**
- * Get default environment configuration.
- */
 function getDefaultConfig() {
   const fastApiBaseUrl =
-    process.env.FASTAPI_BASE_URL || "http://localhost:8000";
+    process.env.FASTAPI_BASE_URL ||
+    (process.env.NODE_ENV === "production" ? "" : "http://localhost:8000");
   const internalSecret = process.env.NEXUS_INTERNAL_SECRET || "";
 
   return { fastApiBaseUrl, internalSecret };
 }
 
-/**
- * Create default dependencies using real implementations.
- */
 async function createDefaultDeps(): Promise<ProxyDeps> {
-  const supabase = await createClient();
-
   return {
-    getSession: async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      return session;
-    },
+    readSession: (request) =>
+      readSupabaseSessionCookie(
+        parseCookieHeader(request.headers.get("cookie"))
+      ),
     fetch: globalThis.fetch,
     generateRequestId,
     config: getDefaultConfig(),
   };
 }
 
-/**
- * Core proxy implementation with injectable dependencies.
- *
- * This function is exported for testing. Production code should use proxyToFastAPI.
- *
- * @param request - The incoming Next.js request
- * @param path - The FastAPI path to proxy to (must not contain query string)
- * @param deps - Injectable dependencies
- * @param options - Proxy options (e.g., streaming hints)
- * @returns Response from FastAPI with filtered headers
- */
 export async function proxyToFastAPIWithDeps(
   request: Request,
   path: string,
-  deps: ProxyDeps,
-  options?: ProxyOptions
+  deps: ProxyDeps
 ): Promise<Response> {
   // Validate path does not contain query string (caller error)
   if (path.includes("?")) {
@@ -268,12 +198,30 @@ export async function proxyToFastAPIWithDeps(
 
   const requestId = getOrGenerateRequestId(request, deps.generateRequestId);
 
-  // Get session for access token
-  const session = await deps.getSession();
-
-  if (!session?.access_token) {
-    // No session - return 401 with standard error envelope
+  if (
+    !deps.config.fastApiBaseUrl ||
+    (process.env.NODE_ENV === "production" && !deps.config.internalSecret)
+  ) {
     return NextResponse.json(
+      {
+        error: {
+          code: "E_INTERNAL",
+          message: "Backend service is not configured",
+          request_id: requestId,
+        },
+      },
+      {
+        status: 500,
+        headers: {
+          [REQUEST_ID_HEADER]: requestId,
+        },
+      }
+    );
+  }
+
+  const session = deps.readSession(request);
+  if (!session.ok) {
+    const response = NextResponse.json(
       {
         error: {
           code: "E_UNAUTHENTICATED",
@@ -288,6 +236,10 @@ export async function proxyToFastAPIWithDeps(
         },
       }
     );
+    for (const name of session.cookieNames) {
+      response.cookies.set(name, "", { maxAge: 0, path: "/" });
+    }
+    return response;
   }
 
   // Extract query string from request URL
@@ -308,7 +260,7 @@ export async function proxyToFastAPIWithDeps(
   });
 
   // Always set/override these headers
-  headers.set("Authorization", `Bearer ${session.access_token}`);
+  headers.set("Authorization", `Bearer ${session.accessToken}`);
   headers.set(REQUEST_ID_HEADER, requestId);
 
   // Add internal header if configured
@@ -316,27 +268,32 @@ export async function proxyToFastAPIWithDeps(
     headers.set("X-Nexus-Internal", deps.config.internalSecret);
   }
 
-  // Forward request body for non-GET/HEAD methods as raw bytes
-  // For streaming routes, forward body as-is (do not call request.json())
+  // Forward request body for non-GET/HEAD methods as raw bytes.
   let body: ArrayBuffer | undefined;
   if (request.method !== "GET" && request.method !== "HEAD") {
     body = await request.arrayBuffer();
   }
 
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, FASTAPI_FETCH_TIMEOUT_MS);
+  const abortFromClient = () => controller.abort();
+  if (request.signal.aborted) {
+    controller.abort();
+  } else {
+    request.signal.addEventListener("abort", abortFromClient, { once: true });
+  }
+
   try {
-    // Make request to FastAPI with abort signal propagation
     const response = await deps.fetch(url, {
       method: request.method,
       headers,
       body,
-      signal: request.signal,
+      signal: controller.signal,
     });
-
-    // Check if this is an SSE streaming response
-    const upstreamContentType = response.headers.get("content-type");
-    if (isStreamingResponse(upstreamContentType, options?.expectStream)) {
-      return buildStreamingResponse(response, requestId);
-    }
 
     // Build filtered response headers (non-streaming path)
     const responseHeaders = new Headers();
@@ -346,10 +303,11 @@ export async function proxyToFastAPIWithDeps(
       }
     });
 
-    // Always include X-Request-ID (normalize to lowercase)
-    if (!responseHeaders.has(REQUEST_ID_HEADER)) {
-      responseHeaders.set(REQUEST_ID_HEADER, requestId);
-    }
+    const backendRequestId = response.headers.get(REQUEST_ID_HEADER);
+    responseHeaders.set(
+      REQUEST_ID_HEADER,
+      isValidRequestId(backendRequestId) ? backendRequestId : requestId
+    );
 
     // 204/205/304 and HEAD responses must not include a body.
     // Creating a Response with body bytes for these statuses throws.
@@ -372,6 +330,7 @@ export async function proxyToFastAPIWithDeps(
     if (isTextContentType(contentType)) {
       // Text/JSON response - use text() to preserve encoding
       const text = await response.text();
+      setBodyContentLength(responseHeaders, text);
       return new Response(text, {
         status: response.status,
         statusText: response.statusText,
@@ -380,6 +339,7 @@ export async function proxyToFastAPIWithDeps(
     } else {
       // Binary response - use arrayBuffer() to preserve bytes
       const buffer = await response.arrayBuffer();
+      setBodyContentLength(responseHeaders, buffer);
       return new Response(buffer, {
         status: response.status,
         statusText: response.statusText,
@@ -387,107 +347,224 @@ export async function proxyToFastAPIWithDeps(
       });
     }
   } catch (error) {
-    // Abort errors are expected on client disconnect — do not log as server errors
     if (isAbortLikeError(error)) {
+      if (timedOut) {
+        return NextResponse.json(
+          {
+            error: {
+              code: "E_UPSTREAM_TIMEOUT",
+              message: "Backend service timed out",
+              request_id: requestId,
+            },
+          },
+          {
+            status: 504,
+            headers: {
+              [REQUEST_ID_HEADER]: requestId,
+            },
+          }
+        );
+      }
       return new Response(null, { status: 499 });
     }
 
-    // Network error or FastAPI unavailable
     console.error("FastAPI proxy error:", error);
     return NextResponse.json(
       {
         error: {
-          code: "E_INTERNAL",
+          code: "E_UPSTREAM",
           message: "Backend service unavailable",
           request_id: requestId,
         },
       },
       {
-        status: 503,
+        status: 502,
         headers: {
           [REQUEST_ID_HEADER]: requestId,
         },
       }
     );
+  } finally {
+    clearTimeout(timeout);
+    request.signal.removeEventListener("abort", abortFromClient);
   }
 }
 
-/**
- * Build a streaming SSE response that pipes upstream bytes directly to the browser.
- *
- * Transport headers are set directly for SSE correctness per §4.1.3 / §4.1.7.
- * These are NOT added to ALLOWED_RESPONSE_HEADERS; they apply only to the SSE code path.
- */
-function buildStreamingResponse(
-  upstream: Response,
-  requestId: string
-): Response {
-  // Preserve upstream content-type or default to event-stream
-  const ct =
-    upstream.headers.get("content-type") ||
-    "text/event-stream; charset=utf-8";
-
-  const sseHeaders = new Headers({
-    "content-type": ct,
-    "cache-control": "no-cache, no-transform",
-    connection: "keep-alive",
-    "x-accel-buffering": "no",
-    [REQUEST_ID_HEADER]: requestId,
-  });
-
-  // If upstream has no body (e.g., error before stream starts), return as-is
-  if (!upstream.body) {
-    return new Response(null, {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers: sseHeaders,
-    });
-  }
-
-  // Pipe the upstream ReadableStream directly — no transformation, no buffering
-  return new Response(upstream.body, {
-    status: upstream.status,
-    statusText: upstream.statusText,
-    headers: sseHeaders,
-  });
-}
-
-/**
- * Proxy a request to FastAPI with proper authentication and headers.
- *
- * This function:
- * 1. Extracts the Supabase access token from the session
- * 2. Generates or forwards X-Request-ID for tracing
- * 3. Attaches Authorization and X-Nexus-Internal headers
- * 4. Forwards the request to FastAPI
- * 5. Filters response headers via allowlist
- * 6. For SSE: pipes upstream body directly (no buffering)
- *
- * @param request - The incoming Next.js request
- * @param path - The FastAPI path to proxy to (e.g., "/me", "/libraries/123")
- *               Must NOT contain query string - those are extracted from request URL
- * @param options - Optional proxy options (e.g., `{ expectStream: true }` for SSE)
- * @returns Response from FastAPI with filtered headers
- */
 export async function proxyToFastAPI(
   request: Request,
-  path: string,
-  options?: ProxyOptions
+  path: string
 ): Promise<Response> {
   const deps = await createDefaultDeps();
-  return proxyToFastAPIWithDeps(request, path, deps, options);
+  return proxyToFastAPIWithDeps(request, path, deps);
 }
 
-// Exports for testing
-export {
-  shouldForwardResponseHeader as _shouldForwardResponseHeader,
-  shouldForwardRequestHeader as _shouldForwardRequestHeader,
-  getOrGenerateRequestId as _getOrGenerateRequestId,
-  isTextContentType as _isTextContentType,
-  isStreamingResponse as _isStreamingResponse,
-  buildStreamingResponse as _buildStreamingResponse,
-  ALLOWED_REQUEST_HEADERS as _ALLOWED_REQUEST_HEADERS,
-  BLOCKED_REQUEST_HEADERS as _BLOCKED_REQUEST_HEADERS,
-  ALLOWED_RESPONSE_HEADERS as _ALLOWED_RESPONSE_HEADERS,
-  BLOCKED_RESPONSE_HEADERS as _BLOCKED_RESPONSE_HEADERS,
-};
+export async function proxyExtensionToFastAPI(
+  request: Request,
+  path: string,
+  options: ExtensionProxyOptions = {}
+): Promise<Response> {
+  const requestId = getOrGenerateRequestId(request, generateRequestId);
+  const authorization = request.headers.get("authorization") || "";
+
+  if (!authorization.toLowerCase().startsWith("bearer ")) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "E_UNAUTHENTICATED",
+          message: "Extension token required",
+          request_id: requestId,
+        },
+      },
+      {
+        status: 401,
+        headers: { [REQUEST_ID_HEADER]: requestId },
+      }
+    );
+  }
+
+  const { fastApiBaseUrl, internalSecret } = getDefaultConfig();
+  if (
+    !fastApiBaseUrl ||
+    (process.env.NODE_ENV === "production" && !internalSecret)
+  ) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "E_INTERNAL",
+          message: "Backend service is not configured",
+          request_id: requestId,
+        },
+      },
+      {
+        status: 500,
+        headers: { [REQUEST_ID_HEADER]: requestId },
+      }
+    );
+  }
+
+  const headers = new Headers({
+    Authorization: authorization,
+    [REQUEST_ID_HEADER]: requestId,
+  });
+  const contentType =
+    request.headers.get("content-type") ?? options.defaultContentType;
+  const accept = request.headers.get("accept") ?? options.defaultAccept;
+
+  if (contentType) {
+    headers.set("Content-Type", contentType);
+  }
+  if (accept) {
+    headers.set("Accept", accept);
+  }
+  for (const headerName of options.forwardHeaders ?? []) {
+    const value = request.headers.get(headerName);
+    if (value) {
+      headers.set(headerName, value);
+    }
+  }
+  if (internalSecret) {
+    headers.set("X-Nexus-Internal", internalSecret);
+  }
+
+  let body: ArrayBuffer | undefined;
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    body = await request.arrayBuffer();
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, FASTAPI_FETCH_TIMEOUT_MS);
+  const abortFromClient = () => controller.abort();
+  if (request.signal.aborted) {
+    controller.abort();
+  } else {
+    request.signal.addEventListener("abort", abortFromClient, { once: true });
+  }
+
+  try {
+    const response = await fetch(`${fastApiBaseUrl}${path}`, {
+      method: request.method,
+      headers,
+      body,
+      signal: controller.signal,
+    });
+    const backendRequestId = response.headers.get(REQUEST_ID_HEADER);
+    const responseHeaders = new Headers({
+      [REQUEST_ID_HEADER]: isValidRequestId(backendRequestId)
+        ? backendRequestId
+        : requestId,
+    });
+    const responseContentType = response.headers.get("content-type");
+
+    if (responseContentType) {
+      responseHeaders.set("Content-Type", responseContentType);
+    }
+
+    if (
+      request.method === "HEAD" ||
+      response.status === 204 ||
+      response.status === 205 ||
+      response.status === 304
+    ) {
+      return new Response(null, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: responseHeaders,
+      });
+    }
+
+    if (isTextContentType(responseContentType)) {
+      return new Response(await response.text(), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: responseHeaders,
+      });
+    }
+
+    return new Response(await response.arrayBuffer(), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
+    });
+  } catch (error) {
+    if (isAbortLikeError(error)) {
+      if (timedOut) {
+        return NextResponse.json(
+          {
+            error: {
+              code: "E_UPSTREAM_TIMEOUT",
+              message: "Backend service timed out",
+              request_id: requestId,
+            },
+          },
+          {
+            status: 504,
+            headers: { [REQUEST_ID_HEADER]: requestId },
+          }
+        );
+      }
+      return new Response(null, { status: 499 });
+    }
+
+    console.error("Extension proxy error:", error);
+    return NextResponse.json(
+      {
+        error: {
+          code: "E_UPSTREAM",
+          message: "Backend service unavailable",
+          request_id: requestId,
+        },
+      },
+      {
+        status: 502,
+        headers: { [REQUEST_ID_HEADER]: requestId },
+      }
+    );
+  } finally {
+    clearTimeout(timeout);
+    request.signal.removeEventListener("abort", abortFromClient);
+  }
+}

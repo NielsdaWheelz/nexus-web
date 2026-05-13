@@ -1,29 +1,24 @@
 /**
- * SSE client parser for streaming LLM responses.
+ * SSE parser and direct browser -> FastAPI chat-run stream client.
  *
- * Framing rules (binding per s3_pr07 §5.3):
- * 1. Only process `event:` + `data:` lines (standard SSE format).
+ * Framing rules:
+ * 1. Only process `event:` + `data:` lines.
  * 2. Ignore comment lines (`:`) and unknown event types.
- * 3. `data:` payload is JSON, one object per event. No multi-line JSON.
+ * 3. `data:` payload is JSON, one object per event.
  * 4. Max event size: 256 KB. Exceeding this is a stream error.
  * 5. If JSON parse fails on a `data:` line: stream error.
- * 6. Backend uses `event:` field to distinguish event types (meta, delta, done).
- * 7. Sets `Accept: text/event-stream` request header.
- *
- * Security:
- * - Never logs API key material from events.
- * - Fails fast on malformed events.
  */
+
+import type { ObjectType } from "@/lib/objectRefs";
+import type { BranchAnchor } from "@/lib/conversations/types";
 
 /** Maximum single event payload size (256 KB). */
 const MAX_EVENT_SIZE_BYTES = 256 * 1024;
+const RECONNECT_DELAY_MS = 1000;
 
 // ============================================================================
 // Types
 // ============================================================================
-
-/** SSE event types from the backend streaming protocol. */
-export type SSEEventType = "meta" | "delta" | "done";
 
 /** Meta event: initial IDs and model info. */
 export interface SSEMetaEvent {
@@ -49,153 +44,226 @@ export interface SSEDeltaEvent {
 export interface SSEDoneEvent {
   type: "done";
   data: {
-    status: "complete" | "error";
+    status: "complete" | "error" | "cancelled";
     error_code: string | null;
     final_chars?: number;
   };
 }
 
-export type SSEEvent = SSEMetaEvent | SSEDeltaEvent | SSEDoneEvent;
+export type ContextItemType = ObjectType;
+export type ContextItemColor = "yellow" | "green" | "blue" | "pink" | "purple";
 
-/** Callback invoked for each parsed SSE event. */
-export type SSEEventHandler = (event: SSEEvent) => void;
+export interface SearchCitationEventData {
+  result_type:
+    | "media"
+    | "podcast"
+    | "content_chunk"
+    | "note_block"
+    | "message"
+    | "contributor";
+  source_id: string;
+  title: string;
+  source_label: string | null;
+  snippet: string;
+  deep_link: string;
+  citation_label?: string | null;
+  context_ref: { type: string; id: string; evidence_span_ids?: string[] };
+  resolver?: {
+    kind: "web" | "epub" | "pdf" | "transcript";
+    route: string;
+    params: Record<string, string>;
+    status?: string;
+    selector?: Record<string, unknown>;
+    highlight?: unknown;
+  } | null;
+  media_id: string | null;
+  media_kind: string | null;
+  score: number | null;
+  selected: boolean;
+}
 
-/** Error callback invoked on stream failures. */
-export type SSEErrorHandler = (error: Error) => void;
+export interface WebCitationEventData {
+  assistant_message_id?: string;
+  tool_call_id?: string | null;
+  tool_call_index?: number | null;
+  citation_index?: number;
+  index?: number;
+  result_ref?: string;
+  result_type?: "web" | "news" | "mixed" | string;
+  title: string;
+  url: string;
+  display_url?: string | null;
+  source_name?: string | null;
+  snippet?: string | null;
+  excerpt?: string | null;
+  provider?: string | null;
+  provider_request_id?: string | null;
+  selected?: boolean;
+}
+
+export type CitationEventData = SearchCitationEventData | WebCitationEventData;
+
+export interface SSEToolCallEvent {
+  type: "tool_call";
+  data: {
+    tool_call_id?: string | null;
+    assistant_message_id: string;
+    tool_name: "app_search" | "web_search" | string;
+    tool_call_index: number;
+    status: "started" | "pending" | "complete" | "error" | string;
+    scope?: string;
+    types?: string[];
+    semantic?: boolean;
+    freshness_days?: number | null;
+    allowed_domains?: string[];
+    blocked_domains?: string[];
+  };
+}
+
+export interface SSEToolResultEvent {
+  type: "tool_result";
+  data: {
+    tool_call_id?: string | null;
+    assistant_message_id: string;
+    tool_name: "app_search" | "web_search" | string;
+    tool_call_index: number;
+    status: "complete" | "error" | "skipped" | string;
+    error_code?: string | null;
+    result_count: number;
+    selected_count: number;
+    latency_ms: number;
+    citations: CitationEventData[];
+  };
+}
+
+export interface SSECitationEvent {
+  type: "citation";
+  data: WebCitationEventData;
+}
+
+export type SSEEvent =
+  | SSEMetaEvent
+  | SSEDeltaEvent
+  | SSEDoneEvent
+  | SSEToolCallEvent
+  | SSEToolResultEvent
+  | SSECitationEvent;
+
+type SSEEventHandler = (event: SSEEvent) => void;
+type SSEErrorHandler = (error: Error) => void;
+type SSECompleteHandler = (terminalEventSeen: boolean) => void;
+type SSERetryHandler = (milliseconds: number) => void;
+
+export interface SSEJsonEvent {
+  id: string;
+  type: string;
+  data: unknown;
+}
+
+type SSEJsonEventHandler = (event: SSEJsonEvent) => void;
 
 // ============================================================================
 // Request payload types
 // ============================================================================
 
-export interface ContextItem {
-  type: "highlight" | "annotation" | "media";
+export interface ObjectRefContextItem {
+  kind: "object_ref";
+  type: ContextItemType;
   id: string;
-  /** Display fields — optional, for richer rendering */
-  color?: "yellow" | "green" | "blue" | "pink" | "purple";
+  evidence_span_ids?: string[];
+  /** Display fields carried by the caller when available. */
+  color?: ContextItemColor;
   preview?: string;
   mediaId?: string;
   mediaTitle?: string;
-  /** Enriched fields — populated via API hydration */
   exact?: string;
   prefix?: string;
   suffix?: string;
-  annotationBody?: string;
   mediaKind?: string;
-  hydrated?: boolean;
 }
 
-/**
- * Strip client-side enriched fields from a ContextItem before sending to the API.
- * Only keeps the wire-format fields that the backend expects.
- */
+export interface ReaderSelectionContextItem {
+  kind: "reader_selection";
+  client_context_id: string;
+  media_id: string;
+  media_kind: string;
+  media_title: string;
+  exact: string;
+  prefix?: string;
+  suffix?: string;
+  preview?: string;
+  locator: Record<string, unknown>;
+  color?: ContextItemColor;
+}
+
+export type ContextItem = ObjectRefContextItem | ReaderSelectionContextItem;
+
+export type ConversationScopeInput =
+  | { type: "general" }
+  | { type: "media"; media_id: string }
+  | { type: "library"; library_id: string };
+
+export type ChatRunContext =
+  | {
+      kind: "object_ref";
+      type: ContextItemType;
+      id: string;
+      evidence_span_ids?: string[];
+    }
+  | {
+      kind: "reader_selection";
+      client_context_id: string;
+      media_id: string;
+      media_kind: string;
+      media_title: string;
+      exact: string;
+      prefix?: string;
+      suffix?: string;
+      locator: Record<string, unknown>;
+    };
+
 export function toWireContextItem(
   item: ContextItem,
-): Pick<ContextItem, "type" | "id" | "color" | "preview" | "exact" | "mediaId" | "mediaTitle"> {
+): ChatRunContext {
+  if (item.kind === "reader_selection") {
+    return {
+      kind: "reader_selection",
+      client_context_id: item.client_context_id,
+      media_id: item.media_id,
+      media_kind: item.media_kind,
+      media_title: item.media_title,
+      exact: item.exact,
+      ...(item.prefix ? { prefix: item.prefix } : {}),
+      ...(item.suffix ? { suffix: item.suffix } : {}),
+      locator: item.locator,
+    };
+  }
+
   return {
+    kind: "object_ref",
     type: item.type,
     id: item.id,
-    ...(item.color !== undefined && { color: item.color }),
-    ...(item.preview !== undefined && { preview: item.preview }),
-    ...(item.exact !== undefined && { exact: item.exact }),
-    ...(item.mediaId !== undefined && { mediaId: item.mediaId }),
-    ...(item.mediaTitle !== undefined && { mediaTitle: item.mediaTitle }),
+    ...(item.evidence_span_ids?.length
+      ? { evidence_span_ids: item.evidence_span_ids }
+      : {}),
   };
 }
 
-export interface SendMessageRequest {
+export interface ChatRunCreateRequest {
   content: string;
   model_id: string;
-  reasoning: "none" | "minimal" | "low" | "medium" | "high" | "max";
+  reasoning: "default" | "none" | "minimal" | "low" | "medium" | "high" | "max";
   key_mode?: "auto" | "byok_only" | "platform_only";
-  contexts?: ContextItem[];
-}
-
-// ============================================================================
-// SSE Client
-// ============================================================================
-
-/**
- * Send a message and parse the SSE response stream.
- *
- * @param url - The BFF endpoint URL (e.g., `/api/conversations/{id}/messages/stream`)
- * @param body - The send message request body
- * @param handlers - Event callbacks
- * @param options - Optional fetch options (signal for abort, idempotency key)
- * @returns Cleanup function to abort the stream
- */
-export function sseClient(
-  url: string,
-  body: SendMessageRequest,
-  handlers: {
-    onEvent: SSEEventHandler;
-    onError: SSEErrorHandler;
-    onComplete?: () => void;
-  },
-  options?: {
-    signal?: AbortSignal;
-    idempotencyKey?: string;
-  }
-): () => void {
-  const controller = new AbortController();
-  const combinedSignal = options?.signal
-    ? combineSignals(options.signal, controller.signal)
-    : controller.signal;
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "text/event-stream",
+  parent_message_id?: string;
+  branch_anchor?: BranchAnchor;
+  conversation_scope?: ConversationScopeInput;
+  contexts?: ChatRunContext[];
+  web_search: {
+    mode: "off" | "auto" | "required";
+    freshness_days?: number | null;
+    allowed_domains?: string[];
+    blocked_domains?: string[];
   };
-
-  if (options?.idempotencyKey) {
-    headers["Idempotency-Key"] = options.idempotencyKey;
-  }
-
-  // Start the fetch + parse pipeline
-  (async () => {
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal: combinedSignal,
-      });
-
-      if (!response.ok) {
-        // Non-streaming error — parse the JSON error body
-        let errorMessage = `Request failed with status ${response.status}`;
-        try {
-          const errorBody = await response.json();
-          if (errorBody?.error?.message) {
-            errorMessage = errorBody.error.message;
-          }
-        } catch {
-          // ignore parse failures on error body
-        }
-        handlers.onError(new Error(errorMessage));
-        return;
-      }
-
-      if (!response.body) {
-        handlers.onError(new Error("Response body is null"));
-        return;
-      }
-
-      await parseSSEStream(response.body, handlers.onEvent, handlers.onError);
-      handlers.onComplete?.();
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        // Expected on user-initiated abort
-        handlers.onComplete?.();
-        return;
-      }
-      handlers.onError(
-        err instanceof Error ? err : new Error("Unknown SSE error")
-      );
-    }
-  })();
-
-  // Return cleanup function
-  return () => controller.abort();
 }
 
 // ============================================================================
@@ -208,16 +276,107 @@ export function sseClient(
  * Follows the SSE spec: events are separated by blank lines.
  * Each event has optional `event:` and required `data:` fields.
  */
-async function parseSSEStream(
+export async function parseSSEJsonStream(
   body: ReadableStream<Uint8Array>,
-  onEvent: SSEEventHandler,
-  onError: SSEErrorHandler
+  onEvent: SSEJsonEventHandler,
+  onRetry: SSERetryHandler,
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let currentId = "";
   let currentEvent = "";
-  let currentData = "";
+  let currentDataLines: string[] = [];
+  let currentDataBytes = 0;
+  const textEncoder = new TextEncoder();
+
+  const dispatchEvent = () => {
+    if (currentDataLines.length > 0) {
+      processJsonEvent(
+        currentEvent,
+        currentDataLines.join("\n"),
+        currentId,
+        onEvent,
+      );
+    }
+    currentId = "";
+    currentEvent = "";
+    currentDataLines = [];
+    currentDataBytes = 0;
+  };
+
+  const processLine = (line: string) => {
+    if (line === "") {
+      dispatchEvent();
+      return;
+    }
+
+    if (line.startsWith(":")) {
+      // Comment line — ignore
+      return;
+    }
+
+    const colonIndex = line.indexOf(":");
+    const field = colonIndex === -1 ? line : line.slice(0, colonIndex);
+    let value = colonIndex === -1 ? "" : line.slice(colonIndex + 1);
+    if (value.startsWith(" ")) value = value.slice(1);
+
+    switch (field) {
+      case "id":
+        currentId = value;
+        break;
+      case "event":
+        currentEvent = value;
+        break;
+      case "data": {
+        const valueBytes = textEncoder.encode(value).byteLength;
+        const newlineBytes = currentDataLines.length > 0 ? 1 : 0;
+        currentDataBytes += valueBytes + newlineBytes;
+        if (currentDataBytes > MAX_EVENT_SIZE_BYTES) {
+          throw new Error(
+            `SSE event exceeds maximum size of ${MAX_EVENT_SIZE_BYTES} bytes`
+          );
+        }
+        currentDataLines.push(value);
+        break;
+      }
+      case "retry":
+        if (/^\d+$/.test(value)) {
+          onRetry(Number(value));
+        }
+        break;
+      default:
+        // Unknown field — ignore per SSE spec
+        break;
+    }
+  };
+
+  const processBufferedLines = (flush: boolean) => {
+    let start = 0;
+
+    for (let i = 0; i < buffer.length; i += 1) {
+      const char = buffer[i];
+      if (char !== "\n" && char !== "\r") continue;
+
+      if (char === "\r" && i + 1 === buffer.length && !flush) {
+        break;
+      }
+
+      processLine(buffer.slice(start, i));
+
+      if (char === "\r" && buffer[i + 1] === "\n") {
+        i += 1;
+      }
+      start = i + 1;
+    }
+
+    buffer = buffer.slice(start);
+
+    if (flush && buffer !== "") {
+      processLine(buffer);
+      buffer = "";
+    }
+  };
 
   try {
     while (true) {
@@ -226,132 +385,83 @@ async function parseSSEStream(
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-
-      // Process complete lines
-      const lines = buffer.split("\n");
-      // Keep the last incomplete line in the buffer
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (line === "") {
-          // Blank line = end of event
-          if (currentData) {
-            processEvent(currentEvent, currentData, onEvent, onError);
-          }
-          currentEvent = "";
-          currentData = "";
-          continue;
-        }
-
-        if (line.startsWith(":")) {
-          // Comment line — ignore
-          continue;
-        }
-
-        if (line.startsWith("event:")) {
-          currentEvent = line.slice(6).trim();
-          continue;
-        }
-
-        if (line.startsWith("data:")) {
-          const dataPayload = line.slice(5);
-          // Trim leading space per SSE spec (one optional space after colon)
-          currentData = dataPayload.startsWith(" ")
-            ? dataPayload.slice(1)
-            : dataPayload;
-
-          // Enforce max event size
-          if (currentData.length > MAX_EVENT_SIZE_BYTES) {
-            onError(
-              new Error(
-                `SSE event exceeds maximum size of ${MAX_EVENT_SIZE_BYTES} bytes`
-              )
-            );
-            reader.cancel();
-            return;
-          }
-          continue;
-        }
-
-        // Unknown field — ignore per SSE spec
-      }
+      processBufferedLines(false);
     }
 
-    // Process any remaining buffered event
-    if (currentData) {
-      processEvent(currentEvent, currentData, onEvent, onError);
-    }
+    buffer += decoder.decode();
+    processBufferedLines(true);
+    dispatchEvent();
   } finally {
     reader.releaseLock();
   }
 }
 
 /**
- * Process a single SSE event: parse JSON data and dispatch typed event.
+ * Process a single SSE event: parse JSON data and dispatch it with raw type.
  */
-function processEvent(
+function processJsonEvent(
   eventType: string,
   data: string,
-  onEvent: SSEEventHandler,
-  onError: SSEErrorHandler
+  id: string,
+  onEvent: SSEJsonEventHandler
 ): void {
   let parsed: unknown;
   try {
     parsed = JSON.parse(data);
   } catch {
-    onError(new Error(`Failed to parse SSE data as JSON: ${data.slice(0, 100)}`));
-    return;
+    throw new Error(`Failed to parse SSE data as JSON: ${data.slice(0, 100)}`);
   }
 
+  onEvent({ id, type: eventType, data: parsed });
+}
+
+function toChatSSEEvent(eventType: string, data: unknown): SSEEvent | null {
   switch (eventType) {
     case "meta":
-      onEvent({ type: "meta", data: parsed as SSEMetaEvent["data"] });
-      break;
+      return { type: "meta", data: data as SSEMetaEvent["data"] };
     case "delta":
-      onEvent({ type: "delta", data: parsed as SSEDeltaEvent["data"] });
-      break;
+      return { type: "delta", data: data as SSEDeltaEvent["data"] };
     case "done":
-      onEvent({ type: "done", data: parsed as SSEDoneEvent["data"] });
-      break;
+      return { type: "done", data: data as SSEDoneEvent["data"] };
+    case "tool_call":
+      return { type: "tool_call", data: data as SSEToolCallEvent["data"] };
+    case "tool_result":
+      return { type: "tool_result", data: data as SSEToolResultEvent["data"] };
+    case "citation":
+      return { type: "citation", data: data as SSECitationEvent["data"] };
     default:
       // Unknown event type — ignore per spec
-      break;
+      return null;
   }
 }
 
 // ============================================================================
-// Direct-to-FastAPI SSE Client (PR-08)
+// Direct-to-FastAPI Chat Run SSE Client
 // ============================================================================
 
 /**
- * Send a message via direct browser→fastapi SSE using a stream token.
- *
- * Per PR-08 spec §11.1:
- * 1. Uses stream_base_url + token from fetchStreamToken()
- * 2. Sends to /stream/conversations/{id}/messages or /stream/conversations/messages
- * 3. Same event parsing as sseClient
+ * Tail a durable chat run via direct browser -> FastAPI SSE using a stream token.
  *
  * @param streamBaseUrl - The fastapi base URL for streaming
- * @param streamToken - The short-lived stream JWT
- * @param conversationId - Existing conversation ID or null for new
- * @param body - The send message request body
+ * @param streamToken - The short-lived stream JWT, or a supplier that mints one per reconnect
+ * @param runId - Chat run ID returned by POST /api/chat-runs
  * @param handlers - Event callbacks
  * @param options - Optional fetch options
  * @returns Cleanup function to abort the stream
  */
 export function sseClientDirect(
   streamBaseUrl: string,
-  streamToken: string,
-  conversationId: string | null,
-  body: SendMessageRequest,
+  streamToken: string | (() => Promise<string>),
+  runId: string,
   handlers: {
     onEvent: SSEEventHandler;
     onError: SSEErrorHandler;
-    onComplete?: () => void;
+    onComplete?: SSECompleteHandler;
+    onLastEventId?: (id: string) => void;
   },
   options?: {
     signal?: AbortSignal;
-    idempotencyKey?: string;
+    lastEventId?: string;
   }
 ): () => void {
   const controller = new AbortController();
@@ -359,29 +469,38 @@ export function sseClientDirect(
     ? combineSignals(options.signal, controller.signal)
     : controller.signal;
 
-  const url = conversationId
-    ? `${streamBaseUrl}/stream/conversations/${conversationId}/messages`
-    : `${streamBaseUrl}/stream/conversations/messages`;
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "text/event-stream",
-    Authorization: `Bearer ${streamToken}`,
-  };
-
-  if (options?.idempotencyKey) {
-    headers["Idempotency-Key"] = options.idempotencyKey;
-  }
+  const url = `${streamBaseUrl}/stream/chat-runs/${runId}/events`;
+  let lastEventId = options?.lastEventId ?? "";
+  let reconnectDelayMs = RECONNECT_DELAY_MS;
 
   // Start the fetch + parse pipeline
   (async () => {
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal: combinedSignal,
-      });
+    let terminalEventSeen = false;
+
+    while (!combinedSignal.aborted && !terminalEventSeen) {
+      let response: Response;
+      try {
+        const token =
+          typeof streamToken === "function" ? await streamToken() : streamToken;
+        const headers: Record<string, string> = {
+          Accept: "text/event-stream",
+          Authorization: `Bearer ${token}`,
+        };
+        if (lastEventId) headers["Last-Event-ID"] = lastEventId;
+
+        response = await fetch(url, {
+          method: "GET",
+          headers,
+          signal: combinedSignal,
+        });
+      } catch (err) {
+        if (isAbortError(err) || combinedSignal.aborted) {
+          handlers.onComplete?.(terminalEventSeen);
+          return;
+        }
+        await delay(reconnectDelayMs);
+        continue;
+      }
 
       if (!response.ok) {
         let errorMessage = `Request failed with status ${response.status}`;
@@ -391,7 +510,7 @@ export function sseClientDirect(
             errorMessage = errorBody.error.message;
           }
         } catch {
-          // ignore parse failures
+          // justify-ignore-error: error bodies are optional; the HTTP status fallback is enough.
         }
         handlers.onError(new Error(errorMessage));
         return;
@@ -402,20 +521,63 @@ export function sseClientDirect(
         return;
       }
 
-      await parseSSEStream(response.body, handlers.onEvent, handlers.onError);
-      handlers.onComplete?.();
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        handlers.onComplete?.();
+      try {
+        await parseSSEJsonStream(
+          response.body,
+          (jsonEvent) => {
+            if (jsonEvent.id) {
+              lastEventId = jsonEvent.id;
+              handlers.onLastEventId?.(lastEventId);
+            }
+            const event = toChatSSEEvent(jsonEvent.type, jsonEvent.data);
+            if (!event) return;
+            handlers.onEvent(event);
+            if (event.type === "done") terminalEventSeen = true;
+          },
+          (milliseconds) => {
+            reconnectDelayMs = milliseconds;
+          },
+        );
+      } catch (err) {
+        if (isAbortError(err) || combinedSignal.aborted) {
+          handlers.onComplete?.(terminalEventSeen);
+          return;
+        }
+        if (
+          err instanceof Error &&
+          (err.message.startsWith("SSE event exceeds maximum size") ||
+            err.message.startsWith("Failed to parse SSE data as JSON"))
+        ) {
+          handlers.onError(err);
+          return;
+        }
+        await delay(reconnectDelayMs);
+        continue;
+      }
+
+      break;
+    }
+
+    handlers.onComplete?.(terminalEventSeen);
+  })().catch((err) => {
+      if (isAbortError(err)) {
+        handlers.onComplete?.(false);
         return;
       }
       handlers.onError(
         err instanceof Error ? err : new Error("Unknown SSE error")
       );
-    }
-  })();
+    });
 
   return () => controller.abort();
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 // ============================================================================

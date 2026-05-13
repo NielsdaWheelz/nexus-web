@@ -1,6 +1,6 @@
 """End-to-end integration tests for Slice 2 (Web Articles + Highlights).
 
-PR-11 spec: Prove the full read → highlight → annotate → reload loop works
+PR-11 spec: Prove the full read → highlight → linked-note → reload loop works
 end-to-end and lock regressions with stable integration tests.
 
 Tests cover:
@@ -82,12 +82,12 @@ def httpserver_listen_address():
 
 
 class TestWebArticleHighlightE2E:
-    """End-to-end test for the full read → highlight → annotate → reload loop.
+    """End-to-end test for the full read → highlight → linked-note → reload loop.
 
     Per PR-11 spec section 3.
     """
 
-    def test_full_ingest_highlight_annotate_reload_loop(
+    def test_full_ingest_highlight_note_reload_loop(
         self,
         e2e_client: TestClient,
         direct_db: DirectSessionManager,
@@ -101,7 +101,7 @@ class TestWebArticleHighlightE2E:
         3. Fetch media and verify capabilities
         4. Create overlapping highlights
         5. Verify highlight invariants
-        6. Add annotation
+        6. Add linked note
         7. Reload and verify no drift
 
         Note: Uses direct_db instead of db_session because this test mixes
@@ -237,8 +237,8 @@ class TestWebArticleHighlightE2E:
 
         # Step 5: Verify highlight invariants
         for hl in [hl1, hl2]:
-            start = hl["start_offset"]
-            end = hl["end_offset"]
+            start = hl["anchor"]["start_offset"]
+            end = hl["anchor"]["end_offset"]
             exact = hl["exact"]
             prefix = hl["prefix"]
             suffix = hl["suffix"]
@@ -256,15 +256,22 @@ class TestWebArticleHighlightE2E:
             expected_suffix = canonical_text[end:suffix_end]
             assert suffix == expected_suffix, f"suffix mismatch for highlight {hl['id']}"
 
-        # Step 6: Add annotation
-        annotation_response = e2e_client.put(
-            f"/highlights/{hl1_id}/annotation",
-            json={"body": "This is my annotation for the E2E test."},
+        # Step 6: Add a linked note
+        note_response = e2e_client.post(
+            "/notes/blocks",
+            json={
+                "body_markdown": "This is my highlight note for the E2E test.",
+                "linked_object": {
+                    "object_type": "highlight",
+                    "object_id": hl1_id,
+                    "relation_type": "note_about",
+                },
+            },
             headers=auth_headers(user_id),
         )
-        assert annotation_response.status_code == 201
-        annotation = annotation_response.json()["data"]
-        assert annotation["body"] == "This is my annotation for the E2E test."
+        assert note_response.status_code == 201
+        note = note_response.json()["data"]
+        assert note["bodyText"] == "This is my highlight note for the E2E test."
 
         # Step 7: Reload and verify no drift
         # Re-fetch highlights
@@ -281,13 +288,16 @@ class TestWebArticleHighlightE2E:
         reloaded_hl1 = next(h for h in reloaded_highlights if h["id"] == hl1_id)
 
         # Verify no offset drift
-        assert reloaded_hl1["start_offset"] == hl1["start_offset"]
-        assert reloaded_hl1["end_offset"] == hl1["end_offset"]
+        assert reloaded_hl1["anchor"]["start_offset"] == hl1["anchor"]["start_offset"]
+        assert reloaded_hl1["anchor"]["end_offset"] == hl1["anchor"]["end_offset"]
         assert reloaded_hl1["exact"] == hl1["exact"]
 
-        # Verify annotation still present
-        assert reloaded_hl1["annotation"] is not None
-        assert reloaded_hl1["annotation"]["body"] == "This is my annotation for the E2E test."
+        # Verify linked note still present
+        assert reloaded_hl1["linked_note_blocks"][0]["note_block_id"] == note["id"]
+        assert (
+            reloaded_hl1["linked_note_blocks"][0]["body_text"]
+            == "This is my highlight note for the E2E test."
+        )
 
         # Re-fetch fragment and verify canonical_text immutability
         refetch_fragments = e2e_client.get(
@@ -303,7 +313,8 @@ class TestSharedHighlightVisibility:
 
     Replaces original PR-11 ownership isolation tests with s4-compatible contract:
     - Shared reader CAN list/get highlights from shared library members.
-    - Shared reader CANNOT mutate (patch/delete/annotation put) -> masked 404.
+    - Shared reader CANNOT patch/delete another user's highlights.
+    - Shared reader CAN attach their own note to a readable highlight.
     - Non-member still gets 404.
     """
 
@@ -337,7 +348,7 @@ class TestSharedHighlightVisibility:
             )
             session.commit()
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -438,14 +449,21 @@ class TestSharedHighlightVisibility:
         assert del_resp.status_code == 404
         assert del_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
 
-        # User B CANNOT upsert annotation on A's highlight -> masked 404
-        ann_resp = e2e_client.put(
-            f"/highlights/{highlight_id}/annotation",
-            json={"body": "Nope"},
+        # User B can attach their own note to a readable highlight.
+        note_resp = e2e_client.post(
+            "/notes/blocks",
+            json={
+                "body_markdown": "Nope",
+                "linked_object": {
+                    "object_type": "highlight",
+                    "object_id": highlight_id,
+                    "relation_type": "note_about",
+                },
+            },
             headers=auth_headers(user_b),
         )
-        assert ann_resp.status_code == 404
-        assert ann_resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+        assert note_resp.status_code == 201
+        assert note_resp.json()["data"]["bodyText"] == "Nope"
 
     def test_non_member_cannot_list_or_get_highlights(
         self,
@@ -477,7 +495,7 @@ class TestSharedHighlightVisibility:
             )
             session.commit()
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -569,7 +587,7 @@ class TestUnicodeEmojiStability:
             )
             session.commit()
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -625,8 +643,8 @@ class TestUnicodeEmojiStability:
         for hl in reloaded:
             if hl["id"] == emoji_hl["id"]:
                 assert hl["exact"] == "🎉"
-                assert hl["start_offset"] == 6
-                assert hl["end_offset"] == 7
+                assert hl["anchor"]["start_offset"] == 6
+                assert hl["anchor"]["end_offset"] == 7
 
     def test_multiple_emoji_offsets(
         self,
@@ -664,7 +682,7 @@ class TestUnicodeEmojiStability:
             )
             session.commit()
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)

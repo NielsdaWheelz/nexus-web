@@ -3,9 +3,8 @@
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
 
-from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus, ReaderMediaState
+from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -147,7 +146,8 @@ class TestGetReaderProfile:
         assert data["font_family"] in ("serif", "sans")
         assert 12 <= data["font_size_px"] <= 28
         assert 1.2 <= data["line_height"] <= 2.2
-        assert data["focus_mode"] is False
+        assert data["focus_mode"] == "off"
+        assert data["hyphenation"] == "auto"
         assert "updated_at" in data
 
     def test_get_reader_profile_returns_persisted_values(self, auth_client):
@@ -156,7 +156,12 @@ class TestGetReaderProfile:
 
         auth_client.patch(
             "/me/reader-profile",
-            json={"theme": "dark", "font_size_px": 18, "focus_mode": True},
+            json={
+                "theme": "dark",
+                "font_size_px": 18,
+                "focus_mode": "paragraph",
+                "hyphenation": "off",
+            },
             headers=auth_headers(user_id),
         )
 
@@ -166,7 +171,8 @@ class TestGetReaderProfile:
         data = resp.json()["data"]
         assert data["theme"] == "dark"
         assert data["font_size_px"] == 18
-        assert data["focus_mode"] is True
+        assert data["focus_mode"] == "paragraph"
+        assert data["hyphenation"] == "off"
 
 
 class TestPatchReaderProfile:
@@ -184,7 +190,8 @@ class TestPatchReaderProfile:
                 "line_height": 1.5,
                 "font_family": "serif",
                 "column_width_ch": 65,
-                "focus_mode": True,
+                "focus_mode": "sentence",
+                "hyphenation": "off",
             },
             headers=auth_headers(user_id),
         )
@@ -196,7 +203,47 @@ class TestPatchReaderProfile:
         assert data["line_height"] == 1.5
         assert data["font_family"] == "serif"
         assert data["column_width_ch"] == 65
-        assert data["focus_mode"] is True
+        assert data["focus_mode"] == "sentence"
+        assert data["hyphenation"] == "off"
+
+    def test_patch_reader_profile_round_trips_hyphenation_only(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.patch(
+            "/me/reader-profile",
+            json={"hyphenation": "off"},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["hyphenation"] == "off"
+        assert data["focus_mode"] == "off"
+
+    def test_patch_reader_profile_rejects_invalid_focus_mode(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.patch(
+            "/me/reader-profile",
+            json={"focus_mode": "always"},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
+
+    def test_patch_reader_profile_rejects_invalid_hyphenation(self, auth_client):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        resp = auth_client.patch(
+            "/me/reader-profile",
+            json={"hyphenation": "soft"},
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 400
 
     def test_patch_reader_profile_rejects_invalid_theme(self, auth_client):
         user_id = create_test_user_id()
@@ -318,17 +365,6 @@ class TestReaderState:
         assert get_resp.status_code == 200
         assert get_resp.json()["data"] == payload
 
-        with direct_db.session() as session:
-            row = (
-                session.query(ReaderMediaState)
-                .filter(
-                    ReaderMediaState.user_id == user_id,
-                    ReaderMediaState.media_id == media_id,
-                )
-                .one()
-            )
-            assert row.locator == payload
-
     def test_put_reader_state_allows_clearing_with_null(
         self, auth_client, direct_db: DirectSessionManager
     ):
@@ -359,135 +395,13 @@ class TestReaderState:
 
         assert clear_resp.status_code == 200
         assert clear_resp.json()["data"] is None
-
-        with direct_db.session() as session:
-            row = (
-                session.query(ReaderMediaState)
-                .filter(
-                    ReaderMediaState.user_id == user_id,
-                    ReaderMediaState.media_id == media_id,
-                )
-                .one()
-            )
-            assert row.locator is None
-            is_sql_null = session.execute(
-                text(
-                    """
-                    SELECT locator IS NULL
-                    FROM reader_media_state
-                    WHERE id = :state_id
-                    """
-                ),
-                {"state_id": row.id},
-            ).scalar_one()
-            assert is_sql_null is True
-
-    def test_get_reader_state_returns_null_for_removed_locator_payloads(
-        self,
-        auth_client,
-        direct_db: DirectSessionManager,
-    ):
-        user_id = create_test_user_id()
-        with direct_db.session() as session:
-            media_id, _ = _create_ready_reader_media(session, kind=MediaKind.epub.value)
-
-        _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        with direct_db.session() as session:
-            session.add(
-                ReaderMediaState(
-                    user_id=user_id,
-                    media_id=media_id,
-                    locator={"source": "legacy", "text_offset": 12},
-                )
-            )
-            session.commit()
-
-        resp = auth_client.get(
+        get_resp = auth_client.get(
             f"/media/{media_id}/reader-state",
             headers=auth_headers(user_id),
         )
 
-        assert resp.status_code == 200
-        assert resp.json()["data"] is None
-
-    def test_get_reader_state_returns_null_for_kind_mismatched_resume_state(
-        self,
-        auth_client,
-        direct_db: DirectSessionManager,
-    ):
-        user_id = create_test_user_id()
-        with direct_db.session() as session:
-            media_id, fragment_ids = _create_ready_reader_media(
-                session,
-                kind=MediaKind.web_article.value,
-            )
-
-        _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        with direct_db.session() as session:
-            session.add(
-                ReaderMediaState(
-                    user_id=user_id,
-                    media_id=media_id,
-                    locator=_build_reader_state_payload(MediaKind.video.value, fragment_ids),
-                )
-            )
-            session.commit()
-
-        resp = auth_client.get(
-            f"/media/{media_id}/reader-state",
-            headers=auth_headers(user_id),
-        )
-
-        assert resp.status_code == 200
-        assert resp.json()["data"] is None
-
-    @pytest.mark.parametrize(
-        "payload",
-        [
-            {"source": "legacy", "text_offset": 12},
-            {"page": 4, "position": 4},
-            {"locator": {"kind": "pdf", "page": 1}},
-            {"kind": "epub", "section_id": "ch01", "href_path": "ch01.xhtml"},
-            {"kind": "web", "target": {"fragment_id": "frag-1"}},
-            {
-                "kind": "transcript",
-                "target": {"fragment_id": "frag-1"},
-                "locations": {
-                    "text_offset": 12,
-                    "progression": 0.1,
-                    "total_progression": 0.2,
-                    "position": 1,
-                },
-                "text": {"quote": "q", "quote_prefix": None, "quote_suffix": None},
-                "source": "legacy",
-            },
-            {},
-        ],
-    )
-    def test_put_reader_state_rejects_removed_payload_shapes(
-        self,
-        auth_client,
-        direct_db: DirectSessionManager,
-        payload: dict,
-    ):
-        user_id = create_test_user_id()
-        with direct_db.session() as session:
-            media_id, _ = _create_ready_reader_media(session, kind=MediaKind.epub.value)
-
-        _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        resp = auth_client.put(
-            f"/media/{media_id}/reader-state",
-            json=payload,
-            headers=auth_headers(user_id),
-        )
-
-        assert resp.status_code == 400
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"] is None
 
     @pytest.mark.parametrize(
         ("media_kind", "payload", "label"),

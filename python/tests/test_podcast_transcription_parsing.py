@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.services.podcasts import (
+from nexus.services.podcasts.transcripts import (
     _canonicalize_transcript_segment_text,
     _extract_deepgram_segments,
     _normalize_transcript_segments,

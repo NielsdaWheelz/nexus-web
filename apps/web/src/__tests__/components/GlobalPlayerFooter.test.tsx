@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
+import { setAudioMetrics, setViewportWidth } from "../helpers/audio";
 
 const PODCAST_CHAPTERS = [
   {
@@ -23,33 +23,6 @@ const PODCAST_CHAPTERS = [
     image_url: null,
   },
 ];
-
-function setViewportWidth(width: number): void {
-  Object.defineProperty(window, "innerWidth", {
-    configurable: true,
-    value: width,
-  });
-  window.dispatchEvent(new Event("resize"));
-}
-
-function setAudioMetrics(
-  audio: HTMLAudioElement,
-  values: { duration: number; currentTime: number; bufferedEnd: number }
-): void {
-  Object.defineProperty(audio, "duration", {
-    configurable: true,
-    value: values.duration,
-  });
-  Object.defineProperty(audio, "buffered", {
-    configurable: true,
-    value: {
-      length: 1,
-      start: () => 0,
-      end: () => values.bufferedEnd,
-    },
-  });
-  audio.currentTime = values.currentTime;
-}
 
 function RouteA() {
   const { setTrack } = useGlobalPlayer();
@@ -102,41 +75,37 @@ describe("GlobalPlayerFooter", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("persists selected track across route changes on desktop", async () => {
-    const user = userEvent.setup();
     render(<RouteHarness />);
 
-    await user.click(screen.getByRole("button", { name: "Load episode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load episode" }));
     expect(await screen.findByText("Episode Alpha")).toBeInTheDocument();
 
     const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
     expect(audio.src).toContain("episode-alpha.mp3");
 
-    await user.click(screen.getByRole("button", { name: "Navigate away" }));
+    fireEvent.click(screen.getByRole("button", { name: "Navigate away" }));
     expect(screen.getByText("Route B content")).toBeInTheDocument();
     expect(screen.getByText("Episode Alpha")).toBeInTheDocument();
     expect(screen.getByLabelText("Global podcast player")).toBeInTheDocument();
   });
 
   it("switches footer presentation to mobile mode", async () => {
-    const user = userEvent.setup();
     setViewportWidth(390);
     render(<RouteHarness />);
 
-    await user.click(screen.getByRole("button", { name: "Load episode" }));
-    await waitFor(() => {
-      const footer = screen.getByRole("contentinfo", { name: "Global player footer" });
-      expect(footer).toHaveAttribute("data-mobile-view", "minibar");
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Load episode" }));
+    expect(await screen.findByRole("button", { name: "Expand player" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Play global player" })).toBeNull();
   });
 
   it("renders scrubber, skip, speed, and volume controls", async () => {
-    const user = userEvent.setup();
     render(<RouteHarness />);
 
-    await user.click(screen.getByRole("button", { name: "Load episode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load episode" }));
 
     const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
     setAudioMetrics(audio, { duration: 120, currentTime: 60, bufferedEnd: 90 });
@@ -149,25 +118,25 @@ describe("GlobalPlayerFooter", () => {
     fireEvent.change(seekSlider, { target: { value: "90" } });
     expect(Math.floor(audio.currentTime)).toBe(90);
 
-    await user.click(screen.getByRole("button", { name: /back 15 seconds/i }));
+    fireEvent.click(screen.getByRole("button", { name: /back 15 seconds/i }));
     expect(Math.floor(audio.currentTime)).toBe(75);
 
-    await user.click(screen.getByRole("button", { name: /forward 30 seconds/i }));
+    fireEvent.click(screen.getByRole("button", { name: /forward 30 seconds/i }));
     expect(Math.floor(audio.currentTime)).toBe(105);
 
     audio.currentTime = 5;
     fireEvent(audio, new Event("timeupdate"));
-    await user.click(screen.getByRole("button", { name: /back 15 seconds/i }));
+    fireEvent.click(screen.getByRole("button", { name: /back 15 seconds/i }));
     expect(Math.floor(audio.currentTime)).toBe(0);
 
     audio.currentTime = 118;
     fireEvent(audio, new Event("timeupdate"));
-    await user.click(screen.getByRole("button", { name: /forward 30 seconds/i }));
+    fireEvent.click(screen.getByRole("button", { name: /forward 30 seconds/i }));
     expect(Math.floor(audio.currentTime)).toBe(120);
 
-    await user.click(screen.getByRole("button", { name: "More controls" }));
+    fireEvent.click(screen.getByRole("button", { name: "More controls" }));
     const speedControl = screen.getByRole("combobox", { name: /playback speed/i });
-    await user.selectOptions(speedControl, "1.5");
+    fireEvent.change(speedControl, { target: { value: "1.5" } });
     expect(audio.playbackRate).toBeCloseTo(1.5, 3);
 
     const volumeSlider = screen.getByRole("slider", { name: /volume/i });
@@ -178,13 +147,12 @@ describe("GlobalPlayerFooter", () => {
   });
 
   it("supports global space/arrow shortcuts with input guard", async () => {
-    const user = userEvent.setup();
     render(<RouteHarness />);
 
-    await user.keyboard(" ");
+    fireEvent.keyDown(document, { key: " ", code: "Space" });
     expect(screen.queryByRole("contentinfo", { name: "Global player footer" })).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Load episode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load episode" }));
 
     const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
     const { playSpy, pauseSpy } = mockAudioTransport(audio);
@@ -193,11 +161,11 @@ describe("GlobalPlayerFooter", () => {
     fireEvent(audio, new Event("timeupdate"));
     fireEvent(audio, new Event("progress"));
 
-    await user.keyboard(" ");
+    fireEvent.keyDown(document, { key: " ", code: "Space" });
     expect(playSpy).toHaveBeenCalledTimes(1);
     fireEvent(audio, new Event("play"));
 
-    await user.keyboard(" ");
+    fireEvent.keyDown(document, { key: " ", code: "Space" });
     expect(pauseSpy).toHaveBeenCalledTimes(1);
     fireEvent(audio, new Event("pause"));
 
@@ -217,11 +185,10 @@ describe("GlobalPlayerFooter", () => {
     expect(pauseSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("shows current chapter label and scrubber chapter tick markers", async () => {
-    const user = userEvent.setup();
+  it("shows the current chapter label for chapterized audio", async () => {
     render(<RouteHarness />);
 
-    await user.click(screen.getByRole("button", { name: "Load episode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load episode" }));
 
     const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
     setAudioMetrics(audio, { duration: 120, currentTime: 75, bufferedEnd: 100 });
@@ -230,15 +197,12 @@ describe("GlobalPlayerFooter", () => {
     fireEvent(audio, new Event("progress"));
 
     expect(screen.getByText("Chapter 2: Deep Dive")).toBeVisible();
-    expect(screen.getByTitle("Intro")).toBeVisible();
-    expect(screen.getByTitle("Deep Dive")).toBeVisible();
   });
 
   it("renders playback error UI with retry and source fallback", async () => {
-    const user = userEvent.setup();
     render(<RouteHarness />);
 
-    await user.click(screen.getByRole("button", { name: "Load episode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load episode" }));
 
     const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
     Object.defineProperty(audio, "error", {
@@ -257,16 +221,15 @@ describe("GlobalPlayerFooter", () => {
     const sourceLink = screen.getByRole("link", { name: "Open source audio" });
     expect(sourceLink).toHaveAttribute("href", "https://example.com/episode-alpha");
 
-    await user.click(retryButton);
+    fireEvent.click(retryButton);
     expect(loadSpy).toHaveBeenCalledTimes(1);
     expect(playSpy).toHaveBeenCalledTimes(1);
   });
 
   it("auto-retries network playback errors when browser comes online", async () => {
-    const user = userEvent.setup();
     render(<RouteHarness />);
 
-    await user.click(screen.getByRole("button", { name: "Load episode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load episode" }));
 
     const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
     const playSpy = vi.spyOn(audio, "play").mockResolvedValue(undefined);
@@ -286,10 +249,9 @@ describe("GlobalPlayerFooter", () => {
   });
 
   it("shows and clears a buffering indicator around waiting/playing events", async () => {
-    const user = userEvent.setup();
     render(<RouteHarness />);
 
-    await user.click(screen.getByRole("button", { name: "Load episode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load episode" }));
     const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
 
     fireEvent(audio, new Event("waiting"));

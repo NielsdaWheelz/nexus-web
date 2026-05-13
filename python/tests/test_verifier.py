@@ -3,6 +3,7 @@
 Tests the SupabaseJwksVerifier (with mocked HTTP) and MockJwtVerifier.
 """
 
+import json
 import time
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -76,19 +77,34 @@ class TestSupabaseJwksVerifier:
         )
         return jwt.encode(payload, private_bytes, algorithm="RS256", headers={"kid": "test-key-id"})
 
-    def test_valid_token(self, verifier, rsa_keypair, jwks_response):
+    def signing_key_patch(self, verifier, public_key):
+        """Patch JWKS lookup so decode tests only exercise claim verification."""
+        mock_signing_key = MagicMock()
+        mock_signing_key.key = public_key
+        return patch.object(verifier, "_get_signing_key", return_value=mock_signing_key)
+
+    def json_response(self, payload):
+        """Build a minimal urlopen-compatible JSON response."""
+
+        class JsonResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return None
+
+            def read(self):
+                return json.dumps(payload).encode()
+
+        return JsonResponse()
+
+    def test_valid_token(self, verifier, rsa_keypair):
         """Test 1: Valid token returns claims."""
         private_key, _ = rsa_keypair
         user_id = str(uuid4())
         token = self.mint_token(private_key, user_id)
 
-        with patch.object(verifier, "_get_jwks_client") as mock_client:
-            mock_jwk_client = MagicMock()
-            mock_signing_key = MagicMock()
-            mock_signing_key.key = rsa_keypair[1]  # public key
-            mock_jwk_client.get_signing_key_from_jwt.return_value = mock_signing_key
-            mock_client.return_value = mock_jwk_client
-
+        with self.signing_key_patch(verifier, rsa_keypair[1]):
             claims = verifier.verify(token)
 
             assert claims["sub"] == user_id
@@ -106,14 +122,7 @@ class TestSupabaseJwksVerifier:
         user_id = str(uuid4())
         token = self.mint_token(wrong_private_key, user_id)
 
-        with patch.object(verifier, "_get_jwks_client") as mock_client:
-            mock_jwk_client = MagicMock()
-            mock_signing_key = MagicMock()
-            # Use the correct public key (doesn't match token signature)
-            mock_signing_key.key = rsa_keypair[1]
-            mock_jwk_client.get_signing_key_from_jwt.return_value = mock_signing_key
-            mock_client.return_value = mock_jwk_client
-
+        with self.signing_key_patch(verifier, rsa_keypair[1]):
             with pytest.raises(ApiError) as exc_info:
                 verifier.verify(token)
 
@@ -126,13 +135,7 @@ class TestSupabaseJwksVerifier:
         # Token expired 2 minutes ago (beyond clock skew)
         token = self.mint_token(private_key, user_id, exp=int(time.time()) - 120)
 
-        with patch.object(verifier, "_get_jwks_client") as mock_client:
-            mock_jwk_client = MagicMock()
-            mock_signing_key = MagicMock()
-            mock_signing_key.key = rsa_keypair[1]
-            mock_jwk_client.get_signing_key_from_jwt.return_value = mock_signing_key
-            mock_client.return_value = mock_jwk_client
-
+        with self.signing_key_patch(verifier, rsa_keypair[1]):
             with pytest.raises(ApiError) as exc_info:
                 verifier.verify(token)
 
@@ -145,13 +148,7 @@ class TestSupabaseJwksVerifier:
         user_id = str(uuid4())
         token = self.mint_token(private_key, user_id, iss="https://wrong.supabase.co")
 
-        with patch.object(verifier, "_get_jwks_client") as mock_client:
-            mock_jwk_client = MagicMock()
-            mock_signing_key = MagicMock()
-            mock_signing_key.key = rsa_keypair[1]
-            mock_jwk_client.get_signing_key_from_jwt.return_value = mock_signing_key
-            mock_client.return_value = mock_jwk_client
-
+        with self.signing_key_patch(verifier, rsa_keypair[1]):
             with pytest.raises(ApiError) as exc_info:
                 verifier.verify(token)
 
@@ -164,13 +161,7 @@ class TestSupabaseJwksVerifier:
         user_id = str(uuid4())
         token = self.mint_token(private_key, user_id, aud="wrong-audience")
 
-        with patch.object(verifier, "_get_jwks_client") as mock_client:
-            mock_jwk_client = MagicMock()
-            mock_signing_key = MagicMock()
-            mock_signing_key.key = rsa_keypair[1]
-            mock_jwk_client.get_signing_key_from_jwt.return_value = mock_signing_key
-            mock_client.return_value = mock_jwk_client
-
+        with self.signing_key_patch(verifier, rsa_keypair[1]):
             with pytest.raises(ApiError) as exc_info:
                 verifier.verify(token)
 
@@ -198,13 +189,7 @@ class TestSupabaseJwksVerifier:
             payload, private_bytes, algorithm="RS256", headers={"kid": "test-key-id"}
         )
 
-        with patch.object(verifier, "_get_jwks_client") as mock_client:
-            mock_jwk_client = MagicMock()
-            mock_signing_key = MagicMock()
-            mock_signing_key.key = rsa_keypair[1]
-            mock_jwk_client.get_signing_key_from_jwt.return_value = mock_signing_key
-            mock_client.return_value = mock_jwk_client
-
+        with self.signing_key_patch(verifier, rsa_keypair[1]):
             with pytest.raises(ApiError) as exc_info:
                 verifier.verify(token)
 
@@ -215,52 +200,50 @@ class TestSupabaseJwksVerifier:
         private_key, _ = rsa_keypair
         token = self.mint_token(private_key, "not-a-uuid")
 
-        with patch.object(verifier, "_get_jwks_client") as mock_client:
-            mock_jwk_client = MagicMock()
-            mock_signing_key = MagicMock()
-            mock_signing_key.key = rsa_keypair[1]
-            mock_jwk_client.get_signing_key_from_jwt.return_value = mock_signing_key
-            mock_client.return_value = mock_jwk_client
-
+        with self.signing_key_patch(verifier, rsa_keypair[1]):
             with pytest.raises(ApiError) as exc_info:
                 verifier.verify(token)
 
             assert exc_info.value.code == ApiErrorCode.E_UNAUTHENTICATED
             assert "uuid" in exc_info.value.message.lower()
 
-    def test_kid_miss_triggers_refresh(self, verifier, rsa_keypair):
-        """Test 8: Kid miss triggers JWKS refresh, succeeds after refresh."""
+    def test_jwks_client_uses_bounded_cache_and_timeout(self):
+        """Test 8: JWKS client uses TTL-bounded set cache and explicit timeout."""
+        verifier = SupabaseJwksVerifier(
+            jwks_url="https://test.supabase.co/.well-known/jwks.json",
+            issuer="https://test.supabase.co",
+            audiences=["authenticated"],
+            cache_ttl=123,
+            fetch_timeout=2.5,
+        )
+
+        client = verifier._get_jwks_client()
+
+        assert client.timeout == 2.5
+        assert client.jwk_set_cache is not None
+        assert client.jwk_set_cache.lifespan == 123
+        assert not hasattr(client.get_signing_key, "cache_info")
+        assert verifier._get_jwks_client() is client
+
+    def test_cached_jwks_used_within_ttl(self, verifier, rsa_keypair, jwks_response):
+        """Cached JWKS verifies repeat requests without another fetch."""
         private_key, _ = rsa_keypair
         user_id = str(uuid4())
         token = self.mint_token(private_key, user_id)
 
-        from jwt.exceptions import PyJWKClientError
+        with patch(
+            "jwt.jwks_client.urllib.request.urlopen",
+            return_value=self.json_response(jwks_response),
+        ) as urlopen:
+            first_claims = verifier.verify(token)
+            second_claims = verifier.verify(token)
 
-        call_count = [0]
+        assert first_claims["sub"] == user_id
+        assert second_claims["sub"] == user_id
+        assert urlopen.call_count == 1
 
-        def mock_get_signing_key(token):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                # First call: kid not found
-                raise PyJWKClientError("Unable to find a signing key")
-            # Second call: return key
-            mock_key = MagicMock()
-            mock_key.key = rsa_keypair[1]
-            return mock_key
-
-        with patch.object(verifier, "_get_jwks_client") as mock_client:
-            mock_jwk_client = MagicMock()
-            mock_jwk_client.get_signing_key_from_jwt.side_effect = mock_get_signing_key
-            mock_client.return_value = mock_jwk_client
-
-            with patch.object(verifier, "_refresh_jwks"):
-                claims = verifier.verify(token)
-
-                assert claims["sub"] == user_id
-                assert call_count[0] == 2  # First failed, second succeeded
-
-    def test_kid_not_found_after_refresh(self, verifier, rsa_keypair):
-        """Test 9: Kid not found even after refresh returns E_UNAUTHENTICATED."""
+    def test_kid_not_found_returns_unauthenticated(self, verifier, rsa_keypair):
+        """Test 9: Kid not found returns E_UNAUTHENTICATED."""
         private_key, _ = rsa_keypair
         user_id = str(uuid4())
         token = self.mint_token(private_key, user_id)
@@ -274,28 +257,28 @@ class TestSupabaseJwksVerifier:
             )
             mock_client.return_value = mock_jwk_client
 
-            with patch.object(verifier, "_refresh_jwks"):
-                with pytest.raises(ApiError) as exc_info:
-                    verifier.verify(token)
-
-                assert exc_info.value.code == ApiErrorCode.E_UNAUTHENTICATED
-                assert "signing key" in exc_info.value.message.lower()
-
-    def test_jwks_fetch_failure(self, verifier):
-        """Test 10: JWKS fetch failure returns E_AUTH_UNAVAILABLE."""
-        from jwt.exceptions import PyJWKClientError
-
-        token = "some.fake.token"
-
-        with patch.object(verifier, "_get_jwks_client") as mock_client:
-            mock_jwk_client = MagicMock()
-            mock_jwk_client.get_signing_key_from_jwt.side_effect = PyJWKClientError("Network error")
-            mock_client.return_value = mock_jwk_client
-
             with pytest.raises(ApiError) as exc_info:
                 verifier.verify(token)
 
-            assert exc_info.value.code == ApiErrorCode.E_AUTH_UNAVAILABLE
+            assert exc_info.value.code == ApiErrorCode.E_UNAUTHENTICATED
+            assert "signing key" in exc_info.value.message.lower()
+            mock_jwk_client.get_signing_key_from_jwt.assert_called_once_with(token)
+
+    def test_jwks_fetch_failure(self, verifier, rsa_keypair):
+        """Test 10: JWKS fetch failure returns E_AUTH_UNAVAILABLE."""
+        private_key, _ = rsa_keypair
+        token = self.mint_token(private_key, str(uuid4()))
+
+        def raise_timeout(*args, **kwargs):
+            assert kwargs["timeout"] == verifier.fetch_timeout
+            raise TimeoutError("timed out")
+
+        with patch("jwt.jwks_client.urllib.request.urlopen", side_effect=raise_timeout) as urlopen:
+            with pytest.raises(ApiError) as exc_info:
+                verifier.verify(token)
+
+        assert exc_info.value.code == ApiErrorCode.E_AUTH_UNAVAILABLE
+        assert urlopen.call_count == 1
 
     def test_jwks_invalid_response(self, verifier):
         """Test 11: JWKS invalid response returns E_AUTH_UNAVAILABLE."""
@@ -322,13 +305,7 @@ class TestSupabaseJwksVerifier:
         # Token expired 30 seconds ago (within 60s clock skew)
         token = self.mint_token(private_key, user_id, exp=int(time.time()) - 30)
 
-        with patch.object(verifier, "_get_jwks_client") as mock_client:
-            mock_jwk_client = MagicMock()
-            mock_signing_key = MagicMock()
-            mock_signing_key.key = rsa_keypair[1]
-            mock_jwk_client.get_signing_key_from_jwt.return_value = mock_signing_key
-            mock_client.return_value = mock_jwk_client
-
+        with self.signing_key_patch(verifier, rsa_keypair[1]):
             claims = verifier.verify(token)
             assert claims["sub"] == user_id
 
@@ -339,13 +316,7 @@ class TestSupabaseJwksVerifier:
         # Token expired 90 seconds ago (beyond 60s clock skew)
         token = self.mint_token(private_key, user_id, exp=int(time.time()) - 90)
 
-        with patch.object(verifier, "_get_jwks_client") as mock_client:
-            mock_jwk_client = MagicMock()
-            mock_signing_key = MagicMock()
-            mock_signing_key.key = rsa_keypair[1]
-            mock_jwk_client.get_signing_key_from_jwt.return_value = mock_signing_key
-            mock_client.return_value = mock_jwk_client
-
+        with self.signing_key_patch(verifier, rsa_keypair[1]):
             with pytest.raises(ApiError) as exc_info:
                 verifier.verify(token)
 

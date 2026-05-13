@@ -1,114 +1,164 @@
 /**
- * ChatComposer — message input with model picker, context chips, and streaming send.
- *
- * Handles both streaming (SSE) and non-streaming send paths.
- * Streaming is default when NEXT_PUBLIC_ENABLE_STREAMING=1.
- *
- * Per s3_pr07:
- * - Streaming path uses temporary IDs, patches on meta event.
- * - Non-streaming path creates no optimistic state.
- * - Idempotency key generated per send.
- * - Send disabled while in-flight.
- * - Context cap of 10 enforced client-side.
+ * ChatComposer - message input with model picker, context chips, and chat-run send.
  *
  * Security:
  * - Never console.log API key material.
- * - Key input cleared on submit.
  */
 
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { ArrowUp } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { ArrowUp, ChevronDown, Search, X } from "lucide-react";
+import { apiFetch } from "@/lib/api/client";
+import { toFeedback } from "@/components/feedback/Feedback";
 import {
-  sseClientDirect,
   toWireContextItem,
-  type SSEEvent,
   type ContextItem,
-  type SendMessageRequest,
+  type ChatRunCreateRequest,
 } from "@/lib/api/sse";
-import { fetchStreamToken } from "@/lib/api/streamToken";
+import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
+import ComposerContextRail from "@/components/chat/ComposerContextRail";
+import Button from "@/components/ui/Button";
+import Select from "@/components/ui/Select";
+import Textarea from "@/components/ui/Textarea";
+import Toggle from "@/components/ui/Toggle";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import type {
+  BranchDraft,
+  ChatRunResponse,
+  ConversationScope,
+  ConversationModel,
+} from "@/lib/conversations/types";
 import styles from "./ChatComposer.module.css";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-interface Model {
-  id: string;
-  provider: string;
-  provider_display_name: string;
-  model_name: string;
-  model_display_name: string;
-  model_tier: "sota" | "light";
-  reasoning_modes: Array<"none" | "minimal" | "low" | "medium" | "high" | "max">;
-  max_context_tokens: number;
-}
-
-interface Message {
-  id: string;
-  seq: number;
-  role: "user" | "assistant" | "system";
-  content: string;
-  contexts?: Array<{
-    type: "highlight" | "annotation" | "media";
-    id: string;
-    color?: "yellow" | "green" | "blue" | "pink" | "purple";
-    preview?: string;
-    prefix?: string;
-    suffix?: string;
-    annotation_body?: string;
-    media_id?: string;
-    media_title?: string;
-    media_kind?: string;
-  }>;
-  status: "pending" | "complete" | "error";
-  error_code: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface SendResponse {
-  data: {
-    conversation: { id: string };
-    user_message: Message;
-    assistant_message: Message;
-  };
-}
-
 export interface ChatComposerProps {
   /** Existing conversation ID (null for new conversation). */
   conversationId: string | null;
+  /** Persistent scope for a new scoped draft or loaded scoped conversation. */
+  conversationScope?: ConversationScope;
   /** Attached context items (from quote-to-chat). */
   attachedContexts?: ContextItem[];
   /** Remove a context chip. */
   onRemoveContext?: (index: number) => void;
-  /** Called when a new conversation is created (for URL update). */
-  onConversationCreated?: (conversationId: string) => void;
+  /** Called when the chat run has been created. */
+  onChatRunCreated?: (data: ChatRunResponse["data"]) => void;
   /** Called after message sent (for refreshing lists). */
   onMessageSent?: () => void;
-  /** Streaming callbacks — only used when streaming is enabled. */
-  onOptimisticMessages?: (userMsg: Message, assistantMsg: Message) => void;
-  onMetaReceived?: (
-    tempUserId: string,
-    realUserId: string,
-    tempAsstId: string,
-    realAsstId: string
-  ) => void;
-  onDelta?: (assistantId: string, delta: string) => void;
-  onDone?: (
-    assistantId: string,
-    status: "complete" | "error",
-    errorCode: string | null
-  ) => void;
-  /** Non-streaming callback. */
-  onNonStreamMessages?: (userMsg: Message, assistantMsg: Message) => void;
+  /** Called when a valid send begins. */
+  onSendStarted?: () => void;
+  /** Focus the composer textarea after mount or when focusKey changes. */
+  autoFocus?: boolean;
+  /** Stable key used to refocus the composer for a newly attached quote. */
+  focusKey?: string;
+  /** Draft text inserted by an explicit user action before the user sends. */
+  initialContent?: string;
+  /** Stable draft key supplied by callers that already own path identity. */
+  draftKey?: string;
+  /** Assistant answer anchor for branch-reply mode. */
+  branchDraft?: BranchDraft | null;
+  /** Active-path assistant message used for ordinary continuation replies. */
+  parentMessageId?: string | null;
+  /** Clears branch-reply mode. */
+  onClearBranchDraft?: () => void;
+  /** Jumps the transcript to the visible parent message for branch mode. */
+  onJumpToBranchParent?: (messageId: string) => void;
+  /**
+   * Clears the conversation scope (reverts to general). Omit when the scope
+   * is structural and cannot sensibly be removed (e.g., loaded scoped
+   * conversations); the rail then renders the scope chip without an X.
+   */
+  onClearScope?: () => void;
+  /** Blocks sending while caller-owned conversation state is not safe to continue. */
+  disabledReason?: string;
 }
+
+type ComposerModel = ConversationModel;
+type ReasoningMode = ChatRunCreateRequest["reasoning"];
+type WebSearchMode = ChatRunCreateRequest["web_search"]["mode"];
 
 /** Max contexts per message. */
 const MAX_CONTEXTS = 10;
+const PROVIDER_ORDER = ["openai", "anthropic", "gemini", "deepseek"] as const;
+const DEFAULT_REASONING: ReasoningMode = "default";
+const WEB_SEARCH_MODES = ["auto", "required", "off"] as const;
+const WEB_SEARCH_MODE_LABELS = {
+  auto: "Auto",
+  required: "Required",
+  off: "Off",
+} satisfies Record<WebSearchMode, string>;
+const REASONING_LABELS = {
+  default: "Default",
+  none: "None",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  max: "Max",
+} satisfies Record<ReasoningMode, string>;
+const DEFAULT_CONVERSATION_SCOPE: ConversationScope = { type: "general" };
+
+let cachedModels: ComposerModel[] | null = null;
+let modelLoadPromise: Promise<ComposerModel[]> | null = null;
+
+function loadComposerModels(): Promise<ComposerModel[]> {
+  if (cachedModels) {
+    return Promise.resolve(cachedModels);
+  }
+  if (!modelLoadPromise) {
+    modelLoadPromise = apiFetch<{ data: ComposerModel[] }>("/api/models")
+      .then((response) => {
+        cachedModels = response.data;
+        return response.data;
+      })
+      .catch((error) => {
+        modelLoadPromise = null;
+        throw error;
+      });
+  }
+  return modelLoadPromise;
+}
+
+function getModelSourceLabel(model: ComposerModel): string {
+  if (model.available_via === "byok") {
+    return "Your key";
+  }
+  if (model.available_via === "both") {
+    return "Your key first";
+  }
+  return "Nexus AI";
+}
+
+function isAvailableViaUserKey(model: ComposerModel): boolean {
+  return model.available_via === "byok" || model.available_via === "both";
+}
+
+function firstModelForProviderOrder(models: ComposerModel[]): ComposerModel | undefined {
+  for (const provider of PROVIDER_ORDER) {
+    const lightModel = models.find(
+      (item) => item.provider === provider && item.model_tier === "light"
+    );
+    if (lightModel) return lightModel;
+
+    const firstProviderModel = models.find((item) => item.provider === provider);
+    if (firstProviderModel) return firstProviderModel;
+  }
+  return models[0];
+}
+
+function reasoningOptionsForModel(model: ComposerModel | undefined): ReasoningMode[] {
+  if (!model) return [];
+  const options: ReasoningMode[] = [DEFAULT_REASONING];
+  for (const mode of model.reasoning_modes) {
+    if (!options.includes(mode)) {
+      options.push(mode);
+    }
+  }
+  return options;
+}
 
 // ============================================================================
 // Component
@@ -116,324 +166,187 @@ const MAX_CONTEXTS = 10;
 
 export default function ChatComposer({
   conversationId,
+  conversationScope = DEFAULT_CONVERSATION_SCOPE,
   attachedContexts = [],
   onRemoveContext,
-  onConversationCreated,
+  onChatRunCreated,
   onMessageSent,
-  onOptimisticMessages,
-  onMetaReceived,
-  onDelta,
-  onDone,
-  onNonStreamMessages,
+  onSendStarted,
+  autoFocus = false,
+  focusKey,
+  initialContent = "",
+  draftKey,
+  branchDraft = null,
+  parentMessageId = null,
+  onClearBranchDraft,
+  onJumpToBranchParent,
+  onClearScope,
+  disabledReason,
 }: ChatComposerProps) {
-  const router = useRouter();
-  const [content, setContent] = useState("");
+  const [content, setContent] = useState(initialContent);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [models, setModels] = useState<Model[]>([]);
+  const [models, setModels] = useState<ComposerModel[]>(() => cachedModels ?? []);
   const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [selectedModelId, setSelectedModelId] = useState<string>("");
-  const [selectedReasoning, setSelectedReasoning] = useState<
-    "none" | "minimal" | "low" | "medium" | "high" | "max" | ""
-  >("");
-  const abortRef = useRef<(() => void) | null>(null);
+  const [selectedReasoning, setSelectedReasoning] =
+    useState<ReasoningMode>(DEFAULT_REASONING);
+  const [onlyUseMyKeys, setOnlyUseMyKeys] = useState(false);
+  const [webSearchMode, setWebSearchMode] = useState<WebSearchMode>("auto");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const isMobile = useIsMobileViewport();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const settingsPanelRef = useRef<HTMLDivElement>(null);
+  const draftsByKeyRef = useRef<Map<string, string>>(new Map());
+  const initialContentRef = useRef(initialContent);
+  const activeDraftKey = useMemo(() => {
+    if (draftKey) {
+      return draftKey;
+    }
+    if (branchDraft) {
+      if (branchDraft.anchor.kind === "assistant_selection") {
+        return `branch:${branchDraft.parentMessageId}:selection:${branchDraft.anchor.client_selection_id}`;
+      }
+      return `branch:${branchDraft.parentMessageId}:message`;
+    }
+    return `path:${parentMessageId ?? conversationId ?? "new"}`;
+  }, [branchDraft, conversationId, draftKey, parentMessageId]);
+  const activeDraftKeyRef = useRef(activeDraftKey);
 
   useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-    el.style.overflowY = el.scrollHeight > 160 ? "auto" : "hidden";
-  }, [content]);
+    if (!autoFocus) return;
+    textareaRef.current?.focus({ preventScroll: true });
+  }, [autoFocus, focusKey]);
 
-  const streamingEnabled =
-    typeof window !== "undefined" &&
-    process.env.NEXT_PUBLIC_ENABLE_STREAMING === "1";
+  useEffect(() => {
+    if (activeDraftKeyRef.current === activeDraftKey) return;
+
+    draftsByKeyRef.current.set(activeDraftKeyRef.current, content);
+    activeDraftKeyRef.current = activeDraftKey;
+    setContent(draftsByKeyRef.current.get(activeDraftKey) ?? "");
+    setError(null);
+  }, [activeDraftKey, content]);
+
+  useEffect(() => {
+    if (initialContentRef.current === initialContent) return;
+
+    initialContentRef.current = initialContent;
+    draftsByKeyRef.current.set(activeDraftKey, initialContent);
+    setContent(initialContent);
+  }, [activeDraftKey, initialContent]);
 
   // --------------------------------------------------------------------------
   // Fetch available models
   // --------------------------------------------------------------------------
 
   useEffect(() => {
-    const loadModels = async () => {
-      try {
-        const response = await apiFetch<{ data: Model[] }>("/api/models");
-        setModels(response.data);
-        if (response.data.length > 0) {
-          const providerOrder = ["openai", "anthropic", "gemini", "deepseek"];
-          let firstProvider = "";
-          for (const provider of providerOrder) {
-            if (response.data.some((model) => model.provider === provider)) {
-              firstProvider = provider;
-              break;
-            }
-          }
-          if (!firstProvider) {
-            firstProvider = response.data[0].provider;
-          }
-
-          const firstModel = response.data.find(
-            (model) => model.provider === firstProvider
-          );
-          const firstReasoning = firstModel?.reasoning_modes[0] ?? "";
-
-          setSelectedProvider(firstProvider);
-          setSelectedModelId(firstModel?.id ?? "");
-          setSelectedReasoning(firstReasoning);
+    let cancelled = false;
+    void loadComposerModels()
+      .then((nextModels) => {
+        if (!cancelled) {
+          setModels(nextModels);
         }
-      } catch (err) {
-        console.error("Failed to load models:", err);
-      }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error("Failed to load models:", err);
+        }
+      });
+
+    return () => {
+      cancelled = true;
     };
-    loadModels();
-     
   }, []);
 
-  const selectedModel = models.find((model) => model.id === selectedModelId);
-
-  // --------------------------------------------------------------------------
-  // Cleanup on unmount
-  // --------------------------------------------------------------------------
+  const availableModels = useMemo(
+    () => (onlyUseMyKeys ? models.filter(isAvailableViaUserKey) : models),
+    [models, onlyUseMyKeys]
+  );
 
   useEffect(() => {
-    return () => {
-      abortRef.current?.();
-    };
-  }, []);
+    const selected = availableModels.find((model) => model.id === selectedModelId);
+    if (selected && selected.provider === selectedProvider) return;
 
-  // --------------------------------------------------------------------------
-  // PR-08 §11.3: Poll for E_STREAM_IN_PROGRESS completion
-  // --------------------------------------------------------------------------
+    const firstModel = firstModelForProviderOrder(availableModels);
+    setSelectedProvider(firstModel?.provider ?? "");
+    setSelectedModelId(firstModel?.id ?? "");
+    setSelectedReasoning(DEFAULT_REASONING);
+  }, [availableModels, selectedModelId, selectedProvider]);
 
-  const pollForCompletion = useCallback(
-    async (assistantMessageId: string) => {
-      if (!conversationId) return;
-
-      const maxAttempts = 15; // 30s total (2s intervals)
-      for (let i = 0; i < maxAttempts; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
-        try {
-          const res = await apiFetch<{
-            data: Message[];
-          }>(`/api/conversations/${conversationId}/messages?limit=5`);
-          const messages = res.data;
-          const found = messages.find(
-            (m) => m.id === assistantMessageId && m.status === "complete"
-          );
-          if (found) {
-            onDone?.(assistantMessageId, "complete", null);
-            return;
-          }
-        } catch {
-          // Ignore polling errors
-        }
-      }
-      // Timed out — show message
-      setError("Message is still generating — please wait and try again.");
-    },
-    [conversationId, onDone]
+  const selectedModel = availableModels.find((model) => model.id === selectedModelId);
+  const reasoningOptions = reasoningOptionsForModel(selectedModel);
+  const providerOptions = PROVIDER_ORDER.filter((provider) =>
+    availableModels.some((model) => model.provider === provider)
   );
+  const modelSummary = selectedModel
+    ? `${selectedModel.model_display_name} / ${REASONING_LABELS[selectedReasoning]}`
+    : "Model";
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (isMobile) return;
+      const target = event.target as Node;
+      if (
+        settingsPanelRef.current?.contains(target) ||
+        settingsButtonRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setSettingsOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSettingsOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [settingsOpen, isMobile]);
+
+  useEffect(() => {
+    if (!settingsOpen || !isMobile) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [settingsOpen, isMobile]);
 
   // --------------------------------------------------------------------------
-  // Non-streaming send (fallback)
+  // Chat-run send
   // --------------------------------------------------------------------------
 
-  const sendNonStreaming = useCallback(
-    async (body: SendMessageRequest, idempotencyKey: string): Promise<boolean> => {
+  const sendChatRun = useCallback(
+    async (body: ChatRunCreateRequest, idempotencyKey: string): Promise<boolean> => {
+      let runResponse: ChatRunResponse;
       try {
-        const url = conversationId
-          ? `/api/conversations/${conversationId}/messages`
-          : `/api/conversations/messages`;
-
-        const response = await apiFetch<SendResponse>(url, {
+        runResponse = await apiFetch<ChatRunResponse>("/api/chat-runs", {
           method: "POST",
-          body: JSON.stringify(body),
+          body: JSON.stringify({
+            ...body,
+            ...(conversationId ? { conversation_id: conversationId } : {}),
+          }),
           headers: { "Idempotency-Key": idempotencyKey },
         });
-
-        const { conversation, user_message, assistant_message } =
-          response.data;
-
-        onNonStreamMessages?.(user_message, assistant_message);
-
-        if (!conversationId) {
-          if (onConversationCreated) {
-            onConversationCreated(conversation.id);
-          } else {
-            router.replace(`/conversations/${conversation.id}`);
-          }
-        }
-        return true;
       } catch (err) {
-        if (isApiError(err)) {
-          setError(err.message);
-        } else {
-          setError("Failed to send message");
-        }
+        setError(toFeedback(err, { fallback: "Failed to start chat run" }).title);
         return false;
       }
+
+      onChatRunCreated?.(runResponse.data);
+
+      return true;
     },
-    [conversationId, onConversationCreated, onNonStreamMessages, router]
-  );
-
-  // --------------------------------------------------------------------------
-  // Streaming send
-  // --------------------------------------------------------------------------
-
-  const sendStreaming = useCallback(
-    async (body: SendMessageRequest, idempotencyKey: string): Promise<boolean> => {
-      let streamBaseUrl: string;
-      let streamToken: string;
-      try {
-        const tokenResponse = await fetchStreamToken();
-        streamBaseUrl = tokenResponse.stream_base_url;
-        streamToken = tokenResponse.token;
-      } catch {
-        return sendNonStreaming(body, idempotencyKey);
-      }
-
-      const tempUserId = `temp-user-${crypto.randomUUID()}`;
-      const tempAsstId = `temp-assistant-${crypto.randomUUID()}`;
-      const now = new Date().toISOString();
-
-      // Create optimistic placeholders
-      const userMsg: Message = {
-        id: tempUserId,
-        seq: 0,
-        role: "user",
-        content: body.content,
-        contexts: body.contexts?.map((ctx) => ({
-          type: ctx.type,
-          id: ctx.id,
-          ...(ctx.color !== undefined && { color: ctx.color }),
-          ...(ctx.preview !== undefined && { preview: ctx.preview }),
-          ...(ctx.mediaId !== undefined && { media_id: ctx.mediaId }),
-          ...(ctx.mediaTitle !== undefined && { media_title: ctx.mediaTitle }),
-        })),
-        status: "complete",
-        error_code: null,
-        created_at: now,
-        updated_at: now,
-      };
-      const asstMsg: Message = {
-        id: tempAsstId,
-        seq: 0,
-        role: "assistant",
-        content: "",
-        status: "pending",
-        error_code: null,
-        created_at: now,
-        updated_at: now,
-      };
-
-      onOptimisticMessages?.(userMsg, asstMsg);
-
-      // Track current assistant ID (may change from temp to real)
-      let currentAsstId = tempAsstId;
-      let receivedMeta = false;
-      let sendAccepted = false;
-
-      const eventHandlers = {
-        onEvent: (event: SSEEvent) => {
-          switch (event.type) {
-            case "meta": {
-              receivedMeta = true;
-              sendAccepted = true;
-              const {
-                conversation_id,
-                user_message_id,
-                assistant_message_id,
-              } = event.data;
-
-              onMetaReceived?.(
-                tempUserId,
-                user_message_id,
-                tempAsstId,
-                assistant_message_id
-              );
-              currentAsstId = assistant_message_id;
-
-              if (!conversationId) {
-                if (onConversationCreated) {
-                  onConversationCreated(conversation_id);
-                } else {
-                  router.replace(`/conversations/${conversation_id}`);
-                }
-              }
-              break;
-            }
-            case "delta": {
-              onDelta?.(currentAsstId, event.data.delta);
-              break;
-            }
-            case "done": {
-              if (event.data.error_code === "E_STREAM_IN_PROGRESS") {
-                pollForCompletion(currentAsstId);
-              }
-              onDone?.(
-                currentAsstId,
-                event.data.status,
-                event.data.error_code
-              );
-              break;
-            }
-          }
-        },
-        onError: (err: Error) => {
-          if (!receivedMeta) {
-            setError(`Stream error: ${err.message}`);
-          } else {
-            onDone?.(currentAsstId, "error", "E_STREAM_INTERRUPTED");
-          }
-        },
-        onComplete: () => {},
-      };
-
-      return new Promise<boolean>((resolve) => {
-        let settled = false;
-        const finish = (ok: boolean) => {
-          if (settled) return;
-          settled = true;
-          resolve(ok);
-        };
-
-        const wrappedHandlers = {
-          ...eventHandlers,
-          onError: (err: Error) => {
-            eventHandlers.onError(err);
-            finish(sendAccepted);
-          },
-          onComplete: () => {
-            finish(sendAccepted);
-          },
-          onEvent: (event: SSEEvent) => {
-            eventHandlers.onEvent(event);
-            if (event.type === "done") finish(sendAccepted);
-          },
-        };
-
-        abortRef.current = sseClientDirect(
-          streamBaseUrl,
-          streamToken,
-          conversationId,
-          body,
-          wrappedHandlers,
-          { idempotencyKey }
-        );
-      });
-    },
-    [
-      conversationId,
-      onConversationCreated,
-      onDelta,
-      onDone,
-      onMetaReceived,
-      onOptimisticMessages,
-      pollForCompletion,
-      router,
-      sendNonStreaming,
-    ]
+    [conversationId, onChatRunCreated]
   );
 
   // --------------------------------------------------------------------------
@@ -442,36 +355,72 @@ export default function ChatComposer({
 
   const handleSend = useCallback(async () => {
     const trimmed = content.trim();
-    if (!trimmed || sending || !selectedModelId || !selectedReasoning) return;
+    if (!trimmed || sending || disabledReason || !selectedModelId) return;
 
     setSending(true);
     setError(null);
+    onSendStarted?.();
 
     const idempotencyKey = crypto.randomUUID();
-    const body: SendMessageRequest = {
+    const replyParentMessageId = branchDraft?.parentMessageId ?? parentMessageId;
+    const branchAnchor = branchDraft
+      ? branchDraft.anchor.kind === "assistant_message"
+        ? {
+            kind: "assistant_message" as const,
+            message_id: branchDraft.parentMessageId,
+          }
+        : branchDraft.anchor
+      : conversationId && replyParentMessageId
+        ? {
+            kind: "assistant_message" as const,
+            message_id: replyParentMessageId,
+          }
+        : { kind: "none" as const };
+    const body: ChatRunCreateRequest = {
       content: trimmed,
       model_id: selectedModelId,
       reasoning: selectedReasoning,
-      key_mode: "auto",
+      key_mode: onlyUseMyKeys ? "byok_only" : "auto",
+      ...(conversationId && replyParentMessageId
+        ? { parent_message_id: replyParentMessageId }
+        : {}),
+      branch_anchor: branchAnchor,
+      web_search: {
+        mode: webSearchMode,
+        freshness_days: null,
+        allowed_domains: [],
+        blocked_domains: [],
+      },
       contexts:
         attachedContexts.length > 0
           ? attachedContexts.slice(0, MAX_CONTEXTS).map(toWireContextItem)
           : undefined,
     };
+    if (!conversationId && conversationScope.type === "general") {
+      body.conversation_scope = { type: "general" };
+    } else if (!conversationId && conversationScope.type === "media") {
+      body.conversation_scope = {
+        type: "media",
+        media_id: conversationScope.media_id,
+      };
+    } else if (!conversationId && conversationScope.type === "library") {
+      body.conversation_scope = {
+        type: "library",
+        library_id: conversationScope.library_id,
+      };
+    }
 
     let sent = false;
     try {
-      if (streamingEnabled) {
-        sent = await sendStreaming(body, idempotencyKey);
-      } else {
-        sent = await sendNonStreaming(body, idempotencyKey);
-      }
+      sent = await sendChatRun(body, idempotencyKey);
     } finally {
       setSending(false);
     }
 
     if (sent) {
+      draftsByKeyRef.current.delete(activeDraftKey);
       setContent("");
+      onClearBranchDraft?.();
       onMessageSent?.();
     }
   }, [
@@ -479,43 +428,52 @@ export default function ChatComposer({
     sending,
     selectedModelId,
     selectedReasoning,
+    onlyUseMyKeys,
+    webSearchMode,
     attachedContexts,
-    streamingEnabled,
-    sendNonStreaming,
-    sendStreaming,
+    conversationId,
+    conversationScope,
+    disabledReason,
+    sendChatRun,
+    branchDraft,
+    parentMessageId,
+    onClearBranchDraft,
     onMessageSent,
+    onSendStarted,
+    activeDraftKey,
   ]);
 
   const handleProviderChange = useCallback(
     (provider: string) => {
       setSelectedProvider(provider);
 
-      const providerModels = models.filter((model) => model.provider === provider);
+      const providerModels = availableModels.filter((model) => model.provider === provider);
       const nextModel = providerModels[0];
       setSelectedModelId(nextModel?.id ?? "");
-      setSelectedReasoning(nextModel?.reasoning_modes[0] ?? "");
+      setSelectedReasoning(DEFAULT_REASONING);
     },
-    [models]
+    [availableModels]
   );
 
   const handleModelChange = useCallback(
     (modelId: string) => {
       setSelectedModelId(modelId);
 
-      const model = models.find((item) => item.id === modelId);
+      const model = availableModels.find((item) => item.id === modelId);
       if (!model) {
-        setSelectedReasoning("");
+        setSelectedReasoning(DEFAULT_REASONING);
         return;
       }
+      setSelectedProvider(model.provider);
 
       if (
-        selectedReasoning === "" ||
+        selectedReasoning !== DEFAULT_REASONING &&
         !model.reasoning_modes.includes(selectedReasoning)
       ) {
-        setSelectedReasoning(model.reasoning_modes[0] ?? "");
+        setSelectedReasoning(DEFAULT_REASONING);
       }
     },
-    [models, selectedReasoning]
+    [availableModels, selectedReasoning]
   );
 
   // --------------------------------------------------------------------------
@@ -533,132 +491,227 @@ export default function ChatComposer({
   // Render
   // --------------------------------------------------------------------------
 
+  const sendLabel = branchDraft ? "Send fork reply" : "Send message";
+  const composerDisabled = sending;
+  const sendDisabled = sending || Boolean(disabledReason);
+
   return (
     <div className={styles.composer}>
-      {error && <div className={styles.composerError}>{error}</div>}
+      <div className={styles.composerShell}>
+        {error && <div className={styles.composerError}>{error}</div>}
+        {disabledReason && (
+          <div className={styles.composerError} role="status">
+            {disabledReason}
+          </div>
+        )}
 
-      {/* Context chips */}
-      {attachedContexts.length > 0 && (
-        <div className={styles.contextChips}>
-          {attachedContexts.map((ctx, i) => {
-            const chipText = ctx.exact || ctx.preview;
-            const chipLabel = chipText
-              ? chipText.length > 60
-                ? chipText.slice(0, 60) + "..."
-                : chipText
-              : `${ctx.type}: ${ctx.id.slice(0, 8)}...`;
-            const swatchClass = ctx.color
-              ? styles[`chipSwatch${ctx.color.charAt(0).toUpperCase()}${ctx.color.slice(1)}` as keyof typeof styles]
-              : undefined;
+        {branchDraft ? (
+          <BranchComposerHeader
+            branchDraft={branchDraft}
+            onCancel={() => onClearBranchDraft?.()}
+            onJumpToParent={onJumpToBranchParent}
+          />
+        ) : null}
 
-            return (
-              <span key={`${ctx.type}-${ctx.id}`} className={styles.contextChip}>
-                {ctx.color && (
-                  <span
-                    className={`${styles.chipSwatch} ${swatchClass ?? ""}`}
-                    aria-hidden="true"
-                  />
-                )}
-                <span className={styles.chipText}>{chipLabel}</span>
-                {onRemoveContext && (
-                  <button
-                    className={styles.chipRemove}
-                    onClick={() => onRemoveContext(i)}
-                    aria-label="Remove context"
-                  >
-                    ×
-                  </button>
-                )}
-              </span>
-            );
-          })}
-          {attachedContexts.length >= MAX_CONTEXTS && (
-            <span className={styles.contextChip}>Max {MAX_CONTEXTS} reached</span>
-          )}
-        </div>
-      )}
+        <ComposerContextRail
+          scope={conversationScope}
+          attachedContexts={attachedContexts}
+          onClearScope={onClearScope}
+          onRemoveContext={(index) => onRemoveContext?.(index)}
+        />
 
-      {/* Provider / model / reasoning */}
-      <div className={styles.composerControlBar}>
-        <select
-          className={styles.modelSelect}
-          value={selectedProvider}
-          onChange={(e) => handleProviderChange(e.target.value)}
-          disabled={sending}
-        >
-          {models.length === 0 && <option value="">No providers available</option>}
-          {["openai", "anthropic", "gemini", "deepseek"]
-            .filter((provider) => models.some((model) => model.provider === provider))
-            .map((provider) => {
-              const model = models.find((item) => item.provider === provider);
-              return (
-                <option key={provider} value={provider}>
-                  {model?.provider_display_name ?? provider}
-                </option>
-              );
-            })}
-        </select>
-
-        <select
-          className={styles.modelSelect}
-          value={selectedModelId}
-          onChange={(e) => handleModelChange(e.target.value)}
-          disabled={sending}
-        >
-          {models.length === 0 && <option value="">No models available</option>}
-          {models
-            .filter((model) => model.provider === selectedProvider)
-            .map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.model_display_name} ({m.model_tier})
-            </option>
-            ))}
-        </select>
-
-        <select
-          className={styles.modelSelect}
-          value={selectedReasoning}
-          onChange={(e) =>
-            setSelectedReasoning(
-              e.target.value as "none" | "minimal" | "low" | "medium" | "high" | "max"
-            )
-          }
-          disabled={sending || !selectedModel}
-        >
-          {!selectedModel && <option value="">No reasoning modes</option>}
-          {selectedModel?.reasoning_modes.map((mode) => (
-            <option key={mode} value={mode}>
-              {mode}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Input + send */}
-      <div className={styles.composerInputWrapper}>
-        <textarea
+        <Textarea
           ref={textareaRef}
-          className={styles.composerInput}
+          variant="bare"
+          autoGrow
+          minRows={1}
+          maxRows={8}
           value={content}
           onChange={(e) => setContent(e.target.value)}
           onKeyDown={handleKeyDown}
+          aria-label="Ask anything"
           placeholder="Ask anything..."
-          disabled={sending}
-          rows={1}
+          disabled={composerDisabled}
         />
-        <button
-          className={styles.sendBtn}
-          onClick={handleSend}
-          disabled={
-            sending ||
-            !content.trim() ||
-            !selectedProvider ||
-            !selectedModelId ||
-            !selectedReasoning
-          }
-        >
-          <ArrowUp size={18} />
-        </button>
+
+        <div className={styles.composerActionRow}>
+          <Button
+            ref={settingsButtonRef}
+            variant="pill"
+            size="sm"
+            className={styles.modelSummaryButton}
+            onClick={() => setSettingsOpen((open) => !open)}
+            aria-haspopup="dialog"
+            aria-expanded={settingsOpen}
+            aria-label={`Model settings: ${modelSummary}`}
+            title={modelSummary}
+            trailingIcon={<ChevronDown size={14} aria-hidden="true" />}
+          >
+            <span className={styles.modelSummary}>{modelSummary}</span>
+          </Button>
+
+          <span className={styles.webSearchSelect}>
+            <Search size={13} aria-hidden="true" />
+            <Select
+              size="sm"
+              value={webSearchMode}
+              onChange={(e) => setWebSearchMode(e.target.value as WebSearchMode)}
+              disabled={composerDisabled}
+              aria-label="Web search mode"
+            >
+              {WEB_SEARCH_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {WEB_SEARCH_MODE_LABELS[mode]}
+                </option>
+              ))}
+            </Select>
+          </span>
+
+          {onlyUseMyKeys && <span className={styles.keyModeStatus}>Your key</span>}
+
+          {branchDraft ? (
+            <Button
+              variant="primary"
+              size="md"
+              className={styles.sendButton}
+              leadingIcon={<ArrowUp size={16} aria-hidden="true" />}
+              onClick={handleSend}
+              aria-label={sending ? "Sending fork reply" : sendLabel}
+              disabled={
+                sendDisabled ||
+                !content.trim() ||
+                !selectedProvider ||
+                !selectedModelId
+              }
+            >
+              {sendLabel}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="md"
+              iconOnly
+              className={styles.sendButton}
+              onClick={handleSend}
+              aria-label={sending ? "Sending message" : sendLabel}
+              disabled={
+                sendDisabled ||
+                !content.trim() ||
+                !selectedProvider ||
+                !selectedModelId
+              }
+            >
+              <ArrowUp size={18} aria-hidden="true" />
+            </Button>
+          )}
+        </div>
+
+        {settingsOpen && (
+          <div className={styles.settingsLayer} data-mobile={isMobile ? "true" : "false"}>
+            {isMobile && (
+              <div
+                className={styles.settingsBackdrop}
+                onClick={() => setSettingsOpen(false)}
+              />
+            )}
+
+            <div
+              ref={settingsPanelRef}
+              className={styles.settingsPanel}
+              role="dialog"
+              aria-modal={isMobile ? "true" : undefined}
+              aria-label="Model settings"
+            >
+              <header className={styles.settingsHeader}>
+                <h2 className={styles.settingsTitle}>Model settings</h2>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  onClick={() => setSettingsOpen(false)}
+                  aria-label="Close model settings"
+                >
+                  <X size={16} aria-hidden="true" />
+                </Button>
+              </header>
+
+              <label className={styles.settingsField}>
+                <span className={styles.settingsLabel}>Provider</span>
+                <Select
+                  value={selectedProvider}
+                  onChange={(e) => {
+                    handleProviderChange(e.target.value);
+                    if (!isMobile) setSettingsOpen(false);
+                  }}
+                  disabled={composerDisabled || providerOptions.length === 0}
+                >
+                  {availableModels.length === 0 && (
+                    <option value="">No providers available</option>
+                  )}
+                  {providerOptions.map((provider) => {
+                    const model = availableModels.find((item) => item.provider === provider);
+                    return (
+                      <option key={provider} value={provider}>
+                        {model?.provider_display_name ?? provider}
+                      </option>
+                    );
+                  })}
+                </Select>
+              </label>
+
+              <label className={styles.settingsField}>
+                <span className={styles.settingsLabel}>Model</span>
+                <Select
+                  value={selectedModelId}
+                  onChange={(e) => {
+                    handleModelChange(e.target.value);
+                    if (!isMobile) setSettingsOpen(false);
+                  }}
+                  disabled={composerDisabled || availableModels.length === 0}
+                >
+                  {availableModels.length === 0 && <option value="">No models available</option>}
+                  {availableModels
+                    .filter((model) => model.provider === selectedProvider)
+                    .map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.model_display_name} ({model.model_tier}) -{" "}
+                        {getModelSourceLabel(model)}
+                      </option>
+                    ))}
+                </Select>
+              </label>
+
+              <label className={styles.settingsField}>
+                <span className={styles.settingsLabel}>Reasoning</span>
+                <Select
+                  value={selectedReasoning}
+                  onChange={(e) => {
+                    setSelectedReasoning(e.target.value as ReasoningMode);
+                    if (!isMobile) setSettingsOpen(false);
+                  }}
+                  disabled={composerDisabled || !selectedModel}
+                >
+                  {!selectedModel && <option value="">No reasoning modes</option>}
+                  {reasoningOptions.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {REASONING_LABELS[mode]}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+
+              <Toggle
+                checked={onlyUseMyKeys}
+                onCheckedChange={(next) => {
+                  setOnlyUseMyKeys(next);
+                  if (!isMobile) setSettingsOpen(false);
+                }}
+                disabled={composerDisabled}
+                label="Use my keys only"
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

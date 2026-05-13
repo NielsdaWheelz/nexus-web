@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { ANDROID_SHELL_USER_AGENT_TOKEN } from "@/lib/androidShell";
 
 const {
@@ -10,7 +11,6 @@ const {
   readEditableVaultFilesMock,
   writeVaultPayloadMock,
   apiFetchMock,
-  toastMock,
 } = vi.hoisted(() => ({
   getVaultAutoSyncMock: vi.fn(),
   isLocalVaultSupportedMock: vi.fn(),
@@ -19,7 +19,6 @@ const {
   readEditableVaultFilesMock: vi.fn(),
   writeVaultPayloadMock: vi.fn(),
   apiFetchMock: vi.fn(),
-  toastMock: vi.fn(),
 }));
 
 vi.mock("@/lib/vault/localVault", () => ({
@@ -34,10 +33,6 @@ vi.mock("@/lib/vault/localVault", () => ({
 vi.mock("@/lib/api/client", () => ({
   apiFetch: (...args: unknown[]) => apiFetchMock(...args),
   isApiError: () => false,
-}));
-
-vi.mock("@/components/Toast", () => ({
-  useToast: () => ({ toast: toastMock }),
 }));
 
 import LocalVaultAutoSync from "@/app/(authenticated)/LocalVaultAutoSync";
@@ -61,10 +56,13 @@ describe("LocalVaultAutoSync android shell gating", () => {
     isLocalVaultSupportedMock.mockReturnValue(true);
     getVaultAutoSyncMock.mockReturnValue(true);
 
-    render(<LocalVaultAutoSync />);
+    render(
+      <FeedbackProvider>
+        <LocalVaultAutoSync />
+      </FeedbackProvider>
+    );
 
     expect(loadVaultDirectoryHandleMock).not.toHaveBeenCalled();
     expect(apiFetchMock).not.toHaveBeenCalled();
-    expect(toastMock).not.toHaveBeenCalled();
   });
 });

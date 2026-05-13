@@ -1,27 +1,30 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 test.describe("settings", () => {
+  const settingsChrome = (page: Page) => page.getByTestId("pane-shell-chrome");
+
   test("view settings", async ({ page }) => {
     await page.goto("/settings/keys");
     await expect(
-      page.getByRole("heading", { name: "API Keys" })
+      settingsChrome(page).getByRole("heading", { name: "API Keys" })
     ).toBeVisible();
   });
 
-  test("update preference", async ({ page }) => {
+  test("view provider card controls", async ({ page }) => {
     await page.goto("/settings/keys");
-    await expect(page.locator("#provider")).toBeVisible();
-    await expect(page.locator("#apiKey")).toBeVisible();
+    const openaiCard = page.locator("[data-provider-card='openai']");
+    await expect(openaiCard).toBeVisible();
+    await expect(openaiCard.getByRole("button", { name: /connect|replace/i })).toBeVisible();
   });
 
   test("persisted settings state after reload", async ({ page }) => {
     await page.goto("/settings/keys");
     await expect(
-      page.getByRole("heading", { name: "API Keys" })
+      settingsChrome(page).getByRole("heading", { name: "API Keys" })
     ).toBeVisible();
     await page.reload();
     await expect(
-      page.getByRole("heading", { name: "API Keys" })
+      settingsChrome(page).getByRole("heading", { name: "API Keys" })
     ).toBeVisible();
   });
 });

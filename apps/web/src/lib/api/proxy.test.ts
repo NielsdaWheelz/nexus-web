@@ -1,305 +1,353 @@
-/**
- * Unit tests for proxy helper functions.
- *
- * These tests verify pure, deterministic proxy helper behavior without
- * mocking internal modules or the network stack.
- */
-
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createClient } from "@/lib/supabase/server";
 import {
-  REQUEST_ID_HEADER,
-  proxyToFastAPIWithDeps,
-  type ProxyDeps,
-  _shouldForwardResponseHeader,
-  _shouldForwardRequestHeader,
-  _getOrGenerateRequestId,
-  _isTextContentType,
-  _isStreamingResponse,
-} from "./proxy";
+  parseCookieHeader,
+  readSupabaseSessionCookie,
+  type SessionCookieResult,
+} from "@/lib/auth/session-cookie";
+import { proxyToFastAPI, proxyToFastAPIWithDeps } from "./proxy";
 
-/**
- * Create a mock request with URL and options.
- */
-function createMockRequest(
-  options: {
-    url?: string;
-    method?: string;
-    headers?: Record<string, string>;
-    body?: string | ArrayBuffer;
-  } = {}
-): Request {
-  const url = options.url || "http://localhost:3000/api/test";
-  const headers = new Headers(options.headers || {});
-  const init: RequestInit = {
-    method: options.method || "GET",
-    headers,
-  };
-  if (options.body && options.method !== "GET") {
-    init.body = options.body;
-  }
-  return new Request(url, init);
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: vi.fn(() => {
+    throw new Error("BFF proxy must not call Supabase session APIs");
+  }),
+}));
+
+const SUPABASE_URL = "https://project-ref.supabase.co";
+const COOKIE_NAME = "sb-project-ref-auth-token";
+
+function encodeSessionCookie(session: Record<string, unknown>): string {
+  return `base64-${Buffer.from(JSON.stringify(session), "utf8").toString(
+    "base64url"
+  )}`;
 }
 
-// ============================================================================
-// Helper Function Tests
-// ============================================================================
-
-describe("proxy helper functions", () => {
-  describe("_getOrGenerateRequestId", () => {
-    const generateFn = () => "generated-uuid";
-
-    it("generates request ID when missing", () => {
-      const request = createMockRequest();
-      const requestId = _getOrGenerateRequestId(request, generateFn);
-      expect(requestId).toBe("generated-uuid");
-    });
-
-    it("forwards existing request ID when present", () => {
-      const request = createMockRequest({
-        headers: { [REQUEST_ID_HEADER]: "existing-id" },
-      });
-      const requestId = _getOrGenerateRequestId(request, generateFn);
-      expect(requestId).toBe("existing-id");
-    });
-
-    it("generates new ID when existing ID is too long (>128 chars)", () => {
-      const longId = "a".repeat(200);
-      const request = createMockRequest({
-        headers: { [REQUEST_ID_HEADER]: longId },
-      });
-      const requestId = _getOrGenerateRequestId(request, generateFn);
-      expect(requestId).toBe("generated-uuid");
-    });
-
-    it("preserves valid UUID request IDs", () => {
-      const uuid = "550e8400-e29b-41d4-a716-446655440000";
-      const request = createMockRequest({
-        headers: { [REQUEST_ID_HEADER]: uuid },
-      });
-      const requestId = _getOrGenerateRequestId(request, generateFn);
-      expect(requestId).toBe(uuid);
-    });
+function sessionCookie(
+  overrides: Record<string, unknown> = {},
+  options: { chunked?: boolean } = {}
+): string {
+  const value = encodeSessionCookie({
+    access_token: "server-token",
+    expires_at: Math.floor(Date.now() / 1000) + 60,
+    token_type: "bearer",
+    refresh_token: "refresh-token-not-used",
+    ...overrides,
   });
 
-  describe("_shouldForwardResponseHeader", () => {
-    it("allows x-request-id", () => {
-      expect(_shouldForwardResponseHeader("x-request-id")).toBe(true);
-      expect(_shouldForwardResponseHeader("X-Request-ID")).toBe(true);
-    });
+  if (!options.chunked) {
+    return `${COOKIE_NAME}=${value}`;
+  }
 
-    it("allows content-type", () => {
-      expect(_shouldForwardResponseHeader("content-type")).toBe(true);
-      expect(_shouldForwardResponseHeader("Content-Type")).toBe(true);
-    });
+  const splitAt = Math.ceil(value.length / 2);
+  return `${COOKIE_NAME}.0=${value.slice(0, splitAt)}; ${COOKIE_NAME}.1=${value.slice(splitAt)}`;
+}
 
-    it("strips content-length (runtime recalculates after potential re-encoding)", () => {
-      expect(_shouldForwardResponseHeader("content-length")).toBe(false);
-      expect(_shouldForwardResponseHeader("Content-Length")).toBe(false);
-    });
+function readSessionFromCookie(request: Request): SessionCookieResult {
+  return readSupabaseSessionCookie(
+    parseCookieHeader(request.headers.get("cookie"))
+  );
+}
 
-    it("allows cache-control", () => {
-      expect(_shouldForwardResponseHeader("cache-control")).toBe(true);
-      expect(_shouldForwardResponseHeader("Cache-Control")).toBe(true);
-    });
+function deps({
+  readSession = readSessionFromCookie,
+  backendFetch = vi.fn(async () =>
+    Response.json({ data: [] }, { headers: { "x-request-id": "request-1" } })
+  ) as unknown as typeof fetch,
+  internalSecret = "internal-secret",
+  fastApiBaseUrl = "http://api.local",
+}: {
+  readSession?: (request: Request) => SessionCookieResult;
+  backendFetch?: typeof fetch;
+  internalSecret?: string;
+  fastApiBaseUrl?: string;
+} = {}) {
+  return {
+    readSession,
+    fetch: backendFetch,
+    generateRequestId: () => "generated-request",
+    config: { fastApiBaseUrl, internalSecret },
+  };
+}
 
-    it("allows etag", () => {
-      expect(_shouldForwardResponseHeader("etag")).toBe(true);
-      expect(_shouldForwardResponseHeader("ETag")).toBe(true);
-    });
+async function expectUnauthenticated(
+  response: Response,
+  requestId = "generated-request"
+) {
+  expect(response.status).toBe(401);
+  expect(await response.json()).toEqual({
+    error: {
+      code: "E_UNAUTHENTICATED",
+      message: "Authentication required",
+      request_id: requestId,
+    },
+  });
+}
 
-    it("allows vary", () => {
-      expect(_shouldForwardResponseHeader("vary")).toBe(true);
-      expect(_shouldForwardResponseHeader("Vary")).toBe(true);
-    });
-
-    it("allows content-disposition", () => {
-      expect(_shouldForwardResponseHeader("content-disposition")).toBe(true);
-      expect(_shouldForwardResponseHeader("Content-Disposition")).toBe(true);
-    });
-
-    it("allows location", () => {
-      expect(_shouldForwardResponseHeader("location")).toBe(true);
-      expect(_shouldForwardResponseHeader("Location")).toBe(true);
-    });
-
-    it("blocks authorization header", () => {
-      expect(_shouldForwardResponseHeader("authorization")).toBe(false);
-      expect(_shouldForwardResponseHeader("Authorization")).toBe(false);
-    });
-
-    it("blocks x-nexus-internal header", () => {
-      expect(_shouldForwardResponseHeader("x-nexus-internal")).toBe(false);
-      expect(_shouldForwardResponseHeader("X-Nexus-Internal")).toBe(false);
-    });
-
-    it("blocks set-cookie header", () => {
-      expect(_shouldForwardResponseHeader("set-cookie")).toBe(false);
-      expect(_shouldForwardResponseHeader("Set-Cookie")).toBe(false);
-    });
-
-    it("blocks headers starting with x-internal-", () => {
-      expect(_shouldForwardResponseHeader("x-internal-secret")).toBe(false);
-      expect(_shouldForwardResponseHeader("X-Internal-Debug")).toBe(false);
-    });
-
-    it("blocks unknown headers not on allowlist", () => {
-      expect(_shouldForwardResponseHeader("x-custom-header")).toBe(false);
-      expect(_shouldForwardResponseHeader("x-unknown")).toBe(false);
-    });
+describe("proxyToFastAPI", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", SUPABASE_URL);
   });
 
-  describe("_shouldForwardRequestHeader", () => {
-    it("allows content-type", () => {
-      expect(_shouldForwardRequestHeader("content-type")).toBe(true);
-      expect(_shouldForwardRequestHeader("Content-Type")).toBe(true);
-    });
-
-    it("allows accept", () => {
-      expect(_shouldForwardRequestHeader("accept")).toBe(true);
-      expect(_shouldForwardRequestHeader("Accept")).toBe(true);
-    });
-
-    it("allows range", () => {
-      expect(_shouldForwardRequestHeader("range")).toBe(true);
-      expect(_shouldForwardRequestHeader("Range")).toBe(true);
-    });
-
-    it("allows if-none-match", () => {
-      expect(_shouldForwardRequestHeader("if-none-match")).toBe(true);
-      expect(_shouldForwardRequestHeader("If-None-Match")).toBe(true);
-    });
-
-    it("allows if-modified-since", () => {
-      expect(_shouldForwardRequestHeader("if-modified-since")).toBe(true);
-      expect(_shouldForwardRequestHeader("If-Modified-Since")).toBe(true);
-    });
-
-    it("blocks cookie header", () => {
-      expect(_shouldForwardRequestHeader("cookie")).toBe(false);
-      expect(_shouldForwardRequestHeader("Cookie")).toBe(false);
-    });
-
-    it("blocks authorization header (we override it)", () => {
-      expect(_shouldForwardRequestHeader("authorization")).toBe(false);
-      expect(_shouldForwardRequestHeader("Authorization")).toBe(false);
-    });
-
-    it("blocks x-nexus-internal header (we override it)", () => {
-      expect(_shouldForwardRequestHeader("x-nexus-internal")).toBe(false);
-      expect(_shouldForwardRequestHeader("X-Nexus-Internal")).toBe(false);
-    });
-
-    it("blocks unknown headers not on allowlist", () => {
-      expect(_shouldForwardRequestHeader("x-custom-header")).toBe(false);
-      expect(_shouldForwardRequestHeader("x-unknown")).toBe(false);
-    });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
-  describe("_isTextContentType", () => {
-    it("returns true for application/json", () => {
-      expect(_isTextContentType("application/json")).toBe(true);
-      expect(_isTextContentType("application/json; charset=utf-8")).toBe(true);
-    });
+  it("returns a JSON 401 when the browser has no Supabase auth cookie", async () => {
+    const backendFetch = vi.fn();
 
-    it("returns true for text/* types", () => {
-      expect(_isTextContentType("text/plain")).toBe(true);
-      expect(_isTextContentType("text/html")).toBe(true);
-      expect(_isTextContentType("text/html; charset=utf-8")).toBe(true);
-    });
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries"),
+      "/libraries",
+      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+    );
 
-    it("returns false for binary types", () => {
-      expect(_isTextContentType("image/png")).toBe(false);
-      expect(_isTextContentType("application/octet-stream")).toBe(false);
-      expect(_isTextContentType("application/pdf")).toBe(false);
-    });
-
-    it("returns false for null", () => {
-      expect(_isTextContentType(null)).toBe(false);
-    });
-
-    it("returns false for text/event-stream (handled by streaming path)", () => {
-      expect(_isTextContentType("text/event-stream")).toBe(false);
-      expect(_isTextContentType("text/event-stream; charset=utf-8")).toBe(false);
-    });
+    await expectUnauthenticated(response);
+    expect(backendFetch).not.toHaveBeenCalled();
   });
 
-  describe("_isStreamingResponse", () => {
-    it("returns true when expectStream is true", () => {
-      expect(_isStreamingResponse(null, true)).toBe(true);
-      expect(_isStreamingResponse("application/json", true)).toBe(true);
-    });
+  it("returns a JSON 401 for an expired Supabase auth cookie", async () => {
+    const backendFetch = vi.fn();
 
-    it("returns true for text/event-stream content type", () => {
-      expect(_isStreamingResponse("text/event-stream", false)).toBe(true);
-      expect(_isStreamingResponse("text/event-stream; charset=utf-8", false)).toBe(true);
-    });
-
-    it("returns false for non-SSE content types without hint", () => {
-      expect(_isStreamingResponse("application/json", false)).toBe(false);
-      expect(_isStreamingResponse("text/plain", false)).toBe(false);
-      expect(_isStreamingResponse(null, false)).toBe(false);
-    });
-  });
-
-  describe("proxyToFastAPIWithDeps", () => {
-    it("preserves 204 no-content responses without constructing an invalid body", async () => {
-      const request = createMockRequest({
-        url: "http://localhost:3000/api/highlights/abc",
-        method: "DELETE",
-      });
-      const deps: ProxyDeps = {
-        getSession: async () => ({ access_token: "test-token" }),
-        fetch: async () =>
-          new Response(null, {
-            status: 204,
-            headers: {
-              "content-type": "application/octet-stream",
-            },
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        headers: {
+          cookie: sessionCookie({
+            expires_at: Math.floor(Date.now() / 1000) - 60,
           }),
-        generateRequestId: () => "request-id-1",
-        config: {
-          fastApiBaseUrl: "http://localhost:8000",
-          internalSecret: "",
         },
-      };
+      }),
+      "/libraries",
+      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+    );
 
-      const response = await proxyToFastAPIWithDeps(
-        request,
-        "/highlights/abc",
-        deps
-      );
+    await expectUnauthenticated(response);
+    expect(backendFetch).not.toHaveBeenCalled();
+    expect(response.headers.get("set-cookie")).toContain(`${COOKIE_NAME}=`);
+  });
 
-      expect(response.status).toBe(204);
-      expect(await response.text()).toBe("");
+  it("returns a JSON 401 for a malformed Supabase auth cookie", async () => {
+    const backendFetch = vi.fn();
+
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        headers: {
+          cookie: `${COOKIE_NAME}=not-a-supabase-session`,
+        },
+      }),
+      "/libraries",
+      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+    );
+
+    await expectUnauthenticated(response);
+    expect(backendFetch).not.toHaveBeenCalled();
+  });
+
+  it("requires the internal secret in production before reading auth cookies", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const readSession = vi.fn(readSessionFromCookie);
+
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        headers: {
+          cookie: sessionCookie(),
+        },
+      }),
+      "/libraries",
+      deps({
+        readSession,
+        internalSecret: "",
+        fastApiBaseUrl: "https://api.example.com",
+      })
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "E_INTERNAL",
+        message: "Backend service is not configured",
+        request_id: "generated-request",
+      },
     });
+    expect(readSession).not.toHaveBeenCalled();
+  });
 
-    it("treats ResponseAborted as client cancel instead of backend failure", async () => {
-      const request = createMockRequest({
-        url: "http://localhost:3000/api/media/abc/file",
-        method: "GET",
-      });
-      const deps: ProxyDeps = {
-        getSession: async () => ({ access_token: "test-token" }),
-        fetch: async () => {
-          const err = new Error("aborted by client");
-          err.name = "ResponseAborted";
-          throw err;
+  it("requires the FastAPI URL in production before reading auth cookies", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const readSession = vi.fn(readSessionFromCookie);
+
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        headers: {
+          cookie: sessionCookie(),
         },
-        generateRequestId: () => "request-id-2",
-        config: {
-          fastApiBaseUrl: "http://localhost:8000",
-          internalSecret: "",
-        },
-      };
+      }),
+      "/libraries",
+      deps({
+        readSession,
+        fastApiBaseUrl: "",
+      })
+    );
 
-      const response = await proxyToFastAPIWithDeps(
-        request,
-        "/media/abc/file",
-        deps
-      );
-
-      expect(response.status).toBe(499);
-      expect(await response.text()).toBe("");
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "E_INTERNAL",
+        message: "Backend service is not configured",
+        request_id: "generated-request",
+      },
     });
+    expect(readSession).not.toHaveBeenCalled();
+  });
+
+  it("forwards only server-owned auth headers to FastAPI", async () => {
+    const backendFetch = vi.fn(async () =>
+      Response.json({ data: [] }, { headers: { "x-request-id": "request-1" } })
+    );
+
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries?view=mine", {
+        headers: {
+          authorization: "Bearer browser-token",
+          cookie: `${sessionCookie(
+            { access_token: "cookie-token" },
+            { chunked: true }
+          )}; session=browser-cookie`,
+          "content-type": "application/json",
+          "x-nexus-internal": "spoofed",
+          "x-request-id": "request-1",
+        },
+      }),
+      "/libraries",
+      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+    );
+
+    expect(response.status).toBe(200);
+    expect(backendFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = backendFetch.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    const headers = new Headers(init.headers);
+
+    expect(url).toBe("http://api.local/libraries?view=mine");
+    expect(headers.get("authorization")).toBe("Bearer cookie-token");
+    expect(headers.get("x-nexus-internal")).toBe("internal-secret");
+    expect(headers.get("x-request-id")).toBe("request-1");
+    expect(headers.get("cookie")).toBeNull();
+  });
+
+  it("rejects spoofed request IDs that do not match the request ID grammar", async () => {
+    const backendFetch = vi.fn(async () =>
+      Response.json(
+        { data: [] },
+        { headers: { "x-request-id": "generated-request" } }
+      )
+    );
+
+    await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        headers: {
+          cookie: sessionCookie(),
+          "x-request-id": "bad request id",
+        },
+      }),
+      "/libraries",
+      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+    );
+
+    const [, init] = backendFetch.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(new Headers(init.headers).get("x-request-id")).toBe(
+      "generated-request"
+    );
+  });
+
+  it("does not reflect invalid backend request IDs", async () => {
+    const backendFetch = vi.fn(async () =>
+      Response.json(
+        { data: [] },
+        { headers: { "x-request-id": "bad request id" } }
+      )
+    );
+
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        headers: {
+          cookie: sessionCookie(),
+          "x-request-id": "request-1",
+        },
+      }),
+      "/libraries",
+      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+    );
+
+    expect(response.headers.get("x-request-id")).toBe("request-1");
+  });
+
+  it("returns JSON 504 when FastAPI exceeds the BFF deadline", async () => {
+    vi.useFakeTimers();
+    const responsePromise = proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        headers: {
+          cookie: sessionCookie(),
+        },
+      }),
+      "/libraries",
+      deps({
+        backendFetch: vi.fn(
+          (_input, init) =>
+            new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => {
+                reject(new DOMException("aborted", "AbortError"));
+              });
+            })
+        ) as unknown as typeof fetch,
+      })
+    );
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    const response = await responsePromise;
+
+    expect(response.status).toBe(504);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "E_UPSTREAM_TIMEOUT",
+        message: "Backend service timed out",
+        request_id: "generated-request",
+      },
+    });
+  });
+
+  it("does not call Supabase session APIs on the default BFF path", async () => {
+    vi.stubEnv("FASTAPI_BASE_URL", "http://api.local");
+    vi.stubEnv("NEXUS_INTERNAL_SECRET", "internal-secret");
+    const backendFetch = vi.fn(async () =>
+      Response.json({ data: [] }, { headers: { "x-request-id": "request-1" } })
+    );
+    vi.stubGlobal("fetch", backendFetch);
+
+    const response = await proxyToFastAPI(
+      new Request("http://localhost:3000/api/libraries", {
+        headers: {
+          cookie: sessionCookie({ access_token: "default-cookie-token" }),
+        },
+      }),
+      "/libraries"
+    );
+
+    expect(response.status).toBe(200);
+    expect(createClient).not.toHaveBeenCalled();
+    const [, init] = backendFetch.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(new Headers(init.headers).get("authorization")).toBe(
+      "Bearer default-cookie-token"
+    );
   });
 });

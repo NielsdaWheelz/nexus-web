@@ -52,6 +52,70 @@ function isErrorResponse(body: unknown): body is ErrorResponse {
   );
 }
 
+async function parseApiResponse<T>(response: Response): Promise<T> {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    if (!response.ok) {
+      throw new ApiError(
+        response.status,
+        "E_UNKNOWN",
+        `Request failed with status ${response.status}`
+      );
+    }
+    if (response.status === 204 || response.status === 205) {
+      return undefined as T;
+    }
+    throw new ApiError(
+      response.status,
+      "E_INVALID_RESPONSE",
+      "API returned a non-JSON response"
+    );
+  }
+
+  if (!response.ok) {
+    if (
+      response.status === 401 &&
+      isErrorResponse(body) &&
+      body.error.code === "E_UNAUTHENTICATED"
+    ) {
+      if (
+        typeof window !== "undefined" &&
+        window.location.pathname !== "/login"
+      ) {
+        const loginUrl = new URL("/login", window.location.origin);
+        loginUrl.searchParams.set(
+          "next",
+          `${window.location.pathname}${window.location.search}`
+        );
+        window.location.assign(loginUrl.toString());
+      }
+      throw new ApiError(
+        401,
+        body.error.code,
+        body.error.message,
+        body.error.request_id
+      );
+    }
+    if (isErrorResponse(body)) {
+      throw new ApiError(
+        response.status,
+        body.error.code,
+        body.error.message,
+        body.error.request_id
+      );
+    }
+    throw new ApiError(
+      response.status,
+      "E_UNKNOWN",
+      `Request failed with status ${response.status}`
+    );
+  }
+
+  return body as T;
+}
+
 /**
  * Fetch data from the API with typed response.
  *
@@ -72,51 +136,17 @@ export async function apiFetch<T>(
     },
   });
 
-  // Try to parse JSON response
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    // Non-JSON response
-    if (!response.ok) {
-      throw new ApiError(
-        response.status,
-        "E_UNKNOWN",
-        `Request failed with status ${response.status}`
-      );
-    }
-    return undefined as T;
-  }
+  return parseApiResponse<T>(response);
+}
 
-  // Check for error response
-  if (!response.ok) {
-    if (response.status === 401 && isErrorResponse(body) && body.error.code === "E_UNAUTHENTICATED") {
-      // Reload once to let the Next.js middleware refresh the session.
-      // If the session is truly dead, the middleware redirects to /login.
-      // The flag prevents an infinite reload loop.
-      if (!sessionStorage.getItem("nexus.auth-recovery-attempted")) {
-        sessionStorage.setItem("nexus.auth-recovery-attempted", "1");
-        window.location.reload();
-      }
-      throw new ApiError(401, body.error.code, body.error.message, body.error.request_id);
-    }
-    if (isErrorResponse(body)) {
-      throw new ApiError(
-        response.status,
-        body.error.code,
-        body.error.message,
-        body.error.request_id
-      );
-    }
-    throw new ApiError(
-      response.status,
-      "E_UNKNOWN",
-      `Request failed with status ${response.status}`
-    );
-  }
+export async function apiPostFormData<T>(
+  path: string,
+  formData: FormData
+): Promise<T> {
+  const response = await fetch(path, {
+    method: "POST",
+    body: formData,
+  });
 
-  // Successful auth — clear the recovery flag so future expirations can retry.
-  sessionStorage.removeItem("nexus.auth-recovery-attempted");
-
-  return body as T;
+  return parseApiResponse<T>(response);
 }

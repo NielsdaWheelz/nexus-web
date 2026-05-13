@@ -1,0 +1,37 @@
+.menu {
+  background: var(--surface-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+  color: var(--ink);
+  display: grid;
+  gap: 2px;
+  max-width: 320px;
+  padding: var(--space-1);
+}
+
+.option {
+  width: 100%;
+  justify-content: stretch;
+  text-align: left;
+}
+
+.optionRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  width: 100%;
+  align-items: center;
+}
+
+.optionLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.optionType {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}

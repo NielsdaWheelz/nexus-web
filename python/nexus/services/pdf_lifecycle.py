@@ -51,10 +51,14 @@ def retry_for_viewer_unified(
 ) -> dict:
     """Unified retry entry point across PDF/EPUB/transcript media kinds."""
     media = db.execute(select(Media).where(Media.id == media_id)).scalar()
+    if media is not None and media.kind == "web_article":
+        from nexus.services.web_article_lifecycle import retry_web_article_for_viewer
+
+        return retry_web_article_for_viewer(db, viewer_id, media_id, request_id=request_id)
     if media is not None and media.kind == "pdf":
         return retry_pdf_ingest_for_viewer(db, viewer_id, media_id, request_id=request_id)
     if media is not None and media.kind in {"podcast_episode", "video"}:
-        from nexus.services.podcasts import retry_transcript_media_for_viewer
+        from nexus.services.podcasts.transcripts import retry_transcript_media_for_viewer
 
         return retry_transcript_media_for_viewer(
             db,

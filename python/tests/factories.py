@@ -15,7 +15,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
-    Annotation,
     Conversation,
     ConversationShare,
     DefaultLibraryIntrinsic,
@@ -32,9 +31,15 @@ from nexus.db.models import (
     Membership,
     Message,
     Model,
+    NoteBlock,
+    ObjectLink,
+    Page,
     PdfPageTextSpan,
     ProcessingStatus,
 )
+from nexus.services import object_search
+from nexus.services.content_indexing import rebuild_fragment_content_index
+from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 
 # =============================================================================
 # Models
@@ -68,21 +73,36 @@ def create_test_model(session: Session) -> UUID:
 
 
 def seed_test_models(session: Session) -> None:
-    """Seed the full set of test models if none exist."""
-    if session.query(Model).count() > 0:
-        return
-
-    for provider, model_name, max_tokens in [
-        ("openai", "gpt-5.4", 400000),
+    """Seed the hard-cutover test model catalog."""
+    catalog = [
+        ("openai", "gpt-5.5", 400000),
         ("openai", "gpt-5.4-mini", 400000),
-        ("anthropic", "claude-opus-4-6", 1000000),
+        ("anthropic", "claude-opus-4-7", 1000000),
         ("anthropic", "claude-sonnet-4-6", 1000000),
         ("anthropic", "claude-haiku-4-5-20251001", 200000),
         ("gemini", "gemini-3.1-pro-preview", 1048576),
         ("gemini", "gemini-3-flash-preview", 1048576),
-        ("deepseek", "deepseek-chat", 128000),
-        ("deepseek", "deepseek-reasoner", 128000),
-    ]:
+        ("deepseek", "deepseek-v4-pro", 128000),
+        ("deepseek", "deepseek-v4-flash", 128000),
+    ]
+
+    allowed = {(provider, model_name) for provider, model_name, _max_tokens in catalog}
+    providers = {provider for provider, _model_name, _max_tokens in catalog}
+
+    existing_models = session.query(Model).filter(Model.provider.in_(providers)).all()
+    existing_by_key = {(model.provider, model.model_name): model for model in existing_models}
+
+    for model in existing_models:
+        if (model.provider, model.model_name) not in allowed:
+            model.is_available = False
+
+    for provider, model_name, max_tokens in catalog:
+        existing = existing_by_key.get((provider, model_name))
+        if existing:
+            existing.max_context_tokens = max_tokens
+            existing.is_available = True
+            continue
+
         session.add(
             Model(
                 provider=provider,
@@ -91,6 +111,7 @@ def seed_test_models(session: Session) -> None:
                 is_available=True,
             )
         )
+
     session.commit()
 
 
@@ -124,8 +145,29 @@ def create_test_message(
     content: str = "Test message",
     status: str = "complete",
     model_id: UUID | None = None,
+    parent_message_id: UUID | None = None,
 ) -> UUID:
     """Create a test message and bump the conversation's next_seq."""
+    if parent_message_id is None and role in {"user", "assistant"}:
+        expected_parent_role = "assistant" if role == "user" else "user"
+        previous = (
+            session.query(Message)
+            .filter(
+                Message.conversation_id == conversation_id,
+                Message.seq < seq,
+                Message.role == expected_parent_role,
+            )
+            .order_by(Message.seq.desc(), Message.id.desc())
+            .first()
+        )
+        if previous is not None:
+            parent_message_id = previous.id
+    branch_root_message_id = None
+    if role == "user" and parent_message_id is not None:
+        branch_root_message_id = parent_message_id
+    elif role == "assistant" and parent_message_id is not None:
+        parent_message = session.get(Message, parent_message_id)
+        branch_root_message_id = parent_message.branch_root_message_id if parent_message else None
     msg = Message(
         id=uuid4(),
         conversation_id=conversation_id,
@@ -134,6 +176,8 @@ def create_test_message(
         content=content,
         status=status,
         model_id=model_id,
+        parent_message_id=parent_message_id,
+        branch_root_message_id=branch_root_message_id,
     )
     session.add(msg)
     conv = session.get(Conversation, conversation_id)
@@ -158,17 +202,33 @@ def create_test_conversation_with_message(
         id=uuid4(),
         owner_user_id=user_id,
         sharing="private",
-        next_seq=2,
+        next_seq=3 if role == "assistant" else 2,
     )
     session.add(conv)
     session.flush()
+    parent_message_id = None
+    seq = 1
+    if role == "assistant":
+        parent = Message(
+            id=uuid4(),
+            conversation_id=conv.id,
+            seq=1,
+            role="user",
+            content="Test setup message",
+            status="complete",
+        )
+        session.add(parent)
+        session.flush()
+        parent_message_id = parent.id
+        seq = 2
     msg = Message(
         id=uuid4(),
         conversation_id=conv.id,
-        seq=1,
+        seq=seq,
         role=role,
         content=content,
         status=status,
+        parent_message_id=parent_message_id,
     )
     session.add(msg)
     session.commit()
@@ -320,6 +380,15 @@ def create_searchable_media(
     )
     session.add(fragment)
     session.flush()
+    insert_fragment_blocks(session, fragment.id, parse_fragment_blocks(fragment.canonical_text))
+    rebuild_fragment_content_index(
+        session,
+        media_id=media.id,
+        source_kind="web_article",
+        artifact_ref=f"fragments:{fragment.id}",
+        fragments=[fragment],
+        reason="test_factory",
+    )
     default_libs = (
         session.query(Library)
         .filter(
@@ -335,7 +404,7 @@ def create_searchable_media(
 
 
 # =============================================================================
-# Fragments, Highlights, Annotations
+# Fragments, Highlights, Notes
 # =============================================================================
 
 
@@ -362,32 +431,44 @@ def create_test_highlight(
     exact: str = "highlighted text",
 ) -> UUID:
     """Create a test highlight on a fragment."""
+    fragment = session.get(Fragment, fragment_id)
+    assert fragment is not None
+
+    end_offset = len(exact)
     highlight = Highlight(
         id=uuid4(),
         user_id=user_id,
-        fragment_id=fragment_id,
-        start_offset=0,
-        end_offset=20,
+        anchor_kind="fragment_offsets",
+        anchor_media_id=fragment.media_id,
         color="yellow",
         exact=exact,
         prefix="",
         suffix="",
     )
     session.add(highlight)
+    session.flush()
+    session.add(
+        HighlightFragmentAnchor(
+            highlight_id=highlight.id,
+            fragment_id=fragment_id,
+            start_offset=0,
+            end_offset=end_offset,
+        )
+    )
     session.commit()
     return highlight.id
 
 
-def create_test_annotation(
+def create_test_highlight_note(
     session: Session,
     user_id: UUID,
     media_id: UUID,
-    body: str = "Test annotation body",
+    body: str = "Test note body",
 ) -> tuple[UUID, UUID]:
-    """Create a highlight and annotation for a media item.
+    """Create a highlight and linked note block for a media item.
 
     Looks up the first fragment of the media item automatically.
-    Returns (highlight_id, annotation_id).
+    Returns (highlight_id, note_block_id).
     """
     fragment = session.query(Fragment).filter(Fragment.media_id == media_id).limit(1).first()
     if not fragment:
@@ -396,9 +477,8 @@ def create_test_annotation(
     highlight = Highlight(
         id=uuid4(),
         user_id=user_id,
-        fragment_id=fragment.id,
-        start_offset=0,
-        end_offset=10,
+        anchor_kind="fragment_offsets",
+        anchor_media_id=media_id,
         color="yellow",
         exact="test exact",
         prefix="prefix",
@@ -406,14 +486,56 @@ def create_test_annotation(
     )
     session.add(highlight)
     session.flush()
-    annotation = Annotation(
-        id=uuid4(),
-        highlight_id=highlight.id,
-        body=body,
+    session.add(
+        HighlightFragmentAnchor(
+            highlight_id=highlight.id,
+            fragment_id=fragment.id,
+            start_offset=0,
+            end_offset=10,
+        )
     )
-    session.add(annotation)
+    page = (
+        session.query(Page)
+        .filter(Page.user_id == user_id, Page.title == "Notes")
+        .order_by(Page.id.asc())
+        .first()
+    )
+    if page is None:
+        page = Page(id=uuid4(), user_id=user_id, title="Notes")
+        session.add(page)
+        session.flush()
+
+    note_block = NoteBlock(
+        id=uuid4(),
+        user_id=user_id,
+        page_id=page.id,
+        order_key="0000000001",
+        block_kind="bullet",
+        body_pm_json={
+            "type": "paragraph",
+            "content": [{"type": "text", "text": body}],
+        },
+        body_markdown=body,
+        body_text=body,
+        collapsed=False,
+    )
+    session.add(note_block)
+    session.flush()
+    session.add(
+        ObjectLink(
+            id=uuid4(),
+            user_id=user_id,
+            relation_type="note_about",
+            a_type="note_block",
+            a_id=note_block.id,
+            b_type="highlight",
+            b_id=highlight.id,
+            metadata_json={},
+        )
+    )
+    object_search.project_page(session, user_id, page)
     session.commit()
-    return highlight.id, annotation.id
+    return highlight.id, note_block.id
 
 
 # =============================================================================
@@ -523,6 +645,15 @@ def create_searchable_media_in_library(
     )
     session.add(fragment)
     session.flush()
+    insert_fragment_blocks(session, fragment.id, parse_fragment_blocks(fragment.canonical_text))
+    rebuild_fragment_content_index(
+        session,
+        media_id=media.id,
+        source_kind="web_article",
+        artifact_ref=f"fragments:{fragment.id}",
+        fragments=[fragment],
+        reason="test_factory",
+    )
     add_media_to_library(session, library_id, media.id)
     session.commit()
     return media.id
@@ -765,41 +896,6 @@ def get_user_library(session: Session, user_id: UUID) -> UUID | None:
 
 
 # =============================================================================
-# S6 PR-02: Typed-Highlight Test Factories
-# =============================================================================
-
-
-def create_dormant_fragment_highlight(
-    session: Session,
-    user_id: UUID,
-    fragment_id: UUID,
-    start_offset: int = 0,
-    end_offset: int = 20,
-    exact: str = "highlighted text",
-) -> UUID:
-    """Create a highlight in pr-01 dormant-window shape.
-
-    Legacy bridge fields populated, anchor_kind/anchor_media_id NULL,
-    no highlight_fragment_anchors subtype row.
-    """
-    highlight = Highlight(
-        id=uuid4(),
-        user_id=user_id,
-        fragment_id=fragment_id,
-        start_offset=start_offset,
-        end_offset=end_offset,
-        anchor_kind=None,
-        anchor_media_id=None,
-        color="yellow",
-        exact=exact,
-        prefix="",
-        suffix="",
-    )
-    session.add(highlight)
-    session.commit()
-    return highlight.id
-
-
 def create_normalized_fragment_highlight(
     session: Session,
     user_id: UUID,
@@ -809,16 +905,10 @@ def create_normalized_fragment_highlight(
     end_offset: int = 20,
     exact: str = "highlighted text",
 ) -> UUID:
-    """Create a fully normalized fragment highlight (pr-02 canonical shape).
-
-    Logical fields set, legacy bridge populated, fragment_anchor subtype row present.
-    """
+    """Create a fully normalized fragment highlight with its subtype row."""
     highlight = Highlight(
         id=uuid4(),
         user_id=user_id,
-        fragment_id=fragment_id,
-        start_offset=start_offset,
-        end_offset=end_offset,
         anchor_kind="fragment_offsets",
         anchor_media_id=media_id,
         color="yellow",
@@ -901,16 +991,10 @@ def create_mismatched_fragment_highlight(
     start_offset: int = 0,
     end_offset: int = 20,
 ) -> UUID:
-    """Create a fragment highlight with irreconcilable bridge-vs-subtype mismatch.
-
-    Legacy bridge points to fragment_id but subtype row points to other_fragment_id.
-    """
+    """Create a fragment highlight whose subtype row points to another fragment."""
     highlight = Highlight(
         id=uuid4(),
         user_id=user_id,
-        fragment_id=fragment_id,
-        start_offset=start_offset,
-        end_offset=end_offset,
         anchor_kind="fragment_offsets",
         anchor_media_id=media_id,
         color="yellow",

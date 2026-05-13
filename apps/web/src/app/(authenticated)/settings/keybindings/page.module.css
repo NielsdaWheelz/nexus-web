@@ -9,7 +9,7 @@
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--edge-subtle);
 }
 
 .row:last-child {
@@ -17,8 +17,8 @@
 }
 
 .actionLabel {
-  font-size: var(--font-size-sm);
-  color: var(--color-text);
+  font-size: var(--text-sm);
+  color: var(--ink);
   min-width: 0;
   flex-shrink: 1;
 }
@@ -31,49 +31,11 @@
 }
 
 .combo {
-  font-family: monospace;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
   min-width: 48px;
   text-align: right;
-}
-
-.editBtn,
-.clearBtn,
-.resetBtn,
-.saveBtn,
-.cancelBtn {
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  background: var(--color-bg);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.editBtn:hover,
-.clearBtn:hover,
-.resetBtn:hover,
-.cancelBtn:hover {
-  background: var(--color-surface);
-  color: var(--color-text);
-}
-
-.saveBtn {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: var(--color-bg);
-}
-
-.saveBtn:hover:not(:disabled) {
-  opacity: 0.9;
-}
-
-.saveBtn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .captureRow {
@@ -85,9 +47,9 @@
 }
 
 .captureHint {
-  font-size: var(--font-size-sm);
-  color: var(--color-accent);
-  font-family: monospace;
+  font-size: var(--text-sm);
+  color: var(--accent);
+  font-family: var(--font-mono);
 }
 
 .captureActions {
@@ -96,8 +58,8 @@
 }
 
 .conflict {
-  font-size: var(--font-size-xs);
-  color: var(--color-error);
+  font-size: var(--text-xs);
+  color: var(--danger);
 }
 
 @media (max-width: 600px) {

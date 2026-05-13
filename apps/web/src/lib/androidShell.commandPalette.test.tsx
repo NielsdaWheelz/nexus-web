@@ -1,40 +1,37 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { ANDROID_SHELL_USER_AGENT_TOKEN } from "@/lib/androidShell";
 
-const {
-  apiFetchMock,
-  mockViewportState,
-  mockWorkspaceStore,
-  requestOpenInAppPaneMock,
-} = vi.hoisted(() => ({
+const { apiFetchMock, mockWorkspaceStore, requestOpenInAppPaneMock } = vi.hoisted(() => ({
   apiFetchMock: vi.fn(),
-  mockViewportState: { isMobile: true },
   mockWorkspaceStore: {
     state: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       activePaneId: "pane-a",
       panes: [
-        { id: "pane-a", href: "/settings/billing", widthPx: 480 },
-        { id: "pane-b", href: "/libraries", widthPx: 480 },
-        { id: "pane-c", href: "/settings/local-vault", widthPx: 480 },
+        { id: "pane-a", href: "/settings/billing", widthPx: 480, visibility: "visible" },
+        { id: "pane-b", href: "/libraries", widthPx: 480, visibility: "visible" },
+        { id: "pane-c", href: "/settings/local-vault", widthPx: 480, visibility: "visible" },
       ],
     },
     runtimeTitleByPaneId: new Map(),
-    openHintByPaneId: new Map(),
-    resourceTitleByRef: new Map(),
     activatePane: vi.fn(),
     closePane: vi.fn(),
+    restorePane: vi.fn(),
   },
   requestOpenInAppPaneMock: vi.fn(),
 }));
 
-vi.mock("@/lib/ui/useIsMobileViewport", () => ({
-  useIsMobileViewport: () => mockViewportState.isMobile,
-}));
-
 vi.mock("@/lib/workspace/store", () => ({
   useWorkspaceStore: () => mockWorkspaceStore,
+  resolveWorkspacePaneTitle: (pane: { href: string }) => {
+    if (pane.href === "/settings/billing") return { title: "Billing" };
+    if (pane.href === "/settings/local-vault") return { title: "Local Vault" };
+    if (pane.href === "/libraries") return { title: "Libraries" };
+    return { title: "Pane" };
+  },
 }));
 
 vi.mock("@/lib/panes/openInAppPane", () => ({
@@ -52,7 +49,7 @@ vi.mock("@/lib/api/client", () => ({
   isApiError: () => false,
 }));
 
-import CommandPalette, { OPEN_COMMAND_PALETTE_EVENT } from "@/components/CommandPalette";
+import CommandPalette from "@/components/CommandPalette";
 
 const DEFAULT_USER_AGENT = navigator.userAgent;
 
@@ -74,29 +71,41 @@ describe("CommandPalette android shell gating", () => {
     vi.clearAllMocks();
     setUserAgent(`${DEFAULT_USER_AGENT} ${ANDROID_SHELL_USER_AGENT_TOKEN}`);
     apiFetchMock.mockImplementation(async (path: string) => {
-      if (path === "/api/me/command-palette-recents") {
+      if (path.startsWith("/api/me/palette-history")) {
         return {
-          data: [
-            {
-              href: "/settings/billing",
-              title_snapshot: "Billing",
-              last_used_at: "2026-04-17T12:00:00Z",
-            },
-            {
-              href: "/settings/local-vault",
-              title_snapshot: "Local Vault",
-              last_used_at: "2026-04-17T12:00:00Z",
-            },
-            {
-              href: "/libraries",
-              title_snapshot: "Libraries",
-              last_used_at: "2026-04-17T12:00:00Z",
-            },
-          ],
+          data: {
+            recent: [
+              {
+                target_key: "/settings/billing",
+                target_kind: "href",
+                target_href: "/settings/billing",
+                title_snapshot: "Billing",
+                source: "recent",
+                last_used_at: "2026-04-17T12:00:00Z",
+              },
+              {
+                target_key: "/settings/local-vault",
+                target_kind: "href",
+                target_href: "/settings/local-vault",
+                title_snapshot: "Local Vault",
+                source: "recent",
+                last_used_at: "2026-04-17T12:00:00Z",
+              },
+              {
+                target_key: "/libraries",
+                target_kind: "href",
+                target_href: "/libraries",
+                title_snapshot: "Libraries",
+                source: "recent",
+                last_used_at: "2026-04-17T12:00:00Z",
+              },
+            ],
+            frecency_boosts: {},
+          },
         };
       }
-      if (path.startsWith("/api/search?")) {
-        return { results: [], page: { has_more: false, next_cursor: null } };
+      if (path === "/api/oracle/readings") {
+        return { data: [] };
       }
       throw new Error(`Unhandled apiFetch call: ${path}`);
     });
@@ -107,11 +116,22 @@ describe("CommandPalette android shell gating", () => {
   });
 
   it("hides local vault but keeps billing destinations", async () => {
-    render(<CommandPalette />);
+    render(
+      <FeedbackProvider>
+        <CommandPalette />
+      </FeedbackProvider>
+    );
 
     openPalette();
 
-    expect(await screen.findByRole("dialog", { name: "Search" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
+    const scopeChip = screen.queryByTestId("palette-scope-chip");
+    if (scopeChip) {
+      fireEvent.click(within(scopeChip).getByRole("button", { name: "Remove" }));
+      await waitFor(() => {
+        expect(screen.queryByTestId("palette-scope-chip")).not.toBeInTheDocument();
+      });
+    }
     expect(screen.getAllByText("Billing").length).toBeGreaterThan(0);
     expect(screen.queryByText("Local Vault")).not.toBeInTheDocument();
     expect(screen.getAllByText("Libraries").length).toBeGreaterThan(0);

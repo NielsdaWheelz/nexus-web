@@ -9,18 +9,26 @@ Tests cover:
 - Visibility isolation between users
 """
 
+import json
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
+from nexus.db.models import ConversationBranch, Message
 from nexus.services.conversations import (
     DEFAULT_CONVERSATION_TITLE,
     MAX_CONVERSATION_TITLE_LENGTH,
     derive_conversation_title,
 )
-from tests.factories import create_test_conversation, create_test_message
+from tests.factories import (
+    create_test_conversation,
+    create_test_library,
+    create_test_media_in_library,
+    create_test_message,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -68,6 +76,86 @@ class TestCreateConversation:
         assert "id" in data
         assert "created_at" in data
         assert "updated_at" in data
+
+
+class TestResolveConversationScope:
+    def test_resolve_media_scope_reuses_canonical_conversation(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            library_id = create_test_library(session, user_id, "Scoped Chat Library")
+            media_id = create_test_media_in_library(
+                session,
+                user_id,
+                library_id,
+                title="Scoped Chat Document",
+            )
+
+        first = auth_client.post(
+            "/conversations/resolve",
+            headers=auth_headers(user_id),
+            json={"type": "media", "media_id": str(media_id)},
+        )
+        second = auth_client.post(
+            "/conversations/resolve",
+            headers=auth_headers(user_id),
+            json={"type": "media", "media_id": str(media_id)},
+        )
+
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        first_data = first.json()["data"]
+        second_data = second.json()["data"]
+        assert first_data["id"] == second_data["id"]
+        assert first_data["scope"]["type"] == "media"
+        assert first_data["scope"]["media_id"] == str(media_id)
+        assert first_data["scope"]["title"] == "Scoped Chat Document"
+
+        direct_db.register_cleanup("conversations", "id", UUID(first_data["id"]))
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+        direct_db.register_cleanup("users", "id", user_id)
+
+    def test_resolve_library_scope_reuses_canonical_conversation(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            library_id = create_test_library(session, user_id, "Scoped Research Library")
+
+        first = auth_client.post(
+            "/conversations/resolve",
+            headers=auth_headers(user_id),
+            json={"type": "library", "library_id": str(library_id)},
+        )
+        second = auth_client.post(
+            "/conversations/resolve",
+            headers=auth_headers(user_id),
+            json={"type": "library", "library_id": str(library_id)},
+        )
+
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        first_data = first.json()["data"]
+        second_data = second.json()["data"]
+        assert first_data["id"] == second_data["id"]
+        assert first_data["scope"]["type"] == "library"
+        assert first_data["scope"]["library_id"] == str(library_id)
+        assert first_data["scope"]["title"] == "Scoped Research Library"
+
+        direct_db.register_cleanup("conversations", "id", UUID(first_data["id"]))
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+        direct_db.register_cleanup("users", "id", user_id)
 
     def test_create_conversation_is_private(self, auth_client, direct_db: DirectSessionManager):
         """New conversations are always private."""
@@ -361,6 +449,181 @@ class TestDeleteConversation:
             )
             assert result.scalar() == 0
 
+    def test_delete_conversation_removes_context_links_tool_and_evidence_rows(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        message_context_id = uuid4()
+        object_link_id = uuid4()
+        tool_call_id = uuid4()
+        retrieval_id = uuid4()
+        claim_id = uuid4()
+        claim_evidence_id = uuid4()
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            user_message_id = create_test_message(session, conversation_id, seq=1)
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Answer",
+            )
+            session.execute(
+                text("""
+                    INSERT INTO message_context_items (
+                        id, message_id, user_id, object_type, object_id, ordinal, context_snapshot
+                    )
+                    VALUES (
+                        :id, :message_id, :user_id, 'message', :object_id, 0, '{}'::jsonb
+                    )
+                """),
+                {
+                    "id": message_context_id,
+                    "message_id": user_message_id,
+                    "user_id": user_id,
+                    "object_id": assistant_message_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO object_links (
+                        id, user_id, relation_type, a_type, a_id, b_type, b_id, metadata
+                    )
+                    VALUES (
+                        :id, :user_id, 'used_as_context', 'message', :message_id,
+                        'message', :object_id, '{}'::jsonb
+                    )
+                """),
+                {
+                    "id": object_link_id,
+                    "user_id": user_id,
+                    "message_id": user_message_id,
+                    "object_id": assistant_message_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO message_tool_calls (
+                        id, conversation_id, user_message_id, assistant_message_id,
+                        tool_name, tool_call_index, scope, status
+                    )
+                    VALUES (
+                        :id, :conversation_id, :user_message_id, :assistant_message_id,
+                        'app_search', 0, 'all', 'complete'
+                    )
+                """),
+                {
+                    "id": tool_call_id,
+                    "conversation_id": conversation_id,
+                    "user_message_id": user_message_id,
+                    "assistant_message_id": assistant_message_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO message_retrievals (
+                        id, tool_call_id, ordinal, result_type, source_id,
+                        context_ref, result_ref, selected
+                    )
+                    VALUES (
+                        :id, :tool_call_id, 0, 'message', :source_id,
+                        jsonb_build_object('type', 'message', 'id', CAST(:source_id AS text)),
+                        jsonb_build_object('type', 'message', 'id', CAST(:source_id AS text)),
+                        true
+                    )
+                """),
+                {
+                    "id": retrieval_id,
+                    "tool_call_id": tool_call_id,
+                    "source_id": str(user_message_id),
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO assistant_message_evidence_summaries (
+                        message_id, scope_type, scope_ref, retrieval_status, support_status,
+                        verifier_status, claim_count, supported_claim_count,
+                        unsupported_claim_count, not_enough_evidence_count
+                    )
+                    VALUES (
+                        :message_id, 'general', NULL, 'included_in_prompt', 'supported',
+                        'verified', 1, 1, 0, 0
+                    )
+                """),
+                {"message_id": assistant_message_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO assistant_message_claims (
+                        id, message_id, ordinal, claim_text, answer_start_offset,
+                        answer_end_offset, claim_kind, support_status, verifier_status
+                    )
+                    VALUES (
+                        :id, :message_id, 0, 'Claim', 0, 5, 'answer', 'supported', 'verified'
+                    )
+                """),
+                {"id": claim_id, "message_id": assistant_message_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO assistant_message_claim_evidence (
+                        id, claim_id, ordinal, evidence_role, source_ref, context_ref,
+                        result_ref, exact_snippet, score, retrieval_status,
+                        selected, included_in_prompt
+                    )
+                    VALUES (
+                        :id, :claim_id, 0, 'supports',
+                        jsonb_build_object('type', 'message_retrieval', 'id', CAST(:retrieval_id AS text)),
+                        jsonb_build_object('type', 'message', 'id', CAST(:source_id AS text)),
+                        jsonb_build_object('type', 'message', 'id', CAST(:source_id AS text)),
+                        'Evidence', 1.0, 'included_in_prompt', true, true
+                    )
+                """),
+                {
+                    "id": claim_evidence_id,
+                    "claim_id": claim_id,
+                    "retrieval_id": str(retrieval_id),
+                    "source_id": str(user_message_id),
+                },
+            )
+            session.commit()
+
+        response = auth_client.delete(
+            f"/conversations/{conversation_id}", headers=auth_headers(user_id)
+        )
+        assert response.status_code == 204, response.text
+
+        with direct_db.session() as session:
+            counts = session.execute(
+                text("""
+                    SELECT
+                        (SELECT count(*) FROM messages WHERE conversation_id = :conversation_id),
+                        (SELECT count(*) FROM message_context_items WHERE id = :context_id),
+                        (SELECT count(*) FROM object_links WHERE id = :link_id),
+                        (SELECT count(*) FROM message_tool_calls WHERE id = :tool_call_id),
+                        (SELECT count(*) FROM message_retrievals WHERE id = :retrieval_id),
+                        (SELECT count(*) FROM assistant_message_evidence_summaries
+                         WHERE message_id = :assistant_message_id),
+                        (SELECT count(*) FROM assistant_message_claims WHERE id = :claim_id),
+                        (SELECT count(*) FROM assistant_message_claim_evidence
+                         WHERE id = :claim_evidence_id)
+                """),
+                {
+                    "conversation_id": conversation_id,
+                    "context_id": message_context_id,
+                    "link_id": object_link_id,
+                    "tool_call_id": tool_call_id,
+                    "retrieval_id": retrieval_id,
+                    "assistant_message_id": assistant_message_id,
+                    "claim_id": claim_id,
+                    "claim_evidence_id": claim_evidence_id,
+                },
+            ).one()
+        assert counts == (0, 0, 0, 0, 0, 0, 0, 0)
+
 
 # =============================================================================
 # Message List Tests
@@ -392,9 +655,34 @@ class TestListMessages:
 
         with direct_db.session() as session:
             conversation_id = create_test_conversation(session, user_id)
-            create_test_message(session, conversation_id, seq=1, content="First")
-            create_test_message(session, conversation_id, seq=2, content="Second")
-            create_test_message(session, conversation_id, seq=3, content="Third")
+            first_id = create_test_message(session, conversation_id, seq=1, content="First")
+            second_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Second",
+                parent_message_id=first_id,
+            )
+            third_id = create_test_message(
+                session,
+                conversation_id,
+                seq=3,
+                content="Third",
+                parent_message_id=second_id,
+            )
+            third = session.get(Message, third_id)
+            assert third is not None
+            third.branch_anchor_kind = "assistant_message"
+            third.branch_anchor = {"message_id": str(second_id)}
+            session.add(
+                ConversationBranch(
+                    id=third_id,
+                    conversation_id=conversation_id,
+                    branch_user_message_id=third_id,
+                )
+            )
+            session.commit()
 
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
@@ -415,6 +703,434 @@ class TestListMessages:
         assert data[2]["seq"] == 3
         assert data[2]["contexts"] == []
 
+    def test_list_messages_preserves_rich_context_snapshot_fields(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        context_id = uuid4()
+        chunk_id = uuid4()
+        first_span_id = uuid4()
+        second_span_id = uuid4()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=1,
+                content="Message with saved context",
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_context_items (
+                        id,
+                        message_id,
+                        user_id,
+                        object_type,
+                        object_id,
+                        ordinal,
+                        context_snapshot
+                    )
+                    VALUES (
+                        :id,
+                        :message_id,
+                        :user_id,
+                        'content_chunk',
+                        :object_id,
+                        0,
+                        CAST(:context_snapshot AS jsonb)
+                    )
+                    """
+                ),
+                {
+                    "id": context_id,
+                    "message_id": message_id,
+                    "user_id": user_id,
+                    "object_id": chunk_id,
+                    "context_snapshot": json.dumps(
+                        {
+                            "evidence_span_ids": [str(first_span_id), str(second_span_id)],
+                            "color": "green",
+                            "exact": "exact quote",
+                            "prefix": "before",
+                            "suffix": "after",
+                            "media_id": str(media_id),
+                            "media_title": "Snapshot Source",
+                            "media_kind": "web_article",
+                            "title": "Saved Context Title",
+                            "route": f"/media/{media_id}",
+                            "preview": "Saved preview",
+                        }
+                    ),
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("message_context_items", "id", context_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        response = auth_client.get(
+            f"/conversations/{conversation_id}/messages", headers=auth_headers(user_id)
+        )
+
+        assert response.status_code == 200, (
+            f"Expected message list to succeed, got {response.status_code}: {response.text}"
+        )
+        context = response.json()["data"][0]["contexts"][0]
+        assert context == {
+            "kind": "object_ref",
+            "type": "content_chunk",
+            "id": str(chunk_id),
+            "evidence_span_ids": [str(first_span_id), str(second_span_id)],
+            "color": "green",
+            "preview": "Saved preview",
+            "exact": "exact quote",
+            "prefix": "before",
+            "suffix": "after",
+            "media_id": str(media_id),
+            "media_title": "Snapshot Source",
+            "media_kind": "web_article",
+            "title": "Saved Context Title",
+            "route": f"/media/{media_id}",
+        }
+
+    def test_list_messages_returns_reader_selection_snapshot(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        context_id = uuid4()
+        client_context_id = uuid4()
+        media_id = uuid4()
+        conversation_id = uuid4()
+
+        locator = {
+            "kind": "fragment_offsets",
+            "fragment_id": str(uuid4()),
+            "start_offset": 4,
+            "end_offset": 18,
+        }
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=1,
+                content="Message with reader selection",
+            )
+            session.execute(
+                text("""
+                    INSERT INTO message_context_items (
+                        id,
+                        message_id,
+                        user_id,
+                        context_kind,
+                        source_media_id,
+                        locator_json,
+                        ordinal,
+                        context_snapshot
+                    )
+                    VALUES (
+                        :id,
+                        :message_id,
+                        :user_id,
+                        'reader_selection',
+                        :media_id,
+                        CAST(:locator AS jsonb),
+                        0,
+                        CAST(:context_snapshot AS jsonb)
+                    )
+                """),
+                {
+                    "id": context_id,
+                    "message_id": message_id,
+                    "user_id": user_id,
+                    "media_id": media_id,
+                    "locator": json.dumps(locator),
+                    "context_snapshot": json.dumps(
+                        {
+                            "kind": "reader_selection",
+                            "client_context_id": str(client_context_id),
+                            "media_id": str(media_id),
+                            "source_media_id": str(media_id),
+                            "media_title": "Reader Source",
+                            "media_kind": "web_article",
+                            "exact": "selected quote",
+                            "prefix": "before ",
+                            "suffix": " after",
+                            "locator": locator,
+                            "route": f"/media/{media_id}",
+                        }
+                    ),
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("message_context_items", "id", context_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        response = auth_client.get(
+            f"/conversations/{conversation_id}/messages", headers=auth_headers(user_id)
+        )
+
+        assert response.status_code == 200, response.text
+        context = response.json()["data"][0]["contexts"][0]
+        assert context == {
+            "kind": "reader_selection",
+            "client_context_id": str(client_context_id),
+            "exact": "selected quote",
+            "prefix": "before ",
+            "suffix": " after",
+            "media_id": str(media_id),
+            "source_media_id": str(media_id),
+            "media_title": "Reader Source",
+            "media_kind": "web_article",
+            "locator": locator,
+            "route": f"/media/{media_id}",
+        }
+
+    def test_list_messages_returns_claim_evidence(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            user_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=1,
+                content="What supports this?",
+            )
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="The answer is supported.",
+                parent_message_id=user_message_id,
+            )
+            summary_id = uuid4()
+            claim_id = uuid4()
+            evidence_id = uuid4()
+            retrieval_id = uuid4()
+            tool_call_id = uuid4()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_tool_calls (
+                        id,
+                        conversation_id,
+                        user_message_id,
+                        assistant_message_id,
+                        tool_name,
+                        tool_call_index,
+                        scope,
+                        status
+                    )
+                    VALUES (
+                        :tool_call_id,
+                        :conversation_id,
+                        :user_message_id,
+                        :assistant_message_id,
+                        'app_search',
+                        0,
+                        'all',
+                        'complete'
+                    )
+                    """
+                ),
+                {
+                    "tool_call_id": tool_call_id,
+                    "conversation_id": conversation_id,
+                    "user_message_id": user_message_id,
+                    "assistant_message_id": assistant_message_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_retrievals (
+                        id,
+                        tool_call_id,
+                        ordinal,
+                        result_type,
+                        source_id,
+                        context_ref,
+                        result_ref,
+                        deep_link,
+                        selected,
+                        exact_snippet,
+                        retrieval_status,
+                        included_in_prompt
+                    )
+                    VALUES (
+                        :retrieval_id,
+                        :tool_call_id,
+                        0,
+                        'message',
+                        :source_id,
+                        :context_ref,
+                        :result_ref,
+                        :deep_link,
+                        true,
+                        'Exact source excerpt.',
+                        'included_in_prompt',
+                        true
+                    )
+                    """
+                ).bindparams(
+                    bindparam("context_ref", type_=JSONB),
+                    bindparam("result_ref", type_=JSONB),
+                ),
+                {
+                    "retrieval_id": retrieval_id,
+                    "tool_call_id": tool_call_id,
+                    "source_id": str(assistant_message_id),
+                    "context_ref": {"type": "message", "id": str(assistant_message_id)},
+                    "result_ref": {"type": "message", "title": "Source message"},
+                    "deep_link": f"/conversations/{conversation_id}",
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO assistant_message_evidence_summaries (
+                        id,
+                        message_id,
+                        scope_type,
+                        scope_ref,
+                        retrieval_status,
+                        support_status,
+                        verifier_status,
+                        claim_count,
+                        supported_claim_count,
+                        unsupported_claim_count,
+                        not_enough_evidence_count
+                    )
+                    VALUES (
+                        :summary_id,
+                        :message_id,
+                        'general',
+                        NULL,
+                        'included_in_prompt',
+                        'supported',
+                        'verified',
+                        1,
+                        1,
+                        0,
+                        0
+                    )
+                    """
+                ),
+                {"summary_id": summary_id, "message_id": assistant_message_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO assistant_message_claims (
+                        id,
+                        message_id,
+                        ordinal,
+                        claim_text,
+                        answer_start_offset,
+                        answer_end_offset,
+                        claim_kind,
+                        support_status,
+                        verifier_status
+                    )
+                    VALUES (
+                        :claim_id,
+                        :message_id,
+                        0,
+                        'The answer is supported.',
+                        0,
+                        24,
+                        'answer',
+                        'supported',
+                        'verified'
+                    )
+                    """
+                ),
+                {"claim_id": claim_id, "message_id": assistant_message_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO assistant_message_claim_evidence (
+                        id,
+                        claim_id,
+                        ordinal,
+                        evidence_role,
+                        source_ref,
+                        retrieval_id,
+                        context_ref,
+                        result_ref,
+                        exact_snippet,
+                        deep_link,
+                        retrieval_status,
+                        selected,
+                        included_in_prompt
+                    )
+                    VALUES (
+                        :evidence_id,
+                        :claim_id,
+                        0,
+                        'supports',
+                        :source_ref,
+                        :retrieval_id,
+                        :context_ref,
+                        :result_ref,
+                        'Exact source excerpt.',
+                        :deep_link,
+                        'included_in_prompt',
+                        true,
+                        true
+                    )
+                    """
+                ).bindparams(
+                    bindparam("source_ref", type_=JSONB),
+                    bindparam("context_ref", type_=JSONB),
+                    bindparam("result_ref", type_=JSONB),
+                ),
+                {
+                    "evidence_id": evidence_id,
+                    "claim_id": claim_id,
+                    "source_ref": {
+                        "type": "message_retrieval",
+                        "id": str(retrieval_id),
+                        "retrieval_id": str(retrieval_id),
+                    },
+                    "retrieval_id": retrieval_id,
+                    "context_ref": {"type": "message", "id": str(assistant_message_id)},
+                    "result_ref": {"type": "message", "title": "Source message"},
+                    "deep_link": f"/conversations/{conversation_id}",
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        response = auth_client.get(
+            f"/conversations/{conversation_id}/messages", headers=auth_headers(user_id)
+        )
+
+        assert response.status_code == 200
+        message = next(
+            item for item in response.json()["data"] if item["id"] == str(assistant_message_id)
+        )
+        assert message["evidence_summary"]["support_status"] == "supported"
+        assert message["claims"][0]["claim_text"] == "The answer is supported."
+        assert message["claim_evidence"][0]["exact_snippet"] == "Exact source excerpt."
+        assert message["claim_evidence"][0]["retrieval_status"] == "included_in_prompt"
+
     def test_list_messages_pagination(self, auth_client, direct_db: DirectSessionManager):
         """Message pagination works correctly."""
         user_id = create_test_user_id()
@@ -422,8 +1138,60 @@ class TestListMessages:
 
         with direct_db.session() as session:
             conversation_id = create_test_conversation(session, user_id)
-            for i in range(1, 6):
-                create_test_message(session, conversation_id, seq=i, content=f"Msg {i}")
+            first_id = create_test_message(session, conversation_id, seq=1, content="Msg 1")
+            second_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Msg 2",
+                parent_message_id=first_id,
+            )
+            third_id = create_test_message(
+                session,
+                conversation_id,
+                seq=3,
+                content="Msg 3",
+                parent_message_id=second_id,
+            )
+            fourth_id = create_test_message(
+                session,
+                conversation_id,
+                seq=4,
+                role="assistant",
+                content="Msg 4",
+                parent_message_id=third_id,
+            )
+            fifth_id = create_test_message(
+                session,
+                conversation_id,
+                seq=5,
+                content="Msg 5",
+                parent_message_id=fourth_id,
+            )
+            third = session.get(Message, third_id)
+            fifth = session.get(Message, fifth_id)
+            assert third is not None
+            assert fifth is not None
+            third.branch_anchor_kind = "assistant_message"
+            third.branch_anchor = {"message_id": str(second_id)}
+            fifth.branch_anchor_kind = "assistant_message"
+            fifth.branch_anchor = {"message_id": str(fourth_id)}
+            session.add_all(
+                [
+                    ConversationBranch(
+                        id=third_id,
+                        conversation_id=conversation_id,
+                        branch_user_message_id=third_id,
+                    ),
+                    ConversationBranch(
+                        id=fifth_id,
+                        conversation_id=conversation_id,
+                        branch_user_message_id=fifth_id,
+                    ),
+                ]
+            )
+            session.commit()
 
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
@@ -498,6 +1266,35 @@ class TestListMessages:
 
 
 # =============================================================================
+# Legacy Streaming Route Removal Tests
+# =============================================================================
+
+
+class TestLegacyStreamingRoutesRemoved:
+    """Old conversation-scoped streaming routes are gone after the cutover."""
+
+    def test_new_conversation_stream_route_returns_404(self, auth_client):
+        user_id = create_test_user_id()
+
+        response = auth_client.post(
+            "/conversations/messages/stream",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 404
+
+    def test_existing_conversation_stream_route_returns_404(self, auth_client):
+        user_id = create_test_user_id()
+
+        response = auth_client.post(
+            f"/conversations/{uuid4()}/messages/stream",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 404
+
+
+# =============================================================================
 # Message Delete Tests
 # =============================================================================
 
@@ -536,6 +1333,182 @@ class TestDeleteMessage:
                 {"id": conversation_id},
             )
             assert result.fetchone() is not None
+
+    def test_delete_message_removes_context_links_tool_and_evidence_rows(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        message_context_id = uuid4()
+        object_link_id = uuid4()
+        tool_call_id = uuid4()
+        retrieval_id = uuid4()
+        claim_id = uuid4()
+        claim_evidence_id = uuid4()
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            user_message_id = create_test_message(session, conversation_id, seq=1)
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Answer",
+            )
+            session.execute(
+                text("""
+                    INSERT INTO message_context_items (
+                        id, message_id, user_id, object_type, object_id, ordinal, context_snapshot
+                    )
+                    VALUES (
+                        :id, :message_id, :user_id, 'message', :object_id, 0, '{}'::jsonb
+                    )
+                """),
+                {
+                    "id": message_context_id,
+                    "message_id": assistant_message_id,
+                    "user_id": user_id,
+                    "object_id": user_message_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO object_links (
+                        id, user_id, relation_type, a_type, a_id, b_type, b_id, metadata
+                    )
+                    VALUES (
+                        :id, :user_id, 'used_as_context', 'message', :message_id,
+                        'message', :object_id, '{}'::jsonb
+                    )
+                """),
+                {
+                    "id": object_link_id,
+                    "user_id": user_id,
+                    "message_id": assistant_message_id,
+                    "object_id": user_message_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO message_tool_calls (
+                        id, conversation_id, user_message_id, assistant_message_id,
+                        tool_name, tool_call_index, scope, status
+                    )
+                    VALUES (
+                        :id, :conversation_id, :user_message_id, :assistant_message_id,
+                        'app_search', 0, 'all', 'complete'
+                    )
+                """),
+                {
+                    "id": tool_call_id,
+                    "conversation_id": conversation_id,
+                    "user_message_id": user_message_id,
+                    "assistant_message_id": assistant_message_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO message_retrievals (
+                        id, tool_call_id, ordinal, result_type, source_id,
+                        context_ref, result_ref, selected
+                    )
+                    VALUES (
+                        :id, :tool_call_id, 0, 'message', :source_id,
+                        jsonb_build_object('type', 'message', 'id', CAST(:source_id AS text)),
+                        jsonb_build_object('type', 'message', 'id', CAST(:source_id AS text)),
+                        true
+                    )
+                """),
+                {
+                    "id": retrieval_id,
+                    "tool_call_id": tool_call_id,
+                    "source_id": str(user_message_id),
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO assistant_message_evidence_summaries (
+                        message_id, scope_type, scope_ref, retrieval_status, support_status,
+                        verifier_status, claim_count, supported_claim_count,
+                        unsupported_claim_count, not_enough_evidence_count
+                    )
+                    VALUES (
+                        :message_id, 'general', NULL, 'included_in_prompt', 'supported',
+                        'verified', 1, 1, 0, 0
+                    )
+                """),
+                {"message_id": assistant_message_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO assistant_message_claims (
+                        id, message_id, ordinal, claim_text, answer_start_offset,
+                        answer_end_offset, claim_kind, support_status, verifier_status
+                    )
+                    VALUES (
+                        :id, :message_id, 0, 'Claim', 0, 5, 'answer', 'supported', 'verified'
+                    )
+                """),
+                {"id": claim_id, "message_id": assistant_message_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO assistant_message_claim_evidence (
+                        id, claim_id, ordinal, evidence_role, source_ref, context_ref,
+                        result_ref, exact_snippet, score, retrieval_status,
+                        selected, included_in_prompt
+                    )
+                    VALUES (
+                        :id, :claim_id, 0, 'supports',
+                        jsonb_build_object('type', 'message_retrieval', 'id', CAST(:retrieval_id AS text)),
+                        jsonb_build_object('type', 'message', 'id', CAST(:source_id AS text)),
+                        jsonb_build_object('type', 'message', 'id', CAST(:source_id AS text)),
+                        'Evidence', 1.0, 'included_in_prompt', true, true
+                    )
+                """),
+                {
+                    "id": claim_evidence_id,
+                    "claim_id": claim_id,
+                    "retrieval_id": str(retrieval_id),
+                    "source_id": str(user_message_id),
+                },
+            )
+            session.commit()
+
+        response = auth_client.delete(
+            f"/messages/{assistant_message_id}", headers=auth_headers(user_id)
+        )
+        assert response.status_code == 204, response.text
+
+        with direct_db.session() as session:
+            counts = session.execute(
+                text("""
+                    SELECT
+                        (SELECT count(*) FROM messages WHERE id = :assistant_message_id),
+                        (SELECT count(*) FROM conversations WHERE id = :conversation_id),
+                        (SELECT count(*) FROM message_context_items WHERE id = :context_id),
+                        (SELECT count(*) FROM object_links WHERE id = :link_id),
+                        (SELECT count(*) FROM message_tool_calls WHERE id = :tool_call_id),
+                        (SELECT count(*) FROM message_retrievals WHERE id = :retrieval_id),
+                        (SELECT count(*) FROM assistant_message_evidence_summaries
+                         WHERE message_id = :assistant_message_id),
+                        (SELECT count(*) FROM assistant_message_claims WHERE id = :claim_id),
+                        (SELECT count(*) FROM assistant_message_claim_evidence
+                         WHERE id = :claim_evidence_id)
+                """),
+                {
+                    "assistant_message_id": assistant_message_id,
+                    "conversation_id": conversation_id,
+                    "context_id": message_context_id,
+                    "link_id": object_link_id,
+                    "tool_call_id": tool_call_id,
+                    "retrieval_id": retrieval_id,
+                    "claim_id": claim_id,
+                    "claim_evidence_id": claim_evidence_id,
+                },
+            ).one()
+        assert counts == (0, 1, 0, 0, 0, 0, 0, 0, 0)
 
     def test_delete_last_message_deletes_conversation(
         self, auth_client, direct_db: DirectSessionManager
@@ -977,8 +1950,8 @@ class TestListConversationsScope:
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_MESSAGE_NOT_FOUND"
 
-    # NOTE: test_send_message_existing_conversation_non_owner_still_masked_404
-    # is covered by test_send_message.py::TestSendMessageValidation::test_conversation_not_owned_returns_404
+    # NOTE: Chat send ownership checks are covered by the chat-run create contract
+    # after the durable chat-runs cutover.
     # (requires lifespan-aware TestClient for llm_router setup)
 
     def test_list_conversations_scope_all_cursor_is_stable_across_mixed_visibility(

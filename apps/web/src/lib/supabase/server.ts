@@ -13,6 +13,8 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { type CookieToSet } from "./types";
 
+const SUPABASE_FETCH_TIMEOUT_MS = 5_000;
+
 /**
  * Create a Supabase client for server-side operations.
  *
@@ -40,6 +42,19 @@ export async function createClient() {
             // This can be ignored if you have middleware refreshing
             // user sessions.
           }
+        },
+      },
+      global: {
+        fetch(input, init) {
+          const controller = new AbortController();
+          const timeout = setTimeout(
+            () => controller.abort(),
+            SUPABASE_FETCH_TIMEOUT_MS
+          );
+
+          return fetch(input, { ...init, signal: controller.signal }).finally(
+            () => clearTimeout(timeout)
+          );
         },
       },
     }

@@ -11,7 +11,7 @@ describe("PrivacyPage", () => {
       screen.getByText(/google and github sign-in information/i)
     ).toBeVisible();
     expect(
-      screen.getByText(/documents, media, notes, highlights, and annotations/i)
+      screen.getByText(/documents, media, notes, and highlights/i)
     ).toBeVisible();
     expect(screen.getByRole("link", { name: /return to sign in/i })).toHaveAttribute(
       "href",

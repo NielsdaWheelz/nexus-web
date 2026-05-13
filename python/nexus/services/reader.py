@@ -18,7 +18,8 @@ DEFAULT_FONT_SIZE_PX = 16
 DEFAULT_LINE_HEIGHT = 1.5
 DEFAULT_FONT_FAMILY = "serif"
 DEFAULT_COLUMN_WIDTH_CH = 65
-DEFAULT_FOCUS_MODE = False
+DEFAULT_FOCUS_MODE = "off"
+DEFAULT_HYPHENATION = "auto"
 READER_RESUME_STATE_ADAPTER = TypeAdapter(ReaderResumeState)
 
 
@@ -85,6 +86,7 @@ def get_reader_profile(db: Session, user_id: UUID) -> ReaderProfileOut:
         font_family=DEFAULT_FONT_FAMILY,
         column_width_ch=DEFAULT_COLUMN_WIDTH_CH,
         focus_mode=DEFAULT_FOCUS_MODE,
+        hyphenation=DEFAULT_HYPHENATION,
         updated_at=datetime.now(UTC),
     )
 
@@ -109,6 +111,8 @@ def patch_reader_profile(db: Session, user_id: UUID, patch: ReaderProfilePatch) 
         profile.column_width_ch = patch.column_width_ch
     if patch.focus_mode is not None:
         profile.focus_mode = patch.focus_mode
+    if patch.hyphenation is not None:
+        profile.hyphenation = patch.hyphenation
 
     db.commit()
     db.refresh(profile)

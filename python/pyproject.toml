@@ -1,7 +1,7 @@
 [project]
 name = "nexus"
 version = "0.1.0"
-description = "Nexus backend API - a reading and annotation platform"
+description = "Nexus backend API - a reading and notes platform"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -22,6 +22,8 @@ dependencies = [
     "psycopg-binary>=3.1.0",
     "html5lib>=1.1",
     "stripe>=12.0.0",
+    "llm-calling",
+    "web-search-tool",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +49,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["nexus"]
+
+[tool.uv.sources]
+llm-calling = { git = "https://github.com/NielsdaWheelz/llm-calling", rev = "e61147978b9094f296911e8255e9aa596831ab1d" }
+web-search-tool = { git = "https://github.com/NielsdaWheelz/web-search-tool", rev = "ce911344a2e31900eaee3039b5d61109ef54bcb1" }
 
 [tool.ruff]
 target-version = "py312"
@@ -79,7 +85,6 @@ include = [
     "nexus/api",
     "nexus/db",
     "nexus/schemas",
-    "nexus/services/llm",
     "nexus/tasks",
     "nexus/auth/extension.py",
     "nexus/auth/permissions.py",
@@ -94,9 +99,15 @@ include = [
     "nexus/services/api_key_resolver.py",
     "nexus/services/capabilities.py",
     "nexus/services/canonicalize.py",
+    "nexus/services/chat_runs.py",
+    "nexus/services/conversation_branches.py",
+    "nexus/services/chat_prompt.py",
     "nexus/services/context_rendering.py",
     "nexus/services/context_window.py",
     "nexus/services/contexts.py",
+    "nexus/services/content_indexing.py",
+    "nexus/services/contributor_credits.py",
+    "nexus/services/contributors.py",
     "nexus/services/crypto.py",
     "nexus/services/epub_ingest.py",
     "nexus/services/epub_lifecycle.py",
@@ -105,7 +116,12 @@ include = [
     "nexus/services/image_proxy.py",
     "nexus/services/ingest_recovery.py",
     "nexus/services/metadata_enrichment.py",
+    "nexus/services/message_context_items.py",
     "nexus/services/node_ingest.py",
+    "nexus/services/notes.py",
+    "nexus/services/object_links.py",
+    "nexus/services/object_refs.py",
+    "nexus/services/oracle.py",
     "nexus/services/pdf_highlight_geometry.py",
     "nexus/services/pdf_lifecycle.py",
     "nexus/services/pdf_locking.py",
@@ -120,7 +136,7 @@ include = [
     "nexus/services/semantic_chunks.py",
     "nexus/services/seq.py",
     "nexus/services/shares.py",
-    "nexus/services/stream_liveness.py",
+    "nexus/services/locator_resolver.py",
     "nexus/services/transcript_media.py",
     "nexus/services/transcript_segments.py",
     "nexus/services/url_normalize.py",
@@ -133,7 +149,6 @@ include = [
 ]
 exclude = [
     "tests",
-    "nexus/tasks/sweep_pending.py",
 ]
 
 [tool.pytest.ini_options]
@@ -150,4 +165,6 @@ markers = [
     "slow: tests that are materially slower than normal local feedback loops",
     "supabase: requires Supabase local auth/storage services",
     "network: requires internet access (hits real external services)",
+    "real_media: strict acceptance tests over real media artifacts and evidence traces",
+    "live_provider: strict acceptance tests over live external providers",
 ]

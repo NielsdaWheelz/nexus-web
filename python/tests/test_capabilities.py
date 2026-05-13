@@ -44,6 +44,7 @@ class TestPdfCapabilities:
             media_file_exists=True,
             external_playback_url_exists=False,
             pdf_quote_text_ready=True,
+            retrieval_status="ready",
         )
 
         assert caps.can_read is True
@@ -76,6 +77,7 @@ class TestPdfCapabilities:
             media_file_exists=True,
             external_playback_url_exists=False,
             pdf_quote_text_ready=True,
+            retrieval_status="ready",
         )
         assert caps_ready.can_read is True
         assert caps_ready.can_quote is True
@@ -122,6 +124,7 @@ class TestEpubCapabilities:
             last_error_code=None,
             media_file_exists=True,
             external_playback_url_exists=False,
+            retrieval_status="ready",
         )
 
         assert caps.can_read is True
@@ -129,6 +132,38 @@ class TestEpubCapabilities:
         assert caps.can_quote is True
         assert caps.can_search is True
         assert caps.can_download_file is True
+
+    def test_epub_search_uses_active_ready_retrieval_gate(self):
+        """Search remains available when the active run is ready even if latest state failed."""
+        caps = derive_capabilities(
+            kind="epub",
+            processing_status="ready_for_reading",
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            retrieval_status="failed",
+            retrieval_active_ready=True,
+        )
+
+        assert caps.can_read is True
+        assert caps.can_quote is True
+        assert caps.can_search is True
+
+    def test_epub_search_excludes_missing_active_ready_run(self):
+        """A ready status is not enough when the caller knows no active ready run exists."""
+        caps = derive_capabilities(
+            kind="epub",
+            processing_status="ready_for_reading",
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            retrieval_status="ready",
+            retrieval_active_ready=False,
+        )
+
+        assert caps.can_read is True
+        assert caps.can_quote is True
+        assert caps.can_search is False
 
 
 class TestWebArticleCapabilities:
@@ -166,13 +201,16 @@ class TestVideoCapabilities:
     """Tests for video media capabilities."""
 
     def test_video_ready_with_playback_url(self):
-        """Video ready with playback URL can play and read."""
+        """Video with ready transcript state and playback URL can play and read."""
         caps = derive_capabilities(
             kind="video",
             processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=False,
             external_playback_url_exists=True,
+            transcript_state="ready",
+            transcript_coverage="full",
+            retrieval_status="ready",
         )
 
         assert caps.can_read is True
@@ -186,9 +224,11 @@ class TestVideoCapabilities:
         caps = derive_capabilities(
             kind="video",
             processing_status="failed",
-            last_error_code="E_TRANSCRIPT_UNAVAILABLE",
+            last_error_code=None,
             media_file_exists=False,
             external_playback_url_exists=True,
+            transcript_state="unavailable",
+            transcript_coverage="none",
         )
 
         # Can play but cannot read/highlight/quote
@@ -232,13 +272,16 @@ class TestPodcastEpisodeCapabilities:
         assert caps.can_search is False
 
     def test_podcast_episode_ready(self):
-        """Podcast episode ready can read and play."""
+        """Podcast episode with ready transcript state can read and play."""
         caps = derive_capabilities(
             kind="podcast_episode",
             processing_status="ready_for_reading",
             last_error_code=None,
             media_file_exists=False,
             external_playback_url_exists=True,
+            transcript_state="ready",
+            transcript_coverage="full",
+            retrieval_status="ready",
         )
 
         assert caps.can_read is True
@@ -251,9 +294,11 @@ class TestPodcastEpisodeCapabilities:
         caps = derive_capabilities(
             kind="podcast_episode",
             processing_status="failed",
-            last_error_code="E_TRANSCRIPT_UNAVAILABLE",
+            last_error_code=None,
             media_file_exists=False,
             external_playback_url_exists=True,
+            transcript_state="unavailable",
+            transcript_coverage="none",
         )
 
         assert caps.can_play is True
@@ -262,8 +307,8 @@ class TestPodcastEpisodeCapabilities:
         assert caps.can_quote is False
         assert caps.can_search is False
 
-    def test_podcast_capabilities_use_transcript_state_not_processing_bridge(self):
-        """Transcript state drives transcript capabilities even when processing_status is stale."""
+    def test_podcast_capabilities_require_transcript_state_to_read(self):
+        """Transcript media stays unreadable when transcript state has not been seeded."""
         caps = derive_capabilities(
             kind="podcast_episode",
             processing_status="ready_for_reading",
@@ -280,8 +325,8 @@ class TestPodcastEpisodeCapabilities:
         assert caps.can_quote is False
         assert caps.can_search is False
 
-    def test_podcast_capabilities_allow_ready_transcript_despite_pending_processing_bridge(self):
-        """Dedicated transcript state can mark transcript-ready before legacy bridge status catches up."""
+    def test_podcast_capabilities_allow_ready_transcript_regardless_of_processing_status(self):
+        """Dedicated transcript state controls readability even if processing status lags."""
         caps = derive_capabilities(
             kind="podcast_episode",
             processing_status="pending",
@@ -290,6 +335,7 @@ class TestPodcastEpisodeCapabilities:
             external_playback_url_exists=True,
             transcript_state="ready",
             transcript_coverage="full",
+            retrieval_status="ready",
         )
 
         assert caps.can_play is True
@@ -297,6 +343,24 @@ class TestPodcastEpisodeCapabilities:
         assert caps.can_highlight is True
         assert caps.can_quote is True
         assert caps.can_search is True
+
+    def test_podcast_last_error_code_does_not_stand_in_for_transcript_state(self):
+        """Transcript media no longer infers unavailability from processing failure residue."""
+        caps = derive_capabilities(
+            kind="podcast_episode",
+            processing_status="failed",
+            last_error_code="E_TRANSCRIPT_UNAVAILABLE",
+            media_file_exists=False,
+            external_playback_url_exists=True,
+            transcript_state=None,
+            transcript_coverage=None,
+        )
+
+        assert caps.can_play is True
+        assert caps.can_read is False
+        assert caps.can_highlight is False
+        assert caps.can_quote is False
+        assert caps.can_search is False
 
 
 class TestDownloadCapability:
@@ -361,3 +425,40 @@ class TestProcessingStatusProgression:
         )
 
         assert caps.can_read is expected_read
+
+    def test_failed_web_article_can_retry_when_creator_and_original_url_exists(self):
+        caps = derive_capabilities(
+            kind="web_article",
+            processing_status="failed",
+            last_error_code="E_INGEST_FAILED",
+            media_file_exists=False,
+            external_playback_url_exists=False,
+            is_creator=True,
+            requested_url_exists=True,
+        )
+
+        assert caps.can_retry is True
+
+    def test_failed_pdf_password_error_cannot_retry(self):
+        caps = derive_capabilities(
+            kind="pdf",
+            processing_status="failed",
+            last_error_code="E_PDF_PASSWORD_REQUIRED",
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            is_creator=True,
+        )
+
+        assert caps.can_retry is False
+
+    def test_failed_epub_archive_error_cannot_retry(self):
+        caps = derive_capabilities(
+            kind="epub",
+            processing_status="failed",
+            last_error_code="E_ARCHIVE_UNSAFE",
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            is_creator=True,
+        )
+
+        assert caps.can_retry is False

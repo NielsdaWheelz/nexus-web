@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import MediaKind, ProcessingStatus
+from nexus.db.models import Fragment, MediaKind, ProcessingStatus
 from nexus.services.media import create_provisional_web_article
 from tests.helpers import create_test_user_id
 
@@ -120,6 +120,7 @@ class TestIngestionStateTransitions:
 
     def test_idempotency_skips_already_ready_media(self, db_session: Session):
         """Re-running task on already-processed media should skip without changes."""
+        from nexus.services.content_indexing import rebuild_fragment_content_index
         from nexus.tasks.ingest_web_article import run_ingest_sync
 
         user_id = create_test_user_id()
@@ -151,6 +152,15 @@ class TestIngestionStateTransitions:
             """),
             {"id": fragment_id, "media_id": media_id},
         )
+        fragment = db_session.get(Fragment, fragment_id)
+        rebuild_fragment_content_index(
+            db_session,
+            media_id=media_id,
+            source_kind="web_article",
+            artifact_ref=f"fragments:{fragment_id}",
+            fragments=[fragment],
+            reason="test_ready_index",
+        )
         db_session.commit()
 
         # Run ingestion - should skip
@@ -158,6 +168,46 @@ class TestIngestionStateTransitions:
 
         assert result["status"] == "skipped"
         assert result["reason"] == "already_ready"
+
+    def test_idempotency_repairs_ready_media_without_content_index(self, db_session: Session):
+        """Ready legacy media with fragments but no evidence index should rebuild the index."""
+        from nexus.tasks.ingest_web_article import run_ingest_sync
+
+        user_id = create_test_user_id()
+        _create_user(db_session, user_id)
+        media_id = uuid4()
+        fragment_id = uuid4()
+        db_session.execute(
+            text("""
+                INSERT INTO media (id, kind, title, processing_status, requested_url, created_by_user_id)
+                VALUES (:id, :kind, :title, :status, :url, :user_id)
+            """),
+            {
+                "id": media_id,
+                "kind": MediaKind.web_article.value,
+                "title": "Legacy Article",
+                "status": ProcessingStatus.ready_for_reading.value,
+                "url": "https://example.com/legacy",
+                "user_id": user_id,
+            },
+        )
+        db_session.execute(
+            text("""
+                INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                VALUES (:id, :media_id, 0, '<p>Legacy evidence text</p>', 'Legacy evidence text')
+            """),
+            {"id": fragment_id, "media_id": media_id},
+        )
+        db_session.commit()
+
+        result = run_ingest_sync(db_session, media_id, user_id)
+
+        assert result == {"status": "success", "reason": "rebuilt_content_index"}
+        chunk_count = db_session.execute(
+            text("SELECT count(*) FROM content_chunks WHERE media_id = :media_id"),
+            {"media_id": media_id},
+        ).scalar_one()
+        assert chunk_count >= 1
 
 
 class TestDeduplication:

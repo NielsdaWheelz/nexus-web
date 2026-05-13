@@ -16,14 +16,13 @@ interface AppListItemProps {
   rel?: string;
   title: ReactNode;
   paneTitleHint?: string;
-  paneResourceRef?: string;
   description?: ReactNode;
   meta?: ReactNode;
   icon?: ReactNode;
   trailing?: ReactNode;
   actions?: ReactNode;
   options?: ActionMenuOption[];
-  status?: "success" | "info" | "warning" | "danger" | "neutral";
+  status?: "success" | "info" | "warning" | "error" | "neutral";
 }
 
 export function AppList({ children }: AppListProps) {
@@ -36,7 +35,6 @@ export function AppListItem({
   rel,
   title,
   paneTitleHint,
-  paneResourceRef,
   description,
   meta,
   icon,
@@ -62,12 +60,7 @@ export function AppListItem({
     }
 
     event.preventDefault();
-    if (
-      !requestOpenInAppPane(href, {
-        titleHint: resolvedPaneTitleHint,
-        resourceRef: paneResourceRef,
-      })
-    ) {
+    if (!requestOpenInAppPane(href, { titleHint: resolvedPaneTitleHint })) {
       window.location.assign(href);
     }
   };

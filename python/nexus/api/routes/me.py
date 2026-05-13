@@ -5,13 +5,13 @@ Returns information about the authenticated viewer including profile fields.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
-from nexus.schemas.command_palette import CommandPaletteRecentRecordRequest
+from nexus.schemas.command_palette import CommandPaletteSelectionRecordRequest
 from nexus.schemas.reader import ReaderProfilePatch
 from nexus.schemas.user import UpdateProfileRequest
 from nexus.services import command_palette as command_palette_service
@@ -72,27 +72,27 @@ def patch_reader_profile(
     return success_response(result.model_dump(mode="json"))
 
 
-@router.get("/me/command-palette-recents")
-def get_command_palette_recents(
+@router.get("/me/palette-history")
+def get_palette_history(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    query: Annotated[str | None, Query(max_length=500)] = None,
+) -> dict:
+    """Get command palette usage history for the current viewer."""
+    result = command_palette_service.get_history_for_viewer(db, viewer.user_id, query=query)
+    return success_response(result.model_dump(mode="json"))
+
+
+@router.post("/me/palette-selections")
+def post_palette_selection(
+    body: CommandPaletteSelectionRecordRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get command palette recents for the current viewer."""
-    result = command_palette_service.list_recents_for_viewer(db, viewer.user_id)
-    return success_response([row.model_dump(mode="json") for row in result])
-
-
-@router.post("/me/command-palette-recents")
-def post_command_palette_recent(
-    body: CommandPaletteRecentRecordRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Record one command palette recent destination for the current viewer."""
-    result = command_palette_service.record_recent_for_viewer(
+    """Record one accepted command palette selection for the current viewer."""
+    result = command_palette_service.record_selection_for_viewer(
         db,
         viewer.user_id,
-        body.href,
-        title_snapshot=body.title_snapshot,
+        body,
     )
     return success_response(result.model_dump(mode="json"))

@@ -147,7 +147,8 @@ class TestModelFiltering:
         # Should only have openai models
         providers = {m["provider"] for m in data}
         assert providers == {"openai"}
-        assert len(data) == 2  # gpt-5.4 and gpt-5.4-mini
+        assert {m["model_name"] for m in data} == {"gpt-5.5", "gpt-5.4-mini"}
+        assert {m["available_via"] for m in data} == {"platform"}
 
     def test_disabled_provider_hides_models_even_with_platform_key(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
@@ -181,18 +182,6 @@ class TestModelFiltering:
 
         with direct_db.session() as session:
             seed_test_models(session)
-            session.execute(
-                text(
-                    """
-                    INSERT INTO models (id, provider, model_name, max_context_tokens, is_available)
-                    VALUES
-                        (gen_random_uuid(), 'deepseek', 'deepseek-chat', 128000, true),
-                        (gen_random_uuid(), 'deepseek', 'deepseek-reasoner', 128000, true)
-                    ON CONFLICT (provider, model_name) DO NOTHING
-                    """
-                )
-            )
-            session.commit()
 
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
@@ -202,7 +191,11 @@ class TestModelFiltering:
         data = response.json()["data"]
         providers = {m["provider"] for m in data}
         assert providers == {"deepseek"}
-        assert len(data) == 2
+        assert {m["model_name"] for m in data} == {
+            "deepseek-v4-pro",
+            "deepseek-v4-flash",
+        }
+        assert {m["available_via"] for m in data} == {"platform"}
 
     def test_byok_untested_enables_provider_models(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
@@ -236,6 +229,7 @@ class TestModelFiltering:
         providers = {m["provider"] for m in data}
         assert providers == {"anthropic"}
         assert len(data) == 3  # claude-opus, claude-sonnet, claude-haiku
+        assert {m["available_via"] for m in data} == {"byok"}
 
     def test_byok_valid_enables_provider_models(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
@@ -279,6 +273,7 @@ class TestModelFiltering:
         # Should have gemini models
         providers = {m["provider"] for m in data}
         assert providers == {"gemini"}
+        assert {m["available_via"] for m in data} == {"byok"}
 
     def test_byok_invalid_does_not_enable_models(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
@@ -309,6 +304,53 @@ class TestModelFiltering:
                 text(
                     "UPDATE user_api_keys SET status = 'invalid' "
                     "WHERE user_id = :user_id AND provider = 'openai'"
+                ),
+                {"user_id": user_id},
+            )
+            session.commit()
+
+        response = auth_client.get("/models", headers=auth_headers(user_id))
+
+        assert response.status_code == 200
+        assert response.json()["data"] == []
+
+    def test_byok_without_key_material_does_not_enable_models(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        """A status-only BYOK row without encrypted material does not enable models."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        direct_db.register_cleanup("user_api_keys", "user_id", user_id)
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        clear_settings_cache()
+
+        with direct_db.session() as session:
+            seed_test_models(session)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO user_api_keys (
+                        user_id,
+                        provider,
+                        status,
+                        key_fingerprint,
+                        encrypted_key,
+                        key_nonce,
+                        master_key_version
+                    )
+                    VALUES (
+                        :user_id,
+                        'openai',
+                        'valid',
+                        'abcd',
+                        NULL,
+                        NULL,
+                        NULL
+                    )
+                    """
                 ),
                 {"user_id": user_id},
             )
@@ -383,6 +425,34 @@ class TestModelFiltering:
         # Should have both openai and gemini models
         providers = {m["provider"] for m in data}
         assert providers == {"openai", "gemini"}
+        assert {m["available_via"] for m in data if m["provider"] == "openai"} == {"platform"}
+        assert {m["available_via"] for m in data if m["provider"] == "gemini"} == {"byok"}
+
+    def test_platform_and_byok_marks_models_available_via_both(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        """Provider with both platform key and BYOK returns available_via='both'."""
+        user_id = create_test_user_id()
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-platform-key-openai")
+        clear_settings_cache()
+
+        with direct_db.session() as session:
+            seed_test_models(session)
+
+        auth_client.post(
+            "/keys",
+            json={"provider": "openai", "api_key": "sk-test-openai-key-1234567890abcdef"},
+            headers=auth_headers(user_id),
+        )
+        _seed_ai_plus_billing(direct_db, user_id)
+
+        response = auth_client.get("/models", headers=auth_headers(user_id))
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert {m["provider"] for m in data} == {"openai"}
+        assert {m["available_via"] for m in data} == {"both"}
 
 
 # =============================================================================
@@ -426,6 +496,9 @@ class TestModelResponseFormat:
         assert "model_tier" in model
         assert "reasoning_modes" in model
         assert "max_context_tokens" in model
+        assert "available_via" in model
+        assert model["reasoning_modes"][0] == "default"
+        assert "none" in model["reasoning_modes"]
 
 
 # =============================================================================
@@ -455,12 +528,14 @@ class TestS6PR01OrmMapperCompatibility:
     def test_pr01_orm_models_import_and_map_with_typed_anchor_foundation(self):
         """Mapper configuration succeeds with S6 models and relationships."""
         from nexus.db.models import (
-            Annotation,
             Highlight,
             HighlightFragmentAnchor,
             HighlightPdfAnchor,
             HighlightPdfQuad,
             Media,
+            MediaContentIndexState,
+            NoteBlock,
+            ObjectLink,
             PdfPageTextSpan,
         )
 
@@ -468,13 +543,18 @@ class TestS6PR01OrmMapperCompatibility:
         assert HighlightFragmentAnchor.__tablename__ == "highlight_fragment_anchors"
         assert HighlightPdfAnchor.__tablename__ == "highlight_pdf_anchors"
         assert HighlightPdfQuad.__tablename__ == "highlight_pdf_quads"
+        assert NoteBlock.__tablename__ == "note_blocks"
+        assert ObjectLink.__tablename__ == "object_links"
         assert PdfPageTextSpan.__tablename__ == "pdf_page_text_spans"
+        assert MediaContentIndexState.__tablename__ == "media_content_index_states"
 
         # Verify new fields exist on Highlight
         h_cols = {c.name for c in Highlight.__table__.columns}
         assert "anchor_kind" in h_cols
         assert "anchor_media_id" in h_cols
-        assert "fragment_id" in h_cols  # legacy bridge
+        assert "fragment_id" not in h_cols
+        assert "start_offset" not in h_cols
+        assert "end_offset" not in h_cols
 
         # Verify new fields on Media
         m_cols = {c.name for c in Media.__table__.columns}
@@ -485,7 +565,13 @@ class TestS6PR01OrmMapperCompatibility:
         assert hasattr(Highlight, "fragment_anchor")
         assert hasattr(Highlight, "pdf_anchor")
         assert hasattr(Highlight, "pdf_quads")
-        assert hasattr(Highlight, "annotation")
-        assert hasattr(Highlight, "fragment")
-        assert hasattr(Annotation, "highlight")
+        assert not hasattr(Highlight, "fragment")
         assert hasattr(Media, "pdf_page_text_spans")
+        ppts_cols = {c.name for c in PdfPageTextSpan.__table__.columns}
+        assert "page_label" in ppts_cols
+        assert "page_width" in ppts_cols
+        assert "page_height" in ppts_cols
+        assert "page_rotation_degrees" in ppts_cols
+        index_state_cols = {c.name for c in MediaContentIndexState.__table__.columns}
+        assert "id" in index_state_cols
+        assert MediaContentIndexState.__table__.primary_key.columns.keys() == ["id"]

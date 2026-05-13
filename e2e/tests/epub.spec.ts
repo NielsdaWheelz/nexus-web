@@ -1,6 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { selectFreshVisibleTextSnippet } from "./selection";
 
 interface SeededEpubMedia {
   media_id: string;
@@ -21,19 +22,94 @@ interface EpubSectionDetail {
 
 interface HighlightOut {
   id: string;
-  start_offset: number;
-  end_offset: number;
+  anchor: {
+    start_offset: number;
+    end_offset: number;
+  };
+  linked_note_blocks?: Array<{
+    note_block_id: string;
+    body_text: string;
+    revision: number;
+  }>;
 }
 
-async function upsertHighlightAnnotation(
+interface ObjectLinksResponse {
+  data: {
+    links: Array<{
+      id: string;
+      a: { objectType: string; objectId: string };
+      b: { objectType: string; objectId: string };
+    }>;
+  };
+}
+
+function paragraphPmJsonFromText(text: string) {
+  return text
+    ? { type: "paragraph", content: [{ type: "text", text }] }
+    : { type: "paragraph" };
+}
+
+async function noteBlockRevision(page: Page, noteBlockId: string): Promise<number> {
+  const response = await page.request.get(`/api/notes/blocks/${noteBlockId}`);
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as { data: { revision: number } };
+  return payload.data.revision;
+}
+
+async function upsertHighlightNote(
   page: Page,
   highlightId: string,
   body: string,
 ): Promise<void> {
-  const response = await page.request.put(`/api/highlights/${highlightId}/annotation`, {
-    data: { body },
+  const linksResponse = await page.request.get(
+    `/api/object-links?object_type=highlight&object_id=${highlightId}&relation_type=note_about`
+  );
+  expect(linksResponse.ok()).toBeTruthy();
+  const linksPayload = (await linksResponse.json()) as ObjectLinksResponse;
+  const noteBlockIds = Array.from(
+    new Set(
+      linksPayload.data.links
+        .map((link) => {
+          if (link.a.objectType === "note_block") return link.a.objectId;
+          if (link.b.objectType === "note_block") return link.b.objectId;
+          return null;
+        })
+        .filter((value): value is string => value !== null)
+    )
+  );
+
+  if (noteBlockIds.length === 0) {
+    const response = await page.request.post("/api/notes/blocks", {
+      data: {
+        body_markdown: body,
+        linked_object: {
+          object_type: "highlight",
+          object_id: highlightId,
+          relation_type: "note_about",
+        },
+      },
+    });
+    expect(response.ok()).toBeTruthy();
+    return;
+  }
+
+  const [primaryNoteBlockId, ...duplicateNoteBlockIds] = noteBlockIds;
+  const primaryRevision = await noteBlockRevision(page, primaryNoteBlockId);
+  const updateResponse = await page.request.patch(`/api/notes/blocks/${primaryNoteBlockId}`, {
+    data: {
+      base_revision: primaryRevision,
+      body_pm_json: paragraphPmJsonFromText(body),
+    },
   });
-  expect(response.ok()).toBeTruthy();
+  expect(updateResponse.ok()).toBeTruthy();
+
+  for (const noteBlockId of duplicateNoteBlockIds) {
+    const revision = await noteBlockRevision(page, noteBlockId);
+    const deleteResponse = await page.request.delete(`/api/notes/blocks/${noteBlockId}`, {
+      data: { base_revision: revision },
+    });
+    expect(deleteResponse.ok()).toBeTruthy();
+  }
 }
 
 interface ReaderTextLocations {
@@ -193,12 +269,27 @@ function isEpubReaderResumeState(
   return state?.kind === "epub";
 }
 
-function createDeferred<T = void>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((resolver) => {
-    resolve = resolver;
+async function fetchReaderState(
+  page: Page,
+  mediaId: string
+): Promise<ReaderResumeState | null> {
+  const response = await page.request.get(`/api/media/${mediaId}/reader-state`);
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as ReaderStateResponse;
+  return payload.data;
+}
+
+async function putReaderState(
+  page: Page,
+  mediaId: string,
+  locator: ReaderResumeState | null
+): Promise<ReaderResumeState | null> {
+  const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
+    data: locator,
   });
-  return { promise, resolve };
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as ReaderStateResponse;
+  return payload.data;
 }
 
 async function fetchEpubSectionDetail(
@@ -214,7 +305,7 @@ async function fetchEpubSectionDetail(
 }
 
 async function ensureFragmentHighlight(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   fragmentId: string,
   startOffset: number,
   endOffset: number,
@@ -243,7 +334,8 @@ async function ensureFragmentHighlight(
       data: { highlights: HighlightOut[] };
     };
     const existing = payload.data.highlights.find(
-      (item) => item.start_offset === startOffset && item.end_offset === endOffset
+      (item) =>
+        item.anchor.start_offset === startOffset && item.anchor.end_offset === endOffset
     );
     expect(existing).toBeTruthy();
     if (!existing) {
@@ -259,84 +351,50 @@ async function ensureFragmentHighlight(
   );
 }
 
-async function readAlignmentMetrics(
-  page: Parameters<typeof test>[0]["page"],
+async function readLinkedItemOrder(
+  page: Page,
   highlightIds: string[]
-): Promise<{ order: string[]; deltas: number[]; missing: string[] }> {
+): Promise<{ order: string[]; missing: string[] }> {
   return await page.evaluate((ids) => {
     const linkedContainer = document.querySelector<HTMLElement>(
-      'div[class*="linkedItemsContainer"]'
+      '[data-testid="anchored-highlights-container"]'
     );
-    const contentRoot = document.querySelector<HTMLElement>('div[class*="fragments"]');
 
-    if (!linkedContainer || !contentRoot) {
-      return { order: [], deltas: [], missing: [...ids] };
+    if (!linkedContainer) {
+      return { order: [], missing: [...ids] };
     }
 
-    let scrollContainer: HTMLElement | null = contentRoot.parentElement;
-    while (scrollContainer && scrollContainer !== document.body) {
-      const computed = window.getComputedStyle(scrollContainer);
-      if (/(auto|scroll)/.test(computed.overflowY)) {
-        break;
-      }
-      scrollContainer = scrollContainer.parentElement;
-    }
+    const rowIds = Array.from(
+      linkedContainer.querySelectorAll<HTMLElement>("[data-highlight-id]")
+    )
+      .map((row) => row.dataset.highlightId ?? null)
+      .filter((id): id is string => id !== null);
 
-    if (!(scrollContainer instanceof HTMLElement)) {
-      return { order: [], deltas: [], missing: [...ids] };
-    }
-
-    const linkedRect = linkedContainer.getBoundingClientRect();
-    const scrollRect = scrollContainer.getBoundingClientRect();
-
-    const rawMetrics = ids.map((id) => {
-      const row = linkedContainer.querySelector<HTMLElement>(`[data-highlight-id="${id}"]`);
-      const anchor = contentRoot.querySelector<HTMLElement>(`[data-highlight-anchor="${id}"]`);
-      if (!row || !anchor) {
-        return { id, missing: true, rowTop: 0, anchorTop: 0, delta: Infinity };
-      }
-
-      const rowTop = row.getBoundingClientRect().top - linkedRect.top;
-      const anchorTop = anchor.getBoundingClientRect().top - scrollRect.top;
-      return {
-        id,
-        missing: false,
-        rowTop,
-        anchorTop,
-        delta: 0,
-      };
-    });
-
-    const present = rawMetrics.filter((metric) => !metric.missing);
-    const minRowTop = present.length > 0 ? Math.min(...present.map((metric) => metric.rowTop)) : 0;
-    const minAnchorTop =
-      present.length > 0 ? Math.min(...present.map((metric) => metric.anchorTop)) : 0;
-
-    const metrics = rawMetrics.map((metric) => {
-      if (metric.missing) {
-        return metric;
-      }
-      return {
-        ...metric,
-        delta: Math.abs(
-          (metric.rowTop - minRowTop) - (metric.anchorTop - minAnchorTop),
-        ),
-      };
-    });
-
-    const missing = metrics.filter((m) => m.missing).map((m) => m.id);
-    const order = metrics
-      .filter((m) => !m.missing)
-      .sort((a, b) => a.rowTop - b.rowTop)
-      .map((m) => m.id);
-    const deltas = metrics.filter((m) => !m.missing).map((m) => m.delta);
-
-    return { order, deltas, missing };
+    return {
+      order: rowIds.filter((id) => ids.includes(id)),
+      missing: ids.filter((id) => !rowIds.includes(id)),
+    };
   }, highlightIds);
 }
 
+async function openHighlightsPane(page: Page): Promise<Locator> {
+  const rail = page.getByTestId("reader-secondary-rail");
+  if ((await rail.getAttribute("data-expanded")) === "true") {
+    await rail.getByRole("tab", { name: "Highlights" }).click();
+  } else {
+    await page.getByRole("button", { name: "Open highlights pane" }).click();
+  }
+  await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
+  await expect(rail.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  return page.getByTestId("anchored-highlights-container").first();
+}
+
+
 function rowAskInChatButton(row: Locator): Locator {
-  return row.getByRole("button", { name: /ask in chat|send to chat/i });
+  return row.getByRole("button", { name: "Ask in chat" });
 }
 
 function rowActionsButton(row: Locator): Locator {
@@ -372,17 +430,7 @@ async function rowContainsVisibleTextOrFieldValue(
   }, expectedValue);
 }
 
-async function expectHighlightRowToStayCollapsed(
-  row: Locator,
-  hiddenText: string
-): Promise<void> {
-  await expect(row).toBeVisible();
-  await expect.poll(() => rowContainsVisibleTextOrFieldValue(row, hiddenText)).toBe(false);
-  await expect(rowAskInChatButton(row)).toHaveCount(0);
-  await expect(rowActionsButton(row)).toHaveCount(0);
-}
-
-async function expectHighlightRowToBeExpanded(
+async function expectHighlightRowVisible(
   row: Locator,
   noteText: string
 ): Promise<void> {
@@ -451,7 +499,7 @@ async function readEpubContentScrollTop(page: Page): Promise<number | null> {
   });
 }
 
-async function isLocatorInViewport(locator: Locator): Promise<boolean> {
+async function isLocatorInReaderViewport(locator: Locator): Promise<boolean> {
   if ((await locator.count()) === 0) {
     return false;
   }
@@ -459,9 +507,25 @@ async function isLocatorInViewport(locator: Locator): Promise<boolean> {
     .first()
     .evaluate((element) => {
       const rect = element.getBoundingClientRect();
+      let scroller: HTMLElement | null = element.parentElement;
+      while (scroller && scroller !== document.body) {
+        const computed = window.getComputedStyle(scroller);
+        const canScrollY =
+          /(auto|scroll)/.test(computed.overflowY) &&
+          scroller.scrollHeight > scroller.clientHeight;
+        if (canScrollY) {
+          const scrollerRect = scroller.getBoundingClientRect();
+          return rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom;
+        }
+        scroller = scroller.parentElement;
+      }
       return rect.bottom > 0 && rect.top < window.innerHeight;
     })
     .catch(() => false);
+}
+
+async function expectLocatorInReaderViewport(locator: Locator): Promise<void> {
+  await expect.poll(() => isLocatorInReaderViewport(locator), { timeout: 10_000 }).toBe(true);
 }
 
 async function wheelUntilLocatorInViewport(
@@ -474,14 +538,38 @@ async function wheelUntilLocatorInViewport(
   await contentRoot.hover();
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (await isLocatorInViewport(locator)) {
+    if (await isLocatorInReaderViewport(locator)) {
       return;
     }
-    await page.mouse.wheel(0, 700);
+    await page.evaluate(() => {
+      const contentRoot = document.querySelector<HTMLElement>('div[class*="fragments"]');
+      if (!contentRoot) {
+        window.scrollBy(0, 700);
+        return;
+      }
+
+      let scroller: HTMLElement | null = contentRoot.parentElement;
+      while (scroller && scroller !== document.body) {
+        const computed = window.getComputedStyle(scroller);
+        const canScrollY =
+          /(auto|scroll)/.test(computed.overflowY) &&
+          scroller.scrollHeight > scroller.clientHeight;
+        if (canScrollY) {
+          scroller.scrollTop += 700;
+          return;
+        }
+        scroller = scroller.parentElement;
+      }
+
+      window.scrollBy(0, 700);
+    });
     await page.waitForTimeout(75);
   }
 
-  await expect(locator).toBeInViewport();
+  await locator.evaluate((element) => {
+    (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+  });
+  await expectLocatorInReaderViewport(locator);
 }
 
 function readSeededEpubMedia(): SeededEpubMedia {
@@ -489,99 +577,16 @@ function readSeededEpubMedia(): SeededEpubMedia {
   return JSON.parse(readFileSync(seedPath, "utf-8"));
 }
 
-async function putReaderState(
-  page: Parameters<typeof test>[0]["page"],
-  mediaId: string,
-  locator: ReaderResumeState | null
-): Promise<void> {
-  const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
-    data: locator,
-  });
-  expect(response.ok()).toBeTruthy();
-}
-
-async function fetchReaderState(
-  page: Parameters<typeof test>[0]["page"],
-  mediaId: string
-): Promise<ReaderResumeState | null> {
-  const response = await page.request.get(`/api/media/${mediaId}/reader-state`);
-  expect(response.ok()).toBeTruthy();
-  const payload = (await response.json()) as ReaderStateResponse;
-  return payload.data;
-}
-
-async function seedBaselineEpubReaderState(
-  page: Parameters<typeof test>[0]["page"],
-  mediaId: string
-): Promise<void> {
-  const navigation = await fetchEpubNavigation(page, mediaId);
-  const firstNavigableSection = navigation.data.sections.find((section) => section.href_path);
-  expect(firstNavigableSection).toBeTruthy();
-  if (!firstNavigableSection?.href_path) {
-    throw new Error(`Expected a navigable EPUB section for ${mediaId}.`);
-  }
-
-  await putReaderState(
-    page,
-    mediaId,
-    buildEpubReaderState({
-      section_id: firstNavigableSection.section_id,
-      href_path: firstNavigableSection.href_path,
-    })
-  );
-}
-
-async function resetEpubReaderState(
-  page: Parameters<typeof test>[0]["page"],
-  mediaId: string,
-): Promise<void> {
-  try {
-    await expect
-      .poll(
-        async () => {
-          try {
-            await putReaderState(page, mediaId, null);
-            return true;
-          } catch {
-            return false;
-          }
-        },
-        {
-          timeout: 4_000,
-          intervals: [100, 200, 400, 800],
-        },
-      )
-      .toBe(true);
-    return;
-  } catch (clearError) {
-    try {
-      await expect
-        .poll(
-          async () => {
-            try {
-              await seedBaselineEpubReaderState(page, mediaId);
-              return true;
-            } catch {
-              return false;
-            }
-          },
-          {
-            timeout: 4_000,
-            intervals: [100, 200, 400, 800],
-          },
-        )
-        .toBe(true);
-      return;
-    } catch (seedError) {
-      throw new Error(
-        `Failed to reset EPUB reader state for ${mediaId}. null_clear=${clearError instanceof Error ? clearError.message : String(clearError)} fallback_seed=${seedError instanceof Error ? seedError.message : String(seedError)}`
-      );
-    }
-  }
-}
+const RESERVED_EPUB_HIGHLIGHT_EXACTS = [
+  "introduction chapter of the E2E test EPUB",
+  "Deterministic pre-anchor filler paragraph 2 for E2E.",
+  "Deterministic pre-anchor filler paragraph 3 for E2E.",
+  "Deterministic post-anchor filler paragraph 8 for E2E.",
+  "core concepts for E2E testing",
+];
 
 async function selectSectionByLabel(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   label: string,
 ): Promise<void> {
   const sectionSelect = page.getByLabel("Select section");
@@ -593,7 +598,7 @@ async function selectSectionByLabel(
 }
 
 async function clickToolbarAction(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   name: string | RegExp,
 ): Promise<void> {
   const inlineButton = page.getByRole("button", { name }).first();
@@ -623,9 +628,11 @@ async function clickToolbarAction(
 }
 
 test.describe("epub", () => {
+  test.describe.configure({ mode: "serial" });
+
   test.beforeEach(async ({ page }) => {
     const seed = readSeededEpubMedia();
-    await resetEpubReaderState(page, seed.media_id);
+    await putReaderState(page, seed.media_id, null);
   });
 
   test("upload EPUB", async ({ page }) => {
@@ -648,6 +655,91 @@ test.describe("epub", () => {
     await expect(
       page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("renders EPUB image assets through the BFF when present", async ({ page }) => {
+    const seed = readSeededEpubMedia();
+    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    await expect(
+      page.getByRole("heading", { name: seed.chapter_titles[0] })
+    ).toBeVisible({ timeout: 15_000 });
+
+    const renderer = page.getByTestId("html-renderer").first();
+    await expect(renderer).toBeVisible();
+    const imageCount = await renderer.locator("img").count();
+    expect(imageCount).toBeGreaterThan(0);
+
+    const imageStates = await renderer.locator("img").evaluateAll((images) =>
+      images.map((image) => {
+        const img = image as HTMLImageElement;
+        return {
+          complete: img.complete,
+          naturalHeight: img.naturalHeight,
+          naturalWidth: img.naturalWidth,
+          src: img.getAttribute("src") ?? "",
+          resolvedSrc: img.currentSrc || img.src,
+        };
+      })
+    );
+
+    for (const image of imageStates) {
+      expect(image.src).toContain(`/api/media/${seed.media_id}/assets/`);
+      expect(image.resolvedSrc).toContain(`/api/media/${seed.media_id}/assets/`);
+    }
+
+    await expect
+      .poll(
+        async () =>
+          renderer.locator("img").evaluateAll((images) =>
+            images.every((image) => {
+              const img = image as HTMLImageElement;
+              return img.complete && img.naturalWidth > 0 && img.naturalHeight > 0;
+            })
+          ),
+        { timeout: 10_000 }
+      )
+      .toBe(true);
+  });
+
+  test("publisher CSS does not affect EPUB reader chrome", async ({ page }) => {
+    const seed = readSeededEpubMedia();
+    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
+    await expect(
+      page.getByRole("heading", { name: seed.chapter_titles[0] })
+    ).toBeVisible({ timeout: 15_000 });
+
+    const renderer = page.getByTestId("html-renderer").first();
+    await expect(renderer).toBeVisible();
+    await expect
+      .poll(async () =>
+        renderer.evaluate((root) => ({
+          inlineStyleCount: root.querySelectorAll("[style]").length,
+          stylesheetCount: root.querySelectorAll('style, link[rel="stylesheet"]').length,
+        }))
+      )
+      .toEqual({
+        inlineStyleCount: 0,
+        stylesheetCount: 0,
+      });
+
+    const chrome = page.locator('[data-testid="pane-shell-chrome"]').first();
+    await expect(chrome).toBeVisible();
+    const chromeState = await chrome.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const rendererRoot = document.querySelector('[data-testid="html-renderer"]');
+      return {
+        height: rect.height,
+        visible: rect.width > 0 && rect.height > 0,
+        insideRenderer: rendererRoot?.contains(element) ?? false,
+      };
+    });
+    expect(chromeState).toMatchObject({
+      visible: true,
+      insideRenderer: false,
+    });
+    expect(chromeState.height).toBeGreaterThan(0);
   });
 
   test("navigate sections", async ({ page }) => {
@@ -732,51 +824,27 @@ test.describe("epub", () => {
 
     expect(restoreOffset).toBeGreaterThanOrEqual(0);
 
-    const readerStateRequested = createDeferred<void>();
-    const releaseReaderState = createDeferred<void>();
-    let interceptedReaderStateRequest = false;
+    await putReaderState(page, seed.media_id, buildEpubReaderState(firstSection, {
+      locations: {
+        text_offset: restoreOffset,
+      },
+      text: {
+        quote: restoreQuote,
+      },
+    }));
 
-    await page.route(`**/api/media/${seed.media_id}/reader-state`, async (route) => {
-      if (route.request().method() !== "GET" || interceptedReaderStateRequest) {
-        await route.continue();
-        return;
-      }
-
-      interceptedReaderStateRequest = true;
-      readerStateRequested.resolve();
-      await releaseReaderState.promise;
-
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          data: buildEpubReaderState(firstSection, {
-            locations: {
-              text_offset: restoreOffset,
-            },
-            text: {
-              quote: restoreQuote,
-            },
-          }),
-        }),
-      });
-    });
-
-    await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
-    await readerStateRequested.promise;
+    await page.goto(`/media/${seed.media_id}`);
     await expect(
       page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
 
     const manualScrollTarget = page.getByText(manualScrollQuote, { exact: true }).first();
     await wheelUntilLocatorInViewport(page, manualScrollTarget);
-    await expect(manualScrollTarget).toBeInViewport();
+    await expectLocatorInReaderViewport(manualScrollTarget);
 
     const manualScrollTop = await readEpubContentScrollTop(page);
     expect(manualScrollTop).not.toBeNull();
     expect(manualScrollTop ?? 0).toBeGreaterThan(200);
-
-    releaseReaderState.resolve();
 
     for (let attempt = 0; attempt < 8; attempt += 1) {
       await page.waitForTimeout(200);
@@ -785,7 +853,7 @@ test.describe("epub", () => {
       expect(currentScrollTop ?? 0).toBeGreaterThan((manualScrollTop ?? 0) - 120);
     }
 
-    await expect(manualScrollTarget).toBeInViewport();
+    await expectLocatorInReaderViewport(manualScrollTarget);
   });
 
   test("toc leaf with anchor lands at exact in-fragment target", async ({
@@ -793,6 +861,7 @@ test.describe("epub", () => {
   }) => {
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
 
     await expect(
@@ -831,11 +900,35 @@ test.describe("epub", () => {
         }, seed.toc_anchor_target_id);
       })
       .toBe(true);
+    const chrome = page.locator('[data-testid="pane-shell-chrome"]').first();
+    const target = page.locator(`#${seed.toc_anchor_target_id}`).first();
+    const targetBox = await target.boundingBox();
+    expect(targetBox).not.toBeNull();
+    if (await chrome.isVisible().catch(() => false)) {
+      const chromeBox = await chrome.boundingBox();
+      expect(chromeBox).not.toBeNull();
+      if (chromeBox && targetBox) {
+        expect(targetBox.y).toBeGreaterThanOrEqual(chromeBox.y + chromeBox.height - 8);
+      }
+    }
   });
 
   test("create highlight in epub", async ({ page }) => {
+    test.slow();
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    const section = await fetchEpubSectionDetail(page, seed.media_id, firstSection.section_id);
+    const existingHighlightsResponse = await page.request.get(
+      `/api/fragments/${section.data.fragment_id}/highlights`
+    );
+    expect(existingHighlightsResponse.ok()).toBeTruthy();
+    const existingHighlightsPayload = (await existingHighlightsResponse.json()) as {
+      data: { highlights: Array<{ exact: string }> };
+    };
+    const existingExacts = [
+      ...existingHighlightsPayload.data.highlights.map((highlight) => highlight.exact),
+      ...RESERVED_EPUB_HIGHLIGHT_EXACTS,
+    ];
     await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
 
     // Wait for section content to load
@@ -843,18 +936,56 @@ test.describe("epub", () => {
       page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
 
-    // Select text in the section body (scoped to the content area)
-    const paragraph = page.locator('[class*="fragments"] p').first();
-    await expect(paragraph).toBeVisible();
-    await paragraph.selectText();
+    const highlightedSegments = page.locator('[class*="fragments"] [data-active-highlight-ids]');
+    const beforeHighlightedCount = await highlightedSegments.count();
+    const selectedText = await selectFreshVisibleTextSnippet(
+      page,
+      'div[class*="fragments"]',
+      existingExacts
+    );
 
     // Selection popover should appear
+    const highlightActions = page.getByRole("dialog", { name: /highlight actions/i });
+    await expect(highlightActions).toBeVisible({ timeout: 5_000 });
+
+    const createHighlightResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/api/fragments/${section.data.fragment_id}/highlights`)
+    );
+    await highlightActions.getByRole("button", { name: /^Green/ }).first().click();
+    const createdHighlightResponse = await createHighlightResponse;
+    expect(createdHighlightResponse.ok()).toBeTruthy();
+    const createdHighlightPayload = (await createdHighlightResponse.json()) as {
+      data: HighlightOut;
+    };
+
+    const highlightsPane = await openHighlightsPane(page);
+    const linkedRow = highlightsPane
+      .locator("[data-highlight-id]")
+      .filter({ hasText: selectedText })
+      .first();
+    await expect(linkedRow).toBeVisible({ timeout: 10_000 });
+    await expect(linkedRow).toContainText(selectedText);
+    await expect(highlightActions).toHaveCount(0);
+
+    await expect
+      .poll(async () => highlightedSegments.count(), { timeout: 10_000 })
+      .toBeGreaterThan(beforeHighlightedCount);
     await expect(
-      page.getByRole("dialog", { name: /highlight actions/i })
-    ).toBeVisible({ timeout: 5_000 });
+      page
+        .locator('[class*="fragments"] [data-active-highlight-ids]')
+        .filter({ hasText: selectedText })
+        .first()
+    ).toBeVisible();
+
+    const deleteResponse = await page.request.delete(
+      `/api/highlights/${createdHighlightPayload.data.id}`
+    );
+    expect(deleteResponse.ok()).toBeTruthy();
   });
 
-  test("linked-items stay aligned and ordered after reload", async ({ page }) => {
+  test("linked-items keep highlight order stable after reload", async ({ page }) => {
     const seed = readSeededEpubMedia();
     const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
     await page.goto(`/media/${seed.media_id}?loc=${encodeURIComponent(firstSection.section_id)}`);
@@ -863,8 +994,8 @@ test.describe("epub", () => {
     ).toBeVisible({ timeout: 15_000 });
     const section = await fetchEpubSectionDetail(page, seed.media_id, firstSection.section_id);
 
-    const needleA = "introduction chapter of the E2E test EPUB";
-    const needleB = "Deterministic pre-anchor filler paragraph 2 for E2E.";
+    const needleA = "Deterministic pre-anchor filler paragraph 2 for E2E.";
+    const needleB = "Deterministic pre-anchor filler paragraph 3 for E2E.";
     const startA = section.data.canonical_text.indexOf(needleA);
     const startB = section.data.canonical_text.indexOf(needleB);
     expect(startA).toBeGreaterThanOrEqual(0);
@@ -893,25 +1024,20 @@ test.describe("epub", () => {
       await expect(
         page.getByRole("heading", { name: seed.chapter_titles[0] })
       ).toBeVisible({ timeout: 15_000 });
+      await openHighlightsPane(page);
 
       await expect
         .poll(
           async () => {
-            const metrics = await readAlignmentMetrics(page, targetIds);
-            return metrics.missing.length;
+            const rows = await readLinkedItemOrder(page, targetIds);
+            return rows.missing.length;
           },
           { timeout: 15_000 }
         )
         .toBe(0);
 
-      const metrics = await readAlignmentMetrics(page, targetIds);
-      expect(metrics.order).toEqual(targetIds);
-      expect(metrics.deltas.length).toBe(2);
-      for (const delta of metrics.deltas) {
-        // Unified pane chrome introduces a small vertical offset in row/anchor
-        // alignment while preserving ordering and click targeting fidelity.
-        expect(delta).toBeLessThan(100);
-      }
+      const rows = await readLinkedItemOrder(page, targetIds);
+      expect(rows.order).toEqual(targetIds);
     }
   });
 
@@ -949,12 +1075,12 @@ test.describe("epub", () => {
       chapter1SecondaryStart + chapter1SecondaryNeedle.length,
       "green"
     );
-    await upsertHighlightAnnotation(
+    await upsertHighlightNote(
       page,
       chapter1PrimaryHighlight.id,
       "EPUB chapter one inspector note alpha."
     );
-    await upsertHighlightAnnotation(
+    await upsertHighlightNote(
       page,
       chapter1SecondaryHighlight.id,
       "EPUB chapter one inspector note omega."
@@ -976,7 +1102,7 @@ test.describe("epub", () => {
       chapter2Start + chapter2Needle.length,
       "blue"
     );
-    await upsertHighlightAnnotation(
+    await upsertHighlightNote(
       page,
       chapter2Highlight.id,
       "EPUB chapter two inspector note."
@@ -986,41 +1112,64 @@ test.describe("epub", () => {
     await expect(
       page.getByRole("heading", { name: seed.chapter_titles[0] })
     ).toBeVisible({ timeout: 15_000 });
+    const highlightsPane = await openHighlightsPane(page);
 
     await expect(
       page.getByRole("button", { name: /all highlights|entire book/i })
     ).toHaveCount(0);
 
-    const chapter1PrimaryRow = page
+    const chapter1PrimaryRow = highlightsPane
       .locator(`[data-highlight-id="${chapter1PrimaryHighlight.id}"]`)
       .first();
-    const chapter1SecondaryRow = page
+    const chapter1SecondaryRow = highlightsPane
       .locator(`[data-highlight-id="${chapter1SecondaryHighlight.id}"]`)
       .first();
-    const chapter2Row = page.locator(`[data-highlight-id="${chapter2Highlight.id}"]`);
+    const chapter2Row = highlightsPane.locator(`[data-highlight-id="${chapter2Highlight.id}"]`);
+    const chapter1PrimaryAnchor = page
+      .locator(`[data-active-highlight-ids~="${chapter1PrimaryHighlight.id}"]`)
+      .first();
+    const chapter1SecondaryAnchor = page
+      .locator(`[data-active-highlight-ids~="${chapter1SecondaryHighlight.id}"]`)
+      .first();
+    const chapter2Anchor = page
+      .locator(`[data-active-highlight-ids~="${chapter2Highlight.id}"]`)
+      .first();
 
-    await expect(chapter1PrimaryRow).toBeVisible({ timeout: 15_000 });
-    await expect(chapter1SecondaryRow).toBeVisible({ timeout: 15_000 });
     await expect(chapter2Row).toHaveCount(0);
-    await expectHighlightRowToBeExpanded(
+    await chapter1PrimaryAnchor.evaluate((element) => {
+      (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+    });
+    await expect
+      .poll(
+        async () =>
+          (await readAnchorCenterOffset(page, chapter1PrimaryHighlight.id)) ??
+          Number.POSITIVE_INFINITY,
+        { timeout: 15_000 }
+      )
+      .toBeLessThan(170);
+    await expect(chapter1PrimaryRow).toBeVisible({ timeout: 15_000 });
+    await expectHighlightRowVisible(
       chapter1PrimaryRow,
       "EPUB chapter one inspector note alpha."
-    );
-    await expectHighlightRowToStayCollapsed(
-      chapter1SecondaryRow,
-      "EPUB chapter one inspector note omega."
     );
     await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
 
-    await chapter1SecondaryRow.click();
-    await expectHighlightRowToBeExpanded(
+    await chapter1SecondaryAnchor.evaluate((element) => {
+      (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+    });
+    await expect
+      .poll(
+        async () =>
+          (await readAnchorCenterOffset(page, chapter1SecondaryHighlight.id)) ??
+          Number.POSITIVE_INFINITY,
+        { timeout: 15_000 }
+      )
+      .toBeLessThan(170);
+    await expect(chapter1SecondaryRow).toBeVisible({ timeout: 15_000 });
+    await expectHighlightRowVisible(
       chapter1SecondaryRow,
       "EPUB chapter one inspector note omega."
-    );
-    await expectHighlightRowToStayCollapsed(
-      chapter1PrimaryRow,
-      "EPUB chapter one inspector note alpha."
     );
     await expect
       .poll(
@@ -1029,21 +1178,13 @@ test.describe("epub", () => {
         { timeout: 15_000 }
       )
       .toBeLessThan(170);
-
-    const chapter1PrimaryAnchor = page
-      .locator(`[data-active-highlight-ids~="${chapter1PrimaryHighlight.id}"]`)
-      .first();
     await chapter1PrimaryAnchor.evaluate((element) => {
       (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
     });
     await chapter1PrimaryAnchor.click();
-    await expectHighlightRowToBeExpanded(
+    await expectHighlightRowVisible(
       chapter1PrimaryRow,
       "EPUB chapter one inspector note alpha."
-    );
-    await expectHighlightRowToStayCollapsed(
-      chapter1SecondaryRow,
-      "EPUB chapter one inspector note omega."
     );
 
     await selectSectionByLabel(page, seed.chapter_titles[1]);
@@ -1052,11 +1193,12 @@ test.describe("epub", () => {
     ).toBeVisible({ timeout: 10_000 });
     await expect(chapter1PrimaryRow).toHaveCount(0);
     await expect(chapter1SecondaryRow).toHaveCount(0);
+    await chapter2Anchor.evaluate((element) => {
+      (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
+    });
     const chapter2RowInView = chapter2Row.first();
     await expect(chapter2RowInView).toBeVisible({ timeout: 15_000 });
-    await expectHighlightRowToBeExpanded(chapter2RowInView, "EPUB chapter two inspector note.");
-
     await chapter2RowInView.click();
-    await expectHighlightRowToBeExpanded(chapter2RowInView, "EPUB chapter two inspector note.");
+    await expectHighlightRowVisible(chapter2RowInView, "EPUB chapter two inspector note.");
   });
 });

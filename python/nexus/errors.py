@@ -52,6 +52,8 @@ class ApiErrorCode(str, Enum):
     E_STORAGE_MISSING = "E_STORAGE_MISSING"
     E_INVALID_CURSOR = "E_INVALID_CURSOR"
     E_STRIPE_WEBHOOK_INVALID = "E_STRIPE_WEBHOOK_INVALID"
+    E_BRANCH_PATH_INVALID = "E_BRANCH_PATH_INVALID"
+    E_BRANCH_ANCHOR_INVALID = "E_BRANCH_ANCHOR_INVALID"
 
     # Conflict errors (409)
     E_SHARE_REQUIRED = "E_SHARE_REQUIRED"
@@ -60,6 +62,9 @@ class ApiErrorCode(str, Enum):
     E_INVITE_MEMBER_EXISTS = "E_INVITE_MEMBER_EXISTS"
     E_INVITE_NOT_PENDING = "E_INVITE_NOT_PENDING"
     E_OWNERSHIP_TRANSFER_INVALID = "E_OWNERSHIP_TRANSFER_INVALID"
+    E_BRANCH_DELETE_ACTIVE_PATH = "E_BRANCH_DELETE_ACTIVE_PATH"
+    E_BRANCH_HAS_ACTIVE_RUN = "E_BRANCH_HAS_ACTIVE_RUN"
+    E_NOTE_CONFLICT = "E_NOTE_CONFLICT"
 
     # Highlight errors (400/409)
     E_HIGHLIGHT_INVALID_RANGE = "E_HIGHLIGHT_INVALID_RANGE"  # 400
@@ -79,6 +84,8 @@ class ApiErrorCode(str, Enum):
     E_LLM_BAD_REQUEST = "E_LLM_BAD_REQUEST"  # 400 - Provider rejected the request
     E_LLM_TIMEOUT = "E_LLM_TIMEOUT"  # 504 - Provider request timed out
     E_LLM_CONTEXT_TOO_LARGE = "E_LLM_CONTEXT_TOO_LARGE"  # 400 - Context too large for model
+    E_LLM_INCOMPLETE = "E_LLM_INCOMPLETE"  # 400 - Provider hit output token budget
+    E_APP_SEARCH_FAILED = "E_APP_SEARCH_FAILED"  # 500 - Required in-app retrieval failed
     E_MESSAGE_TOO_LONG = "E_MESSAGE_TOO_LONG"  # 400 - Message exceeds 20,000 char limit
     E_CONTEXT_TOO_LARGE = "E_CONTEXT_TOO_LARGE"  # 400 - Context exceeds 25,000 char limit
     E_MODEL_NOT_AVAILABLE = "E_MODEL_NOT_AVAILABLE"  # 400 - Model not available to user
@@ -97,6 +104,8 @@ class ApiErrorCode(str, Enum):
     E_STREAM_TOKEN_EXPIRED = "E_STREAM_TOKEN_EXPIRED"  # 401 token past expiry
     E_STREAM_TOKEN_REPLAYED = "E_STREAM_TOKEN_REPLAYED"  # 401 jti already used
     E_STREAM_TOKEN_INVALID = "E_STREAM_TOKEN_INVALID"  # 401 signature or claims failed
+    E_CANCELLED = "E_CANCELLED"  # explicit chat-run cancellation
+    E_LLM_INTERRUPTED = "E_LLM_INTERRUPTED"  # worker crashed after partial provider output
     E_PODCAST_QUOTA_EXCEEDED = (
         "E_PODCAST_QUOTA_EXCEEDED"  # 429 monthly transcription quota exceeded
     )
@@ -137,6 +146,19 @@ class ApiErrorCode(str, Enum):
     E_BILLING_NOT_CONFIGURED = "E_BILLING_NOT_CONFIGURED"  # 500
 
 
+CHAT_RESPONSE_RETRYABLE_ERROR_CODES = frozenset(
+    {
+        ApiErrorCode.E_INTERNAL.value,
+        ApiErrorCode.E_LLM_PROVIDER_DOWN.value,
+        ApiErrorCode.E_LLM_TIMEOUT.value,
+        ApiErrorCode.E_LLM_RATE_LIMIT.value,
+        ApiErrorCode.E_LLM_INTERRUPTED.value,
+        ApiErrorCode.E_RATE_LIMITED.value,
+        ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE.value,
+    }
+)
+
+
 # Error code to HTTP status mapping
 ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     # Authentication errors
@@ -170,6 +192,8 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_STORAGE_MISSING: 400,
     ApiErrorCode.E_INVALID_CURSOR: 400,
     ApiErrorCode.E_STRIPE_WEBHOOK_INVALID: 400,
+    ApiErrorCode.E_BRANCH_PATH_INVALID: 400,
+    ApiErrorCode.E_BRANCH_ANCHOR_INVALID: 400,
     # Conflict errors
     ApiErrorCode.E_SHARE_REQUIRED: 409,
     ApiErrorCode.E_SHARES_NOT_ALLOWED: 409,
@@ -177,6 +201,9 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_INVITE_MEMBER_EXISTS: 409,
     ApiErrorCode.E_INVITE_NOT_PENDING: 409,
     ApiErrorCode.E_OWNERSHIP_TRANSFER_INVALID: 409,
+    ApiErrorCode.E_BRANCH_DELETE_ACTIVE_PATH: 409,
+    ApiErrorCode.E_BRANCH_HAS_ACTIVE_RUN: 409,
+    ApiErrorCode.E_NOTE_CONFLICT: 409,
     # Highlight errors
     ApiErrorCode.E_HIGHLIGHT_INVALID_RANGE: 400,
     ApiErrorCode.E_HIGHLIGHT_CONFLICT: 409,
@@ -193,6 +220,8 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_LLM_BAD_REQUEST: 400,
     ApiErrorCode.E_LLM_TIMEOUT: 504,
     ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE: 400,
+    ApiErrorCode.E_LLM_INCOMPLETE: 400,
+    ApiErrorCode.E_APP_SEARCH_FAILED: 500,
     ApiErrorCode.E_MESSAGE_TOO_LONG: 400,
     ApiErrorCode.E_CONTEXT_TOO_LARGE: 400,
     ApiErrorCode.E_MODEL_NOT_AVAILABLE: 400,
@@ -208,6 +237,8 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_STREAM_TOKEN_EXPIRED: 401,
     ApiErrorCode.E_STREAM_TOKEN_REPLAYED: 401,
     ApiErrorCode.E_STREAM_TOKEN_INVALID: 401,
+    ApiErrorCode.E_CANCELLED: 499,
+    ApiErrorCode.E_LLM_INTERRUPTED: 503,
     ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED: 429,
     # S5 EPUB errors
     ApiErrorCode.E_RETRY_INVALID_STATE: 409,

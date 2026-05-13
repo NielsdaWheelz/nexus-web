@@ -16,8 +16,9 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.config import Settings, get_settings
-from nexus.db.models import Media, MediaAuthor
+from nexus.db.models import Media
 from nexus.logging import get_logger
+from nexus.services.contributor_credits import replace_media_contributor_credits
 
 logger = get_logger(__name__)
 
@@ -48,8 +49,7 @@ def detect_metadata_gaps(media: Media) -> MetadataGaps:
     if title.startswith("YouTube Video ") or title in {"Untitled", "Untitled Episode"}:
         title_looks_like_filename = True
 
-    # Check if authors exist via the relationship
-    authors_missing = not media.authors
+    authors_missing = not media.contributor_credits
 
     return MetadataGaps(
         title_looks_like_filename=title_looks_like_filename,
@@ -162,7 +162,7 @@ def build_enrichment_prompt(
         row = db.execute(
             text(
                 """
-                SELECT p.title, p.author
+                SELECT p.title
                 FROM podcast_episodes pe
                 JOIN podcasts p ON p.id = pe.podcast_id
                 WHERE pe.media_id = :media_id
@@ -173,8 +173,6 @@ def build_enrichment_prompt(
         if row is not None:
             if row[0]:
                 metadata_lines.append(f"- podcast_title: {row[0]}")
-            if row[1]:
-                metadata_lines.append(f"- podcast_author: {row[1]}")
 
     metadata_block = "\n".join(metadata_lines)
     content_block = content_sample or "(no media text available)"
@@ -251,16 +249,21 @@ def merge_enrichment(
     if gaps.authors_missing and "authors" in enrichment:
         authors = enrichment["authors"]
         if isinstance(authors, list):
-            for i, name in enumerate(authors[:20]):
-                if isinstance(name, str) and name.strip():
-                    db.add(
-                        MediaAuthor(
-                            media_id=media.id,
-                            name=name.strip()[:255],
-                            role="author",
-                            sort_order=i,
-                        )
-                    )
+            replace_media_contributor_credits(
+                db,
+                media_id=media.id,
+                source="metadata_enrichment",
+                credits=[
+                    {
+                        "name": name.strip()[:255],
+                        "role": "author",
+                        "ordinal": i,
+                        "source": "metadata_enrichment",
+                    }
+                    for i, name in enumerate(authors[:20])
+                    if isinstance(name, str) and name.strip()
+                ],
+            )
 
     if gaps.publisher_missing and "publisher" in enrichment:
         publisher = enrichment["publisher"]

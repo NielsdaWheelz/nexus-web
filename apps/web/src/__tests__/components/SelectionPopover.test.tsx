@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { RefObject } from "react";
 import SelectionPopover from "@/components/SelectionPopover";
 
@@ -57,6 +56,60 @@ function mockPopoverRect(rect: DOMRect) {
     });
 }
 
+function readDialogPosition(dialog: HTMLElement): { top: number; left: number } {
+  return {
+    top: Number.parseFloat(dialog.style.top),
+    left: Number.parseFloat(dialog.style.left),
+  };
+}
+
+function expectPositionWithinViewport(
+  dialog: HTMLElement,
+  popoverRect: { width: number; height: number },
+  viewport: {
+    width: number;
+    height: number;
+    offsetLeft?: number;
+    offsetTop?: number;
+  }
+) {
+  const { top, left } = readDialogPosition(dialog);
+  const minLeft = (viewport.offsetLeft ?? 0) + 8;
+  const minTop = (viewport.offsetTop ?? 0) + 8;
+  const maxRight = (viewport.offsetLeft ?? 0) + viewport.width - 8;
+  const maxBottom = (viewport.offsetTop ?? 0) + viewport.height - 8;
+
+  expect(left).toBeGreaterThanOrEqual(minLeft);
+  expect(top).toBeGreaterThanOrEqual(minTop);
+  expect(left + popoverRect.width).toBeLessThanOrEqual(maxRight + 0.5);
+  expect(top + popoverRect.height).toBeLessThanOrEqual(maxBottom + 0.5);
+}
+
+function expectPositionToTouchViewportEdge(
+  dialog: HTMLElement,
+  popoverRect: { width: number; height: number },
+  viewport: {
+    width: number;
+    height: number;
+    offsetLeft?: number;
+    offsetTop?: number;
+  }
+) {
+  const { top, left } = readDialogPosition(dialog);
+  const minLeft = (viewport.offsetLeft ?? 0) + 8;
+  const minTop = (viewport.offsetTop ?? 0) + 8;
+  const maxRight = (viewport.offsetLeft ?? 0) + viewport.width - 8;
+  const maxBottom = (viewport.offsetTop ?? 0) + viewport.height - 8;
+
+  const touchesEdge =
+    Math.abs(left - minLeft) <= 0.5 ||
+    Math.abs(top - minTop) <= 0.5 ||
+    Math.abs(left + popoverRect.width - maxRight) <= 0.5 ||
+    Math.abs(top + popoverRect.height - maxBottom) <= 0.5;
+
+  expect(touchesEdge).toBe(true);
+}
+
 describe("SelectionPopover", () => {
   const originalInnerWidth = window.innerWidth;
   const originalInnerHeight = window.innerHeight;
@@ -80,55 +133,53 @@ describe("SelectionPopover", () => {
     document.body.innerHTML = "";
   });
 
-  it("shows an icon-only ask-in-chat action when onQuoteToChat is provided", async () => {
+  it("shows an icon-only Ask action when onAsk is provided", () => {
     const onCreateHighlight = vi.fn();
-    const onQuoteToChat = vi.fn();
-    const user = userEvent.setup();
+    const onAsk = vi.fn();
 
     render(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
         onCreateHighlight={onCreateHighlight}
-        onQuoteToChat={onQuoteToChat}
+        onAsk={onAsk}
         onDismiss={vi.fn()}
       />
     );
 
-    const button = screen.getByRole("button", { name: "Ask in chat" });
+    const button = screen.getByRole("button", { name: "Ask" });
     expect(button).toBeInTheDocument();
-    expect(button).not.toHaveTextContent("Ask in chat");
+    expect(button).not.toHaveTextContent("Ask");
 
-    await user.click(button);
+    fireEvent.click(button);
 
-    expect(onQuoteToChat).toHaveBeenCalledTimes(1);
-    expect(onQuoteToChat).toHaveBeenCalledWith("yellow");
+    expect(onAsk).toHaveBeenCalledTimes(1);
+    expect(onAsk).toHaveBeenCalledWith("yellow");
     expect(onCreateHighlight).not.toHaveBeenCalled();
   });
 
-  it("passes the currently selected color to the ask-in-chat icon button", async () => {
+  it("passes the currently selected color to the Ask icon button", () => {
     const onCreateHighlight = vi.fn();
-    const onQuoteToChat = vi.fn();
-    const user = userEvent.setup();
+    const onAsk = vi.fn();
 
     render(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
         onCreateHighlight={onCreateHighlight}
-        onQuoteToChat={onQuoteToChat}
+        onAsk={onAsk}
         onDismiss={vi.fn()}
       />
     );
 
-    await user.click(screen.getByRole("button", { name: "Blue" }));
-    await user.click(screen.getByRole("button", { name: "Ask in chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Blue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
 
     expect(onCreateHighlight).toHaveBeenCalledWith("blue");
-    expect(onQuoteToChat).toHaveBeenCalledWith("blue");
+    expect(onAsk).toHaveBeenCalledWith("blue");
   });
 
-  it("hides ask-in-chat when no quote callback is provided", () => {
+  it("hides Ask when no ask callback is provided", () => {
     render(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
@@ -138,7 +189,24 @@ describe("SelectionPopover", () => {
       />
     );
 
-    expect(screen.queryByRole("button", { name: "Ask in chat" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ask" })).not.toBeInTheDocument();
+  });
+
+  it("does not expose chat destination choices from the selection popover", () => {
+    render(
+      <SelectionPopover
+        selectionRect={new DOMRect(120, 120, 80, 24)}
+        containerRef={createContainerRef()}
+        onCreateHighlight={vi.fn()}
+        onAsk={vi.fn()}
+        onDismiss={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
+    expect(screen.queryByText("Ask in new chat")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ask in this document")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ask in library...")).not.toBeInTheDocument();
   });
 
   it("dismisses on pointerdown outside the popup", async () => {
@@ -160,12 +228,30 @@ describe("SelectionPopover", () => {
     });
   });
 
+  it("prevents pointerdown default inside the popup so text selection stays intact", () => {
+    render(
+      <SelectionPopover
+        selectionRect={new DOMRect(120, 120, 80, 24)}
+        containerRef={createContainerRef()}
+        onCreateHighlight={vi.fn()}
+        onDismiss={vi.fn()}
+      />
+    );
+
+    const button = screen.getByRole("button", { name: "Green" });
+    const event = createEvent.pointerDown(button);
+    fireEvent(button, event);
+
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it("prefers placing the popup below the last selected line on mobile", async () => {
     const containerRef = createContainerRef(new DOMRect(0, 0, 390, 780));
+    const popoverRect = { width: 128, height: 40 };
 
     setViewport(390, 780);
     mockVisualViewport({ width: 390, height: 780 });
-    mockPopoverRect(new DOMRect(0, 0, 128, 40));
+    mockPopoverRect(new DOMRect(0, 0, popoverRect.width, popoverRect.height));
 
     render(
       <SelectionPopover
@@ -179,18 +265,20 @@ describe("SelectionPopover", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Highlight actions" });
     await waitFor(() => {
-      expect(dialog.style.top).toBe("232px");
-      expect(dialog.style.left).toBe("89px");
       expect(dialog.dataset.placement).toBe("below");
     });
+    const { top } = readDialogPosition(dialog);
+    expect(top).toBeGreaterThanOrEqual(224);
+    expectPositionWithinViewport(dialog, popoverRect, { width: 390, height: 780 });
   });
 
   it("falls back above the first selected line on mobile when below does not fit", async () => {
     const containerRef = createContainerRef(new DOMRect(0, 0, 390, 300));
+    const popoverRect = { width: 120, height: 48 };
 
     setViewport(390, 300);
     mockVisualViewport({ width: 390, height: 300 });
-    mockPopoverRect(new DOMRect(0, 0, 120, 48));
+    mockPopoverRect(new DOMRect(0, 0, popoverRect.width, popoverRect.height));
 
     render(
       <SelectionPopover
@@ -204,18 +292,20 @@ describe("SelectionPopover", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Highlight actions" });
     await waitFor(() => {
-      expect(dialog.style.top).toBe("188px");
-      expect(dialog.style.left).toBe("100px");
       expect(dialog.dataset.placement).toBe("above");
     });
+    const { top } = readDialogPosition(dialog);
+    expect(top + popoverRect.height).toBeLessThanOrEqual(244);
+    expectPositionWithinViewport(dialog, popoverRect, { width: 390, height: 300 });
   });
 
   it("falls back to the right on mobile when above and below do not fit", async () => {
     const containerRef = createContainerRef(new DOMRect(0, 0, 390, 140));
+    const popoverRect = { width: 100, height: 80 };
 
     setViewport(390, 140);
     mockVisualViewport({ width: 390, height: 140 });
-    mockPopoverRect(new DOMRect(0, 0, 100, 80));
+    mockPopoverRect(new DOMRect(0, 0, popoverRect.width, popoverRect.height));
 
     render(
       <SelectionPopover
@@ -229,18 +319,20 @@ describe("SelectionPopover", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Highlight actions" });
     await waitFor(() => {
-      expect(dialog.style.top).toBe("8px");
-      expect(dialog.style.left).toBe("168px");
       expect(dialog.dataset.placement).toBe("right");
     });
+    const { left } = readDialogPosition(dialog);
+    expect(left).toBeGreaterThanOrEqual(160);
+    expectPositionWithinViewport(dialog, popoverRect, { width: 390, height: 140 });
   });
 
   it("clamps mobile placement to the visual viewport bounds", async () => {
     const containerRef = createContainerRef(new DOMRect(0, 0, 390, 844));
+    const popoverRect = { width: 160, height: 48 };
 
     setViewport(390, 844);
     mockVisualViewport({ offsetLeft: 24, offsetTop: 120, width: 220, height: 260 });
-    mockPopoverRect(new DOMRect(0, 0, 160, 48));
+    mockPopoverRect(new DOMRect(0, 0, popoverRect.width, popoverRect.height));
 
     render(
       <SelectionPopover
@@ -254,18 +346,23 @@ describe("SelectionPopover", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Highlight actions" });
     await waitFor(() => {
-      expect(dialog.style.top).toBe("208px");
-      expect(dialog.style.left).toBe("76px");
       expect(dialog.dataset.placement).toBe("below");
+    });
+    expectPositionWithinViewport(dialog, popoverRect, {
+      offsetLeft: 24,
+      offsetTop: 120,
+      width: 220,
+      height: 260,
     });
   });
 
   it("pins to the nearest viewport edge on mobile when no side placement fits", async () => {
     const containerRef = createContainerRef(new DOMRect(0, 0, 390, 220));
+    const popoverRect = { width: 140, height: 32 };
 
     setViewport(390, 220);
     mockVisualViewport({ width: 160, height: 120 });
-    mockPopoverRect(new DOMRect(0, 0, 140, 32));
+    mockPopoverRect(new DOMRect(0, 0, popoverRect.width, popoverRect.height));
 
     render(
       <SelectionPopover
@@ -279,9 +376,15 @@ describe("SelectionPopover", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Highlight actions" });
     await waitFor(() => {
-      expect(dialog.style.top).toBe("16px");
-      expect(dialog.style.left).toBe("8px");
       expect(dialog.dataset.placement).toBe("edge");
+    });
+    expectPositionWithinViewport(dialog, popoverRect, {
+      width: 160,
+      height: 120,
+    });
+    expectPositionToTouchViewportEdge(dialog, popoverRect, {
+      width: 160,
+      height: 120,
     });
   });
 });

@@ -1,0 +1,107 @@
+.gutter {
+  position: relative;
+  width: 36px;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  background: var(--reader-bg-secondary, var(--surface-2));
+  border-left: 1px solid var(--reader-border-subtle, var(--edge-subtle));
+  overflow: hidden;
+}
+
+@media (max-width: 600px) {
+  .gutter {
+    width: 24px;
+  }
+}
+
+.expandSlot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--reader-border-subtle, var(--edge-subtle));
+  background: var(--reader-bg-secondary, var(--surface-2));
+}
+
+.markerColumn {
+  position: absolute;
+  inset: 0;
+}
+
+.marker {
+  position: absolute;
+  left: 50%;
+  width: 24px;
+  height: 15px;
+  margin-left: -12px;
+  padding: 6px 0;
+  background-clip: content-box;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: transform var(--duration-fast) var(--ease-glide);
+}
+
+@media (max-width: 600px) {
+  .marker {
+    width: 20px;
+    height: 16px;
+    margin-left: -10px;
+  }
+}
+
+.marker:hover,
+.marker:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  transform: translateY(-50%) scaleY(1.2);
+}
+
+.markerStacked {
+  height: 17px;
+}
+
+@media (max-width: 600px) {
+  .markerStacked {
+    height: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marker {
+    transition: none;
+  }
+}
+
+.previewExcerpt {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.previewList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.previewListItem {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}

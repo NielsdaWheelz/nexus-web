@@ -10,8 +10,3 @@ export async function GET(req: Request, { params }: { params: Params }) {
   const { id } = await params;
   return proxyToFastAPI(req, `/conversations/${id}/messages`);
 }
-
-export async function POST(req: Request, { params }: { params: Params }) {
-  const { id } = await params;
-  return proxyToFastAPI(req, `/conversations/${id}/messages`);
-}

@@ -6,15 +6,31 @@ import { FileText, Mic, Play, Video } from "lucide-react";
 import LibraryTargetPicker, {
   type LibraryTargetPickerItem,
 } from "@/components/LibraryTargetPicker";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
+import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import SectionCard from "@/components/ui/SectionCard";
-import StateMessage from "@/components/ui/StateMessage";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import { apiFetch } from "@/lib/api/client";
+import type { ContributorCredit } from "@/lib/contributors/types";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import {
+  subscribeToPodcast,
+  toPodcastContributorInputs,
+} from "../podcasts/podcastSubscriptions";
 import styles from "./page.module.css";
 
-type BrowseSectionType = "documents" | "videos" | "podcasts" | "podcast_episodes";
+type BrowseSectionType =
+  | "documents"
+  | "videos"
+  | "podcasts"
+  | "podcast_episodes";
 
 type BrowsePageInfo = {
   has_more: boolean;
@@ -31,6 +47,7 @@ type BrowseDocumentResult = {
   source_label?: string | null;
   source_type?: string | null;
   media_id?: string | null;
+  contributors?: ContributorCredit[];
 };
 
 type BrowseVideoResult = {
@@ -39,10 +56,10 @@ type BrowseVideoResult = {
   title: string;
   description: string | null;
   watch_url: string;
-  channel_title: string | null;
   published_at: string | null;
   thumbnail_url: string | null;
   media_id?: string | null;
+  contributors: ContributorCredit[];
 };
 
 type BrowsePodcastResult = {
@@ -50,7 +67,7 @@ type BrowsePodcastResult = {
   podcast_id: string | null;
   provider_podcast_id: string;
   title: string;
-  author: string | null;
+  contributors: ContributorCredit[];
   feed_url: string;
   website_url: string | null;
   image_url: string | null;
@@ -63,7 +80,7 @@ type BrowseEpisodeResult = {
   provider_podcast_id: string;
   provider_episode_id: string;
   podcast_title: string;
-  podcast_author: string | null;
+  podcast_contributors: ContributorCredit[];
   podcast_image_url: string | null;
   title: string;
   audio_url: string;
@@ -87,11 +104,8 @@ type BrowseSectionData = {
 
 type BrowseResponse = {
   data: {
-    page?: BrowsePageInfo;
-    page_type?: BrowseSectionType | null;
     query?: string;
-    results?: BrowseResult[];
-    sections?: Partial<Record<BrowseSectionType, BrowseSectionData>>;
+    sections: Partial<Record<BrowseSectionType, BrowseSectionData>>;
   };
 };
 
@@ -121,7 +135,10 @@ function emptySections(): Record<BrowseSectionType, BrowseSectionData> {
     documents: { results: [], page: { has_more: false, next_cursor: null } },
     videos: { results: [], page: { has_more: false, next_cursor: null } },
     podcasts: { results: [], page: { has_more: false, next_cursor: null } },
-    podcast_episodes: { results: [], page: { has_more: false, next_cursor: null } },
+    podcast_episodes: {
+      results: [],
+      page: { has_more: false, next_cursor: null },
+    },
   };
 }
 
@@ -140,10 +157,6 @@ function isBrowseSectionType(value: string): value is BrowseSectionType {
 
 function parseVisibleTypes(searchParams: URLSearchParams): BrowseSectionType[] {
   if (!searchParams.has("types")) {
-    const legacyType = searchParams.get("type");
-    if (legacyType && isBrowseSectionType(legacyType)) {
-      return [legacyType];
-    }
     return [...BROWSE_TYPES];
   }
   const raw = searchParams.getAll("types").join(",");
@@ -159,7 +172,10 @@ function parseVisibleTypes(searchParams: URLSearchParams): BrowseSectionType[] {
   return seen.size > 0 ? BROWSE_TYPES.filter((type) => seen.has(type)) : [];
 }
 
-function buildBrowseHref(query: string, visibleTypes: BrowseSectionType[]): string {
+function buildBrowseHref(
+  query: string,
+  visibleTypes: BrowseSectionType[],
+): string {
   const params = new URLSearchParams();
   const trimmedQuery = query.trim();
   if (trimmedQuery) {
@@ -177,7 +193,9 @@ function buildBrowseHref(query: string, visibleTypes: BrowseSectionType[]): stri
 function formatEpisodeMeta(result: BrowseEpisodeResult): string {
   const bits: string[] = [];
   if (result.published_at) {
-    bits.push(`Published ${new Date(result.published_at).toLocaleDateString()}`);
+    bits.push(
+      `Published ${new Date(result.published_at).toLocaleDateString()}`,
+    );
   }
   if (result.duration_seconds) {
     bits.push(`${Math.round(result.duration_seconds / 60)} min`);
@@ -209,7 +227,10 @@ function isProjectGutenbergDocument(result: BrowseDocumentResult): boolean {
   return sourceLabel === "Project Gutenberg";
 }
 
-function getDocumentActionLabel(result: BrowseDocumentResult, busy: boolean): string {
+function getDocumentActionLabel(
+  result: BrowseDocumentResult,
+  busy: boolean,
+): string {
   if (result.media_id) {
     return busy ? "Opening..." : "Open";
   }
@@ -220,7 +241,9 @@ function getDocumentActionLabel(result: BrowseDocumentResult, busy: boolean): st
 }
 
 function getDocumentLibraryActionLabel(result: BrowseDocumentResult): string {
-  return isProjectGutenbergDocument(result) ? "Import + library" : "Add + library";
+  return isProjectGutenbergDocument(result)
+    ? "Import + library"
+    : "Add + library";
 }
 
 function getDocumentFallbackDescription(result: BrowseDocumentResult): string {
@@ -235,41 +258,96 @@ function getDocumentFallbackDescription(result: BrowseDocumentResult): string {
 
 function normalizeSections(
   data: BrowseResponse["data"],
-  requestedType: BrowseSectionType | null = null
 ): Record<BrowseSectionType, BrowseSectionData> {
   const nextSections = emptySections();
-  if (data.sections) {
-    for (const type of BROWSE_TYPES) {
-      const section = data.sections[type];
-      if (section) {
-        nextSections[type] = section;
-      }
+  for (const type of BROWSE_TYPES) {
+    const section = data.sections[type];
+    if (section) {
+      nextSections[type] = section;
     }
   }
+  return nextSections;
+}
 
-  if (!data.results || data.results.length === 0) {
-    return nextSections;
-  }
+function replaceSection(
+  current: Record<BrowseSectionType, BrowseSectionData>,
+  sectionType: BrowseSectionType,
+  nextSection: BrowseSectionData,
+): Record<BrowseSectionType, BrowseSectionData> {
+  return {
+    ...current,
+    [sectionType]: nextSection,
+  };
+}
 
-  const targetType =
-    requestedType ?? (data.page_type && isBrowseSectionType(data.page_type) ? data.page_type : null);
-  if (targetType) {
-    nextSections[targetType] = {
-      results: data.results,
-      page: data.page ?? { has_more: false, next_cursor: null },
-    };
-    return nextSections;
-  }
+function updateSectionResults<T extends BrowseResult>(
+  results: BrowseResult[],
+  match: (row: BrowseResult) => row is T,
+  update: (row: T) => T,
+): BrowseResult[] {
+  return results.map((row) => (match(row) ? update(row) : row));
+}
 
-  const grouped = emptySections();
-  for (const result of data.results) {
-    grouped[result.type].results.push(result);
-  }
-  const populatedTypes = BROWSE_TYPES.filter((type) => grouped[type].results.length > 0);
-  if (populatedTypes.length === 1) {
-    grouped[populatedTypes[0]].page = data.page ?? { has_more: false, next_cursor: null };
-  }
-  return grouped;
+function isPodcastResult(row: BrowseResult): row is BrowsePodcastResult {
+  return row.type === "podcasts";
+}
+
+function isPodcastEpisodeResult(row: BrowseResult): row is BrowseEpisodeResult {
+  return row.type === "podcast_episodes";
+}
+
+function isDocumentResult(row: BrowseResult): row is BrowseDocumentResult {
+  return row.type === "documents";
+}
+
+function isVideoResult(row: BrowseResult): row is BrowseVideoResult {
+  return row.type === "videos";
+}
+
+function getSection(
+  sections: Record<BrowseSectionType, BrowseSectionData>,
+  sectionType: BrowseSectionType,
+): BrowseSectionData {
+  return sections[sectionType];
+}
+
+function getSectionResults(
+  sections: Record<BrowseSectionType, BrowseSectionData>,
+  sectionType: BrowseSectionType,
+): BrowseResult[] {
+  return getSection(sections, sectionType).results;
+}
+
+function getSectionPage(
+  sections: Record<BrowseSectionType, BrowseSectionData>,
+  sectionType: BrowseSectionType,
+): BrowsePageInfo {
+  return getSection(sections, sectionType).page;
+}
+
+function mergeSectionResults(
+  current: Record<BrowseSectionType, BrowseSectionData>,
+  sectionType: BrowseSectionType,
+  nextSection: BrowseSectionData,
+): Record<BrowseSectionType, BrowseSectionData> {
+  return replaceSection(current, sectionType, {
+    results: [
+      ...getSectionResults(current, sectionType),
+      ...nextSection.results,
+    ],
+    page: nextSection.page,
+  });
+}
+
+function updateSection(
+  current: Record<BrowseSectionType, BrowseSectionData>,
+  sectionType: BrowseSectionType,
+  updateResults: (results: BrowseResult[]) => BrowseResult[],
+): Record<BrowseSectionType, BrowseSectionData> {
+  return replaceSection(current, sectionType, {
+    ...getSection(current, sectionType),
+    results: updateResults(getSectionResults(current, sectionType)),
+  });
 }
 
 export default function BrowsePaneBody() {
@@ -279,11 +357,14 @@ export default function BrowsePaneBody() {
   const visibleTypes = parseVisibleTypes(paneSearchParams);
 
   const [draftQuery, setDraftQuery] = useState(appliedQuery);
-  const [sections, setSections] = useState<Record<BrowseSectionType, BrowseSectionData>>(emptySections);
+  const [sections, setSections] =
+    useState<Record<BrowseSectionType, BrowseSectionData>>(emptySections);
   const [searching, setSearching] = useState(false);
-  const [loadingMoreTypes, setLoadingMoreTypes] = useState<Set<BrowseSectionType>>(new Set());
+  const [loadingMoreTypes, setLoadingMoreTypes] = useState<
+    Set<BrowseSectionType>
+  >(new Set());
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FeedbackContent | null>(null);
   const [hasSearched, setHasSearched] = useState(Boolean(appliedQuery));
   const [libraries, setLibraries] = useState<LibraryTargetPickerItem[]>([]);
   const [librariesLoading, setLibrariesLoading] = useState(false);
@@ -313,7 +394,9 @@ export default function BrowsePaneBody() {
           q: appliedQuery,
           limit: "10",
         });
-        const response = await apiFetch<BrowseResponse>(`/api/browse?${params.toString()}`);
+        const response = await apiFetch<BrowseResponse>(
+          `/api/browse?${params.toString()}`,
+        );
         if (cancelled) {
           return;
         }
@@ -325,11 +408,7 @@ export default function BrowsePaneBody() {
         }
         setSections(emptySections());
         setHasSearched(true);
-        if (isApiError(searchError)) {
-          setError(searchError.message);
-        } else {
-          setError("Browse failed");
-        }
+        setError(toFeedback(searchError, { fallback: "Browse failed" }));
       } finally {
         if (!cancelled) {
           setSearching(false);
@@ -348,7 +427,9 @@ export default function BrowsePaneBody() {
     }
     setLibrariesLoading(true);
     try {
-      const response = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
+      const response = await apiFetch<{ data: LibrarySummary[] }>(
+        "/api/libraries",
+      );
       setLibraries(
         response.data
           .filter((library) => !library.is_default)
@@ -359,7 +440,7 @@ export default function BrowsePaneBody() {
             isInLibrary: false,
             canAdd: true,
             canRemove: false,
-          }))
+          })),
       );
       setLibrariesLoaded(true);
     } finally {
@@ -371,7 +452,9 @@ export default function BrowsePaneBody() {
     paneRouter.replace(buildBrowseHref(appliedQuery, nextVisibleTypes));
   }
 
-  async function ensureAndOpenPodcast(result: BrowsePodcastResult | BrowseEpisodeResult) {
+  async function ensureAndOpenPodcast(
+    result: BrowsePodcastResult | BrowseEpisodeResult,
+  ) {
     if (result.podcast_id) {
       requestOpenInAppPane(`/podcasts/${result.podcast_id}`);
       return;
@@ -381,46 +464,51 @@ export default function BrowsePaneBody() {
     setBusyKeys((current) => new Set(current).add(busyKey));
     setError(null);
     try {
-      const response = await apiFetch<{ data: { podcast_id: string } }>("/api/podcasts/ensure", {
-        method: "POST",
-        body: JSON.stringify({
-          provider_podcast_id: result.provider_podcast_id,
-          title: result.type === "podcasts" ? result.title : result.podcast_title,
-          author: result.type === "podcasts" ? result.author : result.podcast_author,
-          feed_url: result.feed_url,
-          website_url: result.website_url,
-          image_url: result.type === "podcasts" ? result.image_url : result.podcast_image_url,
-          description: result.description,
-        }),
-      });
+      const response = await apiFetch<{ data: { podcast_id: string } }>(
+        "/api/podcasts/ensure",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            provider_podcast_id: result.provider_podcast_id,
+            title:
+              result.type === "podcasts" ? result.title : result.podcast_title,
+            contributors: toPodcastContributorInputs(
+              result.type === "podcasts"
+                ? result.contributors
+                : result.podcast_contributors,
+            ),
+            feed_url: result.feed_url,
+            website_url: result.website_url,
+            image_url:
+              result.type === "podcasts"
+                ? result.image_url
+                : result.podcast_image_url,
+            description: result.description,
+          }),
+        },
+      );
       const podcastId = response.data.podcast_id;
-      setSections((current) => ({
-        ...current,
-        podcasts: {
-          ...current.podcasts,
-          results: current.podcasts.results.map((row) =>
-            row.type === "podcasts" && row.provider_podcast_id === result.provider_podcast_id
-              ? { ...row, podcast_id: podcastId }
-              : row
+      setSections((current) =>
+        updateSection(
+          updateSection(current, "podcasts", (results) =>
+            updateSectionResults(results, isPodcastResult, (row) =>
+              row.provider_podcast_id === result.provider_podcast_id
+                ? { ...row, podcast_id: podcastId }
+                : row,
+            ),
           ),
-        },
-        podcast_episodes: {
-          ...current.podcast_episodes,
-          results: current.podcast_episodes.results.map((row) =>
-            row.type === "podcast_episodes" &&
-            row.provider_podcast_id === result.provider_podcast_id
-              ? { ...row, podcast_id: podcastId }
-              : row
-          ),
-        },
-      }));
+          "podcast_episodes",
+          (results) =>
+            updateSectionResults(results, isPodcastEpisodeResult, (row) =>
+              row.provider_podcast_id === result.provider_podcast_id
+                ? { ...row, podcast_id: podcastId }
+                : row,
+            ),
+        ),
+      );
       requestOpenInAppPane(`/podcasts/${podcastId}`);
     } catch (openError) {
-      if (isApiError(openError)) {
-        setError(openError.message);
-      } else {
-        setError("Failed to open podcast");
-      }
+      setError(toFeedback(openError, { fallback: "Failed to open podcast" }));
     } finally {
       setBusyKeys((current) => {
         const next = new Set(current);
@@ -430,41 +518,37 @@ export default function BrowsePaneBody() {
     }
   }
 
-  async function followPodcast(result: BrowsePodcastResult, libraryId: string | null = null) {
+  async function followPodcast(
+    result: BrowsePodcastResult,
+    libraryId: string | null = null,
+  ) {
     const busyKey = `podcast:${result.provider_podcast_id}`;
     setBusyKeys((current) => new Set(current).add(busyKey));
     setError(null);
     try {
-      const response = await apiFetch<{ data: { podcast_id: string } }>("/api/podcasts/subscriptions", {
-        method: "POST",
-        body: JSON.stringify({
-          provider_podcast_id: result.provider_podcast_id,
-          title: result.title,
-          author: result.author,
-          feed_url: result.feed_url,
-          website_url: result.website_url,
-          image_url: result.image_url,
-          description: result.description,
-          library_id: libraryId,
-        }),
+      const response = await subscribeToPodcast({
+        provider_podcast_id: result.provider_podcast_id,
+        title: result.title,
+        contributors: result.contributors,
+        feed_url: result.feed_url,
+        website_url: result.website_url,
+        image_url: result.image_url,
+        description: result.description,
+        library_id: libraryId,
       });
-      setSections((current) => ({
-        ...current,
-        podcasts: {
-          ...current.podcasts,
-          results: current.podcasts.results.map((row) =>
-            row.type === "podcasts" && row.provider_podcast_id === result.provider_podcast_id
-              ? { ...row, podcast_id: response.data.podcast_id }
-              : row
+      setSections((current) =>
+        updateSection(current, "podcasts", (results) =>
+          updateSectionResults(results, isPodcastResult, (row) =>
+            row.provider_podcast_id === result.provider_podcast_id
+              ? { ...row, podcast_id: response.podcast_id }
+              : row,
           ),
-        },
-      }));
+        ),
+      );
     } catch (followError) {
-      if (isApiError(followError)) {
-        setError(followError.message);
-      } else {
-        setError("Failed to follow podcast");
-      }
+      setError(
+        toFeedback(followError, { fallback: "Failed to follow podcast" }),
+      );
     } finally {
       setBusyKeys((current) => {
         const next = new Set(current);
@@ -476,7 +560,7 @@ export default function BrowsePaneBody() {
 
   async function addAndOpenResult(
     result: BrowseDocumentResult | BrowseVideoResult,
-    libraryId: string | null = null
+    libraryId: string | null = null,
   ) {
     if (result.media_id) {
       requestOpenInAppPane(`/media/${result.media_id}`);
@@ -484,7 +568,9 @@ export default function BrowsePaneBody() {
     }
 
     const busyKey =
-      result.type === "documents" ? `document:${result.url}` : `video:${result.provider_video_id}`;
+      result.type === "documents"
+        ? `document:${result.url}`
+        : `video:${result.provider_video_id}`;
     setBusyKeys((current) => new Set(current).add(busyKey));
     setError(null);
     try {
@@ -492,34 +578,25 @@ export default function BrowsePaneBody() {
         url: result.type === "documents" ? result.url : result.watch_url,
         libraryId,
       });
-      setSections((current) => ({
-        ...current,
-        [result.type]: {
-          ...current[result.type],
-          results: current[result.type].results.map((row) => {
-            if (result.type === "documents" && row.type === "documents" && row.url === result.url) {
-              return { ...row, media_id: added.mediaId };
-            }
-            if (
-              result.type === "videos" &&
-              row.type === "videos" &&
-              row.provider_video_id === result.provider_video_id
-            ) {
-              return { ...row, media_id: added.mediaId };
-            }
-            return row;
-          }),
-        },
-      }));
+      setSections((current) =>
+        updateSection(current, result.type, (results) => {
+          if (result.type === "documents") {
+            return updateSectionResults(results, isDocumentResult, (row) =>
+              row.url === result.url
+                ? { ...row, media_id: added.mediaId }
+                : row,
+            );
+          }
+          return updateSectionResults(results, isVideoResult, (row) =>
+            row.provider_video_id === result.provider_video_id
+              ? { ...row, media_id: added.mediaId }
+              : row,
+          );
+        }),
+      );
       requestOpenInAppPane(`/media/${added.mediaId}`);
     } catch (addError) {
-      if (isApiError(addError)) {
-        setError(addError.message);
-      } else if (addError instanceof Error && addError.message) {
-        setError(addError.message);
-      } else {
-        setError("Failed to add result");
-      }
+      setError(toFeedback(addError, { fallback: "Failed to add result" }));
     } finally {
       setBusyKeys((current) => {
         const next = new Set(current);
@@ -530,7 +607,7 @@ export default function BrowsePaneBody() {
   }
 
   async function loadMore(sectionType: BrowseSectionType) {
-    const nextCursor = sections[sectionType].page.next_cursor;
+    const nextCursor = getSectionPage(sections, sectionType).next_cursor;
     if (!appliedQuery || !nextCursor) {
       return;
     }
@@ -543,24 +620,20 @@ export default function BrowsePaneBody() {
         page_type: sectionType,
         cursor: nextCursor,
       });
-      const response = await apiFetch<BrowseResponse>(`/api/browse?${params.toString()}`);
-      const nextSection = normalizeSections(response.data, sectionType)[sectionType];
-      if (!nextSection) {
-        throw new Error(`Missing ${sectionType} page`);
-      }
-      setSections((current) => ({
-        ...current,
-        [sectionType]: {
-          results: [...current[sectionType].results, ...nextSection.results],
-          page: nextSection.page,
-        },
-      }));
+      const response = await apiFetch<BrowseResponse>(
+        `/api/browse?${params.toString()}`,
+      );
+      setSections((current) =>
+        mergeSectionResults(
+          current,
+          sectionType,
+          getSection(normalizeSections(response.data), sectionType),
+        ),
+      );
     } catch (loadMoreError) {
-      if (isApiError(loadMoreError)) {
-        setError(loadMoreError.message);
-      } else {
-        setError("Failed to load more results");
-      }
+      setError(
+        toFeedback(loadMoreError, { fallback: "Failed to load more results" }),
+      );
     } finally {
       setLoadingMoreTypes((current) => {
         const next = new Set(current);
@@ -570,7 +643,9 @@ export default function BrowsePaneBody() {
     }
   }
 
-  const visibleSections = visibleTypes.filter((type) => sections[type].results.length > 0);
+  const visibleSections = visibleTypes.filter(
+    (type) => getSectionResults(sections, type).length > 0,
+  );
   const selectedTypeSet = new Set(visibleTypes);
 
   return (
@@ -588,24 +663,29 @@ export default function BrowsePaneBody() {
           }}
         >
           <div className={styles.searchRow}>
-            <input
-              className={styles.searchInput}
+            <Input
+              className={styles.searchInputField}
+              size="lg"
               type="search"
               value={draftQuery}
               onChange={(event) => setDraftQuery(event.target.value)}
               placeholder="Search for new podcasts, episodes, videos, or documents..."
               autoFocus
             />
-            <button
+            <Button
               type="submit"
-              className={styles.searchBtn}
+              variant="primary"
+              size="lg"
               disabled={searching || !draftQuery.trim()}
             >
               {searching ? "..." : "Search"}
-            </button>
+            </Button>
           </div>
 
-          <div className={styles.filters} aria-label="Browse visible result types">
+          <div
+            className={styles.filters}
+            aria-label="Browse visible result types"
+          >
             {BROWSE_TYPES.map((type) => (
               <label key={type} className={styles.filterOption}>
                 <input
@@ -615,12 +695,15 @@ export default function BrowsePaneBody() {
                     if (event.target.checked) {
                       updateVisibleTypes(
                         [...visibleTypes, type].filter(
-                          (value, index, values) => values.indexOf(value) === index
-                        )
+                          (value, index, values) =>
+                            values.indexOf(value) === index,
+                        ),
                       );
                       return;
                     }
-                    updateVisibleTypes(visibleTypes.filter((value) => value !== type));
+                    updateVisibleTypes(
+                      visibleTypes.filter((value) => value !== type),
+                    );
                   }}
                 />
                 <span>{TYPE_LABELS[type]}</span>
@@ -629,41 +712,54 @@ export default function BrowsePaneBody() {
           </div>
         </form>
 
-        {error ? <StateMessage variant="error">{error}</StateMessage> : null}
+        {error ? <FeedbackNotice feedback={error} /> : null}
 
         {!hasSearched ? (
-          <StateMessage variant="info">
-            Search once, then filter which result types stay visible. Browse finds things that are not already in your workspace.
-          </StateMessage>
+          <FeedbackNotice severity="info">
+            Search once, then filter which result types stay visible. Browse
+            finds things that are not already in your workspace.
+          </FeedbackNotice>
         ) : null}
 
-        {searching ? <StateMessage variant="loading">Searching...</StateMessage> : null}
+        {searching ? (
+          <FeedbackNotice severity="info">Searching...</FeedbackNotice>
+        ) : null}
 
         {hasSearched && !searching && visibleSections.length === 0 ? (
-          <StateMessage variant="empty">
+          <FeedbackNotice severity="neutral">
             {visibleTypes.length === 0
               ? "Select at least one visible result type."
               : "No browse results found for this query."}
-          </StateMessage>
+          </FeedbackNotice>
         ) : null}
 
         {visibleSections.map((sectionType) => (
           <section key={sectionType} className={styles.section}>
             <div className={styles.sectionHeader}>
-              <h2 className={styles.sectionTitle}>{TYPE_LABELS[sectionType]}</h2>
+              <h2 className={styles.sectionTitle}>
+                {TYPE_LABELS[sectionType]}
+              </h2>
             </div>
 
             <div className={styles.resultRows}>
-              {sections[sectionType].results.map((result) => {
+              {getSectionResults(sections, sectionType).map((result) => {
                 if (result.type === "documents") {
                   const busy = busyKeys.has(`document:${result.url}`);
                   const sourceLabel = getDocumentSourceLabel(result);
                   return (
                     <div key={result.url} className={styles.row}>
-                      <button
-                        type="button"
+                      <div
+                        role="button"
+                        tabIndex={0}
                         className={styles.primary}
                         onClick={() => {
+                          void addAndOpenResult(result);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") {
+                            return;
+                          }
+                          event.preventDefault();
                           void addAndOpenResult(result);
                         }}
                       >
@@ -682,26 +778,34 @@ export default function BrowsePaneBody() {
                                   : "Article"}
                             </span>
                             {sourceLabel ? (
-                              <span className={styles.typeBadge}>{sourceLabel}</span>
+                              <span className={styles.typeBadge}>
+                                {sourceLabel}
+                              </span>
                             ) : null}
                           </div>
                           <div className={styles.title}>{result.title}</div>
                           <div className={styles.description}>
-                            {result.description || getDocumentFallbackDescription(result)}
+                            {result.description ||
+                              getDocumentFallbackDescription(result)}
                           </div>
                         </div>
-                      </button>
+                      </div>
+                      <ContributorCreditList
+                        credits={result.contributors}
+                        className={styles.rowContributors}
+                        maxVisible={2}
+                      />
                       <div className={styles.actions}>
-                        <button
-                          type="button"
-                          className={styles.primaryAction}
+                        <Button
+                          variant="primary"
+                          size="md"
                           disabled={busy}
                           onClick={() => {
                             void addAndOpenResult(result);
                           }}
                         >
                           {getDocumentActionLabel(result, busy)}
-                        </button>
+                        </Button>
                         {!result.media_id ? (
                           <LibraryTargetPicker
                             label={getDocumentLibraryActionLabel(result)}
@@ -723,13 +827,23 @@ export default function BrowsePaneBody() {
                 }
 
                 if (result.type === "videos") {
-                  const busy = busyKeys.has(`video:${result.provider_video_id}`);
+                  const busy = busyKeys.has(
+                    `video:${result.provider_video_id}`,
+                  );
                   return (
                     <div key={result.provider_video_id} className={styles.row}>
-                      <button
-                        type="button"
+                      <div
+                        role="button"
+                        tabIndex={0}
                         className={styles.primary}
                         onClick={() => {
+                          void addAndOpenResult(result);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") {
+                            return;
+                          }
+                          event.preventDefault();
                           void addAndOpenResult(result);
                         }}
                       >
@@ -744,7 +858,10 @@ export default function BrowsePaneBody() {
                               unoptimized
                             />
                           ) : (
-                            <span className={styles.fallback} aria-hidden="true">
+                            <span
+                              className={styles.fallback}
+                              aria-hidden="true"
+                            >
                               <Video size={18} />
                             </span>
                           )}
@@ -752,27 +869,36 @@ export default function BrowsePaneBody() {
                         <div className={styles.copy}>
                           <div className={styles.headingRow}>
                             <span className={styles.typeBadge}>Video</span>
-                            {result.channel_title ? (
-                              <span className={styles.meta}>{result.channel_title}</span>
-                            ) : null}
                           </div>
                           <div className={styles.title}>{result.title}</div>
                           <div className={styles.description}>
-                            {result.description || "Add this video to open it in the media reader."}
+                            {result.description ||
+                              "Add this video to open it in the media reader."}
                           </div>
                         </div>
-                      </button>
+                      </div>
+                      <ContributorCreditList
+                        credits={result.contributors}
+                        className={styles.rowContributors}
+                        maxVisible={2}
+                      />
                       <div className={styles.actions}>
-                        <button
-                          type="button"
-                          className={styles.primaryAction}
+                        <Button
+                          variant="primary"
+                          size="md"
                           disabled={busy}
                           onClick={() => {
                             void addAndOpenResult(result);
                           }}
                         >
-                          {result.media_id ? (busy ? "Opening..." : "Open") : busy ? "Adding..." : "Add"}
-                        </button>
+                          {result.media_id
+                            ? busy
+                              ? "Opening..."
+                              : "Open"
+                            : busy
+                              ? "Adding..."
+                              : "Add"}
+                        </Button>
                         {!result.media_id ? (
                           <LibraryTargetPicker
                             label="Add + library"
@@ -794,13 +920,26 @@ export default function BrowsePaneBody() {
                 }
 
                 if (result.type === "podcasts") {
-                  const busy = busyKeys.has(`podcast:${result.provider_podcast_id}`);
+                  const busy = busyKeys.has(
+                    `podcast:${result.provider_podcast_id}`,
+                  );
                   return (
-                    <div key={result.provider_podcast_id} className={styles.row}>
-                      <button
-                        type="button"
+                    <div
+                      key={result.provider_podcast_id}
+                      className={styles.row}
+                    >
+                      <div
+                        role="button"
+                        tabIndex={0}
                         className={styles.primary}
                         onClick={() => {
+                          void ensureAndOpenPodcast(result);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") {
+                            return;
+                          }
+                          event.preventDefault();
                           void ensureAndOpenPodcast(result);
                         }}
                       >
@@ -815,7 +954,10 @@ export default function BrowsePaneBody() {
                               unoptimized
                             />
                           ) : (
-                            <span className={styles.fallback} aria-hidden="true">
+                            <span
+                              className={styles.fallback}
+                              aria-hidden="true"
+                            >
                               <Mic size={18} />
                             </span>
                           )}
@@ -823,38 +965,43 @@ export default function BrowsePaneBody() {
                         <div className={styles.copy}>
                           <div className={styles.headingRow}>
                             <span className={styles.typeBadge}>Podcast</span>
-                            {result.author ? <span className={styles.meta}>{result.author}</span> : null}
                           </div>
                           <div className={styles.title}>{result.title}</div>
                           <div className={styles.description}>
-                            {result.description || "Open the show page or follow it from browse."}
+                            {result.description ||
+                              "Open the show page or follow it from browse."}
                           </div>
                         </div>
-                      </button>
+                      </div>
+                      <ContributorCreditList
+                        credits={result.contributors}
+                        className={styles.rowContributors}
+                        maxVisible={2}
+                      />
                       <div className={styles.actions}>
                         {result.podcast_id ? (
-                          <button
-                            type="button"
-                            className={styles.primaryAction}
+                          <Button
+                            variant="primary"
+                            size="md"
                             disabled={busy}
                             onClick={() => {
                               void ensureAndOpenPodcast(result);
                             }}
                           >
                             {busy ? "Opening..." : "Open"}
-                          </button>
+                          </Button>
                         ) : (
                           <>
-                            <button
-                              type="button"
-                              className={styles.primaryAction}
+                            <Button
+                              variant="primary"
+                              size="md"
                               disabled={busy}
                               onClick={() => {
                                 void followPodcast(result);
                               }}
                             >
                               {busy ? "Following..." : "Follow"}
-                            </button>
+                            </Button>
                             <LibraryTargetPicker
                               label="Follow + library"
                               libraries={libraries}
@@ -875,13 +1022,23 @@ export default function BrowsePaneBody() {
                   );
                 }
 
-                const busy = busyKeys.has(`podcast:${result.provider_podcast_id}`);
+                const busy = busyKeys.has(
+                  `podcast:${result.provider_podcast_id}`,
+                );
                 return (
                   <div key={result.provider_episode_id} className={styles.row}>
-                    <button
-                      type="button"
+                    <div
+                      role="button"
+                      tabIndex={0}
                       className={styles.primary}
                       onClick={() => {
+                        void ensureAndOpenPodcast(result);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") {
+                          return;
+                        }
+                        event.preventDefault();
                         void ensureAndOpenPodcast(result);
                       }}
                     >
@@ -904,32 +1061,42 @@ export default function BrowsePaneBody() {
                       <div className={styles.copy}>
                         <div className={styles.headingRow}>
                           <span className={styles.typeBadge}>Episode</span>
-                          <span className={styles.meta}>{result.podcast_title}</span>
+                          <span className={styles.meta}>
+                            {result.podcast_title}
+                          </span>
                         </div>
                         <div className={styles.title}>{result.title}</div>
-                        <div className={styles.description}>{formatEpisodeMeta(result)}</div>
+                        <div className={styles.description}>
+                          {formatEpisodeMeta(result)}
+                        </div>
                       </div>
-                    </button>
+                    </div>
+                    <ContributorCreditList
+                      credits={result.podcast_contributors}
+                      className={styles.rowContributors}
+                      maxVisible={2}
+                    />
                     <div className={styles.actions}>
-                      <button
-                        type="button"
-                        className={styles.primaryAction}
+                      <Button
+                        variant="primary"
+                        size="md"
                         disabled={busy}
                         onClick={() => {
                           void ensureAndOpenPodcast(result);
                         }}
                       >
                         {busy ? "Opening..." : "Open show"}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 );
               })}
             </div>
 
-            {sections[sectionType].page.next_cursor ? (
-              <button
-                type="button"
+            {getSectionPage(sections, sectionType).next_cursor ? (
+              <Button
+                variant="secondary"
+                size="md"
                 className={styles.loadMore}
                 onClick={() => {
                   void loadMore(sectionType);
@@ -939,7 +1106,7 @@ export default function BrowsePaneBody() {
                 {loadingMoreTypes.has(sectionType)
                   ? "Loading..."
                   : `Load more ${TYPE_LABELS[sectionType].toLowerCase()}`}
-              </button>
+              </Button>
             ) : null}
           </section>
         ))}

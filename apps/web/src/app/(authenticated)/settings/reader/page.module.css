@@ -19,24 +19,9 @@
 }
 
 .formLabel {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  font-weight: 500;
-}
-
-.select {
-  padding: var(--space-2);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text);
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-}
-
-.select:focus {
-  outline: none;
-  border-color: var(--color-accent);
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  font-weight: var(--weight-medium);
 }
 
 .range {
@@ -45,22 +30,9 @@
   max-width: 200px;
 }
 
-.checkboxLabel {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-
-.checkboxLabel input {
-  cursor: pointer;
-}
-
 .savingHint {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
   margin: 0;
 }
 

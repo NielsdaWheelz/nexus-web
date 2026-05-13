@@ -1,9 +1,11 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { normalizePaneHref } from "@/lib/panes/openInAppPane";
-import { normalizePaneTitle } from "@/lib/workspace/paneDescriptor";
+import {
+  normalizePaneTitle,
+  normalizeWorkspaceHref,
+  parseWorkspaceHref,
+} from "@/lib/workspace/schema";
 
 export interface PaneScopedRouter {
   push: (href: string) => void;
@@ -21,14 +23,10 @@ interface PaneRuntimeContextValue {
   router: PaneScopedRouter;
   openInNewPane: (href: string) => void;
   setPaneTitle: (title: string | null) => void;
+  setPaneMinWidth: (widthPx: number | null) => void;
 }
 
 const PaneRuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
-const PaneRootNavigationContext = createContext<{
-  router: PaneScopedRouter;
-  searchParams: URLSearchParams;
-  pathParams: Record<string, string>;
-} | null>(null);
 
 interface PaneRuntimeProviderProps {
   paneId: string;
@@ -39,22 +37,19 @@ interface PaneRuntimeProviderProps {
   onNavigatePane: (paneId: string, href: string) => void;
   onReplacePane: (paneId: string, href: string) => void;
   onOpenInNewPane: (href: string) => void;
-  onSetPaneTitle?: (
-    paneId: string,
-    title: string | null,
-    metadata: { routeId: string; resourceRef: string | null }
-  ) => void;
+  onSetPaneTitle?: (paneId: string, title: string | null) => void;
+  onSetPaneMinWidth?: (paneId: string, widthPx: number | null) => void;
   children: React.ReactNode;
 }
 
 function parsePaneHref(href: string): { pathname: string; searchParams: URLSearchParams } {
-  const base =
-    typeof window !== "undefined" &&
-    window.location.origin &&
-    window.location.origin !== "null"
-      ? window.location.origin
-      : "http://localhost";
-  const parsed = new URL(href, base);
+  const parsed = parseWorkspaceHref(href);
+  if (!parsed) {
+    return {
+      pathname: "/",
+      searchParams: new URLSearchParams(),
+    };
+  }
   return {
     pathname: parsed.pathname,
     searchParams: new URLSearchParams(parsed.search),
@@ -71,6 +66,7 @@ export function PaneRuntimeProvider({
   onReplacePane,
   onOpenInNewPane,
   onSetPaneTitle,
+  onSetPaneMinWidth,
   children,
 }: PaneRuntimeProviderProps) {
   const parsed = useMemo(() => parsePaneHref(href), [href]);
@@ -85,14 +81,14 @@ export function PaneRuntimeProvider({
       searchParams: parsed.searchParams,
       router: {
         push: (nextHref: string) => {
-          const normalized = normalizePaneHref(nextHref);
+          const normalized = normalizeWorkspaceHref(nextHref);
           if (!normalized) {
             return;
           }
           onNavigatePane(paneId, normalized);
         },
         replace: (nextHref: string) => {
-          const normalized = normalizePaneHref(nextHref);
+          const normalized = normalizeWorkspaceHref(nextHref);
           if (!normalized) {
             return;
           }
@@ -100,14 +96,17 @@ export function PaneRuntimeProvider({
         },
       },
       openInNewPane: (nextHref: string) => {
-        const normalized = normalizePaneHref(nextHref);
+        const normalized = normalizeWorkspaceHref(nextHref);
         if (!normalized) {
           return;
         }
         onOpenInNewPane(normalized);
       },
       setPaneTitle: (title: string | null) => {
-        onSetPaneTitle?.(paneId, title, { routeId, resourceRef });
+        onSetPaneTitle?.(paneId, title);
+      },
+      setPaneMinWidth: (widthPx: number | null) => {
+        onSetPaneMinWidth?.(paneId, widthPx);
       },
     }),
     [
@@ -116,6 +115,7 @@ export function PaneRuntimeProvider({
       onOpenInNewPane,
       onReplacePane,
       onSetPaneTitle,
+      onSetPaneMinWidth,
       paneId,
       parsed.pathname,
       parsed.searchParams,
@@ -128,96 +128,35 @@ export function PaneRuntimeProvider({
   return <PaneRuntimeContext.Provider value={value}>{children}</PaneRuntimeContext.Provider>;
 }
 
-export function PaneRootNavigationProvider({ children }: { children: React.ReactNode }) {
-  const nextRouter = useRouter();
-  const nextSearchParams = useSearchParams();
-  const nextPathParams = useParams<Record<string, string>>();
-
-  const value = useMemo(
-    () => ({
-      router: {
-        push: (href: string) => nextRouter.push(href),
-        replace: (href: string) => nextRouter.replace(href),
-      } satisfies PaneScopedRouter,
-      searchParams: new URLSearchParams(nextSearchParams.toString()),
-      pathParams: Object.entries(nextPathParams ?? {}).reduce<Record<string, string>>(
-        (acc, [key, value]) => {
-          if (typeof value === "string") {
-            acc[key] = value;
-          }
-          return acc;
-        },
-        {}
-      ),
-    }),
-    [nextPathParams, nextRouter, nextSearchParams]
-  );
-
-  return (
-    <PaneRootNavigationContext.Provider value={value}>
-      {children}
-    </PaneRootNavigationContext.Provider>
-  );
-}
-
 export function usePaneRuntime(): PaneRuntimeContextValue | null {
   return useContext(PaneRuntimeContext);
 }
 
 export function usePaneRouter(): PaneScopedRouter {
   const paneRuntime = usePaneRuntime();
-  const rootNavigation = useContext(PaneRootNavigationContext);
-  return useMemo(() => {
-    if (paneRuntime) {
-      return paneRuntime.router;
-    }
-    if (rootNavigation) {
-      return rootNavigation.router;
-    }
-    return {
-      push: (href: string) => {
-        if (typeof window !== "undefined") {
-          window.location.assign(href);
-        }
-      },
-      replace: (href: string) => {
-        if (typeof window !== "undefined") {
-          window.location.replace(href);
-        }
-      },
-    };
-  }, [paneRuntime, rootNavigation]);
+  if (!paneRuntime) {
+    throw new Error("usePaneRouter must be used inside PaneRuntimeProvider");
+  }
+  return paneRuntime.router;
 }
 
 export function usePaneSearchParams(): URLSearchParams {
   const paneRuntime = usePaneRuntime();
-  const rootNavigation = useContext(PaneRootNavigationContext);
-  const paneSearch = paneRuntime?.searchParams.toString();
-  const rootSearch = rootNavigation?.searchParams.toString();
-  return useMemo(() => {
-    if (typeof paneSearch === "string") {
-      return new URLSearchParams(paneSearch);
-    }
-    if (typeof rootSearch === "string") {
-      return new URLSearchParams(rootSearch);
-    }
-    if (typeof window !== "undefined") {
-      return new URLSearchParams(window.location.search);
-    }
-    return new URLSearchParams();
-  }, [paneSearch, rootSearch]);
+  const paneSearch = paneRuntime?.searchParams.toString() ?? "";
+  if (!paneRuntime) {
+    throw new Error("usePaneSearchParams must be used inside PaneRuntimeProvider");
+  }
+  return useMemo(() => new URLSearchParams(paneSearch), [paneSearch]);
 }
 
 export function usePaneParam(paramName: string): string | null {
   const paneRuntime = usePaneRuntime();
-  const rootNavigation = useContext(PaneRootNavigationContext);
-  if (paneRuntime && typeof paneRuntime.pathParams[paramName] === "string") {
-    return paneRuntime.pathParams[paramName];
+  if (!paneRuntime) {
+    throw new Error("usePaneParam must be used inside PaneRuntimeProvider");
   }
-  if (rootNavigation && typeof rootNavigation.pathParams[paramName] === "string") {
-    return rootNavigation.pathParams[paramName];
-  }
-  return null;
+  return typeof paneRuntime.pathParams[paramName] === "string"
+    ? paneRuntime.pathParams[paramName]
+    : null;
 }
 
 export function useSetPaneTitle(title: string | null | undefined): void {

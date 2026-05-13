@@ -1,21 +1,27 @@
 "use client";
 
-import { useCallback, useMemo, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 import {
   BookOpen,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
   Compass,
+  FileText,
   LogOut,
   MessageSquare,
   Mic,
   Plus,
   Search,
   Settings,
+  Sparkles,
 } from "lucide-react";
 import Link from "next/link";
+import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
 import { useWorkspaceStore } from "@/lib/workspace/store";
-import { dispatchOpenAddContent } from "@/components/CommandPalette";
+import { dispatchOpenAddContent } from "@/components/addContentEvents";
+import { fetchPinnedObjects, type PinnedObject } from "@/lib/pinnedObjects";
+import Button from "@/components/ui/Button";
 import styles from "./Navbar.module.css";
 
 interface NavbarProps {
@@ -32,6 +38,7 @@ function pathnameFromHref(href: string): string {
 
 export default function Navbar({ onToggle }: NavbarProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const [pins, setPins] = useState<PinnedObject[]>([]);
   const { state, navigatePane } = useWorkspaceStore();
 
   const activePane = useMemo(
@@ -49,7 +56,15 @@ export default function Navbar({ onToggle }: NavbarProps) {
     currentPathname === "/podcasts" || currentPathname.startsWith("/podcasts/");
   const chatsActive =
     currentPathname === "/conversations" || currentPathname.startsWith("/conversations/");
+  const todayActive =
+    currentPathname === "/daily" || currentPathname.startsWith("/daily/");
+  const notesActive =
+    currentPathname === "/notes" ||
+    currentPathname.startsWith("/notes/") ||
+    currentPathname.startsWith("/pages/");
   const searchActive = currentPathname === "/search";
+  const oracleActive =
+    currentPathname === "/oracle" || currentPathname.startsWith("/oracle/");
   const settingsActive =
     currentPathname === "/settings" || currentPathname.startsWith("/settings/");
 
@@ -72,6 +87,9 @@ export default function Navbar({ onToggle }: NavbarProps) {
 
   const handleNavClick = useCallback(
     (event: MouseEvent<HTMLAnchorElement>, href: string) => {
+      if (resolvePaneRoute(href).id === "unsupported") {
+        return;
+      }
       event.preventDefault();
       navigateToHref(href);
     },
@@ -84,6 +102,25 @@ export default function Navbar({ onToggle }: NavbarProps) {
     dispatchOpenAddContent("content");
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const loadedPins = await fetchPinnedObjects("navbar");
+        if (!cancelled) {
+          setPins(loadedPins.filter((pin) => pin.objectRef.route));
+        }
+      } catch {
+        if (!cancelled) {
+          setPins([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <nav className={`${styles.navbar} ${collapsed ? styles.collapsed : ""}`}>
       <div className={styles.header}>
@@ -94,13 +131,15 @@ export default function Navbar({ onToggle }: NavbarProps) {
         >
           {collapsed ? "N" : "Nexus"}
         </Link>
-        <button
-          className={styles.toggleBtn}
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
           onClick={handleToggle}
           aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
         >
           <ToggleIcon size={14} aria-hidden="true" />
-        </button>
+        </Button>
       </div>
 
       <div className={styles.nav}>
@@ -135,6 +174,46 @@ export default function Navbar({ onToggle }: NavbarProps) {
           {!collapsed && <span className={styles.label}>Podcasts</span>}
         </Link>
         <Link
+          href="/daily"
+          className={`${styles.navItem} ${todayActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/daily")}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <CalendarDays size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Today</span>}
+        </Link>
+        <Link
+          href="/notes"
+          className={`${styles.navItem} ${notesActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/notes")}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <FileText size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Notes</span>}
+        </Link>
+        {pins.map((pin) => {
+          const href = pin.objectRef.route;
+          if (!href) {
+            return null;
+          }
+          const active = currentPathname === pathnameFromHref(href);
+          return (
+            <Link
+              key={pin.id}
+              href={href}
+              className={`${styles.navItem} ${active ? styles.active : ""}`}
+              onClick={(e) => handleNavClick(e, href)}
+            >
+              <span className={styles.icon} aria-hidden="true">
+                <FileText size={18} strokeWidth={2} />
+              </span>
+              {!collapsed && <span className={styles.label}>{pin.objectRef.label}</span>}
+            </Link>
+          );
+        })}
+        <Link
           href="/conversations"
           className={`${styles.navItem} ${chatsActive ? styles.active : ""}`}
           onClick={(e) => handleNavClick(e, "/conversations")}
@@ -154,6 +233,16 @@ export default function Navbar({ onToggle }: NavbarProps) {
           </span>
           {!collapsed && <span className={styles.label}>Search</span>}
         </a>
+        <Link
+          href="/oracle"
+          className={`${styles.navItem} ${oracleActive ? styles.active : ""}`}
+          onClick={(e) => handleNavClick(e, "/oracle")}
+        >
+          <span className={styles.icon} aria-hidden="true">
+            <Sparkles size={18} strokeWidth={2} />
+          </span>
+          {!collapsed && <span className={styles.label}>Oracle</span>}
+        </Link>
         <a
           href="/settings"
           className={`${styles.navItem} ${settingsActive ? styles.active : ""}`}
@@ -167,8 +256,8 @@ export default function Navbar({ onToggle }: NavbarProps) {
       </div>
 
       <div className={styles.uploadSection}>
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           className={styles.navItem}
           aria-label="Add content"
           aria-haspopup="dialog"
@@ -178,17 +267,17 @@ export default function Navbar({ onToggle }: NavbarProps) {
             <Plus size={18} strokeWidth={2} />
           </span>
           {!collapsed && <span className={styles.label}>Add</span>}
-        </button>
+        </Button>
       </div>
 
       <div className={styles.footer}>
         <form action="/auth/signout" method="post">
-          <button type="submit" className={styles.navItem}>
+          <Button type="submit" variant="ghost" className={styles.navItem}>
             <span className={styles.icon} aria-hidden="true">
               <LogOut size={18} strokeWidth={2} />
             </span>
             {!collapsed && <span className={styles.label}>Sign Out</span>}
-          </button>
+          </Button>
         </form>
       </div>
     </nav>

@@ -1,0 +1,50 @@
+.topBar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  min-height: 44px;
+  padding-top: max(env(safe-area-inset-top), 0.5rem);
+  padding-bottom: 0.5rem;
+  padding-left: max(env(safe-area-inset-left), 1rem);
+  padding-right: max(env(safe-area-inset-right), 1rem);
+  background: color-mix(in oklch, var(--oracle-bg) 80%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.back {
+  font-family: var(--font-oracle-display);
+  font-size: 0.95rem;
+  color: var(--oracle-fg-muted);
+  text-decoration: none;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 0.5rem;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .back:hover {
+    text-decoration: underline;
+    text-decoration-color: var(--oracle-fg-muted);
+    color: var(--oracle-cream);
+  }
+}
+
+.title {
+  font-family: var(--font-oracle-display);
+  font-variant: small-caps;
+  font-size: 0.9rem;
+  color: var(--oracle-gold);
+  letter-spacing: 0.05em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}

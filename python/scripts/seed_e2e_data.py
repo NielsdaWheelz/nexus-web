@@ -17,13 +17,14 @@ This script:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
 import time
 import zipfile
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from html import escape
 from io import BytesIO
 from pathlib import Path
@@ -34,17 +35,23 @@ import httpx
 from sqlalchemy import select, text
 
 from nexus.config import get_settings
-from nexus.db.models import Annotation, FailureStage, Fragment, Media, ProcessingStatus
+from nexus.db.models import FailureStage, Fragment, Media, ProcessingStatus
 from nexus.db.session import create_session_factory
 from nexus.schemas.highlights import CreateHighlightRequest
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.content_indexing import (
+    rebuild_fragment_content_index,
+    rebuild_transcript_content_index,
+)
 from nexus.services.epub_ingest import EpubExtractionError
+from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.highlights import create_highlight_for_fragment
 from nexus.services.media import create_or_reuse_youtube_video, create_provisional_web_article
+from nexus.services.notes import set_highlight_note_body
 from nexus.services.pdf_ingest import PdfExtractionError
 from nexus.services.upload import confirm_ingest, init_upload
 from nexus.tasks.ingest_epub import run_epub_ingest_sync
-from nexus.tasks.ingest_pdf import run_pdf_ingest_sync
+from nexus.tasks.ingest_pdf import _index_pdf_evidence, run_pdf_ingest_sync
 
 E2E_USER_EMAIL = os.getenv("E2E_USER_EMAIL", "e2e-test@nexus.local")
 PDF_PAGE_COUNT = 80
@@ -89,7 +96,7 @@ EPUB_CHAPTERS = [
     {
         "title": "Chapter 2: Core Concepts",
         "body": "This chapter covers core concepts for E2E testing. "
-        "Highlights and annotations should work across chapter boundaries. "
+        "Highlights and notes should work across chapter boundaries. "
         "Navigation between chapters is a key feature to verify.",
     },
     {
@@ -257,16 +264,51 @@ def _build_epub_bytes(variant_id: str = "base") -> bytes:
                 )
                 nav_play_order += 1
 
+            if idx == 0:
+                chapter_body_html += (
+                    '<p><img src="images/e2e-raster.png" alt="E2E EPUB raster asset"/></p>\n'
+                    '<p><img src="images/e2e-vector.svg" alt="E2E EPUB SVG asset"/></p>\n'
+                    '<p class="publisher-css-fixture" style="display:none">'
+                    "Publisher styling should not control the app reader.</p>\n"
+                )
+
             # Chapter XHTML
             zf.writestr(
                 f"OEBPS/{fname}",
                 '<?xml version="1.0" encoding="UTF-8"?>\n'
                 "<!DOCTYPE html>\n"
                 '<html xmlns="http://www.w3.org/1999/xhtml">\n'
-                f"<head><title>{ch['title']}</title></head>\n"
+                f"<head><title>{ch['title']}</title>"
+                '<link rel="stylesheet" href="styles/publisher.css"/>'
+                "</head>\n"
                 f"<body>\n{chapter_body_html}</body>\n"
                 "</html>",
             )
+
+        manifest_items.extend(
+            [
+                '    <item id="raster-img" href="images/e2e-raster.png" media-type="image/png"/>',
+                '    <item id="svg-img" href="images/e2e-vector.svg" media-type="image/svg+xml"/>',
+                '    <item id="publisher-css" href="styles/publisher.css" media-type="text/css"/>',
+            ]
+        )
+        zf.writestr(
+            "OEBPS/images/e2e-raster.png",
+            base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+            ),
+        )
+        zf.writestr(
+            "OEBPS/images/e2e-vector.svg",
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
+            '<rect width="16" height="16" fill="#0f766e"/>'
+            '<circle cx="8" cy="8" r="4" fill="#ffffff"/>'
+            "</svg>",
+        )
+        zf.writestr(
+            "OEBPS/styles/publisher.css",
+            '[data-testid="pane-shell-chrome"] { display: none !important; }',
+        )
 
         # Navigation document (toc.ncx)
         zf.writestr(
@@ -387,6 +429,7 @@ def _write_seed_file(
     seed_path = repo_root / SEED_FILE_RELATIVE
     seed_path.parent.mkdir(parents=True, exist_ok=True)
     seed_payload = {
+        "media_fixture_kind": "synthetic",
         "media_id": media_id,
         "title": title,
         "page_count": page_count,
@@ -433,6 +476,7 @@ def _write_non_pdf_seed_file(
     seed_path = repo_root / NON_PDF_SEED_FILE_RELATIVE
     seed_path.parent.mkdir(parents=True, exist_ok=True)
     seed_payload = {
+        "media_fixture_kind": "synthetic",
         "media_id": media_id,
         "fragment_id": fragment_id,
         "quote_highlight_id": quote_highlight_id,
@@ -459,6 +503,7 @@ def _write_epub_seed_file(
     seed_path = repo_root / EPUB_SEED_FILE_RELATIVE
     seed_path.parent.mkdir(parents=True, exist_ok=True)
     seed_payload = {
+        "media_fixture_kind": "synthetic",
         "media_id": media_id,
         "chapter_count": chapter_count,
         "chapter_titles": chapter_titles,
@@ -485,6 +530,7 @@ def _write_youtube_seed_file(
     seed_path = repo_root / YOUTUBE_SEED_FILE_RELATIVE
     seed_path.parent.mkdir(parents=True, exist_ok=True)
     seed_payload = {
+        "media_fixture_kind": "synthetic",
         "media_id": media_id,
         "playback_only_media_id": playback_only_media_id,
         "watch_url": watch_url,
@@ -511,6 +557,7 @@ def _write_reader_resume_seed_file(
     seed_path = repo_root / READER_RESUME_SEED_FILE_RELATIVE
     seed_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "media_fixture_kind": "synthetic",
         "web_media_id": web_media_id,
         "web_anchor_text": web_anchor_text,
         "epub_media_id": epub_media_id,
@@ -524,16 +571,39 @@ def _write_reader_resume_seed_file(
 
 
 def _clear_fragment_artifacts(db, media_id: UUID) -> None:
-    """Clear fragments/highlights/annotations attached to media transcript content."""
+    """Clear fragments, highlights, and linked notes attached to media transcript content."""
     db.execute(
         text(
             """
-            DELETE FROM annotations
-            WHERE highlight_id IN (
-                SELECT h.id
-                FROM highlights h
-                JOIN fragments f ON f.id = h.fragment_id
-                WHERE f.media_id = :media_id
+            DELETE FROM message_context_items
+            WHERE object_type = 'note_block'
+              AND object_id IN (
+                  SELECT ol.a_id
+                  FROM object_links ol
+                  JOIN highlights h ON h.id = ol.b_id
+                  JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+                  JOIN fragments f ON f.id = hfa.fragment_id
+                  WHERE ol.a_type = 'note_block'
+                    AND ol.b_type = 'highlight'
+                    AND f.media_id = :media_id
+              )
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM note_blocks
+            WHERE id IN (
+                SELECT ol.a_id
+                FROM object_links ol
+                JOIN highlights h ON h.id = ol.b_id
+                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+                JOIN fragments f ON f.id = hfa.fragment_id
+                WHERE ol.a_type = 'note_block'
+                  AND ol.b_type = 'highlight'
+                  AND f.media_id = :media_id
             )
             """
         ),
@@ -542,10 +612,44 @@ def _clear_fragment_artifacts(db, media_id: UUID) -> None:
     db.execute(
         text(
             """
+            DELETE FROM object_links
+            WHERE (a_type = 'note_block' AND a_id IN (
+                SELECT ol.a_id
+                FROM object_links ol
+                JOIN highlights h ON h.id = ol.b_id
+                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+                JOIN fragments f ON f.id = hfa.fragment_id
+                WHERE ol.a_type = 'note_block'
+                  AND ol.b_type = 'highlight'
+                  AND f.media_id = :media_id
+            ))
+               OR (b_type = 'highlight' AND b_id IN (
+                SELECT h.id
+                FROM highlights h
+                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+                JOIN fragments f ON f.id = hfa.fragment_id
+                WHERE f.media_id = :media_id
+            ))
+               OR (a_type = 'highlight' AND a_id IN (
+                SELECT h.id
+                FROM highlights h
+                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+                JOIN fragments f ON f.id = hfa.fragment_id
+                WHERE f.media_id = :media_id
+            ))
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text(
+            """
             DELETE FROM highlights
-            WHERE fragment_id IN (
-                SELECT id
-                FROM fragments
+            WHERE id IN (
+                SELECT h.id
+                FROM highlights h
+                JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
+                JOIN fragments f ON f.id = hfa.fragment_id
                 WHERE media_id = :media_id
             )
             """
@@ -555,6 +659,158 @@ def _clear_fragment_artifacts(db, media_id: UUID) -> None:
     db.execute(
         text("DELETE FROM fragments WHERE media_id = :media_id"),
         {"media_id": media_id},
+    )
+
+
+def _ensure_ai_plus_billing(db, user_id: UUID) -> None:
+    """Keep the E2E user on an AI Plus plan so transcript flows stay testable."""
+    now = datetime.now(UTC)
+    values = {
+        "user_id": user_id,
+        "plan_tier": "ai_plus",
+        "subscription_status": "active",
+        "current_period_start": now - timedelta(days=1),
+        "current_period_end": now + timedelta(days=30),
+        "updated_at": now,
+    }
+    account_id = db.execute(
+        text("SELECT id FROM billing_accounts WHERE user_id = :user_id"),
+        {"user_id": user_id},
+    ).scalar_one_or_none()
+    if account_id is None:
+        db.execute(
+            text(
+                """
+                INSERT INTO billing_accounts (
+                    id,
+                    user_id,
+                    plan_tier,
+                    subscription_status,
+                    current_period_start,
+                    current_period_end,
+                    cancel_at_period_end,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    gen_random_uuid(),
+                    :user_id,
+                    :plan_tier,
+                    :subscription_status,
+                    :current_period_start,
+                    :current_period_end,
+                    false,
+                    :updated_at,
+                    :updated_at
+                )
+                """
+            ),
+            values,
+        )
+    else:
+        db.execute(
+            text(
+                """
+                UPDATE billing_accounts
+                SET plan_tier = :plan_tier,
+                    subscription_status = :subscription_status,
+                    current_period_start = :current_period_start,
+                    current_period_end = :current_period_end,
+                    cancel_at_period_end = false,
+                    updated_at = :updated_at
+                WHERE user_id = :user_id
+                """
+            ),
+            values,
+        )
+    db.commit()
+
+
+def _upsert_media_transcript_state(
+    db,
+    *,
+    media_id: UUID,
+    transcript_state: str,
+    transcript_coverage: str,
+    semantic_status: str,
+    active_transcript_version_id: UUID | None = None,
+    last_request_reason: str | None = None,
+    last_error_code: str | None = None,
+) -> None:
+    """Keep seeded media aligned with the canonical transcript-state table."""
+    params = {
+        "media_id": media_id,
+        "transcript_state": transcript_state,
+        "transcript_coverage": transcript_coverage,
+        "semantic_status": semantic_status,
+        "active_transcript_version_id": active_transcript_version_id,
+        "last_request_reason": last_request_reason,
+        "last_error_code": last_error_code,
+    }
+    existing = db.execute(
+        text("SELECT media_id FROM media_transcript_states WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    ).scalar_one_or_none()
+    if existing is None:
+        result = db.execute(
+            text(
+                """
+                INSERT INTO media_transcript_states (
+                    media_id,
+                    transcript_state,
+                    transcript_coverage,
+                    semantic_status,
+                    active_transcript_version_id,
+                    last_request_reason,
+                    last_error_code,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :media_id,
+                    :transcript_state,
+                    :transcript_coverage,
+                    :semantic_status,
+                    :active_transcript_version_id,
+                    :last_request_reason,
+                    :last_error_code,
+                    now(),
+                    now()
+                )
+                """
+            ),
+            params,
+        )
+    else:
+        result = db.execute(
+            text(
+                """
+                UPDATE media_transcript_states
+                SET transcript_state = :transcript_state,
+                    transcript_coverage = :transcript_coverage,
+                    semantic_status = :semantic_status,
+                    active_transcript_version_id = :active_transcript_version_id,
+                    last_request_reason = :last_request_reason,
+                    last_error_code = :last_error_code,
+                    updated_at = now()
+                WHERE media_id = :media_id
+                """
+            ),
+            params,
+        )
+    if getattr(result, "rowcount", None) != 1:
+        raise RuntimeError("media_transcript_states seed mutation affected an unexpected row count")
+
+
+def _index_seeded_fragment(db, *, media_id: UUID, fragment: Fragment, source_url: str) -> None:
+    insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(fragment.canonical_text or ""))
+    rebuild_fragment_content_index(
+        db,
+        media_id=media_id,
+        source_kind="web_article",
+        artifact_ref=source_url,
+        fragments=[fragment],
+        reason="e2e_seed",
     )
 
 
@@ -577,6 +833,8 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
         if media is None:
             raise RuntimeError(f"Non-PDF seed media missing: {media_id}")
 
+        _clear_fragment_artifacts(db, media_id)
+
         now = datetime.now(UTC)
         media.title = "E2E linked-items web article seed"
         media.processing_status = ProcessingStatus.ready_for_reading
@@ -596,6 +854,12 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
         )
         db.add(fragment)
         db.flush()
+        _index_seeded_fragment(
+            db,
+            media_id=media_id,
+            fragment=fragment,
+            source_url=NON_PDF_SOURCE_URL,
+        )
 
         quote_start = canonical_text.index(quote_exact)
         quote_end = quote_start + len(quote_exact)
@@ -623,17 +887,19 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
             ),
         )
 
-        db.add(
-            Annotation(
-                highlight_id=quote_highlight.id,
-                body="Seeded note for non-PDF linked-items e2e.",
-            )
+        set_highlight_note_body(
+            db,
+            user_id,
+            quote_highlight.id,
+            "Seeded note for non-PDF linked-items e2e.",
+            commit=False,
         )
-        db.add(
-            Annotation(
-                highlight_id=focus_highlight.id,
-                body="Seeded focus note for non-PDF linked-items e2e.",
-            )
+        set_highlight_note_body(
+            db,
+            user_id,
+            focus_highlight.id,
+            "Seeded focus note for non-PDF linked-items e2e.",
+            commit=False,
         )
         db.commit()
 
@@ -685,10 +951,111 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
         media.processing_completed_at = now
         media.updated_at = now
 
+        db.execute(
+            text(
+                """
+                UPDATE podcast_transcript_versions
+                SET is_active = false, updated_at = :updated_at
+                WHERE media_id = :media_id
+                """
+            ),
+            {"media_id": transcript_media_id, "updated_at": now},
+        )
+        next_version_no = db.execute(
+            text(
+                """
+                SELECT COALESCE(MAX(version_no), 0) + 1
+                FROM podcast_transcript_versions
+                WHERE media_id = :media_id
+                """
+            ),
+            {"media_id": transcript_media_id},
+        ).scalar_one()
+        transcript_version_id = db.execute(
+            text(
+                """
+                INSERT INTO podcast_transcript_versions (
+                    media_id,
+                    version_no,
+                    transcript_coverage,
+                    is_active,
+                    request_reason,
+                    created_by_user_id,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :media_id,
+                    :version_no,
+                    'full',
+                    true,
+                    'episode_open',
+                    :created_by_user_id,
+                    :created_at,
+                    :updated_at
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "media_id": transcript_media_id,
+                "version_no": int(next_version_no),
+                "created_by_user_id": user_id,
+                "created_at": now,
+                "updated_at": now,
+            },
+        ).scalar_one()
+
+        transcript_segments: list[dict[str, object]] = []
         for idx, segment in enumerate(YOUTUBE_TRANSCRIPT_SEGMENTS):
+            transcript_segments.append(
+                {
+                    "text": segment["canonical_text"],
+                    "speaker_label": segment["speaker_label"],
+                    "t_start_ms": segment["t_start_ms"],
+                    "t_end_ms": segment["t_end_ms"],
+                }
+            )
+            db.execute(
+                text(
+                    """
+                    INSERT INTO podcast_transcript_segments (
+                        transcript_version_id,
+                        media_id,
+                        segment_idx,
+                        canonical_text,
+                        t_start_ms,
+                        t_end_ms,
+                        speaker_label,
+                        created_at
+                    )
+                    VALUES (
+                        :transcript_version_id,
+                        :media_id,
+                        :segment_idx,
+                        :canonical_text,
+                        :t_start_ms,
+                        :t_end_ms,
+                        :speaker_label,
+                        :created_at
+                    )
+                    """
+                ),
+                {
+                    "transcript_version_id": transcript_version_id,
+                    "media_id": transcript_media_id,
+                    "segment_idx": idx,
+                    "canonical_text": segment["canonical_text"],
+                    "t_start_ms": segment["t_start_ms"],
+                    "t_end_ms": segment["t_end_ms"],
+                    "speaker_label": segment["speaker_label"],
+                    "created_at": now,
+                },
+            )
             db.add(
                 Fragment(
                     media_id=transcript_media_id,
+                    transcript_version_id=transcript_version_id,
                     idx=idx,
                     canonical_text=segment["canonical_text"],
                     html_sanitized=f"<p>{escape(segment['canonical_text'])}</p>",
@@ -698,6 +1065,31 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
                 )
             )
 
+        _upsert_media_transcript_state(
+            db,
+            media_id=transcript_media_id,
+            transcript_state="ready",
+            transcript_coverage="full",
+            semantic_status="pending",
+            active_transcript_version_id=transcript_version_id,
+            last_request_reason="episode_open",
+        )
+        rebuild_transcript_content_index(
+            db,
+            media_id=transcript_media_id,
+            transcript_version_id=transcript_version_id,
+            transcript_segments=transcript_segments,
+            reason="e2e_seed",
+        )
+        _upsert_media_transcript_state(
+            db,
+            media_id=transcript_media_id,
+            transcript_state="ready",
+            transcript_coverage="full",
+            semantic_status="ready",
+            active_transcript_version_id=transcript_version_id,
+            last_request_reason="episode_open",
+        )
         db.commit()
 
     with session_factory() as db:
@@ -733,6 +1125,14 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
         playback_only_media.failed_at = now
         playback_only_media.processing_completed_at = now
         playback_only_media.updated_at = now
+        _upsert_media_transcript_state(
+            db,
+            media_id=playback_only_media_id,
+            transcript_state="unavailable",
+            transcript_coverage="none",
+            semantic_status="failed",
+            last_error_code="E_TRANSCRIPT_UNAVAILABLE",
+        )
         db.commit()
 
     seek_segment = YOUTUBE_TRANSCRIPT_SEGMENTS[1]
@@ -908,13 +1308,19 @@ def _seed_reader_resume_media(session_factory, user_id: UUID, settings) -> None:
         media.processing_completed_at = now
         media.updated_at = now
 
-        db.add(
-            Fragment(
-                media_id=web_media_id,
-                idx=0,
-                canonical_text=web_canonical_text,
-                html_sanitized=web_html,
-            )
+        fragment = Fragment(
+            media_id=web_media_id,
+            idx=0,
+            canonical_text=web_canonical_text,
+            html_sanitized=web_html,
+        )
+        db.add(fragment)
+        db.flush()
+        _index_seeded_fragment(
+            db,
+            media_id=web_media_id,
+            fragment=fragment,
+            source_url=READER_RESUME_WEB_SOURCE_URL,
         )
         db.commit()
 
@@ -1032,6 +1438,7 @@ def _seed_reader_resume_media(session_factory, user_id: UUID, settings) -> None:
         media.processing_completed_at = now
         media.updated_at = now
         db.commit()
+        _index_pdf_evidence(db, pdf_media_id, "e2e_seed", extraction_result)
 
     _write_reader_resume_seed_file(
         web_media_id=str(web_media_id),
@@ -1085,7 +1492,8 @@ def main() -> None:
     upload_fixture_path = _write_upload_fixture(pdf_bytes)
 
     with session_factory() as db:
-        ensure_user_and_default_library(db, user_id)
+        ensure_user_and_default_library(db, user_id, email=E2E_USER_EMAIL)
+        _ensure_ai_plus_billing(db, user_id)
         init_data = init_upload(
             db=db,
             viewer_id=user_id,
@@ -1137,6 +1545,7 @@ def main() -> None:
         media.processing_completed_at = now
         media.updated_at = now
         db.commit()
+        _index_pdf_evidence(db, media_id, "e2e_seed", extraction_result)
 
     password_filename = f"e2e-password-seed-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.pdf"
     with session_factory() as db:

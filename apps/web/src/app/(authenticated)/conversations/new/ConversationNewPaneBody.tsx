@@ -1,29 +1,53 @@
 /**
  * New conversation page — fresh chat composer with optional attached context.
  *
- * Opened by quote-to-chat flows. Reads attach_* search params to pre-populate
- * context chips. On first message send the backend creates the conversation and
- * we navigate to /conversations/:id.
+ * Opened by quote-to-chat flows. Reads typed context ids from search params.
+ * On first message send the backend creates the conversation, the pane streams
+ * locally immediately, then the URL is replaced with /conversations/:id.
  */
 
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import type { ContextItem } from "@/lib/api/sse";
 import {
-  getAttachContextSignature,
-  parseAttachContext,
-  stripAttachParams,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { PanelRightOpen } from "lucide-react";
+import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
+import {
+  getConversationScopeSignature,
+  parseConversationScopeFromUrl,
+  setConversationScopeParam,
 } from "@/lib/conversations/attachedContext";
-import { hydrateContextItems } from "@/lib/conversations/hydrateContextItems";
 import ChatComposer from "@/components/ChatComposer";
+import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
+import ChatSurface from "@/components/chat/ChatSurface";
+import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
+import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
+import Button from "@/components/ui/Button";
+import { apiFetch } from "@/lib/api/client";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   usePaneRouter,
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
+import type {
+  ChatRunResponse,
+  ConversationMessage,
+  ConversationMessagesResponse,
+  ConversationSummary,
+} from "@/lib/conversations/types";
 import styles from "../page.module.css";
 
 // ============================================================================
@@ -33,153 +57,239 @@ import styles from "../page.module.css";
 export default function ConversationNewPaneBody() {
   const router = usePaneRouter();
   const searchParams = usePaneSearchParams();
-  useSetPaneTitle("New chat");
+  const draft = searchParams.get("draft") ?? "";
+  const scrollportRef = useRef<HTMLDivElement>(null);
+  const shouldScrollRef = useRef(true);
+  const resolveGenerationRef = useRef(0);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [contextRailExpanded, setContextRailExpanded] = useState(true);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [resolvingScopedConversation, setResolvingScopedConversation] = useState(false);
+  const [resolveError, setResolveError] = useState<FeedbackContent | null>(null);
+  const [scopedContinuationBlocked, setScopedContinuationBlocked] = useState(false);
+  const conversationScope = parseConversationScopeFromUrl(searchParams);
+  const conversationScopeKey = getConversationScopeSignature(conversationScope);
+  const scopeType = conversationScope.type;
+  const scopeMediaId = scopeType === "media" ? conversationScope.media_id : null;
+  const scopeLibraryId = scopeType === "library" ? conversationScope.library_id : null;
+  const activeReplyParentMessageId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role === "assistant" && message.status === "complete") {
+        return message.id;
+      }
+    }
+    return null;
+  }, [messages]);
+  useSetPaneTitle(
+    conversationScope.type === "media"
+      ? "Chat: Document"
+      : conversationScope.type === "library"
+        ? "Chat: Library"
+        : "New chat",
+  );
 
-  const initialAttach = useMemo(
-    () => parseAttachContext(searchParams),
-    [searchParams],
-  );
   const isMobileViewport = useIsMobileViewport();
-  const initialAttachSignature = useMemo(
-    () => getAttachContextSignature(initialAttach),
-    [initialAttach],
-  );
-  const [attachedContexts, setAttachedContexts] =
-    useState<ContextItem[]>(initialAttach);
-  const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
-  const syncedAttachSignatureRef = useRef(initialAttachSignature);
+  const {
+    attachedContexts,
+    removeContext,
+    clearContexts,
+    stripAttachState,
+  } = useAttachedContextsFromUrl(searchParams);
+  const { tailChatRun } = useChatRunTail({ setMessages, shouldScrollRef });
+
+  useLayoutEffect(() => {
+    if (!scrollportRef.current || !shouldScrollRef.current) return;
+    scrollportRef.current.scrollTop = scrollportRef.current.scrollHeight;
+  }, [messages]);
 
   useEffect(() => {
-    if (syncedAttachSignatureRef.current === initialAttachSignature) {
+    const generation = resolveGenerationRef.current + 1;
+    resolveGenerationRef.current = generation;
+    let cancelled = false;
+    const isCurrentResolution = () =>
+      !cancelled && resolveGenerationRef.current === generation;
+
+    setMessages([]);
+    setActiveConversationId(null);
+    setResolveError(null);
+    setScopedContinuationBlocked(false);
+
+    if (scopeType === "general") {
+      setResolvingScopedConversation(false);
       return;
     }
-    syncedAttachSignatureRef.current = initialAttachSignature;
-    setAttachedContexts(initialAttach);
-  }, [initialAttach, initialAttachSignature]);
+    if (
+      (scopeType === "media" && !scopeMediaId) ||
+      (scopeType === "library" && !scopeLibraryId)
+    ) {
+      setResolvingScopedConversation(false);
+      return;
+    }
 
-  // Hydrate context items with full data from API
-  useEffect(() => {
-    if (attachedContexts.length === 0) return;
-    if (attachedContexts.every((c) => c.hydrated)) return;
-    let cancelled = false;
-    hydrateContextItems(attachedContexts)
-      .then((hydrated) => {
-        if (!cancelled) setAttachedContexts(hydrated);
+    setResolvingScopedConversation(true);
+    apiFetch<{ data: ConversationSummary }>("/api/conversations/resolve", {
+      method: "POST",
+      body: JSON.stringify(
+        scopeType === "media"
+          ? { type: "media", media_id: scopeMediaId }
+          : { type: "library", library_id: scopeLibraryId },
+      ),
+    })
+      .then(async (response) => {
+        if (!isCurrentResolution() || response.data.message_count === 0) return;
+        const messagesResponse = await apiFetch<ConversationMessagesResponse>(
+          `/api/conversations/${response.data.id}/messages?limit=30`,
+        );
+        if (!isCurrentResolution()) return;
+        setMessages(messagesResponse.data);
+        if (
+          messagesResponse.data.some(
+            (message) => message.role === "assistant" && message.status === "complete",
+          )
+        ) {
+          setActiveConversationId(response.data.id);
+          setScopedContinuationBlocked(false);
+        } else {
+          setScopedContinuationBlocked(true);
+          setResolveError({
+            severity: "warning",
+            title: "Scoped chat cannot be continued yet.",
+          });
+        }
       })
-      .catch(() => {
-        // Hydration is best-effort; URL-param data serves as fallback
+      .catch((err) => {
+        if (!isCurrentResolution()) return;
+        setResolveError(toFeedback(err, { fallback: "Failed to load scoped chat" }));
+      })
+      .finally(() => {
+        if (isCurrentResolution()) {
+          setResolvingScopedConversation(false);
+        }
       });
+
     return () => {
       cancelled = true;
     };
-  }, [attachedContexts]);
+  }, [conversationScopeKey, scopeLibraryId, scopeMediaId, scopeType]);
 
-  const handleRemoveContext = useCallback((index: number) => {
-    setAttachedContexts((prev) => prev.filter((_, i) => i !== index));
+  const handleSendStarted = useCallback(() => {
+    setResolveError(null);
   }, []);
 
-  const handleConversationCreated = useCallback(
-    (conversationId: string) => {
-      const cleaned = stripAttachParams(searchParams);
+  const handleChatScroll = useCallback(() => {
+    const scrollport = scrollportRef.current;
+    if (!scrollport) return;
+    shouldScrollRef.current =
+      scrollport.scrollHeight - scrollport.scrollTop - scrollport.clientHeight <= 48;
+  }, []);
+
+  const handleChatRunCreated = useCallback(
+    (runData: ChatRunResponse["data"]) => {
+      resolveGenerationRef.current += 1;
+      setResolvingScopedConversation(false);
+      shouldScrollRef.current = true;
+      void tailChatRun(runData);
+      const cleaned = stripAttachState();
+      cleaned.delete("draft");
+      cleaned.set("run", runData.run.id);
       const qs = cleaned.toString();
-      router.replace(
-        qs
-          ? `/conversations/${conversationId}?${qs}`
-          : `/conversations/${conversationId}`,
-      );
+      router.replace(`/conversations/${runData.conversation.id}?${qs}`);
     },
-    [router, searchParams],
+    [router, stripAttachState, tailChatRun],
   );
 
   const clearAttachState = useCallback(() => {
-    setAttachedContexts([]);
-  }, []);
+    clearContexts();
+  }, [clearContexts]);
 
-  useEffect(() => {
-    if (!contextDrawerOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setContextDrawerOpen(false);
-      }
-    };
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.body.style.overflow = prev;
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [contextDrawerOpen]);
+  const clearConversationScope = useCallback(() => {
+    const cleaned = setConversationScopeParam(searchParams, { type: "general" });
+    const qs = cleaned.toString();
+    router.replace(qs ? `/conversations/new?${qs}` : `/conversations/new`);
+  }, [router, searchParams]);
+  const composerConversationId =
+    conversationScope.type === "general" ? activeConversationId : null;
+  const composerDisabledReason = scopedContinuationBlocked
+    ? "Scoped chat cannot be continued yet."
+    : undefined;
 
   return (
     <>
       <div className={styles.chatSplitLayout}>
         <div className={styles.chatPrimaryColumn}>
           <div className={styles.paneContentChat}>
-            <div className={styles.chatContainer}>
-              <div className={styles.messageList} />
-              <ChatComposer
-                conversationId={null}
-                attachedContexts={attachedContexts}
-                onRemoveContext={handleRemoveContext}
-                onConversationCreated={handleConversationCreated}
-                onMessageSent={clearAttachState}
-              />
-            </div>
+            <ChatSurface
+              messages={messages}
+              scope={conversationScope}
+              scrollportRef={scrollportRef}
+              onScroll={handleChatScroll}
+              composer={
+                <ChatComposer
+                  conversationId={composerConversationId}
+                  conversationScope={conversationScope}
+                  attachedContexts={attachedContexts}
+                  parentMessageId={activeReplyParentMessageId}
+                  onRemoveContext={removeContext}
+                  onChatRunCreated={handleChatRunCreated}
+                  onMessageSent={clearAttachState}
+                  onSendStarted={handleSendStarted}
+                  initialContent={draft}
+                  draftKey="new-conversation"
+                  disabledReason={composerDisabledReason}
+                  onClearScope={
+                    conversationScope.type === "general"
+                      ? undefined
+                      : clearConversationScope
+                  }
+                />
+              }
+              emptyState={
+                resolveError ? (
+                  <FeedbackNotice feedback={resolveError} />
+                ) : resolvingScopedConversation ? (
+                  "Loading scoped chat..."
+                ) : undefined
+              }
+            />
           </div>
         </div>
 
         {!isMobileViewport ? (
-          <aside className={styles.chatContextColumn}>
+          <SecondaryRail
+            ariaLabel="Chat context"
+            expanded={contextRailExpanded}
+            onExpandedChange={setContextRailExpanded}
+            expandedWidthPx={320}
+            bodyClassName={styles.chatSecondaryRailBody}
+            collapsed={
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                className={styles.chatSecondaryRailCollapsedButton}
+                aria-label="Expand chat context"
+                onClick={() => setContextRailExpanded(true)}
+              >
+                <PanelRightOpen size={15} aria-hidden="true" />
+              </Button>
+            }
+          >
             <ConversationContextPane
+              scope={conversationScope}
               contexts={attachedContexts}
-              onRemoveContext={handleRemoveContext}
+              onRemoveContext={removeContext}
             />
-          </aside>
+          </SecondaryRail>
         ) : null}
       </div>
 
       {isMobileViewport ? (
-        <button
-          type="button"
-          className={styles.chatContextFab}
-          onClick={() => setContextDrawerOpen((open) => !open)}
-          aria-label="Linked context"
-          aria-expanded={contextDrawerOpen}
-        >
-          Linked context
-        </button>
-      ) : null}
-
-      {isMobileViewport && contextDrawerOpen ? (
-        <div
-          className={styles.chatContextBackdrop}
-          onClick={() => setContextDrawerOpen(false)}
-        >
-          <aside
-            className={styles.chatContextDrawer}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Linked context"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <header className={styles.chatContextDrawerHeader}>
-              <h2>Linked context</h2>
-              <button
-                type="button"
-                onClick={() => setContextDrawerOpen(false)}
-              >
-                Close
-              </button>
-            </header>
-            <div className={styles.chatContextDrawerBody}>
-              <ConversationContextPane
-                contexts={attachedContexts}
-                onRemoveContext={handleRemoveContext}
-              />
-            </div>
-          </aside>
-        </div>
+        <ChatContextDrawer
+          scope={conversationScope}
+          contexts={attachedContexts}
+          onRemoveContext={removeContext}
+        />
       ) : null}
     </>
   );

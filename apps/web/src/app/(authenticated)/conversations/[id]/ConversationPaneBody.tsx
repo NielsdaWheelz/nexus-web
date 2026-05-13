@@ -1,30 +1,49 @@
 /**
  * Conversation detail page — chat thread + composer.
  *
- * Loads message history (paginated, oldest first), supports streaming send,
- * and handles optimistic message reconciliation per s3_pr07 §5.4.
+ * Loads message history (paginated, oldest first), sends chat runs,
+ * and handles streamed message updates.
  */
 
 "use client";
 
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { AlertCircle } from "lucide-react";
-import { apiFetch, isApiError } from "@/lib/api/client";
-import type { ContextItem } from "@/lib/api/sse";
 import {
-  getAttachContextSignature,
-  parseAttachContext,
-  stripAttachParams,
-} from "@/lib/conversations/attachedContext";
-import { hydrateContextItems } from "@/lib/conversations/hydrateContextItems";
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  useMemo,
+  useLayoutEffect,
+} from "react";
+import { PanelRightOpen } from "lucide-react";
+import { apiFetch } from "@/lib/api/client";
+import { conversationResourceOptions } from "@/lib/actions/resourceActions";
+import { type ContextItem } from "@/lib/api/sse";
+import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
 import ChatComposer from "@/components/ChatComposer";
-import InlineCitations from "@/components/ui/InlineCitations";
-import {
-  MarkdownMessage,
-  StreamingMarkdownMessage,
-} from "@/components/ui/MarkdownMessage";
+import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
+import ChatSurface from "@/components/chat/ChatSurface";
+import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
-import StateMessage from "@/components/ui/StateMessage";
+import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
+import Button from "@/components/ui/Button";
+import type {
+  BranchDraft,
+  BranchGraph,
+  ConversationMessage,
+  ConversationTreeResponse,
+  ChatRunListResponse,
+  ChatRunResponse,
+  ConversationSummary,
+  ForkOption,
+  MessageContextSnapshot,
+} from "@/lib/conversations/types";
+import { formatConversationScopeLabel } from "@/lib/conversations/display";
+import {
+  activeBranchGraphForPath,
+  activeForkOptionsForPath,
+  selectedPathMessageIds,
+} from "@/lib/conversations/branching";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   usePaneParam,
@@ -33,50 +52,24 @@ import {
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import styles from "../page.module.css";
 
-// ============================================================================
-// Types
-// ============================================================================
+type Conversation = ConversationSummary;
 
-export interface Message {
-  id: string;
-  seq: number;
-  role: "user" | "assistant" | "system";
-  content: string;
-  contexts?: MessageContextSnapshot[];
-  status: "pending" | "complete" | "error";
-  error_code: string | null;
-  created_at: string;
-  updated_at: string;
-}
+type ChatRunData = ChatRunResponse["data"];
 
-interface MessageContextSnapshot {
-  type: "highlight" | "annotation" | "media";
-  id: string;
-  color?: "yellow" | "green" | "blue" | "pink" | "purple";
-  preview?: string;
-  exact?: string;
-  prefix?: string;
-  suffix?: string;
-  annotation_body?: string;
-  media_id?: string;
-  media_title?: string;
-  media_kind?: string;
-}
-
-interface MessagesResponse {
-  data: Message[];
-  page: { next_cursor: string | null };
-}
-
-interface Conversation {
-  id: string;
-  title: string;
-  sharing: string;
-  created_at: string;
-  updated_at: string;
-}
+type BranchScroll = {
+  anchorMessageId: string | null;
+  anchorOffsetTop: number;
+  activationAnchorMessageId: string | null;
+  activationAnchorOffsetTop: number | null;
+  scrollTop: number;
+};
 
 // ============================================================================
 // ConversationPaneBody — chat view with inline linked-context surface
@@ -88,64 +81,119 @@ export default function ConversationPaneBody() {
 
   const router = usePaneRouter();
   const searchParams = usePaneSearchParams();
-
-  // Attached context state — shared by both branches
-  const initialAttach = useMemo(
-    () => parseAttachContext(searchParams),
-    [searchParams],
-  );
-  const initialAttachSignature = useMemo(
-    () => getAttachContextSignature(initialAttach),
-    [initialAttach],
-  );
-  const [attachedContexts, setAttachedContexts] =
-    useState<ContextItem[]>(initialAttach);
-  const syncedAttachSignatureRef = useRef(initialAttachSignature);
-
-  useEffect(() => {
-    if (syncedAttachSignatureRef.current === initialAttachSignature) {
-      return;
-    }
-    syncedAttachSignatureRef.current = initialAttachSignature;
-    setAttachedContexts(initialAttach);
-  }, [initialAttach, initialAttachSignature]);
-
-  // Hydrate context items with full data from API
-  useEffect(() => {
-    if (attachedContexts.length === 0) return;
-    if (attachedContexts.every((c) => c.hydrated)) return;
-    let cancelled = false;
-    hydrateContextItems(attachedContexts)
-      .then((hydrated) => {
-        if (!cancelled) setAttachedContexts(hydrated);
-      })
-      .catch(() => {
-        // Hydration is best-effort; URL-param data serves as fallback
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [attachedContexts]);
-
-  const handleRemoveContext = useCallback((index: number) => {
-    setAttachedContexts((prev) => prev.filter((_, i) => i !== index));
-  }, []);
+  const {
+    attachedContexts,
+    removeContext,
+    clearContexts,
+    stripAttachState,
+  } = useAttachedContextsFromUrl(searchParams);
+  const runIdFromUrl = searchParams.get("run");
 
   const clearAttachState = useCallback(() => {
-    setAttachedContexts([]);
-    const cleaned = stripAttachParams(searchParams);
+    clearContexts();
+    const cleaned = stripAttachState();
     const qs = cleaned.toString();
     router.replace(qs ? `/conversations/${id}?${qs}` : `/conversations/${id}`);
-  }, [router, searchParams, id]);
+  }, [clearContexts, stripAttachState, router, id]);
+
+  const clearRunParam = useCallback(
+    (runId: string) => {
+      if (searchParams.get("run") !== runId) return;
+      const cleaned = new URLSearchParams(searchParams);
+      cleaned.delete("run");
+      const qs = cleaned.toString();
+      router.replace(qs ? `/conversations/${id}?${qs}` : `/conversations/${id}`);
+    },
+    [id, router, searchParams],
+  );
 
   return (
     <ChatView
       id={id}
+      runIdFromUrl={runIdFromUrl}
       attachedContexts={attachedContexts}
-      onRemoveContext={handleRemoveContext}
+      onRemoveContext={removeContext}
       onMessageSent={clearAttachState}
+      onRunFinished={clearRunParam}
     />
   );
+}
+
+function captureBranchScroll(
+  scrollport: HTMLElement,
+  activationAnchorMessageId: string | null,
+): BranchScroll {
+  const scrollTop = scrollport.scrollTop;
+  const viewportBottom = scrollTop + scrollport.clientHeight;
+  let anchorMessageId: string | null = null;
+  let anchorOffsetTop = 0;
+  let activationAnchorOffsetTop: number | null = null;
+
+  for (const element of scrollport.querySelectorAll<HTMLElement>("[data-message-id]")) {
+    const messageId = element.dataset.messageId ?? null;
+    if (!messageId) continue;
+
+    const offsetTop = element.offsetTop - scrollTop;
+    if (messageId === activationAnchorMessageId) {
+      activationAnchorOffsetTop = offsetTop;
+    }
+    if (element.offsetTop + element.offsetHeight <= scrollTop) continue;
+    if (element.offsetTop >= viewportBottom) continue;
+
+    if (!anchorMessageId || (anchorOffsetTop < 0 && offsetTop >= 0)) {
+      anchorMessageId = messageId;
+      anchorOffsetTop = offsetTop;
+    }
+  }
+
+  return {
+    anchorMessageId,
+    anchorOffsetTop,
+    activationAnchorMessageId,
+    activationAnchorOffsetTop,
+    scrollTop,
+  };
+}
+
+function restoreBranchScroll(scrollport: HTMLElement, scroll: BranchScroll) {
+  if (
+    scroll.anchorMessageId &&
+    restoreMessageOffset(scrollport, scroll.anchorMessageId, scroll.anchorOffsetTop)
+  ) {
+    return;
+  }
+  if (
+    scroll.activationAnchorMessageId &&
+    scroll.activationAnchorOffsetTop !== null &&
+    restoreMessageOffset(
+      scrollport,
+      scroll.activationAnchorMessageId,
+      scroll.activationAnchorOffsetTop,
+    )
+  ) {
+    return;
+  }
+  scrollport.scrollTop = scroll.scrollTop;
+}
+
+function restoreMessageOffset(
+  scrollport: HTMLElement,
+  messageId: string,
+  offsetTop: number,
+) {
+  const target = findRenderedMessage(scrollport, messageId);
+  if (!target) return false;
+  scrollport.scrollTop = Math.max(0, target.offsetTop - offsetTop);
+  return true;
+}
+
+function findRenderedMessage(scrollport: HTMLElement, messageId: string) {
+  for (const element of scrollport.querySelectorAll<HTMLElement>("[data-message-id]")) {
+    if (element.dataset.messageId === messageId) {
+      return element;
+    }
+  }
+  return null;
 }
 
 // ============================================================================
@@ -154,28 +202,132 @@ export default function ConversationPaneBody() {
 
 function ChatView({
   id,
+  runIdFromUrl,
   attachedContexts,
   onRemoveContext,
   onMessageSent,
+  onRunFinished,
 }: {
   id: string;
+  runIdFromUrl: string | null;
   attachedContexts: ContextItem[];
   onRemoveContext: (index: number) => void;
   onMessageSent: () => void;
+  onRunFinished: (runId: string) => void;
 }) {
   const isMobileViewport = useIsMobileViewport();
   const router = usePaneRouter();
   const [conversation, setConversation] = useState<Conversation | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [forkOptionsByParentId, setForkOptionsByParentId] = useState<
+    Record<string, ForkOption[]>
+  >({});
+  const [pathCacheByLeafId, setPathCacheByLeafId] = useState<
+    Record<string, ConversationMessage[]>
+  >({});
+  const [branchGraph, setBranchGraph] = useState<BranchGraph>({
+    nodes: [],
+    edges: [],
+    root_message_id: null,
+  });
+  const [activeLeafMessageId, setActiveLeafMessageId] = useState<string | null>(null);
+  const [branchDraft, setBranchDraft] = useState<BranchDraft | null>(null);
+  const [branchFocusKey, setBranchFocusKey] = useState("");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FeedbackContent | null>(null);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
-  useSetPaneTitle(conversation?.title ?? "Chat");
+  const [retryingAssistantMessageIds, setRetryingAssistantMessageIds] = useState<
+    Set<string>
+  >(new Set());
+  const [contextRailExpanded, setContextRailExpanded] = useState(true);
+  const conversationScope = conversation?.scope ?? { type: "general" as const };
+  useSetPaneTitle(
+    conversation
+      ? `Chat: ${
+          conversationScope.type !== "general"
+            ? formatConversationScopeLabel(conversationScope)
+            : conversation.title
+        }`
+      : "Chat",
+  );
 
-  const messageListRef = useRef<HTMLDivElement>(null);
+  const scrollportRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
+  const selectedPathIdsRef = useRef<Set<string>>(new Set());
+  const activePathSwitchSeqRef = useRef(0);
+  const pendingBranchScrollRef = useRef<BranchScroll | null>(null);
+  const pendingScrollRestoreRef = useRef<{
+    scrollHeight: number;
+    scrollTop: number;
+  } | null>(null);
+  const retryingAssistantMessageIdsRef = useRef<Set<string>>(new Set());
+  const messageIdsForPath = useCallback(
+    (path: ConversationMessage[], leafMessageId: string | null = null) => {
+      const ids = selectedPathMessageIds(path);
+      if (leafMessageId) {
+        ids.add(leafMessageId);
+      }
+      return ids;
+    },
+    [],
+  );
+  const shouldApplyRunToSelectedPath = useCallback(
+    ({
+      userMessageId,
+      assistantMessageId,
+    }: {
+      userMessageId: string;
+      assistantMessageId: string;
+    }) =>
+      selectedPathIdsRef.current.has(userMessageId) ||
+      selectedPathIdsRef.current.has(assistantMessageId),
+    [],
+  );
+  const { tailChatRun, abortAll } = useChatRunTail({
+    setMessages,
+    setForkOptionsByParentId,
+    shouldScrollRef,
+    onRunFinished,
+    shouldApplyRun: shouldApplyRunToSelectedPath,
+  });
+  const selectedPathIds = useMemo(() => {
+    const ids = selectedPathMessageIds(messages);
+    if (activeLeafMessageId) {
+      ids.add(activeLeafMessageId);
+    }
+    return ids;
+  }, [activeLeafMessageId, messages]);
+  const switchableLeafIds = useMemo(
+    () => new Set(Object.keys(pathCacheByLeafId)),
+    [pathCacheByLeafId],
+  );
+  const activeReplyParentMessageId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role === "assistant" && message.status === "complete") {
+        return message.id;
+      }
+    }
+    return null;
+  }, [messages]);
+  const composerDraftKey = branchDraft
+    ? branchDraft.anchor.kind === "assistant_selection"
+      ? `branch:${branchDraft.parentMessageId}:selection:${branchDraft.anchor.client_selection_id}`
+      : `branch:${branchDraft.parentMessageId}:message`
+    : `path:${activeLeafMessageId ?? activeReplyParentMessageId ?? id}`;
+
+  useEffect(() => {
+    selectedPathIdsRef.current = selectedPathIds;
+  }, [selectedPathIds]);
+
+  useEffect(() => {
+    if (!activeLeafMessageId || messages.length === 0) return;
+    setPathCacheByLeafId((prev) => {
+      if (prev[activeLeafMessageId] === messages) return prev;
+      return { ...prev, [activeLeafMessageId]: messages };
+    });
+  }, [activeLeafMessageId, messages]);
   const persistedRows = useMemo(() => {
     const rows: Array<{
       context: MessageContextSnapshot;
@@ -199,6 +351,75 @@ function ChatView({
     return rows;
   }, [messages]);
 
+  const applyConversationTree = useCallback((tree: ConversationTreeResponse) => {
+    setConversation(tree.conversation);
+    setMessages(tree.selected_path);
+    selectedPathIdsRef.current = messageIdsForPath(
+      tree.selected_path,
+      tree.active_leaf_message_id,
+    );
+    setForkOptionsByParentId(tree.fork_options_by_parent_id);
+    setPathCacheByLeafId(tree.path_cache_by_leaf_id);
+    setBranchGraph(tree.branch_graph);
+    setActiveLeafMessageId(tree.active_leaf_message_id);
+    setOlderCursor(tree.page.before_cursor);
+  }, [messageIdsForPath]);
+
+  const loadConversationTree = useCallback(async () => {
+    const response = await apiFetch<{ data: ConversationTreeResponse }>(
+      `/api/conversations/${id}/tree?limit=50`,
+    );
+    applyConversationTree(response.data);
+    return response.data;
+  }, [applyConversationTree, id]);
+
+  const handleChatRunCreated = useCallback(
+    (runData: ChatRunData) => {
+      shouldScrollRef.current = true;
+      setConversation(runData.conversation);
+      setActiveLeafMessageId(runData.assistant_message.id);
+      selectedPathIdsRef.current = new Set([
+        ...selectedPathIdsRef.current,
+        runData.user_message.id,
+        runData.assistant_message.id,
+      ]);
+      if (!runData.user_message.parent_message_id) {
+        setMessages([runData.user_message, runData.assistant_message]);
+      }
+      void tailChatRun(runData);
+      void loadConversationTree().catch((err) => {
+        console.error("Failed to refresh conversation tree:", err);
+      });
+    },
+    [loadConversationTree, tailChatRun],
+  );
+
+  const tailVisibleActiveRuns = useCallback(
+    async (visibleMessageIds: Set<string>, skipRunId: string | null = null) => {
+      try {
+        const activeRuns = await apiFetch<ChatRunListResponse>(
+          `/api/chat-runs?${new URLSearchParams({
+            conversation_id: id,
+            status: "active",
+          })}`,
+        );
+        for (const runData of activeRuns.data) {
+          if (runData.run.id === skipRunId) continue;
+          if (
+            !visibleMessageIds.has(runData.user_message.id) &&
+            !visibleMessageIds.has(runData.assistant_message.id)
+          ) {
+            continue;
+          }
+          void tailChatRun(runData);
+        }
+      } catch (err) {
+        console.error("Failed to load active chat runs:", err);
+      }
+    },
+    [id, tailChatRun],
+  );
+
   // --------------------------------------------------------------------------
   // Data fetching
   // --------------------------------------------------------------------------
@@ -206,33 +427,73 @@ function ChatView({
   useEffect(() => {
     const load = async () => {
       try {
-        const [convData, msgsData] = await Promise.all([
-          apiFetch<{ data: Conversation }>(`/api/conversations/${id}`),
-          apiFetch<MessagesResponse>(`/api/conversations/${id}/messages?limit=50`),
-        ]);
-        setConversation(convData.data);
-        setMessages(msgsData.data);
-        setOlderCursor(msgsData.page.next_cursor);
+        const tree = await loadConversationTree();
         setError(null);
-      } catch (err) {
-        if (isApiError(err)) {
-          setError(err.message);
-        } else {
-          setError("Failed to load conversation");
+        if (runIdFromUrl) {
+          try {
+            const runResponse = await apiFetch<ChatRunResponse>(
+              `/api/chat-runs/${runIdFromUrl}`,
+            );
+            if (runResponse.data.conversation.id === id) {
+              void tailChatRun(runResponse.data);
+            }
+          } catch (err) {
+            console.error("Failed to load requested chat run:", err);
+          }
         }
+        await tailVisibleActiveRuns(
+          messageIdsForPath(tree.selected_path, tree.active_leaf_message_id),
+          runIdFromUrl,
+        );
+      } catch (err) {
+        setError(toFeedback(err, { fallback: "Failed to load conversation" }));
       } finally {
         setLoading(false);
       }
     };
     load();
-  }, [id]);
+  }, [
+    id,
+    loadConversationTree,
+    messageIdsForPath,
+    runIdFromUrl,
+    tailChatRun,
+    tailVisibleActiveRuns,
+  ]);
 
-  // Auto-scroll to bottom on new messages
   useEffect(() => {
-    if (shouldScrollRef.current && messageListRef.current) {
-      messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+    return () => {
+      abortAll();
+    };
+  }, [abortAll, id]);
+
+  useLayoutEffect(() => {
+    const scrollport = scrollportRef.current;
+    if (!scrollport) return;
+    if (pendingBranchScrollRef.current) {
+      restoreBranchScroll(scrollport, pendingBranchScrollRef.current);
+      pendingBranchScrollRef.current = null;
+      shouldScrollRef.current = false;
+      return;
+    }
+    if (pendingScrollRestoreRef.current) {
+      const restore = pendingScrollRestoreRef.current;
+      pendingScrollRestoreRef.current = null;
+      scrollport.scrollTop = scrollport.scrollHeight - restore.scrollHeight + restore.scrollTop;
+      shouldScrollRef.current = false;
+      return;
+    }
+    if (shouldScrollRef.current) {
+      scrollport.scrollTop = scrollport.scrollHeight;
     }
   }, [messages]);
+
+  const handleChatScroll = useCallback(() => {
+    const scrollport = scrollportRef.current;
+    if (!scrollport) return;
+    shouldScrollRef.current =
+      scrollport.scrollHeight - scrollport.scrollTop - scrollport.clientHeight <= 48;
+  }, []);
 
   // --------------------------------------------------------------------------
   // Actions
@@ -241,22 +502,36 @@ function ChatView({
   const loadOlder = useCallback(async () => {
     if (!olderCursor) return;
     try {
+      if (scrollportRef.current) {
+        pendingScrollRestoreRef.current = {
+          scrollHeight: scrollportRef.current.scrollHeight,
+          scrollTop: scrollportRef.current.scrollTop,
+        };
+      }
       const params = new URLSearchParams({
         limit: "50",
-        cursor: olderCursor,
+        before_cursor: olderCursor,
       });
-      const response = await apiFetch<MessagesResponse>(
-        `/api/conversations/${id}/messages?${params}`
+      const response = await apiFetch<{ data: ConversationTreeResponse }>(
+        `/api/conversations/${id}/tree?${params}`
       );
       // Prepend older messages, deduplicate by ID
       setMessages((prev) => {
         const existingIds = new Set(prev.map((m) => m.id));
-        const newMsgs = response.data.filter((m) => !existingIds.has(m.id));
+        const newMsgs = response.data.selected_path.filter((m) => !existingIds.has(m.id));
         return [...newMsgs, ...prev];
       });
-      setOlderCursor(response.page.next_cursor);
+      setForkOptionsByParentId(response.data.fork_options_by_parent_id);
+      setPathCacheByLeafId((prev) => ({
+        ...prev,
+        ...response.data.path_cache_by_leaf_id,
+      }));
+      setBranchGraph(response.data.branch_graph);
+      setActiveLeafMessageId(response.data.active_leaf_message_id);
+      setOlderCursor(response.data.page.before_cursor);
       shouldScrollRef.current = false;
     } catch (err) {
+      pendingScrollRestoreRef.current = null;
       console.error("Failed to load older messages:", err);
     }
   }, [id, olderCursor]);
@@ -268,147 +543,198 @@ function ChatView({
       await apiFetch(`/api/conversations/${id}`, { method: "DELETE" });
       router.push("/conversations");
     } catch (err) {
-      if (isApiError(err)) {
-        setError(err.message);
-      } else {
-        setError("Failed to delete conversation");
-      }
+      setError(toFeedback(err, { fallback: "Failed to delete conversation" }));
     } finally {
       setDeleting(false);
     }
   }, [id, router]);
 
-  usePaneChromeOverride({
-    options: [
-      {
-        id: "delete-conversation",
-        label: deleting ? "Deleting..." : "Delete conversation",
-        tone: "danger",
-        disabled: deleting,
-        onSelect: () => {
-          void handleDeleteConversation();
-        },
-      },
-    ],
-  });
-
-  // --------------------------------------------------------------------------
-  // Streaming message handlers (rAF-buffered deltas)
-  // --------------------------------------------------------------------------
-
-  const handleOptimisticMessages = useCallback(
-    (userMsg: Message, assistantMsg: Message) => {
-      shouldScrollRef.current = true;
-      setMessages((prev) => [...prev, userMsg, assistantMsg]);
-    },
-    []
-  );
-
-  const handleMetaReceived = useCallback(
-    (tempUserId: string, realUserId: string, tempAsstId: string, realAsstId: string) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id === tempUserId) return { ...m, id: realUserId };
-          if (m.id === tempAsstId) return { ...m, id: realAsstId };
-          return m;
-        })
-      );
-    },
-    []
-  );
-
-  // rAF-buffered delta handler — batches tokens arriving within one frame
-  const deltaBufferRef = useRef<Map<string, string>>(new Map());
-  const rafRef = useRef<number | null>(null);
-
-  const flushDeltas = useCallback(() => {
-    rafRef.current = null;
-    const buffer = deltaBufferRef.current;
-    if (buffer.size === 0) return;
-    const snapshot = new Map(buffer);
-    buffer.clear();
-    setMessages((prev) =>
-      prev.map((m) => {
-        const delta = snapshot.get(m.id);
-        return delta ? { ...m, content: m.content + delta } : m;
-      })
-    );
+  const handleReplyToAssistant = useCallback((draft: BranchDraft) => {
+    setBranchDraft(draft);
+    setBranchFocusKey(`${draft.parentMessageId}:${draft.anchor.kind}:${Date.now()}`);
+    shouldScrollRef.current = true;
   }, []);
 
-  const handleDelta = useCallback((assistantId: string, delta: string) => {
-    const buffer = deltaBufferRef.current;
-    buffer.set(assistantId, (buffer.get(assistantId) ?? "") + delta);
-    if (rafRef.current === null) {
-      rafRef.current = requestAnimationFrame(flushDeltas);
-    }
-  }, [flushDeltas]);
+  const handleRetryAssistantResponse = useCallback(
+    async (assistantMessageId: string) => {
+      if (retryingAssistantMessageIdsRef.current.has(assistantMessageId)) return;
 
-  useEffect(() => {
-    return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    };
-  }, []);
+      retryingAssistantMessageIdsRef.current = new Set([
+        ...retryingAssistantMessageIdsRef.current,
+        assistantMessageId,
+      ]);
+      setRetryingAssistantMessageIds(retryingAssistantMessageIdsRef.current);
+      setError(null);
 
-  const handleDone = useCallback(
-    (assistantId: string, status: "complete" | "error", errorCode: string | null) => {
-      // Flush any remaining buffered deltas before marking done
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
+      try {
+        const response = await apiFetch<ChatRunResponse>(
+          `/api/messages/${assistantMessageId}/retry`,
+          {
+            method: "POST",
+            headers: { "Idempotency-Key": crypto.randomUUID() },
+          },
+        );
+        handleChatRunCreated(response.data);
+      } catch (err) {
+        setError(toFeedback(err, { fallback: "Failed to retry response" }));
+      } finally {
+        const next = new Set(retryingAssistantMessageIdsRef.current);
+        next.delete(assistantMessageId);
+        retryingAssistantMessageIdsRef.current = next;
+        setRetryingAssistantMessageIds(next);
       }
-      const buffer = deltaBufferRef.current;
-      const remaining = buffer.get(assistantId);
-      buffer.delete(assistantId);
+    },
+    [handleChatRunCreated],
+  );
 
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) return m;
-          return {
-            ...m,
-            content: remaining ? m.content + remaining : m.content,
-            status,
-            error_code: errorCode,
+  const jumpToMessage = useCallback((messageId: string) => {
+    const scrollport = scrollportRef.current;
+    if (!scrollport) return;
+    const target = findRenderedMessage(scrollport, messageId);
+    if (!target) return;
+    scrollport.scrollTop = Math.max(0, target.offsetTop - 16);
+    shouldScrollRef.current = false;
+  }, []);
+
+  const switchToLeaf = useCallback(
+    async (nextLeafId: string, activationAnchorMessageId: string | null) => {
+      const nextPath = pathCacheByLeafId[nextLeafId];
+      if (!nextPath) {
+        setError({
+          severity: "error",
+          title: "This fork is not available yet.",
+        });
+        return;
+      }
+
+      const switchSeq = activePathSwitchSeqRef.current + 1;
+      activePathSwitchSeqRef.current = switchSeq;
+      const branchScroll = scrollportRef.current
+        ? captureBranchScroll(scrollportRef.current, activationAnchorMessageId)
+        : null;
+      const previous = {
+        messages,
+        activeLeafMessageId,
+        forkOptionsByParentId,
+        branchGraph,
+        branchDraft,
+        scrollTop: branchScroll?.scrollTop ?? 0,
+        branchScroll,
+      };
+      pendingBranchScrollRef.current = branchScroll;
+      pendingScrollRestoreRef.current = null;
+      setMessages(nextPath);
+      selectedPathIdsRef.current = messageIdsForPath(nextPath, nextLeafId);
+      setActiveLeafMessageId(nextLeafId);
+      if (
+        branchDraft &&
+        !nextPath.some((message) => message.id === branchDraft.parentMessageId)
+      ) {
+        setBranchDraft(null);
+      }
+      setForkOptionsByParentId((prev) => activeForkOptionsForPath(prev, nextPath));
+      setBranchGraph((prev) => activeBranchGraphForPath(prev, nextPath));
+      setError(null);
+      shouldScrollRef.current = false;
+      void tailVisibleActiveRuns(selectedPathIdsRef.current);
+      try {
+        const response = await apiFetch<{ data: ConversationTreeResponse }>(
+          `/api/conversations/${id}/active-path`,
+          {
+            method: "POST",
+            body: JSON.stringify({ active_leaf_message_id: nextLeafId }),
+          },
+        );
+        if (activePathSwitchSeqRef.current !== switchSeq) return;
+        pendingBranchScrollRef.current = scrollportRef.current
+          ? captureBranchScroll(scrollportRef.current, activationAnchorMessageId)
+          : branchScroll;
+        applyConversationTree(response.data);
+        void tailVisibleActiveRuns(
+          messageIdsForPath(
+            response.data.selected_path,
+            response.data.active_leaf_message_id,
+          ),
+        );
+      } catch (err) {
+        if (activePathSwitchSeqRef.current !== switchSeq) return;
+        setError(toFeedback(err, { fallback: "Failed to switch fork" }));
+        pendingBranchScrollRef.current =
+          previous.branchScroll ?? {
+            anchorMessageId: null,
+            anchorOffsetTop: 0,
+            activationAnchorMessageId: null,
+            activationAnchorOffsetTop: null,
+            scrollTop: previous.scrollTop,
           };
-        })
+        setMessages(previous.messages);
+        selectedPathIdsRef.current = messageIdsForPath(
+          previous.messages,
+          previous.activeLeafMessageId,
+        );
+        setActiveLeafMessageId(previous.activeLeafMessageId);
+        setBranchDraft(previous.branchDraft);
+        setForkOptionsByParentId(previous.forkOptionsByParentId);
+        setBranchGraph(previous.branchGraph);
+      }
+    },
+    [
+      activeLeafMessageId,
+      applyConversationTree,
+      branchDraft,
+      branchGraph,
+      forkOptionsByParentId,
+      id,
+      messageIdsForPath,
+      messages,
+      pathCacheByLeafId,
+      tailVisibleActiveRuns,
+    ],
+  );
+
+  const switchToFork = useCallback(
+    async (fork: ForkOption) => {
+      await switchToLeaf(fork.leaf_message_id, fork.parent_message_id);
+    },
+    [switchToLeaf],
+  );
+
+  const switchToGraphLeaf = useCallback(
+    async (leafMessageId: string) => {
+      const graphNode =
+        branchGraph.nodes.find((node) => node.leaf && node.leaf_message_id === leafMessageId) ??
+        branchGraph.nodes.find((node) => node.leaf_message_id === leafMessageId);
+      await switchToLeaf(
+        leafMessageId,
+        graphNode?.parent_message_id ?? graphNode?.message_id ?? null,
       );
     },
-    []
+    [branchGraph.nodes, switchToLeaf],
   );
 
-  const handleNonStreamMessages = useCallback(
-    (userMsg: Message, assistantMsg: Message) => {
-      shouldScrollRef.current = true;
-      setMessages((prev) => [...prev, userMsg, assistantMsg]);
-    },
-    []
-  );
-
-  useEffect(() => {
-    if (!contextDrawerOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setContextDrawerOpen(false);
-      }
-    };
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.body.style.overflow = prev;
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [contextDrawerOpen]);
+  usePaneChromeOverride({
+    options: conversationResourceOptions({
+      deleting,
+      onDelete: () => {
+        void handleDeleteConversation();
+      },
+    }),
+  });
 
   // --------------------------------------------------------------------------
   // Render
   // --------------------------------------------------------------------------
 
   if (loading) {
-    return <StateMessage variant="loading">Loading conversation...</StateMessage>;
+    return <FeedbackNotice severity="info">Loading conversation...</FeedbackNotice>;
   }
 
-  if (error || !conversation) {
-    return <StateMessage variant="error">{error || "Conversation not found"}</StateMessage>;
+  if (!conversation) {
+    return error ? (
+      <FeedbackNotice feedback={error} />
+    ) : (
+      <FeedbackNotice severity="error">Conversation not found</FeedbackNotice>
+    );
   }
 
   return (
@@ -416,168 +742,111 @@ function ChatView({
       <div className={styles.chatSplitLayout}>
         <div className={styles.chatPrimaryColumn}>
           <div className={styles.paneContentChat}>
-            <div className={styles.chatContainer}>
-              <div
-                ref={messageListRef}
-                className={styles.messageList}
-                data-testid="chat-transcript"
-              >
-                {olderCursor && (
-                  <button
-                    className={styles.loadOlder}
-                    aria-label="Load older messages"
-                    onClick={loadOlder}
-                  >
-                    Load older messages
-                  </button>
-                )}
-
-                {messages.map((msg) => (
-                  <MessageRow key={msg.id} message={msg} />
-                ))}
-              </div>
-
-              <ChatComposer
-                conversationId={id}
-                attachedContexts={attachedContexts}
-                onRemoveContext={onRemoveContext}
-                onOptimisticMessages={handleOptimisticMessages}
-                onMetaReceived={handleMetaReceived}
-                onDelta={handleDelta}
-                onDone={handleDone}
-                onNonStreamMessages={handleNonStreamMessages}
-                onMessageSent={onMessageSent}
-              />
-            </div>
+            {error ? <FeedbackNotice feedback={error} /> : null}
+            <ChatSurface
+              messages={messages}
+              scope={conversationScope}
+              forkOptionsByParentId={forkOptionsByParentId}
+              switchableLeafIds={switchableLeafIds}
+              onSelectFork={(fork) => {
+                void switchToFork(fork);
+              }}
+              onReplyToAssistant={handleReplyToAssistant}
+              onRetryAssistantResponse={handleRetryAssistantResponse}
+              retryingAssistantMessageIds={retryingAssistantMessageIds}
+              scrollportRef={scrollportRef}
+              onScroll={handleChatScroll}
+              olderCursor={olderCursor}
+              onLoadOlder={loadOlder}
+              composer={
+                <ChatComposer
+                  conversationId={id}
+                  conversationScope={conversationScope}
+                  attachedContexts={attachedContexts}
+                  draftKey={composerDraftKey}
+                  branchDraft={branchDraft}
+                  parentMessageId={activeReplyParentMessageId}
+                  onClearBranchDraft={() => setBranchDraft(null)}
+                  onJumpToBranchParent={jumpToMessage}
+                  onRemoveContext={onRemoveContext}
+                  onChatRunCreated={handleChatRunCreated}
+                  onMessageSent={onMessageSent}
+                  autoFocus={Boolean(branchDraft)}
+                  focusKey={branchFocusKey}
+                />
+              }
+            />
           </div>
         </div>
 
         {!isMobileViewport ? (
-          <aside className={styles.chatContextColumn}>
+          <SecondaryRail
+            ariaLabel="Chat context"
+            expanded={contextRailExpanded}
+            onExpandedChange={setContextRailExpanded}
+            expandedWidthPx={320}
+            bodyClassName={styles.chatSecondaryRailBody}
+            collapsed={
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                className={styles.chatSecondaryRailCollapsedButton}
+                aria-label="Expand chat context"
+                onClick={() => setContextRailExpanded(true)}
+              >
+                <PanelRightOpen size={15} aria-hidden="true" />
+              </Button>
+            }
+          >
             <ConversationContextPane
+              conversationId={id}
+              scope={conversationScope}
+              memory={conversation?.memory}
               contexts={attachedContexts}
               persistedRows={persistedRows}
+              forkOptionsByParentId={forkOptionsByParentId}
+              branchGraph={branchGraph}
+              switchableLeafIds={switchableLeafIds}
+              selectedPathMessageIds={selectedPathIds}
+              onSelectFork={(fork) => {
+                void switchToFork(fork);
+              }}
+              onSelectGraphLeaf={(leafMessageId) => {
+                void switchToGraphLeaf(leafMessageId);
+              }}
+              onForksChanged={() => {
+                void loadConversationTree();
+              }}
               onRemoveContext={onRemoveContext}
             />
-          </aside>
+          </SecondaryRail>
         ) : null}
       </div>
 
       {isMobileViewport ? (
-        <button
-          type="button"
-          className={styles.chatContextFab}
-          onClick={() => setContextDrawerOpen((open) => !open)}
-          aria-label="Linked context"
-          aria-expanded={contextDrawerOpen}
-        >
-          Linked context
-        </button>
-      ) : null}
-
-      {isMobileViewport && contextDrawerOpen ? (
-        <div
-          className={styles.chatContextBackdrop}
-          onClick={() => setContextDrawerOpen(false)}
-        >
-          <aside
-            className={styles.chatContextDrawer}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Linked context"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <header className={styles.chatContextDrawerHeader}>
-              <h2>Linked context</h2>
-              <button
-                type="button"
-                onClick={() => setContextDrawerOpen(false)}
-              >
-                Close
-              </button>
-            </header>
-            <div className={styles.chatContextDrawerBody}>
-              <ConversationContextPane
-                contexts={attachedContexts}
-                persistedRows={persistedRows}
-                onRemoveContext={onRemoveContext}
-              />
-            </div>
-          </aside>
-        </div>
+        <ChatContextDrawer
+          conversationId={id}
+          scope={conversationScope}
+          memory={conversation?.memory}
+          contexts={attachedContexts}
+          persistedRows={persistedRows}
+          forkOptionsByParentId={forkOptionsByParentId}
+          branchGraph={branchGraph}
+          switchableLeafIds={switchableLeafIds}
+          selectedPathMessageIds={selectedPathIds}
+          onSelectFork={(fork) => {
+            void switchToFork(fork);
+          }}
+          onSelectGraphLeaf={(leafMessageId) => {
+            void switchToGraphLeaf(leafMessageId);
+          }}
+          onForksChanged={() => {
+            void loadConversationTree();
+          }}
+          onRemoveContext={onRemoveContext}
+        />
       ) : null}
     </>
-  );
-}
-
-// ============================================================================
-// MessageRow
-// ============================================================================
-
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const now = Date.now();
-  const diffSec = Math.floor((now - d.getTime()) / 1000);
-  if (diffSec < 60) return "just now";
-  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function MessageRow({ message }: { message: Message }) {
-  const roleClass = styles[message.role] ?? "";
-  const statusClass = message.status !== "complete" ? (styles[message.status] ?? "") : "";
-  const contexts = message.contexts ?? [];
-
-  return (
-    <div className={`${styles.message} ${roleClass} ${statusClass}`}>
-      {message.role === "user" && contexts.length === 1 && (
-        <ReplyBar context={contexts[0]} />
-      )}
-      {message.role === "user" && contexts.length > 1 && (
-        <InlineCitations contexts={contexts} />
-      )}
-
-      {message.role === "assistant" ? (
-        message.status === "pending" ? (
-          <StreamingMarkdownMessage content={message.content} />
-        ) : (
-          <MarkdownMessage content={message.content} />
-        )
-      ) : (
-        <span>{message.content || (message.status === "pending" ? "..." : "")}</span>
-      )}
-
-      {message.status === "error" && message.error_code && (
-        <span className={styles.messageError}>
-          <AlertCircle size={14} />
-          {message.error_code}
-        </span>
-      )}
-
-      <span className={styles.messageTimestamp}>
-        {formatTime(message.created_at)}
-      </span>
-    </div>
-  );
-}
-
-function ReplyBar({ context }: { context: MessageContextSnapshot }) {
-  const text = context.exact || context.preview;
-  const colorClass = styles[`replyBar-${context.color ?? ""}`] ?? "";
-
-  return (
-    <div className={`${styles.replyBar} ${colorClass}`}>
-      {text && (
-        <div>{text.length > 140 ? text.slice(0, 140) + "..." : text}</div>
-      )}
-      {context.annotation_body && (
-        <div className={styles.replyBarAnnotation}>{context.annotation_body}</div>
-      )}
-      {!text && !context.annotation_body && context.media_title && (
-        <div>{context.media_title}</div>
-      )}
-    </div>
   );
 }

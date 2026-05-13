@@ -24,6 +24,10 @@
   max-width: 100%;
 }
 
+.paneWrap[data-minimized="true"] {
+  display: none;
+}
+
 @media (max-width: 768px) {
   .host {
     grid-template-rows: minmax(0, 1fr);
@@ -38,10 +42,15 @@
   min-width: 0;
 }
 
-/* Document-mode panes manage scroll internally (PdfReader, DocumentViewport).
-   They need the route shell constrained to body height so nested height: 100%
-   and absolute-positioned scroll containers resolve correctly. */
+/* Document-mode panes manage their own scroll containers.
+   The route shell must stay height-constrained so nested height: 100%
+   and absolute-positioned content can resolve correctly. */
 [data-body-mode="document"] > .routeShell {
+  min-height: 0;
+}
+
+[data-body-mode="contained"] > .routeShell {
+  height: 100%;
   min-height: 0;
 }
 
@@ -63,7 +72,7 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-4);
-  color: var(--color-text-secondary);
-  background: var(--color-bg);
+  color: var(--ink-muted);
+  background: var(--surface-canvas);
   text-align: center;
 }

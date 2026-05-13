@@ -1,13 +1,4 @@
-"""Highlights API routes.
-
-Route handlers for highlight and annotation CRUD operations.
-Routes are transport-only: each calls exactly one service function.
-
-S6 PR-04 additions:
-- POST /media/{media_id}/pdf-highlights (PDF highlight create)
-- GET /media/{media_id}/pdf-highlights (PDF highlight page-scoped list)
-- Generic routes extended to return TypedHighlightOut for detail/update
-"""
+"""Highlight API routes."""
 
 from typing import Annotated
 from uuid import UUID
@@ -23,7 +14,6 @@ from nexus.schemas.highlights import (
     CreateHighlightRequest,
     CreatePdfHighlightRequest,
     UpdateHighlightRequest,
-    UpsertAnnotationRequest,
 )
 from nexus.services import highlights as highlights_service
 
@@ -150,7 +140,7 @@ def get_highlight(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get a single highlight by ID (anchor-discriminated typed output)."""
+    """Get a single highlight by ID."""
     result = highlights_service.get_highlight(
         db=db,
         viewer_id=viewer.user_id,
@@ -166,7 +156,7 @@ def update_highlight(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Update a highlight (unified PATCH for fragment + PDF)."""
+    """Update a highlight with the canonical typed PATCH contract."""
     result = highlights_service.update_highlight(
         db=db,
         viewer_id=viewer.user_id,
@@ -182,50 +172,8 @@ def delete_highlight(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    """Delete a highlight (cascades annotation for all anchor kinds)."""
+    """Delete a highlight."""
     highlights_service.delete_highlight(
-        db=db,
-        viewer_id=viewer.user_id,
-        highlight_id=highlight_id,
-    )
-    return Response(status_code=204)
-
-
-# =============================================================================
-# Annotation Endpoints (0..1 per highlight, all anchor kinds)
-# =============================================================================
-
-
-@router.put("/highlights/{highlight_id}/annotation")
-def upsert_annotation(
-    highlight_id: UUID,
-    request: UpsertAnnotationRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    response: Response,
-) -> dict:
-    """Create or update the annotation for a highlight."""
-    result, created = highlights_service.upsert_annotation_for_highlight(
-        db=db,
-        viewer_id=viewer.user_id,
-        highlight_id=highlight_id,
-        req=request,
-    )
-
-    if created:
-        response.status_code = 201
-
-    return success_response(result.model_dump(mode="json"))
-
-
-@router.delete("/highlights/{highlight_id}/annotation", status_code=204)
-def delete_annotation(
-    highlight_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    """Delete the annotation for a highlight."""
-    highlights_service.delete_annotation_for_highlight(
         db=db,
         viewer_id=viewer.user_id,
         highlight_id=highlight_id,

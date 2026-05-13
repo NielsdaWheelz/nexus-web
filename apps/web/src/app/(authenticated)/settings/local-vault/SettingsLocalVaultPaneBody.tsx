@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { FolderOpen, RefreshCcw, UploadCloud } from "lucide-react";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { Download, FolderOpen, RefreshCcw, UploadCloud } from "lucide-react";
+import { apiFetch } from "@/lib/api/client";
 import { isAndroidShell } from "@/lib/androidShell";
+import { FeedbackNotice, toFeedback } from "@/components/feedback/Feedback";
 import {
   getVaultAutoSync,
   hasVaultPermission,
@@ -17,8 +18,9 @@ import {
   type VaultSyncPayload,
 } from "@/lib/vault/localVault";
 import SectionCard from "@/components/ui/SectionCard";
-import StateMessage from "@/components/ui/StateMessage";
-import StatusPill from "@/components/ui/StatusPill";
+import Button from "@/components/ui/Button";
+import Pill from "@/components/ui/Pill";
+import Toggle from "@/components/ui/Toggle";
 import styles from "./page.module.css";
 
 type VaultStatus = "notConnected" | "needsPermission" | "synced" | "syncing" | "conflicts" | "error";
@@ -80,13 +82,7 @@ export default function SettingsLocalVaultPaneBody({
 
   const showError = useCallback((error: unknown, fallback: string) => {
     setStatus("error");
-    if (isApiError(error)) {
-      setMessage(error.message);
-    } else if (error instanceof Error) {
-      setMessage(error.message);
-    } else {
-      setMessage(fallback);
-    }
+    setMessage(toFeedback(error, { fallback }).title);
   }, []);
 
   const connectFolder = useCallback(async () => {
@@ -181,10 +177,10 @@ export default function SettingsLocalVaultPaneBody({
   if (androidShell) {
     return (
       <SectionCard>
-        <StateMessage variant="info">
+        <FeedbackNotice severity="info">
           Local Vault is not available in the Android app. Use a supported desktop browser to
           connect and sync a local folder.
-        </StateMessage>
+        </FeedbackNotice>
       </SectionCard>
     );
   }
@@ -192,9 +188,9 @@ export default function SettingsLocalVaultPaneBody({
   if (!supported) {
     return (
       <SectionCard>
-        <StateMessage variant="error">
+        <FeedbackNotice severity="error">
           This browser cannot connect a writable local folder. Use a supported desktop browser.
-        </StateMessage>
+        </FeedbackNotice>
       </SectionCard>
     );
   }
@@ -203,43 +199,52 @@ export default function SettingsLocalVaultPaneBody({
     <SectionCard>
       <div className={styles.content}>
         <div className={styles.statusRow}>
-          <StatusPill variant={statusVariant(status)}>{statusLabel(status)}</StatusPill>
+          <Pill tone={statusVariant(status)}>{statusLabel(status)}</Pill>
           <span className={styles.statusText}>{message}</span>
         </div>
 
         <div className={styles.buttonRow}>
-          <button type="button" className={styles.button} onClick={connectFolder} disabled={busy}>
-            <FolderOpen size={16} />
+          <Button
+            variant="secondary"
+            leadingIcon={<FolderOpen size={16} />}
+            onClick={connectFolder}
+            disabled={busy}
+          >
             Connect folder
-          </button>
-          <button
-            type="button"
-            className={styles.button}
+          </Button>
+          <Button asChild variant="secondary">
+            <a
+              href="/api/vault/download"
+              download="nexus-vault.zip"
+              className={styles.downloadLink}
+            >
+              <Download size={16} />
+              Download export
+            </a>
+          </Button>
+          <Button
+            variant="secondary"
+            leadingIcon={<UploadCloud size={16} />}
             onClick={exportVault}
             disabled={busy || !directoryHandle}
           >
-            <UploadCloud size={16} />
             Export vault
-          </button>
-          <button
-            type="button"
-            className={styles.primaryButton}
+          </Button>
+          <Button
+            variant="primary"
+            leadingIcon={<RefreshCcw size={16} />}
             onClick={syncVault}
             disabled={busy || !directoryHandle}
           >
-            <RefreshCcw size={16} />
             Sync now
-          </button>
+          </Button>
         </div>
 
-        <label className={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={autoSync}
-            onChange={(event) => toggleAutoSync(event.target.checked)}
-          />
-          Auto-sync on app load and when this tab becomes active again
-        </label>
+        <Toggle
+          checked={autoSync}
+          onCheckedChange={toggleAutoSync}
+          label="Auto-sync on app load and when this tab becomes active again"
+        />
       </div>
     </SectionCard>
   );

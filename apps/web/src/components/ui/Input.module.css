@@ -1,0 +1,59 @@
+.input {
+  font-family: inherit;
+  color: var(--ink);
+  width: 100%;
+  transition: border-color var(--duration-fast) var(--ease-glide),
+    box-shadow var(--duration-fast) var(--ease-glide);
+}
+
+.input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.input::placeholder {
+  color: var(--ink-faint);
+}
+
+/* Sizes (match Button font-size scale) */
+.sm {
+  height: var(--size-sm);
+  font-size: var(--text-sm);
+}
+
+.md {
+  height: var(--size-lg);
+  font-size: var(--text-base);
+}
+
+.lg {
+  height: var(--size-xl);
+  font-size: var(--text-base);
+}
+
+/* Default variant */
+.default {
+  background: var(--surface-sunken);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+}
+
+.default:focus,
+.default:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* Bare variant — parent owns visual surface */
+.bare {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.bare:focus,
+.bare:focus-visible {
+  outline: none;
+}

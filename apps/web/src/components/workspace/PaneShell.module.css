@@ -5,13 +5,13 @@
   height: 100%;
   min-height: 0;
   min-width: 0;
-  border-right: 1px solid var(--color-border-subtle);
-  background: var(--color-bg);
+  border-right: 1px solid var(--edge-subtle);
+  background: var(--surface-canvas);
   flex: 0 0 auto;
 }
 
 .paneShell[data-active="true"] {
-  box-shadow: inset 0 0 0 1px rgb(122 162 247 / 35%);
+  box-shadow: inset 0 0 0 1px var(--ring);
 }
 
 .chrome {
@@ -19,18 +19,21 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--color-bg);
-  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--surface-canvas);
+  border-bottom: 1px solid var(--edge-subtle);
 }
 
 .toolbar {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
-  padding: var(--space-2) var(--space-4);
-  border-top: 1px solid var(--color-border-subtle);
+  min-height: var(--size-lg);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: var(--space-1) var(--space-3);
+  border-top: 1px solid var(--edge-subtle);
 }
 
 .body {
@@ -42,7 +45,7 @@
   position: absolute;
   top: 0;
   right: 0;
-  width: 8px;
+  width: var(--resize-handle-width);
   height: 100%;
   cursor: col-resize;
 }
@@ -60,37 +63,32 @@
 
 .paneShell[data-mobile="true"] .toolbar {
   gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-2);
 }
 
-.mobileChromeVisible .chrome,
-.mobileChromeHidden .chrome {
+.paneShell[data-mobile="true"] .chrome {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   z-index: 12;
   padding-top: env(safe-area-inset-top);
-  transition: transform var(--transition-fast), opacity var(--transition-fast);
-  background: rgba(26, 27, 38, 0.94);
+  transition: transform var(--duration-base) var(--ease-glide), opacity var(--duration-fast) var(--ease-glide);
+  background: color-mix(in srgb, var(--surface-2) 94%, transparent);
   backdrop-filter: blur(8px);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.26);
-  will-change: transform;
-}
-
-.mobileChromeVisible .body {
-  padding-top: calc(var(--space-2) + var(--mobile-pane-chrome-height));
+  box-shadow: var(--shadow-2);
+  will-change: transform, opacity;
 }
 
 .mobileChromeHidden .chrome {
   transform: translateY(calc(-1 * var(--mobile-pane-chrome-height)));
-  opacity: 0.98;
-  visibility: hidden;
+  opacity: 0;
   pointer-events: none;
 }
 
-.mobileChromeHidden .body {
-  padding-top: var(--space-2);
+.paneShell[data-mobile="true"] .body[data-body-mode="standard"],
+.paneShell[data-mobile="true"] .body[data-body-mode="contained"] {
+  padding-top: calc(var(--space-2) + var(--mobile-pane-chrome-height));
 }
 
 .mobileSearchButton {
@@ -100,19 +98,26 @@
   width: 40px;
   min-width: 40px;
   height: 40px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
-  background: var(--color-bg);
-  color: var(--color-text-secondary);
+  background: var(--surface-canvas);
+  color: var(--ink-muted);
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition: background var(--duration-fast) var(--ease-glide), color var(--duration-fast) var(--ease-glide);
 }
 
 .mobileSearchButton:hover {
-  background: var(--color-bg-hover);
-  color: var(--color-text);
+  background: var(--surface-hover);
+  color: var(--ink);
 }
 
 .mobileSearchButton:active {
-  background: var(--color-bg-active);
+  background: var(--surface-active);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paneShell[data-mobile="true"] .chrome,
+  .mobileSearchButton {
+    transition: none;
+  }
 }

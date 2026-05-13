@@ -1,0 +1,83 @@
+.root {
+  display: flex;
+  flex-direction: column;
+}
+
+.list {
+  display: flex;
+}
+
+.trigger {
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-snug);
+  transition:
+    color var(--duration-fast) var(--ease-glide),
+    background-color var(--duration-fast) var(--ease-glide),
+    border-color var(--duration-fast) var(--ease-glide),
+    box-shadow var(--duration-fast) var(--ease-glide);
+}
+
+.trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.content {
+  outline: none;
+}
+
+/* === variant: tabs === */
+.listTabs {
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--edge-subtle);
+  margin-bottom: var(--space-3);
+}
+
+.triggerTabs {
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink-muted);
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  border-bottom: 2px solid transparent;
+}
+
+.triggerTabs:hover:not(:disabled):not(.triggerSelected) {
+  color: var(--ink);
+  background: var(--surface-hover);
+}
+
+.triggerTabs.triggerSelected {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+/* === variant: segmented === */
+.listSegmented {
+  display: inline-flex;
+  padding: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-md);
+}
+
+.triggerSegmented {
+  padding: var(--space-1) var(--space-3);
+  color: var(--ink-muted);
+  border: 0;
+  background: transparent;
+  border-radius: calc(var(--radius-md) - 2px);
+}
+
+.triggerSegmented:hover:not(:disabled):not(.triggerSelected) {
+  color: var(--ink);
+}
+
+.triggerSegmented.triggerSelected {
+  background: var(--surface-1);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+}

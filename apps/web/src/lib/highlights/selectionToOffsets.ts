@@ -409,25 +409,3 @@ export function selectionToOffsets(
     selectedText: trimmedText,
   };
 }
-
-/**
- * Check if an existing highlight already has the same span.
- * Used for duplicate detection before API call.
- *
- * @param highlights - Array of existing highlights
- * @param startOffset - Start offset to check
- * @param endOffset - End offset to check
- * @returns The matching highlight ID or null
- */
-export function findDuplicateHighlight(
-  highlights: Array<{ id: string; start_offset: number; end_offset: number }>,
-  startOffset: number,
-  endOffset: number
-): string | null {
-  for (const h of highlights) {
-    if (h.start_offset === startOffset && h.end_offset === endOffset) {
-      return h.id;
-    }
-  }
-  return null;
-}

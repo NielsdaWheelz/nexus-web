@@ -3,6 +3,12 @@
 import Link from "next/link";
 import { useState } from "react";
 import { shouldUseAndroidDebugAuthCallback } from "@/lib/androidShell";
+import Button from "@/components/ui/Button";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import {
   buildAndroidDebugAuthCallbackUrl,
   buildAuthCallbackUrl,
@@ -21,7 +27,6 @@ function GitHubMark() {
   return (
     <svg
       aria-hidden="true"
-      className={styles.providerIcon}
       viewBox="0 0 24 24"
       fill="currentColor"
       focusable="false"
@@ -35,7 +40,6 @@ function GoogleMark() {
   return (
     <svg
       aria-hidden="true"
-      className={styles.providerIcon}
       viewBox="0 0 24 24"
       focusable="false"
     >
@@ -64,7 +68,9 @@ export default function LoginPageClient({
   nextPath,
 }: LoginPageClientProps) {
   const [activeProvider, setActiveProvider] = useState<OAuthProvider | null>(null);
-  const [error, setError] = useState<string | null>(initialError);
+  const [error, setError] = useState<FeedbackContent | null>(
+    initialError ? { severity: "error", title: initialError } : null
+  );
 
   const handleProviderSignIn = async (provider: OAuthProvider) => {
     setError(null);
@@ -88,72 +94,84 @@ export default function LoginPageClient({
       });
 
       if (oauthError) {
-        setError(oauthError.message);
+        setError({
+          severity: "error",
+          title: "We couldn't start sign in. Please try again.",
+        });
         setActiveProvider(null);
       }
-    } catch {
-      setError("We couldn't start sign in. Please try again.");
+    } catch (signInError) {
+      setError(
+        toFeedback(signInError, {
+          fallback: "We couldn't start sign in. Please try again.",
+        })
+      );
       setActiveProvider(null);
     }
   };
 
   return (
     <div className={styles.container}>
-      <div className={styles.shell}>
-        <div className={styles.card}>
-          <div className={styles.header}>
-            <p className={styles.eyebrow}>Nexus</p>
-            <h1 className={styles.title}>Sign in or create your account</h1>
-            <p className={styles.subtitle}>
-              Continue with Google or GitHub. Your first sign-in provisions your
-              workspace automatically.
-            </p>
-          </div>
+      <div className={styles.split}>
+        <section className={styles.editorial}>
+          <h1 className={styles.title}>Read like it matters.</h1>
+          <p className={styles.deck}>
+            A reading workspace for serious readers — annotate, ask, write back.
+          </p>
+          <p className={styles.body}>
+            Bring articles, PDFs, EPUBs, and podcasts into one library. Highlight
+            without breaking the page. Ask questions of any source and get answers
+            grounded in the text.
+          </p>
+          <p className={styles.body}>
+            Your notes link the things you read. Your reading shapes what you
+            remember.
+          </p>
+        </section>
 
-          <div className={styles.form} aria-live="polite">
-            {error && <div className={styles.error}>{error}</div>}
+        <section className={styles.signin}>
+          <div className={styles.providers} aria-live="polite">
+            {error ? <FeedbackNotice feedback={error} /> : null}
 
-            <button
+            <Button
+              variant="secondary"
+              size="lg"
               type="button"
-              className={styles.providerButton}
+              leadingIcon={<GoogleMark />}
               onClick={() => void handleProviderSignIn("google")}
               disabled={activeProvider !== null}
             >
-              <GoogleMark />
-              <span>
-                {activeProvider === "google"
-                  ? "Connecting to Google..."
-                  : "Continue with Google"}
-              </span>
-            </button>
+              {activeProvider === "google"
+                ? "Connecting to Google..."
+                : "Continue with Google"}
+            </Button>
 
-            <button
+            <Button
+              variant="secondary"
+              size="lg"
               type="button"
-              className={styles.providerButton}
+              leadingIcon={<GitHubMark />}
               onClick={() => void handleProviderSignIn("github")}
               disabled={activeProvider !== null}
             >
-              <GitHubMark />
-              <span>
-                {activeProvider === "github"
-                  ? "Connecting to GitHub..."
-                  : "Continue with GitHub"}
-              </span>
-            </button>
-
-            <p className={styles.legalCopy}>
-              By continuing, you agree to the{" "}
-              <Link className={styles.legalLink} href="/terms">
-                Terms of Service
-              </Link>{" "}
-              and acknowledge the{" "}
-              <Link className={styles.legalLink} href="/privacy">
-                Privacy Policy
-              </Link>
-              .
-            </p>
+              {activeProvider === "github"
+                ? "Connecting to GitHub..."
+                : "Continue with GitHub"}
+            </Button>
           </div>
-        </div>
+
+          <p className={styles.legal}>
+            By continuing, you agree to the{" "}
+            <Link className={styles.legalLink} href="/terms">
+              Terms of Service
+            </Link>{" "}
+            and acknowledge the{" "}
+            <Link className={styles.legalLink} href="/privacy">
+              Privacy Policy
+            </Link>
+            .
+          </p>
+        </section>
       </div>
     </div>
   );

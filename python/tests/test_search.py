@@ -2,7 +2,7 @@
 
 Tests cover:
 - Basic search functionality across all types
-- Visibility enforcement (s4 provenance for media, highlight visibility for annotations,
+- Visibility enforcement (s4 provenance for media, note ownership,
   canonical conversation visibility for messages)
 - Scope filtering (all, media, library, conversation)
 - Type filtering
@@ -11,26 +11,40 @@ Tests cover:
 - Pending messages never searchable
 - Invalid cursor handling
 - No visibility leakage
-- S4 shared annotation visibility and revocation
+- Note-block ownership and library revocation behavior
 - S4 library-scope message search
 - S4 conversation scope with shared-read visibility
 - S4 media provenance (stale default-library rows)
 - Response shape preservation
 """
 
+import base64
 import json
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+import respx
+from sqlalchemy import select, text
 
+from nexus.config import clear_settings_cache
+from nexus.db.models import Fragment, ObjectSearchDocument, Page
+from nexus.schemas.notes import CreatePageRequest
+from nexus.services import notes, object_search
+from nexus.services.content_indexing import (
+    mark_content_index_failed,
+    rebuild_fragment_content_index,
+    rebuild_transcript_content_index,
+)
+from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.semantic_chunks import build_text_embedding, to_pgvector_literal
 from tests.factories import (
     add_library_member,
     create_searchable_media,
     create_searchable_media_in_library,
-    create_test_annotation,
     create_test_conversation,
     create_test_conversation_with_message,
+    create_test_highlight_note,
     create_test_library,
     create_test_message,
     get_user_default_library,
@@ -41,15 +55,7 @@ from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
 
-
-def _basis_embedding(index: int) -> list[float]:
-    from nexus.services.semantic_chunks import transcript_embedding_dimensions
-
-    dims = transcript_embedding_dimensions()
-    vector = [0.0] * dims
-    if 0 <= index < dims:
-        vector[index] = 1.0
-    return vector
+OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
 
 
 # =============================================================================
@@ -73,15 +79,18 @@ class TestBasicSearch:
         assert data["page"]["has_more"] is False
 
     def test_search_requires_query(self, auth_client):
-        """Search without q param returns error."""
+        """Search without q param returns an empty result set."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
         response = auth_client.get("/search", headers=auth_headers(user_id))
 
-        assert response.status_code in (400, 422)  # FastAPI validation
+        assert response.status_code == 200
+        data = response.json()
+        assert data["results"] == []
+        assert data["page"]["has_more"] is False
 
-    def test_epub_fragment_and_annotation_results_include_section_id(
+    def test_epub_fragment_and_note_block_results_include_section_id(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """EPUB search hits expose canonical section ids for reader deep links."""
@@ -91,7 +100,7 @@ class TestBasicSearch:
         media_id = uuid4()
         fragment_id = uuid4()
 
-        direct_db.register_cleanup("highlights", "fragment_id", fragment_id)
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
         direct_db.register_cleanup("epub_nav_locations", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -142,6 +151,19 @@ class TestBasicSearch:
                     "href_path": "text/chapter1.xhtml",
                 },
             )
+            fragment = session.get(Fragment, fragment_id)
+            assert fragment is not None
+            insert_fragment_blocks(
+                session, fragment.id, parse_fragment_blocks(fragment.canonical_text)
+            )
+            rebuild_fragment_content_index(
+                session,
+                media_id=media_id,
+                source_kind="epub",
+                artifact_ref="test://epub-search-contract",
+                fragments=[fragment],
+                reason="test",
+            )
             session.commit()
 
         auth_client.post(
@@ -151,18 +173,19 @@ class TestBasicSearch:
         )
 
         with direct_db.session() as session:
-            highlight_id, annotation_id = create_test_annotation(
+            highlight_id, note_block_id = create_test_highlight_note(
                 session,
                 user_id,
                 media_id,
-                body="Unique EPUB annotation needle for section deep link coverage.",
+                body="Unique EPUB note needle for section deep link coverage.",
             )
 
-        direct_db.register_cleanup("annotations", "id", annotation_id)
+        direct_db.register_cleanup("note_blocks", "id", note_block_id)
+        direct_db.register_cleanup("object_links", "a_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
 
         fragment_response = auth_client.get(
-            "/search?q=unique+epub+fragment+needle&types=fragment",
+            "/search?q=unique+epub+fragment+needle&types=content_chunk",
             headers=auth_headers(user_id),
         )
         assert fragment_response.status_code == 200, (
@@ -173,25 +196,30 @@ class TestBasicSearch:
         epub_fragment_row = next(
             row
             for row in fragment_rows
-            if row["type"] == "fragment" and row["source"]["media_id"] == str(media_id)
+            if row["type"] == "content_chunk" and row["source"]["media_id"] == str(media_id)
         )
-        assert epub_fragment_row["section_id"] == "text/chapter1.xhtml"
+        assert epub_fragment_row["source"]["media_id"] == str(media_id)
+        assert epub_fragment_row["deep_link"].startswith(f"/media/{media_id}")
 
-        annotation_response = auth_client.get(
-            "/search?q=unique+epub+annotation+needle&types=annotation",
+        note_block_response = auth_client.get(
+            "/search?q=unique+epub+note+needle&types=note_block",
             headers=auth_headers(user_id),
         )
-        assert annotation_response.status_code == 200, (
-            f"Expected annotation search to succeed, got {annotation_response.status_code}: "
-            f"{annotation_response.text}"
+        assert note_block_response.status_code == 200, (
+            f"Expected note search to succeed, got {note_block_response.status_code}: "
+            f"{note_block_response.text}"
         )
-        annotation_rows = annotation_response.json()["results"]
-        epub_annotation_row = next(
+        note_block_rows = note_block_response.json()["results"]
+        epub_note_block_row = next(
             row
-            for row in annotation_rows
-            if row["type"] == "annotation" and row["source"]["media_id"] == str(media_id)
+            for row in note_block_rows
+            if row["type"] == "note_block" and row["id"] == str(note_block_id)
         )
-        assert epub_annotation_row["section_id"] == "text/chapter1.xhtml"
+        assert (
+            epub_note_block_row["body_text"]
+            == "Unique EPUB note needle for section deep link coverage."
+        )
+        assert epub_note_block_row["deep_link"] == f"/notes/{note_block_id}"
 
     def test_search_finds_media_by_title(self, auth_client, direct_db: DirectSessionManager):
         """Search finds media by matching title."""
@@ -332,6 +360,106 @@ class TestBasicSearch:
         assert str(unavailable_video_id) in result_ids
         assert str(unavailable_podcast_id) in result_ids
 
+    def test_fragment_search_excludes_transcript_media_marked_unavailable(
+        self, auth_client, direct_db
+    ):
+        """Transcript fragment search respects canonical transcript state, not media failure residue."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        media_id = uuid4()
+        fragment_id = uuid4()
+
+        direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        with direct_db.session() as session:
+            default_library_id = get_user_default_library(session, user_id)
+            assert default_library_id is not None
+
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        last_error_code, external_playback_url, provider, provider_id, created_by_user_id
+                    )
+                    VALUES (
+                        :id, 'podcast_episode', :title, :source_url, 'failed',
+                        'E_TRANSCRIPT_UNAVAILABLE', :playback_url, 'podcast_index', :provider_id, :user_id
+                    )
+                """),
+                {
+                    "id": media_id,
+                    "title": "Unavailable transcript fragment search contract",
+                    "source_url": "https://podcasts.example.com/feed.xml",
+                    "playback_url": "https://cdn.example.com/unavailable.mp3",
+                    "provider_id": "unavailable-fragment-contract",
+                    "user_id": user_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)
+                    VALUES (:id, :media_id, 0, :canonical_text, :html_sanitized)
+                """),
+                {
+                    "id": fragment_id,
+                    "media_id": media_id,
+                    "canonical_text": "Needle transcript fragment should stay out of search results.",
+                    "html_sanitized": "<p>Needle transcript fragment should stay out of search results.</p>",
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO media_transcript_states (
+                        media_id,
+                        transcript_state,
+                        transcript_coverage,
+                        semantic_status,
+                        last_request_reason
+                    )
+                    VALUES (
+                        :media_id,
+                        'unavailable',
+                        'none',
+                        'none',
+                        'search'
+                    )
+                """),
+                {"media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO library_entries (library_id, media_id)
+                    VALUES (:library_id, :media_id)
+                """),
+                {"library_id": default_library_id, "media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
+                    VALUES (:default_library_id, :media_id)
+                """),
+                {"default_library_id": default_library_id, "media_id": media_id},
+            )
+            session.commit()
+
+        response = auth_client.get(
+            "/search?q=needle+transcript+fragment&types=content_chunk",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"expected fragment search to succeed, got {response.status_code}: {response.text}"
+        )
+        result_ids = {
+            row["id"] for row in response.json()["results"] if row["type"] == "content_chunk"
+        }
+        assert str(fragment_id) not in result_ids
+
     def test_search_finds_fragments(self, auth_client, direct_db: DirectSessionManager):
         """Search finds fragments by canonical_text."""
         user_id = create_test_user_id()
@@ -349,32 +477,33 @@ class TestBasicSearch:
 
         assert response.status_code == 200
         data = response.json()
-        fragment_results = [r for r in data["results"] if r["type"] == "fragment"]
+        fragment_results = [r for r in data["results"] if r["type"] == "content_chunk"]
         assert len(fragment_results) >= 1
 
-    def test_search_finds_annotations(self, auth_client, direct_db: DirectSessionManager):
-        """Search finds annotations by body text."""
+    def test_search_finds_note_blocks(self, auth_client, direct_db: DirectSessionManager):
+        """Search finds note blocks by body text."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
             media_id = create_searchable_media(session, user_id, title="Test Article")
-            highlight_id, annotation_id = create_test_annotation(
-                session, user_id, media_id, body="My unique annotation about databases"
+            highlight_id, note_block_id = create_test_highlight_note(
+                session, user_id, media_id, body="My unique note about databases"
             )
 
-        direct_db.register_cleanup("annotations", "id", annotation_id)
+        direct_db.register_cleanup("note_blocks", "id", note_block_id)
+        direct_db.register_cleanup("object_links", "a_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        response = auth_client.get("/search?q=annotation+databases", headers=auth_headers(user_id))
+        response = auth_client.get("/search?q=note+databases", headers=auth_headers(user_id))
 
         assert response.status_code == 200
         data = response.json()
-        annotation_results = [r for r in data["results"] if r["type"] == "annotation"]
-        assert len(annotation_results) >= 1
+        note_block_results = [r for r in data["results"] if r["type"] == "note_block"]
+        assert len(note_block_results) >= 1
 
     def test_search_finds_messages(self, auth_client, direct_db: DirectSessionManager):
         """Search finds messages in conversations."""
@@ -434,39 +563,38 @@ class TestSearchVisibility:
         media_results = [r for r in data["results"] if r["type"] == "media"]
         assert not any(r["id"] == str(media_id) for r in media_results)
 
-    def test_search_does_not_leak_other_users_annotations(
+    def test_search_does_not_leak_other_users_note_blocks(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """User A cannot find User B's annotations when they share no library."""
+        """User A cannot find User B's note blocks when they share no library."""
         user_a = create_test_user_id()
         user_b = create_test_user_id()
 
         auth_client.get("/me", headers=auth_headers(user_a))
         auth_client.get("/me", headers=auth_headers(user_b))
 
-        # User B creates media and annotation
+        # User B creates media and note block
         with direct_db.session() as session:
             media_id = create_searchable_media(session, user_b, title="Shared Article")
-            highlight_id, annotation_id = create_test_annotation(
-                session, user_b, media_id, body="User B private annotation notes"
+            highlight_id, note_block_id = create_test_highlight_note(
+                session, user_b, media_id, body="User B private note text"
             )
 
-        direct_db.register_cleanup("annotations", "id", annotation_id)
+        direct_db.register_cleanup("note_blocks", "id", note_block_id)
+        direct_db.register_cleanup("object_links", "a_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         # User A searches for it
-        response = auth_client.get(
-            "/search?q=private+annotation+notes", headers=auth_headers(user_a)
-        )
+        response = auth_client.get("/search?q=private+note+text", headers=auth_headers(user_a))
 
         assert response.status_code == 200
         data = response.json()
-        # Should not find User B's annotation
-        annotation_results = [r for r in data["results"] if r["type"] == "annotation"]
-        assert not any(r["id"] == str(annotation_id) for r in annotation_results)
+        # Should not find User B's note block
+        note_block_results = [r for r in data["results"] if r["type"] == "note_block"]
+        assert not any(r["id"] == str(note_block_id) for r in note_block_results)
 
     def test_search_does_not_leak_other_users_messages(
         self, auth_client, direct_db: DirectSessionManager
@@ -559,7 +687,7 @@ class TestSearchScopes:
         for result in data["results"]:
             if result["type"] == "media":
                 assert result["id"] == str(media1)
-            elif result["type"] == "fragment":
+            elif result["type"] == "content_chunk":
                 assert result["source"]["media_id"] == str(media1)
 
     def test_scope_media_not_found(self, auth_client):
@@ -722,17 +850,19 @@ class TestSearchTypeFiltering:
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=test&types=media,fragment", headers=auth_headers(user_id)
+            "/search?q=test&types=media,content_chunk", headers=auth_headers(user_id)
         )
 
         assert response.status_code == 200
         data = response.json()
         # Results should be media or fragment only
         for result in data["results"]:
-            assert result["type"] in ("media", "fragment")
+            assert result["type"] in ("media", "content_chunk")
 
-    def test_unknown_types_ignored(self, auth_client, direct_db: DirectSessionManager):
-        """Unknown type values are silently ignored."""
+    def test_invalid_types_return_invalid_request(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Unknown type values fail fast instead of being ignored."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -743,17 +873,17 @@ class TestSearchTypeFiltering:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        # Include unknown type - should be ignored
         response = auth_client.get(
-            "/search?q=test&types=media,invalid_type,fragment", headers=auth_headers(user_id)
+            "/search?q=test&types=media,invalid_type,content_chunk", headers=auth_headers(user_id)
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    def test_only_unknown_types_return_no_results(
+    def test_only_invalid_types_return_invalid_request(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """When every type is unknown, search returns no results."""
+        """Reject a type filter made only of unsupported values."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -769,8 +899,8 @@ class TestSearchTypeFiltering:
             headers=auth_headers(user_id),
         )
 
-        assert response.status_code == 200
-        assert response.json()["results"] == []
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_type_filter_empty_returns_no_results(
         self, auth_client, direct_db: DirectSessionManager
@@ -899,6 +1029,82 @@ class TestSearchPagination:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
 
+    @pytest.mark.parametrize("offset", ["1", 1.2, True])
+    def test_invalid_cursor_offset_type(self, auth_client, offset):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        cursor = (
+            base64.urlsafe_b64encode(json.dumps({"offset": offset}).encode("utf-8"))
+            .decode("ascii")
+            .rstrip("=")
+        )
+
+        response = auth_client.get(
+            f"/search?q=the+and&cursor={cursor}",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
+
+    @respx.mock
+    def test_invalid_cursor_does_not_call_embedding_provider(
+        self,
+        auth_client,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        monkeypatch.setenv("NEXUS_ENV", "local")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+        monkeypatch.setenv("ENABLE_OPENAI", "true")
+        clear_settings_cache()
+        try:
+            route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
+                200,
+                json={"data": [{"index": 0, "embedding": [0.1] * 256}]},
+            )
+
+            response = auth_client.get(
+                "/search?q=cursor+check&types=content_chunk&cursor=invalid!!!cursor",
+                headers=auth_headers(user_id),
+            )
+
+            assert response.status_code == 400
+            assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
+            assert route.call_count == 0
+        finally:
+            clear_settings_cache()
+
+    @respx.mock
+    def test_all_stopword_query_does_not_call_embedding_provider(
+        self,
+        auth_client,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        monkeypatch.setenv("NEXUS_ENV", "local")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+        monkeypatch.setenv("ENABLE_OPENAI", "true")
+        clear_settings_cache()
+        try:
+            route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
+                200,
+                json={"data": [{"index": 0, "embedding": [0.1] * 256}]},
+            )
+
+            response = auth_client.get(
+                "/search?q=the+and&types=content_chunk",
+                headers=auth_headers(user_id),
+            )
+
+            assert response.status_code == 200
+            assert response.json()["results"] == []
+            assert route.call_count == 0
+        finally:
+            clear_settings_cache()
+
 
 # =============================================================================
 # Result Format Tests
@@ -938,9 +1144,55 @@ class TestSearchResultFormat:
         assert result["source"]["media_id"] == str(media_id)
         assert result["source"]["media_kind"] == "web_article"
         assert result["source"]["title"] == "Unique Title For Test"
-        assert "authors" in result["source"]
+        assert "contributors" in result["source"]
         assert "published_date" in result["source"]
-        assert "title" not in result
+        assert result["title"] == "Unique Title For Test"
+        assert result["media_id"] == str(media_id)
+        assert result["media_kind"] == "web_article"
+        assert result["deep_link"] == f"/media/{media_id}"
+        assert result["context_ref"] == {"type": "media", "id": str(media_id)}
+
+    def test_media_result_contributors_use_frontend_wire_keys(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Search responses keep contributor fields in snake_case for the web adapter."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(
+                session,
+                user_id,
+                title=f"Contributor Wire Contract {uuid4()}",
+            )
+            replace_media_contributor_credits(
+                session,
+                media_id=media_id,
+                credits=[{"name": "Wire Contract Author", "role": "author", "source": "test"}],
+            )
+            session.commit()
+
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("contributor_credits", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.get(
+            "/search?q=contributor+wire+contract&types=media",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"Expected search to succeed, got {response.status_code}: {response.text}"
+        )
+        rows = response.json()["results"]
+        media_row = next(row for row in rows if row["id"] == str(media_id))
+        credit = media_row["source"]["contributors"][0]
+        assert credit["contributor_handle"]
+        assert credit["contributor_display_name"] == "Wire Contract Author"
+        assert credit["credited_name"] == "Wire Contract Author"
+        assert "contributorHandle" not in credit
+        assert "creditedName" not in credit
 
     def test_fragment_result_has_required_fields(
         self, auth_client, direct_db: DirectSessionManager
@@ -957,7 +1209,7 @@ class TestSearchResultFormat:
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=canonical+text&types=fragment", headers=auth_headers(user_id)
+            "/search?q=canonical+text&types=content_chunk", headers=auth_headers(user_id)
         )
 
         assert response.status_code == 200
@@ -965,13 +1217,144 @@ class TestSearchResultFormat:
 
         if len(data["results"]) >= 1:
             result = data["results"][0]
-            assert result["type"] == "fragment"
-            assert "fragment_idx" in result
+            assert result["type"] == "content_chunk"
             assert "source" in result
             assert result["source"]["media_id"] == str(media_id)
             assert result["source"]["media_kind"] == "web_article"
+            assert result["media_id"] == str(media_id)
+            assert result["media_kind"] == "web_article"
+            assert result["deep_link"].startswith(f"/media/{media_id}?")
+            assert result["citation_label"] == "Source"
+            assert result["resolver"]["kind"] == "web"
+            assert result["resolver"]["route"] == f"/media/{media_id}"
+            assert result["resolver"]["params"]["evidence"] == result["evidence_span_ids"][0]
+            assert result["resolver"]["params"]["fragment"]
+            assert result["resolver"]["highlight"]["kind"] == "web_text"
+            assert result["context_ref"] == {
+                "type": "content_chunk",
+                "id": result["id"],
+                "evidence_span_ids": result["evidence_span_ids"],
+            }
             assert "idx" not in result
-            assert "media_id" not in result
+
+    def test_content_chunk_search_skips_primary_span_from_other_index_run(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(session, user_id, title="Stale Run Search Source")
+            old_span_id = session.execute(
+                text(
+                    """
+                    SELECT cc.primary_evidence_span_id
+                    FROM content_chunks cc
+                    WHERE cc.media_id = :media_id
+                    ORDER BY cc.chunk_idx ASC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar_one()
+            fragment = session.query(Fragment).filter(Fragment.media_id == media_id).one()
+            rebuild_fragment_content_index(
+                session,
+                media_id=media_id,
+                source_kind="web_article",
+                artifact_ref=f"fragments:{fragment.id}:stale-search",
+                fragments=[fragment],
+                reason="test_stale_search",
+            )
+            active_chunk_id = session.execute(
+                text(
+                    """
+                    SELECT cc.id
+                    FROM content_chunks cc
+                    JOIN media_content_index_states mcis
+                      ON mcis.media_id = cc.media_id
+                     AND mcis.active_run_id = cc.index_run_id
+                    WHERE cc.media_id = :media_id
+                    ORDER BY cc.chunk_idx ASC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar_one()
+            session.execute(
+                text(
+                    """
+                    UPDATE content_chunks
+                    SET primary_evidence_span_id = :old_span_id
+                    WHERE id = :active_chunk_id
+                    """
+                ),
+                {"active_chunk_id": active_chunk_id, "old_span_id": old_span_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.get(
+            "/search?q=stale+run+search&types=content_chunk",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"Expected stale primary span to be skipped, got "
+            f"{response.status_code}: {response.text}"
+        )
+        result_ids = {row["id"] for row in response.json()["results"]}
+        assert str(active_chunk_id) not in result_ids
+
+    def test_media_evidence_resolver_returns_reader_payload(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(session, user_id, title="Resolver Source")
+            row = session.execute(
+                text("""
+                    SELECT cc.primary_evidence_span_id, cc.summary_locator
+                    FROM content_chunks cc
+                    WHERE cc.media_id = :media_id
+                    ORDER BY cc.chunk_idx ASC
+                    LIMIT 1
+                """),
+                {"media_id": media_id},
+            ).first()
+            assert row is not None
+            evidence_span_id = row[0]
+            locator = row[1]
+
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.get(
+            f"/media/{media_id}/evidence/{evidence_span_id}",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["evidence_span_id"] == str(evidence_span_id)
+        assert data["media_id"] == str(media_id)
+        assert data["citation_label"] == "Source"
+        assert data["resolver"]["kind"] == "web"
+        assert data["resolver"]["route"] == f"/media/{media_id}"
+        assert data["resolver"]["params"] == {
+            "evidence": str(evidence_span_id),
+            "fragment": locator["fragment_id"],
+        }
+        assert data["resolver"]["status"] == "resolved"
+        assert data["resolver"]["highlight"]["kind"] == "web_text"
+        assert data["resolver"]["highlight"]["fragment_id"] == locator["fragment_id"]
 
     def test_message_result_has_required_fields(self, auth_client, direct_db: DirectSessionManager):
         """Message results include id, conversation_id, seq."""
@@ -998,6 +1381,8 @@ class TestSearchResultFormat:
         assert result["type"] == "message"
         assert "conversation_id" in result
         assert "seq" in result
+        assert result["deep_link"] == f"/conversations/{conversation_id}"
+        assert result["context_ref"] == {"type": "message", "id": str(message_id)}
 
     def test_snippet_max_length(self, auth_client, direct_db: DirectSessionManager):
         """Snippets are truncated to max 300 chars."""
@@ -1019,88 +1404,186 @@ class TestSearchResultFormat:
             # Snippet should be <= 303 (300 + "...")
             assert len(result["snippet"]) <= 303
 
-    def test_annotation_results_include_highlight_and_source_metadata(
+    def test_note_block_results_use_note_contract(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Annotation search returns strict v2 nested highlight/source contract."""
+        """Note-block search returns the hard-cutover note result contract."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
-        annotation_body = "Unique metadata-rich annotation lookup term harmonica"
+        note_body = "Unique metadata-rich note lookup term harmonica"
         source_title = "Metadata Rich Source Title"
-        source_published_date = "2024-02-29"
 
         with direct_db.session() as session:
             media_id = create_searchable_media(session, user_id, title=source_title)
-            highlight_id, annotation_id = create_test_annotation(
+            highlight_id, note_block_id = create_test_highlight_note(
                 session,
                 user_id,
                 media_id,
-                body=annotation_body,
-            )
-            session.execute(
-                text(
-                    """
-                    UPDATE media
-                    SET published_date = :published_date
-                    WHERE id = :media_id
-                    """
-                ),
-                {"published_date": source_published_date, "media_id": media_id},
-            )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media_authors (id, media_id, name, sort_order)
-                    VALUES (:id_1, :media_id, :name_1, 1),
-                           (:id_2, :media_id, :name_2, 2)
-                    """
-                ),
-                {
-                    "id_1": uuid4(),
-                    "id_2": uuid4(),
-                    "media_id": media_id,
-                    "name_1": "Ada Lovelace",
-                    "name_2": "Grace Hopper",
-                },
+                body=note_body,
             )
             session.commit()
 
-        direct_db.register_cleanup("annotations", "id", annotation_id)
+        direct_db.register_cleanup("note_blocks", "id", note_block_id)
+        direct_db.register_cleanup("object_links", "a_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
-        direct_db.register_cleanup("media_authors", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=harmonica&types=annotation",
+            "/search?q=harmonica&types=note_block",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
-            f"Expected 200 for annotation search, got {response.status_code}: {response.text}"
+            f"Expected 200 for note search, got {response.status_code}: {response.text}"
         )
         data = response.json()
-        result = next((r for r in data["results"] if r["id"] == str(annotation_id)), None)
+        result = next((r for r in data["results"] if r["id"] == str(note_block_id)), None)
         assert result is not None, (
-            f"Expected annotation {annotation_id} in results; got {data['results']}"
+            f"Expected note block {note_block_id} in results; got {data['results']}"
         )
 
-        assert result["source"]["media_id"] == str(media_id)
-        assert result["source"]["media_kind"] == "web_article"
-        assert result["source"]["title"] == source_title
-        assert result["source"]["authors"] == ["Ada Lovelace", "Grace Hopper"]
-        assert result["source"]["published_date"] == source_published_date
-        assert result["highlight"]["exact"] == "test exact"
-        assert result["highlight"]["prefix"] == "prefix"
-        assert result["highlight"]["suffix"] == "suffix"
-        assert result["annotation_body"] == annotation_body
-        assert "media_kind" not in result
-        assert "source_title" not in result
-        assert "source_authors" not in result
-        assert "source_published_date" not in result
-        assert "highlight_exact" not in result
-        assert "highlight_prefix" not in result
-        assert "highlight_suffix" not in result
+        assert result["type"] == "note_block"
+        assert result["page_title"] == "Notes"
+        assert result["source_label"] == "note"
+        assert result["highlight_excerpt"] == "test exact"
+        assert result["body_text"] == note_body
+        assert result["deep_link"] == f"/notes/{note_block_id}"
+        assert result["media_id"] is None
+        assert result["media_kind"] is None
+        assert result["context_ref"] == {"type": "note_block", "id": str(note_block_id)}
+        assert "source" not in result
+        assert "highlight" not in result
+        assert "note_body" not in result
+
+    def test_page_results_use_page_contract(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        page_id = uuid4()
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO pages (id, user_id, title, description)
+                    VALUES (:page_id, :user_id, 'Garden Planning', 'Unique trellis page term')
+                """),
+                {"page_id": page_id, "user_id": user_id},
+            )
+            page = session.get(Page, page_id)
+            assert page is not None
+            object_search.project_page(session, user_id, page)
+            session.commit()
+
+        direct_db.register_cleanup("pages", "id", page_id)
+
+        response = auth_client.get(
+            "/search?q=trellis&types=page",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"Expected 200 for page search, got {response.status_code}: {response.text}"
+        )
+        data = response.json()
+        result = next((row for row in data["results"] if row["id"] == str(page_id)), None)
+        assert result is not None, f"Expected page {page_id} in results; got {data['results']}"
+        assert result["type"] == "page"
+        assert result["title"] == "Garden Planning"
+        assert result["description"] == "Unique trellis page term"
+        assert result["deep_link"] == f"/pages/{page_id}"
+        assert result["context_ref"] == {"type": "page", "id": str(page_id)}
+        assert "body_text" not in result
+
+    def test_page_semantic_search_uses_object_search_embeddings(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("libraries", "owner_user_id", user_id)
+        direct_db.register_cleanup("memberships", "user_id", user_id)
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            page = notes.create_page(
+                session,
+                user_id,
+                CreatePageRequest(title="Vector Only Page", description="ordinary garden notes"),
+            )
+            assert object_search.rebuild_missing_embeddings(session, user_id) == 1
+            assert object_search.rebuild_missing_embeddings(session, user_id) == 0
+            document_id = session.scalar(
+                select(ObjectSearchDocument.id).where(
+                    ObjectSearchDocument.user_id == user_id,
+                    ObjectSearchDocument.object_type == "page",
+                    ObjectSearchDocument.object_id == page.id,
+                )
+            )
+            assert document_id is not None
+            _model, vector = build_text_embedding("semanticneedle")
+            session.execute(
+                text(
+                    """
+                    UPDATE object_search_embeddings
+                    SET embedding = CAST(:embedding AS vector(256))
+                    WHERE search_document_id = :document_id
+                    """
+                ),
+                {
+                    "document_id": document_id,
+                    "embedding": to_pgvector_literal(vector),
+                },
+            )
+            session.commit()
+
+        lexical_response = auth_client.get(
+            "/search?q=semanticneedle&types=page&semantic=false",
+            headers=auth_headers(user_id),
+        )
+        assert lexical_response.status_code == 200, lexical_response.text
+        assert lexical_response.json()["results"] == []
+
+        semantic_response = auth_client.get(
+            "/search?q=semanticneedle&types=page&semantic=true",
+            headers=auth_headers(user_id),
+        )
+        assert semantic_response.status_code == 200, semantic_response.text
+        result_ids = {row["id"] for row in semantic_response.json()["results"]}
+        assert str(page.id) in result_ids
+
+        default_response = auth_client.get(
+            "/search?q=semanticneedle&types=page",
+            headers=auth_headers(user_id),
+        )
+        assert default_response.status_code == 200, default_response.text
+        default_result_ids = {row["id"] for row in default_response.json()["results"]}
+        assert str(page.id) in default_result_ids
+
+        _model, unrelated_vector = build_text_embedding("unrelatedobjectmiss")
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE object_search_embeddings
+                    SET embedding = CAST(:embedding AS vector(256))
+                    WHERE search_document_id = :document_id
+                    """
+                ),
+                {
+                    "document_id": document_id,
+                    "embedding": to_pgvector_literal([-value for value in unrelated_vector]),
+                },
+            )
+            session.commit()
+
+        unrelated_response = auth_client.get(
+            "/search?q=unrelatedobjectmiss&types=page",
+            headers=auth_headers(user_id),
+        )
+        assert unrelated_response.status_code == 200, unrelated_response.text
+        assert unrelated_response.json()["results"] == []
 
 
 # =============================================================================
@@ -1166,35 +1649,183 @@ class TestSearchS4ConversationScope:
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_CONVERSATION_NOT_FOUND"
 
-
-class TestSearchS4AnnotationVisibility:
-    """Tests for s4 annotation visibility via highlight shared-read semantics."""
-
-    def test_search_annotations_include_shared_visible_results(
+    def test_scope_conversation_searches_associated_media(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Shared-visible annotations are returned in search.
+        """Conversation scope includes media linked through conversation_media."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
 
-        media M in shared library L; user_a authors highlight+annotation on M;
-        user_b is member of L and sees annotation.
-        """
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            media_id = create_searchable_media(
+                session,
+                user_id,
+                title="Conversation Scoped Media Needle",
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO conversation_media (conversation_id, media_id)
+                    VALUES (:conversation_id, :media_id)
+                    """
+                ),
+                {"conversation_id": conversation_id, "media_id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        response = auth_client.get(
+            f"/search?q=scoped+media+needle&scope=conversation:{conversation_id}&types=media",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        media_results = [r for r in data["results"] if r["type"] == "media"]
+        assert any(r["id"] == str(media_id) for r in media_results)
+
+    def test_scope_conversation_searches_notes_attached_as_message_context(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        page_id = uuid4()
+        context_note_id = uuid4()
+        link_note_id = uuid4()
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=1,
+                content="message with attached notes",
+            )
+            session.execute(
+                text("""
+                    INSERT INTO pages (id, user_id, title)
+                    VALUES (:page_id, :user_id, 'Conversation Context Notes')
+                """),
+                {"page_id": page_id, "user_id": user_id},
+            )
+            for note_id, order_key, body_text in (
+                (
+                    context_note_id,
+                    "0000000001",
+                    "message context item note block piccolo needle",
+                ),
+                (
+                    link_note_id,
+                    "0000000002",
+                    "canonical object link note block piccolo needle",
+                ),
+            ):
+                session.execute(
+                    text("""
+                        INSERT INTO note_blocks (
+                            id, user_id, page_id, order_key, block_kind,
+                            body_pm_json, body_markdown, body_text, collapsed
+                        )
+                        VALUES (
+                            :note_id, :user_id, :page_id, :order_key, 'bullet',
+                            jsonb_build_object('type', 'paragraph'),
+                            :body_text, :body_text, false
+                        )
+                    """),
+                    {
+                        "note_id": note_id,
+                        "user_id": user_id,
+                        "page_id": page_id,
+                        "order_key": order_key,
+                        "body_text": body_text,
+                    },
+                )
+            session.execute(
+                text("""
+                    INSERT INTO message_context_items (
+                        message_id, user_id, object_type, object_id, ordinal, context_snapshot
+                    )
+                    VALUES (
+                        :message_id, :user_id, 'note_block', :note_block_id, 0, '{}'::jsonb
+                    )
+                """),
+                {
+                    "message_id": message_id,
+                    "user_id": user_id,
+                    "note_block_id": context_note_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO object_links (
+                        user_id, relation_type, a_type, a_id, b_type, b_id, metadata
+                    )
+                    VALUES (
+                        :user_id, 'used_as_context', 'message', :message_id,
+                        'note_block', :note_block_id, '{}'::jsonb
+                    )
+                """),
+                {
+                    "user_id": user_id,
+                    "message_id": message_id,
+                    "note_block_id": link_note_id,
+                },
+            )
+            page = session.get(Page, page_id)
+            assert page is not None
+            object_search.project_page(session, user_id, page)
+            session.commit()
+
+        direct_db.register_cleanup("message_context_items", "message_id", message_id)
+        direct_db.register_cleanup("object_links", "a_id", message_id)
+        direct_db.register_cleanup("note_blocks", "id", context_note_id)
+        direct_db.register_cleanup("note_blocks", "id", link_note_id)
+        direct_db.register_cleanup("pages", "id", page_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        response = auth_client.get(
+            f"/search?q=piccolo+needle&scope=conversation:{conversation_id}&types=note_block",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200
+        note_ids = {row["id"] for row in response.json()["results"] if row["type"] == "note_block"}
+        assert note_ids == {str(context_note_id), str(link_note_id)}
+
+
+class TestSearchNoteBlockOwnership:
+    """Tests for note-block search ownership after the hard cutover."""
+
+    def test_search_note_blocks_exclude_other_users_shared_media_notes(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Shared media visibility does not expose another user's note blocks."""
         user_a = create_test_user_id()
         user_b = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_a))
         auth_client.get("/me", headers=auth_headers(user_b))
 
         with direct_db.session() as session:
-            library_id = create_test_library(session, user_a, "Annotation Share Lib")
+            library_id = create_test_library(session, user_a, "Note Share Lib")
             add_library_member(session, library_id, user_b)
 
             media_id = create_searchable_media_in_library(
-                session, user_a, library_id, title="Shared Annotation Article"
+                session, user_a, library_id, title="Shared Note Article"
             )
-            highlight_id, annotation_id = create_test_annotation(
-                session, user_a, media_id, body="Unique shared annotation searchterm xylophone"
+            highlight_id, note_block_id = create_test_highlight_note(
+                session, user_a, media_id, body="Unique shared note searchterm xylophone"
             )
 
-        direct_db.register_cleanup("annotations", "id", annotation_id)
+        direct_db.register_cleanup("note_blocks", "id", note_block_id)
+        direct_db.register_cleanup("object_links", "a_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -1203,22 +1834,18 @@ class TestSearchS4AnnotationVisibility:
         direct_db.register_cleanup("libraries", "id", library_id)
 
         response = auth_client.get(
-            "/search?q=xylophone&types=annotation", headers=auth_headers(user_b)
+            "/search?q=xylophone&types=note_block", headers=auth_headers(user_b)
         )
 
         assert response.status_code == 200
         data = response.json()
-        annotation_results = [r for r in data["results"] if r["type"] == "annotation"]
-        assert any(r["id"] == str(annotation_id) for r in annotation_results)
+        note_block_results = [r for r in data["results"] if r["type"] == "note_block"]
+        assert not any(r["id"] == str(note_block_id) for r in note_block_results)
 
-    def test_search_annotations_hidden_after_membership_revocation(
+    def test_search_note_blocks_remain_hidden_after_membership_revocation(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """After revoking shared library membership, annotations become invisible.
-
-        Start from visible shared-annotation setup, then revoke user_b from
-        the intersecting library.
-        """
+        """Revocation keeps another user's note blocks hidden."""
         user_a = create_test_user_id()
         user_b = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_a))
@@ -1229,13 +1856,14 @@ class TestSearchS4AnnotationVisibility:
             add_library_member(session, library_id, user_b)
 
             media_id = create_searchable_media_in_library(
-                session, user_a, library_id, title="Revocation Annotation Article"
+                session, user_a, library_id, title="Revocation Note Article"
             )
-            highlight_id, annotation_id = create_test_annotation(
-                session, user_a, media_id, body="Revocation test annotation trombone"
+            highlight_id, note_block_id = create_test_highlight_note(
+                session, user_a, media_id, body="Revocation test note trombone"
             )
 
-        direct_db.register_cleanup("annotations", "id", annotation_id)
+        direct_db.register_cleanup("note_blocks", "id", note_block_id)
+        direct_db.register_cleanup("object_links", "a_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -1243,13 +1871,13 @@ class TestSearchS4AnnotationVisibility:
         direct_db.register_cleanup("memberships", "library_id", library_id)
         direct_db.register_cleanup("libraries", "id", library_id)
 
-        # Verify visible before revocation
+        # The note is not visible even before revocation because notes are user-owned.
         resp_before = auth_client.get(
-            "/search?q=trombone&types=annotation", headers=auth_headers(user_b)
+            "/search?q=trombone&types=note_block", headers=auth_headers(user_b)
         )
         assert resp_before.status_code == 200
         before_ids = [r["id"] for r in resp_before.json()["results"]]
-        assert str(annotation_id) in before_ids
+        assert str(note_block_id) not in before_ids
 
         # Revoke membership
         with direct_db.session() as session:
@@ -1264,11 +1892,11 @@ class TestSearchS4AnnotationVisibility:
 
         # Verify invisible after revocation
         resp_after = auth_client.get(
-            "/search?q=trombone&types=annotation", headers=auth_headers(user_b)
+            "/search?q=trombone&types=note_block", headers=auth_headers(user_b)
         )
         assert resp_after.status_code == 200
         after_ids = [r["id"] for r in resp_after.json()["results"]]
-        assert str(annotation_id) not in after_ids
+        assert str(note_block_id) not in after_ids
 
 
 class TestSearchS4LibraryScopeMessages:
@@ -1499,7 +2127,7 @@ class TestSearchS4Provenance:
         data = response.json()
         all_ids = [r["id"] for r in data["results"]]
         assert str(media_id) not in all_ids
-        fragment_ids = [r["id"] for r in data["results"] if r["type"] == "fragment"]
+        fragment_ids = [r["id"] for r in data["results"] if r["type"] == "content_chunk"]
         assert str(fragment_id) not in fragment_ids
 
 
@@ -1541,7 +2169,13 @@ class TestSearchS4ScopeMasking:
 
 
 class TestSemanticTranscriptChunkSearch:
-    """Semantic transcript search over chunk + embedding artifacts."""
+    """Semantic transcript search over shared content chunks."""
+
+    def _use_openai_embedding_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NEXUS_ENV", "local")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+        monkeypatch.setenv("ENABLE_OPENAI", "true")
+        clear_settings_cache()
 
     def _seed_transcript_chunk_media(
         self,
@@ -1549,23 +2183,27 @@ class TestSemanticTranscriptChunkSearch:
         direct_db: DirectSessionManager,
         *,
         semantic_status: str,
+        segments: list[dict[str, object]] | None = None,
     ) -> tuple[UUID, UUID]:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
         media_id = uuid4()
         version_id = uuid4()
-        chunk_a_id = uuid4()
-        chunk_b_id = uuid4()
-        from nexus.services.semantic_chunks import (
-            current_transcript_embedding_model,
-            to_pgvector_literal,
-        )
-
-        embedding_model = current_transcript_embedding_model()
-        embedding_dims = len(_basis_embedding(0))
-        embedding_a = _basis_embedding(0)
-        embedding_b = _basis_embedding(1)
+        transcript_segments = segments or [
+            {
+                "segment_idx": 0,
+                "text": "transformer attention residual stream explanation",
+                "t_start_ms": 1000,
+                "t_end_ms": 5000,
+            },
+            {
+                "segment_idx": 1,
+                "text": "gardening tomatoes and compost aeration tips",
+                "t_start_ms": 5100,
+                "t_end_ms": 9000,
+            },
+        ]
 
         with direct_db.session() as session:
             default_library_id = get_user_default_library(session, user_id)
@@ -1575,26 +2213,14 @@ class TestSemanticTranscriptChunkSearch:
                 text(
                     """
                     INSERT INTO media (
-                        id,
-                        kind,
-                        title,
-                        canonical_source_url,
-                        processing_status,
-                        external_playback_url,
-                        provider,
-                        provider_id,
-                        created_by_user_id
+                        id, kind, title, canonical_source_url, processing_status,
+                        external_playback_url, provider, provider_id, created_by_user_id
                     )
                     VALUES (
-                        :id,
-                        'podcast_episode',
-                        'Semantic Chunk Podcast Episode',
-                        'https://feeds.example.com/semantic.xml',
-                        'ready_for_reading',
-                        'https://cdn.example.com/semantic.mp3',
-                        'podcast_index',
-                        'semantic-episode-1',
-                        :user_id
+                        :id, 'podcast_episode', 'Semantic Chunk Podcast Episode',
+                        'https://feeds.example.com/semantic.xml', 'ready_for_reading',
+                        'https://cdn.example.com/semantic.mp3', 'podcast_index',
+                        'semantic-episode-1', :user_id
                     )
                     """
                 ),
@@ -1618,52 +2244,62 @@ class TestSemanticTranscriptChunkSearch:
                 ),
                 {"default_library_id": default_library_id, "media_id": media_id},
             )
-
             session.execute(
                 text(
                     """
                     INSERT INTO podcast_transcript_versions (
-                        id,
-                        media_id,
-                        version_no,
-                        transcript_coverage,
-                        is_active,
-                        created_by_user_id
+                        id, media_id, version_no, transcript_coverage,
+                        is_active, created_by_user_id
                     )
-                    VALUES (
-                        :id,
-                        :media_id,
-                        1,
-                        'full',
-                        true,
-                        :created_by_user_id
-                    )
+                    VALUES (:id, :media_id, 1, 'full', true, :created_by_user_id)
                     """
                 ),
-                {
-                    "id": version_id,
-                    "media_id": media_id,
-                    "created_by_user_id": user_id,
-                },
+                {"id": version_id, "media_id": media_id, "created_by_user_id": user_id},
             )
+            for segment_idx, segment in enumerate(transcript_segments):
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO podcast_transcript_segments (
+                            transcript_version_id,
+                            media_id,
+                            segment_idx,
+                            canonical_text,
+                            t_start_ms,
+                            t_end_ms,
+                            speaker_label
+                        )
+                        VALUES (
+                            :transcript_version_id,
+                            :media_id,
+                            :segment_idx,
+                            :canonical_text,
+                            :t_start_ms,
+                            :t_end_ms,
+                            :speaker_label
+                        )
+                        """
+                    ),
+                    {
+                        "transcript_version_id": version_id,
+                        "media_id": media_id,
+                        "segment_idx": segment_idx,
+                        "canonical_text": segment["text"],
+                        "t_start_ms": segment["t_start_ms"],
+                        "t_end_ms": segment["t_end_ms"],
+                        "speaker_label": segment.get("speaker_label"),
+                    },
+                )
             session.execute(
                 text(
                     """
                     INSERT INTO media_transcript_states (
-                        media_id,
-                        transcript_state,
-                        transcript_coverage,
-                        semantic_status,
-                        active_transcript_version_id,
-                        last_request_reason
+                        media_id, transcript_state, transcript_coverage, semantic_status,
+                        active_transcript_version_id, last_request_reason
                     )
                     VALUES (
-                        :media_id,
-                        'ready',
-                        'full',
-                        :semantic_status,
-                        :active_transcript_version_id,
-                        'search'
+                        :media_id, 'ready', 'full', :semantic_status,
+                        :active_transcript_version_id, 'search'
                     )
                     """
                 ),
@@ -1673,65 +2309,37 @@ class TestSemanticTranscriptChunkSearch:
                     "active_transcript_version_id": version_id,
                 },
             )
-            session.execute(
-                text(
-                    f"""
-                    INSERT INTO podcast_transcript_chunks (
-                        id,
-                        transcript_version_id,
-                        media_id,
-                        chunk_idx,
-                        chunk_text,
-                        t_start_ms,
-                        t_end_ms,
-                        embedding,
-                        embedding_vector,
-                        embedding_model
-                    )
-                    VALUES
-                        (
-                            :chunk_a_id,
-                            :version_id,
-                            :media_id,
-                            0,
-                            'transformer attention residual stream explanation',
-                            1000,
-                            5000,
-                            CAST(:embedding_a_json AS jsonb),
-                            CAST(:embedding_a_vector AS vector({embedding_dims})),
-                            :embedding_model
-                        ),
-                        (
-                            :chunk_b_id,
-                            :version_id,
-                            :media_id,
-                            1,
-                            'gardening tomatoes and compost aeration tips',
-                            5100,
-                            9000,
-                            CAST(:embedding_b_json AS jsonb),
-                            CAST(:embedding_b_vector AS vector({embedding_dims})),
-                            :embedding_model
-                        )
-                    """
-                ),
-                {
-                    "chunk_a_id": chunk_a_id,
-                    "chunk_b_id": chunk_b_id,
-                    "version_id": version_id,
-                    "media_id": media_id,
-                    "embedding_a_json": json.dumps(embedding_a),
-                    "embedding_b_json": json.dumps(embedding_b),
-                    "embedding_a_vector": to_pgvector_literal(embedding_a),
-                    "embedding_b_vector": to_pgvector_literal(embedding_b),
-                    "embedding_model": embedding_model,
-                },
+            rebuild_transcript_content_index(
+                session,
+                media_id=media_id,
+                transcript_version_id=version_id,
+                transcript_segments=transcript_segments,
+                reason="test",
             )
+            if semantic_status != "ready":
+                session.execute(
+                    text(
+                        """
+                        UPDATE media_content_index_states
+                        SET active_run_id = NULL,
+                            active_embedding_provider = NULL,
+                            active_embedding_model = NULL,
+                            active_embedding_version = NULL,
+                            active_embedding_config_hash = NULL,
+                            status = :semantic_status
+                        WHERE media_id = :media_id
+                        """
+                    ),
+                    {"media_id": media_id, "semantic_status": semantic_status},
+                )
             session.commit()
 
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("podcast_transcript_versions", "media_id", media_id)
+        direct_db.register_cleanup("podcast_transcript_segments", "media_id", media_id)
+        direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         return user_id, media_id
 
     def test_semantic_search_returns_timestamped_transcript_chunks(
@@ -1744,21 +2352,21 @@ class TestSemanticTranscriptChunkSearch:
         )
 
         response = auth_client.get(
-            "/search?q=transformer+attention&types=transcript_chunk&semantic=true",
+            "/search?q=transformer+attention&types=content_chunk&semantic=true",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
             f"expected semantic transcript search to succeed, got {response.status_code}: {response.text}"
         )
-        chunk_results = [r for r in response.json()["results"] if r["type"] == "transcript_chunk"]
-        assert chunk_results, "expected semantic transcript chunk results for ready semantic index"
+        chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
+        assert chunk_results, "expected semantic content chunk results for ready semantic index"
         top = chunk_results[0]
         assert top["source"]["media_id"] == str(media_id)
-        assert top["t_start_ms"] == 1000
-        assert top["t_end_ms"] == 5000
+        assert top["resolver"]["highlight"]["t_start_ms"] == 1000
+        assert top["resolver"]["highlight"]["t_end_ms"] == 5000
         assert "transformer" in top["snippet"].lower()
 
-    def test_semantic_search_with_omitted_types_includes_transcript_chunks_by_default(
+    def test_semantic_search_with_omitted_types_includes_content_chunks_by_default(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id, media_id = self._seed_transcript_chunk_media(
@@ -1775,14 +2383,11 @@ class TestSemanticTranscriptChunkSearch:
             f"expected semantic search with omitted types to succeed, got "
             f"{response.status_code}: {response.text}"
         )
-        chunk_results = [r for r in response.json()["results"] if r["type"] == "transcript_chunk"]
-        assert chunk_results, (
-            "omitting types while semantic=true must still include transcript_chunk "
-            "in default all-types search"
-        )
+        chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
+        assert chunk_results, "omitted types must include content chunks in all-types search"
         assert any(row["source"]["media_id"] == str(media_id) for row in chunk_results)
 
-    def test_semantic_search_excludes_transcripts_when_index_not_ready(
+    def test_semantic_search_excludes_content_chunks_when_index_not_ready(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id, _media_id = self._seed_transcript_chunk_media(
@@ -1792,19 +2397,37 @@ class TestSemanticTranscriptChunkSearch:
         )
 
         response = auth_client.get(
-            "/search?q=transformer+attention&types=transcript_chunk&semantic=true",
+            "/search?q=transformer+attention&types=content_chunk&semantic=true",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
             f"expected semantic search request to succeed even while indexing, got "
             f"{response.status_code}: {response.text}"
         )
-        chunk_results = [r for r in response.json()["results"] if r["type"] == "transcript_chunk"]
-        assert chunk_results == [], (
-            "semantic search must not return transcript chunks while semantic index state is pending"
+        chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
+        assert chunk_results == [], "search must not return chunks while content index is pending"
+
+    def test_lexical_search_excludes_content_chunks_when_index_not_ready(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id, _media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="pending",
         )
 
-    def test_semantic_search_scans_corpus_not_just_newest_chunks(
+        response = auth_client.get(
+            "/search?q=transformer+attention&types=content_chunk&semantic=false",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, (
+            f"expected lexical search request to succeed even while indexing, got "
+            f"{response.status_code}: {response.text}"
+        )
+        chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
+        assert chunk_results == [], "lexical search must not return chunks while index is pending"
+
+    def test_lexical_search_uses_prior_active_ready_run_when_latest_index_failed(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id, media_id = self._seed_transcript_chunk_media(
@@ -1814,236 +2437,300 @@ class TestSemanticTranscriptChunkSearch:
         )
 
         with direct_db.session() as session:
-            from nexus.services.semantic_chunks import (
-                current_transcript_embedding_model,
-                to_pgvector_literal,
+            mark_content_index_failed(
+                session,
+                media_id=media_id,
+                failure_code="E_INGEST_FAILED",
+                failure_message="replacement indexing failed",
             )
-
-            version_id = session.execute(
+            state = session.execute(
                 text(
                     """
-                    SELECT active_transcript_version_id
-                    FROM media_transcript_states
+                    SELECT
+                        status,
+                        active_run_id,
+                        active_embedding_provider,
+                        active_embedding_model,
+                        active_embedding_version,
+                        active_embedding_config_hash
+                    FROM media_content_index_states
                     WHERE media_id = :media_id
                     """
                 ),
                 {"media_id": media_id},
-            ).scalar()
-            assert version_id is not None
-            embedding_model = current_transcript_embedding_model()
-            embedding_dims = len(_basis_embedding(0))
-            irrelevant_embedding = _basis_embedding(1)
-
-            session.execute(
-                text(
-                    """
-                    UPDATE podcast_transcript_chunks
-                    SET created_at = now() - interval '7 days'
-                    WHERE media_id = :media_id
-                      AND chunk_text ILIKE '%transformer attention residual stream explanation%'
-                    """
-                ),
-                {"media_id": media_id},
-            )
-
-            for offset in range(0, 120):
-                session.execute(
-                    text(
-                        f"""
-                        INSERT INTO podcast_transcript_chunks (
-                            transcript_version_id,
-                            media_id,
-                            chunk_idx,
-                            chunk_text,
-                            t_start_ms,
-                            t_end_ms,
-                            embedding,
-                            embedding_vector,
-                            embedding_model,
-                            created_at
-                        )
-                        VALUES (
-                            :transcript_version_id,
-                            :media_id,
-                            :chunk_idx,
-                            :chunk_text,
-                            :t_start_ms,
-                            :t_end_ms,
-                            CAST(:embedding AS jsonb),
-                            CAST(:embedding_vector AS vector({embedding_dims})),
-                            :embedding_model,
-                            now() + (:offset_seconds || ' seconds')::interval
-                        )
-                        """
-                    ),
-                    {
-                        "transcript_version_id": version_id,
-                        "media_id": media_id,
-                        "chunk_idx": 1000 + offset,
-                        "chunk_text": f"irrelevant gardening chunk {offset}",
-                        "t_start_ms": 20_000 + (offset * 1_000),
-                        "t_end_ms": 20_900 + (offset * 1_000),
-                        "offset_seconds": offset,
-                        "embedding": json.dumps(irrelevant_embedding),
-                        "embedding_vector": to_pgvector_literal(irrelevant_embedding),
-                        "embedding_model": embedding_model,
-                    },
-                )
+            ).one()
             session.commit()
+        assert state[0] == "ready"
+        assert state[1] is not None
+        assert state[2] is not None
+        assert state[3] is not None
+        assert state[4] is not None
+        assert state[5] is not None
 
         response = auth_client.get(
-            "/search?q=transformer+attention&types=transcript_chunk&semantic=true",
+            "/search?q=transformer+attention&types=content_chunk&semantic=false",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
-            f"expected semantic transcript search to succeed, got {response.status_code}: {response.text}"
+            f"expected lexical search to use active ready run after latest failure, got "
+            f"{response.status_code}: {response.text}"
         )
-        chunk_results = [r for r in response.json()["results"] if r["type"] == "transcript_chunk"]
-        assert chunk_results, (
-            "semantic retrieval must still find older relevant transcript chunks when many newer "
-            "irrelevant chunks exist"
-        )
-        assert any("transformer" in result["snippet"].lower() for result in chunk_results), (
-            "semantic retrieval should not silently drop old but relevant chunks due to recency-only "
-            "candidate selection"
+        chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
+        assert any(row["source"]["media_id"] == str(media_id) for row in chunk_results), (
+            "content chunk search must gate on the active ready run, not the latest state status"
         )
 
-    def test_semantic_search_is_not_truncated_by_python_scan_limit(
-        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    @pytest.mark.parametrize(
+        ("provider_status", "provider_body"),
+        [
+            (500, {"error": {"message": "provider unavailable"}}),
+            (200, {"data": [{"index": 0, "embedding": [0.1]}]}),
+        ],
+    )
+    @respx.mock
+    def test_semantic_search_reports_query_embedding_failures(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch: pytest.MonkeyPatch,
+        provider_status: int,
+        provider_body: dict[str, object],
     ):
-        from nexus.services import search as search_service
+        user_id, _media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+        self._use_openai_embedding_provider(monkeypatch)
+        route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
+            provider_status,
+            json=provider_body,
+        )
 
-        monkeypatch.setattr(search_service, "TRANSCRIPT_CHUNK_SCAN_LIMIT", 5)
+        response = auth_client.get(
+            "/search?q=transformer+attention&types=content_chunk&semantic=true",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 503, (
+            f"expected semantic provider failure to surface, got "
+            f"{response.status_code}: {response.text}"
+        )
+        assert response.json()["error"]["code"] == "E_LLM_PROVIDER_DOWN"
+        assert route.call_count == 1
 
-        user_id, media_id = self._seed_transcript_chunk_media(
+    @respx.mock
+    def test_default_semantic_search_builds_one_query_embedding(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        user_id, _media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+        self._use_openai_embedding_provider(monkeypatch)
+        route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
+            200,
+            json={"data": [{"index": 0, "embedding": [0.1] * 256}]},
+        )
+
+        response = auth_client.get(
+            "/search?q=transformer+attention",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"expected default semantic search to succeed, got "
+            f"{response.status_code}: {response.text}"
+        )
+        assert route.call_count == 1
+
+    def test_default_semantic_search_filters_unrelated_content_chunks(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id, _media_id = self._seed_transcript_chunk_media(
             auth_client,
             direct_db,
             semantic_status="ready",
         )
 
+        response = auth_client.get(
+            "/search?q=astronomy+nebula&types=content_chunk",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"expected default semantic search to succeed, got "
+            f"{response.status_code}: {response.text}"
+        )
+        assert response.json()["results"] == []
+
+    def test_semantic_search_supports_single_token_content_chunk_queries(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id, media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+        _model, vector = build_text_embedding("xyznonexistent12345")
         with direct_db.session() as session:
-            from nexus.services.semantic_chunks import (
-                current_transcript_embedding_model,
-                to_pgvector_literal,
-            )
-
-            version_id = session.execute(
-                text(
-                    """
-                    SELECT active_transcript_version_id
-                    FROM media_transcript_states
-                    WHERE media_id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            ).scalar()
-            assert version_id is not None
-            embedding_model = current_transcript_embedding_model()
-            embedding_dims = len(_basis_embedding(0))
-            irrelevant_embedding = _basis_embedding(1)
-            relevant_embedding = _basis_embedding(0)
-
-            session.execute(
-                text("DELETE FROM podcast_transcript_chunks WHERE media_id = :media_id"),
-                {"media_id": media_id},
-            )
-            for offset in range(0, 30):
-                session.execute(
-                    text(
-                        f"""
-                        INSERT INTO podcast_transcript_chunks (
-                            transcript_version_id,
-                            media_id,
-                            chunk_idx,
-                            chunk_text,
-                            t_start_ms,
-                            t_end_ms,
-                            embedding,
-                            embedding_vector,
-                            embedding_model,
-                            created_at
-                        )
-                        VALUES (
-                            :transcript_version_id,
-                            :media_id,
-                            :chunk_idx,
-                            :chunk_text,
-                            :t_start_ms,
-                            :t_end_ms,
-                            CAST(:embedding AS jsonb),
-                            CAST(:embedding_vector AS vector({embedding_dims})),
-                            :embedding_model,
-                            now() - interval '1 day'
-                        )
-                        """
-                    ),
-                    {
-                        "transcript_version_id": version_id,
-                        "media_id": media_id,
-                        "chunk_idx": offset,
-                        "chunk_text": f"irrelevant corpus filler chunk {offset}",
-                        "t_start_ms": 1_000 + (offset * 1_000),
-                        "t_end_ms": 1_900 + (offset * 1_000),
-                        "embedding": json.dumps(irrelevant_embedding),
-                        "embedding_vector": to_pgvector_literal(irrelevant_embedding),
-                        "embedding_model": embedding_model,
-                    },
-                )
             session.execute(
                 text(
-                    f"""
-                    INSERT INTO podcast_transcript_chunks (
-                        transcript_version_id,
-                        media_id,
-                        chunk_idx,
-                        chunk_text,
-                        t_start_ms,
-                        t_end_ms,
-                        embedding,
-                        embedding_vector,
-                        embedding_model,
-                        created_at
-                    )
-                    VALUES (
-                        :transcript_version_id,
-                        :media_id,
-                        999,
-                        'transformer attention residual stream explanation',
-                        61000,
-                        66000,
-                        CAST(:embedding AS jsonb),
-                        CAST(:embedding_vector AS vector({embedding_dims})),
-                        :embedding_model,
-                        now()
-                    )
+                    """
+                    UPDATE content_embeddings ce
+                    SET embedding_vector = CAST(:embedding AS vector(256))
+                    FROM content_chunks cc
+                    WHERE cc.id = ce.chunk_id
+                      AND cc.media_id = :media_id
                     """
                 ),
-                {
-                    "transcript_version_id": version_id,
-                    "media_id": media_id,
-                    "embedding": json.dumps(relevant_embedding),
-                    "embedding_vector": to_pgvector_literal(relevant_embedding),
-                    "embedding_model": embedding_model,
-                },
+                {"media_id": media_id, "embedding": to_pgvector_literal(vector)},
             )
             session.commit()
 
         response = auth_client.get(
-            "/search?q=transformer+attention&types=transcript_chunk&semantic=true",
+            "/search?q=xyznonexistent12345&types=content_chunk&semantic=true",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"expected single-token semantic search to succeed, got "
+            f"{response.status_code}: {response.text}"
+        )
+        assert any(
+            row["source"]["media_id"] == str(media_id) for row in response.json()["results"]
+        ), "single-token semantic search should use vector relevance when lexical search has no hit"
+
+    def test_semantic_search_ignores_embeddings_from_different_active_model(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id, media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+        _model, vector = build_text_embedding("xyznonexistent12345")
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE media_content_index_states
+                    SET active_embedding_model = 'other_model',
+                        active_embedding_version = 'other_model'
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE content_embeddings ce
+                    SET embedding_model = 'other_model',
+                        embedding_version = 'other_model',
+                        embedding_vector = CAST(:embedding AS vector)
+                    FROM content_chunks cc
+                    WHERE ce.chunk_id = cc.id
+                      AND cc.media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id, "embedding": to_pgvector_literal(vector)},
+            )
+            session.commit()
+
+        response = auth_client.get(
+            "/search?q=xyznonexistent12345&types=content_chunk&semantic=true",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["results"] == []
+
+    def test_semantic_search_scans_corpus_not_just_newest_chunks(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id, media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+            segments=[
+                {
+                    "segment_idx": 0,
+                    "text": "transformer attention residual stream explanation",
+                    "t_start_ms": 1000,
+                    "t_end_ms": 5000,
+                },
+                *[
+                    {
+                        "segment_idx": offset + 1,
+                        "text": f"irrelevant gardening chunk {offset}",
+                        "t_start_ms": 20_000 + (offset * 1000),
+                        "t_end_ms": 20_900 + (offset * 1000),
+                    }
+                    for offset in range(120)
+                ],
+            ],
+        )
+
+        response = auth_client.get(
+            "/search?q=transformer+attention&types=content_chunk&semantic=true",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
             f"expected semantic transcript search to succeed, got {response.status_code}: {response.text}"
         )
-        chunk_results = [r for r in response.json()["results"] if r["type"] == "transcript_chunk"]
-        assert any("transformer attention" in row["snippet"].lower() for row in chunk_results), (
-            "semantic retrieval must not silently miss relevant chunks because of a bounded "
-            "python-side candidate scan window"
+        chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
+        assert chunk_results, "semantic retrieval must find relevant chunks in a larger corpus"
+        assert any("transformer" in result["snippet"].lower() for result in chunk_results)
+        assert any(row["source"]["media_id"] == str(media_id) for row in chunk_results)
+
+    def test_semantic_search_finds_relevant_chunk_after_large_irrelevant_prefix(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id, _media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+            segments=[
+                *[
+                    {
+                        "segment_idx": offset,
+                        "text": f"irrelevant corpus filler chunk {offset}",
+                        "t_start_ms": 1000 + (offset * 1000),
+                        "t_end_ms": 1900 + (offset * 1000),
+                    }
+                    for offset in range(30)
+                ],
+                {
+                    "segment_idx": 999,
+                    "text": "transformer attention residual stream explanation",
+                    "t_start_ms": 61000,
+                    "t_end_ms": 66000,
+                },
+            ],
         )
+
+        response = auth_client.get(
+            "/search?q=transformer+attention&types=content_chunk&semantic=true",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, (
+            f"expected semantic transcript search to succeed, got {response.status_code}: {response.text}"
+        )
+        chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
+        assert any(
+            "transformer" in row["snippet"].lower() and "attention" in row["snippet"].lower()
+            for row in chunk_results
+        ), "semantic retrieval must not miss relevant chunks after irrelevant transcript rows"
 
 
 class TestSearchTranscriptVersionNavigation:
-    def test_annotation_search_maps_to_active_fragment_when_anchor_targets_old_version(
+    def test_note_block_search_uses_note_deep_link_when_linked_highlight_targets_old_version(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -2055,7 +2742,8 @@ class TestSearchTranscriptVersionNavigation:
         old_fragment_id = uuid4()
         active_fragment_id = uuid4()
         highlight_id = uuid4()
-        annotation_id = uuid4()
+        page_id = uuid4()
+        note_block_id = uuid4()
         now_ts = "2026-03-10T10:00:00Z"
 
         with direct_db.session() as session:
@@ -2234,9 +2922,8 @@ class TestSearchTranscriptVersionNavigation:
                     INSERT INTO highlights (
                         id,
                         user_id,
-                        fragment_id,
-                        start_offset,
-                        end_offset,
+                        anchor_kind,
+                        anchor_media_id,
                         color,
                         exact,
                         prefix,
@@ -2246,9 +2933,8 @@ class TestSearchTranscriptVersionNavigation:
                     VALUES (
                         :highlight_id,
                         :user_id,
-                        :fragment_id,
-                        0,
-                        6,
+                        'fragment_offsets',
+                        :media_id,
                         'yellow',
                         'active',
                         'before',
@@ -2260,68 +2946,131 @@ class TestSearchTranscriptVersionNavigation:
                 {
                     "highlight_id": highlight_id,
                     "user_id": user_id,
-                    "fragment_id": old_fragment_id,
+                    "media_id": media_id,
                     "now_ts": now_ts,
                 },
             )
             session.execute(
                 text(
                     """
-                    INSERT INTO annotations (
-                        id,
+                    INSERT INTO highlight_fragment_anchors (
                         highlight_id,
-                        body,
-                        created_at
-                    )
-                    VALUES (
-                        :annotation_id,
-                        :highlight_id,
-                        'anchor remap needle body text',
-                        :now_ts
-                    )
-                    """
-                ),
-                {
-                    "annotation_id": annotation_id,
-                    "highlight_id": highlight_id,
-                    "now_ts": now_ts,
-                },
-            )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO highlight_transcript_anchors (
-                        highlight_id,
-                        transcript_version_id,
-                        transcript_segment_id,
-                        t_start_ms,
-                        t_end_ms,
+                        fragment_id,
                         start_offset,
-                        end_offset,
-                        created_at
+                        end_offset
                     )
                     VALUES (
                         :highlight_id,
-                        :transcript_version_id,
-                        NULL,
+                        :fragment_id,
                         0,
-                        1000,
-                        0,
-                        6,
-                        :now_ts
+                        6
                     )
                     """
                 ),
                 {
                     "highlight_id": highlight_id,
-                    "transcript_version_id": version_v1,
+                    "fragment_id": old_fragment_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO pages (id, user_id, title)
+                    VALUES (:page_id, :user_id, 'Version Navigation Notes')
+                    """
+                ),
+                {"page_id": page_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO note_blocks (
+                        id,
+                        user_id,
+                        page_id,
+                        order_key,
+                        block_kind,
+                        body_pm_json,
+                        body_markdown,
+                        body_text,
+                        collapsed,
+                        created_at
+                    )
+                    VALUES (
+                        :note_block_id,
+                        :user_id,
+                        :page_id,
+                        '0000000001',
+                        'bullet',
+                        jsonb_build_object(
+                            'type',
+                            'paragraph',
+                            'content',
+                            jsonb_build_array(
+                                jsonb_build_object(
+                                    'type',
+                                    'text',
+                                    'text',
+                                    'anchor remap needle body text'
+                                )
+                            )
+                        ),
+                        'anchor remap needle body text',
+                        'anchor remap needle body text',
+                        false,
+                        :now_ts
+                    )
+                    """
+                ),
+                {
+                    "note_block_id": note_block_id,
+                    "user_id": user_id,
+                    "page_id": page_id,
                     "now_ts": now_ts,
                 },
             )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO object_links (
+                        user_id,
+                        relation_type,
+                        a_type,
+                        a_id,
+                        b_type,
+                        b_id,
+                        metadata,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        :user_id,
+                        'note_about',
+                        'note_block',
+                        :note_block_id,
+                        'highlight',
+                        :highlight_id,
+                        '{}'::jsonb,
+                        :now_ts,
+                        :now_ts
+                    )
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "note_block_id": note_block_id,
+                    "highlight_id": highlight_id,
+                    "now_ts": now_ts,
+                },
+            )
+            page = session.get(Page, page_id)
+            assert page is not None
+            object_search.project_page(session, user_id, page)
             session.commit()
 
-        direct_db.register_cleanup("highlight_transcript_anchors", "highlight_id", highlight_id)
-        direct_db.register_cleanup("annotations", "id", annotation_id)
+        direct_db.register_cleanup("pages", "id", page_id)
+        direct_db.register_cleanup("note_blocks", "id", note_block_id)
+        direct_db.register_cleanup("object_links", "a_id", note_block_id)
         direct_db.register_cleanup("highlights", "id", highlight_id)
         direct_db.register_cleanup("fragments", "id", old_fragment_id)
         direct_db.register_cleanup("fragments", "id", active_fragment_id)
@@ -2333,16 +3082,13 @@ class TestSearchTranscriptVersionNavigation:
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
-            "/search?q=anchor+remap+needle&types=annotation",
+            "/search?q=anchor+remap+needle&types=note_block",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 200, (
-            f"expected annotation search to succeed, got {response.status_code}: {response.text}"
+            f"expected note search to succeed, got {response.status_code}: {response.text}"
         )
-        annotation_rows = [row for row in response.json()["results"] if row["type"] == "annotation"]
-        assert annotation_rows, "expected annotation search row for remap assertion"
-        assert annotation_rows[0]["id"] == str(annotation_id)
-        assert annotation_rows[0]["fragment_id"] == str(active_fragment_id), (
-            "annotation search deep-links must target the active transcript version fragment rather than "
-            "a stale historical fragment id"
-        )
+        note_block_rows = [row for row in response.json()["results"] if row["type"] == "note_block"]
+        assert note_block_rows, "expected note-block search row"
+        assert note_block_rows[0]["id"] == str(note_block_id)
+        assert note_block_rows[0]["deep_link"] == f"/notes/{note_block_id}"

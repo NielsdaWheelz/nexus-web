@@ -41,7 +41,6 @@ class TestEnrichMetadata:
                         provider,
                         provider_podcast_id,
                         title,
-                        author,
                         feed_url
                     )
                     VALUES (
@@ -49,7 +48,6 @@ class TestEnrichMetadata:
                         'podcast_index',
                         :provider_podcast_id,
                         :title,
-                        :author,
                         :feed_url
                     )
                     """
@@ -58,7 +56,6 @@ class TestEnrichMetadata:
                     "id": podcast_id,
                     "provider_podcast_id": f"enrich-podcast-{uuid4()}",
                     "title": "Systems Show",
-                    "author": "Podcast Author",
                     "feed_url": f"https://feeds.example.com/{podcast_id}.xml",
                 },
             )
@@ -127,10 +124,11 @@ class TestEnrichMetadata:
 
         prompt_holder: dict[str, str] = {}
 
-        async def _fake_generate(self, provider, req, api_key, timeout_s, key_mode):
-            _ = self, provider, api_key, timeout_s, key_mode
+        async def _fake_generate(self, provider, req, api_key, timeout_s):
+            _ = self, provider, api_key, timeout_s
             prompt_holder["prompt"] = req.messages[0].content
             return SimpleNamespace(
+                status="completed",
                 text=json.dumps(
                     {
                         "authors": ["Episode Host"],
@@ -139,7 +137,7 @@ class TestEnrichMetadata:
                         "description": "A short summary of the episode.",
                         "published_date": "2026-03-02",
                     }
-                )
+                ),
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
@@ -164,10 +162,10 @@ class TestEnrichMetadata:
             author_rows = session.execute(
                 text(
                     """
-                    SELECT name
-                    FROM media_authors
+                    SELECT credited_name
+                    FROM contributor_credits
                     WHERE media_id = :media_id
-                    ORDER BY sort_order ASC
+                    ORDER BY ordinal ASC
                     """
                 ),
                 {"media_id": media_id},
@@ -252,16 +250,17 @@ class TestEnrichMetadata:
             lambda _settings: ("openai", "gpt-test", "sk-test"),
         )
 
-        async def _fake_generate(self, provider, req, api_key, timeout_s, key_mode):
-            _ = self, provider, req, api_key, timeout_s, key_mode
+        async def _fake_generate(self, provider, req, api_key, timeout_s):
+            _ = self, provider, req, api_key, timeout_s
             return SimpleNamespace(
+                status="completed",
                 text=json.dumps(
                     {
                         "title": "Analytical Engine Notes",
                         "authors": ["Ada Lovelace"],
                         "publisher": "Nexus Archive",
                     }
-                )
+                ),
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
@@ -284,10 +283,10 @@ class TestEnrichMetadata:
             author_rows = session.execute(
                 text(
                     """
-                    SELECT name
-                    FROM media_authors
+                    SELECT credited_name
+                    FROM contributor_credits
                     WHERE media_id = :media_id
-                    ORDER BY sort_order ASC
+                    ORDER BY ordinal ASC
                     """
                 ),
                 {"media_id": media_id},

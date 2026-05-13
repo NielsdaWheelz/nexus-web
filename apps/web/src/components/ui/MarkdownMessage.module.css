@@ -1,19 +1,24 @@
 /* Markdown message typography */
 .markdown {
-  font-size: var(--font-size-sm);
-  line-height: 1.6;
-  color: var(--color-text);
+  font-size: var(--chat-prose-font-size, var(--text-md));
+  line-height: var(--chat-prose-line-height, 1.58);
+  color: var(--ink);
+  overflow-wrap: normal;
+}
+
+.markdown > :where(p, ul, ol, blockquote, h1, h2, h3, h4, hr) {
+  max-width: var(--chat-prose-measure, 66ch);
 }
 
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }
 
-.markdown p { margin: 0 0 var(--space-3); }
+.markdown p { margin: 0 0 var(--space-4); }
 .markdown p:last-child { margin-bottom: 0; }
 
 .markdown ul,
 .markdown ol {
-  margin: 0 0 var(--space-3);
+  margin: 0 0 var(--space-4);
   padding-left: var(--space-6);
 }
 
@@ -21,74 +26,85 @@
 .markdown li:last-child { margin-bottom: 0; }
 
 .markdown blockquote {
-  margin: 0 0 var(--space-3);
+  margin: 0 0 var(--space-4);
   padding-left: var(--space-4);
-  border-left: 3px solid var(--color-border);
-  color: var(--color-text-secondary);
+  border-left: 3px solid var(--edge);
+  color: var(--ink-muted);
 }
 
 .markdown h1,
 .markdown h2,
 .markdown h3,
 .markdown h4 {
-  margin: var(--space-4) 0 var(--space-2);
-  font-weight: 600;
-  line-height: 1.3;
+  margin: var(--space-5) 0 var(--space-2);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
 }
 
-.markdown h1 { font-size: var(--font-size-xl); }
-.markdown h2 { font-size: var(--font-size-lg); }
-.markdown h3 { font-size: var(--font-size-base); }
-.markdown h4 { font-size: var(--font-size-sm); }
+.markdown h1 { font-size: var(--text-lg); }
+.markdown h2 { font-size: var(--text-base); }
+.markdown h3 { font-size: var(--text-sm); }
+.markdown h4 { font-size: var(--text-sm); }
 
 .markdown hr {
-  margin: var(--space-4) 0;
+  margin: var(--space-5) 0;
   border: none;
-  border-top: 1px solid var(--color-border-subtle);
+  border-top: 1px solid var(--edge-subtle);
 }
 
 .markdown a {
-  color: var(--color-accent);
+  color: var(--accent);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
-.markdown strong { font-weight: 600; }
+.markdown strong { font-weight: var(--weight-semibold); }
 
-.markdown table {
-  width: 100%;
-  margin: 0 0 var(--space-3);
-  border-collapse: collapse;
-  font-size: var(--font-size-xs);
+.tableScroll {
+  max-width: 100%;
+  margin: 0 0 var(--space-4);
+  overflow-x: auto;
 }
 
-.markdown th,
-.markdown td {
-  border: 1px solid var(--color-border-subtle);
+.tableScroll table {
+  width: max-content;
+  min-width: min(100%, var(--chat-prose-measure, 66ch));
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.tableScroll th,
+.tableScroll td {
+  border: 1px solid var(--edge-subtle);
   padding: var(--space-2) var(--space-3);
   text-align: left;
+  vertical-align: top;
 }
 
-.markdown th {
-  background: var(--color-bg-secondary);
-  font-weight: 600;
+.tableScroll th {
+  background: var(--surface-2);
+  font-weight: var(--weight-semibold);
 }
 
 /* Inline code */
 .inlineCode {
-  background: var(--color-bg-secondary);
+  background: var(--surface-2);
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 0.88em;
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
 }
 
 /* Code blocks */
 .codeBlock {
   position: relative;
-  margin: 0 0 var(--space-3);
-  background: var(--color-bg-secondary);
-  border-radius: 8px;
+  max-width: 100%;
+  margin: 0 0 var(--space-4);
+  background: var(--surface-2);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -97,18 +113,18 @@
   align-items: center;
   justify-content: space-between;
   padding: var(--space-1) var(--space-3);
-  background: var(--color-bg-tertiary);
+  background: var(--surface-1);
   font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
 }
 
 .codeBlockContent {
   overflow-x: auto;
   padding: var(--space-3);
   font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
-  line-height: 1.5;
+  font-size: var(--text-xs);
+  line-height: 1.55;
 }
 
 .codeBlockContent pre {
@@ -116,7 +132,15 @@
 }
 
 .codeBlockContent code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
   font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .copyBtn {
@@ -126,14 +150,14 @@
   padding: 2px var(--space-2);
   background: none;
   border: none;
-  border-radius: 4px;
-  color: var(--color-text-muted);
+  border-radius: var(--radius-sm);
+  color: var(--ink-faint);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
 .copyBtn:hover {
-  background: var(--color-surface);
-  color: var(--color-text);
+  background: var(--surface-2);
+  color: var(--ink);
 }

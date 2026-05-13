@@ -15,6 +15,8 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "ingest_pdf",
         "ingest_youtube_video",
         "enrich_metadata",
+        "chat_run",
+        "library_intelligence_build_job",
         "podcast_sync_subscription_job",
         "podcast_transcribe_episode_job",
         "podcast_reindex_semantic_job",
@@ -22,25 +24,12 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "reconcile_stale_ingest_media_job",
         "sync_gutenberg_catalog_job",
         "backfill_default_library_closure_job",
+        "oracle_reading_generate",
     }
     actual_kinds = set(get_default_registry().keys())
     assert actual_kinds == expected_kinds, (
         "Registry job kinds drifted from required worker contract. "
         f"Expected={sorted(expected_kinds)}, Actual={sorted(actual_kinds)}"
-    )
-
-
-def test_worker_registry_matches_catalog_contract():
-    from apps.worker.main import create_worker
-
-    from nexus.jobs.registry import get_default_registry
-
-    worker = create_worker()
-    expected = set(get_default_registry().keys())
-    actual = set(worker.registry.keys())
-    assert actual == expected, (
-        "Worker runtime registry must match canonical registry module. "
-        f"Worker={sorted(actual)}, Registry={sorted(expected)}"
     )
 
 

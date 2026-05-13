@@ -14,9 +14,10 @@ Note: All environments use Supabase JWKS for JWT verification.
 Local/test environments use Supabase local, staging/prod use cloud.
 """
 
+import os
 from enum import Enum
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
@@ -75,6 +76,11 @@ class Settings(BaseSettings):
         default="https://api.podcastindex.org/api/1.0",
         alias="PODCAST_INDEX_BASE_URL",
     )
+    real_media_provider_fixtures: bool = Field(
+        default=False,
+        alias="REAL_MEDIA_PROVIDER_FIXTURES",
+    )
+    real_media_fixture_dir: str | None = Field(default=None, alias="REAL_MEDIA_FIXTURE_DIR")
     youtube_data_api_key: str | None = Field(default=None, alias="YOUTUBE_DATA_API_KEY")
     youtube_data_base_url: str = Field(
         default="https://www.googleapis.com/youtube/v3",
@@ -168,6 +174,25 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
     deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
 
+    # Public web search provider settings.
+    # Brave is the first production web-search provider. If no API key is
+    # configured, required web-search turns fail closed with a typed tool error.
+    brave_search_api_key: str | None = Field(default=None, alias="BRAVE_SEARCH_API_KEY")
+    brave_search_base_url: str = Field(
+        default="https://api.search.brave.com/res/v1",
+        alias="BRAVE_SEARCH_BASE_URL",
+    )
+    brave_search_timeout_seconds: float = Field(
+        default=8.0,
+        alias="BRAVE_SEARCH_TIMEOUT_SECONDS",
+    )
+    brave_search_country: str = Field(default="US", alias="BRAVE_SEARCH_COUNTRY")
+    brave_search_language: str = Field(default="en", alias="BRAVE_SEARCH_LANGUAGE")
+    brave_search_safe_search: Literal["off", "moderate", "strict"] = Field(
+        default="moderate",
+        alias="BRAVE_SEARCH_SAFE_SEARCH",
+    )
+
     # S3 PR-04: LLM provider feature flags
     # Controls whether each provider is available to users
     # All providers enabled by default; disable in production if needed
@@ -179,8 +204,6 @@ class Settings(BaseSettings):
     # PR-05: Rate limiting settings
     rate_limit_rpm: int = Field(default=20, alias="RATE_LIMIT_RPM")  # Requests per minute
     rate_limit_concurrent: int = Field(default=3, alias="RATE_LIMIT_CONCURRENT")  # Max concurrent
-    # PR-05: Streaming settings
-    enable_streaming: bool = Field(default=False, alias="ENABLE_STREAMING")  # Feature flag
 
     # PR-05: LLM settings
     llm_timeout_seconds: float = Field(default=45.0, alias="LLM_TIMEOUT_SECONDS")
@@ -307,6 +330,11 @@ class Settings(BaseSettings):
             raise ValueError("PODCAST_SYNC_RUNNING_LEASE_SECONDS must be >= 1.")
         if self.podcast_transcription_timeout_seconds <= 0:
             raise ValueError("PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS must be > 0.")
+        if self.real_media_provider_fixtures:
+            if self.nexus_env in (Environment.STAGING, Environment.PROD):
+                raise ValueError("REAL_MEDIA_PROVIDER_FIXTURES is not allowed in staging or prod.")
+            if not self.real_media_fixture_dir:
+                raise ValueError("REAL_MEDIA_FIXTURE_DIR is required when fixtures are enabled.")
         if self.nexus_env in (Environment.STAGING, Environment.PROD) and self.billing_enabled:
             missing_billing: list[str] = []
             if not self.stripe_secret_key:
@@ -331,7 +359,9 @@ class Settings(BaseSettings):
             if not self.podcast_index_api_secret:
                 missing_podcast_provider_settings.append("PODCAST_INDEX_API_SECRET")
             if missing_podcast_provider_settings:
-                if self.nexus_env in (Environment.STAGING, Environment.PROD):
+                if self.real_media_provider_fixtures:
+                    pass
+                elif self.nexus_env in (Environment.STAGING, Environment.PROD):
                     raise ValueError(
                         "Podcast features are enabled but provider credentials are missing: "
                         f"{', '.join(missing_podcast_provider_settings)}"
@@ -419,6 +449,10 @@ def get_settings() -> Settings:
         ValidationError: If required settings are missing or invalid.
     """
     return Settings()
+
+
+def real_media_provider_fixtures_requested() -> bool:
+    return os.environ.get("REAL_MEDIA_PROVIDER_FIXTURES") in {"1", "true", "True"}
 
 
 def clear_settings_cache() -> None:

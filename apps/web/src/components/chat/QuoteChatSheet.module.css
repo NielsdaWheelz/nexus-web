@@ -1,0 +1,45 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.48);
+}
+
+.sheet {
+  width: 100%;
+  height: min(88dvh, calc(100dvh - env(safe-area-inset-top) - var(--space-4)));
+  max-height: calc(100dvh - env(safe-area-inset-top));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--edge-subtle);
+  border-bottom: none;
+  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
+  background: var(--surface-canvas);
+  color: var(--ink);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  transition:
+    height var(--duration-base) var(--ease-glide),
+    border-radius var(--duration-base) var(--ease-glide);
+}
+
+.sheet[data-composer-focused="true"] {
+  height: calc(100dvh - env(safe-area-inset-top));
+  border-radius: 0;
+}
+
+@media (min-width: 700px) {
+  .sheet {
+    max-width: 560px;
+    margin-inline: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet {
+    transition: none;
+  }
+}

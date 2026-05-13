@@ -9,11 +9,13 @@ vi.mock("next/image", () => ({
   default: ({
     src,
     alt,
+    priority: _priority,
     unoptimized: _unoptimized,
     ...props
   }: {
     src: string | { src: string };
     alt: string;
+    priority?: boolean;
     unoptimized?: boolean;
     [key: string]: unknown;
   }) =>
@@ -24,14 +26,8 @@ vi.mock("next/image", () => ({
     }),
 }));
 
-if (typeof globalThis.process === "undefined") {
-  (globalThis as Record<string, unknown>).process = {
-    env: { NODE_ENV: "test" },
-    cwd: () => "/",
-    platform: "browser",
-  };
-}
-
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });

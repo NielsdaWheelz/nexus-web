@@ -1,0 +1,63 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
+  color: var(--ink-muted);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  max-width: 280px;
+}
+
+.selected {
+  background: var(--accent-muted);
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.sizeSm {
+  height: var(--size-xs);
+}
+
+.sizeMd {
+  height: var(--size-sm);
+}
+
+.label {
+  display: inline-block;
+}
+
+.labelTruncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.leadingIcon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.removeButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  flex-shrink: 0;
+  transition: background var(--duration-fast) var(--ease-glide);
+}
+
+.removeButton:hover {
+  background: var(--surface-3);
+}

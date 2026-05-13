@@ -42,16 +42,35 @@ export async function GET(req: Request) {
   }
 
   const requestId = crypto.randomUUID();
+  const fastApiBaseUrl =
+    process.env.FASTAPI_BASE_URL ||
+    (process.env.NODE_ENV === "production" ? "" : "http://localhost:8000");
+  const internalSecret = process.env.NEXUS_INTERNAL_SECRET || "";
+
+  if (
+    !fastApiBaseUrl ||
+    (process.env.NODE_ENV === "production" && !internalSecret)
+  ) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "E_INTERNAL",
+          message: "Backend service is not configured",
+          request_id: requestId,
+        },
+      },
+      { status: 500, headers: { "x-request-id": requestId } }
+    );
+  }
+
   const response = await fetch(
-    `${process.env.FASTAPI_BASE_URL || "http://localhost:8000"}/auth/extension-sessions`,
+    `${fastApiBaseUrl}/auth/extension-sessions`,
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${session.access_token}`,
         "X-Request-ID": requestId,
-        ...(process.env.NEXUS_INTERNAL_SECRET
-          ? { "X-Nexus-Internal": process.env.NEXUS_INTERNAL_SECRET }
-          : {}),
+        ...(internalSecret ? { "X-Nexus-Internal": internalSecret } : {}),
       },
     }
   );

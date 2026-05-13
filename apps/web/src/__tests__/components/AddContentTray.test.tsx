@@ -1,70 +1,7 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { OPEN_ADD_CONTENT_EVENT } from "@/components/CommandPalette";
-
-const {
-  mockUploadIngestFile,
-  mockAddMediaFromUrl,
-  mockGetFileUploadError,
-  mockRequestOpenInAppPane,
-  mockViewportState,
-} = vi.hoisted(() => {
-  const mockUploadIngestFile = vi.fn().mockResolvedValue({
-    mediaId: "media-file",
-    duplicate: false,
-  });
-  const mockAddMediaFromUrl = vi.fn().mockResolvedValue({
-    mediaId: "media-url",
-    duplicate: false,
-  });
-  const mockGetFileUploadError = vi.fn().mockReturnValue(null);
-  const mockRequestOpenInAppPane = vi.fn().mockReturnValue(true);
-  const mockViewportState = { isMobile: false };
-
-  return {
-    mockUploadIngestFile,
-    mockAddMediaFromUrl,
-    mockGetFileUploadError,
-    mockRequestOpenInAppPane,
-    mockViewportState,
-  };
-});
-
-vi.mock("@/lib/media/ingestionClient", () => ({
-  uploadIngestFile: mockUploadIngestFile,
-  addMediaFromUrl: mockAddMediaFromUrl,
-  getFileUploadError: mockGetFileUploadError,
-}));
-
-vi.mock("@/lib/ui/useIsMobileViewport", () => ({
-  useIsMobileViewport: () => mockViewportState.isMobile,
-}));
-
-vi.mock("@/lib/panes/openInAppPane", () => ({
-  NEXUS_OPEN_PANE_EVENT: "nexus:open-pane",
-  NEXUS_OPEN_PANE_MESSAGE_TYPE: "nexus:open-pane",
-  consumePendingPaneOpenQueue: () => [],
-  isOpenInAppPaneMessage: () => false,
-  normalizePaneHref: (href: string) => href,
-  setPaneGraphReady: vi.fn(),
-  requestOpenInAppPane: mockRequestOpenInAppPane,
-}));
-
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({
-    push: vi.fn(),
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-    prefetch: vi.fn(),
-  }),
-  usePathname: () => "/libraries",
-  useSearchParams: () => new URLSearchParams(),
-  useParams: () => ({}),
-}));
-
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AddContentTray from "@/components/AddContentTray";
+import { OPEN_ADD_CONTENT_EVENT } from "@/components/addContentEvents";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -73,7 +10,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function openTray(mode: "content" | "opml" = "content") {
+function openTray(mode: "content" | "quick-note" | "opml" = "content") {
   act(() => {
     window.dispatchEvent(
       new CustomEvent(OPEN_ADD_CONTENT_EVENT, {
@@ -103,13 +40,48 @@ function dispatchPaste(target: EventTarget, text: string) {
 
 describe("AddContentTray", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mockViewportState.isMobile = false;
     document.body.style.overflow = "";
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/libraries") {
         return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/media/from-url" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        return jsonResponse({
+          data: {
+            media_id: body.url.includes("one.pdf") ? "media-one" : "media-two",
+            idempotency_outcome: "created",
+          },
+        });
+      }
+      if (url.pathname === "/api/notes/pages" && init?.method === "POST") {
+        return jsonResponse({
+          data: {
+            id: "page-new",
+            title: "Untitled",
+            description: null,
+            revision: 1,
+            blocks: [],
+          },
+        });
+      }
+      if (url.pathname.endsWith("/quick-capture") && init?.method === "POST") {
+        return jsonResponse({
+          data: {
+            id: "block-new",
+            page_id: "page-today",
+            parent_block_id: null,
+            order_key: "a",
+            block_kind: "bullet",
+            body_pm_json: { type: "paragraph" },
+            body_markdown: "captured text",
+            body_text: "captured text",
+            collapsed: false,
+            revision: 1,
+            children: [],
+          },
+        });
       }
       if (url.pathname === "/api/podcasts/import/opml" && (init?.method ?? "GET") === "POST") {
         return jsonResponse({
@@ -132,67 +104,32 @@ describe("AddContentTray", () => {
   });
 
   it("opens on OPEN_ADD_CONTENT_EVENT and closes on Close or Escape", async () => {
-    const user = userEvent.setup();
     render(<AddContentTray />);
 
     openTray();
 
-    const dialog = await screen.findByLabelText("Add content");
-    expect(dialog).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Add content" })).toBeInTheDocument();
     expect(screen.getByText("Upload files or paste links.")).toBeInTheDocument();
 
-    await user.click(screen.getByLabelText("Close"));
-    expect(screen.queryByLabelText("Add content")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Add content" })).not.toBeInTheDocument();
+    });
 
     openTray("opml");
-    const reopened = await screen.findByLabelText("Add content");
+    expect(await screen.findByRole("dialog", { name: "Add content" })).toBeInTheDocument();
     expect(
-      within(reopened).getByText("Import podcast subscriptions from an OPML file.")
+      screen.getByText("Import podcast subscriptions from an OPML file.")
     ).toBeInTheDocument();
-    fireEvent.keyDown(reopened, { key: "Escape" });
-    await waitFor(() => {
-      expect(screen.queryByLabelText("Add content")).not.toBeInTheDocument();
-    });
-  });
 
-  it("shows only Content and OPML tabs", async () => {
-    render(<AddContentTray />);
-
-    openTray();
-
-    const dialog = await screen.findByLabelText("Add content");
-    expect(within(dialog).getByRole("tab", { name: "Content", hidden: true })).toBeInTheDocument();
-    expect(within(dialog).getByRole("tab", { name: "OPML", hidden: true })).toBeInTheDocument();
-    expect(within(dialog).queryByRole("tab", { name: "Podcast", hidden: true })).not.toBeInTheDocument();
-  });
-
-  it("supports multiple file selection and enqueues each file", async () => {
-    const user = userEvent.setup();
-    render(<AddContentTray />);
-
-    openTray();
-    const dialog = await screen.findByLabelText("Add content");
-    const fileInput = within(dialog).getByLabelText("Upload file") as HTMLInputElement;
-
-    const firstFile = makeFile("one.pdf", "application/pdf");
-    const secondFile = makeFile("two.epub", "application/epub+zip");
-
-    await user.upload(fileInput, [firstFile, secondFile]);
+    fireEvent.keyDown(document, { key: "Escape" });
 
     await waitFor(() => {
-      expect(mockUploadIngestFile).toHaveBeenCalledTimes(2);
-    });
-    expect(mockUploadIngestFile).toHaveBeenNthCalledWith(1, {
-      file: firstFile,
-      libraryId: null,
-    });
-    expect(mockUploadIngestFile).toHaveBeenNthCalledWith(2, {
-      file: secondFile,
-      libraryId: null,
+      expect(screen.queryByRole("dialog", { name: "Add content" })).not.toBeInTheDocument();
     });
   });
 
-  it("pastes multiple URLs outside inputs", async () => {
+  it("pastes multiple URLs outside inputs and shows both completed adds", async () => {
     render(
       <>
         <AddContentTray />
@@ -203,23 +140,46 @@ describe("AddContentTray", () => {
     dispatchPaste(window, "https://example.com/one.pdf\nhttps://example.com/two.epub");
 
     await waitFor(() => {
-      expect(mockAddMediaFromUrl).toHaveBeenCalledTimes(2);
+      expect(screen.getAllByLabelText("Success")).toHaveLength(2);
     });
+    expect(screen.getByText("https://example.com/one.pdf")).toBeInTheDocument();
+    expect(screen.getByText("https://example.com/two.epub")).toBeInTheDocument();
   });
 
   it("renders the OPML import summary", async () => {
-    const user = userEvent.setup();
     render(<AddContentTray />);
 
     openTray("opml");
 
-    const dialog = await screen.findByLabelText("Add content");
-    const fileInput = within(dialog).getByLabelText("Import OPML file") as HTMLInputElement;
-    await user.upload(fileInput, makeFile("podcasts.opml", "application/xml"));
-    await user.click(within(dialog).getByRole("button", { name: "Import OPML", hidden: true }));
+    expect(await screen.findByRole("dialog", { name: "Add content" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Import OPML file"), {
+      target: { files: [makeFile("podcasts.opml", "application/xml")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Import OPML" }));
 
     expect(await screen.findByText("Import summary")).toBeInTheDocument();
     expect(screen.getByText("Imported: 1")).toBeInTheDocument();
     expect(screen.getByText("Already followed: 1")).toBeInTheDocument();
+  });
+
+  it("creates pages and quick-captures to today from the tray", async () => {
+    render(<AddContentTray />);
+
+    openTray();
+
+    expect(await screen.findByRole("dialog", { name: "Add content" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New page" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Add content" })).not.toBeInTheDocument();
+    });
+
+    openTray("quick-note");
+    fireEvent.change(await screen.findByLabelText("Quick note to today"), {
+      target: { value: "captured text" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+
+    expect(await screen.findByText("Added to today.")).toBeInTheDocument();
   });
 });

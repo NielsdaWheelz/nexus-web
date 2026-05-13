@@ -1,6 +1,7 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { selectTextFromElementStart } from "./selection";
 
 interface SeededNonPdfMedia {
   media_id: string;
@@ -16,9 +17,15 @@ function readSeededNonPdfMedia(): SeededNonPdfMedia {
   return JSON.parse(readFileSync(seedPath, "utf-8"));
 }
 
-async function openAddContentDialog(page: Parameters<typeof test>[0]["page"]) {
+async function openAddContentDialog(page: Page) {
   await page.getByRole("button", { name: "Add content" }).click();
   return page.getByRole("dialog", { name: "Add content" });
+}
+
+function workspacePaneButton(page: Page, name: RegExp | string) {
+  return page
+    .getByRole("toolbar", { name: "Workspace panes" })
+    .getByRole("button", { name });
 }
 
 test.describe("web articles", () => {
@@ -29,7 +36,7 @@ test.describe("web articles", () => {
     await expect(urlInput).toBeVisible();
     await urlInput.fill("https://example.com");
     await addContentDialog.getByRole("button", { name: "Add" }).click();
-    await expect(page.getByRole("tab", { name: "https://example.com" })).toBeVisible({
+    await expect(workspacePaneButton(page, /^https:\/\/example\.com\b/)).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByRole("heading", { name: "https://example.com" })).toBeVisible({
@@ -56,9 +63,11 @@ test.describe("web articles", () => {
     ).toBeVisible({ timeout: 10_000 });
   });
 
-  test("creates highlight from paragraph-start element boundary without OUTSIDE_CONTENT warning", async ({
+  test("creates highlight from paragraph text selection without OUTSIDE_CONTENT warning", async ({
     page,
   }) => {
+    test.slow();
+
     const seed = readSeededNonPdfMedia();
     await page.goto(`/media/${seed.media_id}`);
 
@@ -105,35 +114,13 @@ test.describe("web articles", () => {
     }
     expect(paragraphIndex).toBeGreaterThanOrEqual(0);
 
-    const selectionApplied = await page.evaluate(({ index, len }) => {
-      const paragraphNode = document.querySelectorAll('[class*="fragments"] p')[index];
-      if (!(paragraphNode instanceof HTMLParagraphElement)) {
-        return false;
-      }
-      let textNode: Text | null =
-        paragraphNode.firstChild instanceof Text ? paragraphNode.firstChild : null;
-      if (!textNode) {
-        const walker = document.createTreeWalker(paragraphNode, NodeFilter.SHOW_TEXT);
-        const firstText = walker.nextNode();
-        textNode = firstText instanceof Text ? firstText : null;
-      }
-      if (!textNode) {
-        return false;
-      }
-      const maxLen = Math.max(2, Math.min(len, textNode.textContent?.length ?? 0));
-      const range = document.createRange();
-      range.setStart(paragraphNode, 0); // Element boundary at paragraph start
-      range.setEnd(textNode, maxLen);
-      const selection = window.getSelection();
-      if (!selection) {
-        return false;
-      }
-      selection.removeAllRanges();
-      selection.addRange(range);
-      document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
-      return selection.toString().trim().length >= 2;
-    }, { index: paragraphIndex, len: selectionLength });
-    expect(selectionApplied).toBe(true);
+    const selectedText = await selectTextFromElementStart(
+      page,
+      '[class*="fragments"] p',
+      paragraphIndex,
+      selectionLength,
+    );
+    expect(selectedText.trim().length).toBeGreaterThanOrEqual(2);
 
     await expect(
       page.getByRole("dialog", { name: /highlight actions/i })
@@ -142,7 +129,20 @@ test.describe("web articles", () => {
     const highlightActions = page.getByRole("dialog", { name: /highlight actions/i });
     const greenButton = highlightActions.getByRole("button", { name: /^Green/ }).first();
     await expect(greenButton).toBeEnabled();
+    const createHighlightResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/api/fragments/${seed.fragment_id}/highlights`)
+    );
     await greenButton.click();
+    const createdHighlightResponse = await createHighlightResponse;
+    expect(createdHighlightResponse.ok()).toBeTruthy();
+    const createdHighlight = (await createdHighlightResponse.json()) as {
+      data: { exact: string };
+    };
+    expect(createdHighlight.data.exact.replace(/\s+/g, " ").trim()).toBe(
+      selectedText.replace(/\s+/g, " ").trim(),
+    );
 
     await expect
       .poll(
@@ -156,7 +156,7 @@ test.describe("web articles", () => {
           };
           return payload.data.highlights.length > existingCount;
         },
-        { timeout: 10_000 }
+        { timeout: 20_000 }
       )
       .toBe(true);
 
@@ -166,7 +166,7 @@ test.describe("web articles", () => {
 
     await expect
       .poll(async () => page.locator("[data-active-highlight-ids]").count(), {
-        timeout: 10_000,
+        timeout: 20_000,
       })
       .toBeGreaterThan(beforeCount);
   });

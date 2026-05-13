@@ -1,7 +1,7 @@
 .navLink {
-  color: var(--color-accent);
+  color: var(--accent);
   text-decoration: none;
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .splitLayout {
@@ -32,21 +32,21 @@
   flex: 0 0 380px;
   width: 380px;
   min-width: 0;
-  border-left: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-secondary);
+  border-left: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
   display: flex;
   flex-direction: column;
 }
 
 .episodesColumnHeader {
   padding: 16px;
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--edge-subtle);
 }
 
 .episodesColumnHeader h2 {
   margin: 0;
-  font-size: var(--font-size-base);
-  color: var(--color-text);
+  font-size: var(--text-base);
+  color: var(--ink);
 }
 
 .episodesColumnBody {
@@ -70,13 +70,7 @@
 }
 
 .paneActionButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
+  border-radius: var(--radius-full);
 }
 
 .headerActions {
@@ -94,51 +88,6 @@
   flex-wrap: wrap;
 }
 
-.unsubscribeButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.unsubscribeButton:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.syncButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.syncButton:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.settingsButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.settingsButton:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .subscriptionActions {
   display: flex;
   align-items: center;
@@ -149,36 +98,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.markAllButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.batchTranscribeButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.markAllButton:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.batchTranscribeButton:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 .episodeFilterBar {
@@ -195,19 +114,9 @@
   gap: 6px;
 }
 
-.episodeFilterPill {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
 .episodeFilterPill[aria-pressed="true"] {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .episodeSortLabel,
@@ -215,57 +124,30 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-}
-
-.episodeSortSelect,
-.episodeSearchInput {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 4px 6px;
-  font-size: var(--font-size-xs);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
 }
 
 .episodeSearchInput {
   min-width: 200px;
 }
 
-.unsubscribeModeLabel {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-}
-
-.unsubscribeModeSelect {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 4px 6px;
-  font-size: var(--font-size-xs);
-}
-
 .unsubscribedLabel {
   margin: 0;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
 }
 
 .syncState {
   margin: 0;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
 }
 
 .syncError {
   margin: 8px 0 0;
-  color: var(--color-danger);
-  font-size: var(--font-size-sm);
+  color: var(--danger);
+  font-size: var(--text-sm);
 }
 
 .summaryCard {
@@ -284,24 +166,24 @@
 .summaryArtworkFallback {
   width: 88px;
   height: 88px;
-  border-radius: 16px;
+  border-radius: var(--radius-2xl);
   flex-shrink: 0;
 }
 
 .summaryArtwork {
   object-fit: cover;
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--edge-subtle);
 }
 
 .summaryArtworkFallback {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-panel);
-  color: var(--color-accent);
-  font-size: var(--font-size-lg);
-  font-weight: 700;
+  border: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
+  color: var(--accent);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
 }
 
 .summaryCopy {
@@ -313,22 +195,22 @@
 
 .summaryTitle {
   margin: 0;
-  font-size: clamp(1.125rem, 2vw, 1.5rem);
-  line-height: 1.2;
-  color: var(--color-text);
+  font-size: clamp(var(--text-lg), 2vw, var(--text-2xl));
+  line-height: var(--leading-tight);
+  color: var(--ink);
 }
 
 .summaryByline {
   margin: 0;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
 }
 
 .summaryDescription {
   margin: 0;
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-  line-height: 1.5;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
   white-space: pre-wrap;
 }
 
@@ -342,19 +224,19 @@
 .summaryMetaLink {
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
   padding: 4px 10px;
-  font-size: var(--font-size-xs);
-  background: var(--color-bg-panel);
+  font-size: var(--text-xs);
+  background: var(--surface-2);
 }
 
 .summaryMetaBadge {
-  color: var(--color-text-muted);
+  color: var(--ink-faint);
 }
 
 .summaryMetaLink {
-  color: var(--color-text);
+  color: var(--ink);
   text-decoration: none;
 }
 
@@ -382,7 +264,7 @@
   right: 0;
   bottom: 0;
   width: min(92vw, 400px);
-  background: var(--color-surface);
+  background: var(--surface-2);
   display: flex;
   flex-direction: column;
   z-index: 201;
@@ -393,13 +275,13 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--edge-subtle);
 }
 
 .episodesDrawerHeader h2 {
   margin: 0;
-  font-size: var(--font-size-base);
-  color: var(--color-text);
+  font-size: var(--text-base);
+  color: var(--ink);
 }
 
 .episodesDrawerBody {
@@ -410,9 +292,9 @@
 
 .modalCard {
   width: min(560px, 100%);
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-xl);
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -421,36 +303,27 @@
 
 .modalTitle {
   margin: 0;
-  font-size: var(--font-size-lg);
-  color: var(--color-text);
+  font-size: var(--text-lg);
+  color: var(--ink);
 }
 
 .modalDescription {
   margin: 0;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
 }
 
 .settingsFieldLabel {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-}
-
-.settingsSelect {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 8px;
-  font-size: var(--font-size-sm);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
 }
 
 .settingsToggleLabel {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
+  color: var(--ink);
+  font-size: var(--text-sm);
 }
 
 .modalActions {
@@ -460,53 +333,13 @@
   gap: 8px;
 }
 
-.libraryButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.queueButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.markStateButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.markStateButton:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .queueBadge {
-  border: 1px solid var(--color-border-subtle);
-  background: var(--color-surface);
-  color: var(--color-text-muted);
-  border-radius: 999px;
+  border: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
+  color: var(--ink-faint);
+  border-radius: var(--radius-full);
   padding: 4px 8px;
-  font-size: var(--font-size-xs);
-}
-
-.libraryButton:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  font-size: var(--text-xs);
 }
 
 .episodeActions {
@@ -524,13 +357,13 @@
 .unplayedDot {
   width: 8px;
   height: 8px;
-  border-radius: 999px;
-  background: var(--color-accent);
+  border-radius: var(--radius-full);
+  background: var(--accent);
   flex-shrink: 0;
 }
 
 .playedEpisodeTitleText {
-  color: var(--color-text-muted);
+  color: var(--ink-faint);
 }
 
 .episodeDescription {
@@ -546,8 +379,8 @@
 }
 
 .episodeShowNotesPreview {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
   white-space: pre-wrap;
 }
 
@@ -559,91 +392,52 @@
 }
 
 .showNotesToggleButton {
-  border: none;
-  background: none;
-  color: var(--color-accent);
+  height: auto;
   padding: 0;
-  font-size: var(--font-size-xs);
-  text-align: left;
-  cursor: pointer;
+  color: var(--accent);
+  font-weight: var(--weight-regular);
 }
 
 .batchTranscriptSummary {
   margin: 0 0 12px;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  color: var(--ink-faint);
 }
 
 .inProgressBar {
   width: 140px;
   height: 4px;
-  border-radius: 999px;
-  background: var(--color-border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--edge-subtle);
   overflow: hidden;
 }
 
 .inProgressBarFill {
   display: block;
   height: 100%;
-  background: var(--color-accent);
+  background: var(--accent);
 }
 
 .reasonLabel {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.reasonSelect {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 4px 6px;
-  font-size: var(--font-size-xs);
-}
-
-.requestButton {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.requestButton:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
 }
 
 .loadMoreButton {
   margin-top: 12px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-panel);
-  color: var(--color-text);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-
-.loadMoreButton:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 .transcriptRequestHint {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
 }
 
 .transcriptStatus {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
 }
 
 @media (max-width: 640px) {
@@ -653,6 +447,6 @@
 }
 
 .transcriptQuotaWarning {
-  color: var(--color-danger);
-  font-size: var(--font-size-xs);
+  color: var(--danger);
+  font-size: var(--text-xs);
 }

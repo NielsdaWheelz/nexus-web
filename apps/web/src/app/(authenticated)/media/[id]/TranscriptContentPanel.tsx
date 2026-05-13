@@ -1,46 +1,30 @@
 "use client";
 
-import type { MouseEvent, RefObject } from "react";
-import ReaderContentArea from "@/components/ReaderContentArea";
+import type { CSSProperties, MouseEvent, RefObject } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
+import Button from "@/components/ui/Button";
+import { useReaderContext } from "@/lib/reader/ReaderContext";
 import {
+  formatTranscriptTimestampMs,
   normalizeTranscriptChapters,
   type TranscriptChapter,
+  type TranscriptCoverage,
   type TranscriptFragment,
-} from "./mediaHelpers";
+  type TranscriptState,
+} from "./transcriptView";
 import styles from "./page.module.css";
 
-function formatTimestampMs(timestampMs: number | null | undefined): string | null {
-  if (timestampMs == null || timestampMs < 0) {
-    return null;
-  }
-
-  const totalSeconds = Math.floor(timestampMs / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  return `${hours.toString().padStart(2, "0")}:${minutes
-    .toString()
-    .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
-}
-
 interface TranscriptContentPanelProps {
-  transcriptState:
-    | "not_requested"
-    | "queued"
-    | "running"
-    | "failed_provider"
-    | "failed_quota"
-    | "unavailable"
-    | "ready"
-    | "partial"
-    | null;
-  transcriptCoverage: "none" | "partial" | "full" | null;
+  mediaId: string;
+  transcriptState: TranscriptState;
+  transcriptCoverage: TranscriptCoverage;
   chapters: TranscriptChapter[];
   fragments: TranscriptFragment[];
   activeFragment: TranscriptFragment | null;
   renderedHtml: string;
+  evidenceHighlightId?: string | null;
+  evidenceStartMs?: number | null;
+  evidenceEndMs?: number | null;
   contentRef: RefObject<HTMLDivElement | null>;
   onSegmentSelect: (fragment: TranscriptFragment) => void;
   onSeek: (timestampMs: number | null | undefined) => void;
@@ -48,17 +32,35 @@ interface TranscriptContentPanelProps {
 }
 
 export default function TranscriptContentPanel({
+  mediaId,
   transcriptState,
   transcriptCoverage,
   chapters,
   fragments,
   activeFragment,
   renderedHtml,
+  evidenceHighlightId,
+  evidenceStartMs,
+  evidenceEndMs,
   contentRef,
   onSegmentSelect,
   onSeek,
   onContentClick,
 }: TranscriptContentPanelProps) {
+  const { profile } = useReaderContext();
+  const readerFontFamily =
+    profile.font_family === "sans"
+      ? "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+      : "Iowan Old Style, Palatino Linotype, Book Antiqua, Palatino, Georgia, Times New Roman, serif";
+  const readerSurfaceStyle = {
+    "--reader-font-family": readerFontFamily,
+    "--reader-font-size-px": `${profile.font_size_px}px`,
+    "--reader-line-height": String(profile.line_height),
+    "--reader-column-width-ch": `${profile.column_width_ch}ch`,
+  } as CSSProperties;
+  const readerSurfaceClassName = `${styles.readerContentRoot} ${
+    profile.theme === "dark" ? styles.readerThemeDark : styles.readerThemeLight
+  }`;
   const normalizedChapters = normalizeTranscriptChapters(chapters);
   const isReadablePartialTranscript =
     transcriptState === "partial" || transcriptCoverage === "partial";
@@ -126,7 +128,9 @@ export default function TranscriptContentPanel({
           <div className={styles.transcriptSegments}>
             {timeline.map((entry) => {
               if (entry.kind === "chapter") {
-                const chapterTimestamp = formatTimestampMs(entry.chapterStartMs);
+                const chapterTimestamp = formatTranscriptTimestampMs(
+                  entry.chapterStartMs
+                );
                 return (
                   <div
                     key={`inline-chapter-${entry.chapterIdx}-${entry.chapterStartMs}`}
@@ -144,22 +148,51 @@ export default function TranscriptContentPanel({
                 );
               }
 
-              const timestamp = formatTimestampMs(entry.fragment.t_start_ms);
+              const timestamp = formatTranscriptTimestampMs(entry.fragment.t_start_ms);
               const isActive = entry.fragment.id === activeFragment?.id;
+              const segmentStartMs = entry.fragment.t_start_ms;
+              const segmentEndMs = entry.fragment.t_end_ms;
+              const hasEvidence = Boolean(
+                evidenceHighlightId &&
+                  typeof evidenceStartMs === "number" &&
+                  typeof segmentStartMs === "number" &&
+                  (typeof evidenceEndMs === "number" && typeof segmentEndMs === "number"
+                    ? segmentStartMs < evidenceEndMs && segmentEndMs > evidenceStartMs
+                    : segmentStartMs === evidenceStartMs),
+              );
+              const segmentLabel = [
+                timestamp ?? "Transcript segment",
+                entry.fragment.speaker_label,
+                hasEvidence ? "Evidence source" : null,
+                entry.fragment.canonical_text,
+              ]
+                .filter(Boolean)
+                .join(" ");
 
               return (
-                <button
+                <Button
                   key={entry.fragment.id}
-                  type="button"
+                  variant="secondary"
+                  size="md"
                   className={`${styles.segmentButton} ${
                     isActive ? styles.segmentButtonActive : ""
-                  }`}
+                  } ${hasEvidence ? "hl-blue hl-evidence" : ""}`}
                   aria-current={isActive ? "true" : undefined}
+                  aria-label={segmentLabel}
+                  data-active-highlight-ids={
+                    hasEvidence ? (evidenceHighlightId ?? undefined) : undefined
+                  }
                   onClick={() => {
                     onSegmentSelect(entry.fragment);
                     onSeek(entry.fragment.t_start_ms);
                   }}
                 >
+                  {hasEvidence ? (
+                    <span
+                      data-highlight-anchor={evidenceHighlightId ?? undefined}
+                      aria-hidden="true"
+                    />
+                  ) : null}
                   <span className={styles.segmentMeta}>
                     {timestamp ? <span>{timestamp}</span> : null}
                     {entry.fragment.speaker_label ? (
@@ -169,17 +202,19 @@ export default function TranscriptContentPanel({
                   <span className={styles.segmentText}>
                     {entry.fragment.canonical_text}
                   </span>
-                </button>
+                </Button>
               );
             })}
           </div>
 
           {activeFragment ? (
-            <ReaderContentArea>
-              <div ref={contentRef} onClick={onContentClick}>
-                <HtmlRenderer htmlSanitized={renderedHtml} />
+            <div className={readerSurfaceClassName} style={readerSurfaceStyle}>
+              <div className={styles.readerContentInner}>
+                <div ref={contentRef} onClick={onContentClick}>
+                  <HtmlRenderer htmlSanitized={renderedHtml} mediaId={mediaId} />
+                </div>
               </div>
-            </ReaderContentArea>
+            </div>
           ) : null}
         </div>
       )}

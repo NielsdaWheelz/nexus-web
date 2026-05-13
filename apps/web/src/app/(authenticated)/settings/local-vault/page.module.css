@@ -12,8 +12,8 @@
 }
 
 .statusText {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
 }
 
 .buttonRow {
@@ -22,61 +22,12 @@
   flex-wrap: wrap;
 }
 
-.button,
-.primaryButton {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 36px;
-  padding: var(--space-2) var(--space-3);
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    background var(--transition-fast),
-    border-color var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.button {
-  background: var(--color-bg);
-  color: var(--color-text);
-}
-
-.button:hover:not(:disabled) {
-  border-color: var(--color-accent);
-}
-
-.primaryButton {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: var(--color-bg);
-}
-
-.primaryButton:hover:not(:disabled) {
-  background: var(--color-accent-hover);
-}
-
-.button:disabled,
-.primaryButton:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.checkboxLabel {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
+.downloadLink {
+  text-decoration: none;
 }
 
 @media (max-width: 640px) {
-  .button,
-  .primaryButton {
+  .buttonRow > * {
     width: 100%;
     justify-content: center;
   }

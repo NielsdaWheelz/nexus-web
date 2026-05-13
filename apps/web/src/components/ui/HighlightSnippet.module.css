@@ -1,13 +1,13 @@
 .root {
-  font-size: var(--font-size-sm);
-  line-height: 1.45;
-  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--ink-muted);
   white-space: normal;
   word-break: break-word;
 }
 
 .compact {
-  color: var(--color-text);
+  color: var(--ink);
 }
 
 .prefix,
@@ -16,30 +16,30 @@
 }
 
 .exact {
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   padding: 1px 2px;
 }
 
 .color-yellow {
-  background: rgba(255, 235, 59, 0.5);
+  background: var(--highlight-yellow);
 }
 
 .color-green {
-  background: rgba(76, 175, 80, 0.4);
+  background: var(--highlight-green);
 }
 
 .color-blue {
-  background: rgba(33, 150, 243, 0.35);
+  background: var(--highlight-blue);
 }
 
 .color-pink {
-  background: rgba(233, 30, 99, 0.35);
+  background: var(--highlight-pink);
 }
 
 .color-purple {
-  background: rgba(156, 39, 176, 0.35);
+  background: var(--highlight-purple);
 }
 
 .color-neutral {
-  background: color-mix(in oklab, var(--color-accent) 20%, transparent);
+  background: var(--accent-muted);
 }

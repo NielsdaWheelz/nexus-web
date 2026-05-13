@@ -1,9 +1,9 @@
 /**
- * SelectionPopover - Selection actions for highlight + chat.
+ * SelectionPopover - Selection actions for highlight + Ask.
  *
  * Appears when user selects text in the content area. Positioned relative
  * to the selection bounding box. Selecting a color creates the highlight
- * immediately, and the chat icon creates a highlight then opens quote-to-chat.
+ * immediately, and the Ask icon emits the active selection color.
  * Dismisses on Escape, click outside, or selection collapse.
  */
 
@@ -11,9 +11,10 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MessageSquare } from "lucide-react";
-import { COLOR_LABELS } from "@/lib/highlights/colors";
-import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/highlights/segmenter";
+import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
+import Button from "@/components/ui/Button";
 import styles from "./SelectionPopover.module.css";
 
 export interface SelectionPopoverProps {
@@ -21,7 +22,7 @@ export interface SelectionPopoverProps {
   selectionLineRects?: DOMRect[];
   containerRef: React.RefObject<HTMLElement | null>;
   onCreateHighlight: (color: HighlightColor) => void | Promise<void | string | null>;
-  onQuoteToChat?: (color: HighlightColor) => void | Promise<void>;
+  onAsk?: (color: HighlightColor) => void | Promise<void>;
   onDismiss: () => void;
   isCreating?: boolean;
 }
@@ -76,7 +77,7 @@ export default function SelectionPopover({
   selectionLineRects,
   containerRef,
   onCreateHighlight,
-  onQuoteToChat,
+  onAsk,
   onDismiss,
   isCreating = false,
 }: SelectionPopoverProps) {
@@ -284,12 +285,16 @@ export default function SelectionPopover({
     [isCreating, onCreateHighlight]
   );
 
-  const handleQuoteToChat = useCallback(() => {
-    if (isCreating || !onQuoteToChat) {
+  const handleAsk = useCallback(() => {
+    if (isCreating || !onAsk) {
       return;
     }
-    void onQuoteToChat(selectedColor);
-  }, [isCreating, onQuoteToChat, selectedColor]);
+    void onAsk(selectedColor);
+  }, [isCreating, onAsk, selectedColor]);
+
+  const handlePopoverPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+  }, []);
 
   return (
     <div
@@ -304,33 +309,28 @@ export default function SelectionPopover({
       aria-label="Highlight actions"
       data-placement={position.placement}
       data-mobile={isMobileViewport ? "true" : "false"}
+      onPointerDown={handlePopoverPointerDown}
     >
-      <div className={styles.colorPicker}>
-        {HIGHLIGHT_COLORS.map((color) => (
-          <button
-            key={color}
-            type="button"
-            className={`${styles.colorButton} ${styles[`color-${color}`]} ${
-              selectedColor === color ? styles.selected : ""
-            }`}
-            onClick={() => handleColorSelect(color)}
-            aria-label={`${COLOR_LABELS[color]}${selectedColor === color ? " (selected)" : ""}`}
-            aria-pressed={selectedColor === color}
-            disabled={isCreating}
-          />
-        ))}
-      </div>
-      {onQuoteToChat && (
-        <button
-          type="button"
-          className={styles.chatButton}
-          onClick={handleQuoteToChat}
+      <HighlightColorPicker
+        selectedColor={selectedColor}
+        onSelectColor={handleColorSelect}
+        disabled={isCreating}
+        className={styles.colorPicker}
+      />
+      {onAsk ? (
+        <Button
+          variant="secondary"
+          size="sm"
+          iconOnly
+          className={styles.askButton}
+          onClick={handleAsk}
           disabled={isCreating}
-          aria-label="Ask in chat"
+          aria-label="Ask"
+          title="Ask"
         >
           <MessageSquare size={14} aria-hidden="true" />
-        </button>
-      )}
+        </Button>
+      ) : null}
     </div>
   );
 }

@@ -27,6 +27,10 @@ wheels/
 .venv/
 venv/
 ENV/
+!deploy/env/
+!deploy/env/.gitignore
+!deploy/env/*.example
+!deploy/env/README.md
 
 # IDE
 .idea/
@@ -112,3 +116,4 @@ e2e/playwright-report/
 
 # Lock files that shouldn't be edited manually
 # (uv.lock and bun.lock SHOULD be committed)
+.vercel

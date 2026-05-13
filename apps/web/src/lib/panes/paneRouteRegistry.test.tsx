@@ -1,177 +1,75 @@
-import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@/app/(authenticated)/libraries/LibrariesPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/libraries/[id]/LibraryPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/media/[id]/MediaPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/conversations/ConversationsPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/conversations/[id]/ConversationPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/conversations/new/ConversationNewPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/browse/BrowsePaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/podcasts/PodcastsPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/search/SearchPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/settings/SettingsPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/settings/billing/SettingsBillingPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/settings/reader/SettingsReaderPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/settings/keys/SettingsKeysPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/settings/local-vault/SettingsLocalVaultPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody", () => ({
-  default: () => null,
-}));
-vi.mock("@/app/(authenticated)/settings/keybindings/KeybindingsPaneBody", () => ({
-  default: () => null,
-}));
-
-import { resolvePaneRoute } from "./paneRouteRegistry";
+import { describe, expect, it } from "vitest";
+import { getParentHref, resolvePaneRoute } from "./paneRouteRegistry";
 
 describe("pane route registry", () => {
-  it("resolves typed route params", () => {
-    const route = resolvePaneRoute("/media/abc-123");
-    expect(route.id).toBe("media");
-    expect(route.params.id).toBe("abc-123");
-    expect(route.render).toBeTypeOf("function");
-    expect(route.staticTitle).toBe("Media");
-    expect(route.resourceRef).toBe("media:abc-123");
+  it("uses broad search copy for evidence-backed search", () => {
+    const route = resolvePaneRoute("/search");
+    const chrome = route.definition?.getChrome?.({ href: "/search", params: {} });
+
+    expect(route.id).toBe("search");
+    expect(chrome?.subtitle).toBe(
+      "Search across authors, media, podcasts, evidence, notes, and chat."
+    );
   });
 
-  it("resolves /conversations/new before :id capture", () => {
-    const route = resolvePaneRoute("/conversations/new");
-    expect(route.id).toBe("conversationNew");
-    expect(route.render).toBeTypeOf("function");
-  });
+  it("resolves author routes with contributor resource refs", () => {
+    const route = resolvePaneRoute("/authors/ursula-k-le-guin");
 
-  it("still resolves /conversations/:id for real IDs", () => {
-    const route = resolvePaneRoute("/conversations/abc-123");
-    expect(route.id).toBe("conversation");
-    expect(route.params.id).toBe("abc-123");
-    expect(route.staticTitle).toBe("Chat");
-    expect(route.resourceRef).toBe("conversation:abc-123");
-  });
-
-  it("keeps chat-detail route as a single pane surface", () => {
-    const route = resolvePaneRoute("/conversations/abc-123");
-    expect(route.id).toBe("conversation");
+    expect(route.id).toBe("author");
+    expect(route.params).toEqual({ handle: "ursula-k-le-guin" });
+    expect(route.resourceRef).toBe("contributor:ursula-k-le-guin");
+    expect(route.render).toEqual(expect.any(Function));
     expect(route.definition?.bodyMode).toBe("standard");
-    expect(route.definition?.defaultWidthPx).toBe(560);
-    expect(route.definition?.getChrome).toBeTypeOf("function");
+    expect(getParentHref(route)).toBeNull();
   });
 
-  it("keeps podcast-detail route as a wide document surface", () => {
-    const route = resolvePaneRoute("/podcasts/pod-123");
-    expect(route.id).toBe("podcastDetail");
-    expect(route.params.podcastId).toBe("pod-123");
-    expect(route.staticTitle).toBe("Podcast");
-    expect(route.resourceRef).toBe("podcast:pod-123");
+  it("resolves page routes as document panes", () => {
+    const route = resolvePaneRoute("/pages/page-1");
+
+    expect(route.id).toBe("page");
+    expect(route.params).toEqual({ pageId: "page-1" });
+    expect(route.resourceRef).toBe("page:page-1");
+    expect(route.render).toEqual(expect.any(Function));
     expect(route.definition?.bodyMode).toBe("document");
-    expect(route.definition?.defaultWidthPx).toBe(960);
-    expect(route.definition?.minWidthPx).toBe(760);
-    expect(route.definition?.maxWidthPx).toBe(1400);
-    expect(route.definition?.getChrome).toBeTypeOf("function");
+    expect(getParentHref(route)).toBeNull();
   });
 
-  it("rejects the removed discover podcasts surface", () => {
-    const route = resolvePaneRoute("/discover/podcasts");
-    expect(route.id).toBe("unsupported");
-    expect(route.render).toBeNull();
-    expect(route.staticTitle).toBe("Tab");
-    expect(route.resourceRef).toBeNull();
+  it("resolves notes and note block routes", () => {
+    const notesRoute = resolvePaneRoute("/notes");
+    const noteRoute = resolvePaneRoute("/notes/block-1");
+
+    expect(notesRoute.id).toBe("notes");
+    expect(notesRoute.resourceRef).toBeNull();
+    expect(notesRoute.render).toEqual(expect.any(Function));
+    expect(notesRoute.definition?.bodyMode).toBe("standard");
+
+    expect(noteRoute.id).toBe("note");
+    expect(noteRoute.params).toEqual({ blockId: "block-1" });
+    expect(noteRoute.resourceRef).toBe("note_block:block-1");
+    expect(noteRoute.render).toEqual(expect.any(Function));
+    expect(noteRoute.definition?.bodyMode).toBe("document");
+    expect(getParentHref(noteRoute)).toBe("/notes");
   });
 
-  it("rejects removed top-level discover and media catalog routes", () => {
-    expect(resolvePaneRoute("/discover").id).toBe("unsupported");
-    expect(resolvePaneRoute("/documents").id).toBe("unsupported");
-    expect(resolvePaneRoute("/videos").id).toBe("unsupported");
+  it("resolves daily note routes as document panes", () => {
+    const todayRoute = resolvePaneRoute("/daily");
+    const datedRoute = resolvePaneRoute("/daily/2026-05-06");
+
+    expect(todayRoute.id).toBe("daily");
+    expect(todayRoute.resourceRef).toBeNull();
+    expect(todayRoute.render).toEqual(expect.any(Function));
+    expect(todayRoute.definition?.bodyMode).toBe("document");
+
+    expect(datedRoute.id).toBe("dailyDate");
+    expect(datedRoute.params).toEqual({ localDate: "2026-05-06" });
+    expect(datedRoute.resourceRef).toBe("daily:2026-05-06");
+    expect(datedRoute.render).toEqual(expect.any(Function));
+    expect(datedRoute.definition?.bodyMode).toBe("document");
+    expect(getParentHref(datedRoute)).toBe("/daily");
   });
 
-  it("resolves /conversations/new with query params", () => {
-    const route = resolvePaneRoute("/conversations/new?attach_type=highlight&attach_id=abc");
-    expect(route.id).toBe("conversationNew");
-  });
-
-  it("returns unsupported when route is not registered", () => {
-    const route = resolvePaneRoute("/not-supported");
-    expect(route.id).toBe("unsupported");
-    expect(route.render).toBeNull();
-    expect(route.staticTitle).toBe("Tab");
-    expect(route.resourceRef).toBeNull();
-  });
-
-  it("rejects the removed /podcasts/subscriptions route", () => {
-    const route = resolvePaneRoute("/podcasts/subscriptions");
-    expect(route.id).toBe("unsupported");
-    expect(route.render).toBeNull();
-    expect(route.staticTitle).toBe("Tab");
-    expect(route.resourceRef).toBeNull();
-  });
-
-  it("treats malformed encoded params as unsupported", () => {
-    const route = resolvePaneRoute("/media/%E0%A4%A");
-    expect(route.id).toBe("unsupported");
-    expect(route.render).toBeNull();
-    expect(route.staticTitle).toBe("Tab");
-  });
-
-  it("resolves expanded authenticated static routes", () => {
-    expect(resolvePaneRoute("/libraries").id).toBe("libraries");
-    expect(resolvePaneRoute("/browse").id).toBe("browse");
-    expect(resolvePaneRoute("/discover/podcasts").id).toBe("unsupported");
-    expect(resolvePaneRoute("/podcasts").id).toBe("podcasts");
-    expect(resolvePaneRoute("/search").id).toBe("search");
-    expect(resolvePaneRoute("/settings").id).toBe("settings");
-    expect(resolvePaneRoute("/settings/billing").id).toBe("settingsBilling");
-    expect(resolvePaneRoute("/settings/reader").id).toBe("settingsReader");
-    expect(resolvePaneRoute("/settings/keys").id).toBe("settingsKeys");
-    expect(resolvePaneRoute("/settings/local-vault").id).toBe(
-      "settingsLocalVault"
-    );
-    expect(resolvePaneRoute("/settings/identities").id).toBe(
-      "settingsIdentities"
-    );
-  });
-
-  it("describes podcasts as the followed-show management surface", () => {
-    const route = resolvePaneRoute("/podcasts");
-    expect(route.definition?.getChrome?.({ href: "/podcasts", params: {} })).toMatchObject({
-      title: "Podcasts",
-      subtitle: "Followed shows, library membership, and subscription controls.",
-    });
-  });
-
-  it("describes browse as the global acquisition surface", () => {
-    const route = resolvePaneRoute("/browse");
-    expect(route.definition?.getChrome?.({ href: "/browse", params: {} })).toMatchObject({
-      title: "Browse",
-      subtitle: "Search globally for podcasts, episodes, videos, and documents.",
-    });
+  it("returns the unsupported placeholder for full-screen Oracle routes", () => {
+    expect(resolvePaneRoute("/oracle").id).toBe("unsupported");
+    expect(resolvePaneRoute("/oracle/reading-1").id).toBe("unsupported");
   });
 });

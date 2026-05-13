@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, type ReactNode } from "react";
+import { forwardRef, useId, type ReactNode } from "react";
 import { ChevronLeft } from "lucide-react";
 import ActionMenu, { type ActionMenuOption } from "./ActionMenu";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -17,6 +17,7 @@ interface SurfaceHeaderProps {
   headingLevel?: 1 | 2;
   className?: string;
   onBack?: () => void;
+  onOptionsOpenChange?: (open: boolean) => void;
 }
 
 const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function SurfaceHeader(
@@ -29,11 +30,14 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
     headingLevel = 2,
     className,
     onBack,
+    onOptionsOpenChange,
   }: SurfaceHeaderProps,
   ref
 ) {
   const HeadingTag = headingLevel === 1 ? "h1" : "h2";
   const hasOptions = options.length > 0;
+  const subtitleId = useId();
+  const hasSubtitle = Boolean(subtitle);
   const isMobile = useIsMobileViewport();
   const headerClassName = [styles.header, isMobile ? styles.mobile : "", className]
     .filter(Boolean)
@@ -45,6 +49,7 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
       className={headerClassName}
       data-surface-header="true"
       data-mobile={isMobile ? "true" : undefined}
+      aria-describedby={hasSubtitle ? subtitleId : undefined}
     >
       <div className={styles.leading}>
         {onBack && (
@@ -59,8 +64,12 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
         )}
         <div className={styles.titles}>
           <HeadingTag className={styles.title}>{title}</HeadingTag>
-          {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
           {meta && <div className={styles.meta}>{meta}</div>}
+          {subtitle && (
+            <p id={subtitleId} className="sr-only">
+              {subtitle}
+            </p>
+          )}
         </div>
       </div>
 
@@ -68,7 +77,12 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
         {actions && <div className={styles.actions}>{actions}</div>}
 
         {hasOptions && (
-          <ActionMenu options={options} label="Options" className={styles.optionsContainer} />
+          <ActionMenu
+            options={options}
+            label="Options"
+            className={styles.optionsContainer}
+            onOpenChange={onOptionsOpenChange}
+          />
         )}
       </div>
     </header>

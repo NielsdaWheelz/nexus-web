@@ -12,7 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
+from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiErrorCode,
@@ -36,11 +36,9 @@ from nexus.schemas.library import (
     LibraryPodcastSubscriptionOut,
     LibraryRole,
 )
-from nexus.schemas.media import MediaAuthorOut, MediaOut
-from nexus.services.capabilities import derive_capabilities
-from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
-from nexus.services.playback_source import derive_playback_source
-from nexus.services.search import visible_media_ids_cte_sql
+from nexus.schemas.media import MediaOut
+from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
+from nexus.storage import get_storage_client
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +185,9 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
         NotFoundError: If library not found or viewer is not a member.
         ForbiddenError: If library is default or viewer is not owner.
     """
+    storage_paths: list[str] = []
     with transaction(db):
+        from nexus.services import media_deletion
         from nexus.services.default_library_closure import remove_media_from_non_default_closure
 
         result = db.execute(
@@ -234,6 +234,8 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
         for media_id in media_ids:
             remove_media_from_non_default_closure(db, library_id, media_id)
 
+        _delete_library_intelligence_rows(db, library_id)
+
         db.execute(
             text("DELETE FROM library_entries WHERE library_id = :library_id"),
             {"library_id": library_id},
@@ -242,6 +244,102 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
             text("DELETE FROM libraries WHERE id = :library_id"),
             {"library_id": library_id},
         )
+
+        for media_id in media_ids:
+            paths = media_deletion.delete_document_media_if_unreferenced(db, media_id)
+            if paths:
+                storage_paths.extend(paths)
+
+    if storage_paths:
+        storage_client = get_storage_client()
+        for storage_path in storage_paths:
+            storage_client.delete_object(storage_path)
+
+
+def _delete_library_intelligence_rows(db: Session, library_id: UUID) -> None:
+    db.execute(
+        text(
+            """
+            DELETE FROM library_intelligence_evidence e
+            USING library_intelligence_claims c, library_intelligence_versions v
+            WHERE e.claim_id = c.id
+              AND c.version_id = v.id
+              AND v.library_id = :library_id
+            """
+        ),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM library_intelligence_claims c
+            USING library_intelligence_versions v
+            WHERE c.version_id = v.id
+              AND v.library_id = :library_id
+            """
+        ),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM library_intelligence_nodes n
+            USING library_intelligence_versions v
+            WHERE n.version_id = v.id
+              AND v.library_id = :library_id
+            """
+        ),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM library_intelligence_sections s
+            USING library_intelligence_versions v
+            WHERE s.version_id = v.id
+              AND v.library_id = :library_id
+            """
+        ),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text(
+            """
+            UPDATE library_intelligence_artifacts
+            SET active_version_id = NULL,
+                updated_at = now()
+            WHERE library_id = :library_id
+            """
+        ),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text("DELETE FROM library_intelligence_versions WHERE library_id = :library_id"),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text("DELETE FROM library_intelligence_builds WHERE library_id = :library_id"),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM library_source_set_items i
+            USING library_source_set_versions s
+            WHERE i.source_set_version_id = s.id
+              AND s.library_id = :library_id
+            """
+        ),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text("DELETE FROM library_intelligence_artifacts WHERE library_id = :library_id"),
+        {"library_id": library_id},
+    )
+    db.execute(
+        text("DELETE FROM library_source_set_versions WHERE library_id = :library_id"),
+        {"library_id": library_id},
+    )
 
 
 def list_libraries(db: Session, viewer_id: UUID, limit: int = 100) -> list[LibraryOut]:
@@ -386,6 +484,9 @@ def add_media_to_library(
         )
         if result.fetchone() is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        from nexus.services.media_deletion import clear_user_media_deletion
+
+        clear_user_media_deletion(db, viewer_id, media_id)
 
         is_default_library = membership[1]
         if is_default_library:
@@ -480,97 +581,6 @@ def list_media_item_libraries(
         )
         for row in rows
     ]
-
-
-def remove_media_from_library(
-    db: Session,
-    viewer_id: UUID,
-    library_id: UUID,
-    media_id: UUID,
-) -> None:
-    """Remove media from a library.
-
-    S4 closure rules:
-    - Default target: remove intrinsic; gc materialized row iff no intrinsic
-      and no remaining closure edge. Does NOT cascade to non-default libraries.
-    - Non-default target: remove source row, remove source closure edges, gc
-      affected default rows.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        library_id: The ID of the library.
-        media_id: The ID of the media to remove.
-
-    Raises:
-        NotFoundError: If library not found, viewer not a member, or media not in library.
-        ForbiddenError: If viewer is not admin.
-    """
-    from nexus.services.default_library_closure import (
-        remove_default_intrinsic_and_gc,
-        remove_media_from_non_default_closure,
-    )
-
-    with transaction(db):
-        # Step 1: Fetch library with lock
-        result = db.execute(
-            text("""
-                SELECT l.id, l.is_default, l.owner_user_id
-                FROM libraries l
-                WHERE l.id = :library_id
-                FOR UPDATE
-            """),
-            {"library_id": library_id},
-        )
-        library = result.fetchone()
-
-        if library is None:
-            raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
-
-        is_default = library[1]
-
-        # Step 2: Verify viewer is admin member
-        result = db.execute(
-            text("""
-                SELECT role FROM memberships
-                WHERE library_id = :library_id AND user_id = :viewer_id
-            """),
-            {"library_id": library_id, "viewer_id": viewer_id},
-        )
-        membership = result.fetchone()
-
-        if membership is None:
-            raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
-
-        if membership[0] != "admin":
-            raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
-
-        # Step 3: Verify media exists in this library
-        row = db.execute(
-            text("""
-                SELECT id
-                FROM library_entries
-                WHERE library_id = :library_id
-                  AND media_id = :media_id
-            """),
-            {"library_id": library_id, "media_id": media_id},
-        ).fetchone()
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found in library")
-
-        if is_default:
-            remove_default_intrinsic_and_gc(db, library_id, media_id)
-        else:
-            db.execute(
-                text("""
-                    DELETE FROM library_entries
-                    WHERE library_id = :library_id
-                      AND media_id = :media_id
-                """),
-                {"library_id": library_id, "media_id": media_id},
-            )
-            remove_media_from_non_default_closure(db, library_id, media_id)
-        _normalize_library_entry_positions(db, library_id)
 
 
 def add_podcast_to_library(
@@ -881,74 +891,12 @@ def _hydrate_library_entries(
 
     media_by_id: dict[UUID, MediaOut] = {}
     if media_ids:
-        media_rows = db.execute(
-            text("""
-                SELECT m.id, m.kind, m.title, m.canonical_source_url,
-                       m.processing_status, m.failure_stage, m.last_error_code,
-                       m.external_playback_url, m.provider, m.provider_id,
-                       m.created_at, m.updated_at,
-                       EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file,
-                       EXISTS(SELECT 1 FROM fragments f WHERE f.media_id = m.id) AS has_fragments,
-                       m.published_date, m.publisher, m.language, m.description
-                FROM media m
-                WHERE m.id = ANY(:media_ids)
-            """),
-            {"media_ids": media_ids},
-        ).fetchall()
-        pdf_media_ids = [UUID(str(row[0])) for row in media_rows if row[1] == "pdf"]
-        pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
-        author_rows = db.execute(
-            text("""
-                SELECT id, media_id, name, role
-                FROM media_authors
-                WHERE media_id = ANY(:media_ids)
-                ORDER BY sort_order
-            """),
-            {"media_ids": media_ids},
-        ).fetchall()
-        authors_by_media: dict[UUID, list[MediaAuthorOut]] = {
-            media_id: [] for media_id in media_ids
+        from nexus.services import media as media_service
+
+        media_by_id = {
+            media.id: media
+            for media in media_service.list_media_for_viewer_by_ids(db, viewer_id, media_ids)
         }
-        for author_row in author_rows:
-            author_media_id = UUID(str(author_row[1]))
-            authors_by_media.setdefault(author_media_id, []).append(
-                MediaAuthorOut(id=author_row[0], name=author_row[2], role=author_row[3])
-            )
-        for media_row in media_rows:
-            media_id = UUID(str(media_row[0]))
-            pdf_ready = pdf_readiness.get(media_id, False) if media_row[1] == "pdf" else False
-            media_by_id[media_id] = MediaOut(
-                id=media_id,
-                kind=media_row[1],
-                title=media_row[2],
-                canonical_source_url=media_row[3],
-                processing_status=media_row[4],
-                failure_stage=media_row[5],
-                last_error_code=media_row[6],
-                playback_source=derive_playback_source(
-                    kind=media_row[1],
-                    external_playback_url=media_row[7],
-                    canonical_source_url=media_row[3],
-                    provider=media_row[8],
-                    provider_id=media_row[9],
-                ),
-                capabilities=derive_capabilities(
-                    kind=media_row[1],
-                    processing_status=media_row[4],
-                    last_error_code=media_row[6],
-                    media_file_exists=bool(media_row[12]),
-                    external_playback_url_exists=media_row[7] is not None,
-                    has_fragments=bool(media_row[13]),
-                    pdf_quote_text_ready=pdf_ready,
-                ),
-                authors=authors_by_media.get(media_id, []),
-                published_date=media_row[14],
-                publisher=media_row[15],
-                language=media_row[16],
-                description=media_row[17],
-                created_at=media_row[10],
-                updated_at=media_row[11],
-            )
 
     podcast_rows_by_id: dict[UUID, tuple] = {}
     if podcast_ids:
@@ -979,7 +927,6 @@ def _hydrate_library_entries(
                     p.provider,
                     p.provider_podcast_id,
                     p.title,
-                    p.author,
                     p.feed_url,
                     p.website_url,
                     p.image_url,
@@ -1010,6 +957,7 @@ def _hydrate_library_entries(
             {"viewer_id": viewer_id, "podcast_ids": podcast_ids},
         ).fetchall()
         podcast_rows_by_id = {UUID(str(row[0])): row for row in podcast_rows}
+    contributors_by_podcast_id = load_contributor_credits_for_podcasts(db, podcast_ids)
 
     hydrated: list[LibraryEntryOut] = []
     for row in rows:
@@ -1043,21 +991,21 @@ def _hydrate_library_entries(
             continue
 
         subscription = None
-        if podcast_row[12] is not None:
+        if podcast_row[11] is not None:
             subscription = LibraryPodcastSubscriptionOut(
-                status=podcast_row[12],
-                default_playback_speed=float(podcast_row[13])
-                if podcast_row[13] is not None
+                status=podcast_row[11],
+                default_playback_speed=float(podcast_row[12])
+                if podcast_row[12] is not None
                 else None,
-                auto_queue=bool(podcast_row[14]),
-                sync_status=podcast_row[15],
-                sync_error_code=podcast_row[16],
-                sync_error_message=podcast_row[17],
-                sync_attempts=int(podcast_row[18] or 0),
-                sync_started_at=podcast_row[19],
-                sync_completed_at=podcast_row[20],
-                last_synced_at=podcast_row[21],
-                updated_at=podcast_row[22],
+                auto_queue=bool(podcast_row[13]),
+                sync_status=podcast_row[14],
+                sync_error_code=podcast_row[15],
+                sync_error_message=podcast_row[16],
+                sync_attempts=int(podcast_row[17] or 0),
+                sync_started_at=podcast_row[18],
+                sync_completed_at=podcast_row[19],
+                last_synced_at=podcast_row[20],
+                updated_at=podcast_row[21],
             )
 
         hydrated.append(
@@ -1073,14 +1021,14 @@ def _hydrate_library_entries(
                     provider=podcast_row[1],
                     provider_podcast_id=podcast_row[2],
                     title=podcast_row[3],
-                    author=podcast_row[4],
-                    feed_url=podcast_row[5],
-                    website_url=podcast_row[6],
-                    image_url=podcast_row[7],
-                    description=podcast_row[8],
-                    created_at=podcast_row[9],
-                    updated_at=podcast_row[10],
-                    unplayed_count=int(podcast_row[11] or 0),
+                    contributors=contributors_by_podcast_id.get(podcast_id, []),
+                    feed_url=podcast_row[4],
+                    website_url=podcast_row[5],
+                    image_url=podcast_row[6],
+                    description=podcast_row[7],
+                    created_at=podcast_row[8],
+                    updated_at=podcast_row[9],
+                    unplayed_count=int(podcast_row[10] or 0),
                 ),
                 subscription=subscription,
             )
@@ -1564,15 +1512,18 @@ def create_library_invite(
         _require_admin(lib_row[6])
         _require_non_default(lib_row[1])
 
-        # Resolve invitee: by user_id or by email
-        # Schema validation ensures at least one is provided; assert defensively.
-        assert invitee_user_id is not None or invitee_email is not None
+        normalized_invitee_email = invitee_email.strip() if invitee_email else None
+        if invitee_user_id is None and normalized_invitee_email is None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "Either invitee_user_id or invitee_email is required",
+            )
 
         if invitee_user_id is None:
             # Resolve email to user_id
             row = db.execute(
                 text("SELECT id FROM users WHERE email = :email"),
-                {"email": invitee_email},
+                {"email": normalized_invitee_email},
             ).fetchone()
             if row is None:
                 raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found")

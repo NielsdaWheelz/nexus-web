@@ -4,7 +4,7 @@ from uuid import UUID
 
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
-from nexus.services.podcasts import (
+from nexus.services.podcasts.sync import (
     run_podcast_subscription_sync_now as run_podcast_subscription_sync_now_service,
 )
 

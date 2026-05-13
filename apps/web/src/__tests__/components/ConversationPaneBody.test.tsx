@@ -1,448 +1,545 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { userEvent } from "vitest/browser";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import type {
+  ChatRunResponse,
+  ConversationMessage,
+  ConversationTreeResponse,
+  ForkOption,
+} from "@/lib/conversations/types";
 
-const apiFetchMock = vi.hoisted(() => vi.fn());
-const hydrateContextItemsMock = vi.hoisted(() => vi.fn(async (items: unknown[]) => items));
-
-vi.mock("@/lib/api/client", () => ({
-  apiFetch: apiFetchMock,
-  isApiError: () => false,
+const tailMocks = vi.hoisted(() => ({
+  tailChatRun: vi.fn(),
+  abortAll: vi.fn(),
+  useChatRunTail: vi.fn(),
 }));
 
-vi.mock("@/lib/conversations/hydrateContextItems", () => ({
-  hydrateContextItems: hydrateContextItemsMock,
+vi.mock("@/components/chat/useChatRunTail", () => ({
+  useChatRunTail: tailMocks.useChatRunTail,
 }));
 
-vi.mock("@/components/ChatComposer", () => ({
-  default: (props: {
-    onOptimisticMessages?: (
-      userMsg: {
-        id: string;
-        seq: number;
-        role: "user" | "assistant" | "system";
-        content: string;
-        status: "pending" | "complete" | "error";
-        error_code: string | null;
-        created_at: string;
-        updated_at: string;
-      },
-      assistantMsg: {
-        id: string;
-        seq: number;
-        role: "user" | "assistant" | "system";
-        content: string;
-        status: "pending" | "complete" | "error";
-        error_code: string | null;
-        created_at: string;
-        updated_at: string;
-      }
-    ) => void;
-    onMessageSent?: () => void;
-  }) => (
-    <div>
-      <button
-        type="button"
-        onClick={() => {
-          const now = new Date().toISOString();
-          props.onOptimisticMessages?.(
-            {
-              id: "optimistic-user",
-              seq: 2,
-              role: "user",
-              content: "new user message",
-              status: "complete",
-              error_code: null,
-              created_at: now,
-              updated_at: now,
-            },
-            {
-              id: "optimistic-assistant",
-              seq: 3,
-              role: "assistant",
-              content: "new assistant reply",
-              status: "pending",
-              error_code: null,
-              created_at: now,
-              updated_at: now,
-            }
-          );
-          props.onMessageSent?.();
-        }}
-      >
-        Send mock message
-      </button>
-      <textarea placeholder="Type a message... (Enter to send, Shift+Enter for newline)" />
-    </div>
-  ),
-}));
+const timestamp = "2026-01-01T00:00:00Z";
 
-function renderConversationPane(
-  href: string,
+const MODELS = [
   {
-    onReplacePane = () => {},
-    onSetPaneTitle,
-  }: {
-    onReplacePane?: (paneId: string, href: string) => void;
-    onSetPaneTitle?: (
-      paneId: string,
-      title: string | null,
-      metadata: { routeId: string; resourceRef: string | null }
-    ) => void;
-  } = {}
-) {
-  return render(
+    id: "gpt-5-mini",
+    provider: "openai",
+    provider_display_name: "OpenAI",
+    model_name: "gpt-5-mini",
+    model_display_name: "GPT-5 mini",
+    model_tier: "light",
+    reasoning_modes: ["default"],
+    max_context_tokens: 128000,
+    available_via: "platform",
+  },
+];
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function pathOf(input: RequestInfo | URL): string {
+  if (input instanceof Request) {
+    return new URL(input.url).pathname;
+  }
+  return new URL(String(input), "http://localhost").pathname;
+}
+
+function message(
+  id: string,
+  seq: number,
+  role: ConversationMessage["role"],
+  content: string,
+  parentMessageId: string | null = null,
+  status: ConversationMessage["status"] = "complete",
+): ConversationMessage {
+  return {
+    id,
+    seq,
+    role,
+    content,
+    parent_message_id: parentMessageId,
+    contexts: [],
+    tool_calls: [],
+    status,
+    error_code: null,
+    can_retry_response: false,
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+}
+
+const rootUser = message("root-user", 1, "user", "Start");
+const rootAssistant = message(
+  "root-assistant",
+  2,
+  "assistant",
+  "Choose a branch",
+  "root-user",
+);
+const branchAUser = message("branch-a-user", 3, "user", "Ask A", "root-assistant");
+const branchAAssistant = message(
+  "branch-a-assistant",
+  4,
+  "assistant",
+  "Answer A",
+  "branch-a-user",
+);
+const branchBUser = message("branch-b-user", 5, "user", "Ask B", "root-assistant");
+const branchBAssistant = message(
+  "branch-b-assistant",
+  6,
+  "assistant",
+  "Answer B",
+  "branch-b-user",
+);
+const branchBPendingAssistant = message(
+  "branch-b-assistant",
+  6,
+  "assistant",
+  "",
+  "branch-b-user",
+  "pending",
+);
+
+const forkA: ForkOption = {
+  id: "branch-a",
+  parent_message_id: "root-assistant",
+  user_message_id: "branch-a-user",
+  assistant_message_id: "branch-a-assistant",
+  leaf_message_id: "branch-a-assistant",
+  title: "Branch A",
+  preview: "Ask A",
+  branch_anchor_kind: "assistant_message",
+  branch_anchor_preview: null,
+  status: "complete",
+  message_count: 2,
+  created_at: timestamp,
+  updated_at: timestamp,
+  active: true,
+};
+
+const forkB: ForkOption = {
+  id: "branch-b",
+  parent_message_id: "root-assistant",
+  user_message_id: "branch-b-user",
+  assistant_message_id: "branch-b-assistant",
+  leaf_message_id: "branch-b-assistant",
+  title: "Branch B",
+  preview: "Ask B",
+  branch_anchor_kind: "assistant_message",
+  branch_anchor_preview: null,
+  status: "complete",
+  message_count: 2,
+  created_at: "2026-01-02T00:00:00Z",
+  updated_at: "2026-01-02T00:00:00Z",
+  active: false,
+};
+
+function treeResponse({
+  selected = "a",
+  branchBStatus = "complete",
+}: {
+  selected?: "a" | "b";
+  branchBStatus?: "complete" | "pending";
+} = {}): ConversationTreeResponse {
+  const pathA = [rootUser, rootAssistant, branchAUser, branchAAssistant];
+  const pathB = [
+    rootUser,
+    rootAssistant,
+    branchBUser,
+    branchBStatus === "pending" ? branchBPendingAssistant : branchBAssistant,
+  ];
+  return {
+    conversation: {
+      id: "conversation-1",
+      title: "Branch chat",
+      sharing: "private",
+      message_count: 6,
+      scope: { type: "general" },
+      created_at: timestamp,
+      updated_at: timestamp,
+    },
+    selected_path: selected === "a" ? pathA : pathB,
+    active_leaf_message_id:
+      selected === "a" ? "branch-a-assistant" : "branch-b-assistant",
+    fork_options_by_parent_id: {
+      "root-assistant": [
+        { ...forkA, active: selected === "a" },
+        { ...forkB, active: selected === "b", status: branchBStatus },
+      ],
+    },
+    path_cache_by_leaf_id: {
+      "branch-a-assistant": pathA,
+      "branch-b-assistant": pathB,
+    },
+    branch_graph: {
+      root_message_id: "root-assistant",
+      edges: [],
+      nodes: [],
+    },
+    page: { before_cursor: null },
+  };
+}
+
+function activeBranchBRun(): ChatRunResponse["data"] {
+  return {
+    run: {
+      id: "run-branch-b",
+      status: "running",
+      conversation_id: "conversation-1",
+      user_message_id: "branch-b-user",
+      assistant_message_id: "branch-b-assistant",
+      model_id: "gpt-5-mini",
+      reasoning: "default",
+      key_mode: "auto",
+      cancel_requested_at: null,
+      started_at: timestamp,
+      completed_at: null,
+      error_code: null,
+      created_at: timestamp,
+      updated_at: timestamp,
+    },
+    conversation: treeResponse().conversation,
+    user_message: branchBUser,
+    assistant_message: branchBPendingAssistant,
+  };
+}
+
+function failedRootRetryTree(): ConversationTreeResponse {
+  const failedUser = message("failed-user", 1, "user", "Original prompt");
+  const failedAssistant: ConversationMessage = {
+    ...message(
+      "failed-assistant",
+      2,
+      "assistant",
+      "An unexpected error occurred. Please try again.",
+      "failed-user",
+      "error",
+    ),
+    error_code: "E_INTERNAL",
+    can_retry_response: true,
+  };
+  return {
+    conversation: {
+      id: "conversation-1",
+      title: "Retry chat",
+      sharing: "private",
+      message_count: 2,
+      scope: { type: "general" },
+      created_at: timestamp,
+      updated_at: timestamp,
+    },
+    selected_path: [failedUser, failedAssistant],
+    active_leaf_message_id: "failed-assistant",
+    fork_options_by_parent_id: {},
+    path_cache_by_leaf_id: {
+      "failed-assistant": [failedUser, failedAssistant],
+    },
+    branch_graph: {
+      root_message_id: "failed-user",
+      edges: [],
+      nodes: [],
+    },
+    page: { before_cursor: null },
+  };
+}
+
+function retryRun(): ChatRunResponse["data"] {
+  const retryUser = message("retry-user", 3, "user", "Original prompt");
+  const retryAssistant = message(
+    "retry-assistant",
+    4,
+    "assistant",
+    "",
+    "retry-user",
+    "pending",
+  );
+  return {
+    run: {
+      id: "retry-run",
+      status: "queued",
+      conversation_id: "conversation-1",
+      user_message_id: "retry-user",
+      assistant_message_id: "retry-assistant",
+      model_id: "gpt-5-mini",
+      reasoning: "default",
+      key_mode: "auto",
+      cancel_requested_at: null,
+      started_at: null,
+      completed_at: null,
+      error_code: null,
+      created_at: timestamp,
+      updated_at: timestamp,
+    },
+    conversation: failedRootRetryTree().conversation,
+    user_message: retryUser,
+    assistant_message: retryAssistant,
+  };
+}
+
+function renderPane() {
+  render(
     <PaneRuntimeProvider
-      paneId="pane-conversation"
-      href={href}
+      paneId="pane-1"
+      href="/conversations/conversation-1"
       routeId="conversation"
-      resourceRef="conversation:conv-1"
-      pathParams={{ id: "conv-1" }}
-      onNavigatePane={() => {}}
-      onReplacePane={onReplacePane}
-      onOpenInNewPane={() => {}}
-      onSetPaneTitle={onSetPaneTitle}
+      resourceRef="conversation-1"
+      pathParams={{ id: "conversation-1" }}
+      onNavigatePane={vi.fn()}
+      onReplacePane={vi.fn()}
+      onOpenInNewPane={vi.fn()}
+      onSetPaneTitle={vi.fn()}
     >
       <ConversationPaneBody />
-    </PaneRuntimeProvider>
+    </PaneRuntimeProvider>,
   );
+}
+
+let restoreChatGeometry = () => undefined;
+
+function installChatGeometry(scrollport: HTMLElement) {
+  restoreChatGeometry();
+
+  let scrollTop = 0;
+  const messageTop: Record<string, number> = {
+    "root-user": 0,
+    "root-assistant": 80,
+    "branch-a-user": 200,
+    "branch-a-assistant": 300,
+    "branch-b-user": 200,
+    "branch-b-assistant": 300,
+  };
+  Object.defineProperty(scrollport, "clientHeight", {
+    configurable: true,
+    get: () => 220,
+  });
+  Object.defineProperty(scrollport, "scrollTop", {
+    configurable: true,
+    get: () => scrollTop,
+    set: (value) => {
+      scrollTop = Number(value);
+    },
+  });
+  Object.defineProperty(scrollport, "scrollHeight", {
+    configurable: true,
+    get: () => 520,
+  });
+
+  const topMock = vi
+    .spyOn(HTMLElement.prototype, "offsetTop", "get")
+    .mockImplementation(function (this: HTMLElement) {
+      return this.dataset.messageId ? messageTop[this.dataset.messageId] ?? 0 : 0;
+    });
+  const heightMock = vi
+    .spyOn(HTMLElement.prototype, "offsetHeight", "get")
+    .mockImplementation(function (this: HTMLElement) {
+      return this.dataset.messageId ? 80 : 0;
+    });
+
+  restoreChatGeometry = () => {
+    topMock.mockRestore();
+    heightMock.mockRestore();
+    restoreChatGeometry = () => undefined;
+  };
 }
 
 describe("ConversationPaneBody", () => {
   beforeEach(() => {
-    apiFetchMock.mockReset();
-    hydrateContextItemsMock.mockClear();
+    tailMocks.tailChatRun.mockReset();
+    tailMocks.abortAll.mockReset();
+    tailMocks.useChatRunTail.mockReset();
+    tailMocks.useChatRunTail.mockReturnValue({
+      tailChatRun: tailMocks.tailChatRun,
+      abortAll: tailMocks.abortAll,
+    });
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 320,
+      writable: true,
+    });
   });
 
-  it("loads messages into a transcript scroll container and keeps composer visible", async () => {
-    apiFetchMock.mockImplementation(async (path: string) => {
-      if (path === "/api/conversations/conv-1") {
-        return {
-          data: {
-            id: "conv-1",
-            title: "Chat title",
-            sharing: "private",
-            message_count: 1,
-            created_at: "2026-03-30T00:00:00.000Z",
-            updated_at: "2026-03-30T00:00:00.000Z",
-          },
-        };
+  afterEach(() => {
+    restoreChatGeometry();
+  });
+
+  it("posts retry with an idempotency key and tails the returned run", async () => {
+    const user = userEvent.setup();
+    const retryData = retryRun();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse({ data: failedRootRetryTree() });
       }
-      if (path.startsWith("/api/conversations/conv-1/messages")) {
-        return {
-          data: [
-            {
-              id: "msg-1",
-              seq: 1,
-              role: "assistant",
-              content: "existing assistant reply",
-              status: "complete",
-              error_code: null,
-              created_at: "2026-03-30T00:00:00.000Z",
-              updated_at: "2026-03-30T00:00:00.000Z",
-            },
-          ],
-          page: { next_cursor: null },
-        };
+      if (path === "/api/models") {
+        return jsonResponse({ data: MODELS });
       }
-      throw new Error(`unexpected api path: ${path}`);
+      if (path === "/api/chat-runs") {
+        return jsonResponse({ data: [] });
+      }
+      if (
+        path === "/api/messages/failed-assistant/retry" &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse({ data: retryData });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
     });
+    vi.stubGlobal("fetch", fetchMock);
 
-    renderConversationPane("/conversations/conv-1");
+    renderPane();
 
-    expect(await screen.findByText("existing assistant reply")).toBeInTheDocument();
-    expect(screen.getByTestId("chat-transcript")).toHaveStyle({ overflowY: "auto" });
+    expect(await screen.findByText("Original prompt")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Retry response" }));
+
+    await waitFor(() => {
+      expect(tailMocks.tailChatRun).toHaveBeenCalledWith(retryData);
+    });
+    const retryCall = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        pathOf(input) === "/api/messages/failed-assistant/retry" &&
+        init?.method === "POST",
+    );
+    expect(retryCall).toBeDefined();
     expect(
-      screen.getByPlaceholderText("Type a message... (Enter to send, Shift+Enter for newline)")
-    ).toBeInTheDocument();
+      (retryCall?.[1]?.headers as Record<string, string>)["Idempotency-Key"],
+    ).toEqual(expect.any(String));
   });
 
-  it("renders persisted user context snapshots above user message content", async () => {
-    apiFetchMock.mockImplementation(async (path: string) => {
-      if (path === "/api/conversations/conv-1") {
-        return {
-          data: {
-            id: "conv-1",
-            title: "Chat title",
-            sharing: "private",
-            message_count: 2,
-            created_at: "2026-03-30T00:00:00.000Z",
-            updated_at: "2026-03-30T00:00:00.000Z",
-          },
-        };
-      }
-      if (path.startsWith("/api/conversations/conv-1/messages")) {
-        return {
-          data: [
-            {
-              id: "msg-user",
-              seq: 1,
-              role: "user",
-              content: "What does this mean?",
-              contexts: [
-                {
-                  type: "highlight",
-                  id: "hl-1",
-                  preview: "Persisted quote",
-                  color: "yellow",
-                  media_title: "Source",
-                  media_kind: "pdf",
-                },
-              ],
-              status: "complete",
-              error_code: null,
-              created_at: "2026-03-30T00:00:00.000Z",
-              updated_at: "2026-03-30T00:00:00.000Z",
-            },
-            {
-              id: "msg-asst",
-              seq: 2,
-              role: "assistant",
-              content: "It means this is context-aware.",
-              status: "complete",
-              error_code: null,
-              created_at: "2026-03-30T00:00:00.000Z",
-              updated_at: "2026-03-30T00:00:00.000Z",
-            },
-          ],
-          page: { next_cursor: null },
-        };
-      }
-      throw new Error(`unexpected api path: ${path}`);
-    });
-
-    renderConversationPane("/conversations/conv-1");
-
-    expect(await screen.findByText("Persisted quote")).toBeInTheDocument();
-
-    const linkedContextButton = screen.queryByRole("button", { name: "Linked context" });
-    if (linkedContextButton) {
-      await userEvent.setup().click(linkedContextButton);
-    }
-
-    const contextPane = await screen.findByTestId("conversation-context-pane");
-    expect(within(contextPane).getByText(/Source - pdf - Message #1/)).toBeInTheDocument();
-    expect(screen.getByText("What does this mean?")).toBeInTheDocument();
-  });
-
-  it("appends optimistic user+assistant messages when composer sends", async () => {
+  it("preserves the chat viewport while switching cached paths and rolling back a failed active path", async () => {
     const user = userEvent.setup();
-    apiFetchMock.mockImplementation(async (path: string) => {
-      if (path === "/api/conversations/conv-1") {
-        return {
-          data: {
-            id: "conv-1",
-            title: "Chat title",
-            sharing: "private",
-            message_count: 0,
-            created_at: "2026-03-30T00:00:00.000Z",
-            updated_at: "2026-03-30T00:00:00.000Z",
-          },
-        };
-      }
-      if (path.startsWith("/api/conversations/conv-1/messages")) {
-        return { data: [], page: { next_cursor: null } };
-      }
-      throw new Error(`unexpected api path: ${path}`);
+    let resolveActivePath: (response: Response) => void = () => undefined;
+    const activePathPromise = new Promise<Response>((resolve) => {
+      resolveActivePath = resolve;
     });
-
-    renderConversationPane("/conversations/conv-1");
-    await screen.findByRole("button", { name: "Send mock message" });
-
-    await user.click(screen.getByRole("button", { name: "Send mock message" }));
-
-    expect(screen.getByText("new user message")).toBeInTheDocument();
-    expect(screen.getByText("new assistant reply")).toBeInTheDocument();
-  });
-
-  it("clears attach params after send while preserving non-attach params", async () => {
-    const user = userEvent.setup();
-    const onReplacePane = vi.fn();
-    apiFetchMock.mockImplementation(async (path: string) => {
-      if (path === "/api/conversations/conv-1") {
-        return {
-          data: {
-            id: "conv-1",
-            title: "Chat title",
-            sharing: "private",
-            message_count: 0,
-            created_at: "2026-03-30T00:00:00.000Z",
-            updated_at: "2026-03-30T00:00:00.000Z",
-          },
-        };
-      }
-      if (path.startsWith("/api/conversations/conv-1/messages")) {
-        return { data: [], page: { next_cursor: null } };
-      }
-      throw new Error(`unexpected api path: ${path}`);
-    });
-
-    renderConversationPane(
-      "/conversations/conv-1?foo=bar&attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=quoted%20line",
-      { onReplacePane }
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations/conversation-1/tree") {
+          return jsonResponse({ data: treeResponse() });
+        }
+        if (path === "/api/models") {
+          return jsonResponse({ data: MODELS });
+        }
+        if (path === "/api/chat-runs") {
+          return jsonResponse({ data: [] });
+        }
+        if (
+          path === "/api/conversations/conversation-1/active-path" &&
+          init?.method === "POST"
+        ) {
+          return activePathPromise;
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      }),
     );
-    await screen.findByRole("button", { name: "Send mock message" });
 
-    await user.click(screen.getByRole("button", { name: "Send mock message" }));
+    renderPane();
 
-    expect(onReplacePane).toHaveBeenCalledWith(
-      "pane-conversation",
-      "/conversations/conv-1?foo=bar"
-    );
-  });
+    expect(await screen.findByText("Answer A")).toBeVisible();
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    installChatGeometry(scrollport);
+    const composerDock = screen.getByTestId("chat-composer-dock");
+    const input = screen.getByRole("textbox", { name: "Ask anything" });
+    expect(scrollport).not.toContainElement(input);
+    expect(composerDock).toContainElement(input);
+    scrollport.scrollTop = 60;
+    fireEvent.scroll(scrollport);
 
-  it("does not rehydrate unchanged attach context on host rerenders", async () => {
-    const user = userEvent.setup();
-    apiFetchMock.mockImplementation(async (path: string) => {
-      if (path === "/api/conversations/conv-1") {
-        return {
-          data: {
-            id: "conv-1",
-            title: "Chat title",
-            sharing: "private",
-            message_count: 0,
-            created_at: "2026-03-30T00:00:00.000Z",
-            updated_at: "2026-03-30T00:00:00.000Z",
-          },
-        };
-      }
-      if (path.startsWith("/api/conversations/conv-1/messages")) {
-        return { data: [], page: { next_cursor: null } };
-      }
-      throw new Error(`unexpected api path: ${path}`);
-    });
-
-    const { rerender } = render(
-      <PaneRuntimeProvider
-        paneId="pane-conversation"
-        href="/conversations/conv-1?attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=quoted%20line"
-        routeId="conversation"
-        resourceRef="conversation:conv-1"
-        pathParams={{ id: "conv-1" }}
-        onNavigatePane={() => {}}
-        onReplacePane={() => {}}
-        onOpenInNewPane={() => {}}
-      >
-        <ConversationPaneBody />
-      </PaneRuntimeProvider>
+    await user.click(
+      screen.getByRole("button", { name: /switch to fork\. title: branch b/i }),
     );
 
     await waitFor(() => {
-      expect(hydrateContextItemsMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("Answer B")).toBeVisible();
     });
-    await screen.findByTestId("chat-transcript");
-    await user.click(screen.getByRole("button", { name: "Linked context" }));
-    await screen.findByRole("dialog", { name: "Linked context" });
-    expect(hydrateContextItemsMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Answer A")).not.toBeInTheDocument();
+    expect(scrollport.scrollTop).toBe(60);
 
-    rerender(
-      <PaneRuntimeProvider
-        paneId="pane-conversation"
-        href="/conversations/conv-1?attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=quoted%20line"
-        routeId="conversation"
-        resourceRef="conversation:conv-1"
-        pathParams={{ id: "conv-1" }}
-        onNavigatePane={() => {}}
-        onReplacePane={() => {}}
-        onOpenInNewPane={() => {}}
-      >
-        <ConversationPaneBody />
-      </PaneRuntimeProvider>
+    resolveActivePath(
+      jsonResponse(
+        {
+          error: {
+            code: "E_BRANCH_PATH_INVALID",
+            message: "Could not switch active path",
+          },
+        },
+        500,
+      ),
     );
 
     await waitFor(() => {
-      expect(hydrateContextItemsMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("Answer A")).toBeVisible();
     });
+    expect(screen.queryByText("Answer B")).not.toBeInTheDocument();
+    expect(scrollport.scrollTop).toBe(60);
   });
 
-  it("renders linked context in the secondary drawer surface", async () => {
+  it("tails an active sibling run as soon as that cached path becomes visible", async () => {
     const user = userEvent.setup();
-    apiFetchMock.mockImplementation(async (path: string) => {
-      if (path === "/api/conversations/conv-1") {
-        return {
-          data: {
-            id: "conv-1",
-            title: "Chat title",
-            sharing: "private",
-            message_count: 0,
-            created_at: "2026-03-30T00:00:00.000Z",
-            updated_at: "2026-03-30T00:00:00.000Z",
-          },
-        };
-      }
-      if (path.startsWith("/api/conversations/conv-1/messages")) {
-        return { data: [], page: { next_cursor: null } };
-      }
-      throw new Error(`unexpected api path: ${path}`);
+    let resolveActivePath: (response: Response) => void = () => undefined;
+    const activePathPromise = new Promise<Response>((resolve) => {
+      resolveActivePath = resolve;
     });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse({ data: treeResponse({ branchBStatus: "pending" }) });
+      }
+      if (path === "/api/models") {
+        return jsonResponse({ data: MODELS });
+      }
+      if (path === "/api/chat-runs") {
+        return jsonResponse({ data: [activeBranchBRun()] });
+      }
+      if (
+        path === "/api/conversations/conversation-1/active-path" &&
+        init?.method === "POST"
+      ) {
+        return activePathPromise;
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
-    renderConversationPane(
-      "/conversations/conv-1?attach_type=highlight&attach_id=11111111-1111-4111-8111-111111111111&attach_preview=highlighted%20quote"
+    renderPane();
+
+    expect(await screen.findByText("Answer A")).toBeVisible();
+    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    installChatGeometry(scrollport);
+    scrollport.scrollTop = 60;
+    fireEvent.scroll(scrollport);
+    expect(tailMocks.tailChatRun).not.toHaveBeenCalled();
+
+    await user.click(
+      screen.getByRole("button", { name: /switch to fork\. title: branch b/i }),
     );
 
-    await user.click(await screen.findByRole("button", { name: "Linked context" }));
-    expect(await screen.findByRole("dialog", { name: "Linked context" })).toBeInTheDocument();
-    expect(screen.getByText("highlighted quote")).toBeInTheDocument();
-    expect(screen.queryByRole("separator", { name: "Resize pane" })).not.toBeInTheDocument();
-  });
-
-  it("shows persisted linked context from prior user messages in context pane", async () => {
-    const user = userEvent.setup();
-
-    apiFetchMock.mockImplementation(async (path: string) => {
-      if (path === "/api/conversations/conv-1") {
-        return {
-          data: {
-            id: "conv-1",
-            title: "Chat title",
-            sharing: "private",
-            message_count: 1,
-            created_at: "2026-03-30T00:00:00.000Z",
-            updated_at: "2026-03-30T00:00:00.000Z",
-          },
-        };
-      }
-      if (path.startsWith("/api/conversations/conv-1/messages")) {
-        return {
-          data: [
-            {
-              id: "msg-user",
-              seq: 1,
-              role: "user",
-              content: "What does this mean?",
-              contexts: [
-                {
-                  type: "highlight",
-                  id: "hl-1",
-                  preview: "Persisted quote",
-                  color: "yellow",
-                  media_id: "media-1",
-                  media_title: "Source",
-                  media_kind: "pdf",
-                },
-              ],
-              status: "complete",
-              error_code: null,
-              created_at: "2026-03-30T00:00:00.000Z",
-              updated_at: "2026-03-30T00:00:00.000Z",
-            },
-          ],
-          page: { next_cursor: null },
-        };
-      }
-      throw new Error(`unexpected api path: ${path}`);
+    await waitFor(() => {
+      expect(screen.getByTestId("streaming-cue")).toBeInTheDocument();
+    });
+    expect(scrollport.scrollTop).toBe(60);
+    await waitFor(() => {
+      expect(tailMocks.tailChatRun).toHaveBeenCalledWith(activeBranchBRun());
     });
 
-    renderConversationPane("/conversations/conv-1");
-
-    await user.click(await screen.findByRole("button", { name: "Linked context" }));
-    const contextPane = await screen.findByTestId("conversation-context-pane");
-    expect(within(contextPane).getByText("Persisted quote")).toBeInTheDocument();
-    expect(within(contextPane).getByText(/Message #1/)).toBeInTheDocument();
-    await user.click(within(contextPane).getByRole("button", { name: "Actions" }));
-    expect(screen.getByRole("menuitem", { name: "Open source" })).toBeInTheDocument();
+    resolveActivePath(
+      jsonResponse({
+        data: treeResponse({ selected: "b", branchBStatus: "pending" }),
+      }),
+    );
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.filter(([input]) => pathOf(input) === "/api/chat-runs"),
+      ).toHaveLength(3);
+    });
+    expect(scrollport.scrollTop).toBe(60);
   });
 });

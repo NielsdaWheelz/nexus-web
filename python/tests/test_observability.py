@@ -3,8 +3,7 @@
 Covers:
 - Redaction utilities (hash_text, redact_text, safe_kv)
 - Logging ContextVars (path, method, route_template, flow_id, stream_jti)
-- LLM router event emission (llm.request.started / finished / failed)
-- LLMOperation enum and LLMCallContext
+- Nexus LLM event field safety
 - Event taxonomy correctness
 - No sensitive data in logs (prompt, api_key, content)
 """
@@ -20,7 +19,6 @@ from nexus.logging import (
     set_route_template,
     set_stream_jti,
 )
-from nexus.services.llm.types import LLMCallContext, LLMOperation
 from nexus.services.redact import FORBIDDEN_KEYS, hash_text, redact_text, safe_kv
 
 pytestmark = pytest.mark.unit
@@ -183,38 +181,42 @@ class TestContextVars:
         assert "flow_id" not in event_dict
 
 
-# ─── LLMOperation / LLMCallContext Tests ─────────────────────────────
+# ─── Nexus LLM Log Field Tests ───────────────────────────────────────
 
 
-class TestLLMTypes:
-    """Tests for LLMOperation enum and LLMCallContext."""
+class TestNexusLLMLogFields:
+    """Tests for Nexus-owned LLM observability field names."""
 
-    def test_operation_values(self):
-        assert LLMOperation.CHAT_SEND.value == "chat_send"
-        assert LLMOperation.KEY_TEST.value == "key_test"
-        assert LLMOperation.OTHER.value == "other"
-
-    def test_call_context_defaults(self):
-        ctx = LLMCallContext()
-        assert ctx.operation == LLMOperation.OTHER
-        assert ctx.conversation_id is None
-        assert ctx.assistant_message_id is None
-
-    def test_call_context_chat_send(self):
-        ctx = LLMCallContext(
-            operation=LLMOperation.CHAT_SEND,
+    def test_chat_send_fields_are_safe(self):
+        fields = safe_kv(
+            provider="openai",
+            model_name="gpt-test",
+            reasoning_effort="none",
+            key_mode="platform",
+            streaming=True,
+            llm_operation="chat_send",
             conversation_id="conv-1",
             assistant_message_id="msg-1",
+            message_chars=123,
         )
-        assert ctx.operation == LLMOperation.CHAT_SEND
-        assert ctx.conversation_id == "conv-1"
-        assert ctx.assistant_message_id == "msg-1"
 
-    def test_call_context_frozen(self):
-        """LLMCallContext is frozen (immutable)."""
-        ctx = LLMCallContext()
-        with pytest.raises(AttributeError):
-            ctx.operation = LLMOperation.CHAT_SEND
+        assert fields["llm_operation"] == "chat_send"
+        assert fields["conversation_id"] == "conv-1"
+        assert fields["assistant_message_id"] == "msg-1"
+
+    def test_key_test_fields_are_safe(self):
+        fields = safe_kv(
+            provider="openai",
+            model_name="gpt-test",
+            reasoning_effort="none",
+            key_mode="byok",
+            streaming=False,
+            llm_operation="key_test",
+            message_chars=14,
+        )
+
+        assert fields["llm_operation"] == "key_test"
+        assert fields["key_mode"] == "byok"
 
 
 # ─── Log Capture Infrastructure ──────────────────────────────────────

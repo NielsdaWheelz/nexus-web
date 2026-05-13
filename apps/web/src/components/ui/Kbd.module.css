@@ -1,0 +1,28 @@
+.kbd {
+  font-family: var(--font-mono);
+  color: var(--ink-faint);
+}
+
+.ghost {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.bordered {
+  background: var(--surface-2);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+  height: var(--size-xs);
+  display: inline-flex;
+  align-items: center;
+}
+
+.sizeSm {
+  font-size: var(--text-xs);
+}
+
+.sizeMd {
+  font-size: var(--text-sm);
+}

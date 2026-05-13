@@ -1,12 +1,18 @@
+import type { MouseEvent } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import {
   type EpubNavigationSection,
   type EpubSectionContent,
   type NormalizedNavigationTocNode,
 } from "@/lib/media/epubReader";
+import {
+  parseAnchorIdFromHref,
+  resolveEpubInternalLinkTarget,
+} from "./epubHelpers";
 import styles from "./page.module.css";
 
 export default function EpubContentPane({
+  mediaId,
   sections,
   activeChapter,
   activeSectionId,
@@ -20,6 +26,7 @@ export default function EpubContentPane({
   onContentClick,
   onNavigate,
 }: {
+  mediaId: string;
   sections: EpubNavigationSection[] | null;
   activeChapter: EpubSectionContent | null;
   activeSectionId: string | null;
@@ -55,6 +62,28 @@ export default function EpubContentPane({
 
   const hasToc = toc !== null && toc.length > 0;
 
+  function handleContentClick(event: MouseEvent<HTMLDivElement>) {
+    const target = event.target as Element;
+    const anchorEl = target.closest("a[href]");
+    if (!(anchorEl instanceof HTMLAnchorElement)) {
+      onContentClick(event);
+      return;
+    }
+
+    const linkTarget = resolveEpubInternalLinkTarget(
+      anchorEl.getAttribute("href"),
+      activeSectionId,
+      sections
+    );
+    if (!linkTarget) {
+      onContentClick(event);
+      return;
+    }
+
+    event.preventDefault();
+    onNavigate(linkTarget.sectionId, linkTarget.anchorId);
+  }
+
   return (
     <div className={styles.epubContainer}>
       {(hasToc || tocWarning) && (
@@ -82,31 +111,17 @@ export default function EpubContentPane({
         <div
           ref={contentRef}
           className={styles.fragments}
-          onClick={onContentClick}
+          onClick={handleContentClick}
         >
           <HtmlRenderer
             htmlSanitized={renderedHtml}
             className={styles.fragment}
+            mediaId={mediaId}
           />
         </div>
       ) : null}
     </div>
   );
-}
-
-function parseAnchorIdFromHref(href: string | null): string | null {
-  if (!href || !href.includes("#")) {
-    return null;
-  }
-  const fragment = href.split("#", 2)[1];
-  if (!fragment) {
-    return null;
-  }
-  try {
-    return decodeURIComponent(fragment) || null;
-  } catch {
-    return fragment;
-  }
 }
 
 function TocNodeList({

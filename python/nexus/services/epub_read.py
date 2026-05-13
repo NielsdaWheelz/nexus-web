@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media as _can_read_media
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.media import (
+    EpubNavigationLocationOut,
     EpubNavigationOut,
     EpubNavigationSectionOut,
     EpubNavigationTocNodeOut,
@@ -56,9 +57,34 @@ def _load_toc_rows(db: Session, media_id: UUID) -> list[tuple]:
                    fragment_idx, depth, order_key
             FROM epub_toc_nodes
             WHERE media_id = :mid
+              AND nav_type = 'toc'
             ORDER BY order_key ASC
         """),
         {"mid": media_id},
+    ).fetchall()
+
+
+def _load_navigation_locations(db: Session, media_id: UUID, nav_type: str) -> list[tuple]:
+    return db.execute(
+        text("""
+            SELECT n.label,
+                   n.href,
+                   n.fragment_idx,
+                   loc.location_id
+            FROM epub_toc_nodes n
+            LEFT JOIN LATERAL (
+                SELECT location_id
+                FROM epub_nav_locations
+                WHERE media_id = n.media_id
+                  AND fragment_idx = n.fragment_idx
+                ORDER BY ordinal ASC
+                LIMIT 1
+            ) loc ON n.fragment_idx IS NOT NULL
+            WHERE n.media_id = :mid
+              AND n.nav_type = :nav_type
+            ORDER BY n.order_key ASC
+        """),
+        {"mid": media_id, "nav_type": nav_type},
     ).fetchall()
 
 
@@ -72,25 +98,43 @@ def get_epub_navigation_for_viewer(
 
     section_rows = db.execute(
         text("""
-            SELECT n.location_id,
-                   n.label,
-                   n.fragment_idx,
-                   n.href_path,
-                   n.href_fragment,
-                   n.source_node_id,
-                   n.source,
-                   n.ordinal,
-                   char_length(f.canonical_text)
-            FROM epub_nav_locations n
-            JOIN fragments f
-              ON f.media_id = n.media_id
-             AND f.idx = n.fragment_idx
-            WHERE n.media_id = :mid
-            ORDER BY n.ordinal ASC
+            WITH nav AS (
+                SELECT n.location_id,
+                       n.label,
+                       n.fragment_idx,
+                       n.href_path,
+                       n.href_fragment,
+                       n.source_node_id,
+                       n.source,
+                       n.ordinal,
+                       char_length(f.canonical_text) AS fragment_chars,
+                       row_number() OVER (
+                           PARTITION BY n.fragment_idx
+                           ORDER BY n.ordinal
+                       ) AS fragment_row
+                FROM epub_nav_locations n
+                JOIN fragments f
+                  ON f.media_id = n.media_id
+                 AND f.idx = n.fragment_idx
+                WHERE n.media_id = :mid
+            )
+            SELECT location_id,
+                   label,
+                   fragment_idx,
+                   href_path,
+                   href_fragment,
+                   source_node_id,
+                   source,
+                   ordinal,
+                   CASE WHEN fragment_row = 1 THEN fragment_chars ELSE 0 END
+            FROM nav
+            ORDER BY ordinal ASC
         """),
         {"mid": media_id},
     ).fetchall()
     toc_rows = _load_toc_rows(db, media_id)
+    landmark_rows = _load_navigation_locations(db, media_id, "landmarks")
+    page_rows = _load_navigation_locations(db, media_id, "page_list")
 
     sections = [
         EpubNavigationSectionOut(
@@ -138,7 +182,28 @@ def get_epub_navigation_for_viewer(
         else:
             nodes_by_id[parent_id].children.append(node)
 
-    return EpubNavigationOut(sections=sections, toc_nodes=roots)
+    return EpubNavigationOut(
+        sections=sections,
+        toc_nodes=roots,
+        landmarks=[
+            EpubNavigationLocationOut(
+                label=row[0],
+                href=row[1],
+                fragment_idx=row[2],
+                section_id=row[3],
+            )
+            for row in landmark_rows
+        ],
+        page_list=[
+            EpubNavigationLocationOut(
+                label=row[0],
+                href=row[1],
+                fragment_idx=row[2],
+                section_id=row[3],
+            )
+            for row in page_rows
+        ],
+    )
 
 
 def get_epub_section_for_viewer(
