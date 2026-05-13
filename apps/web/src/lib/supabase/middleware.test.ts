@@ -14,6 +14,7 @@ vi.mock("@supabase/ssr", () => ({
 describe("updateSession", () => {
   beforeEach(() => {
     mockGetUser.mockReset();
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://project-ref.supabase.co";
   });
 
   it("redirects unauthenticated protected requests to login and preserves the destination", async () => {
@@ -30,25 +31,23 @@ describe("updateSession", () => {
   });
 
   it("allows public routes without redirecting unauthenticated users", async () => {
-    mockGetUser.mockResolvedValue({ data: { user: null } });
-
     const { updateSession } = await import("./middleware");
     const response = await updateSession(
       new NextRequest("http://localhost:3000/login?next=%2Flibraries")
     );
 
     expect(response.headers.get("location")).toBeNull();
+    expect(mockGetUser).not.toHaveBeenCalled();
   });
 
   it("allows unauthenticated API routes through so route handlers can return JSON errors", async () => {
-    mockGetUser.mockResolvedValue({ data: { user: null } });
-
     const { updateSession } = await import("./middleware");
     const response = await updateSession(
       new NextRequest("http://localhost:3000/api/libraries")
     );
 
     expect(response.headers.get("location")).toBeNull();
+    expect(mockGetUser).not.toHaveBeenCalled();
   });
 
   it("allows authenticated protected requests through", async () => {
@@ -60,5 +59,38 @@ describe("updateSession", () => {
     );
 
     expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("allows protected requests with a local session when Supabase Auth has a transient server failure", async () => {
+    mockGetUser.mockResolvedValue({
+      data: { user: null },
+      error: { status: 504 },
+    });
+
+    const { updateSession } = await import("./middleware");
+    const request = new NextRequest("http://localhost:3000/libraries", {
+      headers: {
+        cookie: "sb-project-ref-auth-token=base64-session",
+      },
+    });
+    const response = await updateSession(request);
+
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("redirects protected requests without a local session when Supabase Auth has a transient server failure", async () => {
+    mockGetUser.mockResolvedValue({
+      data: { user: null },
+      error: { status: 504 },
+    });
+
+    const { updateSession } = await import("./middleware");
+    const response = await updateSession(
+      new NextRequest("http://localhost:3000/libraries")
+    );
+
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/login?next=%2Flibraries"
+    );
   });
 });

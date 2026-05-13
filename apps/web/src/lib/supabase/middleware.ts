@@ -12,6 +12,10 @@ import { type NextRequest, NextResponse } from "next/server";
 import { buildLoginRedirectUrl } from "@/lib/auth/redirects";
 import { type CookieToSet } from "./types";
 
+type AuthGateStatus = "authenticated" | "unauthenticated" | "unknown";
+
+const AUTH_GATE_TIMEOUT_MS = 1500;
+
 /**
  * Routes that don't require authentication
  */
@@ -32,6 +36,44 @@ function isApiRoute(pathname: string): boolean {
   return pathname === "/api" || pathname.startsWith("/api/");
 }
 
+function authErrorStatus(error: unknown): number | null {
+  if (typeof error !== "object" || error === null || !("status" in error)) {
+    return null;
+  }
+
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : null;
+}
+
+function supabaseAuthCookiePrefix(): string | null {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!supabaseUrl) {
+    return null;
+  }
+
+  try {
+    const projectRef = new URL(supabaseUrl).hostname.split(".")[0];
+    return projectRef ? `sb-${projectRef}-auth-token` : null;
+  } catch {
+    return null;
+  }
+}
+
+function hasSupabaseAuthCookie(request: NextRequest): boolean {
+  const cookiePrefix = supabaseAuthCookiePrefix();
+  if (!cookiePrefix) {
+    return false;
+  }
+
+  return request.cookies
+    .getAll()
+    .some(
+      ({ name, value }) =>
+        Boolean(value) &&
+        (name === cookiePrefix || name.startsWith(`${cookiePrefix}.`))
+    );
+}
+
 /**
  * Update the Supabase session and handle auth redirects.
  *
@@ -41,6 +83,21 @@ function isApiRoute(pathname: string): boolean {
  * 3. Allow authenticated users through
  */
 export async function updateSession(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+
+  // Allow public routes without spending middleware time on Supabase Auth.
+  if (isPublicRoute(pathname)) {
+    return NextResponse.next({ request });
+  }
+
+  // API route handlers own their auth response shape. Let unauthenticated API
+  // requests reach the BFF so callers receive JSON errors instead of login HTML.
+  if (isApiRoute(pathname)) {
+    return NextResponse.next({ request });
+  }
+
+  const hasLocalAuthSession = hasSupabaseAuthCookie(request);
+
   let supabaseResponse = NextResponse.next({
     request,
   });
@@ -82,24 +139,37 @@ export async function updateSession(request: NextRequest) {
   // supabase.auth.getUser(). A simple mistake could make it very hard to debug
   // issues with users being randomly logged out.
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const authCheck = supabase.auth
+    .getUser()
+    .then(({ data: { user }, error }): AuthGateStatus => {
+      if (user) {
+        return "authenticated";
+      }
 
-  // Allow public routes without auth
-  const pathname = request.nextUrl.pathname;
-  if (isPublicRoute(pathname)) {
-    return supabaseResponse;
-  }
+      // Treat transient Supabase Auth failures as unknown instead of turning a
+      // protected page navigation into a Vercel middleware timeout.
+      const status = authErrorStatus(error);
+      if (status !== null && status >= 500) {
+        return "unknown";
+      }
 
-  // API route handlers own their auth response shape. Let unauthenticated API
-  // requests reach the BFF so callers receive JSON errors instead of login HTML.
-  if (isApiRoute(pathname)) {
+      return "unauthenticated";
+    })
+    .catch((): AuthGateStatus => "unknown");
+
+  const authStatus = await Promise.race<AuthGateStatus>([
+    authCheck,
+    new Promise<AuthGateStatus>((resolve) => {
+      setTimeout(() => resolve("unknown"), AUTH_GATE_TIMEOUT_MS);
+    }),
+  ]);
+
+  if (authStatus === "unknown" && hasLocalAuthSession) {
     return supabaseResponse;
   }
 
   // Redirect to login if not authenticated
-  if (!user) {
+  if (authStatus !== "authenticated") {
     return NextResponse.redirect(buildLoginRedirectUrl(request.nextUrl));
   }
 
