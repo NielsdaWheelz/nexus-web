@@ -11,7 +11,7 @@ from sqlalchemy.engine import Engine
 
 from nexus.config import get_settings
 
-DATABASE_POOL_SIZE = 1
+DATABASE_POOL_SIZE = 2
 DATABASE_MAX_OVERFLOW = 0
 DATABASE_POOL_TIMEOUT_SECONDS = 10
 
