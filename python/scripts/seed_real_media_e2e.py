@@ -189,7 +189,7 @@ def main() -> None:
                 caption_sha256 == "f2be864a2e42f94e629245a4a46326258ecaaffa64868caf16b46e75b4f7d237"
             )
             video_media_id, video_result = create_nasa_captioned_video(
-                client, direct_db, headers, user_id, allow_already_ready=True
+                client, direct_db, headers, user_id
             )
 
             podcast_bytes = (
@@ -200,7 +200,7 @@ def main() -> None:
                 podcast_sha256 == "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953"
             )
             podcast_media_id, podcast_id, podcast_result = create_nasa_podcast_episode(
-                client, direct_db, headers, user_id, allow_already_ready=True
+                client, direct_db, headers, user_id
             )
 
         SEED_PATH.parent.mkdir(parents=True, exist_ok=True)
