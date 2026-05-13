@@ -107,9 +107,7 @@ describe("SecondaryRail", () => {
     await user.keyboard("{ArrowRight}");
 
     const askTab = screen.getByRole("tab", { name: "Ask" });
-    await waitFor(() => {
-      expect(askTab).toHaveFocus();
-      expect(askTab).toHaveAttribute("aria-selected", "true");
-    });
+    await waitFor(() => expect(askTab).toHaveFocus());
+    expect(askTab).toHaveAttribute("aria-selected", "true");
   });
 });
