@@ -12,67 +12,20 @@ import { type NextRequest, NextResponse } from "next/server";
 import { buildLoginRedirectUrl } from "@/lib/auth/redirects";
 import { type CookieToSet } from "./types";
 
-type AuthGateStatus = "authenticated" | "unauthenticated" | "unknown";
-
-const AUTH_GATE_TIMEOUT_MS = 1500;
+const AUTH_FETCH_TIMEOUT_MS = 2_000;
+const REQUEST_PATH_HEADER = "x-nexus-request-path";
 
 /**
  * Routes that don't require authentication
  */
 const PUBLIC_ROUTES = new Set([
   "/login",
+  "/privacy",
+  "/terms",
   "/auth/callback",
   "/auth/signout",
+  "/extension/connect/start",
 ]);
-
-/**
- * Check if a path is a public route (no auth required)
- */
-function isPublicRoute(pathname: string): boolean {
-  return PUBLIC_ROUTES.has(pathname) || pathname.startsWith("/_next");
-}
-
-function isApiRoute(pathname: string): boolean {
-  return pathname === "/api" || pathname.startsWith("/api/");
-}
-
-function authErrorStatus(error: unknown): number | null {
-  if (typeof error !== "object" || error === null || !("status" in error)) {
-    return null;
-  }
-
-  const status = (error as { status?: unknown }).status;
-  return typeof status === "number" ? status : null;
-}
-
-function supabaseAuthCookiePrefix(): string | null {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!supabaseUrl) {
-    return null;
-  }
-
-  try {
-    const projectRef = new URL(supabaseUrl).hostname.split(".")[0];
-    return projectRef ? `sb-${projectRef}-auth-token` : null;
-  } catch {
-    return null;
-  }
-}
-
-function hasSupabaseAuthCookie(request: NextRequest): boolean {
-  const cookiePrefix = supabaseAuthCookiePrefix();
-  if (!cookiePrefix) {
-    return false;
-  }
-
-  return request.cookies
-    .getAll()
-    .some(
-      ({ name, value }) =>
-        Boolean(value) &&
-        (name === cookiePrefix || name.startsWith(`${cookiePrefix}.`))
-    );
-}
 
 /**
  * Update the Supabase session and handle auth redirects.
@@ -86,20 +39,50 @@ export async function updateSession(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
   // Allow public routes without spending middleware time on Supabase Auth.
-  if (isPublicRoute(pathname)) {
+  if (PUBLIC_ROUTES.has(pathname) || pathname.startsWith("/_next")) {
     return NextResponse.next({ request });
   }
 
   // API route handlers own their auth response shape. Let unauthenticated API
   // requests reach the BFF so callers receive JSON errors instead of login HTML.
-  if (isApiRoute(pathname)) {
+  if (pathname === "/api" || pathname.startsWith("/api/")) {
     return NextResponse.next({ request });
   }
 
-  const hasLocalAuthSession = hasSupabaseAuthCookie(request);
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set(
+    REQUEST_PATH_HEADER,
+    `${request.nextUrl.pathname}${request.nextUrl.search}`
+  );
+
+  let hasAuthCookie = false;
+  try {
+    const projectRef = new URL(
+      process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""
+    ).hostname.split(".")[0];
+    const cookieName = `sb-${projectRef}-auth-token`;
+    hasAuthCookie = request.cookies
+      .getAll()
+      .some(
+        ({ name, value }) =>
+          Boolean(value) &&
+          (name === cookieName || name.startsWith(`${cookieName}.`))
+      );
+  } catch {
+    // justify-ignore-error: malformed or missing Supabase URL means there is no
+    // trusted auth-cookie prefix for this request, so the protected route must
+    // fail closed.
+    hasAuthCookie = false;
+  }
+
+  if (!hasAuthCookie) {
+    return NextResponse.redirect(buildLoginRedirectUrl(request.nextUrl));
+  }
 
   let supabaseResponse = NextResponse.next({
-    request,
+    request: {
+      headers: requestHeaders,
+    },
   });
 
   const supabase = createServerClient(
@@ -118,7 +101,9 @@ export async function updateSession(request: NextRequest) {
             request.cookies.set(name, value)
           );
           supabaseResponse = NextResponse.next({
-            request,
+            request: {
+              headers: requestHeaders,
+            },
           });
           cookiesToSet.forEach(({ name, value, options }: CookieToSet) =>
             supabaseResponse.cookies.set(name, value, options)
@@ -132,6 +117,19 @@ export async function updateSession(request: NextRequest) {
           }
         },
       },
+      global: {
+        fetch(input, init) {
+          const controller = new AbortController();
+          const timeout = setTimeout(
+            () => controller.abort(),
+            AUTH_FETCH_TIMEOUT_MS
+          );
+
+          return fetch(input, { ...init, signal: controller.signal }).finally(
+            () => clearTimeout(timeout)
+          );
+        },
+      },
     }
   );
 
@@ -139,37 +137,18 @@ export async function updateSession(request: NextRequest) {
   // supabase.auth.getUser(). A simple mistake could make it very hard to debug
   // issues with users being randomly logged out.
 
-  const authCheck = supabase.auth
-    .getUser()
-    .then(({ data: { user }, error }): AuthGateStatus => {
-      if (user) {
-        return "authenticated";
-      }
-
-      // Treat transient Supabase Auth failures as unknown instead of turning a
-      // protected page navigation into a Vercel middleware timeout.
-      const status = authErrorStatus(error);
-      if (status !== null && status >= 500) {
-        return "unknown";
-      }
-
-      return "unauthenticated";
-    })
-    .catch((): AuthGateStatus => "unknown");
-
-  const authStatus = await Promise.race<AuthGateStatus>([
-    authCheck,
-    new Promise<AuthGateStatus>((resolve) => {
-      setTimeout(() => resolve("unknown"), AUTH_GATE_TIMEOUT_MS);
-    }),
-  ]);
-
-  if (authStatus === "unknown" && hasLocalAuthSession) {
-    return supabaseResponse;
+  let authenticated = false;
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    authenticated = Boolean(user);
+  } catch (error) {
+    console.error("Supabase middleware auth check failed:", error);
   }
 
   // Redirect to login if not authenticated
-  if (authStatus !== "authenticated") {
+  if (!authenticated) {
     return NextResponse.redirect(buildLoginRedirectUrl(request.nextUrl));
   }
 

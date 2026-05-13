@@ -89,12 +89,16 @@ function generateRequestId(): string {
   return crypto.randomUUID();
 }
 
+function isValidRequestId(value: string | null): value is string {
+  return Boolean(value && /^[A-Za-z0-9._:-]{1,128}$/.test(value));
+}
+
 function getOrGenerateRequestId(
   request: Request,
   generateFn: () => string
 ): string {
   const existing = request.headers.get(REQUEST_ID_HEADER);
-  if (existing && existing.length <= 128) {
+  if (isValidRequestId(existing)) {
     return existing;
   }
   return generateFn();
@@ -156,7 +160,8 @@ function isAbortLikeError(error: unknown): boolean {
 
 function getDefaultConfig() {
   const fastApiBaseUrl =
-    process.env.FASTAPI_BASE_URL || "http://localhost:8000";
+    process.env.FASTAPI_BASE_URL ||
+    (process.env.NODE_ENV === "production" ? "" : "http://localhost:8000");
   const internalSecret = process.env.NEXUS_INTERNAL_SECRET || "";
 
   return { fastApiBaseUrl, internalSecret };
@@ -178,7 +183,7 @@ async function createDefaultDeps(): Promise<ProxyDeps> {
   };
 }
 
-async function proxyToFastAPIWithDeps(
+export async function proxyToFastAPIWithDeps(
   request: Request,
   path: string,
   deps: ProxyDeps
@@ -192,8 +197,48 @@ async function proxyToFastAPIWithDeps(
 
   const requestId = getOrGenerateRequestId(request, deps.generateRequestId);
 
-  // Get session for access token
-  const session = await deps.getSession();
+  if (
+    !deps.config.fastApiBaseUrl ||
+    (process.env.NODE_ENV === "production" && !deps.config.internalSecret)
+  ) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "E_INTERNAL",
+          message: "Backend service is not configured",
+          request_id: requestId,
+        },
+      },
+      {
+        status: 500,
+        headers: {
+          [REQUEST_ID_HEADER]: requestId,
+        },
+      }
+    );
+  }
+
+  let session: { access_token: string } | null;
+  try {
+    session = await deps.getSession();
+  } catch (error) {
+    console.error("Supabase session lookup failed:", error);
+    return NextResponse.json(
+      {
+        error: {
+          code: "E_INTERNAL",
+          message: "Authentication service unavailable",
+          request_id: requestId,
+        },
+      },
+      {
+        status: 503,
+        headers: {
+          [REQUEST_ID_HEADER]: requestId,
+        },
+      }
+    );
+  }
 
   if (!session?.access_token) {
     // No session - return 401 with standard error envelope
@@ -263,10 +308,11 @@ async function proxyToFastAPIWithDeps(
       }
     });
 
-    // Always include X-Request-ID (normalize to lowercase)
-    if (!responseHeaders.has(REQUEST_ID_HEADER)) {
-      responseHeaders.set(REQUEST_ID_HEADER, requestId);
-    }
+    const backendRequestId = response.headers.get(REQUEST_ID_HEADER);
+    responseHeaders.set(
+      REQUEST_ID_HEADER,
+      isValidRequestId(backendRequestId) ? backendRequestId : requestId
+    );
 
     // 204/205/304 and HEAD responses must not include a body.
     // Creating a Response with body bytes for these statuses throws.
@@ -364,6 +410,25 @@ export async function proxyExtensionToFastAPI(
   }
 
   const { fastApiBaseUrl, internalSecret } = getDefaultConfig();
+  if (
+    !fastApiBaseUrl ||
+    (process.env.NODE_ENV === "production" && !internalSecret)
+  ) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "E_INTERNAL",
+          message: "Backend service is not configured",
+          request_id: requestId,
+        },
+      },
+      {
+        status: 500,
+        headers: { [REQUEST_ID_HEADER]: requestId },
+      }
+    );
+  }
+
   const headers = new Headers({
     Authorization: authorization,
     [REQUEST_ID_HEADER]: requestId,
@@ -400,9 +465,11 @@ export async function proxyExtensionToFastAPI(
       body,
       signal: request.signal,
     });
+    const backendRequestId = response.headers.get(REQUEST_ID_HEADER);
     const responseHeaders = new Headers({
-      [REQUEST_ID_HEADER]:
-        response.headers.get(REQUEST_ID_HEADER) || requestId,
+      [REQUEST_ID_HEADER]: isValidRequestId(backendRequestId)
+        ? backendRequestId
+        : requestId,
     });
     const responseContentType = response.headers.get("content-type");
 

@@ -4,6 +4,7 @@ import { ApiError, apiFetch, apiPostFormData } from "./client";
 describe("apiFetch", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("throws an API error for successful non-JSON responses", async () => {
@@ -42,7 +43,48 @@ describe("apiFetch", () => {
     );
 
     await expect(apiFetch("/api/libraries")).rejects.toEqual(
-      new ApiError(401, "E_UNAUTHENTICATED", "Authentication required", "request-1")
+      new ApiError(
+        401,
+        "E_UNAUTHENTICATED",
+        "Authentication required",
+        "request-1"
+      )
+    );
+  });
+
+  it("redirects browser callers to login on unauthenticated API responses", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("window", {
+      location: {
+        assign,
+        origin: "http://localhost:3000",
+        pathname: "/libraries",
+        search: "?view=mine",
+      },
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json(
+        {
+          error: {
+            code: "E_UNAUTHENTICATED",
+            message: "Authentication required",
+            request_id: "request-1",
+          },
+        },
+        { status: 401 }
+      )
+    );
+
+    await expect(apiFetch("/api/libraries")).rejects.toEqual(
+      new ApiError(
+        401,
+        "E_UNAUTHENTICATED",
+        "Authentication required",
+        "request-1"
+      )
+    );
+    expect(assign).toHaveBeenCalledWith(
+      "http://localhost:3000/login?next=%2Flibraries%3Fview%3Dmine"
     );
   });
 

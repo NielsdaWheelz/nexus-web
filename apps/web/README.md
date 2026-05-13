@@ -44,7 +44,7 @@ Prerequisites:
 
 Primary variables for this app:
 
-- `FASTAPI_BASE_URL`
+- `FASTAPI_BASE_URL` (required outside local/test)
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `AUTH_ALLOWED_REDIRECT_ORIGINS`

@@ -4,6 +4,7 @@ const fetchSpy = vi.spyOn(globalThis, "fetch");
 const mockGetSession = vi.fn();
 const mockBuildLoginRedirectUrl = vi.fn((url: URL) => new URL("/login", url.origin));
 const previousFastApiBaseUrl = process.env.FASTAPI_BASE_URL;
+const previousInternalSecret = process.env.NEXUS_INTERNAL_SECRET;
 const previousRedirectOrigins = process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS;
 
 vi.mock("@/lib/auth/redirects", () => ({
@@ -24,6 +25,7 @@ describe("GET /extension/connect/start", () => {
     mockGetSession.mockReset();
     mockBuildLoginRedirectUrl.mockClear();
     process.env.FASTAPI_BASE_URL = "http://api.local";
+    process.env.NEXUS_INTERNAL_SECRET = "test-internal-secret";
     process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS = "https://extension.chromiumapp.org";
   });
 
@@ -95,6 +97,9 @@ describe("GET /extension/connect/start", () => {
     expect(String(url)).toBe("http://api.local/auth/extension-sessions");
     expect(init?.method).toBe("POST");
     expect(new Headers(init?.headers).get("authorization")).toBe("Bearer web-session-token");
+    expect(new Headers(init?.headers).get("x-nexus-internal")).toBe(
+      "test-internal-secret"
+    );
 
     expect(response.status).toBe(307);
     const location = new URL(response.headers.get("location") || "");
@@ -109,6 +114,12 @@ afterEach(() => {
     delete process.env.FASTAPI_BASE_URL;
   } else {
     process.env.FASTAPI_BASE_URL = previousFastApiBaseUrl;
+  }
+
+  if (previousInternalSecret === undefined) {
+    delete process.env.NEXUS_INTERNAL_SECRET;
+  } else {
+    process.env.NEXUS_INTERNAL_SECRET = previousInternalSecret;
   }
 
   if (previousRedirectOrigins === undefined) {

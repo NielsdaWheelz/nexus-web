@@ -3,6 +3,8 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { type CookieToSet } from "./types";
 
+const SUPABASE_FETCH_TIMEOUT_MS = 5_000;
+
 function isNextResponse(response: Response): response is NextResponse {
   return "cookies" in response;
 }
@@ -37,6 +39,19 @@ export async function createRouteHandlerClient() {
           if (headers) {
             Object.assign(headersToApply, headers);
           }
+        },
+      },
+      global: {
+        fetch(input, init) {
+          const controller = new AbortController();
+          const timeout = setTimeout(
+            () => controller.abort(),
+            SUPABASE_FETCH_TIMEOUT_MS
+          );
+
+          return fetch(input, { ...init, signal: controller.signal }).finally(
+            () => clearTimeout(timeout)
+          );
         },
       },
     }

@@ -80,7 +80,23 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
       isErrorResponse(body) &&
       body.error.code === "E_UNAUTHENTICATED"
     ) {
-      throw new ApiError(401, body.error.code, body.error.message, body.error.request_id);
+      if (
+        typeof window !== "undefined" &&
+        window.location.pathname !== "/login"
+      ) {
+        const loginUrl = new URL("/login", window.location.origin);
+        loginUrl.searchParams.set(
+          "next",
+          `${window.location.pathname}${window.location.search}`
+        );
+        window.location.assign(loginUrl.toString());
+      }
+      throw new ApiError(
+        401,
+        body.error.code,
+        body.error.message,
+        body.error.request_id
+      );
     }
     if (isErrorResponse(body)) {
       throw new ApiError(

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mockGetUser = vi.fn();
@@ -17,9 +17,11 @@ describe("updateSession", () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://project-ref.supabase.co";
   });
 
-  it("redirects unauthenticated protected requests to login and preserves the destination", async () => {
-    mockGetUser.mockResolvedValue({ data: { user: null } });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
+  it("redirects protected requests without an auth cookie and preserves the destination", async () => {
     const { updateSession } = await import("./middleware");
     const response = await updateSession(
       new NextRequest("http://localhost:3000/conversations?view=compact")
@@ -28,15 +30,25 @@ describe("updateSession", () => {
     expect(response.headers.get("location")).toBe(
       "http://localhost:3000/login?next=%2Fconversations%3Fview%3Dcompact"
     );
+    expect(mockGetUser).not.toHaveBeenCalled();
   });
 
   it("allows public routes without redirecting unauthenticated users", async () => {
     const { updateSession } = await import("./middleware");
-    const response = await updateSession(
-      new NextRequest("http://localhost:3000/login?next=%2Flibraries")
-    );
+    const responses = await Promise.all([
+      updateSession(
+        new NextRequest("http://localhost:3000/login?next=%2Flibraries")
+      ),
+      updateSession(new NextRequest("http://localhost:3000/terms")),
+      updateSession(new NextRequest("http://localhost:3000/privacy")),
+      updateSession(
+        new NextRequest("http://localhost:3000/extension/connect/start")
+      ),
+    ]);
 
-    expect(response.headers.get("location")).toBeNull();
+    expect(
+      responses.every((response) => !response.headers.get("location"))
+    ).toBe(true);
     expect(mockGetUser).not.toHaveBeenCalled();
   });
 
@@ -55,17 +67,18 @@ describe("updateSession", () => {
 
     const { updateSession } = await import("./middleware");
     const response = await updateSession(
-      new NextRequest("http://localhost:3000/libraries")
+      new NextRequest("http://localhost:3000/libraries", {
+        headers: {
+          cookie: "sb-project-ref-auth-token=base64-session",
+        },
+      })
     );
 
     expect(response.headers.get("location")).toBeNull();
   });
 
-  it("allows protected requests with a local session when Supabase Auth has a transient server failure", async () => {
-    mockGetUser.mockResolvedValue({
-      data: { user: null },
-      error: { status: 504 },
-    });
+  it("redirects protected requests with a stale or fake auth cookie", async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null } });
 
     const { updateSession } = await import("./middleware");
     const request = new NextRequest("http://localhost:3000/libraries", {
@@ -75,18 +88,22 @@ describe("updateSession", () => {
     });
     const response = await updateSession(request);
 
-    expect(response.headers.get("location")).toBeNull();
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/login?next=%2Flibraries"
+    );
   });
 
-  it("redirects protected requests without a local session when Supabase Auth has a transient server failure", async () => {
-    mockGetUser.mockResolvedValue({
-      data: { user: null },
-      error: { status: 504 },
-    });
+  it("redirects protected requests when Supabase Auth fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockGetUser.mockRejectedValue(new Error("auth unavailable"));
 
     const { updateSession } = await import("./middleware");
     const response = await updateSession(
-      new NextRequest("http://localhost:3000/libraries")
+      new NextRequest("http://localhost:3000/libraries", {
+        headers: {
+          cookie: "sb-project-ref-auth-token=base64-session",
+        },
+      })
     );
 
     expect(response.headers.get("location")).toBe(
