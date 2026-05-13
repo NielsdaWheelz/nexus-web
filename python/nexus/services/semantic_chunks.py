@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import time
 from typing import Any
 
 import httpx
@@ -15,6 +16,9 @@ from nexus.logging import get_logger
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
+_EMBEDDING_PROVIDER_RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504, 520}
+_EMBEDDING_PROVIDER_MAX_ATTEMPTS = 3
+_EMBEDDING_PROVIDER_BACKOFF_SECONDS = (0.25, 0.5, 1.0)
 logger = get_logger(__name__)
 
 
@@ -91,6 +95,23 @@ def _embedding_provider_error(status_code: int) -> ApiErrorCode:
     return ApiErrorCode.E_LLM_PROVIDER_DOWN
 
 
+def _embedding_provider_retry_delay_seconds(
+    attempt_index: int, response: httpx.Response | None = None
+) -> float:
+    if response is not None and response.status_code == 429:
+        retry_after = str(response.headers.get("Retry-After") or "").strip()
+        if retry_after:
+            try:
+                retry_after_seconds = float(retry_after)
+                if retry_after_seconds > 0:
+                    return min(retry_after_seconds, 10.0)
+            except ValueError:
+                pass
+    return _EMBEDDING_PROVIDER_BACKOFF_SECONDS[
+        min(attempt_index, len(_EMBEDDING_PROVIDER_BACKOFF_SECONDS) - 1)
+    ]
+
+
 def _parse_embedding_response_data(
     body: Any, *, dimensions: int, expected_count: int
 ) -> list[list[float]]:
@@ -148,51 +169,97 @@ def _embed_with_openai(texts: list[str], *, dimensions: int) -> list[list[float]
     vectors: list[list[float]] = []
     for start in range(0, len(texts), 64):
         batch = texts[start : start + 64]
-        try:
-            response = httpx.post(
-                _OPENAI_EMBEDDINGS_URL,
-                headers=headers,
-                json={
-                    "model": settings.transcript_embedding_model_openai,
-                    "input": batch,
-                    "dimensions": dimensions,
-                },
-                timeout=httpx.Timeout(settings.transcript_embedding_timeout_seconds, connect=10.0),
+        for attempt_index in range(_EMBEDDING_PROVIDER_MAX_ATTEMPTS):
+            try:
+                response = httpx.post(
+                    _OPENAI_EMBEDDINGS_URL,
+                    headers=headers,
+                    json={
+                        "model": settings.transcript_embedding_model_openai,
+                        "input": batch,
+                        "dimensions": dimensions,
+                    },
+                    timeout=httpx.Timeout(
+                        settings.transcript_embedding_timeout_seconds, connect=10.0
+                    ),
+                )
+            except httpx.TimeoutException as exc:
+                if attempt_index < _EMBEDDING_PROVIDER_MAX_ATTEMPTS - 1:
+                    delay_seconds = _embedding_provider_retry_delay_seconds(attempt_index)
+                    logger.warning(
+                        "embedding_provider_retryable_transport_error",
+                        error_code=ApiErrorCode.E_LLM_TIMEOUT.value,
+                        attempt=attempt_index + 1,
+                        max_attempts=_EMBEDDING_PROVIDER_MAX_ATTEMPTS,
+                        retry_delay_seconds=delay_seconds,
+                    )
+                    time.sleep(delay_seconds)
+                    continue
+                raise ApiError(
+                    ApiErrorCode.E_LLM_TIMEOUT,
+                    "Embedding provider request timed out.",
+                ) from exc
+            except httpx.RequestError as exc:
+                if attempt_index < _EMBEDDING_PROVIDER_MAX_ATTEMPTS - 1:
+                    delay_seconds = _embedding_provider_retry_delay_seconds(attempt_index)
+                    logger.warning(
+                        "embedding_provider_retryable_transport_error",
+                        error_code=ApiErrorCode.E_LLM_PROVIDER_DOWN.value,
+                        attempt=attempt_index + 1,
+                        max_attempts=_EMBEDDING_PROVIDER_MAX_ATTEMPTS,
+                        retry_delay_seconds=delay_seconds,
+                    )
+                    time.sleep(delay_seconds)
+                    continue
+                raise ApiError(
+                    ApiErrorCode.E_LLM_PROVIDER_DOWN,
+                    "Embedding provider request failed.",
+                ) from exc
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                error_code = _embedding_provider_error(response.status_code)
+                if (
+                    response.status_code in _EMBEDDING_PROVIDER_RETRYABLE_STATUS_CODES
+                    and attempt_index < _EMBEDDING_PROVIDER_MAX_ATTEMPTS - 1
+                ):
+                    delay_seconds = _embedding_provider_retry_delay_seconds(
+                        attempt_index,
+                        response,
+                    )
+                    logger.warning(
+                        "embedding_provider_retryable_http_error",
+                        status_code=response.status_code,
+                        error_code=error_code.value,
+                        attempt=attempt_index + 1,
+                        max_attempts=_EMBEDDING_PROVIDER_MAX_ATTEMPTS,
+                        retry_delay_seconds=delay_seconds,
+                    )
+                    time.sleep(delay_seconds)
+                    continue
+                logger.warning(
+                    "embedding_provider_request_failed",
+                    status_code=response.status_code,
+                    error_code=error_code.value,
+                    response_chars=len(response.text),
+                )
+                raise ApiError(
+                    error_code,
+                    "Embedding provider request failed.",
+                ) from exc
+            try:
+                body = response.json()
+            except ValueError as exc:
+                raise ApiError(
+                    ApiErrorCode.E_LLM_PROVIDER_DOWN,
+                    "Embedding provider returned invalid JSON.",
+                ) from exc
+            vectors.extend(
+                _parse_embedding_response_data(
+                    body, dimensions=dimensions, expected_count=len(batch)
+                )
             )
-        except httpx.TimeoutException as exc:
-            raise ApiError(
-                ApiErrorCode.E_LLM_TIMEOUT,
-                "Embedding provider request timed out.",
-            ) from exc
-        except httpx.RequestError as exc:
-            raise ApiError(
-                ApiErrorCode.E_LLM_PROVIDER_DOWN,
-                "Embedding provider request failed.",
-            ) from exc
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            error_code = _embedding_provider_error(response.status_code)
-            logger.warning(
-                "embedding_provider_request_failed",
-                status_code=response.status_code,
-                error_code=error_code.value,
-                response_chars=len(response.text),
-            )
-            raise ApiError(
-                error_code,
-                "Embedding provider request failed.",
-            ) from exc
-        try:
-            body = response.json()
-        except ValueError as exc:
-            raise ApiError(
-                ApiErrorCode.E_LLM_PROVIDER_DOWN,
-                "Embedding provider returned invalid JSON.",
-            ) from exc
-        vectors.extend(
-            _parse_embedding_response_data(body, dimensions=dimensions, expected_count=len(batch))
-        )
+            break
     return vectors
 
 

@@ -4,6 +4,9 @@ import android.app.Activity
 import android.app.Instrumentation.ActivityResult
 import android.content.Intent
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.os.Message
 import android.os.SystemClock
 import android.webkit.CookieManager
 import android.webkit.ValueCallback
@@ -131,13 +134,13 @@ class MainActivityTest {
     }
 
     @Test
-    fun ownedCallbackNewIntentLoadsThatExactUrl() {
+    fun ownedCallbackIntentWhileRunningLoadsThatExactUrl() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val callbackUrl =
                 "${BuildConfig.NEXUS_BASE_URL}/auth/callback?code=test-code&next=%2Flibraries"
 
             scenario.onActivity { activity ->
-                activity.startActivity(
+                activity.loadUrlFromIntent(
                     Intent(Intent.ACTION_VIEW, Uri.parse(callbackUrl)).apply {
                         setClass(activity, MainActivity::class.java)
                     }
@@ -150,6 +153,33 @@ class MainActivityTest {
                     currentUrl = activity.webView.url
                 }
                 currentUrl == callbackUrl
+            }
+        }
+    }
+
+    @Test
+    fun debugDevCallbackIntentWhileRunningLoadsTheWebCallbackUrl() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val expectedUrl =
+                "${BuildConfig.NEXUS_BASE_URL}/auth/callback?code=test-code&next=%2Flibraries"
+
+            scenario.onActivity { activity ->
+                activity.loadUrlFromIntent(
+                    Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.parse("nexus-dev://auth/callback?code=test-code&next=%2Flibraries")
+                    ).apply {
+                        setClass(activity, MainActivity::class.java)
+                    }
+                )
+            }
+
+            waitUntil("Expected debug dev callback new intent to load in the WebView.") {
+                var currentUrl: String? = null
+                scenario.onActivity { activity ->
+                    currentUrl = activity.webView.url
+                }
+                currentUrl == expectedUrl
             }
         }
     }
@@ -181,31 +211,62 @@ class MainActivityTest {
 
     @Test
     fun backNavigationUsesWebViewHistoryFirst() {
-        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            val settingsUrl = "${BuildConfig.NEXUS_BASE_URL}/settings"
+        val firstUrl = "${BuildConfig.NEXUS_BASE_URL}/first"
+        val secondUrl = "${BuildConfig.NEXUS_BASE_URL}/second"
 
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
-                activity.routeUrl(Uri.parse(settingsUrl))
+                activity.webView.loadDataWithBaseURL(
+                    firstUrl,
+                    "<!doctype html><title>Nexus first</title>",
+                    "text/html",
+                    "utf-8",
+                    firstUrl
+                )
             }
 
-            waitUntil("Expected WebView to load the settings URL.") {
+            waitUntil("Expected WebView to load the first test page.") {
                 var currentUrl: String? = null
+                var progress = 0
                 scenario.onActivity { activity ->
                     currentUrl = activity.webView.url
+                    progress = activity.webView.progress
                 }
-                currentUrl == settingsUrl
+                currentUrl == firstUrl && progress == 100
+            }
+
+            scenario.onActivity { activity ->
+                activity.webView.loadDataWithBaseURL(
+                    secondUrl,
+                    "<!doctype html><title>Nexus second</title>",
+                    "text/html",
+                    "utf-8",
+                    secondUrl
+                )
+            }
+
+            waitUntil("Expected WebView test page to create back history.") {
+                var currentUrl: String? = null
+                var progress = 0
+                var canGoBack = false
+                scenario.onActivity { activity ->
+                    currentUrl = activity.webView.url
+                    progress = activity.webView.progress
+                    canGoBack = activity.webView.canGoBack()
+                }
+                currentUrl == secondUrl && progress == 100 && canGoBack
             }
 
             scenario.onActivity { activity ->
                 activity.onBackPressedDispatcher.onBackPressed()
             }
 
-            waitUntil("Expected Android back to return to the launch URL first.") {
+            waitUntil("Expected Android back to return to the previous WebView entry first.") {
                 var currentUrl: String? = null
                 scenario.onActivity { activity ->
                     currentUrl = activity.webView.url
                 }
-                currentUrl == BuildConfig.NEXUS_BASE_URL
+                currentUrl == firstUrl
             }
         }
     }
@@ -220,6 +281,54 @@ class MainActivityTest {
                         false,
                         false,
                         null
+                    )
+                )
+            }
+        }
+    }
+
+    @Test
+    fun userOpenedPopupWebViewsUseShellSecuritySettings() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val message = Message.obtain(Handler(Looper.getMainLooper()) { true })
+                val transport = activity.webView.WebViewTransport()
+                message.obj = transport
+
+                assertTrue(
+                    activity.shellChromeClient.onCreateWindow(
+                        activity.webView,
+                        false,
+                        true,
+                        message
+                    )
+                )
+
+                val popupWebView = checkNotNull(transport.webView)
+                val settings = popupWebView.settings
+                assertTrue(settings.javaScriptEnabled)
+                assertTrue(settings.domStorageEnabled)
+                assertFalse(settings.allowFileAccess)
+                assertFalse(settings.allowContentAccess)
+                assertEquals(WebSettings.MIXED_CONTENT_NEVER_ALLOW, settings.mixedContentMode)
+                assertTrue(settings.safeBrowsingEnabled)
+                assertFalse(settings.javaScriptCanOpenWindowsAutomatically)
+                assertTrue(settings.userAgentString.contains("NexusAndroidShell"))
+                assertFalse(CookieManager.getInstance().acceptThirdPartyCookies(popupWebView))
+                popupWebView.destroy()
+            }
+        }
+    }
+
+    @Test
+    fun missingFileInputCallbackDoesNotLaunchChooser() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                assertFalse(
+                    activity.shellChromeClient.onShowFileChooser(
+                        activity.webView,
+                        null,
+                        FakeFileChooserParams()
                     )
                 )
             }

@@ -1,4 +1,5 @@
 const AUTH_ALLOWED_REDIRECT_ORIGINS = "AUTH_ALLOWED_REDIRECT_ORIGINS";
+const AUTH_TRUSTED_PROXY_ORIGINS = "AUTH_TRUSTED_PROXY_ORIGINS";
 const NEXUS_ENV = "NEXUS_ENV";
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -79,6 +80,9 @@ export function resolveCallbackRedirectOrigin(
   const allowlistedOrigins = parseAllowlistedOrigins(
     process.env[AUTH_ALLOWED_REDIRECT_ORIGINS]
   );
+  const trustedProxyOrigins = parseAllowlistedOrigins(
+    process.env[AUTH_TRUSTED_PROXY_ORIGINS]
+  );
   const requestOrigin = requestUrl.origin;
 
   if (allowlistedOrigins.length === 0) {
@@ -96,7 +100,11 @@ export function resolveCallbackRedirectOrigin(
   }
 
   const forwardedOrigin = getForwardedOrigin(request);
-  if (forwardedOrigin && allowlistedOrigins.includes(forwardedOrigin)) {
+  if (
+    forwardedOrigin &&
+    allowlistedOrigins.includes(forwardedOrigin) &&
+    trustedProxyOrigins.includes(requestOrigin)
+  ) {
     return forwardedOrigin;
   }
 

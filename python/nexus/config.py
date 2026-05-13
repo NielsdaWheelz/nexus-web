@@ -46,6 +46,13 @@ class Settings(BaseSettings):
 
     nexus_env: Environment = Field(default=Environment.LOCAL, alias="NEXUS_ENV")
     database_url: Annotated[str, Field(alias="DATABASE_URL")]
+    database_pool_size: int = Field(default=10, ge=1, alias="DATABASE_POOL_SIZE")
+    database_max_overflow: int = Field(default=10, ge=0, alias="DATABASE_MAX_OVERFLOW")
+    database_pool_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        alias="DATABASE_POOL_TIMEOUT_SECONDS",
+    )
     nexus_internal_secret: str | None = Field(default=None, alias="NEXUS_INTERNAL_SECRET")
 
     # Supabase auth settings (required in all environments)
@@ -85,6 +92,10 @@ class Settings(BaseSettings):
     youtube_data_base_url: str = Field(
         default="https://www.googleapis.com/youtube/v3",
         alias="YOUTUBE_DATA_BASE_URL",
+    )
+    youtube_transcript_timeout_seconds: float = Field(
+        default=30.0,
+        alias="YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS",
     )
     deepgram_api_key: str | None = Field(default=None, alias="DEEPGRAM_API_KEY")
     deepgram_base_url: str = Field(default="https://api.deepgram.com", alias="DEEPGRAM_BASE_URL")
@@ -330,6 +341,8 @@ class Settings(BaseSettings):
             raise ValueError("PODCAST_SYNC_RUNNING_LEASE_SECONDS must be >= 1.")
         if self.podcast_transcription_timeout_seconds <= 0:
             raise ValueError("PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS must be > 0.")
+        if self.youtube_transcript_timeout_seconds <= 0:
+            raise ValueError("YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS must be > 0.")
         if self.real_media_provider_fixtures:
             if self.nexus_env in (Environment.STAGING, Environment.PROD):
                 raise ValueError("REAL_MEDIA_PROVIDER_FIXTURES is not allowed in staging or prod.")

@@ -106,6 +106,40 @@ describe("LinkedIdentitiesPage", () => {
     });
   });
 
+  it("keeps generic local Android WebViews on the standard web callback", async () => {
+    const user = userEvent.setup();
+    setUserAgent(
+      "Mozilla/5.0 (Linux; Android 14; SM-S906W Build/UP1A.231005.007; wv) AppleWebKit/537.36"
+    );
+    mockGetUserIdentities.mockResolvedValue({
+      data: {
+        identities: [
+          {
+            identity_id: "github-id",
+            provider: "github",
+            identity_data: { email: "owner+github@example.com" },
+            created_at: "2026-03-21T00:00:00Z",
+          },
+        ],
+      },
+      error: null,
+    });
+
+    render(<LinkedIdentitiesPage />);
+
+    const connectGoogle = await screen.findByRole("button", {
+      name: /connect google/i,
+    });
+    await user.click(connectGoogle);
+
+    expect(mockLinkIdentity).toHaveBeenCalledWith({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback?next=%2Fsettings%2Fidentities`,
+      },
+    });
+  });
+
   it("supports unlinking one provider identity while keeping another", async () => {
     const user = userEvent.setup();
     mockGetUserIdentities

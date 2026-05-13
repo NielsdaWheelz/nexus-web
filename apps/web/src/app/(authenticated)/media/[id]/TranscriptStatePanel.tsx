@@ -54,18 +54,21 @@ export default function TranscriptStatePanel({
   transcriptCoverage,
   onTranscriptStateChange,
 }: TranscriptStatePanelProps) {
-  const { account: billingAccount } = useBillingAccount();
+  const { account: billingAccount, loading: billingLoading } = useBillingAccount();
   const [transcriptRequestInFlight, setTranscriptRequestInFlight] = useState(false);
   const [transcriptRequestForecast, setTranscriptRequestForecast] =
     useState<TranscriptRequestForecast | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
-  const requestDisabled =
-    transcriptRequestInFlight ||
-    (transcriptRequestForecast ? !transcriptRequestForecast.fitsBudget : false);
   const billingDisabled = billingAccount?.billing_enabled === false;
   const transcriptionLocked =
     billingAccount != null &&
     (billingAccount.plan_tier === "free" || billingAccount.plan_tier === "plus");
+  const requestDisabled =
+    billingLoading ||
+    billingDisabled ||
+    transcriptionLocked ||
+    transcriptRequestInFlight ||
+    (transcriptRequestForecast ? !transcriptRequestForecast.fitsBudget : false);
 
   const refreshTranscriptState = useCallback(async () => {
     const mediaResponse = await apiFetch<{
@@ -102,7 +105,12 @@ export default function TranscriptStatePanel({
   }, [mediaId, onTranscriptStateChange]);
 
   useEffect(() => {
-    if (!canRequestTranscript(transcriptState)) {
+    if (
+      billingLoading ||
+      billingDisabled ||
+      transcriptionLocked ||
+      !canRequestTranscript(transcriptState)
+    ) {
       setTranscriptRequestForecast(null);
       setRequestError(null);
       return;
@@ -155,7 +163,14 @@ export default function TranscriptStatePanel({
     return () => {
       cancelled = true;
     };
-  }, [mediaId, onTranscriptStateChange, transcriptState]);
+  }, [
+    billingDisabled,
+    billingLoading,
+    mediaId,
+    onTranscriptStateChange,
+    transcriptState,
+    transcriptionLocked,
+  ]);
 
   useEffect(() => {
     if (!shouldPollTranscriptProvisioning(transcriptState)) {
@@ -174,6 +189,10 @@ export default function TranscriptStatePanel({
   }, [refreshTranscriptState, transcriptState]);
 
   const handleRequestTranscript = useCallback(async () => {
+    if (billingDisabled || billingLoading || transcriptionLocked) {
+      return;
+    }
+
     setTranscriptRequestInFlight(true);
     setRequestError(null);
     try {
@@ -218,7 +237,14 @@ export default function TranscriptStatePanel({
     } finally {
       setTranscriptRequestInFlight(false);
     }
-  }, [mediaId, onTranscriptStateChange, refreshTranscriptState]);
+  }, [
+    billingDisabled,
+    billingLoading,
+    mediaId,
+    onTranscriptStateChange,
+    refreshTranscriptState,
+    transcriptionLocked,
+  ]);
 
   if (transcriptionLocked) {
     return (

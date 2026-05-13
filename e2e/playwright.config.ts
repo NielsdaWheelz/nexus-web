@@ -22,7 +22,7 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: 2,
+  workers: REAL_MEDIA_ENABLED ? 1 : 2,
   reporter: process.env.CI
     ? [["html"], ["github"]]
     : [["html", { open: "never" }]],
@@ -67,6 +67,7 @@ export default defineConfig({
         ...process.env,
         NEXUS_ENV: RUNTIME_ENV,
         E2E_DISABLE_CSP: "1",
+        E2E_DISABLE_NEXT_DEV_INDICATOR: "1",
         PORT: WEB_PORT,
       },
     },

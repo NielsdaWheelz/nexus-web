@@ -924,6 +924,18 @@ export default function CommandPalette() {
 
   const executeCommand = useCallback(
     async (command: PaletteCommand) => {
+      if (command.target.kind === "href" && androidShell) {
+        const route = resolvePaneRoute(command.target.href);
+        if (isAndroidShellRestrictedRouteId(route.id)) {
+          setOpen(false);
+          feedback.show({
+            severity: "warning",
+            title: "Local Vault is not available in the Android app.",
+          });
+          return;
+        }
+      }
+
       setOpen(false);
 
       const targetKey =
@@ -992,6 +1004,17 @@ export default function CommandPalette() {
         if (actionId.startsWith("pane-open:")) {
           const paneId = actionId.slice("pane-open:".length);
           const pane = workspaceState.panes.find((item) => item.id === paneId);
+          if (
+            androidShell &&
+            pane &&
+            isAndroidShellRestrictedRouteId(resolvePaneRoute(pane.href).id)
+          ) {
+            feedback.show({
+              severity: "warning",
+              title: "Local Vault is not available in the Android app.",
+            });
+            return;
+          }
           if (pane?.visibility === "minimized") {
             restorePane(paneId);
           } else {
@@ -1017,7 +1040,7 @@ export default function CommandPalette() {
         feedback.show(toFeedback(error, { fallback: "Command failed" }));
       }
     },
-    [activatePane, closePane, feedback, query, restorePane, workspaceState.panes],
+    [activatePane, androidShell, closePane, feedback, query, restorePane, workspaceState.panes],
   );
 
   useEffect(() => {

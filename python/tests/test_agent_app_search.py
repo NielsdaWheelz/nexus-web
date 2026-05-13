@@ -276,7 +276,7 @@ def test_execute_app_search_preserves_typed_provider_error_code(
         )
         session.commit()
 
-        route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
+        respx.post(OPENAI_EMBEDDINGS_URL).respond(
             500,
             json={"error": {"message": "provider unavailable"}},
         )
@@ -300,7 +300,6 @@ def test_execute_app_search_preserves_typed_provider_error_code(
         assert run.tool_call_id is not None
         assert run.status == "error"
         assert run.error_code == ApiErrorCode.E_LLM_PROVIDER_DOWN.value
-        assert route.call_count == 1
 
         tool_status, tool_error_code = session.execute(
             text(

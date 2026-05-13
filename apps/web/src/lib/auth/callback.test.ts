@@ -6,8 +6,10 @@ import {
 } from "./messages";
 
 const AUTH_ALLOWED_REDIRECT_ORIGINS = "AUTH_ALLOWED_REDIRECT_ORIGINS";
+const AUTH_TRUSTED_PROXY_ORIGINS = "AUTH_TRUSTED_PROXY_ORIGINS";
 const originalAllowedRedirectOrigins =
   process.env[AUTH_ALLOWED_REDIRECT_ORIGINS];
+const originalTrustedProxyOrigins = process.env[AUTH_TRUSTED_PROXY_ORIGINS];
 const originalNodeEnv = process.env.NODE_ENV;
 
 function setNodeEnv(value: string | undefined) {
@@ -36,13 +38,19 @@ describe("handleAuthCallback", () => {
     setNodeEnv(originalNodeEnv);
     if (originalAllowedRedirectOrigins === undefined) {
       delete process.env[AUTH_ALLOWED_REDIRECT_ORIGINS];
-      return;
+    } else {
+      process.env[AUTH_ALLOWED_REDIRECT_ORIGINS] = originalAllowedRedirectOrigins;
     }
-    process.env[AUTH_ALLOWED_REDIRECT_ORIGINS] = originalAllowedRedirectOrigins;
+    if (originalTrustedProxyOrigins === undefined) {
+      delete process.env[AUTH_TRUSTED_PROXY_ORIGINS];
+    } else {
+      process.env[AUTH_TRUSTED_PROXY_ORIGINS] = originalTrustedProxyOrigins;
+    }
   });
 
-  it("uses forwarded origin only when the origin is explicitly allowlisted", async () => {
+  it("uses forwarded origin only when the direct origin is a trusted proxy", async () => {
     process.env[AUTH_ALLOWED_REDIRECT_ORIGINS] = "https://app.example.com";
+    process.env[AUTH_TRUSTED_PROXY_ORIGINS] = "http://internal.local";
     const exchangeCodeForSession = vi.fn().mockResolvedValue({ error: null });
     const request = new Request(
       "http://internal.local/auth/callback?code=test-code&next=%2Fsearch%3Fq%3Doauth",
@@ -64,8 +72,31 @@ describe("handleAuthCallback", () => {
     );
   });
 
+  it("rejects spoofed forwarded callback origins from untrusted direct origins", async () => {
+    process.env[AUTH_ALLOWED_REDIRECT_ORIGINS] = "https://app.example.com";
+    process.env[AUTH_TRUSTED_PROXY_ORIGINS] = "http://internal.local";
+    const exchangeCodeForSession = vi.fn().mockResolvedValue({ error: null });
+    const request = new Request(
+      "http://attacker.local/auth/callback?code=test-code&next=%2Fbrowse",
+      {
+        headers: {
+          "x-forwarded-host": "app.example.com",
+          "x-forwarded-proto": "https",
+        },
+      }
+    );
+
+    await expect(
+      handleAuthCallback(request, {
+        exchangeCodeForSession,
+      })
+    ).rejects.toThrow(AUTH_ALLOWED_REDIRECT_ORIGINS);
+    expect(exchangeCodeForSession).not.toHaveBeenCalled();
+  });
+
   it("rejects non-allowlisted callback origins before exchanging the code", async () => {
     process.env[AUTH_ALLOWED_REDIRECT_ORIGINS] = "https://app.example.com";
+    process.env[AUTH_TRUSTED_PROXY_ORIGINS] = "http://internal.local";
     const exchangeCodeForSession = vi.fn().mockResolvedValue({ error: null });
     const request = new Request(
       "http://internal.local/auth/callback?code=test-code&next=%2Fbrowse",
@@ -140,6 +171,7 @@ describe("handleAuthCallback", () => {
   });
 
   it("redirects back to login with the preserved next path when code is missing", async () => {
+    process.env[AUTH_ALLOWED_REDIRECT_ORIGINS] = "https://app.example.com";
     const exchangeCodeForSession = vi.fn();
     const response = await handleAuthCallback(
       new Request("https://app.example.com/auth/callback?next=%2Fconversations"),
@@ -155,6 +187,7 @@ describe("handleAuthCallback", () => {
   });
 
   it("maps provider cancellation codes to a safe user-facing message", async () => {
+    process.env[AUTH_ALLOWED_REDIRECT_ORIGINS] = "https://app.example.com";
     const exchangeCodeForSession = vi.fn();
     const response = await handleAuthCallback(
       new Request(
@@ -172,6 +205,7 @@ describe("handleAuthCallback", () => {
   });
 
   it("redirects back to login when the exchange fails", async () => {
+    process.env[AUTH_ALLOWED_REDIRECT_ORIGINS] = "https://app.example.com";
     const exchangeCodeForSession = vi
       .fn()
       .mockResolvedValue({ error: { message: "Provider rejected the code" } });

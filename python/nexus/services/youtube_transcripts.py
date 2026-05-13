@@ -6,11 +6,57 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
+from requests import Session
+
 from nexus.config import get_settings, real_media_provider_fixtures_requested
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class _TimeoutSession(Session):
+    def __init__(self, timeout_seconds: float) -> None:
+        super().__init__()
+        self._timeout_seconds = timeout_seconds
+
+    def request(
+        self,
+        method: str | bytes,
+        url: str | bytes,
+        params: Any = None,
+        data: Any = None,
+        headers: Any = None,
+        cookies: Any = None,
+        files: Any = None,
+        auth: Any = None,
+        timeout: Any = None,
+        allow_redirects: bool = True,
+        proxies: Any = None,
+        hooks: Any = None,
+        stream: Any = None,
+        verify: Any = None,
+        cert: Any = None,
+        json: Any = None,
+    ) -> Any:
+        return super().request(
+            method,
+            url,
+            params=params,
+            data=data,
+            headers=headers,
+            cookies=cookies,
+            files=files,
+            auth=auth,
+            timeout=self._timeout_seconds if timeout is None else timeout,
+            allow_redirects=allow_redirects,
+            proxies=proxies,
+            hooks=hooks,
+            stream=stream,
+            verify=verify,
+            cert=cert,
+            json=json,
+        )
 
 
 def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
@@ -36,8 +82,13 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
             ApiErrorCode.E_TRANSCRIPTION_FAILED.value, "Transcription provider unavailable"
         )
 
+    settings = get_settings()
     try:
-        raw_segments = list(YouTubeTranscriptApi().fetch(video_id))
+        raw_segments = list(
+            YouTubeTranscriptApi(
+                http_client=_TimeoutSession(settings.youtube_transcript_timeout_seconds)
+            ).fetch(video_id)
+        )
     except Exception as exc:
         class_name = exc.__class__.__name__
         if class_name in {

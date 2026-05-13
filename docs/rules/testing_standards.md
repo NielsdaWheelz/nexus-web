@@ -461,6 +461,11 @@ make test-back-unit      # backend unit tests only
 make test-back-integration # backend integration tests only
 make test-front-unit     # frontend unit tests only (Node)
 make test-front-browser   # frontend component tests (Vitest Browser Mode / Chromium)
+make check-android      # Android lint
+make build-android      # Android debug and instrumentation APK build
+make test-android       # Android instrumentation tests on a connected device/emulator
+make verify-android     # Android lint + debug/test APK build
+make verify-android-release # signed Android release APK build + signer verification
 make test-migrations     # migration/schema tests only
 make test-supabase       # Supabase-local auth/storage tests only
 make test-e2e-ui    # Playwright UI mode
@@ -477,6 +482,9 @@ Command semantics:
 - `make test-live-providers`: live external-provider backend gate
 - `make verify`: check + build + non-E2E tests for routine development
 - `make verify-full`: verify + real-media + live-provider + E2E
+- `make test-android`: instrumentation tests; requires a connected Android device or emulator
+- `make verify-android`: Android static and build verification only; does not require a connected device
+- `make verify-android-release`: signed APK verification; requires release signing env vars/secrets
 - `make test-e2e-ui`: interactive Playwright UI mode
 - `bun run test:csp` in `e2e/`: strict CSP profile for runtime policy assertions against production Next runtime
 

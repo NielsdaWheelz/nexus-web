@@ -1,5 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { buildLoginRedirectUrl } from "@/lib/auth/redirects";
+import {
+  DEFAULT_AUTH_REDIRECT,
+  buildLoginRedirectUrl,
+  normalizeAuthRedirect,
+} from "@/lib/auth/redirects";
 import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
 
 const REQUEST_PATH_HEADER = "x-nexus-request-path";
@@ -18,6 +22,22 @@ const PUBLIC_ROUTES = new Set([
 
 export async function updateSession(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+
+  if (pathname === "/login") {
+    const session = readSupabaseSessionCookie(request.cookies.getAll());
+    if (session.ok) {
+      return NextResponse.redirect(
+        new URL(
+          normalizeAuthRedirect(
+            request.nextUrl.searchParams.get("next"),
+            DEFAULT_AUTH_REDIRECT
+          ),
+          request.nextUrl.origin
+        )
+      );
+    }
+    return NextResponse.next({ request });
+  }
 
   if (PUBLIC_ROUTES.has(pathname) || pathname.startsWith("/_next")) {
     return NextResponse.next({ request });

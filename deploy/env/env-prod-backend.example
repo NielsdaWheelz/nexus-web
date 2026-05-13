@@ -7,6 +7,9 @@ CADDY_ACME_EMAIL=you@example.com
 
 # Supabase Postgres. Use the transaction pooler on port 6543 on small VPS/free-tier Supabase.
 DATABASE_URL=postgresql+psycopg://postgres.<project-ref>:<password>@<supabase-pooler-host>:6543/postgres?sslmode=require
+DATABASE_POOL_SIZE=5
+DATABASE_MAX_OVERFLOW=5
+DATABASE_POOL_TIMEOUT_SECONDS=30
 
 # Supabase Storage service-role key.
 SUPABASE_SERVICE_KEY=<supabase-service-role-key>
@@ -24,6 +27,7 @@ PODCASTS_ENABLED=false
 
 # Required by staging/prod config for browse providers.
 YOUTUBE_DATA_API_KEY=<youtube-data-api-key>
+YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS=30
 
 # Optional platform provider keys. BYOK can still be used where supported.
 # OPENAI_API_KEY=

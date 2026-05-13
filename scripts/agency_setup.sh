@@ -70,8 +70,12 @@ SUPABASE_ANON_KEY=$(echo "$SUPABASE_STATUS" | grep -o '"ANON_KEY": *"[^"]*"' | s
 SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_STATUS" | grep -o '"SERVICE_ROLE_KEY": *"[^"]*"' | sed 's/"SERVICE_ROLE_KEY": *"//;s/"$//')
 
 if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+    missing_fields=()
+    [ -z "$SUPABASE_URL" ] && missing_fields+=("API_URL")
+    [ -z "$SUPABASE_ANON_KEY" ] && missing_fields+=("ANON_KEY")
+    [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && missing_fields+=("SERVICE_ROLE_KEY")
     echo "Error: Failed to extract Supabase configuration"
-    echo "Status output: $SUPABASE_STATUS"
+    echo "Missing fields: ${missing_fields[*]}"
     exit 1
 fi
 

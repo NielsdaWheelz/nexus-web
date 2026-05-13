@@ -77,12 +77,29 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
     )
     assert podcast is not None, candidates
 
+    contributors = []
+    for credit in podcast["contributors"]:
+        contributor = {
+            "credited_name": credit["credited_name"],
+            "role": credit["role"],
+            "source": credit["source"],
+        }
+        if credit.get("raw_role"):
+            contributor["raw_role"] = credit["raw_role"]
+        if isinstance(credit.get("ordinal"), int):
+            contributor["ordinal"] = credit["ordinal"]
+        if credit.get("source_ref"):
+            contributor["source_ref"] = credit["source_ref"]
+        if credit.get("confidence") is not None:
+            contributor["confidence"] = credit["confidence"]
+        contributors.append(contributor)
+
     subscribe_response = auth_client.post(
         "/podcasts/subscriptions",
         json={
             "provider_podcast_id": podcast["provider_podcast_id"],
             "title": podcast["title"],
-            "contributors": podcast["contributors"],
+            "contributors": contributors,
             "feed_url": podcast["feed_url"],
             "website_url": podcast["website_url"],
             "image_url": podcast["image_url"],

@@ -13,6 +13,7 @@ val debugOwnedHost = (providers.gradleProperty("nexusAndroidDebugOwnedHost").orN
 val requestedReleaseBuild = gradle.startParameter.taskNames.any {
     it.contains("Release", ignoreCase = true)
 }
+val canonicalReleaseHost = "nexus.nielseriknandal.com"
 val releaseBaseUrlProperty = providers.gradleProperty("nexusAndroidReleaseBaseUrl").orNull?.trim()
     ?: System.getenv("NEXUS_ANDROID_RELEASE_BASE_URL")?.trim()
 val releaseOwnedHostProperty = providers.gradleProperty("nexusAndroidReleaseOwnedHost").orNull?.trim()
@@ -36,9 +37,21 @@ val releaseOwnedHost = releaseOwnedHostProperty ?: "release-host-required.invali
 val debugUri = URI(debugBaseUrl)
 val releaseUri = URI(releaseBaseUrl)
 val assetLinksText = rootProject.file("../web/public/.well-known/assetlinks.json").readText()
+val assetLinksTextForFingerprintMatch = assetLinksText.replace(":", "").uppercase()
 
 require(debugUri.host == debugOwnedHost) {
     "nexusAndroidDebugBaseUrl host must match nexusAndroidDebugOwnedHost."
+}
+require(debugUri.scheme == "http" || debugUri.scheme == "https") {
+    "nexusAndroidDebugBaseUrl must use http or https."
+}
+require(
+    debugUri.rawUserInfo == null &&
+        (debugUri.rawPath.isNullOrEmpty() || debugUri.rawPath == "/") &&
+        debugUri.rawQuery == null &&
+        debugUri.rawFragment == null
+) {
+    "nexusAndroidDebugBaseUrl must be an origin without path, query, fragment, or credentials."
 }
 if (requestedReleaseBuild) {
     require(!releaseBaseUrlProperty.isNullOrBlank()) {
@@ -53,17 +66,16 @@ if (requestedReleaseBuild) {
     require(releaseUri.host == releaseOwnedHost) {
         "nexusAndroidReleaseBaseUrl host must match nexusAndroidReleaseOwnedHost."
     }
-    require(releaseOwnedHost != "nexus.example.com") {
-        "Replace the placeholder Android release host before building release."
+    require(releaseOwnedHost == canonicalReleaseHost) {
+        "Android release host must be $canonicalReleaseHost."
     }
     require(
-        releaseOwnedHost != "localhost" &&
-            releaseOwnedHost != "127.0.0.1" &&
-            releaseOwnedHost != "10.0.2.2" &&
-            !releaseOwnedHost.endsWith(".invalid") &&
-            !releaseOwnedHost.endsWith(".example.com")
+        releaseUri.rawUserInfo == null &&
+            (releaseUri.rawPath.isNullOrEmpty() || releaseUri.rawPath == "/") &&
+            releaseUri.rawQuery == null &&
+            releaseUri.rawFragment == null
     ) {
-        "Android release host must be a real production host."
+        "nexusAndroidReleaseBaseUrl must be an origin without path, query, fragment, or credentials."
     }
     require(!assetLinksText.contains("REPLACE_WITH_RELEASE_APK_SIGNING_CERT_SHA256")) {
         "Replace the placeholder assetlinks.json SHA-256 fingerprint before building release."
@@ -71,7 +83,11 @@ if (requestedReleaseBuild) {
     require(!releaseCertSha256Property.isNullOrBlank()) {
         "Set nexusAndroidReleaseCertSha256 or NEXUS_ANDROID_RELEASE_CERT_SHA256 before building release."
     }
-    require(assetLinksText.contains(releaseCertSha256Property)) {
+    require(
+        assetLinksTextForFingerprintMatch.contains(
+            releaseCertSha256Property.replace(":", "").uppercase()
+        )
+    ) {
         "assetlinks.json must contain the Android release signing certificate SHA-256 fingerprint."
     }
     require(!releaseStoreFileProperty.isNullOrBlank()) {

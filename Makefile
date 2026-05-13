@@ -8,7 +8,7 @@
 	verify verify-android verify-android-release verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw \
-	_test-supabase-raw _test-real-media-backend-raw _test-live-providers-raw \
+	_test-supabase-raw _test-real-media-raw _test-real-media-backend-raw _test-live-providers-raw \
 	_seed-real-media-e2e-raw _test-e2e-raw _test-real-media-e2e-raw _test-e2e-ui-raw
 
 -include .env
@@ -261,8 +261,11 @@ _test-supabase-raw:
 	cd python && NEXUS_ENV=test uv run pytest -v --tb=short -m supabase
 
 test-real-media: _ensure-e2e-deps
-	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-back-db-ready _test-real-media-backend-raw
-	./scripts/with_supabase_services.sh make _test-real-media-e2e-raw
+	./scripts/with_supabase_services.sh make _test-real-media-raw
+
+_test-real-media-raw:
+	./scripts/with_test_services.sh make _test-back-db-ready _test-real-media-backend-raw
+	make _test-real-media-e2e-raw
 
 _test-real-media-backend-raw:
 	make _ensure-node-ingest
@@ -341,7 +344,18 @@ verify-android-release:
 			echo "Could not find apksigner. Install Android SDK build-tools or set ANDROID_APK_SIGNER."; \
 			exit 1; \
 		fi; \
-		"$$apksigner" verify --verbose --print-certs apps/android/app/build/outputs/apk/release/app-release.apk; \
+		if [ -z "$${NEXUS_ANDROID_RELEASE_CERT_SHA256:-}" ]; then \
+			echo "Set NEXUS_ANDROID_RELEASE_CERT_SHA256 to verify the release APK signer."; \
+			exit 1; \
+		fi; \
+		verify_output=$$("$$apksigner" verify --verbose --print-certs apps/android/app/build/outputs/apk/release/app-release.apk); \
+		printf '%s\n' "$$verify_output"; \
+		actual_cert_sha256=$$(printf '%s\n' "$$verify_output" | sed -n -e 's/^Signer #1 certificate SHA-256 digest: //p' -e 's/^V[0-9][^:]* Signer: certificate SHA-256 digest: //p' | head -n 1 | tr -d ' :' | tr '[:lower:]' '[:upper:]'); \
+		expected_cert_sha256=$$(printf '%s' "$$NEXUS_ANDROID_RELEASE_CERT_SHA256" | tr -d ' :' | tr '[:lower:]' '[:upper:]'); \
+		if [ -z "$$actual_cert_sha256" ] || [ "$$actual_cert_sha256" != "$$expected_cert_sha256" ]; then \
+			echo "Release APK signer does not match NEXUS_ANDROID_RELEASE_CERT_SHA256."; \
+			exit 1; \
+		fi; \
 		shasum -a 256 apps/android/app/build/outputs/apk/release/app-release.apk
 	@echo "=== android release verification passed ==="
 

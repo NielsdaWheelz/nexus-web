@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.os.Message
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -45,20 +46,9 @@ class MainActivity : AppCompatActivity() {
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
 
         webView = WebView(this)
-        val settings = webView.settings
-        settings.javaScriptEnabled = true
-        settings.domStorageEnabled = true
-        settings.allowFileAccess = false
-        settings.allowContentAccess = false
-        settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-        settings.safeBrowsingEnabled = true
-        settings.javaScriptCanOpenWindowsAutomatically = false
-        settings.setSupportMultipleWindows(true)
-        settings.userAgentString = "${settings.userAgentString} NexusAndroidShell"
-
+        hardenWebView(webView)
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
-        cookieManager.setAcceptThirdPartyCookies(webView, false)
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(
@@ -93,7 +83,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
                 val popupWebView = WebView(this@MainActivity)
-                popupWebView.settings.javaScriptEnabled = true
+                hardenWebView(popupWebView)
 
                 var handled = false
                 popupWebView.webViewClient = object : WebViewClient() {
@@ -132,6 +122,9 @@ class MainActivity : AppCompatActivity() {
                 filePathCallback: ValueCallback<Array<Uri>>?,
                 fileChooserParams: FileChooserParams?
             ): Boolean {
+                if (filePathCallback == null) {
+                    return false
+                }
                 this@MainActivity.fileChooserCallback?.onReceiveValue(null)
                 this@MainActivity.fileChooserCallback = filePathCallback
 
@@ -182,6 +175,8 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
+        webView.stopLoading()
+        (webView.parent as? ViewGroup)?.removeView(webView)
         webView.destroy()
         super.onDestroy()
     }
@@ -196,7 +191,7 @@ class MainActivity : AppCompatActivity() {
         openExternalUrl(uri)
     }
 
-    private fun loadUrlFromIntent(intent: Intent?) {
+    internal fun loadUrlFromIntent(intent: Intent?) {
         val launchUrl =
             intent?.data?.let { uri ->
                 if (
@@ -220,6 +215,20 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl(launchUrl)
     }
 
+    private fun hardenWebView(view: WebView) {
+        val settings = view.settings
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.allowFileAccess = false
+        settings.allowContentAccess = false
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        settings.safeBrowsingEnabled = true
+        settings.javaScriptCanOpenWindowsAutomatically = false
+        settings.setSupportMultipleWindows(true)
+        settings.userAgentString = "${settings.userAgentString} NexusAndroidShell"
+        CookieManager.getInstance().setAcceptThirdPartyCookies(view, false)
+    }
+
     private fun isOwnedUrl(uri: Uri): Boolean {
         val scheme = uri.scheme ?: return false
         if (scheme != "http" && scheme != "https") {
@@ -239,7 +248,10 @@ class MainActivity : AppCompatActivity() {
             nexusBaseUri.port
         }
 
-        return scheme == baseScheme && uri.host == baseHost && uriPort == basePort
+        val uriHost = uri.host ?: return false
+        return scheme == baseScheme &&
+            uriHost.equals(baseHost, ignoreCase = true) &&
+            uriPort == basePort
     }
 
     private fun openExternalUrl(uri: Uri) {

@@ -20,5 +20,8 @@ This document covers the architectural layers and their responsibilities.
 - Services must not import from route handlers or middleware.
 - Route handlers must not contain business logic beyond input validation and response shaping.
 - BFF proxy routes must not contain business logic. They forward requests and attach auth.
-- Client-side code calls `/api/*` routes only. It never calls FastAPI directly (except streaming SSE).
+- Client-side product data calls use `/api/*` routes only. They never call
+  FastAPI directly except streaming SSE.
+- Supabase browser auth calls are allowed only in owned login, auth callback,
+  and linked-identity modules. They must not be used for product data access.
 - Android shell code does not call FastAPI, Supabase, or product APIs directly.

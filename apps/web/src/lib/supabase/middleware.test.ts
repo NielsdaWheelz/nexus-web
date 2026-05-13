@@ -72,6 +72,41 @@ describe("updateSession", () => {
     expect(mockGetUser).not.toHaveBeenCalled();
   });
 
+  it("redirects authenticated login requests to the normalized next path", async () => {
+    const { updateSession } = await import("./middleware");
+    const response = await updateSession(
+      new NextRequest(
+        "http://localhost:3000/login?next=%2Fsearch%3Fq%3Doauth",
+        {
+          headers: {
+            cookie: authCookie(),
+          },
+        }
+      )
+    );
+
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/search?q=oauth"
+    );
+    expect(mockGetUser).not.toHaveBeenCalled();
+  });
+
+  it("redirects authenticated login requests with unsafe next paths to the default", async () => {
+    const { updateSession } = await import("./middleware");
+    const response = await updateSession(
+      new NextRequest("http://localhost:3000/login?next=https://evil.example", {
+        headers: {
+          cookie: authCookie(),
+        },
+      })
+    );
+
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/libraries"
+    );
+    expect(mockGetUser).not.toHaveBeenCalled();
+  });
+
   it("allows unauthenticated API routes through so route handlers can return JSON errors", async () => {
     const { updateSession } = await import("./middleware");
     const response = await updateSession(

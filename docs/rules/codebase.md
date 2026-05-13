@@ -29,3 +29,12 @@ This document covers repository-wide code organization, imports, and module boun
 - External functionality may be consumed by any module.
 - Internal functionality is only for a module and its submodules.
 - Default to internal unless functionality is clearly external.
+- `apps/android/app/src/main/java/.../MainActivity.kt` owns Android shell
+  mechanics: WebView setup, owned-origin routing, external routing, file
+  chooser handoff, popup handoff, and app-link intent handling.
+- Android manifests own Android framework entrypoints and deep-link filters.
+- Android Gradle files own Android build, signing, app-link, and release
+  configuration.
+- Android code must not add product API clients, Supabase clients, auth
+  exchange code, upload clients, or JavaScript bridges without updating this
+  rule first.

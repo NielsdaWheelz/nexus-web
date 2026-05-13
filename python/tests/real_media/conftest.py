@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -46,28 +47,39 @@ def ensure_real_media_prerequisites() -> None:
         "apikey": settings.supabase_service_key,
         "Authorization": f"Bearer {settings.supabase_service_key}",
     }
-    with httpx.Client(timeout=30.0) as client:
-        bucket_response = client.get(
-            f"{settings.supabase_url}/storage/v1/bucket/{settings.storage_bucket}",
-            headers=headers,
-        )
-        if bucket_response.status_code == 200:
-            return
-        if bucket_response.status_code not in (400, 404):
-            pytest.fail(
-                "Unexpected Supabase storage bucket check response: "
-                f"{bucket_response.status_code} {bucket_response.text}"
-            )
-        create_response = client.post(
-            f"{settings.supabase_url}/storage/v1/bucket",
-            headers=headers,
-            json={"id": settings.storage_bucket, "name": settings.storage_bucket, "public": False},
-        )
-    if create_response.status_code not in (200, 201, 409):
-        pytest.fail(
-            "Failed to create Supabase storage bucket "
-            f"{settings.storage_bucket!r}: {create_response.status_code} {create_response.text}"
-        )
+    last_error: str | None = None
+    for _ in range(30):
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                bucket_response = client.get(
+                    f"{settings.supabase_url}/storage/v1/bucket/{settings.storage_bucket}",
+                    headers=headers,
+                )
+                if bucket_response.status_code == 200:
+                    return
+                if bucket_response.status_code not in (400, 404):
+                    pytest.fail(
+                        "Unexpected Supabase storage bucket check response: "
+                        f"{bucket_response.status_code} {bucket_response.text}"
+                    )
+                create_response = client.post(
+                    f"{settings.supabase_url}/storage/v1/bucket",
+                    headers=headers,
+                    json={
+                        "id": settings.storage_bucket,
+                        "name": settings.storage_bucket,
+                        "public": False,
+                    },
+                )
+            if create_response.status_code in (200, 201, 409):
+                return
+            last_error = f"{create_response.status_code} {create_response.text}"
+        except httpx.HTTPError as exc:
+            last_error = str(exc)
+        time.sleep(1)
+    pytest.fail(
+        f"Failed to create Supabase storage bucket {settings.storage_bucket!r}: {last_error}"
+    )
 
 
 def grant_ai_plus(direct_db: DirectSessionManager, user_id: UUID) -> None:
@@ -159,6 +171,8 @@ def create_nasa_captioned_video(
     direct_db: DirectSessionManager,
     headers: dict[str, str],
     user_id: UUID,
+    *,
+    allow_already_ready: bool = False,
 ) -> tuple[UUID, dict]:
     caption_bytes = (
         REAL_MEDIA_FIXTURES_DIR / "nasa-picturing-earth-behind-scenes-captions.srt"
@@ -188,6 +202,9 @@ def create_nasa_captioned_video(
             request_id="real-media-youtube-caption-fixture",
         )
         session.commit()
+    if allow_already_ready and result.get("status") == "skipped":
+        assert result.get("reason") == "already_ready", result
+        return media_id, result
     assert result["status"] == "success", result
     assert result["segment_count"] >= 20, result
     return media_id, result
@@ -198,6 +215,8 @@ def create_nasa_podcast_episode(
     direct_db: DirectSessionManager,
     headers: dict[str, str],
     user_id: UUID,
+    *,
+    allow_already_ready: bool = False,
 ) -> tuple[UUID, UUID, dict]:
     grant_ai_plus(direct_db, user_id)
 
@@ -317,8 +336,12 @@ def create_nasa_podcast_episode(
             request_id="real-media-podcast-transcript-fixture",
         )
         session.commit()
-    assert transcription_result["status"] == "completed", transcription_result
-    assert transcription_result["segment_count"] > 0, transcription_result
+    if allow_already_ready and transcription_result.get("status") == "skipped":
+        assert transcription_result.get("reason") == "not_pending", transcription_result
+        assert transcription_result.get("job_status") == "completed", transcription_result
+    else:
+        assert transcription_result["status"] == "completed", transcription_result
+        assert transcription_result["segment_count"] > 0, transcription_result
 
     assert_fragment_content_contains(direct_db, media_id, "International Space Station")
     register_media_cleanup(direct_db, media_id)

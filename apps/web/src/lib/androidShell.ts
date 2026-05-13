@@ -12,7 +12,19 @@ export function isAndroidShell(): boolean {
 }
 
 export function isAndroidShellRestrictedHref(href: string): boolean {
-  return href === "/settings/local-vault";
+  try {
+    const baseOrigin =
+      typeof window === "undefined" ? "https://nexus.local" : window.location.origin;
+    const url = new URL(href, baseOrigin);
+    if (url.origin !== baseOrigin) {
+      return false;
+    }
+    const pathname =
+      url.pathname === "/" ? url.pathname : url.pathname.replace(/\/+$/, "");
+    return pathname === "/settings/local-vault";
+  } catch {
+    return false;
+  }
 }
 
 export function isAndroidShellRestrictedRouteId(routeId: string): boolean {

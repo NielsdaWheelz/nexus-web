@@ -101,9 +101,11 @@ over in code.
 
 ### owned versus external navigation
 
-- same-host nexus main-frame navigation stays in the `WebView`
-- off-host main-frame navigation never stays in the `WebView`
-- off-host navigation opens in a Custom Tab
+- same-origin nexus main-frame navigation stays in the `WebView`
+- same origin means scheme, host, and effective port match
+  `BuildConfig.NEXUS_BASE_URL`
+- off-origin main-frame navigation never stays in the `WebView`
+- off-origin navigation opens in a Custom Tab
 - unsupported external schemes never crash the app
 - popup or new-window navigation is user-gesture gated
 - third-party popup content is not a product surface
@@ -171,7 +173,7 @@ over in code.
 `MainActivity.kt` owns:
 
 - `WebView` creation and settings
-- owned-host versus external-host routing
+- owned-origin versus external-origin routing
 - Custom Tab handoff
 - incoming app-link intent handling
 - debug-only local callback intent handling
@@ -370,10 +372,10 @@ native code is not added to mirror existing web product behavior.
 
 - keep one `MainActivity`
 - keep webview settings explicit
-- keep same-host routing in `WebView`
-- route all off-host navigation to Custom Tabs
+- keep same-origin routing in `WebView`
+- route all off-origin navigation to Custom Tabs
 - reject non-user-gesture popups
-- ensure popup targets are routed externally or through normal owned-host
+- ensure popup targets are routed externally or through normal owned-origin
   handling, never rendered as a second product surface
 - keep file chooser success and cancel behavior
 - keep webview history-first back behavior
@@ -396,8 +398,9 @@ native code is not added to mirror existing web product behavior.
 - replace the asset links placeholder with the release apk signing certificate
   sha-256 fingerprint
 - deploy `/.well-known/assetlinks.json` from the canonical web host
-- verify app links on installed debug and release variants
-- document the exact adb verification commands
+- verify app links on installed release variants
+- verify debug callback routing through the debug-only `nexus-dev://` intent
+- document the exact adb verification commands for debug and release packages
 - keep release callbacks on `https` only
 
 ### 4. finish oauth
@@ -421,6 +424,7 @@ native code is not added to mirror existing web product behavior.
 ### 6. finish tests and ci
 
 - keep android lint and debug/test apk build in `make verify-android`
+- require `make test-android` on a connected device or emulator before release
 - add release apk build coverage once production props are available in ci
 - add instrumentation coverage for launch, owned routing, external routing,
   app-link re-entry, debug callback re-entry, `onNewIntent`, back navigation,
@@ -444,8 +448,8 @@ native code is not added to mirror existing web product behavior.
 
 - launching the app opens the configured base url in one `WebView`
 - verified nexus `https` links open directly in the installed app
-- owned-host links stay in `WebView`
-- off-host links open in Custom Tabs
+- owned-origin links stay in `WebView`
+- off-origin links open in Custom Tabs
 - unsupported external schemes do not crash the app
 - android back navigates web history before exiting
 - app-link re-entry works when the activity is cold
@@ -502,10 +506,13 @@ native code is not added to mirror existing web product behavior.
 - release build fails without release keystore inputs
 - release build fails when asset links do not contain the release signing cert
   fingerprint
+- release verification fails when the APK signer certificate does not match the
+  configured release fingerprint
 - release cleartext traffic is disabled
 - release app-link autoverification is enabled
 - signed release apk verifies with `apksigner`
-- github release contains the signed apk and sha-256 checksum
+- github draft release contains the signed apk and sha-256 checksum
+- github release publication uses an existing `android-v*` tag
 - release candidate completes google and github oauth on a physical device
 - release has monitoring and rollback criteria
 
@@ -515,12 +522,19 @@ local:
 
 ```bash
 make verify-android
-bun run test:unit -- src/lib/auth/callback.test.ts src/lib/auth/redirects.test.ts src/lib/androidShell.test.ts
-bun run test:browser -- src/app/login/LoginPageClient.test.tsx 'src/app/(authenticated)/settings/SettingsPaneBody.test.tsx' 'src/app/(authenticated)/settings/billing/page.test.tsx' 'src/app/(authenticated)/settings/local-vault/page.test.tsx' 'src/app/(authenticated)/settings/identities/page.test.tsx'
+cd apps/web && bun run test:unit -- src/lib/auth/callback.test.ts src/lib/auth/redirects.test.ts src/lib/androidShell.test.ts
+cd apps/web && bun run test:browser -- src/app/login/LoginPageClient.test.tsx src/__tests__/components/SettingsPage.test.tsx 'src/app/(authenticated)/settings/page.androidShell.test.tsx' 'src/app/(authenticated)/settings/billing/page.test.tsx' 'src/app/(authenticated)/settings/local-vault/page.test.tsx' 'src/app/(authenticated)/settings/local-vault/page.androidShell.test.tsx' 'src/app/(authenticated)/settings/identities/page.test.tsx' src/lib/androidShell.commandPalette.test.tsx src/lib/androidShell.localVaultAutoSync.test.tsx src/lib/androidShell.transcriptStatePanel.test.tsx src/lib/panes/paneRouteRegistry.androidShell.test.tsx
 make check-workflows
 ```
 
-device:
+debug device:
+
+```bash
+adb devices
+adb shell am start -a android.intent.action.VIEW -d 'nexus-dev://auth/callback?code=test-code&next=%2Flibraries' app.nexus.android.debug
+```
+
+release device:
 
 ```bash
 adb devices
@@ -543,26 +557,20 @@ keytool -list -v -keystore nexus-release.jks -alias nexus
 base64 -i nexus-release.jks | pbcopy
 ```
 
-release, once production inputs exist:
+release, local signed verification:
 
 ```bash
-cd apps/android
-./gradlew :app:assembleRelease \
-  -PnexusAndroidReleaseBaseUrl=https://<canonical-host> \
-  -PnexusAndroidReleaseOwnedHost=<canonical-host> \
-  -PnexusAndroidReleaseStoreFile=/abs/path/nexus-release.jks \
-  -PnexusAndroidReleaseStorePassword='<store-password>' \
-  -PnexusAndroidReleaseKeyAlias=nexus \
-  -PnexusAndroidReleaseKeyPassword='<key-password>' \
-  -PnexusAndroidReleaseCertSha256='<release-cert-sha256>' \
-  -PnexusAndroidVersionCode=<monotonic-version-code> \
-  -PnexusAndroidVersionName=<release-version-name>
+set -a
+. ./deploy/env/env-android-release
+set +a
+export NEXUS_ANDROID_RELEASE_STORE_FILE=/abs/path/nexus-release.jks
+make verify-android-release
 ```
 
 ## release blockers
 
 - placeholder app-link fingerprint
-- placeholder release host
+- release host is not `nexus.nielseriknandal.com`
 - missing release signing fingerprint
 - missing release keystore
 - unverified app links
