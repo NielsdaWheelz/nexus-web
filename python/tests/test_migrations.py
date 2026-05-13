@@ -2396,6 +2396,132 @@ class TestWorkerRuntime:
         assert worker is not None
         assert len(worker.registry) > 0
 
+    def test_worker_queue_and_reconciler_indexes_exist(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            indexes = {
+                row["index_name"]: row
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT
+                            idx.relname AS index_name,
+                            tbl.relname AS table_name,
+                            array_agg(
+                                pg_get_indexdef(i.indexrelid, keys.key_no, true)
+                                ORDER BY keys.key_no
+                            ) AS keys,
+                            pg_get_expr(i.indpred, i.indrelid) AS predicate
+                        FROM pg_index i
+                        JOIN pg_class idx ON idx.oid = i.indexrelid
+                        JOIN pg_class tbl ON tbl.oid = i.indrelid
+                        JOIN pg_namespace ns ON ns.oid = idx.relnamespace
+                        CROSS JOIN LATERAL generate_series(1, i.indnkeyatts) AS keys(key_no)
+                        WHERE ns.nspname = 'public'
+                        GROUP BY idx.relname, tbl.relname, i.indexrelid, i.indrelid, i.indpred
+                        """
+                    )
+                )
+                .mappings()
+                .all()
+            }
+
+        def assert_index(
+            name: str,
+            *,
+            table_name: str,
+            keys: list[str],
+            predicate_fragments: list[str],
+        ) -> None:
+            assert name in indexes, f"Expected worker hardening index {name} to exist."
+            row = indexes[name]
+            assert row["table_name"] == table_name, (
+                f"Expected {name} on table {table_name}. Row={row}"
+            )
+            assert list(row["keys"]) == keys, f"Expected {name} keys {keys}. Row={row}"
+            predicate = str(row["predicate"]).lower()
+            missing_fragments = [
+                fragment for fragment in predicate_fragments if fragment.lower() not in predicate
+            ]
+            assert not missing_fragments, (
+                f"Expected {name} predicate to contain {missing_fragments}. "
+                f"Predicate={row['predicate']}"
+            )
+
+        assert_index(
+            "idx_background_jobs_due_claim",
+            table_name="background_jobs",
+            keys=["priority", "available_at", "created_at", "id"],
+            predicate_fragments=["pending", "failed"],
+        )
+        assert_index(
+            "idx_background_jobs_running_expired_claim",
+            table_name="background_jobs",
+            keys=["priority", "lease_expires_at", "created_at", "id"],
+            predicate_fragments=["running", "lease_expires_at IS NOT NULL"],
+        )
+        assert_index(
+            "idx_background_jobs_terminal_prune",
+            table_name="background_jobs",
+            keys=["finished_at", "id"],
+            predicate_fragments=["succeeded", "dead", "finished_at IS NOT NULL"],
+        )
+        assert_index(
+            "idx_media_stale_extracting_recovery",
+            table_name="media",
+            keys=["processing_started_at", "id"],
+            predicate_fragments=[
+                "processing_status",
+                "extracting",
+                "web_article",
+                "pdf",
+                "epub",
+                "podcast_episode",
+                "processing_started_at IS NOT NULL",
+            ],
+        )
+        assert_index(
+            "ix_media_content_index_states_repair_waiting",
+            table_name="media_content_index_states",
+            keys=["updated_at", "media_id"],
+            predicate_fragments=["pending", "failed", "active_run_id IS NULL"],
+        )
+        assert_index(
+            "ix_media_content_index_states_repair_indexing",
+            table_name="media_content_index_states",
+            keys=["updated_at", "media_id"],
+            predicate_fragments=["indexing"],
+        )
+        assert_index(
+            "ix_media_transcript_states_semantic_repair",
+            table_name="media_transcript_states",
+            keys=["updated_at", "media_id"],
+            predicate_fragments=[
+                "active_transcript_version_id IS NOT NULL",
+                "ready",
+                "partial",
+                "full",
+                "pending",
+                "failed",
+            ],
+        )
+        source_index = indexes.get("ix_source_snapshots_transcript_run_version")
+        assert source_index is not None, "Expected transcript source snapshot expression index."
+        assert source_index["table_name"] == "source_snapshots"
+        source_keys = list(source_index["keys"])
+        assert source_keys[0] == "index_run_id", f"Unexpected source index keys: {source_keys}"
+        assert "metadata" in source_keys[1] and "transcript_version_id" in source_keys[1], (
+            f"Unexpected transcript source expression key: {source_keys}"
+        )
+        source_predicate = str(source_index["predicate"]).lower()
+        assert "source_kind" in source_predicate and "=" in source_predicate, (
+            f"Expected source snapshot index to filter source_kind equality. "
+            f"Predicate={source_index['predicate']}"
+        )
+        assert "'transcript'" in source_predicate, (
+            f"Expected source snapshot index to filter only transcript sources. "
+            f"Predicate={source_index['predicate']}"
+        )
+
 
 class TestS4Migration0007:
     """Tests for S4 migration 0007 — library sharing schema.

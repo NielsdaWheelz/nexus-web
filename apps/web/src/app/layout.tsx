@@ -55,8 +55,6 @@ const unifrakturMaguntia = UnifrakturMaguntia({
   variable: "--font-unifraktur",
 });
 
-const themeBootstrapScript = `(function(){try{var c=document.cookie.match(/(?:^|;\\s*)nx-theme=(light|dark)/);var t=c?c[1]:(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark");document.documentElement.setAttribute("data-theme",t);}catch(_){}})();`;
-
 export default async function RootLayout({
   children,
 }: {
@@ -69,9 +67,6 @@ export default async function RootLayout({
       data-theme={theme ?? undefined}
       className={`${inter.variable} ${jetbrainsMono.variable} ${ebGaramond.variable} ${imFellEnglish.variable} ${unifrakturMaguntia.variable}`}
     >
-      <head>
-        <script>{themeBootstrapScript}</script>
-      </head>
       <body>
         <FeedbackProvider>{children}</FeedbackProvider>
       </body>

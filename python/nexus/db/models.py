@@ -838,6 +838,16 @@ class Media(Base):
             unique=True,
             postgresql_where=text("provider = 'x' AND provider_id IS NOT NULL"),
         ),
+        Index(
+            "idx_media_stale_extracting_recovery",
+            "processing_started_at",
+            "id",
+            postgresql_where=text(
+                "processing_status = 'extracting' "
+                "AND kind IN ('web_article', 'pdf', 'epub', 'podcast_episode') "
+                "AND processing_started_at IS NOT NULL"
+            ),
+        ),
     )
 
     # Relationships
@@ -2701,6 +2711,12 @@ class SourceSnapshot(Base):
         CheckConstraint("char_length(content_sha256) = 64", name="ck_source_snapshots_sha"),
         CheckConstraint("jsonb_typeof(metadata) = 'object'", name="ck_source_snapshots_metadata"),
         Index("ix_source_snapshots_media_run", "media_id", "index_run_id"),
+        Index(
+            "ix_source_snapshots_transcript_run_version",
+            "index_run_id",
+            text("(metadata ->> 'transcript_version_id')"),
+            postgresql_where=text("source_kind = 'transcript'"),
+        ),
     )
 
     media: Mapped["Media"] = relationship("Media", back_populates="source_snapshots")
@@ -3012,6 +3028,18 @@ class MediaContentIndexState(Base):
             "status IN ('pending', 'indexing', 'ready', 'no_text', 'ocr_required', 'failed')",
             name="ck_media_content_index_states_status",
         ),
+        Index(
+            "ix_media_content_index_states_repair_waiting",
+            "updated_at",
+            "media_id",
+            postgresql_where=text("status IN ('pending', 'failed') AND active_run_id IS NULL"),
+        ),
+        Index(
+            "ix_media_content_index_states_repair_indexing",
+            "updated_at",
+            "media_id",
+            postgresql_where=text("status = 'indexing'"),
+        ),
     )
 
     media: Mapped["Media"] = relationship("Media", back_populates="content_index_state")
@@ -3083,6 +3111,17 @@ class MediaTranscriptState(Base):
             name="ck_media_transcript_states_last_request_reason",
         ),
         Index("ix_media_transcript_states_semantic_status", "semantic_status"),
+        Index(
+            "ix_media_transcript_states_semantic_repair",
+            "updated_at",
+            "media_id",
+            postgresql_where=text(
+                "active_transcript_version_id IS NOT NULL "
+                "AND transcript_state IN ('ready', 'partial') "
+                "AND transcript_coverage IN ('partial', 'full') "
+                "AND semantic_status IN ('pending', 'failed', 'ready')"
+            ),
+        ),
     )
 
     media: Mapped["Media"] = relationship("Media", back_populates="transcript_state")

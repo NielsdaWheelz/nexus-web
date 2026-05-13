@@ -7,26 +7,21 @@ import styles from "./page.module.css";
 
 type Selection = "light" | "dark" | "system";
 
-function readCookieSelection(): Selection {
-  const match = document.cookie.match(/(?:^|;\s*)nx-theme=(light|dark)/);
-  return match ? (match[1] as Selection) : "system";
-}
-
-function resolveAppliedTheme(value: Selection): "light" | "dark" {
-  if (value !== "system") return value;
-  return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-}
-
 export default function SettingsAppearancePaneBody() {
   const [selection, setSelection] = useState<Selection | null>(null);
 
   useEffect(() => {
-    setSelection(readCookieSelection());
+    const value = document.cookie.match(/(?:^|;\s*)nx-theme=(light|dark)/)?.[1];
+    setSelection(value === "light" || value === "dark" ? value : "system");
   }, []);
 
   async function handleChange(next: Selection) {
     setSelection(next);
-    document.documentElement.dataset.theme = resolveAppliedTheme(next);
+    if (next === "system") {
+      delete document.documentElement.dataset.theme;
+    } else {
+      document.documentElement.dataset.theme = next;
+    }
     await setAppearanceAction(next);
   }
 

@@ -11,6 +11,7 @@ SSH_TARGET="${NEXUS_SSH_TARGET:-${DEPLOY_USER}@${HOST}}"
 SHARED_ENV="${NEXUS_SHARED_ENV:-${ROOT_DIR}/deploy/env/env-prod}"
 BACKEND_ENV="${NEXUS_BACKEND_ENV:-${ROOT_DIR}/deploy/env/env-prod-backend}"
 WORKER_ENV="${NEXUS_WORKER_ENV:-${ROOT_DIR}/deploy/env/env-prod-worker}"
+SAFE_WORKER_ALLOWED_JOB_KINDS="ingest_web_article,ingest_epub,ingest_pdf,ingest_youtube_video,enrich_metadata,chat_run,library_intelligence_build_job,podcast_sync_subscription_job,podcast_transcribe_episode_job,podcast_reindex_semantic_job,backfill_default_library_closure_job,oracle_reading_generate"
 
 REQUIRED_HETZNER_ENV_KEYS="
 NEXUS_ENV
@@ -121,6 +122,23 @@ require_non_empty_keys() {
   [ -z "$missing" ] || die "required production Hetzner env keys are missing or empty:${missing}"
 }
 
+require_safe_worker_defaults() {
+  local file="$1"
+  local key value
+
+  if is_true "${NEXUS_ALLOW_WORKER_MAINTENANCE:-false}"; then
+    return
+  fi
+
+  value="$(normalize_env_value "$(env_value "WORKER_ALLOWED_JOB_KINDS" "$file" || true)")"
+  [ "$value" = "$SAFE_WORKER_ALLOWED_JOB_KINDS" ] || die "WORKER_ALLOWED_JOB_KINDS is not the safe production allowlist; set NEXUS_ALLOW_WORKER_MAINTENANCE=1 for a bounded maintenance sync"
+
+  for key in PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS INGEST_RECONCILE_SCHEDULE_SECONDS SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS; do
+    value="$(normalize_env_value "$(env_value "$key" "$file" || true)")"
+    [ "$value" = "0" ] || die "${key} must be 0 for safe worker sync; set NEXUS_ALLOW_WORKER_MAINTENANCE=1 for a bounded maintenance sync"
+  done
+}
+
 [ -n "$HOST" ] || [ -n "${NEXUS_SSH_TARGET:-}" ] || die "set NEXUS_HOST or NEXUS_SSH_TARGET"
 command -v ssh >/dev/null 2>&1 || die "ssh is not installed locally"
 command -v scp >/dev/null 2>&1 || die "scp is not installed locally"
@@ -152,6 +170,7 @@ if grep -Ev '^[[:space:]]*#' "$tmp_file" | grep -Eq '[<>]|example\.com|=changeme
 fi
 
 require_non_empty_keys "$tmp_file"
+require_safe_worker_defaults "$tmp_file"
 
 scp "$tmp_file" "${SSH_TARGET}:${remote_tmp}"
 # shellcheck disable=SC2029

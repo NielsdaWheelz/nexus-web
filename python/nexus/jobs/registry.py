@@ -42,7 +42,6 @@ def get_task_contract_version() -> str:
             "max_attempts": definition.max_attempts,
             "retry_delays_seconds": list(definition.retry_delays_seconds),
             "lease_seconds": definition.lease_seconds,
-            "periodic_interval_seconds": definition.periodic_interval_seconds,
         }
         for definition in sorted(definitions.values(), key=lambda item: item.kind)
     ]
@@ -50,12 +49,20 @@ def get_task_contract_version() -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def clear_registry_cache() -> None:
+    """Clear cached registry data after environment changes in tests."""
+    _build_default_registry.cache_clear()
+    get_task_contract_version.cache_clear()
+
+
 def periodic_slot_start(*, now: datetime, interval_seconds: int) -> datetime:
     """Return UTC schedule bucket start for a periodic interval."""
+    if interval_seconds <= 0:
+        raise ValueError("periodic interval must be positive")
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
     epoch_seconds = int(now.timestamp())
-    interval = max(int(interval_seconds), 1)
+    interval = int(interval_seconds)
     slot_epoch = epoch_seconds - (epoch_seconds % interval)
     return datetime.fromtimestamp(slot_epoch, tz=UTC)
 
@@ -145,7 +152,11 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=300,
-            periodic_interval_seconds=int(settings.podcast_active_poll_schedule_seconds),
+            periodic_interval_seconds=(
+                int(settings.podcast_active_poll_schedule_seconds)
+                if settings.podcast_active_poll_schedule_seconds > 0
+                else None
+            ),
         ),
         "reconcile_stale_ingest_media_job": JobDefinition(
             kind="reconcile_stale_ingest_media_job",
@@ -153,7 +164,11 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=300,
-            periodic_interval_seconds=int(settings.ingest_reconcile_schedule_seconds),
+            periodic_interval_seconds=(
+                int(settings.ingest_reconcile_schedule_seconds)
+                if settings.ingest_reconcile_schedule_seconds > 0
+                else None
+            ),
         ),
         "sync_gutenberg_catalog_job": JobDefinition(
             kind="sync_gutenberg_catalog_job",
@@ -161,7 +176,23 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=7200,
-            periodic_interval_seconds=86400,
+            periodic_interval_seconds=(
+                int(settings.sync_gutenberg_catalog_schedule_seconds)
+                if settings.sync_gutenberg_catalog_schedule_seconds > 0
+                else None
+            ),
+        ),
+        "prune_background_jobs_job": JobDefinition(
+            kind="prune_background_jobs_job",
+            handler=_run_prune_background_jobs,
+            max_attempts=1,
+            retry_delays_seconds=(0,),
+            lease_seconds=300,
+            periodic_interval_seconds=(
+                int(settings.background_job_prune_schedule_seconds)
+                if settings.background_job_prune_schedule_seconds > 0
+                else None
+            ),
         ),
         "backfill_default_library_closure_job": JobDefinition(
             kind="backfill_default_library_closure_job",
@@ -297,6 +328,12 @@ def _run_sync_gutenberg_catalog(*, payload: Mapping[str, Any]) -> Mapping[str, A
         request_id=_optional_str(payload.get("request_id")),
         scheduler_identity=_optional_str(payload.get("scheduler_identity")),
     )
+
+
+def _run_prune_background_jobs(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    from nexus.tasks.prune_background_jobs import prune_background_jobs_job
+
+    return prune_background_jobs_job(request_id=_optional_str(payload.get("request_id")))
 
 
 def _run_backfill_default_library_closure(

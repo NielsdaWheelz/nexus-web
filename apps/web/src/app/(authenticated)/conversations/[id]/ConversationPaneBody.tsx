@@ -808,6 +808,7 @@ function ChatView({
               forkOptionsByParentId={forkOptionsByParentId}
               branchGraph={branchGraph}
               switchableLeafIds={switchableLeafIds}
+              activeLeafMessageId={activeLeafMessageId}
               selectedPathMessageIds={selectedPathIds}
               onSelectFork={(fork) => {
                 void switchToFork(fork);
@@ -834,6 +835,7 @@ function ChatView({
           forkOptionsByParentId={forkOptionsByParentId}
           branchGraph={branchGraph}
           switchableLeafIds={switchableLeafIds}
+          activeLeafMessageId={activeLeafMessageId}
           selectedPathMessageIds={selectedPathIds}
           onSelectFork={(fork) => {
             void switchToFork(fork);

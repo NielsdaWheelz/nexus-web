@@ -59,6 +59,7 @@ compose() {
 }
 
 compose build --pull
+compose stop worker api
 compose run -T --rm --no-deps api sh -c 'cd /app/migrations && /app/.venv/bin/alembic upgrade head' </dev/null
 compose up -d --remove-orphans
 compose ps

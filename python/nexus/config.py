@@ -23,6 +23,13 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
+DEFAULT_WORKER_ALLOWED_JOB_KINDS = (
+    "ingest_web_article,ingest_epub,ingest_pdf,ingest_youtube_video,"
+    "enrich_metadata,chat_run,library_intelligence_build_job,"
+    "podcast_sync_subscription_job,podcast_transcribe_episode_job,"
+    "podcast_reindex_semantic_job,backfill_default_library_closure_job,"
+    "oracle_reading_generate"
+)
 
 
 class Environment(str, Enum):
@@ -46,12 +53,10 @@ class Settings(BaseSettings):
 
     nexus_env: Environment = Field(default=Environment.LOCAL, alias="NEXUS_ENV")
     database_url: Annotated[str, Field(alias="DATABASE_URL")]
-    database_pool_size: int = Field(default=10, ge=1, alias="DATABASE_POOL_SIZE")
-    database_max_overflow: int = Field(default=10, ge=0, alias="DATABASE_MAX_OVERFLOW")
+    database_pool_size: int = Field(default=5, alias="DATABASE_POOL_SIZE")
+    database_max_overflow: int = Field(default=5, alias="DATABASE_MAX_OVERFLOW")
     database_pool_timeout_seconds: float = Field(
-        default=30.0,
-        gt=0,
-        alias="DATABASE_POOL_TIMEOUT_SECONDS",
+        default=30.0, alias="DATABASE_POOL_TIMEOUT_SECONDS"
     )
     nexus_internal_secret: str | None = Field(default=None, alias="NEXUS_INTERNAL_SECRET")
 
@@ -106,7 +111,7 @@ class Settings(BaseSettings):
     podcast_initial_episode_window: int = Field(default=3, alias="PODCAST_INITIAL_EPISODE_WINDOW")
     podcast_ingest_prefetch_limit: int = Field(default=50, alias="PODCAST_INGEST_PREFETCH_LIMIT")
     podcast_active_poll_schedule_seconds: int = Field(
-        default=300, alias="PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS"
+        default=0, alias="PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS"
     )
     podcast_active_poll_limit: int = Field(default=100, alias="PODCAST_ACTIVE_POLL_LIMIT")
     podcast_active_poll_run_lease_seconds: int = Field(
@@ -143,7 +148,7 @@ class Settings(BaseSettings):
 
     # Ingest recovery guardrails
     ingest_reconcile_schedule_seconds: int = Field(
-        default=300, alias="INGEST_RECONCILE_SCHEDULE_SECONDS"
+        default=0, alias="INGEST_RECONCILE_SCHEDULE_SECONDS"
     )
     ingest_stale_extracting_seconds: int = Field(
         default=1800, alias="INGEST_STALE_EXTRACTING_SECONDS"
@@ -156,6 +161,45 @@ class Settings(BaseSettings):
     )
     ingest_semantic_failed_retry_seconds: int = Field(
         default=1800, alias="INGEST_SEMANTIC_FAILED_RETRY_SECONDS"
+    )
+
+    # Worker runtime. Production defaults are safe for Supabase free/Nano:
+    # explicit domain jobs only, no maintenance jobs, and bounded idle/backoff loops.
+    worker_allowed_job_kinds: str = Field(
+        default=DEFAULT_WORKER_ALLOWED_JOB_KINDS,
+        alias="WORKER_ALLOWED_JOB_KINDS",
+    )
+    worker_poll_interval_seconds: float = Field(default=5.0, alias="WORKER_POLL_INTERVAL_SECONDS")
+    worker_idle_backoff_max_seconds: float = Field(
+        default=300.0, alias="WORKER_IDLE_BACKOFF_MAX_SECONDS"
+    )
+    worker_scheduler_interval_seconds: float = Field(
+        default=300.0, alias="WORKER_SCHEDULER_INTERVAL_SECONDS"
+    )
+    worker_heartbeat_interval_seconds: float = Field(
+        default=60.0, alias="WORKER_HEARTBEAT_INTERVAL_SECONDS"
+    )
+    worker_lease_seconds: int = Field(default=300, alias="WORKER_LEASE_SECONDS")
+    worker_db_failure_backoff_seconds: float = Field(
+        default=60.0, alias="WORKER_DB_FAILURE_BACKOFF_SECONDS"
+    )
+    worker_db_failure_backoff_max_seconds: float = Field(
+        default=900.0, alias="WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS"
+    )
+    sync_gutenberg_catalog_schedule_seconds: int = Field(
+        default=0, alias="SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS"
+    )
+    background_job_prune_schedule_seconds: int = Field(
+        default=0, alias="BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS"
+    )
+    background_job_prune_succeeded_after_days: int = Field(
+        default=7, alias="BACKGROUND_JOB_PRUNE_SUCCEEDED_AFTER_DAYS"
+    )
+    background_job_prune_dead_after_days: int = Field(
+        default=30, alias="BACKGROUND_JOB_PRUNE_DEAD_AFTER_DAYS"
+    )
+    background_job_prune_batch_size: int = Field(
+        default=100, alias="BACKGROUND_JOB_PRUNE_BATCH_SIZE"
     )
 
     # S5: EPUB archive safety limits (L2 baseline = ceiling; may be stricter, never weaker)
@@ -294,6 +338,13 @@ class Settings(BaseSettings):
                 "Run 'make setup' to configure Supabase local, or set these environment variables."
             )
 
+        if self.database_pool_size < 1:
+            raise ValueError("DATABASE_POOL_SIZE must be >= 1.")
+        if self.database_max_overflow < 0:
+            raise ValueError("DATABASE_MAX_OVERFLOW must be >= 0.")
+        if self.database_pool_timeout_seconds <= 0:
+            raise ValueError("DATABASE_POOL_TIMEOUT_SECONDS must be > 0.")
+
         # NEXUS_INTERNAL_SECRET is required only in staging/prod
         if self.nexus_env in (Environment.STAGING, Environment.PROD):
             if not self.nexus_internal_secret:
@@ -331,8 +382,8 @@ class Settings(BaseSettings):
             raise ValueError("TRANSCRIPT_EMBEDDING_TIMEOUT_SECONDS must be > 0.")
         if self.podcast_ingest_prefetch_limit < 1:
             raise ValueError("PODCAST_INGEST_PREFETCH_LIMIT must be >= 1.")
-        if self.podcast_active_poll_schedule_seconds < 1:
-            raise ValueError("PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS must be >= 1.")
+        if self.podcast_active_poll_schedule_seconds < 0:
+            raise ValueError("PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS must be >= 0.")
         if self.podcast_active_poll_limit < 1:
             raise ValueError("PODCAST_ACTIVE_POLL_LIMIT must be >= 1.")
         if self.podcast_active_poll_run_lease_seconds < 1:
@@ -397,8 +448,8 @@ class Settings(BaseSettings):
                     "Browse providers are missing required credentials: "
                     f"{', '.join(missing_browse_provider_settings)}"
                 )
-        if self.ingest_reconcile_schedule_seconds < 1:
-            raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be >= 1.")
+        if self.ingest_reconcile_schedule_seconds < 0:
+            raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be >= 0.")
         if self.ingest_stale_extracting_seconds < 1:
             raise ValueError("INGEST_STALE_EXTRACTING_SECONDS must be >= 1.")
         if self.ingest_stale_requeue_max_attempts < 1:
@@ -407,6 +458,37 @@ class Settings(BaseSettings):
             raise ValueError("INGEST_SEMANTIC_REPAIR_BATCH_LIMIT must be >= 1.")
         if self.ingest_semantic_failed_retry_seconds < 1:
             raise ValueError("INGEST_SEMANTIC_FAILED_RETRY_SECONDS must be >= 1.")
+        if not any(value.strip() for value in self.worker_allowed_job_kinds.split(",")):
+            raise ValueError("WORKER_ALLOWED_JOB_KINDS must contain at least one job kind.")
+        if self.worker_poll_interval_seconds <= 0:
+            raise ValueError("WORKER_POLL_INTERVAL_SECONDS must be > 0.")
+        if self.worker_idle_backoff_max_seconds < self.worker_poll_interval_seconds:
+            raise ValueError(
+                "WORKER_IDLE_BACKOFF_MAX_SECONDS must be >= WORKER_POLL_INTERVAL_SECONDS."
+            )
+        if self.worker_scheduler_interval_seconds <= 0:
+            raise ValueError("WORKER_SCHEDULER_INTERVAL_SECONDS must be > 0.")
+        if self.worker_heartbeat_interval_seconds <= 0:
+            raise ValueError("WORKER_HEARTBEAT_INTERVAL_SECONDS must be > 0.")
+        if self.worker_lease_seconds < 1:
+            raise ValueError("WORKER_LEASE_SECONDS must be >= 1.")
+        if self.worker_db_failure_backoff_seconds <= 0:
+            raise ValueError("WORKER_DB_FAILURE_BACKOFF_SECONDS must be > 0.")
+        if self.worker_db_failure_backoff_max_seconds < self.worker_db_failure_backoff_seconds:
+            raise ValueError(
+                "WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS must be >= "
+                "WORKER_DB_FAILURE_BACKOFF_SECONDS."
+            )
+        if self.sync_gutenberg_catalog_schedule_seconds < 0:
+            raise ValueError("SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS must be >= 0.")
+        if self.background_job_prune_schedule_seconds < 0:
+            raise ValueError("BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS must be >= 0.")
+        if self.background_job_prune_succeeded_after_days < 1:
+            raise ValueError("BACKGROUND_JOB_PRUNE_SUCCEEDED_AFTER_DAYS must be >= 1.")
+        if self.background_job_prune_dead_after_days < 1:
+            raise ValueError("BACKGROUND_JOB_PRUNE_DEAD_AFTER_DAYS must be >= 1.")
+        if self.background_job_prune_batch_size < 1:
+            raise ValueError("BACKGROUND_JOB_PRUNE_BATCH_SIZE must be >= 1.")
 
         return self
 
@@ -461,7 +543,7 @@ def get_settings() -> Settings:
     Raises:
         ValidationError: If required settings are missing or invalid.
     """
-    return Settings()
+    return Settings()  # pyright: ignore[reportCallIssue] - BaseSettings reads env.
 
 
 def real_media_provider_fixtures_requested() -> bool:

@@ -171,8 +171,6 @@ def create_nasa_captioned_video(
     direct_db: DirectSessionManager,
     headers: dict[str, str],
     user_id: UUID,
-    *,
-    allow_already_ready: bool = False,
 ) -> tuple[UUID, dict]:
     caption_bytes = (
         REAL_MEDIA_FIXTURES_DIR / "nasa-picturing-earth-behind-scenes-captions.srt"
@@ -202,10 +200,15 @@ def create_nasa_captioned_video(
             request_id="real-media-youtube-caption-fixture",
         )
         session.commit()
-    if allow_already_ready and result.get("status") == "skipped":
+    if result["status"] == "skipped":
         assert result.get("reason") == "already_ready", result
-        return media_id, result
-    assert result["status"] == "success", result
+        with direct_db.session() as session:
+            result["segment_count"] = session.execute(
+                text("SELECT count(*) FROM transcript_segments WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar_one()
+    else:
+        assert result["status"] == "success", result
     assert result["segment_count"] >= 20, result
     return media_id, result
 
@@ -215,8 +218,6 @@ def create_nasa_podcast_episode(
     direct_db: DirectSessionManager,
     headers: dict[str, str],
     user_id: UUID,
-    *,
-    allow_already_ready: bool = False,
 ) -> tuple[UUID, UUID, dict]:
     grant_ai_plus(direct_db, user_id)
 
@@ -336,7 +337,7 @@ def create_nasa_podcast_episode(
             request_id="real-media-podcast-transcript-fixture",
         )
         session.commit()
-    if allow_already_ready and transcription_result.get("status") == "skipped":
+    if transcription_result.get("status") == "skipped":
         assert transcription_result.get("reason") == "not_pending", transcription_result
         assert transcription_result.get("job_status") == "completed", transcription_result
     else:

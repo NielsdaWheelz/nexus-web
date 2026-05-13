@@ -33,41 +33,82 @@ while ! mkdir "$lock_dir" 2>/dev/null; do
 done
 printf '%s\n' "$$" > "$lock_dir/pid"
 
+cleanup_supabase_project() {
+    docker rm -f \
+        "supabase_db_${project_id}" \
+        "supabase_kong_${project_id}" \
+        "supabase_auth_${project_id}" \
+        "supabase_rest_${project_id}" \
+        "supabase_storage_${project_id}" \
+        "supabase_realtime_${project_id}" \
+        "supabase_inbucket_${project_id}" \
+        "supabase_imgproxy_${project_id}" \
+        "supabase_pg_meta_${project_id}" \
+        "supabase_studio_${project_id}" \
+        "supabase_edge_runtime_${project_id}" \
+        "supabase_analytics_${project_id}" \
+        "supabase_vector_${project_id}" \
+        "supabase_pooler_${project_id}" >/dev/null 2>&1 || true
+    docker volume rm "supabase_db_${project_id}" "supabase_storage_${project_id}" >/dev/null 2>&1 || true
+    docker network rm "supabase_network_${project_id}" >/dev/null 2>&1 || true
+}
+
+wait_for_supabase_ports_to_close() {
+    for _ in {1..40}; do
+        if ! lsof -i :54321 >/dev/null 2>&1 && ! lsof -i :54322 >/dev/null 2>&1; then
+            return
+        fi
+        sleep 0.5
+    done
+}
+
 cleanup() {
     set +e
-    if [ "${SUPABASE_KEEP_RUNNING:-}" != "1" ]; then
-        supabase stop >/dev/null 2>&1 || true
+    if [ "${SUPABASE_KEEP_RUNNING:-}" = "1" ]; then
+        rm -rf "$lock_dir"
+        return
     fi
+    cleanup_supabase_project
     rm -rf "$lock_dir"
 }
 trap cleanup EXIT
 
-supabase start --ignore-health-check >/dev/null 2>&1 || true
+if [ "${SUPABASE_KEEP_RUNNING:-}" != "1" ]; then
+    cleanup_supabase_project
+    wait_for_supabase_ports_to_close
+fi
+# Test suites use Supabase Postgres, Kong, Auth, REST, and Storage only.
 for attempt in 1 2; do
+    supabase start \
+        -x realtime,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,mailpit \
+        --ignore-health-check >/dev/null 2>&1 || true
+
     for _ in {1..120}; do
         db_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "supabase_db_${project_id}" 2>/dev/null || true)
         storage_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "supabase_storage_${project_id}" 2>/dev/null || true)
         auth_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "supabase_auth_${project_id}" 2>/dev/null || true)
         kong_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "supabase_kong_${project_id}" 2>/dev/null || true)
+        rest_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "supabase_rest_${project_id}" 2>/dev/null || true)
         if [ "$db_health" = "healthy" ] &&
             [ "$storage_health" = "healthy" ] &&
             [ "$auth_health" = "healthy" ] &&
-            [ "$kong_health" = "healthy" ]; then
+            [ "$kong_health" = "healthy" ] &&
+            { [ "$rest_health" = "healthy" ] || [ "$rest_health" = "running" ]; }; then
             break 2
         fi
         sleep 1
     done
+
     if [ "$attempt" = "2" ]; then
         echo "Error: Supabase core containers did not become healthy." >&2
         docker ps -a --format '{{.Names}} {{.Status}}' | grep "supabase_.*_${project_id}" >&2 || true
         exit 1
     fi
-    echo "Supabase core containers did not settle; clearing partial local stack before retry..." >&2
-    supabase stop --no-backup >/dev/null 2>&1 || true
-    sleep 10
-    supabase start --ignore-health-check >/dev/null 2>&1 || true
-done
 
+    echo "Supabase core containers did not settle; clearing partial local stack before retry..." >&2
+    cleanup_supabase_project
+    wait_for_supabase_ports_to_close
+done
 test_env_export_supabase_env
 test_env_export_storage_prefix
 

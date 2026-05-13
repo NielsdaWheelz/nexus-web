@@ -766,6 +766,50 @@ class TestPodcastDiscovery:
             f"before={contributor_count_before} after={contributor_count_after}"
         )
 
+    def test_subscribe_accepts_discovered_contributors(self, auth_client, monkeypatch):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        provider_podcast_id = f"discover-subscribe-{uuid4()}"
+        podcast = _podcast_payload(provider_podcast_id, "Discovered Contributor Subscribe")
+        podcast["author"] = f"Discovery Subscribe Author {uuid4()}"
+
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[podcast],
+            episodes_by_podcast={provider_podcast_id: []},
+        )
+
+        discover_response = auth_client.get(
+            "/podcasts/discover?q=discovered&limit=10",
+            headers=auth_headers(user_id),
+        )
+        assert discover_response.status_code == 200, (
+            f"discover failed: {discover_response.status_code} {discover_response.text}"
+        )
+        discovered = discover_response.json()["data"][0]
+        assert discovered["contributors"], "test setup must discover contributor previews"
+
+        subscribe_response = auth_client.post(
+            "/podcasts/subscriptions",
+            json={
+                "provider_podcast_id": discovered["provider_podcast_id"],
+                "title": discovered["title"],
+                "contributors": discovered["contributors"],
+                "feed_url": discovered["feed_url"],
+                "website_url": discovered["website_url"],
+                "image_url": discovered["image_url"],
+                "description": discovered["description"],
+                "auto_queue": False,
+            },
+            headers=auth_headers(user_id),
+        )
+
+        assert subscribe_response.status_code == 200, (
+            f"subscribe should accept its own discovery response contributor shape, "
+            f"got {subscribe_response.status_code}: {subscribe_response.text}"
+        )
+
     def test_discovery_includes_local_podcast_id_when_known(
         self, auth_client, monkeypatch, direct_db
     ):

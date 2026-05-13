@@ -7,9 +7,9 @@ dropped/discarded or never finished. Recovery is bounded:
 """
 
 import hashlib
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 
-from sqlalchemy import select, text
+from sqlalchemy import func, literal, select, text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
@@ -72,7 +72,7 @@ def reconcile_stale_ingest_media_job(
 
     Rows are considered stale when:
     - processing_status = extracting
-    - kind in {pdf, epub, podcast_episode}
+    - kind in {web_article, pdf, epub, podcast_episode}
     - processing_started_at older than INGEST_STALE_EXTRACTING_SECONDS
 
     Also repairs semantic transcript backlog:
@@ -81,7 +81,6 @@ def reconcile_stale_ingest_media_job(
     - active transcript version exists
     """
     settings = get_settings()
-    stale_before = datetime.now(UTC) - timedelta(seconds=settings.ingest_stale_extracting_seconds)
 
     session_factory = get_session_factory()
     db = session_factory()
@@ -93,7 +92,14 @@ def reconcile_stale_ingest_media_job(
                 .where(Media.processing_status == ProcessingStatus.extracting)
                 .where(Media.kind.in_(tuple(_RECOVERABLE_KINDS)))
                 .where(Media.processing_started_at.is_not(None))
-                .where(Media.processing_started_at < stale_before)
+                .where(
+                    Media.processing_started_at
+                    < func.now()
+                    - (
+                        literal(int(settings.ingest_stale_extracting_seconds))
+                        * text("interval '1 second'")
+                    )
+                )
                 .order_by(Media.processing_started_at.asc())
                 .limit(_BATCH_LIMIT)
                 .with_for_update(skip_locked=True)
@@ -102,7 +108,7 @@ def reconcile_stale_ingest_media_job(
             .all()
         )
 
-        now = datetime.now(UTC)
+        now = db.execute(text("SELECT now()")).scalar_one()
         requeued = 0
         failed = 0
 
@@ -177,7 +183,7 @@ def reconcile_stale_ingest_media_job(
                     )
                     OR (
                         mcis.status = 'indexing'
-                        AND mcis.updated_at < :stale_before
+                        AND mcis.updated_at < now() - (CAST(:stale_seconds AS integer) * interval '1 second')
                     )
                   )
                   AND m.kind IN ('web_article', 'epub', 'pdf')
@@ -187,7 +193,7 @@ def reconcile_stale_ingest_media_job(
                 """
             ),
             {
-                "stale_before": stale_before,
+                "stale_seconds": int(settings.ingest_stale_extracting_seconds),
                 "limit": int(settings.ingest_semantic_repair_batch_limit),
             },
         ).fetchall()
@@ -245,7 +251,6 @@ def reconcile_stale_ingest_media_job(
         semantic_repaired = 0
         semantic_failed = 0
         semantic_skipped = 0
-        retry_failed_before = now - timedelta(seconds=settings.ingest_semantic_failed_retry_seconds)
         embedding_model = current_transcript_embedding_model()
         embedding_provider = "test" if embedding_model.startswith("test_") else "openai"
         embedding_config_hash = hashlib.sha256(
@@ -265,7 +270,7 @@ def reconcile_stale_ingest_media_job(
                       mts.semantic_status = 'pending'
                       OR (
                           mts.semantic_status = 'failed'
-                          AND mts.updated_at < :retry_failed_before
+                          AND mts.updated_at < now() - (CAST(:retry_failed_seconds AS integer) * interval '1 second')
                       )
                       OR (
                           mts.semantic_status = 'ready'
@@ -292,7 +297,7 @@ def reconcile_stale_ingest_media_job(
                 """
             ),
             {
-                "retry_failed_before": retry_failed_before,
+                "retry_failed_seconds": int(settings.ingest_semantic_failed_retry_seconds),
                 "semantic_limit": int(settings.ingest_semantic_repair_batch_limit),
                 "embedding_provider": embedding_provider,
                 "embedding_model": embedding_model,
@@ -431,13 +436,12 @@ def _mark_content_index_state_failed(db: Session, media_id, message: str) -> Non
             UPDATE media_content_index_states
             SET status = 'failed',
                 status_reason = :message,
-                updated_at = :now
+                updated_at = now()
             WHERE media_id = :media_id
             """
         ),
         {
             "media_id": media_id,
             "message": message[:_MAX_ERROR_MSG_LEN],
-            "now": datetime.now(UTC),
         },
     )

@@ -21,3 +21,10 @@ cp deploy/env/env-prod-worker.example deploy/env/env-prod-worker
 `env-prod-backend`, and `env-prod-worker` into `/etc/nexus/nexus.env` on the
 VPS. `deploy/vercel/sync-env.sh` merges `env-prod` and `env-prod-frontend` into
 Vercel's production environment.
+
+Worker production defaults are intentionally conservative for Supabase free/Nano:
+the allowlist contains only explicit user/domain job kinds, schedule values use
+`0` as disabled, and maintenance jobs require a temporary allowlist edit for the
+specific job kind being run. `deploy/hetzner/sync-env.sh` rejects maintenance
+allowlists or positive maintenance schedules unless
+`NEXUS_ALLOW_WORKER_MAINTENANCE=1` is set for that bounded sync.

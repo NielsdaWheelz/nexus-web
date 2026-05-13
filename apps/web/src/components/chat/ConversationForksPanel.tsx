@@ -27,6 +27,7 @@ export default function ConversationForksPanel({
   forkOptionsByParentId,
   branchGraph,
   switchableLeafIds,
+  activeLeafMessageId,
   selectedPathMessageIds,
   onSelectFork,
   onSelectGraphLeaf,
@@ -36,6 +37,7 @@ export default function ConversationForksPanel({
   forkOptionsByParentId: Record<string, ForkOption[]>;
   branchGraph: BranchGraph;
   switchableLeafIds?: Set<string>;
+  activeLeafMessageId?: string | null;
   selectedPathMessageIds: Set<string>;
   onSelectFork: (fork: ForkOption) => void;
   onSelectGraphLeaf: (leafMessageId: string) => void;
@@ -333,6 +335,7 @@ export default function ConversationForksPanel({
               focusedId={focusedId}
               expandedIds={expandedIds}
               switchableLeafIds={switchableLeafIds}
+              activeLeafMessageId={activeLeafMessageId}
               selectedPathMessageIds={selectedPathMessageIds}
               searchQuery={query.trim().toLowerCase()}
               editingId={editingId}
@@ -369,6 +372,7 @@ function ForkNodeRow({
   focusedId,
   expandedIds,
   switchableLeafIds,
+  activeLeafMessageId,
   selectedPathMessageIds,
   searchQuery,
   editingId,
@@ -390,6 +394,7 @@ function ForkNodeRow({
   focusedId: string | null;
   expandedIds: Set<string>;
   switchableLeafIds?: Set<string>;
+  activeLeafMessageId?: string | null;
   selectedPathMessageIds: Set<string>;
   searchQuery: string;
   editingId: string | null;
@@ -408,6 +413,7 @@ function ForkNodeRow({
   const editRef = useRef<HTMLTextAreaElement>(null);
   const activeInPath =
     node.active ||
+    node.leaf_message_id === activeLeafMessageId ||
     selectedPathMessageIds.has(node.leaf_message_id) ||
     selectedPathMessageIds.has(node.user_message_id) ||
     (node.assistant_message_id ? selectedPathMessageIds.has(node.assistant_message_id) : false);
@@ -564,6 +570,7 @@ function ForkNodeRow({
               focusedId={focusedId}
               expandedIds={expandedIds}
               switchableLeafIds={switchableLeafIds}
+              activeLeafMessageId={activeLeafMessageId}
               selectedPathMessageIds={selectedPathMessageIds}
               searchQuery={searchQuery}
               editingId={editingId}
