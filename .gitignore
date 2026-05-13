@@ -106,3 +106,4 @@ e2e/playwright-report/
 
 # Lock files that shouldn't be edited manually
 # (uv.lock and bun.lock SHOULD be committed)
+.vercel
