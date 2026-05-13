@@ -443,7 +443,14 @@ jobs:
       - name: Install node ingest dependencies
         run: cd node/ingest && bun ci
 
+      - name: Skip live-provider gate when provider secrets are not configured
+        if: ${{ env.OPENAI_API_KEY == '' || env.PODCAST_INDEX_API_KEY == '' || env.PODCAST_INDEX_API_SECRET == '' || env.DEEPGRAM_API_KEY == '' }}
+        run: |
+          echo "Skipping live-provider gate because one or more provider secrets are not configured."
+          echo "Required secrets: OPENAI_API_KEY, PODCAST_INDEX_API_KEY, PODCAST_INDEX_API_SECRET, DEEPGRAM_API_KEY."
+
       - name: Test live-provider gate
+        if: ${{ env.OPENAI_API_KEY != '' && env.PODCAST_INDEX_API_KEY != '' && env.PODCAST_INDEX_API_SECRET != '' && env.DEEPGRAM_API_KEY != '' }}
         run: make test-live-providers
 
       - name: Upload live-provider traces
