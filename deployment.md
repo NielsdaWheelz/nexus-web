@@ -10,6 +10,21 @@ Nexus production is intended to run with:
 The goal is to avoid Render free-tier cold starts while keeping the operational
 surface small.
 
+## Current Production
+
+- Frontend: `https://nexus.nielseriknandal.com`
+- API: `https://api.nexus.nielseriknandal.com`
+- Hetzner server: `nexus-api-worker`
+- Hetzner IPv4: `5.78.194.235`
+- Hetzner location/type: `hil` / `cpx11`
+- Vercel project: `niels-erik-nandals-projects/nexus-web`
+- Supabase project URL: `https://jiaozhsisiphjtomoamy.supabase.co`
+
+Render `nexus-web-worker` should stay suspended after the Hetzner worker is
+running, otherwise two workers can claim jobs from the same Postgres queue.
+Render `nexus-web-api` is no longer the production API, but is currently left as
+a free-tier fallback.
+
 ## Runtime Shape
 
 On the Hetzner VPS:
@@ -66,27 +81,36 @@ type if Docker builds or media jobs run out of memory.
 
 ## DNS
 
-Point the API domain, for example `api.example.com`, at the Hetzner server IPv4
-address with an `A` record. Caddy will request and renew TLS automatically.
+Point the API domain at the Hetzner server IPv4 address with an `A` record.
+Caddy will request and renew TLS automatically.
+
+Current Cloudflare record:
+
+```text
+Type: A
+Name: api.nexus
+Value: 5.78.194.235
+Proxy: DNS only
+```
 
 ## Backend Deploy
 
 Upload the merged VPS env:
 
 ```bash
-NEXUS_HOST=<server-ip-or-api-domain> ./deploy/hetzner/sync-env.sh
+NEXUS_HOST=5.78.194.235 ./deploy/hetzner/sync-env.sh
 ```
 
 Deploy API and worker:
 
 ```bash
-NEXUS_HOST=<server-ip-or-api-domain> ./deploy/hetzner/deploy.sh
+NEXUS_HOST=5.78.194.235 ./deploy/hetzner/deploy.sh
 ```
 
 Upload env and deploy in one command:
 
 ```bash
-NEXUS_HOST=<server-ip-or-api-domain> NEXUS_SYNC_ENV=1 ./deploy/hetzner/deploy.sh
+NEXUS_HOST=5.78.194.235 NEXUS_SYNC_ENV=1 ./deploy/hetzner/deploy.sh
 ```
 
 The deploy script syncs the repo to `/opt/nexus-web`, builds Docker images on
@@ -117,12 +141,25 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<supabase-anon-key>
 NEXUS_INTERNAL_SECRET=<same value as VPS>
 ```
 
+Current frontend values should use:
+
+```bash
+FASTAPI_BASE_URL=https://api.nexus.nielseriknandal.com
+NEXT_PUBLIC_SUPABASE_URL=https://jiaozhsisiphjtomoamy.supabase.co
+```
+
+After syncing Vercel env, deploy production from the repo root:
+
+```bash
+vercel deploy --prod --scope niels-erik-nandals-projects
+```
+
 ## Operations
 
 SSH into the VPS:
 
 ```bash
-ssh nexus@<server-ip-or-api-domain>
+ssh nexus@5.78.194.235
 cd /opt/nexus-web
 ```
 
@@ -143,7 +180,7 @@ docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.
 Health check:
 
 ```bash
-curl https://api.example.com/health
+curl https://api.nexus.nielseriknandal.com/health
 ```
 
 ## Files To Remember
