@@ -14,6 +14,7 @@ const REQUEST_PATH_HEADER = "x-nexus-request-path";
 const PUBLIC_ROUTES = new Set([
   "/login",
   "/android",
+  "/.well-known/assetlinks.json",
   "/privacy",
   "/terms",
   "/auth/callback",
