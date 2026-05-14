@@ -72,6 +72,9 @@ COPY apps/worker ./apps/worker
 # Copy migrations (may be needed for some operations)
 COPY migrations ./migrations
 
+# Copy migration seed manifests
+COPY scripts/oracle ./scripts/oracle
+
 # Copy Node.js ingest package
 COPY --from=node-builder /app/node/ingest ./node/ingest
 COPY node/ingest/ingest.mjs ./node/ingest/

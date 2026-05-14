@@ -68,7 +68,7 @@ compose() {
 compose build --pull
 compose up -d postgres
 for i in $(seq 1 30); do
-  if compose exec -T postgres sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
+  if compose exec -T postgres sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' </dev/null >/dev/null 2>&1; then
     break
   fi
   if [ "$i" = "30" ]; then
@@ -79,6 +79,6 @@ for i in $(seq 1 30); do
 done
 compose stop worker api
 compose run -T --rm api sh -c 'cd /app/migrations && /app/.venv/bin/alembic upgrade head' </dev/null
-compose up -d --remove-orphans
+compose up -d --remove-orphans --force-recreate
 compose ps
 REMOTE

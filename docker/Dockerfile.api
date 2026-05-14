@@ -41,6 +41,9 @@ COPY apps/api ./apps/api
 # Copy migrations
 COPY migrations ./migrations
 
+# Copy migration seed manifests
+COPY scripts/oracle ./scripts/oracle
+
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app"
