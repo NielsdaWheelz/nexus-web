@@ -46,6 +46,7 @@ import {
   type SearchResultRowViewModel,
   type SearchType,
 } from "@/lib/search/resultRowAdapter";
+import { isAndroidShell, isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import {
   resolveWorkspacePaneTitle,
   useWorkspaceStore,
@@ -579,6 +580,7 @@ interface PaletteScope {
 }
 
 export default function CommandPalette() {
+  const androidShell = isAndroidShell();
   const feedback = useFeedback();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -738,6 +740,10 @@ export default function CommandPalette() {
     const normalizedQuery = query.trim().toLowerCase();
 
     for (const pane of workspaceState.panes) {
+      const route = resolvePaneRoute(pane.href);
+      if (androidShell && isAndroidShellRestrictedRouteId(route.id)) {
+        continue;
+      }
       const { title } = resolveWorkspacePaneTitle(pane, runtimeTitleByPaneId);
       commands.push({
         id: `pane-open-${pane.id}`,
@@ -765,6 +771,7 @@ export default function CommandPalette() {
     for (const row of historyRows) {
       if (openPaneHrefs.has(row.target_href)) continue;
       const resolved = resolvePaneRoute(row.target_href);
+      if (androidShell && isAndroidShellRestrictedRouteId(resolved.id)) continue;
       const affinity = resolved.id === "unsupported" ? undefined : [resolved.id];
       commands.push({
         id: `recent-${row.target_key}`,
@@ -795,6 +802,12 @@ export default function CommandPalette() {
     }
 
     for (const command of STATIC_COMMANDS) {
+      if (command.target.kind === "href") {
+        const route = resolvePaneRoute(command.target.href);
+        if (androidShell && isAndroidShellRestrictedRouteId(route.id)) {
+          continue;
+        }
+      }
       const combo = keybindings[command.id];
       commands.push({
         ...command,
@@ -843,6 +856,8 @@ export default function CommandPalette() {
     }
 
     for (const result of searchResults) {
+      const route = resolvePaneRoute(result.href);
+      if (androidShell && isAndroidShellRestrictedRouteId(route.id)) continue;
       commands.push({
         id: `search-${result.key}`,
         title: result.primaryText,
@@ -858,6 +873,7 @@ export default function CommandPalette() {
 
     return commands.filter((command) => matchesCommand(command, normalizedQuery));
   }, [
+    androidShell,
     frecencyBoosts,
     historyRows,
     keybindings,
@@ -908,6 +924,18 @@ export default function CommandPalette() {
 
   const executeCommand = useCallback(
     async (command: PaletteCommand) => {
+      if (command.target.kind === "href" && androidShell) {
+        const route = resolvePaneRoute(command.target.href);
+        if (isAndroidShellRestrictedRouteId(route.id)) {
+          setOpen(false);
+          feedback.show({
+            severity: "warning",
+            title: "Local Vault is not available in the Android app.",
+          });
+          return;
+        }
+      }
+
       setOpen(false);
 
       const targetKey =
@@ -976,6 +1004,17 @@ export default function CommandPalette() {
         if (actionId.startsWith("pane-open:")) {
           const paneId = actionId.slice("pane-open:".length);
           const pane = workspaceState.panes.find((item) => item.id === paneId);
+          if (
+            androidShell &&
+            pane &&
+            isAndroidShellRestrictedRouteId(resolvePaneRoute(pane.href).id)
+          ) {
+            feedback.show({
+              severity: "warning",
+              title: "Local Vault is not available in the Android app.",
+            });
+            return;
+          }
           if (pane?.visibility === "minimized") {
             restorePane(paneId);
           } else {
@@ -1001,7 +1040,7 @@ export default function CommandPalette() {
         feedback.show(toFeedback(error, { fallback: "Command failed" }));
       }
     },
-    [activatePane, closePane, feedback, query, restorePane, workspaceState.panes],
+    [activatePane, androidShell, closePane, feedback, query, restorePane, workspaceState.panes],
   );
 
   useEffect(() => {

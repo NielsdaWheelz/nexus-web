@@ -1,0 +1,98 @@
+name: Android APK Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing android-v* git tag to build and publish.
+        required: true
+        type: string
+  push:
+    tags:
+      - "android-v*"
+
+concurrency:
+  group: android-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: android-release
+
+    env:
+      ANDROID_RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      NEXUS_ANDROID_RELEASE_BASE_URL: ${{ vars.NEXUS_ANDROID_RELEASE_BASE_URL }}
+      NEXUS_ANDROID_RELEASE_OWNED_HOST: ${{ vars.NEXUS_ANDROID_RELEASE_OWNED_HOST }}
+      NEXUS_ANDROID_RELEASE_CERT_SHA256: ${{ secrets.NEXUS_ANDROID_RELEASE_CERT_SHA256 }}
+      NEXUS_ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.NEXUS_ANDROID_RELEASE_KEY_ALIAS }}
+      NEXUS_ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.NEXUS_ANDROID_RELEASE_KEY_PASSWORD }}
+      NEXUS_ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.NEXUS_ANDROID_RELEASE_STORE_PASSWORD }}
+      NEXUS_ANDROID_VERSION_CODE: ${{ github.run_number }}
+      NEXUS_ANDROID_VERSION_NAME: ${{ inputs.tag || github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release tag
+        run: |
+          set -euo pipefail
+          if [[ ! "$ANDROID_RELEASE_TAG" == android-v* ]]; then
+            echo "Android releases must use an android-v* git tag."
+            exit 1
+          fi
+          tag_commit="$(git rev-parse "$ANDROID_RELEASE_TAG^{commit}")"
+          head_commit="$(git rev-parse HEAD)"
+          if [ "$tag_commit" != "$head_commit" ]; then
+            echo "Checked-out commit does not match $ANDROID_RELEASE_TAG."
+            exit 1
+          fi
+
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Decode release keystore
+        env:
+          NEXUS_ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.NEXUS_ANDROID_RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "$NEXUS_ANDROID_RELEASE_KEYSTORE_BASE64"
+          printf '%s' "$NEXUS_ANDROID_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/nexus-release.jks"
+
+      - name: Build and verify signed APK
+        env:
+          NEXUS_ANDROID_RELEASE_STORE_FILE: ${{ runner.temp }}/nexus-release.jks
+        run: make verify-android-release
+
+      - name: Prepare release assets
+        run: |
+          set -euo pipefail
+          cp apps/android/app/build/outputs/apk/release/app-release.apk "nexus-android-$ANDROID_RELEASE_TAG.apk"
+          shasum -a 256 "nexus-android-$ANDROID_RELEASE_TAG.apk" > "nexus-android-$ANDROID_RELEASE_TAG.apk.sha256"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$ANDROID_RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$ANDROID_RELEASE_TAG" \
+              --verify-tag \
+              --draft \
+              --prerelease \
+              --title "$ANDROID_RELEASE_TAG" \
+              --notes "Self-distributed Nexus Android APK. Publish only after installing this APK on a device and verifying App Links for app.nexus.android."
+          fi
+          gh release upload "$ANDROID_RELEASE_TAG" \
+            "nexus-android-$ANDROID_RELEASE_TAG.apk" \
+            "nexus-android-$ANDROID_RELEASE_TAG.apk.sha256"

@@ -98,6 +98,10 @@ class Settings(BaseSettings):
         default="https://www.googleapis.com/youtube/v3",
         alias="YOUTUBE_DATA_BASE_URL",
     )
+    youtube_transcript_timeout_seconds: float = Field(
+        default=30.0,
+        alias="YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS",
+    )
     deepgram_api_key: str | None = Field(default=None, alias="DEEPGRAM_API_KEY")
     deepgram_base_url: str = Field(default="https://api.deepgram.com", alias="DEEPGRAM_BASE_URL")
     deepgram_model: str = Field(default="nova-3", alias="DEEPGRAM_MODEL")
@@ -388,6 +392,8 @@ class Settings(BaseSettings):
             raise ValueError("PODCAST_SYNC_RUNNING_LEASE_SECONDS must be >= 1.")
         if self.podcast_transcription_timeout_seconds <= 0:
             raise ValueError("PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS must be > 0.")
+        if self.youtube_transcript_timeout_seconds <= 0:
+            raise ValueError("YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS must be > 0.")
         if self.real_media_provider_fixtures:
             if self.nexus_env in (Environment.STAGING, Environment.PROD):
                 raise ValueError("REAL_MEDIA_PROVIDER_FIXTURES is not allowed in staging or prod.")

@@ -15,7 +15,7 @@ Tests exist to verify behavior, not implementation. Tests are the primary verifi
 
 ## 2. Scope and Definitions
 
-This document covers backend (`python/`), frontend (`apps/web/`), and end-to-end tests (`e2e/`).
+This document covers backend (`python/`), web frontend (`apps/web/`), Android shell (`apps/android/`), and end-to-end tests (`e2e/`).
 
 Definitions used throughout this document:
 
@@ -27,9 +27,14 @@ Definitions used throughout this document:
 
 ## 3. Command Surface
 
-`make help` is the canonical command list. This document only names the stable gates and how they are grouped.
+`make help` is the canonical command list for repo-level commands. This document only names the stable gates and how they are grouped.
 
 - `make check` covers core static analysis.
+- `make check-android` is the Android lint gate.
+- `make build-android` builds Android debug and instrumentation APKs.
+- `make verify-android` covers Android lint plus APK build gates.
+- `make build-android-release` builds the signed self-distributed Android release APK.
+- `make verify-android-release` verifies the signed release APK and prints its checksum.
 - `make type-back` is the backend type gate. Its Pyright include list is the enforced baseline; expand it when newly touched backend modules are clean.
 - `make check-workflows` validates GitHub Actions files.
 - `make audit` is the dependency/security gate.
@@ -160,6 +165,26 @@ Rules:
 - Seed data through app APIs or dedicated seed scripts, not ad hoc SQL from browser tests
 - Tests must be independent and parallelizable
 - CI shards Playwright to keep wall time down; local `make test-e2e` remains a single command.
+
+### Android Shell Tests
+
+- Tool: Android instrumentation tests in `apps/android/`
+
+What belongs here:
+
+- App launch into the configured Nexus URL
+- Verified app-link re-entry
+- Same-origin navigation stays in `WebView`; off-origin navigation leaves to `Custom Tabs`
+- Back navigation and `WebView` file chooser handoff
+- Debug/test APK build validity through `make verify-android`
+- Signed release APK validity through `make verify-android-release` when release secrets are available
+
+Rules:
+
+- Test the real activity and real `WebView` behavior
+- Prefer instrumentation tests. Use local JVM tests only for already-pure Kotlin with no Android or `WebView` dependency
+- Do not add wrappers, bridges, or fake navigators just to make shell code unit-testable
+- Mock only external boundaries the app does not own
 
 ## 6. Assertion Standards
 
@@ -436,6 +461,11 @@ make test-back-unit      # backend unit tests only
 make test-back-integration # backend integration tests only
 make test-front-unit     # frontend unit tests only (Node)
 make test-front-browser   # frontend component tests (Vitest Browser Mode / Chromium)
+make check-android      # Android lint
+make build-android      # Android debug and instrumentation APK build
+make test-android       # Android instrumentation tests on a connected device/emulator
+make verify-android     # Android lint + debug/test APK build
+make verify-android-release # signed Android release APK build + signer verification
 make test-migrations     # migration/schema tests only
 make test-supabase       # Supabase-local auth/storage tests only
 make test-e2e-ui    # Playwright UI mode
@@ -452,6 +482,9 @@ Command semantics:
 - `make test-live-providers`: live external-provider backend gate
 - `make verify`: check + build + non-E2E tests for routine development
 - `make verify-full`: verify + real-media + live-provider + E2E
+- `make test-android`: instrumentation tests; requires a connected Android device or emulator
+- `make verify-android`: Android static and build verification only; does not require a connected device
+- `make verify-android-release`: signed APK verification; requires release signing env vars/secrets
 - `make test-e2e-ui`: interactive Playwright UI mode
 - `bun run test:csp` in `e2e/`: strict CSP profile for runtime policy assertions against production Next runtime
 

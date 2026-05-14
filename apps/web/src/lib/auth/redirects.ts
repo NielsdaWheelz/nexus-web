@@ -60,6 +60,12 @@ export function buildAuthCallbackUrl(origin: string, nextPath: string): string {
   return callbackUrl.toString();
 }
 
+export function buildAndroidDebugAuthCallbackUrl(nextPath: string): string {
+  const callbackUrl = new URL("nexus-dev://auth/callback");
+  callbackUrl.searchParams.set("next", normalizeAuthRedirect(nextPath));
+  return callbackUrl.toString();
+}
+
 export function buildLoginUrlWithError(
   origin: string,
   nextPath: string,

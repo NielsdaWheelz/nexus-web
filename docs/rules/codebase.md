@@ -6,17 +6,21 @@ This document covers repository-wide code organization, imports, and module boun
 
 ## Structure
 
-- `apps/web/` — Next.js frontend (TypeScript, React).
-- `python/` — FastAPI backend (Python).
-- `python/nexus/` — Backend application code.
-- `python/tests/` — Backend tests.
-- `supabase/` — Supabase configuration and migrations.
+- `apps/` — top-level runnable app surfaces.
+- `apps/android/` — Android shell app.
+- `apps/api/` — FastAPI ASGI entrypoint.
+- `apps/extension/` — browser extension.
+- `apps/web/` — Next.js frontend and BFF.
+- `apps/worker/` — worker entrypoint.
+- `python/` — backend package and Python tests.
+- `migrations/` — Alembic migrations.
+- `supabase/` — Supabase local configuration.
 - `e2e/` — Playwright end-to-end tests.
 
 ## Imports
 
 - Relative imports may go up at most two levels.
-- If a relative import would go deeper, use an alias (`@/` in TypeScript, package-level in Python).
+- If a relative import would go deeper, use an alias (`@/` in TypeScript) or a package import (Python, Kotlin).
 - Do not re-export symbols from other modules. Import each symbol from its defining module.
 
 ## Module Boundaries
@@ -25,3 +29,12 @@ This document covers repository-wide code organization, imports, and module boun
 - External functionality may be consumed by any module.
 - Internal functionality is only for a module and its submodules.
 - Default to internal unless functionality is clearly external.
+- `apps/android/app/src/main/java/.../MainActivity.kt` owns Android shell
+  mechanics: WebView setup, owned-origin routing, external routing, file
+  chooser handoff, popup handoff, and app-link intent handling.
+- Android manifests own Android framework entrypoints and deep-link filters.
+- Android Gradle files own Android build, signing, app-link, and release
+  configuration.
+- Android code must not add product API clients, Supabase clients, auth
+  exchange code, upload clients, or JavaScript bridges without updating this
+  rule first.

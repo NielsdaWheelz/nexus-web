@@ -7,6 +7,7 @@ This document covers the architectural layers and their responsibilities.
 ## Architecture
 
 - **Next.js middleware**: session refresh, auth gating, CSP headers.
+- **Android shell**: host the configured Nexus web origin in `WebView`; route off-origin navigation to Custom Tabs.
 - **Next.js API routes (BFF)**: proxy requests to FastAPI with bearer tokens. No business logic.
 - **FastAPI middleware**: JWT verification, request ID, viewer injection.
 - **FastAPI route handlers**: validate input, call services, return response envelopes.
@@ -19,4 +20,8 @@ This document covers the architectural layers and their responsibilities.
 - Services must not import from route handlers or middleware.
 - Route handlers must not contain business logic beyond input validation and response shaping.
 - BFF proxy routes must not contain business logic. They forward requests and attach auth.
-- Client-side code calls `/api/*` routes only. It never calls FastAPI directly (except streaming SSE).
+- Client-side product data calls use `/api/*` routes only. They never call
+  FastAPI directly except streaming SSE.
+- Supabase browser auth calls are allowed only in owned login, auth callback,
+  and linked-identity modules. They must not be used for product data access.
+- Android shell code does not call FastAPI, Supabase, or product APIs directly.

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -320,28 +321,39 @@ def _ensure_real_media_prerequisites() -> None:
         "apikey": settings.supabase_service_key,
         "Authorization": f"Bearer {settings.supabase_service_key}",
     }
-    with httpx.Client(timeout=30.0) as client:
-        bucket_response = client.get(
-            f"{settings.supabase_url}/storage/v1/bucket/{settings.storage_bucket}",
-            headers=headers,
-        )
-        if bucket_response.status_code == 200:
-            return
-        if bucket_response.status_code not in (400, 404):
-            raise RuntimeError(
-                "Unexpected Supabase storage bucket check response: "
-                f"{bucket_response.status_code} {bucket_response.text}"
-            )
-        create_response = client.post(
-            f"{settings.supabase_url}/storage/v1/bucket",
-            headers=headers,
-            json={"id": settings.storage_bucket, "name": settings.storage_bucket, "public": False},
-        )
-    if create_response.status_code not in (200, 201, 409):
-        raise RuntimeError(
-            "Failed to create Supabase storage bucket "
-            f"{settings.storage_bucket!r}: {create_response.status_code} {create_response.text}"
-        )
+    last_error: str | None = None
+    for _ in range(30):
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                bucket_response = client.get(
+                    f"{settings.supabase_url}/storage/v1/bucket/{settings.storage_bucket}",
+                    headers=headers,
+                )
+                if bucket_response.status_code == 200:
+                    return
+                if bucket_response.status_code not in (400, 404):
+                    raise RuntimeError(
+                        "Unexpected Supabase storage bucket check response: "
+                        f"{bucket_response.status_code} {bucket_response.text}"
+                    )
+                create_response = client.post(
+                    f"{settings.supabase_url}/storage/v1/bucket",
+                    headers=headers,
+                    json={
+                        "id": settings.storage_bucket,
+                        "name": settings.storage_bucket,
+                        "public": False,
+                    },
+                )
+            if create_response.status_code in (200, 201, 409):
+                return
+            last_error = f"{create_response.status_code} {create_response.text}"
+        except httpx.HTTPError as exc:
+            last_error = str(exc)
+        time.sleep(1)
+    raise RuntimeError(
+        f"Failed to create Supabase storage bucket {settings.storage_bucket!r}: {last_error}"
+    )
 
 
 def _existing_seed_ready(engine: Engine) -> bool:

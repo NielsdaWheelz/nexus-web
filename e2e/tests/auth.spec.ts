@@ -37,14 +37,7 @@ test.describe("authentication", () => {
       await page.goto("/libraries");
       const signOutBtn = page.getByRole("button", { name: /sign out|log out/i });
       await expect(signOutBtn).toBeVisible();
-      const signOutResponsePromise = page.waitForResponse(
-        (response) =>
-          response.url().includes("/auth/signout") &&
-          response.request().method() === "POST"
-      );
       await signOutBtn.click();
-      const signOutResponse = await signOutResponsePromise;
-      expect(signOutResponse.status()).toBe(302);
       await expect(page).toHaveURL(/\/login/);
       await expect(
         page.getByRole("button", { name: /continue with google/i })

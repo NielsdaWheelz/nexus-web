@@ -124,8 +124,24 @@ class TestPodcastProviderConfiguration:
         assert settings.podcast_index_api_secret is None
 
 
-class TestWorkerMaintenanceConfiguration:
-    def test_database_pool_settings_are_validated(self):
+class TestDatabasePoolConfiguration:
+    def test_defaults_are_bounded_for_small_production_poolers(self):
+        settings = _make_settings()
+        assert settings.database_pool_size == 5
+        assert settings.database_max_overflow == 5
+        assert settings.database_pool_timeout_seconds == 30.0
+
+    def test_pool_can_be_capped_for_managed_poolers(self):
+        settings = _make_settings(
+            DATABASE_POOL_SIZE=2,
+            DATABASE_MAX_OVERFLOW=0,
+            DATABASE_POOL_TIMEOUT_SECONDS=10,
+        )
+        assert settings.database_pool_size == 2
+        assert settings.database_max_overflow == 0
+        assert settings.database_pool_timeout_seconds == 10.0
+
+    def test_invalid_pool_values_rejected(self):
         with pytest.raises(ValidationError, match="DATABASE_POOL_SIZE"):
             _make_settings(DATABASE_POOL_SIZE=0)
         with pytest.raises(ValidationError, match="DATABASE_MAX_OVERFLOW"):
@@ -133,6 +149,8 @@ class TestWorkerMaintenanceConfiguration:
         with pytest.raises(ValidationError, match="DATABASE_POOL_TIMEOUT_SECONDS"):
             _make_settings(DATABASE_POOL_TIMEOUT_SECONDS=0)
 
+
+class TestWorkerMaintenanceConfiguration:
     def test_periodic_maintenance_schedules_default_disabled(self):
         settings = _make_settings()
         assert settings.podcast_active_poll_schedule_seconds == 0
@@ -208,6 +226,10 @@ class TestBrowseProviderConfiguration:
                 NEXUS_INTERNAL_SECRET="secret",
                 YOUTUBE_DATA_API_KEY="",
             )
+
+    def test_youtube_transcript_timeout_must_be_positive(self):
+        with pytest.raises(ValidationError, match="YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS"):
+            _make_settings(YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS=0)
 
 
 class TestTranscriptEmbeddingConfiguration:

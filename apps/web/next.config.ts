@@ -59,4 +59,8 @@ const nextConfig: NextConfig = {
   },
 };
 
+if (process.env.E2E_DISABLE_NEXT_DEV_INDICATOR === "1") {
+  nextConfig.devIndicators = false;
+}
+
 export default nextConfig;

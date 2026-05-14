@@ -70,8 +70,12 @@ SUPABASE_ANON_KEY=$(echo "$SUPABASE_STATUS" | grep -o '"ANON_KEY": *"[^"]*"' | s
 SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_STATUS" | grep -o '"SERVICE_ROLE_KEY": *"[^"]*"' | sed 's/"SERVICE_ROLE_KEY": *"//;s/"$//')
 
 if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+    missing_fields=()
+    [ -z "$SUPABASE_URL" ] && missing_fields+=("API_URL")
+    [ -z "$SUPABASE_ANON_KEY" ] && missing_fields+=("ANON_KEY")
+    [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && missing_fields+=("SERVICE_ROLE_KEY")
     echo "Error: Failed to extract Supabase configuration"
-    echo "Status output: $SUPABASE_STATUS"
+    echo "Missing fields: ${missing_fields[*]}"
     exit 1
 fi
 
@@ -146,7 +150,7 @@ DATABASE_URL_TEST_MIGRATIONS="postgresql+psycopg://postgres:postgres@localhost:$
 SUPABASE_ISSUER="${SUPABASE_URL}/auth/v1"
 SUPABASE_JWKS_URL="${SUPABASE_URL}/auth/v1/.well-known/jwks.json"
 SUPABASE_AUDIENCES="authenticated"
-AUTH_ALLOWED_REDIRECT_ORIGINS="http://localhost:3000,http://localhost:3001"
+AUTH_ALLOWED_REDIRECT_ORIGINS="http://localhost:3000,http://127.0.0.1:3000,http://10.0.2.2:3000,http://localhost:3001,http://127.0.0.1:3001"
 STREAM_BASE_URL="http://localhost:8000"
 STREAM_CORS_ORIGINS="http://localhost:3000,http://localhost:3001"
 

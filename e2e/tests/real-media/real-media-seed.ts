@@ -273,20 +273,11 @@ export async function searchRealMediaEvidenceThroughUi(
   query: string,
   contentKind: RealMediaContentKind,
 ): Promise<RealMediaSearchResponseBody> {
-  await page.goto(`/search?types=content_chunk&content_kinds=${contentKind}`);
-  await expect(
-    page.getByRole("group", { name: "Result types" }).getByLabel("Evidence"),
-  ).toBeChecked();
-  await expect(
-    page
-      .getByRole("group", { name: "Content kinds" })
-      .getByLabel(CONTENT_KIND_LABELS[contentKind]),
-  ).toBeChecked();
-
-  await page.getByLabel("Search content").fill(query);
-  const searchButton = page.getByRole("button", { name: "Search", exact: true });
-  await expect(searchButton).toBeEnabled();
-
+  const searchUrl = `/search?${new URLSearchParams({
+    q: query,
+    types: "content_chunk",
+    content_kinds: contentKind,
+  })}`;
   const responsePromise = page.waitForResponse((response) => {
     if (response.request().method() !== "GET") {
       return false;
@@ -299,12 +290,23 @@ export async function searchRealMediaEvidenceThroughUi(
       url.searchParams.get("content_kinds") === contentKind
     );
   });
-  await searchButton.click();
+  await page.goto(searchUrl);
+  await expect(
+    page.getByRole("group", { name: "Result types" }).getByLabel("Evidence"),
+  ).toBeChecked();
+  await expect(
+    page
+      .getByRole("group", { name: "Content kinds" })
+      .getByLabel(CONTENT_KIND_LABELS[contentKind]),
+  ).toBeChecked();
+
+  await expect(page.getByLabel("Search content")).toHaveValue(query);
   const response = await responsePromise;
   expect(
     response.ok(),
     `visible search for ${contentKind} should succeed`,
   ).toBeTruthy();
+  await expect(page.getByText("Searching...")).toBeHidden({ timeout: 15_000 });
   const body = (await response.json()) as { results: RealMediaSearchResult[] };
   return { ...body, api_url: response.url() };
 }

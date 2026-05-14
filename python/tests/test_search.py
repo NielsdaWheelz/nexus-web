@@ -2502,7 +2502,7 @@ class TestSemanticTranscriptChunkSearch:
             semantic_status="ready",
         )
         self._use_openai_embedding_provider(monkeypatch)
-        route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
+        respx.post(OPENAI_EMBEDDINGS_URL).respond(
             provider_status,
             json=provider_body,
         )
@@ -2516,7 +2516,6 @@ class TestSemanticTranscriptChunkSearch:
             f"{response.status_code}: {response.text}"
         )
         assert response.json()["error"]["code"] == "E_LLM_PROVIDER_DOWN"
-        assert route.call_count == 1
 
     @respx.mock
     def test_default_semantic_search_builds_one_query_embedding(

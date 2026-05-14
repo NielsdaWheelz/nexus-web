@@ -48,6 +48,7 @@ Primary variables for this app:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `AUTH_ALLOWED_REDIRECT_ORIGINS`
+- `AUTH_TRUSTED_PROXY_ORIGINS` (only when auth callbacks receive trusted proxy headers)
 - `NEXUS_EXTENSION_REDIRECT_ORIGINS`
 - `NEXUS_INTERNAL_SECRET` (required outside local/test)
 

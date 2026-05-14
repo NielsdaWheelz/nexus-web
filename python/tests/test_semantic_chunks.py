@@ -1,5 +1,6 @@
 """Tests for semantic chunk embedding provider boundaries."""
 
+import httpx
 import pytest
 import respx
 
@@ -55,7 +56,8 @@ def test_openai_embedding_http_errors_raise_stable_codes(
     expected_code: ApiErrorCode,
 ):
     _configure_openai_embeddings(monkeypatch)
-    respx.post(OPENAI_EMBEDDINGS_URL).respond(
+    monkeypatch.setattr("nexus.services.semantic_chunks.time.sleep", lambda _: None)
+    route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
         status_code,
         json={"error": {"message": "provider secret body"}},
     )
@@ -66,6 +68,27 @@ def test_openai_embedding_http_errors_raise_stable_codes(
     assert exc_info.value.code == expected_code
     assert exc_info.value.message == "Embedding provider request failed."
     assert "provider secret body" not in exc_info.value.message
+    assert route.call_count == (3 if status_code in {408, 429, 500} else 1)
+
+
+@respx.mock
+def test_openai_embedding_retries_transient_provider_errors(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _configure_openai_embeddings(monkeypatch)
+    monkeypatch.setattr("nexus.services.semantic_chunks.time.sleep", lambda _: None)
+    route = respx.post(OPENAI_EMBEDDINGS_URL).mock(
+        side_effect=[
+            httpx.Response(520, json={"error": {"message": "edge error"}}),
+            httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.1] * 256}]}),
+        ]
+    )
+
+    model_name, vectors = build_text_embeddings(["NASA evidence"])
+
+    assert model_name == "openai_text_embedding_3_small_256_v1"
+    assert len(vectors) == 1
+    assert route.call_count == 2
 
 
 @pytest.mark.parametrize(

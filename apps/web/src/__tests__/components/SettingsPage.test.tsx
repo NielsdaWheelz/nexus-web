@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import SettingsPage from "@/app/(authenticated)/settings/page";
+import SettingsPaneBody from "@/app/(authenticated)/settings/SettingsPaneBody";
 
-describe("SettingsPage", () => {
+describe("SettingsPaneBody", () => {
   it("includes linked identities management entrypoint", () => {
-    render(<SettingsPage />);
+    render(<SettingsPaneBody />);
 
     const billingLink = screen.getByRole("link", {
       name: /billing/i,
@@ -20,5 +20,15 @@ describe("SettingsPage", () => {
       name: /local vault/i,
     });
     expect(localVaultLink).toHaveAttribute("href", "/settings/local-vault");
+  });
+
+  it("hides Local Vault in the Android shell without hiding Billing", () => {
+    render(<SettingsPaneBody initialAndroidShell />);
+
+    expect(screen.getByRole("link", { name: /billing/i })).toHaveAttribute(
+      "href",
+      "/settings/billing"
+    );
+    expect(screen.queryByRole("link", { name: /local vault/i })).not.toBeInTheDocument();
   });
 });

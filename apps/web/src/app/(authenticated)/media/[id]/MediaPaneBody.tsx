@@ -3048,7 +3048,7 @@ export default function MediaPaneBody() {
           return;
         }
         setHighlights(newHighlights);
-  
+
         const newIds = new Set(newHighlights.map((h) => h.id));
         const reconciledFocus = reconcileFocusAfterRefetch(
           focusState.focusedId,

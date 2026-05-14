@@ -2,13 +2,13 @@
 # Run `make help` for available commands.
 
 .PHONY: help setup dev down logs clean api web worker migrate migrate-test migrate-down seed seed-real-media-e2e \
-	check check-back type-back check-front check-workflows format format-back fix-front build audit \
+	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
-	test-migrations test-supabase test-real-media test-live-providers test-e2e test-e2e-ui \
-	verify verify-full \
+	test-android test-migrations test-supabase test-real-media test-live-providers test-e2e test-e2e-ui \
+	verify verify-android verify-android-release verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw \
-	_test-supabase-raw _test-real-media-backend-raw _test-live-providers-raw \
+	_test-supabase-raw _test-real-media-raw _test-real-media-backend-raw _test-live-providers-raw \
 	_seed-real-media-e2e-raw _test-e2e-raw _test-real-media-e2e-raw _test-e2e-ui-raw
 
 -include .env
@@ -17,7 +17,7 @@ export
 
 SUPABASE_DB_PORT ?= 54322
 SUPABASE_URL ?= http://127.0.0.1:54321
-AUTH_ALLOWED_REDIRECT_ORIGINS ?= http://localhost:3000,http://localhost:3001
+AUTH_ALLOWED_REDIRECT_ORIGINS ?= http://localhost:3000,http://127.0.0.1:3000,http://10.0.2.2:3000,http://localhost:3001,http://127.0.0.1:3001
 STREAM_BASE_URL ?= http://localhost:$(API_PORT)
 STREAM_CORS_ORIGINS ?= http://localhost:$(WEB_PORT),http://localhost:3000,http://localhost:3001
 
@@ -42,7 +42,14 @@ help:
 	@echo ""
 	@echo "Routine gates:"
 	@echo "  make check              - Static checks only"
+	@echo "  make type-back          - Backend type checking"
+	@echo "  make check-workflows    - GitHub Actions lint/security checks"
+	@echo "  make check-android      - Android lint"
 	@echo "  make audit              - Dependency vulnerability audits"
+	@echo "  make build-android      - Build Android debug and instrumentation APKs"
+	@echo "  make build-android-release - Build signed Android release APK"
+	@echo "  make verify-android     - Android lint + debug/test APK build"
+	@echo "  make verify-android-release - Build and verify signed Android release APK"
 	@echo "  make test-unit          - Fast backend and frontend unit tests"
 	@echo "  make test               - All non-E2E automated tests"
 	@echo "  make test-e2e           - Default Playwright E2E tests"
@@ -58,6 +65,7 @@ help:
 	@echo "  make test-back-integration - Backend DB/API integration tests"
 	@echo "  make test-front-unit       - Frontend unit tests"
 	@echo "  make test-front-browser    - Frontend browser component tests"
+	@echo "  make test-android          - Android instrumentation tests on a connected device"
 	@echo "  make test-migrations       - Alembic migration tests"
 	@echo "  make test-supabase         - Supabase auth/storage integration tests"
 	@echo "  make test-e2e-ui           - Playwright E2E in UI mode"
@@ -164,6 +172,9 @@ check-front:
 	cd apps/web && bun run lint
 	cd apps/web && bun run typecheck
 
+check-android:
+	cd apps/android && ./gradlew :app:lintDebug
+
 check-workflows:
 	actionlint .github/workflows/*.yml
 	cd python && uv run zizmor ../.github/workflows
@@ -180,6 +191,12 @@ fix-front:
 
 build:
 	cd apps/web && bun run build
+
+build-android:
+	cd apps/android && ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+
+build-android-release:
+	cd apps/android && ./gradlew :app:lintRelease :app:assembleRelease
 
 audit:
 	cd python && uv sync --all-extras --locked
@@ -227,6 +244,9 @@ test-front-browser:
 	fi
 	cd apps/web && bun run test:browser
 
+test-android:
+	cd apps/android && ./gradlew :app:connectedDebugAndroidTest
+
 test-migrations:
 	./scripts/with_test_services.sh make _test-migrations-raw
 
@@ -242,8 +262,11 @@ _test-supabase-raw:
 		-m "supabase and not real_media and not live_provider"
 
 test-real-media: _ensure-e2e-deps
-	./scripts/with_supabase_services.sh ./scripts/with_test_services.sh make _test-back-db-ready _test-real-media-backend-raw
-	./scripts/with_supabase_services.sh make _test-real-media-e2e-raw
+	./scripts/with_supabase_services.sh make _test-real-media-raw
+
+_test-real-media-raw:
+	./scripts/with_test_services.sh make _test-back-db-ready _test-real-media-backend-raw
+	make _test-real-media-e2e-raw
 
 _test-real-media-backend-raw:
 	make _ensure-node-ingest
@@ -303,6 +326,39 @@ verify:
 	make build
 	make test
 	@echo "=== verification passed ==="
+
+verify-android:
+	make check-android
+	make build-android
+	@echo "=== android verification passed ==="
+
+verify-android-release:
+	make build-android-release
+	@set -eu; \
+		sdk_root="$${ANDROID_HOME:-$${ANDROID_SDK_ROOT:-}}"; \
+		if [ -z "$$sdk_root" ]; then \
+			echo "Set ANDROID_HOME or ANDROID_SDK_ROOT to verify the release APK."; \
+			exit 1; \
+		fi; \
+		apksigner="$${ANDROID_APK_SIGNER:-$$(find "$$sdk_root/build-tools" -name apksigner -type f | sort | tail -n 1)}"; \
+		if [ -z "$$apksigner" ] || [ ! -x "$$apksigner" ]; then \
+			echo "Could not find apksigner. Install Android SDK build-tools or set ANDROID_APK_SIGNER."; \
+			exit 1; \
+		fi; \
+		if [ -z "$${NEXUS_ANDROID_RELEASE_CERT_SHA256:-}" ]; then \
+			echo "Set NEXUS_ANDROID_RELEASE_CERT_SHA256 to verify the release APK signer."; \
+			exit 1; \
+		fi; \
+		verify_output=$$("$$apksigner" verify --verbose --print-certs apps/android/app/build/outputs/apk/release/app-release.apk); \
+		printf '%s\n' "$$verify_output"; \
+		actual_cert_sha256=$$(printf '%s\n' "$$verify_output" | sed -n -e 's/^Signer #1 certificate SHA-256 digest: //p' -e 's/^V[0-9][^:]* Signer: certificate SHA-256 digest: //p' | head -n 1 | tr -d ' :' | tr '[:lower:]' '[:upper:]'); \
+		expected_cert_sha256=$$(printf '%s' "$$NEXUS_ANDROID_RELEASE_CERT_SHA256" | tr -d ' :' | tr '[:lower:]' '[:upper:]'); \
+		if [ -z "$$actual_cert_sha256" ] || [ "$$actual_cert_sha256" != "$$expected_cert_sha256" ]; then \
+			echo "Release APK signer does not match NEXUS_ANDROID_RELEASE_CERT_SHA256."; \
+			exit 1; \
+		fi; \
+		shasum -a 256 apps/android/app/build/outputs/apk/release/app-release.apk
+	@echo "=== android release verification passed ==="
 
 verify-full:
 	make verify

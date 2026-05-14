@@ -27,6 +27,7 @@ PODCASTS_ENABLED=false
 
 # Required by staging/prod config for browse providers.
 YOUTUBE_DATA_API_KEY=<youtube-data-api-key>
+YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS=30
 
 # Optional platform provider keys. BYOK can still be used where supported.
 # OPENAI_API_KEY=

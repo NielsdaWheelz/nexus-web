@@ -7,8 +7,12 @@ import {
 
 async function existingHighlightExacts(page: Page, fragmentId: string): Promise<string[]> {
   const response = await page.request.get(`/api/fragments/${fragmentId}/highlights`);
-  expect(response.ok()).toBeTruthy();
-  const payload = (await response.json()) as {
+  const responseText = await response.text();
+  expect(
+    response.ok(),
+    `GET /api/fragments/${fragmentId}/highlights failed: ${response.status()} ${responseText}`,
+  ).toBeTruthy();
+  const payload = JSON.parse(responseText) as {
     data: { highlights: Array<{ exact?: string | null }> };
   };
   return payload.data.highlights

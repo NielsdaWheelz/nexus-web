@@ -9,6 +9,7 @@ import {
 import SectionCard from "@/components/ui/SectionCard";
 import Button from "@/components/ui/Button";
 import { AppList, AppListItem } from "@/components/ui/AppList";
+import { shouldUseAndroidDebugAuthCallback } from "@/lib/androidShell";
 import {
   formatIdentityProvider,
   getConnectableProviders,
@@ -17,7 +18,10 @@ import {
   type LinkedIdentity,
   type OAuthProvider,
 } from "@/lib/auth/identities";
-import { buildAuthCallbackUrl } from "@/lib/auth/redirects";
+import {
+  buildAndroidDebugAuthCallbackUrl,
+  buildAuthCallbackUrl,
+} from "@/lib/auth/redirects";
 import { createClient } from "@/lib/supabase/client";
 import styles from "./page.module.css";
 
@@ -77,10 +81,17 @@ export default function SettingsIdentitiesPaneBody() {
 
     try {
       const supabase = createClient();
+      const useAndroidDebugCallback = shouldUseAndroidDebugAuthCallback(
+        window.location.protocol,
+        window.location.hostname,
+        navigator.userAgent
+      );
       const { error: linkError } = await supabase.auth.linkIdentity({
         provider,
         options: {
-          redirectTo: buildAuthCallbackUrl(window.location.origin, "/settings/identities"),
+          redirectTo: useAndroidDebugCallback
+            ? buildAndroidDebugAuthCallbackUrl("/settings/identities")
+            : buildAuthCallbackUrl(window.location.origin, "/settings/identities"),
         },
       });
 
