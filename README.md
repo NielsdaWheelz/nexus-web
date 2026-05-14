@@ -94,6 +94,23 @@ test-live-providers` additionally requires real Podcast Index and Deepgram
 credentials. The default Playwright project covers deterministic seeded feature
 flows; the real-media project covers deterministic real-media acceptance flows.
 
+## Android Release Distribution
+
+End users install Android from
+[`nexus.nielseriknandal.com/android`](https://nexus.nielseriknandal.com/android).
+
+Android self-distribution uses GitHub Releases. The `/android` install page must
+link to the stable latest-release assets:
+
+- `https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk`
+- `https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk.sha256`
+
+Create an existing `android-v*` tag, run the Android APK Release workflow for
+that tag, install the APK from the draft release on a physical device, verify
+App Links and login, then rerun the workflow with `publish_stable=true`. The
+workflow uploads stable assets for `/android` plus versioned assets such as
+`nexus-android-v0.1.0.apk` for tag `android-v0.1.0`.
+
 ## Repository Map
 
 - `apps/android/` -> Android shell app. Debug builds default to `http://10.0.2.2:3000`; local OAuth callbacks use the debug-only `nexus-dev://auth/callback` return path. Release APKs require explicit host, version, release keystore, and release certificate fingerprint inputs. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.

@@ -7,6 +7,11 @@ on:
         description: Existing android-v* git tag to build and publish.
         required: true
         type: string
+      publish_stable:
+        description: Publish the verified draft as the latest stable release.
+        required: false
+        default: false
+        type: boolean
   push:
     tags:
       - "android-v*"
@@ -34,6 +39,7 @@ jobs:
       NEXUS_ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.NEXUS_ANDROID_RELEASE_STORE_PASSWORD }}
       NEXUS_ANDROID_VERSION_CODE: ${{ github.run_number }}
       NEXUS_ANDROID_VERSION_NAME: ${{ inputs.tag || github.ref_name }}
+      ANDROID_PUBLISH_STABLE: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_stable || false }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -77,22 +83,49 @@ jobs:
       - name: Prepare release assets
         run: |
           set -euo pipefail
-          cp apps/android/app/build/outputs/apk/release/app-release.apk "nexus-android-$ANDROID_RELEASE_TAG.apk"
-          shasum -a 256 "nexus-android-$ANDROID_RELEASE_TAG.apk" > "nexus-android-$ANDROID_RELEASE_TAG.apk.sha256"
+          android_version="${ANDROID_RELEASE_TAG#android-}"
+          cp apps/android/app/build/outputs/apk/release/app-release.apk nexus-android.apk
+          cp nexus-android.apk "nexus-android-$android_version.apk"
+          shasum -a 256 nexus-android.apk > nexus-android.apk.sha256
+          shasum -a 256 "nexus-android-$android_version.apk" > "nexus-android-$android_version.apk.sha256"
 
-      - name: Publish GitHub release
+      - name: Create or update draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if ! gh release view "$ANDROID_RELEASE_TAG" >/dev/null 2>&1; then
+          upload_args=()
+          if gh release view "$ANDROID_RELEASE_TAG" >/dev/null 2>&1; then
+            if [ "$(gh release view "$ANDROID_RELEASE_TAG" --json isDraft --jq .isDraft)" = "true" ]; then
+              upload_args+=(--clobber)
+            fi
+          else
             gh release create "$ANDROID_RELEASE_TAG" \
               --verify-tag \
               --draft \
-              --prerelease \
               --title "$ANDROID_RELEASE_TAG" \
-              --notes "Self-distributed Nexus Android APK. Publish only after installing this APK on a device and verifying App Links for app.nexus.android."
+              --notes "Self-distributed Nexus Android APK. Publish only after installing this APK on a device and verifying App Links for app.nexus.android. After publishing, the stable install URL is /releases/latest/download/nexus-android.apk."
           fi
+          android_version="${ANDROID_RELEASE_TAG#android-}"
           gh release upload "$ANDROID_RELEASE_TAG" \
-            "nexus-android-$ANDROID_RELEASE_TAG.apk" \
-            "nexus-android-$ANDROID_RELEASE_TAG.apk.sha256"
+            nexus-android.apk \
+            nexus-android.apk.sha256 \
+            "nexus-android-$android_version.apk" \
+            "nexus-android-$android_version.apk.sha256" \
+            "${upload_args[@]}"
+
+      - name: Publish stable release
+        if: ${{ env.ANDROID_PUBLISH_STABLE == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$(gh release view "$ANDROID_RELEASE_TAG" --json isDraft --jq .isDraft)" != "true" ]; then
+            echo "Only draft Android releases can be published by this workflow."
+            exit 1
+          fi
+          release_id="$(gh release view "$ANDROID_RELEASE_TAG" --json databaseId --jq .databaseId)"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false \
+            -F prerelease=false \
+            -f make_latest=true

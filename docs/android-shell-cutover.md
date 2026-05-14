@@ -237,7 +237,20 @@ payoff.
 - release artifacts are signed apks
 - signing is owned by the self-distribution release keystore
 - the release keystore is never committed
-- github release assets are the signed apk and its sha-256 checksum
+- github release assets include stable `nexus-android.apk` and
+  `nexus-android.apk.sha256`
+- github release assets include versioned apk and checksum files without a
+  duplicated `android` prefix, for example `nexus-android-v0.1.0.apk` for tag
+  `android-v0.1.0`
+- the `/android` install page links to the stable latest-release apk and
+  checksum download urls
+- github releases are created as drafts for manual device verification
+- github releases are not prereleases; publishing the verified draft makes
+  github latest-release download urls work
+- the workflow publishes the verified draft only when manually run with
+  `publish_stable=true`
+- release asset upload may use clobber so rerunning the workflow against the
+  same draft replaces stale draft assets
 - tagged release candidates are installed on physical devices before publish
 - release testing verifies oauth, app links, uploads, billing, and
   shell-restricted ux on physical devices
@@ -438,7 +451,13 @@ native code is not added to mirror existing web product behavior.
 - add crash and anr monitoring before production rollout
 - add auth callback failure telemetry
 - add webview load failure visibility
-- write a release checklist for tagged github releases
+- write a release checklist for tagged github releases:
+  create the `android-v*` tag, run the Android APK Release workflow, install
+  the draft APK on a physical device, verify app links and auth, then rerun the
+  workflow with `publish_stable=true`
+- keep the `/android` install page pointed at
+  `/releases/latest/download/nexus-android.apk` and
+  `/releases/latest/download/nexus-android.apk.sha256`
 - write rollback criteria
 - keep the public privacy policy current
 
@@ -511,8 +530,13 @@ native code is not added to mirror existing web product behavior.
 - release cleartext traffic is disabled
 - release app-link autoverification is enabled
 - signed release apk verifies with `apksigner`
-- github draft release contains the signed apk and sha-256 checksum
+- github draft release contains `nexus-android.apk`,
+  `nexus-android.apk.sha256`, the versioned apk, and the versioned checksum
 - github release publication uses an existing `android-v*` tag
+- github release publication does not mark the release as a prerelease
+- github release publication is explicit through the manual `publish_stable`
+  workflow input
+- publishing the verified draft updates github latest-release download urls
 - release candidate completes google and github oauth on a physical device
 - release has monitoring and rollback criteria
 
@@ -565,6 +589,24 @@ set -a
 set +a
 export NEXUS_ANDROID_RELEASE_STORE_FILE=/abs/path/nexus-release.jks
 make verify-android-release
+```
+
+release tag and publish flow:
+
+```bash
+git tag android-v0.1.0
+git push origin android-v0.1.0
+```
+
+then install the APK from the draft release on a physical device, verify app
+links and auth, and rerun the Android APK Release workflow for `android-v0.1.0`
+with `publish_stable=true`.
+
+stable install urls used by `/android`:
+
+```text
+https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk
+https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk.sha256
 ```
 
 ## release blockers

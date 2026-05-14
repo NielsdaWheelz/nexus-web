@@ -59,6 +59,7 @@ describe("updateSession", () => {
       updateSession(
         new NextRequest("http://localhost:3000/login?next=%2Flibraries")
       ),
+      updateSession(new NextRequest("http://localhost:3000/android")),
       updateSession(new NextRequest("http://localhost:3000/terms")),
       updateSession(new NextRequest("http://localhost:3000/privacy")),
       updateSession(
