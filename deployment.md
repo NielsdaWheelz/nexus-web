@@ -3,12 +3,14 @@
 Nexus production is intended to run with:
 
 - Vercel for the Next.js frontend/BFF.
-- Supabase for Postgres, Auth, and Storage.
-- One Hetzner Cloud VPS for the FastAPI API and Postgres-backed worker.
+- Supabase Auth only.
+- One Hetzner Cloud VPS for Postgres, the FastAPI API, and the worker.
+- Cloudflare R2 for object storage.
 - Caddy on the VPS for HTTPS at the API domain.
 
 The goal is to keep the operational surface small while avoiding background
-workers or APIs running in more than one production location.
+workers or APIs running in more than one production location. This is a hard
+cutover: production does not fall back to Supabase Database or Supabase Storage.
 
 ## Current Production
 
@@ -18,12 +20,14 @@ workers or APIs running in more than one production location.
 - Hetzner IPv4: `5.78.194.235`
 - Hetzner location/type: `hil` / `cpx11`
 - Vercel project: `niels-erik-nandals-projects/nexus-web`
-- Supabase project URL: `https://jiaozhsisiphjtomoamy.supabase.co`
+- Supabase Auth project URL: `https://jiaozhsisiphjtomoamy.supabase.co`
 
 ## Runtime Shape
 
 On the Hetzner VPS:
 
+- `postgres`: Postgres with pgvector, backed by the Compose `postgres_data`
+  volume.
 - `caddy`: public HTTPS reverse proxy.
 - `api`: FastAPI service built from `docker/Dockerfile.api`.
 - `worker`: background worker built from `docker/Dockerfile.worker`.
@@ -35,7 +39,14 @@ The API is always-on. The worker is safe to leave running only with the explicit
 production allowlist in `WORKER_ALLOWED_JOB_KINDS`. Maintenance jobs are not in
 that allowlist, and `*_SCHEDULE_SECONDS=0` means no autonomous polling, broad
 repair scans, catalog syncs, or prune sweeps. Run maintenance only for a bounded
-operator window after Supabase I/O is healthy.
+operator window after Hetzner Postgres and R2 are healthy.
+
+Supabase is only an identity provider in production. Use it for hosted Auth,
+JWKS, OAuth providers, and browser anon-key auth flows. Do not configure
+production services to read/write Supabase Database or Supabase Storage.
+
+Cloudflare R2 is the production object store. Keep bucket credentials scoped to
+the production bucket and rotate them independently from Supabase Auth keys.
 
 ## Env Files
 
@@ -61,15 +72,15 @@ Important: `NEXUS_INTERNAL_SECRET` must match between Vercel and the VPS. The
 sync scripts fail before uploading if required production env values are empty
 or still contain placeholders.
 
-Use Supabase's transaction-pooler `DATABASE_URL` on port `6543` for the VPS
-runtime. The session pooler on port `5432` is too easy to exhaust on the current
-free-tier Supabase project.
+Use Hetzner Postgres for production data. `deploy/hetzner/sync-env.sh`
+validates that `DATABASE_URL` points at the private Compose service
+`postgres:5432` and matches `POSTGRES_USER`, `POSTGRES_PASSWORD`, and
+`POSTGRES_DB`, then the Compose `env_file` supplies that value to API, worker,
+and one-off commands.
 
 The backend DB pool is bounded by `DATABASE_POOL_SIZE`,
 `DATABASE_MAX_OVERFLOW`, and `DATABASE_POOL_TIMEOUT_SECONDS`. Keep the default
-`5/5/30` unless Supabase pooler metrics show sustained saturation; do not lower
-it to the old two-connection cap, because concurrent browser/API requests can
-exhaust that pool before real work starts.
+`5/5/30` unless VPS Postgres metrics show sustained saturation.
 
 ## Hetzner Provisioning
 
@@ -89,7 +100,7 @@ HCLOUD_SERVER_TYPE=cpx11 \
 ./deploy/hetzner/provision.sh
 ```
 
-Use `HCLOUD_LOCATION=ash` if Supabase is closer to US East. Use a larger server
+Use the Hetzner location closest to users and Cloudflare R2. Use a larger server
 type if Docker builds or media jobs run out of memory.
 
 ## DNS
@@ -120,18 +131,20 @@ Deploy API and worker:
 NEXUS_HOST=5.78.194.235 ./deploy/hetzner/deploy.sh
 ```
 
-Upload env and deploy in one command:
+`deploy.sh` runs `deploy/hetzner/sync-env.sh` first by default, so normal
+deploys validate and upload env before rebuilding. Skip that only when the
+remote env was already verified for the same deploy:
 
 ```bash
-NEXUS_HOST=5.78.194.235 NEXUS_SYNC_ENV=1 ./deploy/hetzner/deploy.sh
+NEXUS_HOST=5.78.194.235 NEXUS_SYNC_ENV=0 ./deploy/hetzner/deploy.sh
 ```
 
 The deploy script syncs the repo to `/opt/nexus-web`, builds Docker images on
 the VPS, runs Alembic migrations, and starts the Compose stack.
 
-Deploy may recreate/start the worker. If Supabase Disk I/O Budget is exhausted,
-stop the worker after deploy and leave API/Caddy running until Supabase auth,
-PostgREST, and a simple DB query recover.
+Deploy may recreate/start the worker. Keep the safe worker env in place during
+normal deploys; use `NEXUS_ALLOW_WORKER_MAINTENANCE=1` only for a bounded
+maintenance window.
 
 ## Frontend Env
 
@@ -150,9 +163,9 @@ Push production frontend env:
 ```
 
 The Vercel sync script validates required production keys locally, writes the
-configured production env to Vercel as CLI-readable values, then pulls the
-Vercel production env into a temporary file and verifies required keys without
-printing secret values.
+configured production env to Vercel, keeps `NEXUS_INTERNAL_SECRET` sensitive,
+then pulls the Vercel production env into a temporary file and verifies readable
+required keys without printing secret values.
 
 Key Vercel values:
 
@@ -162,6 +175,9 @@ NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<supabase-anon-key>
 NEXUS_INTERNAL_SECRET=<same value as VPS>
 ```
+
+`NEXT_PUBLIC_SUPABASE_*` is for Auth only. Do not add Supabase database or
+storage service-role keys to Vercel.
 
 Current frontend values should use:
 
@@ -224,18 +240,71 @@ Health check:
 curl https://api.nexus.nielseriknandal.com/health
 ```
 
-## Supabase Disk I/O Runbook
+## Cutover
 
-When Supabase warns that Disk I/O Budget is exhausted:
+Before switching production traffic:
 
-1. Stop the Hetzner worker first.
-2. Keep API and Caddy running.
-3. Confirm Supabase JWKS/auth/PostgREST recover.
-4. Confirm a simple `select 1` works through the configured database URL.
-5. Sync the verified safe worker env with `NEXUS_HOST=5.78.194.235 ./deploy/hetzner/sync-env.sh`.
-6. Recreate the worker with `up -d --no-deps --force-recreate worker`.
-7. Watch worker logs and Supabase Disk I/O Budget before any maintenance window.
-8. Never run Render and Hetzner workers at the same time.
+1. Provision Hetzner and DNS.
+2. Create the production R2 bucket, access keys, and browser CORS policy.
+3. Stop or disable old backend writers and workers before starting the Hetzner
+   worker.
+4. Use a fresh cutover by default: run migrations on empty Hetzner Postgres and
+   start with an empty R2 bucket. If preserving old data, export/import it
+   offline before traffic moves; do not configure Supabase as a live fallback.
+5. Sync VPS env and Vercel env.
+6. Deploy backend and run migrations.
+7. Confirm `/health`, Supabase Auth login, object upload/download, and a worker
+   job against Hetzner Postgres/R2.
+8. Switch frontend/API traffic and keep maintenance schedules at `0`.
+
+After cutover, treat Supabase Database and Supabase Storage as legacy data
+sources only. Do not write new production data to them and do not configure them
+as a fallback path.
+
+Keep legacy Supabase cleanup/export credentials in a separate local file that is
+never synced as runtime env:
+
+```bash
+SUPABASE_DATABASE_URL=<old-supabase-postgres-url>
+SUPABASE_URL=<auth-project-url>
+SUPABASE_SERVICE_KEY=<legacy-cleanup-only-service-role-key>
+STORAGE_BUCKET=media
+```
+
+## Rollback
+
+Rollback is revision plus data restore, not provider fallback:
+
+1. Stop `worker`.
+2. Restore the last known-good Hetzner Postgres backup or server snapshot.
+3. Restore or reconcile the matching R2 object state.
+4. Redeploy the previous app revision with the matching env.
+5. Force-recreate `api`, confirm health/login/read paths, then recreate
+   `worker`.
+
+Do not point production back to Supabase Database or Supabase Storage. If the
+legacy data needs to be consulted, export from it offline and import into
+Hetzner Postgres/R2.
+
+## Failure Recovery
+
+- Supabase Auth failure: keep Postgres/R2 unchanged, stop worker only if jobs
+  are repeatedly failing on auth-dependent work, and wait for Auth/JWKS recovery
+  or rotate Supabase Auth keys if compromised.
+- Hetzner Postgres failure: stop `worker`, keep `caddy` up, restore from the
+  latest verified database backup/snapshot, run migrations for the deployed
+  revision, then force-recreate `api` and `worker`.
+- R2 failure: stop write-heavy jobs, verify Cloudflare status/credentials, retry
+  failed object operations after recovery, and reconcile DB object metadata
+  against R2 inventory if writes partially completed.
+- Bad deploy/env: redeploy the previous revision with the previous env, recreate
+  services, and verify `/health`, auth, DB query, object read/write, and worker
+  logs.
+- Worker runaway: stop `worker`, restore the safe allowlist/schedules, sync env,
+  force-recreate `worker`, and watch DB/R2 metrics before any maintenance
+  window.
+
+## Maintenance Windows
 
 Maintenance is opt-in per job kind:
 
@@ -249,9 +318,9 @@ prune_background_jobs_job -> BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS
 To run a repair window, append only the required maintenance job kind to
 `WORKER_ALLOWED_JOB_KINDS`, set only its schedule above `0`, sync env with
 `NEXUS_ALLOW_WORKER_MAINTENANCE=1`, force-recreate the worker, and watch
-Supabase I/O. When the window is done, remove the maintenance kind, restore its
-schedule to `0`, sync env again without `NEXUS_ALLOW_WORKER_MAINTENANCE`, and
-force-recreate the worker again.
+Postgres and R2 metrics. When the window is done, remove the maintenance kind,
+restore its schedule to `0`, sync env again without
+`NEXUS_ALLOW_WORKER_MAINTENANCE`, and force-recreate the worker again.
 
 ## Files To Remember
 
@@ -262,3 +331,6 @@ force-recreate the worker again.
 - `deploy/hetzner/deploy.sh`: builds, migrates, and starts services.
 - `deploy/vercel/sync-env.sh`: pushes Vercel env.
 - `.dockerignore`: keeps VPS Docker build contexts small.
+- `deploy/cloudflare/r2-cors.example.json`: production R2 browser upload CORS policy.
+- `deploy/cloudflare/r2-lifecycle.example.json`: production R2 lifecycle policy that expires `uploads/` staging objects.
+- `deploy/cloudflare/apply-r2-lifecycle.sh`: applies the R2 lifecycle policy through the Cloudflare API.

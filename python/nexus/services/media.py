@@ -7,6 +7,7 @@ Routes may not contain domain logic or raw DB access - they must call these func
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import posixpath
 import re
@@ -78,7 +79,11 @@ from nexus.services.sanitize_html import sanitize_html
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.x_identity import classify_x_url, is_x_url
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
-from nexus.storage import build_storage_path, get_file_extension, get_storage_client
+from nexus.storage import (
+    build_upload_staging_storage_path,
+    get_file_extension,
+    get_storage_client,
+)
 from nexus.storage.client import StorageError
 
 logger = get_logger(__name__)
@@ -1065,7 +1070,7 @@ def _create_file_media_from_remote_url(
     _validate_upload_request(kind, content_type, len(payload))
 
     media_id = uuid4()
-    storage_path = build_storage_path(media_id, get_file_extension(kind))
+    storage_path = build_upload_staging_storage_path(media_id, get_file_extension(kind))
     storage_client = get_storage_client()
     try:
         storage_client.put_object(storage_path, payload, content_type)
@@ -1101,7 +1106,7 @@ def _create_file_media_from_remote_url(
         db.rollback()
         try:
             storage_client.delete_object(storage_path)
-        except Exception as cleanup_error:
+        except StorageError as cleanup_error:
             # justify-ignore-error: remote upload cleanup is best-effort; preserving
             # the original DB failure gives the caller the actionable error.
             logger.warning(
@@ -1320,7 +1325,7 @@ def create_captured_file(
         validate_requested_url(clean_source_url)
 
     media_id = uuid4()
-    storage_path = build_storage_path(media_id, get_file_extension(kind))
+    storage_path = build_upload_staging_storage_path(media_id, get_file_extension(kind))
     storage_client = get_storage_client()
     try:
         storage_client.put_object(storage_path, payload, normalized_content_type)
@@ -1364,7 +1369,9 @@ def create_captured_file(
         db.rollback()
         try:
             storage_client.delete_object(storage_path)
-        except Exception as cleanup_error:
+        except StorageError as cleanup_error:
+            # justify-ignore-error: captured upload cleanup is best-effort;
+            # preserving the original DB failure gives the caller the actionable error.
             logger.warning(
                 "captured_file_cleanup_failed media_id=%s storage_path=%s error=%s",
                 media_id,
@@ -2090,7 +2097,7 @@ def get_epub_asset_for_viewer(
     row = db.execute(
         text(
             """
-            SELECT storage_path, content_type
+            SELECT storage_path, content_type, size_bytes, sha256
             FROM epub_resources
             WHERE media_id = :media_id
               AND asset_key = :asset_key
@@ -2107,7 +2114,18 @@ def get_epub_asset_for_viewer(
 
     sc = storage_client or get_storage_client()
     try:
-        data = b"".join(sc.stream_object(row[0]))
+        hasher = hashlib.sha256()
+        chunks = []
+        total_bytes = 0
+        for chunk in sc.stream_object(row[0]):
+            total_bytes += len(chunk)
+            if total_bytes > row[2]:
+                raise StorageError("Stored EPUB asset is larger than persisted metadata")
+            hasher.update(chunk)
+            chunks.append(chunk)
+        if total_bytes != row[2] or hasher.hexdigest() != row[3]:
+            raise StorageError("Stored EPUB asset integrity mismatch")
+        data = b"".join(chunks)
     except StorageError as exc:
         raise ApiError(
             ApiErrorCode.E_STORAGE_ERROR,

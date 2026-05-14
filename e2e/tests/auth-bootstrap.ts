@@ -4,7 +4,7 @@ import { applyResolvedSupabaseEnv } from "../supabase-env.mjs";
 
 const E2E_USER_EMAIL = process.env.E2E_USER_EMAIL ?? "e2e-test@nexus.local";
 const ROOT_DIR = path.resolve(__dirname, "..", "..");
-applyResolvedSupabaseEnv(ROOT_DIR, process.env);
+applyResolvedSupabaseEnv(ROOT_DIR, process.env, { includeAdminKey: true });
 
 interface GenerateLinkResponse {
   action_link?: string;
@@ -14,6 +14,7 @@ interface GenerateLinkResponse {
 }
 
 interface ResolvedAuthEnv {
+  anonKey: string;
   appBaseUrl: string;
   adminKey: string;
   supabaseUrl: string;
@@ -37,29 +38,29 @@ interface SupabaseSessionPayload {
 }
 
 function resolveAuthEnv(): ResolvedAuthEnv {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
-  const adminKey =
-    process.env.SUPABASE_ADMIN_KEY ??
-    process.env.SUPABASE_SECRET_KEY ??
-    process.env.SUPABASE_SERVICE_ROLE_KEY ??
-    process.env.SUPABASE_SERVICE_KEY;
+  const supabaseUrl =
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
+  const anonKey =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY;
+  const adminKey = process.env.SUPABASE_AUTH_ADMIN_KEY;
   const appBaseUrl = `http://localhost:${process.env.WEB_PORT ?? "3000"}`;
 
-  if (!supabaseUrl || !adminKey) {
+  if (!supabaseUrl || !anonKey || !adminKey) {
     throw new Error(
       "Missing Supabase admin auth env. Expected NEXT_PUBLIC_SUPABASE_URL/SUPABASE_URL " +
-        "plus a Supabase admin key."
+        "plus NEXT_PUBLIC_SUPABASE_ANON_KEY/SUPABASE_ANON_KEY and command-scoped " +
+        "SUPABASE_AUTH_ADMIN_KEY.",
     );
   }
 
-  return { appBaseUrl, adminKey, supabaseUrl };
+  return { anonKey, appBaseUrl, adminKey, supabaseUrl };
 }
 
 function extractActionLink(payload: GenerateLinkResponse): string {
   const actionLink = payload.action_link ?? payload.properties?.action_link;
   if (!actionLink) {
     throw new Error(
-      `Supabase admin generate_link did not return an action link: ${JSON.stringify(payload)}`
+      `Supabase admin generate_link did not return an action link: ${JSON.stringify(payload)}`,
     );
   }
   return actionLink;
@@ -77,7 +78,7 @@ function encodeSupabaseCookieValue(session: SupabaseSessionPayload): string {
 
 function chunkCookie(
   name: string,
-  value: string
+  value: string,
 ): Array<{ name: string; value: string }> {
   const maxCookieValueBytes = 3_800;
   if (value.length <= maxCookieValueBytes) {
@@ -107,7 +108,10 @@ function readHashSessionTokens(pageUrl: string): HashSessionTokens | null {
 
   const tokenType = hashParams.get("token_type") ?? "bearer";
   const expiresIn = Number.parseInt(hashParams.get("expires_in") ?? "3600", 10);
-  const expiresAtFromHash = Number.parseInt(hashParams.get("expires_at") ?? "", 10);
+  const expiresAtFromHash = Number.parseInt(
+    hashParams.get("expires_at") ?? "",
+    10,
+  );
   const nowSeconds = Math.floor(Date.now() / 1000);
   const expiresAt =
     Number.isFinite(expiresAtFromHash) && expiresAtFromHash > nowSeconds
@@ -126,16 +130,16 @@ function readHashSessionTokens(pageUrl: string): HashSessionTokens | null {
 async function fetchSessionUser(
   request: APIRequestContext,
   env: ResolvedAuthEnv,
-  accessToken: string
+  accessToken: string,
 ): Promise<Record<string, unknown>> {
   const response = await request.get(
     `${env.supabaseUrl.replace(/\/$/, "")}/auth/v1/user`,
     {
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        apikey: env.adminKey,
+        apikey: env.anonKey,
       },
-    }
+    },
   );
 
   const responseBody = await response.text();
@@ -147,7 +151,7 @@ async function persistSessionCookies(
   page: Page,
   request: APIRequestContext,
   env: ResolvedAuthEnv,
-  tokens: HashSessionTokens
+  tokens: HashSessionTokens,
 ) {
   const user = await fetchSessionUser(request, env, tokens.accessToken);
   const cookieName = sessionCookieBaseName(env.supabaseUrl);
@@ -168,7 +172,7 @@ async function persistSessionCookies(
       httpOnly: false,
       secure: false,
       expires: tokens.expiresAt,
-    }))
+    })),
   );
 }
 
@@ -176,7 +180,7 @@ async function completeMagicLinkInBrowser(
   page: Page,
   request: APIRequestContext,
   env: ResolvedAuthEnv,
-  actionLink: string
+  actionLink: string,
 ) {
   const verificationUrl = new URL(actionLink);
   const redirectTarget = new URL("/login", env.appBaseUrl);
@@ -194,7 +198,7 @@ async function completeMagicLinkInBrowser(
   const hashSessionTokens = readHashSessionTokens(currentUrl);
   if (!hashSessionTokens) {
     throw new Error(
-      `Magic-link verification did not yield session hash tokens. Final URL: ${currentUrl}`
+      `Magic-link verification did not yield session hash tokens. Final URL: ${currentUrl}`,
     );
   }
 
@@ -203,7 +207,7 @@ async function completeMagicLinkInBrowser(
 
 async function createMagicLink(
   request: APIRequestContext,
-  env: ResolvedAuthEnv
+  env: ResolvedAuthEnv,
 ): Promise<string> {
   const response = await request.post(
     `${env.supabaseUrl.replace(/\/$/, "")}/auth/v1/admin/generate_link`,
@@ -220,7 +224,7 @@ async function createMagicLink(
           redirectTo: `${env.appBaseUrl}/libraries`,
         },
       },
-    }
+    },
   );
 
   const responseBody = await response.text();
@@ -230,7 +234,7 @@ async function createMagicLink(
 
 export async function bootstrapMagicLinkSession(
   page: Page,
-  request: APIRequestContext
+  request: APIRequestContext,
 ) {
   const env = resolveAuthEnv();
   const actionLink = await createMagicLink(request, env);

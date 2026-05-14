@@ -23,7 +23,7 @@ Definitions used throughout this document:
 - `implementation`: internal helper calls, module wiring, service composition, ORM query shape, React child composition details, or framework internals.
 - `internal boundary`: code owned by this repo (for example `nexus.services.*`, `apps/web/src/lib/*`, Next.js BFF proxy code in this app).
 - `external boundary`: third-party systems or APIs outside this repo (for example LLM providers, external object storage, external auth verification providers).
-- `real stack`: real running app services and dependencies used in local/CI (Next.js, FastAPI, PostgreSQL, Supabase local), not mocked equivalents.
+- `real stack`: real running app services and dependencies used in local/CI (Next.js, FastAPI, PostgreSQL, MinIO/R2-compatible storage, Supabase local Auth), not mocked equivalents.
 
 ## 3. Command Surface
 
@@ -414,7 +414,7 @@ Expected marker set in `python/pyproject.toml`:
 - `unit`: pure logic tests, no DB/network
 - `integration`: DB/API-backed tests
 - `slow`: tests that are materially slower than normal local feedback loops
-- `supabase`: requires Supabase local auth/storage services
+- `supabase`: requires Supabase local Auth services
 
 Rules:
 
@@ -467,7 +467,7 @@ make test-android       # Android instrumentation tests on a connected device/em
 make verify-android     # Android lint + debug/test APK build
 make verify-android-release # signed Android release APK build + signer verification
 make test-migrations     # migration/schema tests only
-make test-supabase       # Supabase-local auth/storage tests only
+make test-supabase       # Supabase-local Auth tests only
 make test-e2e-ui    # Playwright UI mode
 cd e2e && bun run test:csp -- tests/youtube-transcript.csp.spec.ts --project=chromium-csp # strict CSP runtime assertions
 ```

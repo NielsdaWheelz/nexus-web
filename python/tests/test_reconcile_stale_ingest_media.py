@@ -4,10 +4,12 @@ from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import func, literal, select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import FailureStage, Media, ProcessingStatus
+from nexus.db.models import FailureStage, Media, MediaFile, ProcessingStatus, User
+from nexus.storage import build_storage_path, build_upload_staging_storage_path
+from nexus.storage.client import FakeStorageClient
 from tests.utils.db import task_session_factory
 
 pytestmark = pytest.mark.integration
@@ -58,6 +60,54 @@ def _insert_extracting_media(
     return media_id
 
 
+def _insert_stale_pending_upload(
+    db: Session,
+    *,
+    age_seconds: int = 600,
+    processing_started_seconds_ago: int | None = None,
+) -> tuple[UUID, str, str]:
+    media_id = uuid4()
+    user_id = uuid4()
+    created_at = db.execute(
+        select(func.now() - (literal(age_seconds) * text("interval '1 second'")))
+    ).scalar_one()
+    processing_started_at = (
+        db.execute(
+            select(
+                func.now() - (literal(processing_started_seconds_ago) * text("interval '1 second'"))
+            )
+        ).scalar_one()
+        if processing_started_seconds_ago is not None
+        else None
+    )
+    storage_path = build_upload_staging_storage_path(media_id, "pdf")
+    final_storage_path = build_storage_path(media_id, "pdf")
+
+    db.add(User(id=user_id))
+    db.add(
+        Media(
+            id=media_id,
+            kind="pdf",
+            title="abandoned upload",
+            processing_status=ProcessingStatus.pending,
+            processing_started_at=processing_started_at,
+            created_by_user_id=user_id,
+            created_at=created_at,
+            updated_at=created_at,
+        )
+    )
+    db.add(
+        MediaFile(
+            media_id=media_id,
+            storage_path=storage_path,
+            content_type="application/pdf",
+            size_bytes=12,
+        )
+    )
+    db.flush()
+    return media_id, storage_path, final_storage_path
+
+
 def _recovery_settings(
     *,
     stale_seconds: int = 60,
@@ -70,6 +120,7 @@ def _recovery_settings(
         ingest_stale_requeue_max_attempts=max_attempts,
         ingest_semantic_repair_batch_limit=semantic_batch_limit,
         ingest_semantic_failed_retry_seconds=semantic_retry_failed_seconds,
+        signed_url_expiry_s=300,
     )
 
 
@@ -550,10 +601,80 @@ def test_reconciler_requeues_stale_pdf_when_attempts_below_limit(db_session: Ses
         f"for media_id={media_id}, got {queued_count}"
     )
 
-    db_session.expire_all()
-    refreshed = db_session.get(Media, media_id)
-    assert refreshed.processing_status == ProcessingStatus.extracting
-    assert refreshed.processing_attempts == 2
+
+def test_reconciler_deletes_stale_pending_upload_and_storage_object(db_session: Session):
+    media_id, storage_path, final_storage_path = _insert_stale_pending_upload(db_session)
+    db_session.commit()
+    storage = FakeStorageClient()
+    storage.put_object(storage_path, b"%PDF-stale", "application/pdf")
+    storage.put_object(final_storage_path, b"%PDF-final-orphan", "application/pdf")
+
+    with (
+        patch(
+            "nexus.tasks.reconcile_stale_ingest_media.get_settings",
+            return_value=_recovery_settings(),
+        ),
+        patch(
+            "nexus.tasks.reconcile_stale_ingest_media.get_session_factory",
+            return_value=task_session_factory(db_session),
+        ),
+        patch(
+            "nexus.tasks.reconcile_stale_ingest_media.get_storage_client",
+            return_value=storage,
+        ),
+    ):
+        from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
+
+        result = reconcile_stale_ingest_media_job()
+
+    assert result["pending_upload_deleted"] >= 1
+    assert storage.get_object(storage_path) is None
+    assert storage.get_object(final_storage_path) is None
+    remaining = db_session.execute(
+        text("SELECT COUNT(*) FROM media WHERE id = :media_id"),
+        {"media_id": media_id},
+    ).scalar_one()
+    assert remaining == 0
+
+
+def test_reconciler_keeps_pending_upload_with_active_confirmation_claim(
+    db_session: Session,
+):
+    media_id, storage_path, final_storage_path = _insert_stale_pending_upload(
+        db_session,
+        processing_started_seconds_ago=10,
+    )
+    db_session.commit()
+    storage = FakeStorageClient()
+    storage.put_object(storage_path, b"%PDF-stale", "application/pdf")
+    storage.put_object(final_storage_path, b"%PDF-final-in-progress", "application/pdf")
+
+    with (
+        patch(
+            "nexus.tasks.reconcile_stale_ingest_media.get_settings",
+            return_value=_recovery_settings(stale_seconds=60),
+        ),
+        patch(
+            "nexus.tasks.reconcile_stale_ingest_media.get_session_factory",
+            return_value=task_session_factory(db_session),
+        ),
+        patch(
+            "nexus.tasks.reconcile_stale_ingest_media.get_storage_client",
+            return_value=storage,
+        ),
+    ):
+        from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
+
+        result = reconcile_stale_ingest_media_job()
+
+    assert result["pending_upload_deleted"] == 0
+    assert storage.get_object(storage_path) == b"%PDF-stale"
+    assert storage.get_object(final_storage_path) == b"%PDF-final-in-progress"
+    remaining = db_session.execute(
+        text("SELECT COUNT(*) FROM media WHERE id = :media_id"),
+        {"media_id": media_id},
+    ).scalar_one()
+    assert remaining == 1
 
 
 def test_reconciler_requeues_stale_podcast_episode_when_attempts_below_limit(

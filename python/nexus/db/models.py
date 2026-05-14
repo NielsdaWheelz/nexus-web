@@ -1281,8 +1281,8 @@ class ContributorIdentityEvent(Base):
 class MediaFile(Base):
     """Media file storage metadata (0..1 per media).
 
-    Stores metadata about files uploaded to Supabase Storage.
-    The actual file is stored in storage, not in the database.
+    Stores metadata about files uploaded to object storage.
+    The actual file is stored outside the database.
     """
 
     __tablename__ = "media_file"

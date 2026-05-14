@@ -13,7 +13,15 @@ const API_PORT = process.env.API_PORT ?? "8000";
 const REAL_MEDIA_ENABLED = process.env.E2E_REAL_MEDIA === "1";
 const RUNTIME_ENV = REAL_MEDIA_ENABLED ? "local" : "test";
 
-process.env.NEXUS_KEY_ENCRYPTION_KEY ??= "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+process.env.NEXUS_KEY_ENCRYPTION_KEY ??=
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+const appRuntimeEnv = { ...process.env };
+delete appRuntimeEnv.SERVICE_ROLE_KEY;
+delete appRuntimeEnv.SUPABASE_AUTH_ADMIN_KEY;
+delete appRuntimeEnv.SUPABASE_DATABASE_URL;
+delete appRuntimeEnv.SUPABASE_SERVICE_KEY;
+delete appRuntimeEnv.SUPABASE_SERVICE_ROLE_KEY;
 
 export default defineConfig({
   globalSetup: "./global-setup.mjs",
@@ -64,7 +72,7 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 60_000,
       env: {
-        ...process.env,
+        ...appRuntimeEnv,
         NEXUS_ENV: RUNTIME_ENV,
         E2E_DISABLE_CSP: "1",
         E2E_DISABLE_NEXT_DEV_INDICATOR: "1",
@@ -77,7 +85,7 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 30_000,
       env: {
-        ...process.env,
+        ...appRuntimeEnv,
         NEXUS_ENV: RUNTIME_ENV,
         SIGNED_URL_EXPIRY_S: process.env.SIGNED_URL_EXPIRY_S ?? "8",
       },

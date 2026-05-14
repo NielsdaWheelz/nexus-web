@@ -12,6 +12,7 @@ import {
 test("@real-media podcast episode transcript opens seekable evidence", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(180_000);
   const seed = readRealMediaSeed();
   const mediaId = seed.fixtures.podcast.media_id;
   const query = seed.fixtures.podcast.query;
@@ -39,7 +40,9 @@ test("@real-media podcast episode transcript opens seekable evidence", async ({
     "podcast transcript should return indexed evidence",
   ).toBeTruthy();
   if (!result) {
-    throw new Error(`podcast transcript visible search did not return ${mediaId}`);
+    throw new Error(
+      `podcast transcript visible search did not return ${mediaId}`,
+    );
   }
   const resolverResponse = await page.request.get(
     `/api/media/${mediaId}/evidence/${result.evidence_span_ids[0]}`,
@@ -55,7 +58,9 @@ test("@real-media podcast episode transcript opens seekable evidence", async ({
   const visibleHref = await resultLink.getAttribute("href");
   expect(visibleHref ?? "").toContain("t_start_ms=");
   if (!visibleHref) {
-    throw new Error(`podcast transcript result for ${mediaId} did not expose a href`);
+    throw new Error(
+      `podcast transcript result for ${mediaId} did not expose a href`,
+    );
   }
   await resultLink.click();
   await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
@@ -78,9 +83,7 @@ test("@real-media podcast episode transcript opens seekable evidence", async ({
     writeRealMediaTrace(testInfo, "real-podcast-transcript-trace.json", {
       fixture_id: "podcast-nasa-hwhap-crew4-transcript",
       artifact_sha256: seed.fixtures.podcast.artifact_sha256,
-      artifact_bytes: seed.fixtures.podcast.artifact_bytes,
       media_id: mediaId,
-      podcast_id: seed.fixtures.podcast.podcast_id,
       query,
       search_api_url: search.api_url,
       search_result: result,

@@ -26,10 +26,60 @@ def upgrade() -> None:
             postgresql_concurrently=True,
         )
         op.create_index(
+            "idx_background_jobs_due_claim_by_kind",
+            "background_jobs",
+            ["kind", "priority", "available_at", "created_at", "id"],
+            postgresql_where=sa.text("status IN ('pending', 'failed')"),
+            postgresql_concurrently=True,
+        )
+        op.create_index(
             "idx_background_jobs_running_expired_claim",
             "background_jobs",
             ["priority", "lease_expires_at", "created_at", "id"],
-            postgresql_where=sa.text("status = 'running' AND lease_expires_at IS NOT NULL"),
+            postgresql_where=sa.text(
+                "status = 'running' AND lease_expires_at IS NOT NULL"
+            ),
+            postgresql_concurrently=True,
+        )
+        op.create_index(
+            "idx_background_jobs_running_expired_claim_by_kind",
+            "background_jobs",
+            ["kind", "priority", "lease_expires_at", "created_at", "id"],
+            postgresql_where=sa.text(
+                "status = 'running' AND lease_expires_at IS NOT NULL"
+            ),
+            postgresql_concurrently=True,
+        )
+        op.create_index(
+            "idx_background_jobs_wait_due",
+            "background_jobs",
+            ["available_at", "id"],
+            postgresql_where=sa.text("status IN ('pending', 'failed')"),
+            postgresql_concurrently=True,
+        )
+        op.create_index(
+            "idx_background_jobs_wait_due_by_kind",
+            "background_jobs",
+            ["kind", "available_at", "id"],
+            postgresql_where=sa.text("status IN ('pending', 'failed')"),
+            postgresql_concurrently=True,
+        )
+        op.create_index(
+            "idx_background_jobs_wait_running",
+            "background_jobs",
+            ["lease_expires_at", "id"],
+            postgresql_where=sa.text(
+                "status = 'running' AND lease_expires_at IS NOT NULL"
+            ),
+            postgresql_concurrently=True,
+        )
+        op.create_index(
+            "idx_background_jobs_wait_running_by_kind",
+            "background_jobs",
+            ["kind", "lease_expires_at", "id"],
+            postgresql_where=sa.text(
+                "status = 'running' AND lease_expires_at IS NOT NULL"
+            ),
             postgresql_concurrently=True,
         )
         op.create_index(
@@ -53,10 +103,23 @@ def upgrade() -> None:
             postgresql_concurrently=True,
         )
         op.create_index(
+            "idx_media_stale_pending_upload_cleanup",
+            "media",
+            ["created_at", "processing_started_at", "id"],
+            postgresql_where=sa.text(
+                "processing_status = 'pending' "
+                "AND kind IN ('pdf', 'epub') "
+                "AND file_sha256 IS NULL"
+            ),
+            postgresql_concurrently=True,
+        )
+        op.create_index(
             "ix_media_content_index_states_repair_waiting",
             "media_content_index_states",
             ["updated_at", "media_id"],
-            postgresql_where=sa.text("status IN ('pending', 'failed') AND active_run_id IS NULL"),
+            postgresql_where=sa.text(
+                "status IN ('pending', 'failed') AND active_run_id IS NULL"
+            ),
             postgresql_concurrently=True,
         )
         op.create_index(
@@ -106,6 +169,11 @@ def downgrade() -> None:
             postgresql_concurrently=True,
         )
         op.drop_index(
+            "idx_media_stale_pending_upload_cleanup",
+            table_name="media",
+            postgresql_concurrently=True,
+        )
+        op.drop_index(
             "idx_media_stale_extracting_recovery",
             table_name="media",
             postgresql_concurrently=True,
@@ -116,12 +184,42 @@ def downgrade() -> None:
             postgresql_concurrently=True,
         )
         op.drop_index(
+            "idx_background_jobs_wait_running",
+            table_name="background_jobs",
+            postgresql_concurrently=True,
+        )
+        op.drop_index(
+            "idx_background_jobs_wait_running_by_kind",
+            table_name="background_jobs",
+            postgresql_concurrently=True,
+        )
+        op.drop_index(
+            "idx_background_jobs_wait_due",
+            table_name="background_jobs",
+            postgresql_concurrently=True,
+        )
+        op.drop_index(
+            "idx_background_jobs_wait_due_by_kind",
+            table_name="background_jobs",
+            postgresql_concurrently=True,
+        )
+        op.drop_index(
             "idx_background_jobs_running_expired_claim",
             table_name="background_jobs",
             postgresql_concurrently=True,
         )
         op.drop_index(
+            "idx_background_jobs_running_expired_claim_by_kind",
+            table_name="background_jobs",
+            postgresql_concurrently=True,
+        )
+        op.drop_index(
             "idx_background_jobs_due_claim",
+            table_name="background_jobs",
+            postgresql_concurrently=True,
+        )
+        op.drop_index(
+            "idx_background_jobs_due_claim_by_kind",
             table_name="background_jobs",
             postgresql_concurrently=True,
         )

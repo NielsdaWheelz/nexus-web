@@ -1,44 +1,32 @@
-"""Supabase Storage client abstraction.
-
-Provides a clean interface for storage operations with:
-- Signed upload URLs (for direct browser uploads)
-- Signed download URLs (for secure file access)
-- Object existence checks
-- Object streaming (for hashing)
-- Object deletion
-
-The client uses Supabase's signed URL mechanisms for secure access.
-All methods receive the full storage_path directly - no prefix manipulation.
-"""
+"""Cloudflare R2 storage client."""
 
 import hashlib
-import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import BinaryIO
 from uuid import uuid4
 
-import httpx
+import boto3
+from botocore.client import BaseClient, Config
+from botocore.exceptions import BotoCoreError, ClientError
+
+from nexus.config import get_settings
 
 
 @dataclass(frozen=True)
 class SignedUpload:
-    """Supabase signed upload response.
-
-    Use with supabase.storage.uploadToSignedUrl(path, token, file) on client.
-    """
+    """Signed direct-upload URL for a storage path."""
 
     path: str
-    token: str
+    upload_url: str
 
 
 @dataclass(frozen=True)
 class ObjectMetadata:
     """Storage object metadata.
 
-    Advisory only - do not trust for security validation.
-    Only reliable signal is existence (None vs not-None from head_object).
+    Metadata is advisory. The reliable existence signal is None vs not-None
+    from head_object().
     """
 
     content_type: str
@@ -46,7 +34,7 @@ class ObjectMetadata:
 
 
 class StorageClientBase(ABC):
-    """Abstract base class for storage client implementations."""
+    """Storage operations used by services and tasks."""
 
     @abstractmethod
     def sign_upload(
@@ -54,21 +42,10 @@ class StorageClientBase(ABC):
         path: str,
         *,
         content_type: str,
+        size_bytes: int,
         expires_in: int = 300,
     ) -> SignedUpload:
-        """Create a signed upload URL for direct browser upload.
-
-        Args:
-            path: Full storage path (e.g., "media/{id}/original.pdf").
-            content_type: Expected content type for the upload.
-            expires_in: URL validity in seconds.
-
-        Returns:
-            SignedUpload with path and token for uploadToSignedUrl().
-
-        Raises:
-            StorageError: If signing fails.
-        """
+        """Create a signed URL for browser direct upload."""
         ...
 
     @abstractmethod
@@ -78,48 +55,17 @@ class StorageClientBase(ABC):
         *,
         expires_in: int = 300,
     ) -> str:
-        """Create a signed download URL.
-
-        Args:
-            path: Full storage path.
-            expires_in: URL validity in seconds.
-
-        Returns:
-            Signed URL string.
-
-        Raises:
-            StorageError: If signing fails.
-        """
+        """Create a signed URL for downloading an object."""
         ...
 
     @abstractmethod
     def head_object(self, path: str) -> ObjectMetadata | None:
-        """Check if object exists and get metadata.
-
-        Args:
-            path: Full storage path.
-
-        Returns:
-            ObjectMetadata if object exists, None otherwise.
-            Note: Metadata values are advisory only.
-        """
+        """Return object metadata, or None when the object is missing."""
         ...
 
     @abstractmethod
     def stream_object(self, path: str) -> Iterator[bytes]:
-        """Stream object content in chunks.
-
-        Used for hashing and validation from actual bytes.
-
-        Args:
-            path: Full storage path.
-
-        Yields:
-            Chunks of bytes.
-
-        Raises:
-            StorageError: If object doesn't exist or streaming fails.
-        """
+        """Stream object bytes in chunks."""
         ...
 
     @abstractmethod
@@ -129,27 +75,17 @@ class StorageClientBase(ABC):
         content: bytes,
         content_type: str = "application/octet-stream",
     ) -> None:
-        """Upload bytes to a storage object path.
+        """Upload bytes to an object path."""
+        ...
 
-        Args:
-            path: Full storage path.
-            content: Binary payload to upload.
-            content_type: MIME type metadata for the object.
-
-        Raises:
-            StorageError: If upload fails.
-        """
+    @abstractmethod
+    def copy_object(self, source_path: str, destination_path: str) -> None:
+        """Copy one object to another path inside the same bucket."""
         ...
 
     @abstractmethod
     def delete_object(self, path: str) -> None:
-        """Delete an object from storage.
-
-        Best-effort operation - logs errors but doesn't raise.
-
-        Args:
-            path: Full storage path.
-        """
+        """Delete an object path."""
         ...
 
 
@@ -163,69 +99,55 @@ class StorageError(Exception):
 
 
 class StorageClient(StorageClientBase):
-    """Production Supabase Storage client.
-
-    Uses httpx for HTTP operations against Supabase Storage API.
-    """
+    """Cloudflare R2 client using the S3-compatible API."""
 
     def __init__(
         self,
-        supabase_url: str,
-        service_key: str,
-        bucket: str = "media",
+        endpoint_url: str,
+        access_key_id: str,
+        secret_access_key: str,
+        bucket: str,
+        region: str = "auto",
+        s3_client: BaseClient | None = None,
     ):
-        """Initialize the storage client.
-
-        Args:
-            supabase_url: Supabase project URL (e.g., https://xxx.supabase.co).
-            service_key: Supabase service role key.
-            bucket: Storage bucket name.
-        """
-        self._base_url = supabase_url.rstrip("/")
-        self._service_key = service_key
         self._bucket = bucket
-        self._storage_url = f"{self._base_url}/storage/v1"
-        self._headers = {
-            "Authorization": f"Bearer {service_key}",
-            "apikey": service_key,
-        }
+        self._client = s3_client or boto3.client(
+            "s3",
+            endpoint_url=endpoint_url.rstrip("/"),
+            aws_access_key_id=access_key_id,
+            aws_secret_access_key=secret_access_key,
+            region_name=region,
+            config=Config(
+                signature_version="s3v4",
+                s3={"addressing_style": "path"},
+                request_checksum_calculation="when_required",
+                response_checksum_validation="when_required",
+            ),
+        )
 
     def sign_upload(
         self,
         path: str,
         *,
         content_type: str,
+        size_bytes: int,
         expires_in: int = 300,
     ) -> SignedUpload:
-        """Create signed upload URL via Supabase Storage API."""
-        # Supabase uses POST /object/upload/sign/{bucket}/{path}
-        url = f"{self._storage_url}/object/upload/sign/{self._bucket}/{path}"
-
-        with httpx.Client() as client:
-            response = client.post(
-                url,
-                headers=self._headers,
-                json={"expiresIn": expires_in},
-                timeout=30.0,
+        try:
+            upload_url = self._client.generate_presigned_url(
+                "put_object",
+                Params={
+                    "Bucket": self._bucket,
+                    "Key": path,
+                    "ContentType": content_type,
+                    "ContentLength": int(size_bytes),
+                },
+                ExpiresIn=expires_in,
+                HttpMethod="PUT",
             )
-
-            if response.status_code != 200:
-                raise StorageError(
-                    f"Failed to sign upload: {response.status_code} {response.text}",
-                    code="E_SIGN_UPLOAD_FAILED",
-                )
-
-            data = response.json()
-            # Supabase returns { url: "...", token: "..." }
-            # The token is what we need for uploadToSignedUrl
-            token = data.get("token", "")
-            if not token:
-                # Fallback: extract from URL if token not in response
-                signed_url = data.get("url", "")
-                if "token=" in signed_url:
-                    token = signed_url.split("token=")[1].split("&")[0]
-
-            return SignedUpload(path=path, token=token)
+        except (BotoCoreError, ClientError) as exc:
+            raise StorageError(f"Failed to sign upload for {path}") from exc
+        return SignedUpload(path=path, upload_url=upload_url)
 
     def sign_download(
         self,
@@ -233,96 +155,52 @@ class StorageClient(StorageClientBase):
         *,
         expires_in: int = 300,
     ) -> str:
-        """Create signed download URL via Supabase Storage API."""
-        # Supabase uses POST /object/sign/{bucket}/{path}
-        url = f"{self._storage_url}/object/sign/{self._bucket}/{path}"
-
-        with httpx.Client() as client:
-            response = client.post(
-                url,
-                headers=self._headers,
-                json={"expiresIn": expires_in},
-                timeout=30.0,
+        try:
+            return self._client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": self._bucket, "Key": path},
+                ExpiresIn=expires_in,
+                HttpMethod="GET",
             )
-
-            if response.status_code != 200:
-                raise StorageError(
-                    f"Failed to sign download: {response.status_code} {response.text}",
-                    code="E_SIGN_DOWNLOAD_FAILED",
-                )
-
-            data = response.json()
-            signed_path = data.get("signedURL") or data.get("signedUrl") or ""
-            if not signed_path:
-                raise StorageError(
-                    "Failed to sign download: missing signed URL",
-                    code="E_SIGN_DOWNLOAD_FAILED",
-                )
-
-            # Supabase may return relative paths (with or without /storage/v1).
-            if signed_path.startswith("http://") or signed_path.startswith("https://"):
-                return signed_path
-
-            if signed_path.startswith("/storage/"):
-                return f"{self._base_url}{signed_path}"
-
-            if signed_path.startswith("/object/"):
-                return f"{self._storage_url}{signed_path}"
-
-            if signed_path.startswith("storage/"):
-                return f"{self._base_url}/{signed_path.lstrip('/')}"
-
-            if signed_path.startswith("object/"):
-                return f"{self._storage_url}/{signed_path.lstrip('/')}"
-
-            if signed_path.startswith("/"):
-                return f"{self._base_url}{signed_path}"
-
-            # Fallback to storage base if the API returns a bare path.
-            return f"{self._storage_url}/{signed_path.lstrip('/')}"
+        except (BotoCoreError, ClientError) as exc:
+            raise StorageError(f"Failed to sign download for {path}") from exc
 
     def head_object(self, path: str) -> ObjectMetadata | None:
-        """Check object existence via HEAD request."""
-        # Use the public/authenticated object endpoint
-        url = f"{self._storage_url}/object/{self._bucket}/{path}"
-
-        with httpx.Client() as client:
-            response = client.head(url, headers=self._headers, timeout=30.0)
-
-            if response.status_code == 404:
+        try:
+            response = self._client.head_object(Bucket=self._bucket, Key=path)
+        except ClientError as exc:
+            if _client_error_is_missing(exc):
                 return None
+            raise StorageError(f"Failed to read object metadata for {path}") from exc
+        except BotoCoreError as exc:
+            raise StorageError(f"Failed to read object metadata for {path}") from exc
 
-            if response.status_code != 200:
-                # Treat other errors as "doesn't exist" for safety
-                return None
-
-            content_type = response.headers.get("content-type", "application/octet-stream")
-            content_length = response.headers.get("content-length", "0")
-
-            return ObjectMetadata(
-                content_type=content_type,
-                size_bytes=int(content_length),
-            )
+        return ObjectMetadata(
+            content_type=str(response.get("ContentType") or "application/octet-stream"),
+            size_bytes=int(response.get("ContentLength") or 0),
+        )
 
     def stream_object(self, path: str) -> Iterator[bytes]:
-        """Stream object content via authenticated GET request."""
-        url = f"{self._storage_url}/object/{self._bucket}/{path}"
+        try:
+            response = self._client.get_object(Bucket=self._bucket, Key=path)
+        except ClientError as exc:
+            if _client_error_is_missing(exc):
+                raise StorageError(f"Object not found: {path}", code="E_STORAGE_MISSING") from exc
+            raise StorageError(f"Failed to stream object {path}") from exc
+        except BotoCoreError as exc:
+            raise StorageError(f"Failed to stream object {path}") from exc
 
-        with httpx.Client() as client:
-            with client.stream("GET", url, headers=self._headers, timeout=60.0) as response:
-                if response.status_code == 404:
-                    raise StorageError(
-                        f"Object not found: {path}",
-                        code="E_STORAGE_MISSING",
-                    )
-
-                if response.status_code != 200:
-                    raise StorageError(
-                        f"Failed to stream object: {response.status_code}",
-                        code="E_STORAGE_ERROR",
-                    )
-
-                yield from response.iter_bytes(chunk_size=8 * 1024 * 1024)  # 8 MiB chunks
+        body = response["Body"]
+        try:
+            try:
+                while chunk := body.read(8 * 1024 * 1024):
+                    yield chunk
+            except (BotoCoreError, ClientError, OSError) as exc:
+                raise StorageError(f"Failed to stream object {path}") from exc
+        finally:
+            close = getattr(body, "close", None)
+            if close:
+                close()
 
     def put_object(
         self,
@@ -330,72 +208,53 @@ class StorageClient(StorageClientBase):
         content: bytes,
         content_type: str = "application/octet-stream",
     ) -> None:
-        """Upload object bytes via authenticated POST request.
-
-        Uses upsert semantics so deterministic asset writes remain idempotent
-        across retries for the same media row.
-        """
-        url = f"{self._storage_url}/object/{self._bucket}/{path}"
-        headers = {
-            **self._headers,
-            "Content-Type": content_type,
-            "x-upsert": "true",
-        }
-
-        with httpx.Client() as client:
-            response = client.post(url, headers=headers, content=content, timeout=60.0)
-
-        if response.status_code not in (200, 201):
-            raise StorageError(
-                f"Failed to upload object: {response.status_code} {response.text}",
-                code="E_STORAGE_ERROR",
+        try:
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=path,
+                Body=content,
+                ContentType=content_type,
             )
+        except (BotoCoreError, ClientError) as exc:
+            raise StorageError(f"Failed to upload object {path}") from exc
+
+    def copy_object(self, source_path: str, destination_path: str) -> None:
+        try:
+            self._client.copy_object(
+                Bucket=self._bucket,
+                Key=destination_path,
+                CopySource={"Bucket": self._bucket, "Key": source_path},
+            )
+        except (BotoCoreError, ClientError) as exc:
+            raise StorageError(
+                f"Failed to copy object {source_path} to {destination_path}"
+            ) from exc
 
     def delete_object(self, path: str) -> None:
-        """Delete object from storage (best-effort)."""
-        url = f"{self._storage_url}/object/{self._bucket}/{path}"
-
         try:
-            with httpx.Client() as client:
-                response = client.delete(url, headers=self._headers, timeout=30.0)
-                # Log but don't raise on failure
-                if response.status_code not in (200, 204, 404):
-                    # Use standard logging instead of print
-                    import logging
-
-                    logging.getLogger(__name__).warning(
-                        "Storage delete failed: %s %s",
-                        response.status_code,
-                        response.text,
-                    )
-        except Exception as e:
-            import logging
-
-            logging.getLogger(__name__).warning("Storage delete error: %s", e)
+            self._client.delete_object(Bucket=self._bucket, Key=path)
+        except (BotoCoreError, ClientError) as exc:
+            raise StorageError(f"Failed to delete object {path}") from exc
 
 
 class FakeStorageClient(StorageClientBase):
-    """Fake storage client for testing without real Supabase.
-
-    Stores files in memory and provides deterministic behavior for unit tests.
-    """
+    """In-memory storage client for unit tests."""
 
     def __init__(self):
-        self._objects: dict[str, tuple[bytes, str]] = {}  # path -> (content, content_type)
-        self._signed_uploads: dict[str, str] = {}  # path -> token
+        self._objects: dict[str, tuple[bytes, str]] = {}
 
     def sign_upload(
         self,
         path: str,
         *,
         content_type: str,
+        size_bytes: int,
         expires_in: int = 300,
     ) -> SignedUpload:
-        """Create a fake signed upload token."""
-        token = f"fake-token-{uuid4()}"
-        self._signed_uploads[path] = token
-        # Pre-create empty entry so head_object returns None until actual upload
-        return SignedUpload(path=path, token=token)
+        return SignedUpload(
+            path=path,
+            upload_url=f"https://fake-storage.test/upload/{path}?signature=fake-{uuid4()}",
+        )
 
     def sign_download(
         self,
@@ -403,94 +262,93 @@ class FakeStorageClient(StorageClientBase):
         *,
         expires_in: int = 300,
     ) -> str:
-        """Create a fake signed download URL."""
-        return f"https://fake-storage.test/download/{path}?token=fake-{uuid4()}"
+        return f"https://fake-storage.test/download/{path}?signature=fake-{uuid4()}"
 
     def head_object(self, path: str) -> ObjectMetadata | None:
-        """Check if fake object exists."""
         if path not in self._objects:
             return None
         content, content_type = self._objects[path]
-        return ObjectMetadata(
-            content_type=content_type,
-            size_bytes=len(content),
-        )
+        return ObjectMetadata(content_type=content_type, size_bytes=len(content))
 
     def stream_object(self, path: str) -> Iterator[bytes]:
-        """Stream fake object content."""
         if path not in self._objects:
-            raise StorageError(
-                f"Object not found: {path}",
-                code="E_STORAGE_MISSING",
-            )
+            raise StorageError(f"Object not found: {path}", code="E_STORAGE_MISSING")
         content, _ = self._objects[path]
-        # Yield in chunks like real client
-        chunk_size = 8 * 1024 * 1024
-        for i in range(0, len(content), chunk_size):
-            yield content[i : i + chunk_size]
+        for i in range(0, len(content), 8 * 1024 * 1024):
+            yield content[i : i + 8 * 1024 * 1024]
 
-    def delete_object(self, path: str) -> None:
-        """Delete fake object."""
-        self._objects.pop(path, None)
-
-    # Test helper methods
-
-    def put_object(self, path: str, content: bytes, content_type: str = "application/pdf") -> None:
-        """Store an object directly (test helper)."""
+    def put_object(
+        self,
+        path: str,
+        content: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> None:
         self._objects[path] = (content, content_type)
 
+    def copy_object(self, source_path: str, destination_path: str) -> None:
+        if source_path not in self._objects:
+            raise StorageError(f"Object not found: {source_path}", code="E_STORAGE_MISSING")
+        self._objects[destination_path] = self._objects[source_path]
+
+    def delete_object(self, path: str) -> None:
+        self._objects.pop(path, None)
+
     def get_object(self, path: str) -> bytes | None:
-        """Get object content directly (test helper)."""
         if path not in self._objects:
             return None
         return self._objects[path][0]
 
     def clear(self) -> None:
-        """Clear all stored objects (test helper)."""
         self._objects.clear()
-        self._signed_uploads.clear()
 
 
 def get_storage_client() -> StorageClientBase:
-    """Get the configured storage client.
+    settings = get_settings()
+    endpoint_url = settings.r2_endpoint_url
+    access_key_id = settings.r2_access_key_id
+    secret_access_key = settings.r2_secret_access_key
+    bucket = settings.r2_bucket
+    region = settings.r2_region or "auto"
 
-    Returns:
-        StorageClient if SUPABASE_URL and SUPABASE_SERVICE_KEY are set,
-        FakeStorageClient otherwise.
-    """
-    supabase_url = os.environ.get("SUPABASE_URL")
-    service_key = os.environ.get("SUPABASE_SERVICE_KEY")
-
-    if supabase_url and service_key:
-        return StorageClient(
-            supabase_url=supabase_url,
-            service_key=service_key,
+    missing = [
+        key
+        for key, value in (
+            ("R2_ENDPOINT_URL", endpoint_url),
+            ("R2_ACCESS_KEY_ID", access_key_id),
+            ("R2_SECRET_ACCESS_KEY", secret_access_key),
+            ("R2_BUCKET", bucket),
         )
+        if not value
+    ]
+    if missing:
+        raise StorageError(f"Missing R2 storage settings: {', '.join(missing)}")
 
-    # Return fake client for local dev / tests without Supabase
-    return FakeStorageClient()
+    assert endpoint_url is not None
+    assert access_key_id is not None
+    assert secret_access_key is not None
+    assert bucket is not None
+    return StorageClient(
+        endpoint_url=endpoint_url,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+        bucket=bucket,
+        region=region,
+    )
 
 
-def compute_sha256(data: bytes | BinaryIO | Iterator[bytes]) -> str:
-    """Compute SHA-256 hash of data.
-
-    Args:
-        data: Bytes, file-like object, or iterator of bytes.
-
-    Returns:
-        Hex-encoded SHA-256 hash.
-    """
+def compute_sha256(data: bytes | Iterator[bytes]) -> str:
     hasher = hashlib.sha256()
 
     if isinstance(data, bytes):
         hasher.update(data)
-    elif hasattr(data, "read"):
-        # File-like object
-        while chunk := data.read(8 * 1024 * 1024):
-            hasher.update(chunk)
     else:
-        # Iterator
         for chunk in data:
             hasher.update(chunk)
 
     return hasher.hexdigest()
+
+
+def _client_error_is_missing(exc: ClientError) -> bool:
+    response = getattr(exc, "response", {})
+    error_code = str(response.get("Error", {}).get("Code") or "")
+    return error_code in {"404", "NoSuchKey", "NotFound"}

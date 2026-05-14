@@ -28,9 +28,21 @@ from nexus.db.models import (
     MediaFile,
     ProcessingStatus,
 )
-from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
+from nexus.errors import (
+    ApiError,
+    ApiErrorCode,
+    ConflictError,
+    ForbiddenError,
+    InvalidRequestError,
+    NotFoundError,
+)
 from nexus.services import libraries as libraries_service
-from nexus.storage import build_storage_path, get_file_extension, get_storage_client
+from nexus.storage import (
+    build_storage_path,
+    build_upload_staging_storage_path,
+    get_file_extension,
+    get_storage_client,
+)
 from nexus.storage.client import StorageError
 
 logger = logging.getLogger(__name__)
@@ -124,7 +136,7 @@ def init_upload(
         size_bytes: File size in bytes.
 
     Returns:
-        Dict with media_id, storage_path, token, and expires_at.
+        Dict with media_id, upload_url, and expires_at.
 
     Raises:
         InvalidRequestError: If validation fails.
@@ -142,7 +154,7 @@ def init_upload(
 
     # Generate media_id before persisting
     media_id = uuid4()
-    storage_path = build_storage_path(media_id, ext)
+    storage_path = build_upload_staging_storage_path(media_id, ext)
 
     # Mint signed upload URL FIRST (before DB writes)
     storage_client = get_storage_client()
@@ -150,6 +162,7 @@ def init_upload(
         signed_upload = storage_client.sign_upload(
             storage_path,
             content_type=content_type,
+            size_bytes=size_bytes,
             expires_in=settings.signed_url_expiry_s,
         )
     except StorageError as e:
@@ -199,8 +212,7 @@ def init_upload(
 
     return {
         "media_id": str(media_id),
-        "storage_path": storage_path,
-        "token": signed_upload.token,
+        "upload_url": signed_upload.upload_url,
         "expires_at": expires_at.isoformat(),
     }
 
@@ -260,28 +272,25 @@ def confirm_ingest(
     settings = get_settings()
     storage_client = get_storage_client()
 
-    # Fetch media with FOR UPDATE lock
     result = db.execute(select(Media).where(Media.id == media_id).with_for_update())
     media = result.scalar()
 
     if not media:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
-    # Verify caller is creator
-    if media.created_by_user_id != viewer_id:
+    created_by_user_id = media.created_by_user_id
+    if created_by_user_id is None or created_by_user_id != viewer_id:
         raise ForbiddenError(
             ApiErrorCode.E_FORBIDDEN,
             "Only the creator can confirm upload",
         )
 
-    # Idempotency: if file_sha256 already set, ingest already completed
     if media.file_sha256 is not None:
         return {
             "media_id": str(media.id),
             "duplicate": False,
         }
 
-    # Get media_file for storage path
     media_file = media.media_file
     if not media_file:
         _mark_failed(
@@ -297,123 +306,242 @@ def confirm_ingest(
         )
 
     storage_path = media_file.storage_path
+    declared_size = int(media_file.size_bytes or 0)
+    kind = str(media.kind)
+    ext = get_file_extension(kind)
+    final_storage_path = build_storage_path(media_id, ext)
+    expected_staging_path = build_upload_staging_storage_path(media_id, ext)
+    if storage_path != expected_staging_path:
+        db.rollback()
+        raise ConflictError(
+            ApiErrorCode.E_UPLOAD_CONFLICT,
+            "Upload state is not staged for confirmation.",
+        )
+    if media.processing_started_at is not None:
+        db.rollback()
+        raise ConflictError(
+            ApiErrorCode.E_UPLOAD_CONFLICT,
+            "Upload confirmation is already in progress.",
+        )
+    now = db.execute(text("SELECT now()")).scalar_one()
+    media.processing_started_at = now
+    media.updated_at = now
+    db.commit()
 
-    # Check object exists in storage
-    metadata = storage_client.head_object(storage_path)
-    if metadata is None:
+    try:
+        computed_sha, total_bytes = _read_validated_upload_object(
+            storage_client,
+            storage_path,
+            kind,
+            declared_size,
+            max_size=settings.max_pdf_bytes if kind == "pdf" else settings.max_epub_bytes,
+        )
+    except InvalidRequestError as exc:
+        _mark_failed_and_delete_upload_by_id(
+            db,
+            media_id,
+            storage_client,
+            storage_path,
+            "upload",
+            exc.code.value,
+            exc.message,
+        )
+        raise
+    except StorageError as exc:
+        _clear_upload_confirmation_claim(db, media_id)
+        raise ApiError(
+            ApiErrorCode.E_STORAGE_ERROR,
+            "Failed to read uploaded file.",
+        ) from exc
+
+    result = db.execute(select(Media).where(Media.id == media_id).with_for_update())
+    media = result.scalar()
+    if not media:
+        _delete_upload_object(storage_client, storage_path, media_id, "missing_media")
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    created_by_user_id = media.created_by_user_id
+    if created_by_user_id is None or created_by_user_id != viewer_id:
+        _delete_upload_object(storage_client, storage_path, media_id, "forbidden_confirm")
+        raise ForbiddenError(
+            ApiErrorCode.E_FORBIDDEN,
+            "Only the creator can confirm upload",
+        )
+
+    if media.file_sha256 is not None:
+        db.commit()
+        _delete_upload_object(storage_client, storage_path, media_id, "already_confirmed")
+        return {
+            "media_id": str(media.id),
+            "duplicate": False,
+        }
+
+    media_file = media.media_file
+    if not media_file:
+        _delete_upload_object(storage_client, storage_path, media_id, "missing_media_file")
         _mark_failed(
             db,
             media,
             "upload",
             ApiErrorCode.E_STORAGE_MISSING.value,
-            "Object not found in storage",
+            "No media file record",
         )
         raise InvalidRequestError(
             ApiErrorCode.E_STORAGE_MISSING,
-            "Upload not found in storage. Please try again.",
+            "Upload not found. Please try again.",
         )
 
-    # Stream object and validate from actual bytes
+    if media_file.storage_path != storage_path or int(media_file.size_bytes or 0) != declared_size:
+        db.rollback()
+        _delete_upload_object(storage_client, storage_path, media_id, "changed_upload_state")
+        raise ConflictError(
+            ApiErrorCode.E_UPLOAD_CONFLICT,
+            "Upload state changed while it was being confirmed.",
+        )
+    if media.processing_started_at is None:
+        db.rollback()
+        raise ConflictError(
+            ApiErrorCode.E_UPLOAD_CONFLICT,
+            "Upload confirmation state was cleared while it was being confirmed.",
+        )
+
+    db.commit()
+
     try:
-        hasher = hashlib.sha256()
-        total_bytes = 0
-        first_chunk = True
-        max_size = settings.max_pdf_bytes if media.kind == "pdf" else settings.max_epub_bytes
-
-        for chunk in storage_client.stream_object(storage_path):
-            # Validate magic bytes on first chunk
-            if first_chunk:
-                if not _validate_magic_bytes(chunk, media.kind):
-                    _mark_failed(
-                        db,
-                        media,
-                        "upload",
-                        ApiErrorCode.E_INVALID_FILE_TYPE.value,
-                        f"Invalid file type: expected {media.kind}",
-                    )
-                    raise InvalidRequestError(
-                        ApiErrorCode.E_INVALID_FILE_TYPE,
-                        f"Invalid file type. Expected {media.kind}.",
-                    )
-                first_chunk = False
-
-            total_bytes += len(chunk)
-
-            # Enforce size cap
-            if total_bytes > max_size:
-                _mark_failed(
-                    db,
-                    media,
-                    "upload",
-                    ApiErrorCode.E_FILE_TOO_LARGE.value,
-                    f"File exceeds {max_size} bytes",
-                )
-                raise InvalidRequestError(
-                    ApiErrorCode.E_FILE_TOO_LARGE,
-                    f"File size exceeds maximum {max_size} bytes for {media.kind}.",
-                )
-
-            hasher.update(chunk)
-
-        computed_sha = hasher.hexdigest()
-
-    except StorageError as e:
-        _mark_failed(db, media, "upload", e.code, e.message)
-        raise InvalidRequestError(
+        storage_client.copy_object(storage_path, final_storage_path)
+        final_sha, final_size = _read_validated_upload_object(
+            storage_client,
+            final_storage_path,
+            kind,
+            declared_size,
+            max_size=settings.max_pdf_bytes if kind == "pdf" else settings.max_epub_bytes,
+        )
+    except StorageError as exc:
+        _delete_upload_object(storage_client, final_storage_path, media_id, "finalize_failed")
+        _clear_upload_confirmation_claim(db, media_id)
+        raise ApiError(
             ApiErrorCode.E_STORAGE_ERROR,
-            "Failed to read uploaded file.",
-        ) from e
+            "Failed to finalize uploaded file.",
+        ) from exc
+    except InvalidRequestError as exc:
+        _delete_upload_object(
+            storage_client, final_storage_path, media_id, "final_validation_failed"
+        )
+        _mark_failed_and_delete_upload_by_id(
+            db,
+            media_id,
+            storage_client,
+            storage_path,
+            "upload",
+            exc.code.value,
+            exc.message,
+        )
+        raise
 
-    # Check for duplicate
-    existing = _find_existing_by_hash(db, media.created_by_user_id, media.kind, computed_sha)
+    if final_sha != computed_sha or final_size != total_bytes:
+        _delete_upload_object(
+            storage_client, final_storage_path, media_id, "final_integrity_mismatch"
+        )
+        _mark_failed_and_delete_upload_by_id(
+            db,
+            media_id,
+            storage_client,
+            storage_path,
+            "upload",
+            ApiErrorCode.E_INVALID_REQUEST.value,
+            "Uploaded object changed while it was being finalized",
+        )
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Uploaded file changed while it was being finalized. Please upload the file again.",
+        )
+
+    result = db.execute(select(Media).where(Media.id == media_id).with_for_update())
+    media = result.scalar()
+    if not media:
+        _delete_upload_object(storage_client, storage_path, media_id, "missing_media_after_copy")
+        _delete_upload_object(
+            storage_client, final_storage_path, media_id, "missing_media_after_copy"
+        )
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    created_by_user_id = media.created_by_user_id
+    if created_by_user_id is None or created_by_user_id != viewer_id:
+        _delete_upload_object(storage_client, storage_path, media_id, "forbidden_after_copy")
+        _delete_upload_object(storage_client, final_storage_path, media_id, "forbidden_after_copy")
+        raise ForbiddenError(
+            ApiErrorCode.E_FORBIDDEN,
+            "Only the creator can confirm upload",
+        )
+
+    if media.file_sha256 is not None:
+        db.commit()
+        _delete_upload_object(
+            storage_client, storage_path, media_id, "already_confirmed_after_copy"
+        )
+        return {
+            "media_id": str(media.id),
+            "duplicate": False,
+        }
+
+    media_file = media.media_file
+    if not media_file:
+        _delete_upload_object(storage_client, storage_path, media_id, "missing_file_after_copy")
+        _delete_upload_object(
+            storage_client, final_storage_path, media_id, "missing_file_after_copy"
+        )
+        _mark_failed(
+            db,
+            media,
+            "upload",
+            ApiErrorCode.E_STORAGE_MISSING.value,
+            "No media file record",
+        )
+        raise InvalidRequestError(
+            ApiErrorCode.E_STORAGE_MISSING,
+            "Upload not found. Please try again.",
+        )
+
+    if media_file.storage_path != storage_path or int(media_file.size_bytes or 0) != declared_size:
+        db.rollback()
+        _delete_upload_object(storage_client, storage_path, media_id, "changed_state_after_copy")
+        _delete_upload_object(
+            storage_client, final_storage_path, media_id, "changed_state_after_copy"
+        )
+        raise ConflictError(
+            ApiErrorCode.E_UPLOAD_CONFLICT,
+            "Upload state changed while it was being confirmed.",
+        )
+
+    existing = _find_existing_by_hash(db, created_by_user_id, kind, computed_sha)
 
     if existing and existing.id != media.id:
-        # DUPLICATE: delete loser row, return winner
-        # Capture path before deletion
-        loser_path = storage_path
-
-        # Delete the media row (cascades to media_file and media library_entries)
         db.execute(
             text("DELETE FROM user_media_deletions WHERE media_id = :media_id"),
             {"media_id": media.id},
         )
         db.delete(media)
-
-        # Ensure winner is in viewer's default library
         _ensure_in_default_library(db, viewer_id, existing.id)
-
         db.commit()
 
-        # Clean up storage (best-effort, after commit)
-        try:
-            storage_client.delete_object(loser_path)
-        except Exception as e:
-            logger.warning("Failed to delete duplicate storage object: %s", e)
+        _delete_upload_object(storage_client, storage_path, media_id, "duplicate_loser")
+        _delete_upload_object(storage_client, final_storage_path, media_id, "duplicate_loser")
 
         return {
             "media_id": str(existing.id),
             "duplicate": True,
         }
 
-    # Not a duplicate: set sha256
     try:
         media.file_sha256 = computed_sha
         media.updated_at = datetime.now(UTC)
-
-        # Update media_file with actual size
         media_file.size_bytes = total_bytes
-
+        media_file.storage_path = final_storage_path
         db.flush()
     except IntegrityError:
-        # Race condition: another ingest won
         db.rollback()
-
-        # Look up winner
-        winner = _find_existing_by_hash(db, media.created_by_user_id, media.kind, computed_sha)
+        winner = _find_existing_by_hash(db, created_by_user_id, kind, computed_sha)
         if winner:
-            # Delete loser and return winner
-            loser_path = storage_path
-
             db.execute(select(Media).where(Media.id == media_id).with_for_update())
             result = db.execute(select(Media).where(Media.id == media_id))
             media_to_delete = result.scalar()
@@ -427,20 +555,23 @@ def confirm_ingest(
             _ensure_in_default_library(db, viewer_id, winner.id)
             db.commit()
 
-            try:
-                storage_client.delete_object(loser_path)
-            except Exception as e:
-                logger.warning("Failed to delete duplicate storage object: %s", e)
+            _delete_upload_object(
+                storage_client, storage_path, media_id, "integrity_duplicate_loser"
+            )
+            _delete_upload_object(
+                storage_client, final_storage_path, media_id, "integrity_duplicate_loser"
+            )
 
             return {
                 "media_id": str(winner.id),
                 "duplicate": True,
             }
 
-        # If we can't find winner, something went wrong
+        _delete_upload_object(storage_client, final_storage_path, media_id, "dedupe_failed")
         raise ApiError(ApiErrorCode.E_INTERNAL, "Unexpected error during deduplication") from None
 
     db.commit()
+    _delete_upload_object(storage_client, storage_path, media_id, "confirmed")
 
     return {
         "media_id": str(media.id),
@@ -473,6 +604,99 @@ def _mark_failed(
     db.commit()
 
 
+def _clear_upload_confirmation_claim(db: Session, media_id: UUID) -> None:
+    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
+    if media is not None and media.file_sha256 is None:
+        media.processing_started_at = None
+        media.updated_at = db.execute(text("SELECT now()")).scalar_one()
+    db.commit()
+
+
+def _delete_upload_object(storage_client, storage_path: str, media_id: UUID, reason: str) -> None:
+    try:
+        storage_client.delete_object(storage_path)
+    except StorageError as exc:
+        # justify-ignore-error: storage cleanup is secondary to the already
+        # committed media state or the primary typed API error being returned.
+        logger.warning(
+            "upload_storage_cleanup_failed media_id=%s storage_path=%s reason=%s error=%s",
+            media_id,
+            storage_path,
+            reason,
+            exc.message,
+        )
+
+
+def _mark_failed_and_delete_upload_by_id(
+    db: Session,
+    media_id: UUID,
+    storage_client,
+    storage_path: str,
+    stage: str,
+    error_code: str,
+    error_message: str,
+) -> None:
+    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
+    if media is not None and media.file_sha256 is None:
+        _mark_failed(db, media, stage, error_code, error_message)
+    else:
+        db.commit()
+    _delete_upload_object(storage_client, storage_path, media_id, "failed_upload")
+
+
+def _read_validated_upload_object(
+    storage_client,
+    storage_path: str,
+    kind: str,
+    declared_size: int,
+    *,
+    max_size: int,
+) -> tuple[str, int]:
+    metadata = storage_client.head_object(storage_path)
+    if metadata is None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_STORAGE_MISSING,
+            "Upload not found in storage. Please try again.",
+        )
+    if metadata.size_bytes <= 0 or declared_size <= 0:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Uploaded file is empty. Please upload the file again.",
+        )
+    if metadata.size_bytes != declared_size:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Uploaded file size does not match the upload request. Please upload the file again.",
+        )
+
+    hasher = hashlib.sha256()
+    total_bytes = 0
+    first_chunk = True
+    for chunk in storage_client.stream_object(storage_path):
+        if first_chunk:
+            if not _validate_magic_bytes(chunk, kind):
+                raise InvalidRequestError(
+                    ApiErrorCode.E_INVALID_FILE_TYPE,
+                    f"Invalid file type. Expected {kind}.",
+                )
+            first_chunk = False
+
+        total_bytes += len(chunk)
+        if total_bytes > max_size:
+            raise InvalidRequestError(
+                ApiErrorCode.E_FILE_TOO_LARGE,
+                f"File size exceeds maximum {max_size} bytes for {kind}.",
+            )
+        hasher.update(chunk)
+
+    if total_bytes <= 0 or total_bytes != metadata.size_bytes or total_bytes != declared_size:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Uploaded file size does not match the stored object. Please upload the file again.",
+        )
+    return hasher.hexdigest(), total_bytes
+
+
 def _ensure_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> None:
     """Ensure media is in user's default library with intrinsic provenance.
 
@@ -501,12 +725,17 @@ def validate_source_integrity(
     """
     settings = get_settings()
 
-    metadata = storage_client.head_object(media_file.storage_path)
-    if metadata is None:
-        raise InvalidRequestError(
-            ApiErrorCode.E_STORAGE_MISSING,
-            "Source file not found in storage.",
-        )
+    try:
+        metadata = storage_client.head_object(media_file.storage_path)
+        if metadata is None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_STORAGE_MISSING,
+                "Source file not found in storage.",
+            )
+    except StorageError as e:
+        raise ApiError(
+            ApiErrorCode.E_STORAGE_ERROR, f"Failed to read source file: {e.message}"
+        ) from e
 
     max_size = settings.max_pdf_bytes if kind == "pdf" else settings.max_epub_bytes
     try:

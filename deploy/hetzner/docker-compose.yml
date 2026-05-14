@@ -1,11 +1,33 @@
 name: nexus
 
 services:
+  postgres:
+    image: pgvector/pgvector:pg15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set}
+      POSTGRES_DB: ${POSTGRES_DB:?set}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
-    env_file:
-      - ${NEXUS_ENV_FILE:-/etc/nexus/nexus.env}
+    environment:
+      CADDY_SITE: ${CADDY_SITE:?set}
+      CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL:?set}
     depends_on:
       api:
         condition: service_healthy
@@ -17,11 +39,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    logging: &default-logging
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
+    logging: *default-logging
 
   api:
     build:
@@ -30,6 +48,9 @@ services:
     restart: unless-stopped
     env_file:
       - ${NEXUS_ENV_FILE:-/etc/nexus/nexus.env}
+    depends_on:
+      postgres:
+        condition: service_healthy
     expose:
       - "8000"
     healthcheck:
@@ -52,10 +73,13 @@ services:
     env_file:
       - ${NEXUS_ENV_FILE:-/etc/nexus/nexus.env}
     depends_on:
+      postgres:
+        condition: service_healthy
       api:
         condition: service_healthy
     logging: *default-logging
 
 volumes:
+  postgres_data:
   caddy_data:
   caddy_config:

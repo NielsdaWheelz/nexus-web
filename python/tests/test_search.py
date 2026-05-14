@@ -37,6 +37,7 @@ from nexus.services.content_indexing import (
 )
 from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.search import _snippet_around_query, _truncate_snippet
 from nexus.services.semantic_chunks import build_text_embedding, to_pgvector_literal
 from tests.factories import (
     add_library_member,
@@ -1403,6 +1404,28 @@ class TestSearchResultFormat:
         for result in data["results"]:
             # Snippet should be <= 303 (300 + "...")
             assert len(result["snippet"]) <= 303
+
+    def test_truncated_snippet_keeps_highlighted_match_visible(self):
+        prefix = " ".join(f"filler {idx:03d}" for idx in range(40))
+        suffix = " ".join(f"tail {idx:03d}" for idx in range(40))
+        snippet = _truncate_snippet(f"{prefix} <b>target match</b> {suffix}")
+
+        assert snippet.startswith("...")
+        assert "<b>target match</b>" in snippet
+        assert len(snippet) <= 306
+
+    def test_query_centered_snippet_recovers_when_headline_misses_match(self):
+        prefix = " ".join(f"filler {idx:03d}" for idx in range(40))
+        suffix = " ".join(f"tail {idx:03d}" for idx in range(40))
+        snippet = _snippet_around_query(
+            f"{prefix} target phrase for evidence navigation {suffix}",
+            "target phrase for evidence navigation",
+        )
+
+        assert snippet is not None
+        assert snippet.startswith("...")
+        assert "<b>target phrase for evidence navigation</b>" in snippet
+        assert len(snippet) <= 300
 
     def test_note_block_results_use_note_contract(
         self, auth_client, direct_db: DirectSessionManager

@@ -7,7 +7,8 @@ Nexus is a reading and notes platform with a Next.js frontend, a first-party And
 - Default request path: Browser -> Next.js BFF -> FastAPI -> Postgres.
 - Streaming exception: Browser -> FastAPI `/stream/*` endpoints for SSE.
 - Background work: worker claims jobs from Postgres (`background_jobs`).
-- Local infra: Supabase local provides Postgres, Auth, Storage, and Studio.
+- Local infra: Docker Compose provides dev Postgres plus MinIO for
+  R2-compatible object storage; Supabase local provides Auth only.
 
 ## Quick Start
 
@@ -86,13 +87,23 @@ make seed-real-media-e2e
 
 - `.env.example` is the source of truth for environment variables and defaults.
 - `make setup` generates local `.env` and `apps/web/.env.local`.
+- `make dev` writes the live Supabase Auth URL and keys to `.dev-ports`.
+- Test wrappers choose free Postgres/MinIO ports unless `TEST_POSTGRES_PORT` or
+  `TEST_MINIO_PORT` is set.
 
 Real-media gates are strict. `make test-real-media` runs deterministic backend
-and Playwright acceptance coverage, requires Supabase local plus real OpenAI
-embeddings, and seeds the browser corpus through the product paths. `make
-test-live-providers` additionally requires real Podcast Index and Deepgram
-credentials. The default Playwright project covers deterministic seeded feature
-flows; the real-media project covers deterministic real-media acceptance flows.
+and Playwright acceptance coverage, requires Supabase Auth plus local
+Postgres/MinIO and real OpenAI embeddings, and seeds the browser corpus through
+the product paths. `make test-live-providers` additionally requires real Podcast
+Index and Deepgram credentials. The default Playwright project covers
+deterministic seeded feature flows; the real-media project covers deterministic
+real-media acceptance flows.
+
+Local application data is stored in the standalone Docker Compose Postgres
+container on `localhost:54320`. Local uploads use MinIO through the same
+R2-compatible environment variables used by production storage clients.
+Supabase local still starts its own internal database for Auth metadata, but app
+tables and object storage do not use Supabase Database or Supabase Storage.
 
 ## Android Release Distribution
 

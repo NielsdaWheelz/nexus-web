@@ -7,7 +7,7 @@ NEXUS_ENV=prod
 APP_PUBLIC_URL=https://your-vercel-app.example.com
 API_PUBLIC_URL=https://api.example.com
 
-# Supabase
+# Supabase Auth only. Production does not use Supabase Database or Storage.
 SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_ISSUER=https://<project-ref>.supabase.co/auth/v1
 SUPABASE_JWKS_URL=https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json

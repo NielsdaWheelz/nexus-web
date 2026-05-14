@@ -9,17 +9,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyResolvedSupabaseEnv } from "./supabase-env.mjs";
 
-const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-applyResolvedSupabaseEnv(ROOT_DIR, process.env);
+const ROOT_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
+applyResolvedSupabaseEnv(ROOT_DIR, process.env, { includeAdminKey: true });
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ADMIN_KEY =
-  process.env.SUPABASE_ADMIN_KEY ??
-  process.env.SUPABASE_SECRET_KEY ??
-  process.env.SUPABASE_SERVICE_ROLE_KEY ??
-  process.env.SUPABASE_SERVICE_KEY;
+const SUPABASE_AUTH_ADMIN_KEY = process.env.SUPABASE_AUTH_ADMIN_KEY;
 
-const E2E_USER_EMAIL = "e2e-test@nexus.local";
+const E2E_USER_EMAIL = process.env.E2E_USER_EMAIL ?? "e2e-test@nexus.local";
 const USERS_PER_PAGE = 200;
 const MAX_LIST_PAGES = 25;
 
@@ -32,16 +31,16 @@ interface AdminListUsersResponse {
   users?: AdminUser[];
 }
 
-if (!SUPABASE_URL || !SUPABASE_ADMIN_KEY) {
+if (!SUPABASE_URL || !SUPABASE_AUTH_ADMIN_KEY) {
   throw new Error(
     "Missing Supabase admin configuration. Expected live values from `supabase status` " +
-      "or SUPABASE_URL plus SUPABASE_ADMIN_KEY/SUPABASE_SECRET_KEY."
+      "or SUPABASE_URL plus command-scoped SUPABASE_AUTH_ADMIN_KEY.",
   );
 }
 
 const authAdminHeaders = {
-  Authorization: `Bearer ${SUPABASE_ADMIN_KEY}`,
-  apikey: SUPABASE_ADMIN_KEY,
+  Authorization: `Bearer ${SUPABASE_AUTH_ADMIN_KEY}`,
+  apikey: SUPABASE_AUTH_ADMIN_KEY,
 };
 
 async function findExistingUserByEmail(): Promise<AdminUser | null> {
@@ -50,11 +49,13 @@ async function findExistingUserByEmail(): Promise<AdminUser | null> {
       `${SUPABASE_URL}/auth/v1/admin/users?page=${page}&per_page=${USERS_PER_PAGE}`,
       {
         headers: authAdminHeaders,
-      }
+      },
     );
 
     if (!listRes.ok) {
-      throw new Error(`Failed to list users: ${listRes.status} ${await listRes.text()}`);
+      throw new Error(
+        `Failed to list users: ${listRes.status} ${await listRes.text()}`,
+      );
     }
 
     const payload = (await listRes.json()) as AdminListUsersResponse;
@@ -99,7 +100,9 @@ async function seedUser() {
       (createRes.status === 409 || createRes.status === 422) &&
       /(already|exists|duplicate)/i.test(errorBody)
     ) {
-      console.log("E2E user already exists (create raced with another setup run).");
+      console.log(
+        "E2E user already exists (create raced with another setup run).",
+      );
       return;
     }
 

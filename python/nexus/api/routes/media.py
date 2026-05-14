@@ -369,13 +369,12 @@ def upload_init(
     """Initialize a file upload.
 
     Creates media stub and returns signed upload URL.
-    Client should upload file directly to storage using the returned token,
+    Client should upload file directly to storage using the returned URL,
     then call POST /media/{id}/ingest to confirm.
 
     Returns:
         - media_id: UUID of the created media
-        - storage_path: Path in storage bucket
-        - token: Token for uploadToSignedUrl()
+        - upload_url: Presigned PUT URL for direct browser upload
         - expires_at: When the signed URL expires
     """
     result = upload_service.init_upload(

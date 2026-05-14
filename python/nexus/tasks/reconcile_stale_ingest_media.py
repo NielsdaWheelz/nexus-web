@@ -9,11 +9,11 @@ dropped/discarded or never finished. Recovery is bounded:
 import hashlib
 from datetime import datetime
 
-from sqlalchemy import func, literal, select, text
+from sqlalchemy import func, literal, or_, select, text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
-from nexus.db.models import FailureStage, Media, ProcessingStatus
+from nexus.db.models import FailureStage, Media, MediaFile, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode
 from nexus.jobs.queue import enqueue_job
@@ -27,6 +27,8 @@ from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     transcript_embedding_dimensions,
 )
+from nexus.storage import build_storage_path, get_file_extension, get_storage_client
+from nexus.storage.client import StorageError
 
 logger = get_logger(__name__)
 
@@ -86,6 +88,44 @@ def reconcile_stale_ingest_media_job(
     db = session_factory()
 
     try:
+        pending_upload_rows = db.execute(
+            select(Media, MediaFile.storage_path)
+            .join(MediaFile, MediaFile.media_id == Media.id)
+            .where(Media.processing_status == ProcessingStatus.pending)
+            .where(Media.kind.in_(("pdf", "epub")))
+            .where(Media.file_sha256.is_(None))
+            .where(
+                Media.created_at
+                < func.now()
+                - (literal(int(settings.signed_url_expiry_s)) * text("interval '1 second'"))
+            )
+            .where(
+                or_(
+                    Media.processing_started_at.is_(None),
+                    Media.processing_started_at
+                    < func.now()
+                    - (
+                        literal(int(settings.ingest_stale_extracting_seconds))
+                        * text("interval '1 second'")
+                    ),
+                )
+            )
+            .order_by(Media.created_at.asc())
+            .limit(_BATCH_LIMIT)
+            .with_for_update(skip_locked=True)
+        ).all()
+        pending_upload_storage_paths = []
+        for media, storage_path in pending_upload_rows:
+            pending_upload_storage_paths.append(str(storage_path))
+            pending_upload_storage_paths.append(
+                build_storage_path(media.id, get_file_extension(str(media.kind)))
+            )
+            db.execute(
+                text("DELETE FROM user_media_deletions WHERE media_id = :media_id"),
+                {"media_id": media.id},
+            )
+            db.delete(media)
+
         stale_rows = (
             db.execute(
                 select(Media)
@@ -333,8 +373,20 @@ def reconcile_stale_ingest_media_job(
                     semantic_skipped += 1
 
         db.commit()
+        for storage_path in pending_upload_storage_paths:
+            try:
+                get_storage_client().delete_object(storage_path)
+            except StorageError as exc:
+                # justify-ignore-error: stale pending media rows were already
+                # removed; storage cleanup can be retried operationally.
+                logger.warning(
+                    "stale_pending_upload_storage_delete_failed storage_path=%s error=%s",
+                    storage_path,
+                    exc.message,
+                )
         logger.info(
             "stale_ingest_reconcile_complete",
+            pending_upload_deleted=len(pending_upload_rows),
             scanned=len(stale_rows),
             requeued=requeued,
             failed=failed,
@@ -350,6 +402,7 @@ def reconcile_stale_ingest_media_job(
         )
         return {
             "scanned": len(stale_rows),
+            "pending_upload_deleted": len(pending_upload_rows),
             "requeued": requeued,
             "failed": failed,
             "content_index_scanned": content_index_scanned,

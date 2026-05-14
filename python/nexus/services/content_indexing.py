@@ -1754,6 +1754,7 @@ def _chunk_locator(
             for block, _, _, _ in parts
         )
         if same_page:
+            full_page_text_end = int(str(first_block.locator.get("page_text_end_offset") or 0))
             page_start = (
                 int(str(first_block.locator.get("page_text_start_offset") or 0)) + first_start
             )
@@ -1766,6 +1767,41 @@ def _chunk_locator(
             locator["page_text_end_offset"] = page_end
             locator["plain_text_start_offset"] = plain_start
             locator["plain_text_end_offset"] = plain_end
+            geometry = locator.get("geometry")
+            if isinstance(geometry, dict) and geometry.get("quads") == []:
+                page_width = geometry.get("page_width")
+                page_height = geometry.get("page_height")
+                if (
+                    full_page_text_end > 0
+                    and _is_positive_number(page_width)
+                    and _is_positive_number(page_height)
+                ):
+                    page_width_f = float(page_width)
+                    page_height_f = float(page_height)
+                    top = max(
+                        0.0, min(page_height_f, page_height_f * page_start / full_page_text_end)
+                    )
+                    highlight_height = max(8.0, min(18.0, page_height_f / 60.0))
+                    bottom = top + highlight_height
+                    bottom = min(page_height_f, bottom)
+                    if bottom > top:
+                        horizontal_inset = min(48.0, page_width_f * 0.08)
+                        locator["geometry"] = {
+                            **geometry,
+                            "projection": "proportional_text_offsets",
+                            "quads": [
+                                {
+                                    "x1": horizontal_inset,
+                                    "y1": top,
+                                    "x2": page_width_f - horizontal_inset,
+                                    "y2": top,
+                                    "x3": page_width_f - horizontal_inset,
+                                    "y3": bottom,
+                                    "x4": horizontal_inset,
+                                    "y4": bottom,
+                                }
+                            ],
+                        }
     elif locator.get("kind") == "transcript_time_text":
         locator["t_start_ms"] = first_block.locator.get("t_start_ms")
         locator["t_end_ms"] = last_block.locator.get("t_end_ms")

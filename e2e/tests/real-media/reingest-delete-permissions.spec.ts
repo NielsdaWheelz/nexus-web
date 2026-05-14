@@ -3,8 +3,11 @@ import path from "node:path";
 import { deleteE2eResource, throwE2eCleanupFailures } from "../cleanup";
 import {
   drainRealMediaWorkerForMediaReady,
+  expectRealMediaEvidenceNeedle,
+  FRESH_REAL_MEDIA_FIXTURES,
   readRealMediaSeed,
   searchRealMediaEvidenceThroughUi,
+  uploadFreshRealMediaFileThroughUi,
   writeRealMediaTrace,
 } from "./real-media-seed";
 
@@ -16,6 +19,8 @@ test("@real-media owner can refresh and delete real-media documents", async ({
   const mediaId = seed.fixtures.web.media_id;
   const refreshMediaId = seed.fixtures.web_url.media_id;
   const query = seed.fixtures.web.query;
+  const disposableQuery = FRESH_REAL_MEDIA_FIXTURES.pdfSvms.query;
+  const disposableNeedle = FRESH_REAL_MEDIA_FIXTURES.pdfSvms.needle;
   const disposablePdfPath = path.join(
     __dirname,
     "..",
@@ -37,7 +42,10 @@ test("@real-media owner can refresh and delete real-media documents", async ({
     (item: { type: string; source: { media_id: string } }) =>
       item.type === "content_chunk" && item.source.media_id === refreshMediaId,
   );
-  expect(initialRefreshResult, "refresh fixture should have initial evidence").toBeTruthy();
+  expect(
+    initialRefreshResult,
+    "refresh fixture should have initial evidence",
+  ).toBeTruthy();
   if (!initialRefreshResult) {
     throw new Error(`refresh fixture search did not return ${refreshMediaId}`);
   }
@@ -60,6 +68,7 @@ test("@real-media owner can refresh and delete real-media documents", async ({
     (response) =>
       response.request().method() === "POST" &&
       response.url().includes(`/api/media/${refreshMediaId}/refresh`),
+    { timeout: 30_000 },
   );
   await page.getByRole("menuitem", { name: "Refresh source" }).click();
   const refreshResponse = await refreshResponsePromise;
@@ -69,9 +78,14 @@ test("@real-media owner can refresh and delete real-media documents", async ({
   });
   const refreshedMedia = await page.request.get(`/api/media/${refreshMediaId}`);
   expect(refreshedMedia.ok()).toBeTruthy();
-  expect((await refreshedMedia.json()).data.processing_status).toBe("extracting");
+  expect((await refreshedMedia.json()).data.processing_status).toBe(
+    "extracting",
+  );
 
-  const workerResult = await drainRealMediaWorkerForMediaReady(page, refreshMediaId);
+  const workerResult = await drainRealMediaWorkerForMediaReady(
+    page,
+    refreshMediaId,
+  );
   expect(workerResult.status).toBe("success");
 
   const postRefreshSearch = await searchRealMediaEvidenceThroughUi(
@@ -83,11 +97,16 @@ test("@real-media owner can refresh and delete real-media documents", async ({
     (item: { type: string; source: { media_id: string } }) =>
       item.type === "content_chunk" && item.source.media_id === refreshMediaId,
   );
-  expect(postRefreshResult, "refresh should return replacement evidence").toBeTruthy();
+  expect(
+    postRefreshResult,
+    "refresh should return replacement evidence",
+  ).toBeTruthy();
   if (!postRefreshResult) {
     throw new Error(`refreshed search did not return ${refreshMediaId}`);
   }
-  expect(postRefreshResult.context_ref.id).not.toBe(initialRefreshResult.context_ref.id);
+  expect(postRefreshResult.context_ref.id).not.toBe(
+    initialRefreshResult.context_ref.id,
+  );
 
   const modelsResponse = await page.request.get("/api/models");
   expect(modelsResponse.ok(), await modelsResponse.text()).toBeTruthy();
@@ -116,24 +135,61 @@ test("@real-media owner can refresh and delete real-media documents", async ({
     },
   });
   expect(staleContextResponse.status()).toBe(400);
-  expect((await staleContextResponse.json()).error.code).toBe("E_INVALID_REQUEST");
+  expect((await staleContextResponse.json()).error.code).toBe(
+    "E_INVALID_REQUEST",
+  );
 
   let deletedMediaId: string | null = null;
+  let deletedUpload: Awaited<
+    ReturnType<typeof uploadFreshRealMediaFileThroughUi>
+  > | null = null;
+  let deletedBeforeDeleteSearchApiUrl: string | null = null;
+  let deletedBeforeDeleteContextRef: unknown = null;
   let deletedMediaStatus: number | null = null;
   let deletedSearchApiUrl: string | null = null;
   let deletedSearchResultCount: number | null = null;
   let productError: unknown = null;
   try {
-    await page.goto("/libraries");
-    await page.getByRole("button", { name: "Add content" }).click();
-    const addContentDialog = page.getByRole("dialog", { name: "Add content" });
-    await expect(addContentDialog).toBeVisible();
-    await addContentDialog.getByLabel("Upload file").setInputFiles(disposablePdfPath);
-    await expect(page).toHaveURL(/\/media\/[0-9a-f-]+/i, { timeout: 30_000 });
-    const match = page.url().match(/\/media\/([0-9a-f-]{36})/i);
-    expect(match, `Expected media id in ${page.url()}`).toBeTruthy();
-    deletedMediaId = match![1];
+    deletedUpload = await uploadFreshRealMediaFileThroughUi({
+      page,
+      artifactPath: disposablePdfPath,
+      filename: "svms-real-media-delete-fresh.pdf",
+      mimeType: "application/pdf",
+      expectedSha256: FRESH_REAL_MEDIA_FIXTURES.pdfSvms.sha256,
+      seededMediaId: seed.fixtures.pdf.media_id,
+      seededSha256: seed.fixtures.pdf.artifact_sha256,
+      artifactSalt: "reingest-delete-pdf",
+    });
+    deletedMediaId = deletedUpload.media_id;
 
+    const beforeDeleteSearch = await searchRealMediaEvidenceThroughUi(
+      page,
+      disposableQuery,
+      "pdf",
+    );
+    deletedBeforeDeleteSearchApiUrl = beforeDeleteSearch.api_url;
+    const beforeDeleteResult = beforeDeleteSearch.results.find(
+      (item: { type: string; source: { media_id: string } }) =>
+        item.type === "content_chunk" &&
+        item.source.media_id === deletedMediaId,
+    );
+    expect(
+      beforeDeleteResult,
+      "disposable PDF should have evidence before delete",
+    ).toBeTruthy();
+    if (!beforeDeleteResult) {
+      throw new Error(
+        `disposable PDF search did not return ${deletedMediaId} before delete`,
+      );
+    }
+    deletedBeforeDeleteContextRef = beforeDeleteResult.context_ref;
+    expectRealMediaEvidenceNeedle(
+      beforeDeleteResult,
+      disposableNeedle,
+      "disposable PDF evidence should contain the pinned fixture needle before delete",
+    );
+
+    await page.goto(`/media/${deletedMediaId}`);
     await page.getByRole("button", { name: "Options" }).last().click();
     page.once("dialog", async (dialog) => {
       expect(dialog.message()).toContain("Delete");
@@ -146,7 +202,7 @@ test("@real-media owner can refresh and delete real-media documents", async ({
     expect(deletedMediaStatus).toBe(404);
     const deletedSearch = await searchRealMediaEvidenceThroughUi(
       page,
-      "support vector",
+      disposableQuery,
       "pdf",
     );
     deletedSearchApiUrl = deletedSearch.api_url;
@@ -159,7 +215,9 @@ test("@real-media owner can refresh and delete real-media documents", async ({
       "deleted media evidence must not remain searchable",
     ).toBe(false);
     await expect(
-      page.locator(`a[href*="/media/${deletedMediaId}?"]`),
+      page.locator(
+        `a[href$="/media/${deletedMediaId}"], a[href*="/media/${deletedMediaId}?"]`,
+      ),
     ).toHaveCount(0);
   } catch (error) {
     productError = error;
@@ -177,7 +235,11 @@ test("@real-media owner can refresh and delete real-media documents", async ({
         cleanupErrors.push(error);
       }
     }
-    throwE2eCleanupFailures("Real-media disposable delete flow", productError, cleanupErrors);
+    throwE2eCleanupFailures(
+      "Real-media disposable delete flow",
+      productError,
+      cleanupErrors,
+    );
   }
 
   writeRealMediaTrace(testInfo, "real-media-delete-permissions-trace.json", {
@@ -192,6 +254,11 @@ test("@real-media owner can refresh and delete real-media documents", async ({
     stale_context_status: staleContextResponse.status(),
     deleted_media_id: deletedMediaId,
     deleted_fixture_id: "pdf-svms",
+    deleted_upload: deletedUpload,
+    deleted_query: disposableQuery,
+    deleted_needle: disposableNeedle,
+    deleted_before_delete_search_api_url: deletedBeforeDeleteSearchApiUrl,
+    deleted_before_delete_context_ref: deletedBeforeDeleteContextRef,
     deleted_media_status: deletedMediaStatus,
     deleted_search_api_url: deletedSearchApiUrl,
     deleted_search_result_count: deletedSearchResultCount,

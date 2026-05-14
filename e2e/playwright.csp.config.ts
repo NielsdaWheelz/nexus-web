@@ -21,9 +21,16 @@ const SUPABASE_ANON_KEY =
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   throw new Error(
-    "playwright.csp.config.ts requires SUPABASE URL + anon key (env or .env/.dev-ports)"
+    "playwright.csp.config.ts requires SUPABASE URL + anon key (env or .env/.dev-ports)",
   );
 }
+
+const appRuntimeEnv = { ...process.env };
+delete appRuntimeEnv.SERVICE_ROLE_KEY;
+delete appRuntimeEnv.SUPABASE_AUTH_ADMIN_KEY;
+delete appRuntimeEnv.SUPABASE_DATABASE_URL;
+delete appRuntimeEnv.SUPABASE_SERVICE_KEY;
+delete appRuntimeEnv.SUPABASE_SERVICE_ROLE_KEY;
 
 export default defineConfig({
   globalSetup: "./global-setup.mjs",
@@ -58,7 +65,7 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 240_000,
       env: {
-        ...process.env,
+        ...appRuntimeEnv,
         NEXUS_ENV: "test",
         FASTAPI_BASE_URL: `http://localhost:${API_PORT}`,
         NEXT_PUBLIC_SUPABASE_URL: SUPABASE_URL,
@@ -72,7 +79,7 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 30_000,
       env: {
-        ...process.env,
+        ...appRuntimeEnv,
         SIGNED_URL_EXPIRY_S: process.env.SIGNED_URL_EXPIRY_S ?? "8",
       },
     },

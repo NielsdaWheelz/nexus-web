@@ -1,12 +1,21 @@
 import type { Page } from "@playwright/test";
 
 type SelectionPoint = { x: number; y: number };
-type SelectionCandidate = { text: string; start: SelectionPoint; end: SelectionPoint };
+type SelectionCandidate = {
+  text: string;
+  start: SelectionPoint;
+  end: SelectionPoint;
+  containerIndex: number;
+  textNodeIndex: number;
+  startOffset: number;
+  endOffset: number;
+};
 
 export async function selectFreshVisibleTextSnippet(
   page: Page,
   containerSelector: string,
   existingExacts: string[],
+  options: { method?: "drag" | "range" } = {},
 ): Promise<string> {
   const candidate = await page.evaluate(
     ({ selector, blockedExacts, minLength, maxLength }) => {
@@ -65,13 +74,15 @@ export async function selectFreshVisibleTextSnippet(
         return null;
       };
 
-      for (const container of containers) {
+      for (const [containerIndex, container] of containers.entries()) {
         const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+        let textNodeIndex = -1;
         while (walker.nextNode()) {
           const textNode = walker.currentNode;
           if (!(textNode instanceof Text)) {
             continue;
           }
+          textNodeIndex += 1;
 
           const parent = textNode.parentElement;
           const rawText = textNode.textContent ?? "";
@@ -137,6 +148,10 @@ export async function selectFreshVisibleTextSnippet(
                 text: normalizedCandidate,
                 start: { x: startRect.left + 1, y: startRect.top + startRect.height / 2 },
                 end: { x: endRect.right - 1, y: endRect.top + endRect.height / 2 },
+                containerIndex,
+                textNodeIndex,
+                startOffset: start,
+                endOffset: end,
               };
             }
           }
@@ -151,7 +166,56 @@ export async function selectFreshVisibleTextSnippet(
   if (!candidate) {
     throw new Error(`Expected to select visible text in ${containerSelector}.`);
   }
+  if (options.method === "range") {
+    return selectCandidateRange(page, containerSelector, candidate);
+  }
   return dragSelection(page, candidate);
+}
+
+async function selectCandidateRange(
+  page: Page,
+  containerSelector: string,
+  candidate: SelectionCandidate,
+): Promise<string> {
+  const selected = await page.evaluate(
+    ({ selector, target }) => {
+      const containers = Array.from(document.querySelectorAll(selector)).filter(
+        (node): node is HTMLElement => node instanceof HTMLElement,
+      );
+      const container = containers[target.containerIndex];
+      if (!container) {
+        return "";
+      }
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      let textNode: Text | null = null;
+      let textNodeIndex = -1;
+      while (walker.nextNode()) {
+        if (walker.currentNode instanceof Text) {
+          textNodeIndex += 1;
+          if (textNodeIndex === target.textNodeIndex) {
+            textNode = walker.currentNode;
+            break;
+          }
+        }
+      }
+      if (!textNode) {
+        return "";
+      }
+      const range = document.createRange();
+      range.setStart(textNode, target.startOffset);
+      range.setEnd(textNode, target.endOffset);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+      return selection?.toString().replace(/\s+/g, " ").trim() ?? "";
+    },
+    { selector: containerSelector, target: candidate },
+  );
+  if (selected !== candidate.text) {
+    throw new Error(`Selected text did not match candidate text: ${selected}`);
+  }
+  return selected;
 }
 
 export async function selectExactVisibleText(

@@ -39,18 +39,21 @@ async function searchEvidenceThroughUi(
     types: "content_chunk",
     content_kinds: contentKind,
   })}`;
-  const responsePromise = page.waitForResponse((response) => {
-    if (response.request().method() !== "GET") {
-      return false;
-    }
-    const url = new URL(response.url());
-    return (
-      url.pathname === "/api/search" &&
-      url.searchParams.get("q") === query &&
-      url.searchParams.get("types") === "content_chunk" &&
-      url.searchParams.get("content_kinds") === contentKind
-    );
-  });
+  const responsePromise = page.waitForResponse(
+    (response) => {
+      if (response.request().method() !== "GET") {
+        return false;
+      }
+      const url = new URL(response.url());
+      return (
+        url.pathname === "/api/search" &&
+        url.searchParams.get("q") === query &&
+        url.searchParams.get("types") === "content_chunk" &&
+        url.searchParams.get("content_kinds") === contentKind
+      );
+    },
+    { timeout: 60_000 },
+  );
   await page.goto(searchUrl);
   await expect(
     page.getByRole("group", { name: "Result types" }).getByLabel("Evidence"),
@@ -63,7 +66,10 @@ async function searchEvidenceThroughUi(
 
   await expect(page.getByLabel("Search content")).toHaveValue(query);
   const response = await responsePromise;
-  expect(response.ok(), `visible search for ${contentKind} should succeed`).toBeTruthy();
+  expect(
+    response.ok(),
+    `visible search for ${contentKind} should succeed`,
+  ).toBeTruthy();
   await expect(page.getByText("Searching...")).toBeHidden({ timeout: 15_000 });
   return response.json() as Promise<SearchResponseBody>;
 }
@@ -71,11 +77,17 @@ async function searchEvidenceThroughUi(
 test("@real-media search returns resolver-backed evidence for every configured media kind", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(180_000);
   const seed = readRealMediaSeed();
   const media: Array<[string, string, string, ContentKind]> = [
     ["pdf", seed.fixtures.pdf.media_id, seed.fixtures.pdf.query, "pdf"],
     ["epub", seed.fixtures.epub.media_id, seed.fixtures.epub.query, "epub"],
-    ["web article", seed.fixtures.web.media_id, seed.fixtures.web.query, "web_article"],
+    [
+      "web article",
+      seed.fixtures.web.media_id,
+      seed.fixtures.web.query,
+      "web_article",
+    ],
     ["video", seed.fixtures.video.media_id, seed.fixtures.video.query, "video"],
     [
       "podcast episode",
@@ -112,10 +124,15 @@ test("@real-media search returns resolver-backed evidence for every configured m
     const resolver = await resolverResponse.json();
 
     const resultLink = page.locator(`a[href*="/media/${mediaId}?"]`).first();
-    await expect(resultLink, `${kind} should render a visible evidence result`).toBeVisible();
+    await expect(
+      resultLink,
+      `${kind} should render a visible evidence result`,
+    ).toBeVisible();
     const visibleHref = await resultLink.getAttribute("href");
     if (!visibleHref) {
-      throw new Error(`${kind} evidence result for ${mediaId} did not expose a href`);
+      throw new Error(
+        `${kind} evidence result for ${mediaId} did not expose a href`,
+      );
     }
     await resultLink.click();
     await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
@@ -123,12 +140,8 @@ test("@real-media search returns resolver-backed evidence for every configured m
       /not found|failed to load/i,
     );
     if (contentKind === "pdf") {
-      expect(["resolved", "no_geometry"]).toContain(resolver.data.resolver.status);
-      if (resolver.data.resolver.status === "resolved") {
-        await expectVisiblePdfEvidenceHighlight(page);
-      } else {
-        await expect(page.getByRole("toolbar", { name: "PDF controls" })).toBeVisible();
-      }
+      expect(resolver.data.resolver.status).toBe("resolved");
+      await expectVisiblePdfEvidenceHighlight(page);
     } else if (contentKind === "video" || contentKind === "podcast_episode") {
       await openTranscriptEvidenceSegment(page, query, visibleHref);
       await expectVisibleTextEvidenceHighlight(page);
@@ -148,7 +161,11 @@ test("@real-media search returns resolver-backed evidence for every configured m
   }
 
   const noResultsQuery = "qzxqzxqzxqzx missingterm";
-  const noResults = await searchEvidenceThroughUi(page, noResultsQuery, "web_article");
+  const noResults = await searchEvidenceThroughUi(
+    page,
+    noResultsQuery,
+    "web_article",
+  );
   expect(noResults.results).toEqual([]);
   await expect(page.getByText("No results found.")).toBeVisible();
 

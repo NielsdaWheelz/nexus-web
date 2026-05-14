@@ -24,6 +24,7 @@ dependencies = [
     "stripe>=12.0.0",
     "llm-calling",
     "web-search-tool",
+    "boto3>=1.43.7",
 ]
 
 [project.optional-dependencies]
@@ -90,6 +91,7 @@ include = [
     "nexus/auth/permissions.py",
     "nexus/auth/verifier.py",
     "nexus/cli.py",
+    "nexus/config.py",
     "nexus/errors.py",
     "nexus/jobs/registry.py",
     "nexus/jobs/worker.py",
@@ -136,6 +138,7 @@ include = [
     "nexus/services/semantic_chunks.py",
     "nexus/services/seq.py",
     "nexus/services/shares.py",
+    "nexus/services/upload.py",
     "nexus/services/locator_resolver.py",
     "nexus/services/transcript_media.py",
     "nexus/services/transcript_segments.py",
@@ -145,6 +148,8 @@ include = [
     "nexus/services/x_identity.py",
     "nexus/services/youtube_identity.py",
     "nexus/services/youtube_transcripts.py",
+    "nexus/storage/__init__.py",
+    "nexus/storage/client.py",
     "nexus/storage/paths.py",
 ]
 exclude = [
@@ -163,7 +168,7 @@ markers = [
     "unit: pure logic tests, no DB/network",
     "integration: DB/API-backed tests",
     "slow: tests that are materially slower than normal local feedback loops",
-    "supabase: requires Supabase local auth/storage services",
+    "supabase: requires Supabase local Auth services",
     "network: requires internet access (hits real external services)",
     "real_media: strict acceptance tests over real media artifacts and evidence traces",
     "live_provider: strict acceptance tests over live external providers",

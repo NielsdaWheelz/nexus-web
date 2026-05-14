@@ -1,17 +1,10 @@
-"""Tests for storage client and path utilities.
+"""Tests for storage clients and path utilities."""
 
-Tests cover:
-- Path building with test prefix isolation
-- Storage client abstraction
-- SHA-256 computation
-- FakeStorageClient behavior
-"""
-
+from io import BytesIO
 from uuid import uuid4
 
-import httpx
 import pytest
-import respx
+from botocore.exceptions import ClientError
 
 from nexus.storage.client import (
     FakeStorageClient,
@@ -20,31 +13,108 @@ from nexus.storage.client import (
     StorageClient,
     StorageError,
     compute_sha256,
+    get_storage_client,
 )
-from nexus.storage.paths import build_storage_path, get_file_extension, parse_storage_path
+from nexus.storage.paths import (
+    build_epub_asset_storage_path,
+    build_storage_path,
+    build_upload_staging_storage_path,
+    get_file_extension,
+    parse_storage_path,
+)
 
 pytestmark = pytest.mark.unit
 
 
-class TestPathBuilding:
-    """Tests for storage path building utilities."""
+class RecordingS3Client:
+    def __init__(self):
+        self.calls: list[tuple[str, dict]] = []
+        self.head_response = {"ContentType": "application/pdf", "ContentLength": 123}
+        self.head_error: ClientError | None = None
+        self.get_body = b"pdf-bytes"
+        self.get_error: ClientError | None = None
+        self.put_error: ClientError | None = None
+        self.copy_error: ClientError | None = None
+        self.delete_error: ClientError | None = None
 
+    def generate_presigned_url(self, client_method, Params, ExpiresIn, HttpMethod):
+        self.calls.append(
+            (
+                "generate_presigned_url",
+                {
+                    "client_method": client_method,
+                    "Params": Params,
+                    "ExpiresIn": ExpiresIn,
+                    "HttpMethod": HttpMethod,
+                },
+            )
+        )
+        return f"https://signed.test/{client_method}/{Params['Key']}"
+
+    def head_object(self, **kwargs):
+        self.calls.append(("head_object", kwargs))
+        if self.head_error:
+            raise self.head_error
+        return self.head_response
+
+    def get_object(self, **kwargs):
+        self.calls.append(("get_object", kwargs))
+        if self.get_error:
+            raise self.get_error
+        return {"Body": BytesIO(self.get_body)}
+
+    def put_object(self, **kwargs):
+        self.calls.append(("put_object", kwargs))
+        if self.put_error:
+            raise self.put_error
+        return {}
+
+    def copy_object(self, **kwargs):
+        self.calls.append(("copy_object", kwargs))
+        if self.copy_error:
+            raise self.copy_error
+        return {}
+
+    def delete_object(self, **kwargs):
+        self.calls.append(("delete_object", kwargs))
+        if self.delete_error:
+            raise self.delete_error
+        return {}
+
+
+class FailingReadBody:
+    def __init__(self):
+        self.closed = False
+
+    def read(self, _size: int) -> bytes:
+        raise OSError("stream interrupted")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def client_error(code: str, status_code: int = 500) -> ClientError:
+    return ClientError(
+        {
+            "Error": {"Code": code, "Message": code},
+            "ResponseMetadata": {"HTTPStatusCode": status_code},
+        },
+        "storage-test",
+    )
+
+
+class TestPathBuilding:
     def test_get_file_extension_pdf(self):
-        """PDF kind returns 'pdf' extension."""
         assert get_file_extension("pdf") == "pdf"
 
     def test_get_file_extension_epub(self):
-        """EPUB kind returns 'epub' extension."""
         assert get_file_extension("epub") == "epub"
 
     def test_get_file_extension_invalid(self):
-        """Invalid kind raises ValueError."""
         with pytest.raises(ValueError, match="not a file-backed media type"):
             get_file_extension("web_article")
 
     def test_build_storage_path_production(self, monkeypatch):
-        """Production path has no test prefix."""
-        # Ensure no test prefix is set
         monkeypatch.delenv("STORAGE_TEST_PREFIX", raising=False)
 
         media_id = uuid4()
@@ -54,98 +124,135 @@ class TestPathBuilding:
         assert not path.startswith("test_runs/")
 
     def test_build_storage_path_test_prefix(self, monkeypatch):
-        """Test prefix is applied when STORAGE_TEST_PREFIX is set."""
-        run_id = "test-run-123"
-        monkeypatch.setenv("STORAGE_TEST_PREFIX", f"test_runs/{run_id}/")
+        monkeypatch.setenv("STORAGE_TEST_PREFIX", "test_runs/test-run-123/")
 
         media_id = uuid4()
         path = build_storage_path(media_id, "epub")
 
-        assert path == f"test_runs/{run_id}/media/{media_id}/original.epub"
+        assert path == f"test_runs/test-run-123/media/{media_id}/original.epub"
 
     def test_build_storage_path_test_prefix_no_trailing_slash(self, monkeypatch):
-        """Test prefix without trailing slash gets one added."""
-        run_id = "test-run-456"
-        monkeypatch.setenv("STORAGE_TEST_PREFIX", f"test_runs/{run_id}")  # No trailing slash
+        monkeypatch.setenv("STORAGE_TEST_PREFIX", "test_runs/test-run-456")
 
         media_id = uuid4()
         path = build_storage_path(media_id, "pdf")
 
-        assert path == f"test_runs/{run_id}/media/{media_id}/original.pdf"
+        assert path == f"test_runs/test-run-456/media/{media_id}/original.pdf"
+
+    def test_build_upload_staging_storage_path(self, monkeypatch):
+        monkeypatch.delenv("STORAGE_TEST_PREFIX", raising=False)
+
+        media_id = uuid4()
+
+        assert (
+            build_upload_staging_storage_path(media_id, "pdf")
+            == f"uploads/media/{media_id}/original.pdf"
+        )
+
+    @pytest.mark.parametrize(
+        "prefix",
+        [
+            "/test_runs/test-run",
+            "test_runs",
+            "test_runs/",
+            "other/test-run",
+            "test_runs/test-run/extra",
+            "test_runs/../test-run",
+            "test_runs/test run",
+        ],
+    )
+    def test_build_storage_path_rejects_invalid_test_prefix(self, monkeypatch, prefix: str):
+        monkeypatch.setenv("STORAGE_TEST_PREFIX", prefix)
+
+        with pytest.raises(ValueError, match="STORAGE_TEST_PREFIX"):
+            build_storage_path(uuid4(), "pdf")
+
+    def test_build_epub_asset_storage_path_production(self, monkeypatch):
+        monkeypatch.delenv("STORAGE_TEST_PREFIX", raising=False)
+
+        media_id = uuid4()
+
+        assert (
+            build_epub_asset_storage_path(media_id, "OEBPS/images/cover.png")
+            == f"media/{media_id}/assets/OEBPS/images/cover.png"
+        )
+
+    def test_build_epub_asset_storage_path_test_prefix(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_TEST_PREFIX", "test_runs/test-run-789")
+
+        media_id = uuid4()
+
+        assert (
+            build_epub_asset_storage_path(media_id, "OEBPS/images/cover.png")
+            == f"test_runs/test-run-789/media/{media_id}/assets/OEBPS/images/cover.png"
+        )
+
+    @pytest.mark.parametrize(
+        "asset_key",
+        ["", "/", "/cover.png", "images//cover.png", "./cover.png", "../cover.png"],
+    )
+    def test_build_epub_asset_storage_path_rejects_unsafe_asset_key(self, asset_key: str):
+        with pytest.raises(ValueError, match="EPUB asset key"):
+            build_epub_asset_storage_path(uuid4(), asset_key)
 
     def test_parse_storage_path_production(self):
-        """Parse production path correctly."""
         media_id = str(uuid4())
-        path = f"media/{media_id}/original.pdf"
 
-        parsed_id, ext = parse_storage_path(path)
+        parsed_id, ext = parse_storage_path(f"media/{media_id}/original.pdf")
 
         assert parsed_id == media_id
         assert ext == "pdf"
 
     def test_parse_storage_path_test_prefix(self):
-        """Parse test prefixed path correctly."""
         media_id = str(uuid4())
-        path = f"test_runs/run-123/media/{media_id}/original.epub"
 
-        parsed_id, ext = parse_storage_path(path)
+        parsed_id, ext = parse_storage_path(f"test_runs/run-123/media/{media_id}/original.epub")
 
         assert parsed_id == media_id
         assert ext == "epub"
 
 
 class TestFakeStorageClient:
-    """Tests for FakeStorageClient implementation."""
-
     @pytest.fixture
     def client(self):
-        """Provide a fresh FakeStorageClient."""
         return FakeStorageClient()
 
-    def test_sign_upload_returns_path_and_token(self, client):
-        """sign_upload returns SignedUpload with path and token."""
+    def test_sign_upload_returns_path_and_upload_url(self, client):
         result = client.sign_upload(
             "media/test/original.pdf",
             content_type="application/pdf",
+            size_bytes=123,
         )
 
         assert isinstance(result, SignedUpload)
         assert result.path == "media/test/original.pdf"
-        assert result.token.startswith("fake-token-")
+        assert result.upload_url.startswith(
+            "https://fake-storage.test/upload/media/test/original.pdf"
+        )
 
     def test_sign_download_returns_url(self, client):
-        """sign_download returns fake URL."""
         url = client.sign_download("media/test/original.pdf")
 
         assert "fake-storage.test" in url
         assert "download" in url
 
     def test_head_object_missing(self, client):
-        """head_object returns None for missing object."""
-        result = client.head_object("missing/path.pdf")
-        assert result is None
+        assert client.head_object("missing/path.pdf") is None
 
     def test_head_object_exists(self, client):
-        """head_object returns metadata for existing object."""
         client.put_object("test/file.pdf", b"test content", "application/pdf")
 
         result = client.head_object("test/file.pdf")
 
-        assert isinstance(result, ObjectMetadata)
-        assert result.content_type == "application/pdf"
-        assert result.size_bytes == len(b"test content")
+        assert result == ObjectMetadata(content_type="application/pdf", size_bytes=12)
 
     def test_stream_object_missing(self, client):
-        """stream_object raises StorageError for missing object."""
-        from nexus.storage.client import StorageError
-
         with pytest.raises(StorageError) as exc_info:
             list(client.stream_object("missing/path.pdf"))
 
         assert exc_info.value.code == "E_STORAGE_MISSING"
 
     def test_stream_object_returns_chunks(self, client):
-        """stream_object yields content in chunks."""
         content = b"hello world" * 1000
         client.put_object("test/file.pdf", content, "application/pdf")
 
@@ -154,7 +261,6 @@ class TestFakeStorageClient:
         assert b"".join(chunks) == content
 
     def test_delete_object(self, client):
-        """delete_object removes the object."""
         client.put_object("test/file.pdf", b"content", "application/pdf")
 
         client.delete_object("test/file.pdf")
@@ -162,12 +268,9 @@ class TestFakeStorageClient:
         assert client.head_object("test/file.pdf") is None
 
     def test_delete_object_missing_no_error(self, client):
-        """delete_object doesn't error for missing object."""
-        # Should not raise
         client.delete_object("missing/path.pdf")
 
     def test_clear(self, client):
-        """clear removes all objects."""
         client.put_object("test/a.pdf", b"a", "application/pdf")
         client.put_object("test/b.pdf", b"b", "application/pdf")
 
@@ -177,62 +280,270 @@ class TestFakeStorageClient:
         assert client.head_object("test/b.pdf") is None
 
 
-class TestComputeSha256:
-    """Tests for SHA-256 computation utility."""
+class TestStorageClient:
+    def test_sign_upload_returns_presigned_put_url(self):
+        s3 = RecordingS3Client()
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
 
+        result = client.sign_upload(
+            "media/test/original.pdf",
+            content_type="application/pdf",
+            size_bytes=123,
+            expires_in=120,
+        )
+
+        assert result == SignedUpload(
+            path="media/test/original.pdf",
+            upload_url="https://signed.test/put_object/media/test/original.pdf",
+        )
+        assert s3.calls == [
+            (
+                "generate_presigned_url",
+                {
+                    "client_method": "put_object",
+                    "Params": {
+                        "Bucket": "media",
+                        "Key": "media/test/original.pdf",
+                        "ContentType": "application/pdf",
+                        "ContentLength": 123,
+                    },
+                    "ExpiresIn": 120,
+                    "HttpMethod": "PUT",
+                },
+            )
+        ]
+
+    def test_sign_download_returns_presigned_get_url(self):
+        s3 = RecordingS3Client()
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        signed_url = client.sign_download("media/test/original.pdf", expires_in=60)
+
+        assert signed_url == "https://signed.test/get_object/media/test/original.pdf"
+        assert s3.calls == [
+            (
+                "generate_presigned_url",
+                {
+                    "client_method": "get_object",
+                    "Params": {"Bucket": "media", "Key": "media/test/original.pdf"},
+                    "ExpiresIn": 60,
+                    "HttpMethod": "GET",
+                },
+            )
+        ]
+
+    def test_head_object_reads_metadata(self):
+        s3 = RecordingS3Client()
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        metadata = client.head_object("media/test/file.pdf")
+
+        assert metadata == ObjectMetadata(content_type="application/pdf", size_bytes=123)
+        assert s3.calls == [("head_object", {"Bucket": "media", "Key": "media/test/file.pdf"})]
+
+    def test_head_object_returns_none_when_missing(self):
+        s3 = RecordingS3Client()
+        s3.head_error = client_error("NoSuchKey", 404)
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        assert client.head_object("media/test/file.pdf") is None
+
+    def test_head_object_raises_on_missing_bucket(self):
+        s3 = RecordingS3Client()
+        s3.head_error = client_error("NoSuchBucket", 404)
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        with pytest.raises(StorageError) as exc_info:
+            client.head_object("media/test/file.pdf")
+
+        assert exc_info.value.code == "E_STORAGE_ERROR"
+
+    def test_head_object_raises_on_infrastructure_error(self):
+        s3 = RecordingS3Client()
+        s3.head_error = client_error("InternalError", 500)
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        with pytest.raises(StorageError) as exc_info:
+            client.head_object("media/test/file.pdf")
+
+        assert exc_info.value.code == "E_STORAGE_ERROR"
+
+    def test_stream_object_reads_body(self):
+        s3 = RecordingS3Client()
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        assert list(client.stream_object("media/test/file.pdf")) == [b"pdf-bytes"]
+        assert s3.calls == [("get_object", {"Bucket": "media", "Key": "media/test/file.pdf"})]
+
+    def test_stream_object_wraps_mid_stream_failure(self):
+        s3 = RecordingS3Client()
+        body = FailingReadBody()
+
+        def get_object(**kwargs):
+            s3.calls.append(("get_object", kwargs))
+            return {"Body": body}
+
+        s3.get_object = get_object
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        with pytest.raises(StorageError) as exc_info:
+            list(client.stream_object("media/test/file.pdf"))
+
+        assert exc_info.value.code == "E_STORAGE_ERROR"
+        assert body.closed is True
+
+    def test_stream_object_raises_missing_code_for_missing_object(self):
+        s3 = RecordingS3Client()
+        s3.get_error = client_error("NoSuchKey", 404)
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        with pytest.raises(StorageError) as exc_info:
+            list(client.stream_object("media/test/file.pdf"))
+
+        assert exc_info.value.code == "E_STORAGE_MISSING"
+
+    def test_put_object_uploads_bytes_with_content_type(self):
+        s3 = RecordingS3Client()
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        client.put_object("media/test/assets/cover.jpg", b"jpeg-bytes", "image/jpeg")
+
+        assert s3.calls == [
+            (
+                "put_object",
+                {
+                    "Bucket": "media",
+                    "Key": "media/test/assets/cover.jpg",
+                    "Body": b"jpeg-bytes",
+                    "ContentType": "image/jpeg",
+                },
+            )
+        ]
+
+    def test_put_object_raises_storage_error(self):
+        s3 = RecordingS3Client()
+        s3.put_error = client_error("InternalError", 500)
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        with pytest.raises(StorageError) as exc_info:
+            client.put_object("media/test/assets/bad.bin", b"data")
+
+        assert exc_info.value.code == "E_STORAGE_ERROR"
+
+    def test_copy_object_copies_within_bucket(self):
+        s3 = RecordingS3Client()
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        client.copy_object("media/test/uploads/original.pdf", "media/test/original.pdf")
+
+        assert s3.calls == [
+            (
+                "copy_object",
+                {
+                    "Bucket": "media",
+                    "Key": "media/test/original.pdf",
+                    "CopySource": {
+                        "Bucket": "media",
+                        "Key": "media/test/uploads/original.pdf",
+                    },
+                },
+            )
+        ]
+
+    def test_copy_object_raises_storage_error(self):
+        s3 = RecordingS3Client()
+        s3.copy_error = client_error("InternalError", 500)
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        with pytest.raises(StorageError) as exc_info:
+            client.copy_object("media/test/uploads/original.pdf", "media/test/original.pdf")
+
+        assert exc_info.value.code == "E_STORAGE_ERROR"
+
+    def test_delete_object_raises_storage_error(self):
+        s3 = RecordingS3Client()
+        s3.delete_error = client_error("InternalError", 500)
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        with pytest.raises(StorageError) as exc_info:
+            client.delete_object("media/test/file.pdf")
+
+        assert exc_info.value.code == "E_STORAGE_ERROR"
+        assert s3.calls == [("delete_object", {"Bucket": "media", "Key": "media/test/file.pdf"})]
+
+
+class TestGetStorageClient:
+    @pytest.fixture(autouse=True)
+    def clear_rejected_supabase_service_role_env(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://localhost/test")
+        monkeypatch.setenv("SUPABASE_SERVICE_KEY", "")
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "")
+
+    def test_test_env_without_r2_fails_closed(self, monkeypatch):
+        for key in ("R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
+            monkeypatch.setenv(key, "")
+        monkeypatch.setenv("NEXUS_ENV", "test")
+
+        with pytest.raises(StorageError, match="R2_ENDPOINT_URL"):
+            get_storage_client()
+
+    def test_local_without_r2_fails_closed(self, monkeypatch):
+        for key in ("R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
+            monkeypatch.setenv(key, "")
+        monkeypatch.setenv("NEXUS_ENV", "local")
+
+        with pytest.raises(StorageError, match="R2_ENDPOINT_URL"):
+            get_storage_client()
+
+    def test_partial_r2_env_fails_closed(self, monkeypatch):
+        monkeypatch.setenv("NEXUS_ENV", "local")
+        monkeypatch.setenv("R2_ENDPOINT_URL", "https://r2.test")
+        monkeypatch.setenv("R2_ACCESS_KEY_ID", "access")
+        monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "")
+        monkeypatch.setenv("R2_BUCKET", "")
+
+        with pytest.raises(StorageError, match="R2_SECRET_ACCESS_KEY"):
+            get_storage_client()
+
+    def test_complete_r2_settings_create_real_storage_client(self, monkeypatch):
+        calls = []
+
+        def fake_boto3_client(service_name, **kwargs):
+            calls.append((service_name, kwargs))
+            return RecordingS3Client()
+
+        monkeypatch.setenv("NEXUS_ENV", "test")
+        monkeypatch.setenv("R2_ENDPOINT_URL", "https://abc123.r2.cloudflarestorage.com")
+        monkeypatch.setenv("R2_ACCESS_KEY_ID", "access")
+        monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "secret")
+        monkeypatch.setenv("R2_BUCKET", "media")
+        monkeypatch.setenv("R2_REGION", "auto")
+        monkeypatch.setattr("nexus.storage.client.boto3.client", fake_boto3_client)
+
+        client = get_storage_client()
+
+        assert isinstance(client, StorageClient)
+        assert calls[0][0] == "s3"
+        assert calls[0][1]["endpoint_url"] == "https://abc123.r2.cloudflarestorage.com"
+        assert calls[0][1]["aws_access_key_id"] == "access"
+        assert calls[0][1]["aws_secret_access_key"] == "secret"
+        assert calls[0][1]["region_name"] == "auto"
+
+
+class TestComputeSha256:
     def test_compute_sha256_bytes(self):
-        """Compute SHA-256 from bytes."""
-        # Known SHA-256 for "hello"
-        expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         result = compute_sha256(b"hello")
-        assert result == expected
+        assert result == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
 
     def test_compute_sha256_iterator(self):
-        """Compute SHA-256 from iterator of bytes."""
-        expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-
         def chunks():
             yield b"hel"
             yield b"lo"
 
         result = compute_sha256(chunks())
-        assert result == expected
+
+        assert result == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
 
     def test_compute_sha256_empty(self):
-        """Compute SHA-256 for empty input."""
-        # Known SHA-256 for empty string
-        expected = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         result = compute_sha256(b"")
-        assert result == expected
-
-
-class TestStorageClientPutObject:
-    """Tests for production StorageClient put_object behavior."""
-
-    @respx.mock
-    def test_put_object_uploads_bytes_with_content_type(self):
-        client = StorageClient("https://example.supabase.co", "svc-key", bucket="media")
-        route = respx.post(
-            "https://example.supabase.co/storage/v1/object/media/media/test/assets/cover.jpg"
-        ).mock(return_value=httpx.Response(200, json={"Key": "ok"}))
-
-        payload = b"jpeg-bytes"
-        client.put_object("media/test/assets/cover.jpg", payload, "image/jpeg")
-
-        assert route.called, "Expected storage upload request to be issued"
-        request = route.calls[0].request
-        assert request.content == payload
-        assert request.headers.get("content-type") == "image/jpeg"
-        assert request.headers.get("x-upsert") == "true"
-
-    @respx.mock
-    def test_put_object_raises_storage_error_on_non_2xx(self):
-        client = StorageClient("https://example.supabase.co", "svc-key", bucket="media")
-        respx.post(
-            "https://example.supabase.co/storage/v1/object/media/media/test/assets/bad.bin"
-        ).mock(return_value=httpx.Response(500, text="boom"))
-
-        with pytest.raises(StorageError) as exc_info:
-            client.put_object("media/test/assets/bad.bin", b"data", "application/octet-stream")
-
-        assert exc_info.value.code == "E_STORAGE_ERROR"
+        assert result == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"

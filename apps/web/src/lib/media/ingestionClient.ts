@@ -1,15 +1,14 @@
 "use client";
 
 import { apiFetch } from "@/lib/api/client";
-import { createClient } from "@/lib/supabase/client";
 
 type FileKind = "pdf" | "epub";
 
 interface UploadInitResponse {
   data: {
     media_id: string;
-    storage_path: string;
-    token: string;
+    upload_url: string;
+    expires_at: string;
   };
 }
 
@@ -82,20 +81,24 @@ export async function uploadIngestFile({
     }),
   });
 
-  const supabase = createClient();
-  const { error } = await supabase.storage
-    .from("media")
-    .uploadToSignedUrl(init.data.storage_path, init.data.token, file, {
-      upsert: false,
-    });
+  const upload = await fetch(init.data.upload_url, {
+    method: "PUT",
+    headers: {
+      "Content-Type": contentTypeFor(kind),
+    },
+    body: file,
+  });
 
-  if (error) {
-    throw new Error(`Upload failed: ${error.message}`);
+  if (!upload.ok) {
+    throw new Error(`Upload failed: ${upload.status}`);
   }
 
-  const ingest = await apiFetch<IngestResponse>(`/api/media/${init.data.media_id}/ingest`, {
-    method: "POST",
-  });
+  const ingest = await apiFetch<IngestResponse>(
+    `/api/media/${init.data.media_id}/ingest`,
+    {
+      method: "POST",
+    },
+  );
 
   return {
     mediaId: ingest.data.media_id,

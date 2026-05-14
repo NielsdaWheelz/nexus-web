@@ -18,7 +18,7 @@ function loadEnvFile(filePath) {
     const key = trimmed.slice(0, eqIdx).trim();
     let value = trimmed.slice(eqIdx + 1).trim();
     if (
-      (value.startsWith("\"") && value.endsWith("\"")) ||
+      (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
     ) {
       value = value.slice(1, -1);
@@ -45,7 +45,7 @@ function parseSupabaseStatus(rawStatus) {
     const publishableKey = parsed.PUBLISHABLE_KEY ?? null;
     const serviceRoleKey = parsed.SERVICE_ROLE_KEY ?? null;
     const secretKey = parsed.SECRET_KEY ?? null;
-    if (!apiUrl || (!anonKey && !publishableKey) || (!serviceRoleKey && !secretKey)) {
+    if (!apiUrl && !anonKey && !publishableKey && !serviceRoleKey && !secretKey) {
       return null;
     }
     return { apiUrl, anonKey, publishableKey, serviceRoleKey, secretKey };
@@ -77,13 +77,24 @@ export function loadRootFileEnv(rootDir) {
 export function resolveSupabaseEnv(rootDir, env = process.env) {
   const fileEnv = loadRootFileEnv(rootDir);
   const liveStatus = readLiveSupabaseStatus(rootDir);
+  let localApiUrl = null;
+  try {
+    const config = readFileSync(path.join(rootDir, "supabase/config.toml"), "utf-8");
+    const match = config.match(/\[api\][\s\S]*?\nport\s*=\s*([0-9]+)/);
+    if (match) {
+      localApiUrl = `http://127.0.0.1:${match[1]}`;
+    }
+  } catch {
+    localApiUrl = null;
+  }
 
   const supabaseUrl =
     liveStatus?.apiUrl ??
     env.NEXT_PUBLIC_SUPABASE_URL ??
     env.SUPABASE_URL ??
     fileEnv.NEXT_PUBLIC_SUPABASE_URL ??
-    fileEnv.SUPABASE_URL;
+    fileEnv.SUPABASE_URL ??
+    localApiUrl;
 
   const anonKey =
     liveStatus?.anonKey ??
@@ -98,14 +109,7 @@ export function resolveSupabaseEnv(rootDir, env = process.env) {
   const adminKey =
     liveStatus?.secretKey ??
     liveStatus?.serviceRoleKey ??
-    env.SUPABASE_ADMIN_KEY ??
-    env.SUPABASE_SECRET_KEY ??
-    env.SUPABASE_SERVICE_ROLE_KEY ??
-    env.SUPABASE_SERVICE_KEY ??
-    fileEnv.SUPABASE_ADMIN_KEY ??
-    fileEnv.SUPABASE_SECRET_KEY ??
-    fileEnv.SUPABASE_SERVICE_ROLE_KEY ??
-    fileEnv.SUPABASE_SERVICE_KEY;
+    env.SUPABASE_AUTH_ADMIN_KEY;
 
   return {
     ...fileEnv,
@@ -115,7 +119,7 @@ export function resolveSupabaseEnv(rootDir, env = process.env) {
   };
 }
 
-export function applyResolvedSupabaseEnv(rootDir, env = process.env) {
+export function applyResolvedSupabaseEnv(rootDir, env = process.env, options = {}) {
   const resolved = resolveSupabaseEnv(rootDir, env);
 
   if (resolved.supabaseUrl) {
@@ -130,9 +134,8 @@ export function applyResolvedSupabaseEnv(rootDir, env = process.env) {
     env.NEXT_PUBLIC_SUPABASE_ANON_KEY = resolved.anonKey;
   }
 
-  if (resolved.adminKey) {
-    env.SUPABASE_ADMIN_KEY = resolved.adminKey;
-    env.SUPABASE_SERVICE_KEY = resolved.adminKey;
+  if (options.includeAdminKey && resolved.adminKey) {
+    env.SUPABASE_AUTH_ADMIN_KEY = resolved.adminKey;
   }
 
   env.SUPABASE_AUDIENCES = env.SUPABASE_AUDIENCES ?? "authenticated";

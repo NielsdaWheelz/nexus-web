@@ -575,7 +575,7 @@ def assert_search_and_resolver(
     assert resolved["media_id"] == str(media_id), resolved
     assert resolved["resolver"]["kind"] == resolver_kind, resolved
     if resolver_kind == "pdf":
-        assert resolved["resolver"]["status"] in {"resolved", "no_geometry"}, resolved
+        assert resolved["resolver"]["status"] == "resolved", resolved
     elif resolver_kind in {"web", "epub", "transcript"}:
         assert resolved["resolver"]["status"] == "resolved", resolved
     else:

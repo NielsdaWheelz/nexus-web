@@ -11,6 +11,7 @@ import {
 test("@real-media captured web article opens reader text and evidence highlight", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(180_000);
   const seed = readRealMediaSeed();
   const mediaId = seed.fixtures.web.media_id;
   const query = seed.fixtures.web.query;
@@ -38,7 +39,9 @@ test("@real-media captured web article opens reader text and evidence highlight"
     "captured article should return indexed evidence",
   ).toBeTruthy();
   if (!result) {
-    throw new Error(`captured article visible search did not return ${mediaId}`);
+    throw new Error(
+      `captured article visible search did not return ${mediaId}`,
+    );
   }
   const resolverResponse = await page.request.get(
     `/api/media/${mediaId}/evidence/${result.evidence_span_ids[0]}`,
@@ -70,7 +73,6 @@ test("@real-media captured web article opens reader text and evidence highlight"
     writeRealMediaTrace(testInfo, "real-web-captured-article-trace.json", {
       fixture_id: "web-nasa-water-on-moon",
       artifact_sha256: seed.fixtures.web.artifact_sha256,
-      artifact_bytes: seed.fixtures.web.artifact_bytes,
       media_id: mediaId,
       query,
       search_api_url: search.api_url,

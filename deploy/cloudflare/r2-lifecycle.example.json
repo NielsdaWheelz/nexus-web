@@ -1,0 +1,23 @@
+{
+  "rules": [
+    {
+      "id": "expire-direct-upload-staging",
+      "enabled": true,
+      "conditions": {
+        "prefix": "uploads/"
+      },
+      "deleteObjectsTransition": {
+        "condition": {
+          "type": "Age",
+          "maxAge": 86400
+        }
+      },
+      "abortMultipartUploadsTransition": {
+        "condition": {
+          "type": "Age",
+          "maxAge": 86400
+        }
+      }
+    }
+  ]
+}

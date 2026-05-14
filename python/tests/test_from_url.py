@@ -29,7 +29,7 @@ import respx
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 
-from nexus.storage import build_storage_path
+from nexus.storage import build_storage_path, build_upload_staging_storage_path
 from nexus.storage.client import FakeStorageClient, StorageError
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -1466,7 +1466,7 @@ class TestFromUrlRemoteFiles:
 
         media_uuid = UUID("11111111-1111-1111-1111-111111111111")
         monkeypatch.setattr("nexus.services.media.uuid4", lambda: media_uuid)
-        storage_path = build_storage_path(media_uuid, "pdf")
+        storage_path = build_upload_staging_storage_path(media_uuid, "pdf")
 
         _install_library_entry_insert_failure(direct_db)
         try:
@@ -1525,6 +1525,8 @@ class TestFromUrlRemoteFiles:
         assert first_response.status_code == 202
         first_data = first_response.json()["data"]
         media_id = UUID(first_data["media_id"])
+        first_staging_path = build_upload_staging_storage_path(media_id, "pdf")
+        first_final_path = build_storage_path(media_id, "pdf")
 
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
@@ -1542,6 +1544,9 @@ class TestFromUrlRemoteFiles:
         assert UUID(second_data["media_id"]) == media_id
         assert "duplicate" not in second_data
         assert second_data["idempotency_outcome"] == "reused"
+        assert storage.put_paths[0] == first_staging_path
+        second_staging_path = storage.put_paths[1]
+        second_final_path = build_storage_path(UUID(second_staging_path.split("/")[-2]), "pdf")
 
         with direct_db.session() as session:
             count = session.execute(
@@ -1556,7 +1561,15 @@ class TestFromUrlRemoteFiles:
             ).scalar_one()
 
         assert count == 1
-        assert len(storage.deleted_paths) == 1
+        assert storage.get_object(first_staging_path) is None
+        assert storage.get_object(first_final_path) == PDF_CONTENT
+        assert storage.get_object(second_staging_path) is None
+        assert storage.get_object(second_final_path) is None
+        assert storage.deleted_paths == [
+            first_staging_path,
+            second_staging_path,
+            second_final_path,
+        ]
 
 
 # =============================================================================

@@ -37,7 +37,7 @@ bun run dev
 
 Prerequisites:
 
-- `make dev` (Supabase local)
+- `make dev` (local Postgres, MinIO, and Supabase Auth)
 - `make api` (FastAPI)
 
 ## Environment

@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-import nexus.jobs.worker as worker_module
-from nexus.jobs.queue import enqueue_job
+from nexus.jobs.queue import enqueue_job, fail_job
 from nexus.jobs.registry import JobDefinition
 from nexus.jobs.worker import JobWorker
 from tests.utils.db import DirectSessionManager, task_session_factory
@@ -92,6 +92,74 @@ def test_worker_run_once_executes_handler_and_marks_job_succeeded(db_session: Se
     )
 
 
+def test_worker_run_once_skips_handler_when_start_heartbeat_loses_ownership(
+    direct_db: DirectSessionManager,
+):
+    kind = "test_lost_before_start_job"
+    direct_db.register_cleanup("background_jobs", "kind", kind)
+    observed_payloads: list[dict[str, object]] = []
+    ownership_moved = threading.Event()
+
+    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+        observed_payloads.append(payload)
+        return {"ok": True}
+
+    def session_factory() -> Session:
+        db = direct_db.session()
+        if not ownership_moved.is_set():
+            event.listen(db, "after_commit", move_ownership_after_claim, once=True)
+        return db
+
+    def move_ownership_after_claim(_db: Session) -> None:
+        with direct_db.session() as takeover:
+            takeover.execute(
+                text(
+                    """
+                    UPDATE background_jobs
+                    SET claimed_by = 'other-worker',
+                        lease_expires_at = now() + interval '60 seconds'
+                    WHERE kind = :kind
+                      AND status = 'running'
+                    """
+                ),
+                {"kind": kind},
+            )
+            takeover.commit()
+        ownership_moved.set()
+
+    worker = JobWorker(
+        session_factory=session_factory,
+        worker_id="worker-test-lost-before-start",
+        registry={
+            kind: JobDefinition(
+                kind=kind,
+                handler=handler,
+                max_attempts=1,
+                retry_delays_seconds=(0,),
+                lease_seconds=60,
+            )
+        },
+    )
+
+    with direct_db.session() as db:
+        job = enqueue_job(
+            db,
+            kind=kind,
+            payload={"value": "abc"},
+            max_attempts=1,
+        )
+        job_id = job.id
+        db.commit()
+
+    assert worker.run_once() is True
+    assert observed_payloads == []
+
+    with direct_db.session() as db:
+        row = _fetch_job_row(db, job_id)
+    assert row["status"] == "running"
+    assert row["claimed_by"] == "other-worker"
+
+
 def test_worker_run_once_reclaims_stale_running_job_and_completes_it(db_session: Session):
     def handler(*, payload: dict[str, object]) -> dict[str, object]:
         return {"reclaimed": payload.get("reclaimed", False)}
@@ -124,11 +192,11 @@ def test_worker_run_once_reclaims_stale_running_job_and_completes_it(db_session:
                 status = 'running',
                 attempts = 1,
                 claimed_by = 'dead-worker',
-                lease_expires_at = :expired_at
+                lease_expires_at = now() - interval '3 minutes'
             WHERE id = :job_id
             """
         ),
-        {"job_id": stale_job.id, "expired_at": datetime.now(UTC) - timedelta(minutes=3)},
+        {"job_id": stale_job.id},
     )
     db_session.commit()
 
@@ -189,7 +257,6 @@ def test_worker_scheduler_enqueues_periodic_jobs_with_slot_dedupe(db_session: Se
 
 def test_worker_scheduler_race_enqueues_one_periodic_job(
     direct_db: DirectSessionManager,
-    monkeypatch: pytest.MonkeyPatch,
 ):
     kind = "test_periodic_race_job"
     direct_db.register_cleanup("background_jobs", "kind", kind)
@@ -197,15 +264,6 @@ def test_worker_scheduler_race_enqueues_one_periodic_job(
     with direct_db.session() as db:
         db.execute(text("DELETE FROM background_jobs WHERE kind = :kind"), {"kind": kind})
         db.commit()
-
-    barrier = threading.Barrier(2)
-    real_enqueue_job = worker_module.enqueue_job
-
-    def gated_enqueue_job(*args, **kwargs):
-        barrier.wait(timeout=5)
-        return real_enqueue_job(*args, **kwargs)
-
-    monkeypatch.setattr(worker_module, "enqueue_job", gated_enqueue_job)
 
     registry = {
         kind: JobDefinition(
@@ -218,8 +276,10 @@ def test_worker_scheduler_race_enqueues_one_periodic_job(
         )
     }
     slot_now = datetime(2026, 3, 23, 12, 0, 7, tzinfo=UTC)
+    start = threading.Barrier(2)
 
     def run_scheduler(worker_id: str) -> int:
+        start.wait(timeout=5)
         worker = JobWorker(
             session_factory=direct_db.session,
             worker_id=worker_id,
@@ -360,6 +420,356 @@ def test_worker_scheduler_respects_allowed_kinds(db_session: Session):
     rows = db_session.execute(text("SELECT kind FROM background_jobs ORDER BY kind")).fetchall()
     assert [row[0] for row in rows] == ["allowed_periodic_job"], (
         f"Expected scheduler to skip blocked periodic job. Rows={rows}"
+    )
+
+
+def test_worker_run_forever_wakes_on_enqueue_notification(direct_db: DirectSessionManager):
+    kind = "test_notify_wakeup_job"
+    direct_db.register_cleanup("background_jobs", "kind", kind)
+
+    with direct_db.session() as db:
+        db.execute(text("DELETE FROM background_jobs WHERE kind = :kind"), {"kind": kind})
+        db.commit()
+
+    processed = threading.Event()
+    stop = threading.Event()
+
+    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+        processed.set()
+        stop.set()
+        return {"ok": True, "payload": payload}
+
+    worker = JobWorker(
+        session_factory=direct_db.session,
+        worker_id="worker-test-notify-wakeup",
+        registry={
+            kind: JobDefinition(
+                kind=kind,
+                handler=handler,
+                max_attempts=1,
+                retry_delays_seconds=(0,),
+                lease_seconds=60,
+            )
+        },
+        poll_interval_seconds=5.0,
+        idle_backoff_max_seconds=5.0,
+        scheduler_interval_seconds=60.0,
+    )
+
+    started_at = time.monotonic()
+    worker_thread = threading.Thread(
+        target=worker.run_forever,
+        kwargs={"stop_event": stop},
+        daemon=True,
+    )
+    worker_thread.start()
+
+    time.sleep(0.2)
+    with direct_db.session() as db:
+        enqueue_job(db, kind=kind, payload={"source": "notify"}, max_attempts=1)
+        db.commit()
+
+    worker_thread.join(timeout=3.0)
+    stop.set()
+    worker_thread.join(timeout=1.0)
+
+    assert not worker_thread.is_alive(), "Expected LISTEN/NOTIFY to wake the idle worker."
+    assert processed.is_set(), "Expected enqueued notification job to be processed."
+    elapsed = time.monotonic() - started_at
+    assert elapsed < 3.0, (
+        "Expected notification wakeup before the 5 second idle backoff elapsed. "
+        f"elapsed={elapsed:.3f}s"
+    )
+
+
+def test_worker_run_forever_ignores_disallowed_notification_until_allowed_job(
+    direct_db: DirectSessionManager,
+):
+    blocked_kind = "test_blocked_notify_job"
+    allowed_kind = "test_allowed_notify_job"
+    direct_db.register_cleanup("background_jobs", "kind", blocked_kind)
+    direct_db.register_cleanup("background_jobs", "kind", allowed_kind)
+
+    with direct_db.session() as db:
+        db.execute(
+            text("DELETE FROM background_jobs WHERE kind IN (:blocked_kind, :allowed_kind)"),
+            {"blocked_kind": blocked_kind, "allowed_kind": allowed_kind},
+        )
+        db.commit()
+
+    processed = threading.Event()
+    stop = threading.Event()
+    observed_payloads: list[dict[str, object]] = []
+
+    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+        observed_payloads.append(payload)
+        processed.set()
+        stop.set()
+        return {"ok": True, "payload": payload}
+
+    worker = JobWorker(
+        session_factory=direct_db.session,
+        worker_id="worker-test-allowed-notify",
+        registry={
+            allowed_kind: JobDefinition(
+                kind=allowed_kind,
+                handler=handler,
+                max_attempts=1,
+                retry_delays_seconds=(0,),
+                lease_seconds=60,
+            )
+        },
+        poll_interval_seconds=5.0,
+        idle_backoff_max_seconds=5.0,
+        scheduler_interval_seconds=60.0,
+        allowed_kinds=(allowed_kind,),
+    )
+
+    worker_thread = threading.Thread(
+        target=worker.run_forever,
+        kwargs={"stop_event": stop},
+        daemon=True,
+    )
+    worker_thread.start()
+
+    time.sleep(0.2)
+    with direct_db.session() as db:
+        enqueue_job(db, kind=blocked_kind, payload={"source": "blocked"}, max_attempts=1)
+        db.commit()
+    time.sleep(0.3)
+    assert not processed.is_set(), "Disallowed notification should not wake the sharded worker."
+
+    with direct_db.session() as db:
+        enqueue_job(db, kind=allowed_kind, payload={"source": "allowed"}, max_attempts=1)
+        db.commit()
+
+    worker_thread.join(timeout=3.0)
+    stop.set()
+    worker_thread.join(timeout=1.0)
+
+    assert not worker_thread.is_alive(), "Expected allowed notification to wake the worker."
+    assert observed_payloads == [{"source": "allowed"}]
+
+
+def test_worker_notification_wait_falls_back_when_driver_connection_is_unavailable():
+    class FakeConnection:
+        connection = type("DriverConnectionBox", (), {"driver_connection": None})()
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def connection(self, **_kwargs):
+            return FakeConnection()
+
+    worker = JobWorker(
+        session_factory=FakeSession,
+        worker_id="worker-test-no-driver-listen",
+        registry={},
+    )
+    stop = threading.Event()
+
+    worker._wait_for_job_notification(stop_event=stop, timeout=0.01)
+
+
+def test_worker_run_forever_wakes_when_future_job_becomes_due(direct_db: DirectSessionManager):
+    kind = "test_future_due_wakeup_job"
+    direct_db.register_cleanup("background_jobs", "kind", kind)
+
+    with direct_db.session() as db:
+        db.execute(text("DELETE FROM background_jobs WHERE kind = :kind"), {"kind": kind})
+        available_at = db.execute(text("SELECT now() + interval '0.4 seconds'")).scalar_one()
+        enqueue_job(
+            db,
+            kind=kind,
+            payload={"source": "future"},
+            available_at=available_at,
+            max_attempts=1,
+        )
+        db.commit()
+
+    processed = threading.Event()
+    stop = threading.Event()
+
+    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+        processed.set()
+        stop.set()
+        return {"ok": True, "payload": payload}
+
+    worker = JobWorker(
+        session_factory=direct_db.session,
+        worker_id="worker-test-future-wakeup",
+        registry={
+            kind: JobDefinition(
+                kind=kind,
+                handler=handler,
+                max_attempts=1,
+                retry_delays_seconds=(0,),
+                lease_seconds=60,
+            )
+        },
+        poll_interval_seconds=5.0,
+        idle_backoff_max_seconds=5.0,
+        scheduler_interval_seconds=60.0,
+    )
+
+    started_at = time.monotonic()
+    worker_thread = threading.Thread(
+        target=worker.run_forever,
+        kwargs={"stop_event": stop},
+        daemon=True,
+    )
+    worker_thread.start()
+    worker_thread.join(timeout=3.0)
+    stop.set()
+    worker_thread.join(timeout=1.0)
+
+    assert not worker_thread.is_alive(), "Expected due-time cap to wake the idle worker."
+    assert processed.is_set(), "Expected future job to process soon after available_at."
+    elapsed = time.monotonic() - started_at
+    assert elapsed < 3.0, (
+        f"Expected future due job before the 5 second idle backoff elapsed. elapsed={elapsed:.3f}s"
+    )
+
+
+def test_worker_run_forever_caps_idle_wait_at_scheduler_deadline(direct_db: DirectSessionManager):
+    kind = "test_scheduler_deadline_job"
+    direct_db.register_cleanup("background_jobs", "kind", kind)
+
+    with direct_db.session() as db:
+        db.execute(text("DELETE FROM background_jobs WHERE kind = :kind"), {"kind": kind})
+        db.commit()
+
+    processed_count = 0
+    stop = threading.Event()
+
+    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+        nonlocal processed_count
+        processed_count += 1
+        if processed_count >= 2:
+            stop.set()
+        return {"ok": True, "payload": payload}
+
+    worker = JobWorker(
+        session_factory=direct_db.session,
+        worker_id="worker-test-scheduler-deadline",
+        registry={
+            kind: JobDefinition(
+                kind=kind,
+                handler=handler,
+                max_attempts=1,
+                retry_delays_seconds=(0,),
+                lease_seconds=60,
+                periodic_interval_seconds=1,
+            )
+        },
+        poll_interval_seconds=5.0,
+        idle_backoff_max_seconds=5.0,
+        scheduler_interval_seconds=1.0,
+    )
+
+    started_at = time.monotonic()
+    worker_thread = threading.Thread(
+        target=worker.run_forever,
+        kwargs={"stop_event": stop},
+        daemon=True,
+    )
+    worker_thread.start()
+    worker_thread.join(timeout=3.0)
+    stop.set()
+    worker_thread.join(timeout=1.0)
+
+    assert not worker_thread.is_alive(), "Expected scheduler deadline to wake the idle worker."
+    assert processed_count >= 2
+    elapsed = time.monotonic() - started_at
+    assert elapsed < 3.0, (
+        "Expected the second periodic job before the 5 second idle backoff elapsed. "
+        f"elapsed={elapsed:.3f}s"
+    )
+
+
+def test_worker_run_forever_wakes_on_failed_retry_notification(direct_db: DirectSessionManager):
+    kind = "test_failed_retry_notify_job"
+    direct_db.register_cleanup("background_jobs", "kind", kind)
+
+    with direct_db.session() as db:
+        db.execute(text("DELETE FROM background_jobs WHERE kind = :kind"), {"kind": kind})
+        job = enqueue_job(db, kind=kind, payload={"source": "retry"}, max_attempts=3)
+        db.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET
+                    status = 'running',
+                    attempts = 1,
+                    claimed_by = 'worker-a',
+                    lease_expires_at = now() + interval '1 minute'
+                WHERE id = :job_id
+                """
+            ),
+            {"job_id": job.id},
+        )
+        db.commit()
+
+    processed = threading.Event()
+    stop = threading.Event()
+
+    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+        processed.set()
+        stop.set()
+        return {"ok": True, "payload": payload}
+
+    worker = JobWorker(
+        session_factory=direct_db.session,
+        worker_id="worker-test-failed-retry-notify",
+        registry={
+            kind: JobDefinition(
+                kind=kind,
+                handler=handler,
+                max_attempts=3,
+                retry_delays_seconds=(0,),
+                lease_seconds=60,
+            )
+        },
+        poll_interval_seconds=5.0,
+        idle_backoff_max_seconds=5.0,
+        scheduler_interval_seconds=60.0,
+    )
+
+    started_at = time.monotonic()
+    worker_thread = threading.Thread(
+        target=worker.run_forever,
+        kwargs={"stop_event": stop},
+        daemon=True,
+    )
+    worker_thread.start()
+
+    time.sleep(0.2)
+    with direct_db.session() as db:
+        transition = fail_job(
+            db,
+            job_id=job.id,
+            worker_id="worker-a",
+            error_code="E_TEST_RETRY",
+            error_message="retry now",
+            retry_delays_seconds=(0,),
+        )
+        db.commit()
+
+    assert transition == "failed"
+    worker_thread.join(timeout=3.0)
+    stop.set()
+    worker_thread.join(timeout=1.0)
+
+    assert not worker_thread.is_alive(), "Expected fail_job notification to wake the idle worker."
+    assert processed.is_set(), "Expected failed retry job to be processed."
+    elapsed = time.monotonic() - started_at
+    assert elapsed < 3.0, (
+        "Expected failed retry notification before the 5 second idle backoff elapsed. "
+        f"elapsed={elapsed:.3f}s"
     )
 
 

@@ -13,6 +13,7 @@ fi
 
 if [ "${TEST_RUNTIME_ACTIVE:-}" = "1" ]; then
     test_env_export_db_urls
+    test_env_export_r2_env
     test_env_export_makeflags
 
     status=0
@@ -21,15 +22,20 @@ if [ "${TEST_RUNTIME_ACTIVE:-}" = "1" ]; then
 fi
 
 test_env_resolve_ports
+test_env_resolve_minio_port
 
 COMPOSE_PROJECT_NAME="nexus-test-$(date +%s)-$$"
-export COMPOSE_PROJECT_NAME POSTGRES_PORT TEST_RUNTIME_ACTIVE=1
+export COMPOSE_PROJECT_NAME POSTGRES_PORT MINIO_PORT TEST_RUNTIME_ACTIVE=1
 
+# shellcheck disable=SC2329
 cleanup() {
     set +e
     docker compose -f "$COMPOSE_FILE" down -v >/dev/null
     if [ -n "${TEST_POSTGRES_PORT_LOCK_DIR:-}" ]; then
         rm -rf "$TEST_POSTGRES_PORT_LOCK_DIR"
+    fi
+    if [ -n "${TEST_MINIO_PORT_LOCK_DIR:-}" ]; then
+        rm -rf "$TEST_MINIO_PORT_LOCK_DIR"
     fi
 }
 trap cleanup EXIT
@@ -37,6 +43,8 @@ trap cleanup EXIT
 docker compose -f "$COMPOSE_FILE" up -d
 
 postgres_container="$(docker compose -f "$COMPOSE_FILE" ps -q postgres)"
+
+test_env_require_tool curl
 
 for i in {1..30}; do
     if docker exec "$postgres_container" pg_isready -U postgres >/dev/null 2>&1; then
@@ -49,11 +57,54 @@ for i in {1..30}; do
     sleep 1
 done
 
+for i in {1..30}; do
+    if curl -fsS "http://127.0.0.1:${MINIO_PORT}/minio/health/ready" >/dev/null 2>&1; then
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        echo "Error: MinIO did not become ready in time" >&2
+        exit 1
+    fi
+    sleep 1
+done
+
 docker exec "$postgres_container" createdb -U postgres nexus_test >/dev/null 2>&1 || true
 docker exec "$postgres_container" createdb -U postgres nexus_test_migrations >/dev/null 2>&1 || true
 
 test_env_export_db_urls
+test_env_export_r2_env
 test_env_export_makeflags
+
+(
+    cd "$PROJECT_ROOT/python"
+    uv run python - <<'PY'
+import os
+
+import boto3
+from botocore.client import Config
+from botocore.exceptions import ClientError
+
+s3 = boto3.client(
+    "s3",
+    endpoint_url=os.environ["R2_ENDPOINT_URL"],
+    aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+    region_name=os.environ["R2_REGION"],
+    config=Config(
+        signature_version="s3v4",
+        s3={"addressing_style": "path"},
+        request_checksum_calculation="when_required",
+        response_checksum_validation="when_required",
+    ),
+)
+try:
+    s3.create_bucket(Bucket=os.environ["R2_BUCKET"])
+except ClientError as exc:
+    code = exc.response.get("Error", {}).get("Code")
+    if code not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
+        raise
+PY
+)
 
 status=0
 "$@" || status=$?

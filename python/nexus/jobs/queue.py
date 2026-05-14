@@ -10,6 +10,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 PENDING = "pending"
@@ -113,6 +114,7 @@ def enqueue_job(
         .mappings()
         .one()
     )
+    db.execute(text("SELECT pg_notify('nexus_background_jobs', :kind)"), {"kind": kind})
     return _row_to_job(row)
 
 
@@ -125,70 +127,8 @@ def enqueue_unique_job(
     priority: int = 100,
     max_attempts: int = 3,
     available_at: datetime | None = None,
-) -> JobRow:
-    """Insert one deduped job by dedupe_key, returning the existing row when present."""
-    inserted = (
-        db.execute(
-            text(
-                """
-                INSERT INTO background_jobs (
-                    kind,
-                    payload,
-                    status,
-                    priority,
-                    attempts,
-                    max_attempts,
-                    available_at,
-                    lease_expires_at,
-                    claimed_by,
-                    dedupe_key,
-                    error_code,
-                    last_error,
-                    result,
-                    started_at,
-                    finished_at,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    :kind,
-                    CAST(:payload AS jsonb),
-                    'pending',
-                    :priority,
-                    0,
-                    :max_attempts,
-                    COALESCE(:available_at, now()),
-                    NULL,
-                    NULL,
-                    :dedupe_key,
-                    NULL,
-                    NULL,
-                    NULL,
-                    NULL,
-                    NULL,
-                    now(),
-                    now()
-                )
-                ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL
-                DO NOTHING
-                RETURNING *
-                """
-            ),
-            {
-                "kind": kind,
-                "payload": json.dumps(dict(payload or {})),
-                "priority": int(priority),
-                "max_attempts": max(int(max_attempts), 1),
-                "available_at": available_at,
-                "dedupe_key": dedupe_key,
-            },
-        )
-        .mappings()
-        .first()
-    )
-    if inserted is not None:
-        return _row_to_job(inserted)
-
+) -> tuple[JobRow, bool]:
+    """Insert one deduped job by dedupe_key, returning the row and whether it inserted."""
     existing = (
         db.execute(
             text("SELECT * FROM background_jobs WHERE dedupe_key = :dedupe_key"),
@@ -198,9 +138,88 @@ def enqueue_unique_job(
         .first()
     )
     if existing is not None:
-        return _row_to_job(existing)
+        return _row_to_job(existing), False
 
-    raise RuntimeError(f"Concurrent enqueue for dedupe_key={dedupe_key!r} did not commit.")
+    try:
+        with db.begin_nested():
+            inserted = (
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO background_jobs (
+                            kind,
+                            payload,
+                            status,
+                            priority,
+                            attempts,
+                            max_attempts,
+                            available_at,
+                            lease_expires_at,
+                            claimed_by,
+                            dedupe_key,
+                            error_code,
+                            last_error,
+                            result,
+                            started_at,
+                            finished_at,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (
+                            :kind,
+                            CAST(:payload AS jsonb),
+                            'pending',
+                            :priority,
+                            0,
+                            :max_attempts,
+                            COALESCE(:available_at, now()),
+                            NULL,
+                            NULL,
+                            :dedupe_key,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            now(),
+                            now()
+                        )
+                        RETURNING *
+                        """
+                    ),
+                    {
+                        "kind": kind,
+                        "payload": json.dumps(dict(payload or {})),
+                        "priority": int(priority),
+                        "max_attempts": max(int(max_attempts), 1),
+                        "available_at": available_at,
+                        "dedupe_key": dedupe_key,
+                    },
+                )
+                .mappings()
+                .one()
+            )
+            db.execute(text("SELECT pg_notify('nexus_background_jobs', :kind)"), {"kind": kind})
+            return _row_to_job(inserted), True
+    except IntegrityError as exc:
+        constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+        sqlstate = getattr(exc.orig, "sqlstate", None)
+        if not (
+            constraint_name == "idx_background_jobs_dedupe_key_unique"
+            or (sqlstate == "23505" and "idx_background_jobs_dedupe_key_unique" in str(exc.orig))
+        ):
+            raise
+        existing_after_conflict = (
+            db.execute(
+                text("SELECT * FROM background_jobs WHERE dedupe_key = :dedupe_key"),
+                {"dedupe_key": dedupe_key},
+            )
+            .mappings()
+            .first()
+        )
+        if existing_after_conflict is None:
+            raise
+        return _row_to_job(existing_after_conflict), False
 
 
 def claim_next_job(
@@ -214,66 +233,183 @@ def claim_next_job(
     if allowed_kinds is not None and len(allowed_kinds) == 0:
         return None
 
-    claimed = (
+    params = {
+        "worker_id": worker_id,
+        "lease_seconds": max(int(lease_seconds), 1),
+    }
+    if allowed_kinds is None:
         db.execute(
             text(
                 """
                 WITH candidate AS (
                     SELECT id
-                    FROM (
-                        SELECT id, priority, ready_at, created_at
-                        FROM (
-                            SELECT id, priority, available_at AS ready_at, created_at
-                            FROM background_jobs
-                            WHERE status IN ('pending', 'failed')
-                              AND available_at <= now()
-                              AND (:allow_all_kinds OR kind = ANY(:allowed_kinds))
-                            ORDER BY priority ASC, available_at ASC, created_at ASC, id ASC
-                            FOR UPDATE SKIP LOCKED
-                            LIMIT 1
-                        ) due
-
-                        UNION ALL
-
-                        SELECT id, priority, ready_at, created_at
-                        FROM (
-                            SELECT id, priority, lease_expires_at AS ready_at, created_at
-                            FROM background_jobs
-                            WHERE status = 'running'
-                              AND lease_expires_at IS NOT NULL
-                              AND lease_expires_at <= now()
-                              AND (:allow_all_kinds OR kind = ANY(:allowed_kinds))
-                            ORDER BY priority ASC, lease_expires_at ASC, created_at ASC, id ASC
-                            FOR UPDATE SKIP LOCKED
-                            LIMIT 1
-                        ) expired
-                    ) candidates
-                    ORDER BY priority ASC, ready_at ASC, created_at ASC, id ASC
+                    FROM background_jobs
+                    WHERE status = 'running'
+                      AND lease_expires_at IS NOT NULL
+                      AND lease_expires_at <= now()
+                      AND attempts >= max_attempts
+                    ORDER BY lease_expires_at ASC, created_at ASC, id ASC
                     LIMIT 1
+                    FOR UPDATE SKIP LOCKED
                 )
                 UPDATE background_jobs j
                 SET
-                    status = 'running',
-                    attempts = j.attempts + 1,
-                    claimed_by = :worker_id,
-                    started_at = COALESCE(j.started_at, now()),
-                    lease_expires_at = now() + (CAST(:lease_seconds AS integer) * interval '1 second'),
+                    status = 'dead',
+                    lease_expires_at = NULL,
+                    claimed_by = NULL,
+                    finished_at = now(),
+                    error_code = COALESCE(error_code, 'E_JOB_LEASE_EXPIRED'),
+                    last_error = COALESCE(last_error, 'Job lease expired after max attempts.'),
                     updated_at = now()
                 FROM candidate
                 WHERE j.id = candidate.id
-                RETURNING j.*
+                """
+            )
+        )
+    else:
+        db.execute(
+            text(
+                """
+                WITH candidate AS (
+                    SELECT id
+                    FROM background_jobs
+                    WHERE status = 'running'
+                      AND lease_expires_at IS NOT NULL
+                      AND lease_expires_at <= now()
+                      AND attempts >= max_attempts
+                      AND kind = ANY(:allowed_kinds)
+                    ORDER BY lease_expires_at ASC, created_at ASC, id ASC
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE background_jobs j
+                SET
+                    status = 'dead',
+                    lease_expires_at = NULL,
+                    claimed_by = NULL,
+                    finished_at = now(),
+                    error_code = COALESCE(error_code, 'E_JOB_LEASE_EXPIRED'),
+                    last_error = COALESCE(last_error, 'Job lease expired after max attempts.'),
+                    updated_at = now()
+                FROM candidate
+                WHERE j.id = candidate.id
                 """
             ),
-            {
-                "worker_id": worker_id,
-                "lease_seconds": max(int(lease_seconds), 1),
-                "allow_all_kinds": allowed_kinds is None,
-                "allowed_kinds": list(allowed_kinds or []),
-            },
+            {"allowed_kinds": list(allowed_kinds)},
         )
-        .mappings()
-        .first()
-    )
+
+    if allowed_kinds is None:
+        claimed = (
+            db.execute(
+                text(
+                    """
+                    WITH candidate AS (
+                        SELECT id
+                        FROM (
+                            SELECT id, priority, ready_at, created_at
+                            FROM (
+                                SELECT id, priority, available_at AS ready_at, created_at
+                                FROM background_jobs
+                                WHERE status IN ('pending', 'failed')
+                                  AND available_at <= now()
+                                ORDER BY priority ASC, available_at ASC, created_at ASC, id ASC
+                                FOR UPDATE SKIP LOCKED
+                                LIMIT 1
+                            ) due
+
+                            UNION ALL
+
+                            SELECT id, priority, ready_at, created_at
+                            FROM (
+                                SELECT id, priority, lease_expires_at AS ready_at, created_at
+                                FROM background_jobs
+                                WHERE status = 'running'
+                                  AND lease_expires_at IS NOT NULL
+                                  AND lease_expires_at <= now()
+                                  AND attempts < max_attempts
+                                ORDER BY priority ASC, lease_expires_at ASC, created_at ASC, id ASC
+                                FOR UPDATE SKIP LOCKED
+                                LIMIT 1
+                            ) expired
+                        ) candidates
+                        ORDER BY priority ASC, ready_at ASC, created_at ASC, id ASC
+                        LIMIT 1
+                    )
+                    UPDATE background_jobs j
+                    SET
+                        status = 'running',
+                        attempts = j.attempts + 1,
+                        claimed_by = :worker_id,
+                        started_at = COALESCE(j.started_at, now()),
+                        lease_expires_at = now() + (CAST(:lease_seconds AS integer) * interval '1 second'),
+                        updated_at = now()
+                    FROM candidate
+                    WHERE j.id = candidate.id
+                    RETURNING j.*
+                    """
+                ),
+                params,
+            )
+            .mappings()
+            .first()
+        )
+    else:
+        claimed = (
+            db.execute(
+                text(
+                    """
+                    WITH candidate AS (
+                        SELECT id
+                        FROM (
+                            SELECT id, priority, ready_at, created_at
+                            FROM (
+                                SELECT id, priority, available_at AS ready_at, created_at
+                                FROM background_jobs
+                                WHERE status IN ('pending', 'failed')
+                                  AND available_at <= now()
+                                  AND kind = ANY(:allowed_kinds)
+                                ORDER BY priority ASC, available_at ASC, created_at ASC, id ASC
+                                FOR UPDATE SKIP LOCKED
+                                LIMIT 1
+                            ) due
+
+                            UNION ALL
+
+                            SELECT id, priority, ready_at, created_at
+                            FROM (
+                                SELECT id, priority, lease_expires_at AS ready_at, created_at
+                                FROM background_jobs
+                                WHERE status = 'running'
+                                  AND lease_expires_at IS NOT NULL
+                                  AND lease_expires_at <= now()
+                                  AND attempts < max_attempts
+                                  AND kind = ANY(:allowed_kinds)
+                                ORDER BY priority ASC, lease_expires_at ASC, created_at ASC, id ASC
+                                FOR UPDATE SKIP LOCKED
+                                LIMIT 1
+                            ) expired
+                        ) candidates
+                        ORDER BY priority ASC, ready_at ASC, created_at ASC, id ASC
+                        LIMIT 1
+                    )
+                    UPDATE background_jobs j
+                    SET
+                        status = 'running',
+                        attempts = j.attempts + 1,
+                        claimed_by = :worker_id,
+                        started_at = COALESCE(j.started_at, now()),
+                        lease_expires_at = now() + (CAST(:lease_seconds AS integer) * interval '1 second'),
+                        updated_at = now()
+                    FROM candidate
+                    WHERE j.id = candidate.id
+                    RETURNING j.*
+                    """
+                ),
+                {**params, "allowed_kinds": list(allowed_kinds)},
+            )
+            .mappings()
+            .first()
+        )
     if claimed is None:
         return None
     return _row_to_job(claimed)
@@ -297,6 +433,7 @@ def heartbeat_job(
                 WHERE id = :job_id
                   AND status = 'running'
                   AND claimed_by = :worker_id
+                  AND lease_expires_at > now()
                 RETURNING id
                 """
         ),
@@ -331,6 +468,7 @@ def complete_job(
                 WHERE id = :job_id
                   AND status = 'running'
                   AND claimed_by = :worker_id
+                  AND lease_expires_at > now()
                 RETURNING id
                 """
         ),
@@ -359,11 +497,12 @@ def fail_job(
         db.execute(
             text(
                 """
-                SELECT id, status, attempts, max_attempts
+                SELECT id, kind, status, attempts, max_attempts
                 FROM background_jobs
                 WHERE id = :job_id
                   AND status = 'running'
                   AND claimed_by = :worker_id
+                  AND lease_expires_at > now()
                 FOR UPDATE
                 """
             ),
@@ -411,6 +550,11 @@ def fail_job(
             "is_dead": should_dead_letter,
         },
     )
+    if new_status == FAILED:
+        db.execute(
+            text("SELECT pg_notify('nexus_background_jobs', :kind)"),
+            {"kind": str(row["kind"])},
+        )
     return new_status
 
 
@@ -421,30 +565,40 @@ def requeue_job(
     delay_seconds: int = 0,
 ) -> bool:
     """Move failed/dead row back to pending for operator-initiated replay."""
-    updated = db.execute(
-        text(
-            """
-                UPDATE background_jobs
-                SET
-                    status = 'pending',
-                    available_at = now() + (CAST(:delay_seconds AS integer) * interval '1 second'),
-                    lease_expires_at = NULL,
-                    claimed_by = NULL,
-                    error_code = NULL,
-                    last_error = NULL,
-                    finished_at = NULL,
-                    updated_at = now()
-                WHERE id = :job_id
-                  AND status IN ('failed', 'dead')
-                RETURNING id
+    updated = (
+        db.execute(
+            text(
                 """
-        ),
-        {
-            "job_id": job_id,
-            "delay_seconds": max(int(delay_seconds), 0),
-        },
-    ).first()
-    return updated is not None
+                    UPDATE background_jobs
+                    SET
+                        status = 'pending',
+                        available_at = now() + (CAST(:delay_seconds AS integer) * interval '1 second'),
+                        lease_expires_at = NULL,
+                        claimed_by = NULL,
+                        error_code = NULL,
+                        last_error = NULL,
+                        finished_at = NULL,
+                        updated_at = now()
+                    WHERE id = :job_id
+                      AND status IN ('failed', 'dead')
+                    RETURNING kind
+                    """
+            ),
+            {
+                "job_id": job_id,
+                "delay_seconds": max(int(delay_seconds), 0),
+            },
+        )
+        .mappings()
+        .first()
+    )
+    if updated is None:
+        return False
+    db.execute(
+        text("SELECT pg_notify('nexus_background_jobs', :kind)"),
+        {"kind": str(updated["kind"])},
+    )
+    return True
 
 
 def prune_terminal_jobs(

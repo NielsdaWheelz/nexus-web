@@ -5,22 +5,27 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
-import httpx
 import pytest
 from sqlalchemy import text
 
 from nexus.config import get_settings
-from nexus.storage import get_storage_client
+from nexus.storage import (
+    build_storage_path,
+    build_upload_staging_storage_path,
+    get_file_extension,
+    get_storage_client,
+)
 from tests.real_media.assertions import assert_fragment_content_contains
 from tests.utils.db import DirectSessionManager
 
 REAL_MEDIA_FIXTURES_DIR = Path(__file__).parents[1] / "fixtures" / "real_media"
 FIXTURES_DIR = Path(__file__).parents[1] / "fixtures"
+NON_LOCAL_STORAGE_OPT_IN = "REAL_MEDIA_ALLOW_NON_LOCAL_STORAGE"
 
 
 def ensure_real_media_prerequisites() -> None:
@@ -36,49 +41,33 @@ def ensure_real_media_prerequisites() -> None:
     fixture_dir = Path(settings.real_media_fixture_dir)
     if not fixture_dir.is_dir():
         pytest.fail(f"REAL_MEDIA_FIXTURE_DIR does not exist: {fixture_dir}")
-    if not settings.supabase_url or not settings.supabase_service_key:
-        pytest.fail("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set for real-media tests")
+    missing_r2 = [
+        key
+        for key in ("R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
+        if not os.environ.get(key)
+    ]
+    if missing_r2:
+        pytest.fail(f"Cloudflare R2 storage env is required: {', '.join(missing_r2)}")
+    if settings.nexus_env.value == "local" and os.environ.get(NON_LOCAL_STORAGE_OPT_IN) != "1":
+        endpoint_url = settings.r2_endpoint_url or os.environ.get("R2_ENDPOINT_URL") or ""
+        if not _is_local_storage_endpoint(endpoint_url):
+            pytest.fail(
+                "Refusing local real-media tests against non-local R2/MinIO endpoint "
+                f"{endpoint_url!r}. Set {NON_LOCAL_STORAGE_OPT_IN}=1 to opt in explicitly."
+            )
     if not settings.enable_openai:
         pytest.fail("ENABLE_OPENAI must be true for real-media embedding tests")
     if not os.environ.get("OPENAI_API_KEY"):
         pytest.fail("OPENAI_API_KEY must be set for real-media embedding tests")
 
-    headers = {
-        "apikey": settings.supabase_service_key,
-        "Authorization": f"Bearer {settings.supabase_service_key}",
-    }
-    last_error: str | None = None
-    for _ in range(30):
-        try:
-            with httpx.Client(timeout=30.0) as client:
-                bucket_response = client.get(
-                    f"{settings.supabase_url}/storage/v1/bucket/{settings.storage_bucket}",
-                    headers=headers,
-                )
-                if bucket_response.status_code == 200:
-                    return
-                if bucket_response.status_code not in (400, 404):
-                    pytest.fail(
-                        "Unexpected Supabase storage bucket check response: "
-                        f"{bucket_response.status_code} {bucket_response.text}"
-                    )
-                create_response = client.post(
-                    f"{settings.supabase_url}/storage/v1/bucket",
-                    headers=headers,
-                    json={
-                        "id": settings.storage_bucket,
-                        "name": settings.storage_bucket,
-                        "public": False,
-                    },
-                )
-            if create_response.status_code in (200, 201, 409):
-                return
-            last_error = f"{create_response.status_code} {create_response.text}"
-        except httpx.HTTPError as exc:
-            last_error = str(exc)
-        time.sleep(1)
-    pytest.fail(
-        f"Failed to create Supabase storage bucket {settings.storage_bucket!r}: {last_error}"
+
+def _is_local_storage_endpoint(endpoint_url: str) -> bool:
+    try:
+        host = urlparse(endpoint_url).hostname or ""
+    except ValueError:
+        return False
+    return host in {"localhost", "127.0.0.1", "::1", "0.0.0.0", "minio"} or host.endswith(
+        ".localhost"
     )
 
 
@@ -373,14 +362,14 @@ def upload_file_media(
     assert upload_response.status_code == 200, upload_response.text
     upload = upload_response.json()["data"]
     media_id = UUID(upload["media_id"])
-    storage_path = upload["storage_path"]
+    storage_path = build_upload_staging_storage_path(media_id, get_file_extension(kind))
     register_media_cleanup(direct_db, media_id)
 
     get_storage_client().put_object(storage_path, payload, content_type)
     confirm_response = auth_client.post(f"/media/{media_id}/ingest", headers=headers)
     assert confirm_response.status_code == 200, confirm_response.text
     assert confirm_response.json()["data"]["duplicate"] is False
-    return media_id, storage_path
+    return media_id, build_storage_path(media_id, get_file_extension(kind))
 
 
 def register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> None:

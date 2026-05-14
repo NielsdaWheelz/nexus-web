@@ -188,6 +188,20 @@ class TestIngestPdfTask:
             ).scalar_one()
             == 2
         )
+        evidence_selector = db_session.execute(
+            text(
+                """
+                SELECT selector
+                FROM evidence_spans
+                WHERE media_id = :mid
+                ORDER BY created_at
+                LIMIT 1
+                """
+            ),
+            {"mid": mid},
+        ).scalar_one()
+        assert evidence_selector["geometry"]["projection"] == "proportional_text_offsets"
+        assert len(evidence_selector["geometry"]["quads"]) == 1
         assert (
             db_session.execute(
                 text("SELECT count(*) FROM content_chunks WHERE media_id = :mid"),

@@ -147,8 +147,7 @@ class UploadInitResponse(BaseModel):
     """Response schema for POST /media/upload/init."""
 
     media_id: str
-    storage_path: str
-    token: str
+    upload_url: str
     expires_at: str
 
 

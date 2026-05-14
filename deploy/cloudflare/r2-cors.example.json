@@ -1,0 +1,24 @@
+[
+  {
+    "AllowedOrigins": [
+      "https://nexus.nielseriknandal.com"
+    ],
+    "AllowedMethods": [
+      "GET",
+      "HEAD",
+      "PUT"
+    ],
+    "AllowedHeaders": [
+      "content-type",
+      "content-length",
+      "range"
+    ],
+    "ExposeHeaders": [
+      "ETag",
+      "Accept-Ranges",
+      "Content-Range",
+      "Content-Length"
+    ],
+    "MaxAgeSeconds": 3600
+  }
+]

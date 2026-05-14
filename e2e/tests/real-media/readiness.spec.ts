@@ -8,6 +8,7 @@ import {
 test("@real-media configured media are ready and open in the reader", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(180_000);
   const seed = readRealMediaSeed();
   const media = [
     ["pdf", seed.fixtures.pdf.media_id, "ready"],

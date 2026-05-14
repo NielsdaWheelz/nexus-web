@@ -25,6 +25,7 @@ from nexus.services.epub_ingest import (
     EpubExtractionResult,
     extract_epub_artifacts,
 )
+from nexus.storage import build_epub_asset_storage_path, build_storage_path
 from nexus.storage.client import FakeStorageClient
 from nexus.tasks.ingest_epub import run_epub_ingest_sync
 from tests.utils.db import task_session_factory
@@ -169,7 +170,7 @@ def _create_media_with_epub(
 ) -> UUID:
     """Insert media + media_file rows and store bytes in fake storage."""
     media_id = uuid4()
-    storage_path = f"media/{media_id}/original.epub"
+    storage_path = build_storage_path(media_id, "epub")
 
     db.execute(
         text("""
@@ -544,6 +545,46 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
         assert "onerror" not in html.lower()
         # javascript: protocol stripped from href
         assert "javascript:" not in html.lower()
+
+    def test_epub_asset_storage_paths_use_test_prefix(self, db_session: Session, monkeypatch):
+        monkeypatch.setenv("STORAGE_TEST_PREFIX", "test_runs/epub-assets")
+        storage = FakeStorageClient()
+        img_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+        epub = _make_epub(
+            {
+                "OEBPS/content.opf": _build_opf(
+                    spine_items=[
+                        ("ch1", "chapter1.xhtml", "application/xhtml+xml"),
+                        ("img1", "images/fig1.png", "image/png"),
+                    ],
+                ),
+                "OEBPS/chapter1.xhtml": _build_chapter_xhtml(
+                    '<p><img src="images/fig1.png" alt="fig1"/></p>'
+                ),
+                "OEBPS/images/fig1.png": img_bytes,
+            },
+        )
+        mid = _create_media_with_epub(db_session, storage, epub)
+
+        result = run_epub_ingest_sync(db_session, mid, storage)
+        db_session.flush()
+
+        prefixed_path = build_epub_asset_storage_path(mid, "OEBPS/images/fig1.png")
+        assert isinstance(result, EpubExtractionResult)
+        assert storage.get_object(prefixed_path) == img_bytes
+        assert storage.get_object(f"media/{mid}/assets/OEBPS/images/fig1.png") is None
+        stored_path = db_session.execute(
+            text(
+                """
+                SELECT storage_path
+                FROM epub_resources
+                WHERE media_id = :media_id
+                  AND asset_key = 'OEBPS/images/fig1.png'
+                """
+            ),
+            {"media_id": mid},
+        ).scalar_one()
+        assert stored_path == prefixed_path
 
     def test_unsupported_manifest_resources_are_not_stored(self, db_session: Session):
         storage = FakeStorageClient()

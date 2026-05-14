@@ -23,6 +23,7 @@ import base64
 import binascii
 import hashlib
 import json
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -1449,10 +1450,15 @@ def _search_content_chunks(
         except NotFoundError:
             continue
         evidence_span_ids = [row[9]] if row[9] is not None else []
+        snippet = _truncate_snippet(str(row[7] or row[6] or ""))
+        if has_query and q.lower() not in snippet.lower().replace("<b>", "").replace("</b>", ""):
+            query_snippet = _snippet_around_query(str(row[6] or ""), q)
+            if query_snippet is not None:
+                snippet = query_snippet
         results.append(
             _RankedContentChunkResult(
                 id=row[0],
-                snippet=_truncate_snippet(str(row[7] or row[6] or "")),
+                snippet=snippet,
                 source_kind=str(row[8]),
                 evidence_span_ids=evidence_span_ids,
                 citation_label=str(resolution["citation_label"]),
@@ -1904,17 +1910,70 @@ def _normalize_scores_by_type(results: list[InternalSearchResult]) -> None:
 
 
 def _truncate_snippet(snippet: str) -> str:
-    """Truncate snippet to max length, preserving word boundaries."""
+    """Truncate snippet to max length, preserving highlighted matches."""
     if len(snippet) <= MAX_SNIPPET_LENGTH:
         return snippet
 
-    # Find last space before limit
+    match_start = snippet.lower().find("<b>")
+    if match_start > MAX_SNIPPET_LENGTH:
+        start = max(0, match_start - MAX_SNIPPET_LENGTH // 3)
+        first_space = snippet.find(" ", start, match_start)
+        if first_space != -1:
+            start = first_space + 1
+
+        end = min(len(snippet), start + MAX_SNIPPET_LENGTH)
+        last_space = snippet.rfind(" ", match_start, end)
+        if last_space > match_start:
+            end = last_space
+
+        return f"...{snippet[start:end]}{'...' if end < len(snippet) else ''}"
+
     truncated = snippet[:MAX_SNIPPET_LENGTH]
     last_space = truncated.rfind(" ")
     if last_space > MAX_SNIPPET_LENGTH // 2:
         truncated = truncated[:last_space]
 
     return truncated + "..."
+
+
+def _snippet_around_query(text: str, query: str) -> str | None:
+    query = " ".join(query.split())
+    if not text or not query:
+        return None
+
+    text_lower = text.lower()
+    query_lower = query.lower()
+    match_start = text_lower.find(query_lower)
+    match_len = len(query)
+
+    if match_start == -1:
+        terms = [term for term in re.findall(r"[a-z0-9]+", query_lower) if len(term) >= 2]
+        positions = [(text_lower.find(term), len(term)) for term in terms]
+        positions = [position for position in positions if position[0] != -1]
+        if not positions:
+            return None
+        match_start, match_len = min(positions, key=lambda position: position[0])
+
+    prefix = "..." if match_start > MAX_SNIPPET_LENGTH // 3 else ""
+    body_limit = MAX_SNIPPET_LENGTH - len(prefix) - len("...") - len("<b></b>")
+    start = max(0, match_start - MAX_SNIPPET_LENGTH // 3)
+    first_space = text.find(" ", start, match_start)
+    if first_space != -1:
+        start = first_space + 1
+
+    end = min(len(text), start + body_limit)
+    if end < match_start + match_len:
+        end = min(len(text), match_start + match_len)
+    last_space = text.rfind(" ", match_start + match_len, end)
+    if last_space > match_start + match_len:
+        end = last_space
+
+    suffix = "..." if end < len(text) else ""
+    local_match_start = match_start - start
+    body = text[start : local_match_start + start]
+    body += f"<b>{text[match_start : match_start + match_len]}</b>"
+    body += text[match_start + match_len : end]
+    return f"{prefix}{body}{suffix}"
 
 
 def _build_source_label(source: SearchResultSourceOut) -> str:

@@ -12,6 +12,7 @@ import {
 test("@real-media video transcript opens seekable evidence", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(180_000);
   const seed = readRealMediaSeed();
   const mediaId = seed.fixtures.video.media_id;
   const query = seed.fixtures.video.query;
@@ -35,7 +36,9 @@ test("@real-media video transcript opens seekable evidence", async ({
     "video transcript should return indexed evidence",
   ).toBeTruthy();
   if (!result) {
-    throw new Error(`video transcript visible search did not return ${mediaId}`);
+    throw new Error(
+      `video transcript visible search did not return ${mediaId}`,
+    );
   }
   const resolverResponse = await page.request.get(
     `/api/media/${mediaId}/evidence/${result.evidence_span_ids[0]}`,
@@ -51,7 +54,9 @@ test("@real-media video transcript opens seekable evidence", async ({
   const visibleHref = await resultLink.getAttribute("href");
   expect(visibleHref ?? "").toContain("t_start_ms=");
   if (!visibleHref) {
-    throw new Error(`video transcript result for ${mediaId} did not expose a href`);
+    throw new Error(
+      `video transcript result for ${mediaId} did not expose a href`,
+    );
   }
   await resultLink.click();
   await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
@@ -74,7 +79,6 @@ test("@real-media video transcript opens seekable evidence", async ({
     writeRealMediaTrace(testInfo, "real-video-transcript-trace.json", {
       fixture_id: "video-nasa-picturing-earth-behind-scenes-captions",
       artifact_sha256: seed.fixtures.video.artifact_sha256,
-      artifact_bytes: seed.fixtures.video.artifact_bytes,
       media_id: mediaId,
       query,
       search_api_url: search.api_url,

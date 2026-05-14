@@ -44,6 +44,7 @@ from nexus.services.upload import (
     validate_source_integrity,
 )
 from nexus.storage import get_storage_client
+from nexus.storage.client import StorageError
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,6 @@ def _confirm_epub_ingest(
             "ingest_enqueued": False,
         }
 
-    storage_client = get_storage_client()
     media_file = media.media_file
     if not media_file:
         _mark_epub_failed(
@@ -148,34 +148,65 @@ def _confirm_epub_ingest(
             "Upload not found. Please try again.",
         )
 
+    storage_path = media_file.storage_path
+    file_sha256 = media.file_sha256
+    db.commit()
+
+    storage_client = get_storage_client()
     try:
-        epub_bytes = b"".join(storage_client.stream_object(media_file.storage_path))
-    except Exception as exc:
+        epub_bytes = b"".join(storage_client.stream_object(storage_path))
+    except StorageError as exc:
+        if exc.code != ApiErrorCode.E_STORAGE_MISSING.value:
+            raise ApiError(
+                ApiErrorCode.E_STORAGE_ERROR,
+                "Failed to read uploaded file.",
+            ) from exc
+        media = db.execute(
+            select(Media).where(Media.id == actual_media_id).with_for_update()
+        ).scalar()
+        if media is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found") from exc
         _mark_epub_failed(
             db,
             media,
             "upload",
-            ApiErrorCode.E_STORAGE_ERROR.value,
-            "Failed to read EPUB from storage",
+            ApiErrorCode.E_STORAGE_MISSING.value,
+            "Stored EPUB object is missing",
         )
-        raise ApiError(
-            ApiErrorCode.E_STORAGE_ERROR,
-            "Failed to read uploaded file.",
+        raise InvalidRequestError(
+            ApiErrorCode.E_STORAGE_MISSING,
+            "Upload not found. Please try again.",
         ) from exc
 
     safety_err = check_archive_safety(epub_bytes)
+
+    media = db.execute(select(Media).where(Media.id == actual_media_id).with_for_update()).scalar()
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    if media.processing_status != ProcessingStatus.pending:
+        return {
+            "media_id": str(media.id),
+            "duplicate": False,
+            "processing_status": media.processing_status.value,
+            "ingest_enqueued": False,
+        }
+
+    media_file = media.media_file
+    if (
+        not media_file
+        or media_file.storage_path != storage_path
+        or media.file_sha256 != file_sha256
+    ):
+        db.rollback()
+        raise ConflictError(
+            ApiErrorCode.E_UPLOAD_CONFLICT,
+            "EPUB upload state changed while it was being confirmed.",
+        )
+
     if safety_err is not None:
-        _mark_epub_failed(
-            db,
-            media,
-            "extract",
-            safety_err.error_code,
-            safety_err.error_message,
-        )
-        raise InvalidRequestError(
-            ApiErrorCode.E_ARCHIVE_UNSAFE,
-            safety_err.error_message,
-        )
+        _mark_epub_failed(db, media, "extract", safety_err.error_code, safety_err.error_message)
+        raise InvalidRequestError(ApiErrorCode.E_ARCHIVE_UNSAFE, safety_err.error_message)
 
     now = datetime.now(UTC)
     media.processing_status = ProcessingStatus.extracting
@@ -276,7 +307,7 @@ def retry_epub_ingest_for_viewer(
         expected_sha256=media.file_sha256,
     )
 
-    _delete_extraction_artifacts(db, media_id)
+    storage_paths_to_delete = _delete_extraction_artifacts(db, media_id)
 
     now = datetime.now(UTC)
     media.processing_status = ProcessingStatus.extracting
@@ -311,6 +342,20 @@ def retry_epub_ingest_for_viewer(
         ) from exc
 
     db.commit()
+    storage_client = get_storage_client()
+    for path in storage_paths_to_delete:
+        try:
+            storage_client.delete_object(path)
+        except StorageError as exc:
+            # justify-ignore-error: retry committed the DB artifact reset first,
+            # so stale extraction objects are now unreachable and can be removed
+            # by operational cleanup without corrupting DB/storage references.
+            logger.warning(
+                "epub_artifact_storage_delete_failed media_id=%s storage_path=%s error=%s",
+                media_id,
+                path,
+                exc.message,
+            )
 
     return {
         "media_id": str(media.id),
@@ -319,7 +364,7 @@ def retry_epub_ingest_for_viewer(
     }
 
 
-def _delete_extraction_artifacts(db: Session, media_id: UUID) -> None:
+def _delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:
     """Delete all extraction and chunk/embedding artifacts for a media row."""
     storage_paths = (
         db.execute(select(EpubResource.storage_path).where(EpubResource.media_id == media_id))
@@ -351,10 +396,7 @@ def _delete_extraction_artifacts(db: Session, media_id: UUID) -> None:
     db.execute(delete(Fragment).where(Fragment.media_id == media_id))
 
     db.flush()
-
-    storage_client = get_storage_client()
-    for path in storage_paths:
-        storage_client.delete_object(path)
+    return list(storage_paths)
 
 
 def _mark_epub_failed(

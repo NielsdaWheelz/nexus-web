@@ -3,6 +3,7 @@
 Environment Configuration:
     NEXUS_ENV: Deployment environment (local | test | staging | prod)
     DATABASE_URL: PostgreSQL connection string (required)
+    DATABASE_URL must not point at Supabase Database in any environment
     NEXUS_INTERNAL_SECRET: Internal API secret (required in staging/prod)
 
 Auth Configuration (required in all environments):
@@ -12,12 +13,14 @@ Auth Configuration (required in all environments):
 
 Note: All environments use Supabase JWKS for JWT verification.
 Local/test environments use Supabase local, staging/prod use cloud.
+Supabase service-role keys are not application runtime settings.
 """
 
 import os
 from enum import Enum
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
@@ -30,6 +33,25 @@ DEFAULT_WORKER_ALLOWED_JOB_KINDS = (
     "podcast_reindex_semantic_job,backfill_default_library_closure_job,"
     "oracle_reading_generate"
 )
+
+
+def _database_url_looks_like_supabase(database_url: str) -> bool:
+    parsed = urlparse(database_url)
+    hostname = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    return (
+        hostname == "supabase.co"
+        or hostname.endswith(".supabase.co")
+        or hostname == "supabase.com"
+        or hostname.endswith(".supabase.com")
+        or (
+            hostname in {"localhost", "127.0.0.1", "::1"}
+            and str(port or "") == os.environ.get("SUPABASE_DB_PORT", "54322")
+        )
+    )
 
 
 class Environment(str, Enum):
@@ -47,8 +69,10 @@ class Settings(BaseSettings):
     Settings are loaded from environment variables.
     Validation rules:
     - DATABASE_URL is always required
+    - DATABASE_URL must not point at Supabase Database in any environment
     - SUPABASE_JWKS_URL, SUPABASE_ISSUER, SUPABASE_AUDIENCES are required in all environments
     - NEXUS_INTERNAL_SECRET is required in staging and prod only
+    - Supabase service-role keys are rejected as app runtime settings
     """
 
     nexus_env: Environment = Field(default=Environment.LOCAL, alias="NEXUS_ENV")
@@ -69,10 +93,45 @@ class Settings(BaseSettings):
     test_token_issuer: str = Field(default="test-issuer", alias="TEST_TOKEN_ISSUER")
     test_token_audiences: str = Field(default="test-audience", alias="TEST_TOKEN_AUDIENCES")
 
-    # Supabase Storage settings
-    supabase_url: str | None = Field(default=None, alias="SUPABASE_URL")
-    supabase_service_key: str | None = Field(default=None, alias="SUPABASE_SERVICE_KEY")
-    storage_bucket: str = Field(default="media", alias="STORAGE_BUCKET")
+    # Rejected Supabase Auth admin settings. Seed scripts must read service-role
+    # keys from script-local env, not the application runtime Settings object.
+    supabase_service_key_rejected: str | None = Field(
+        default=None,
+        alias="SUPABASE_SERVICE_KEY",
+        exclude=True,
+        repr=False,
+    )
+    supabase_service_role_key_rejected: str | None = Field(
+        default=None,
+        alias="SUPABASE_SERVICE_ROLE_KEY",
+        exclude=True,
+        repr=False,
+    )
+    supabase_auth_admin_key_rejected: str | None = Field(
+        default=None,
+        alias="SUPABASE_AUTH_ADMIN_KEY",
+        exclude=True,
+        repr=False,
+    )
+    supabase_database_url_rejected: str | None = Field(
+        default=None,
+        alias="SUPABASE_DATABASE_URL",
+        exclude=True,
+        repr=False,
+    )
+    service_role_key_rejected: str | None = Field(
+        default=None,
+        alias="SERVICE_ROLE_KEY",
+        exclude=True,
+        repr=False,
+    )
+
+    # Cloudflare R2 object storage settings.
+    r2_endpoint_url: str | None = Field(default=None, alias="R2_ENDPOINT_URL")
+    r2_access_key_id: str | None = Field(default=None, alias="R2_ACCESS_KEY_ID")
+    r2_secret_access_key: str | None = Field(default=None, alias="R2_SECRET_ACCESS_KEY")
+    r2_bucket: str | None = Field(default=None, alias="R2_BUCKET")
+    r2_region: str = Field(default="auto", alias="R2_REGION")
 
     # Storage limits
     max_pdf_bytes: int = Field(default=100 * 1024 * 1024, alias="MAX_PDF_BYTES")  # 100 MB
@@ -163,7 +222,7 @@ class Settings(BaseSettings):
         default=1800, alias="INGEST_SEMANTIC_FAILED_RETRY_SECONDS"
     )
 
-    # Worker runtime. Production defaults are safe for Supabase free/Nano:
+    # Worker runtime. Production defaults are safe for a small VPS Postgres:
     # explicit domain jobs only, no maintenance jobs, and bounded idle/backoff loops.
     worker_allowed_job_kinds: str = Field(
         default=DEFAULT_WORKER_ALLOWED_JOB_KINDS,
@@ -338,6 +397,29 @@ class Settings(BaseSettings):
                 "Run 'make setup' to configure Supabase local, or set these environment variables."
             )
 
+        rejected_supabase_service_role_settings = [
+            alias
+            for alias, value in (
+                ("SUPABASE_SERVICE_KEY", self.supabase_service_key_rejected),
+                ("SUPABASE_SERVICE_ROLE_KEY", self.supabase_service_role_key_rejected),
+                ("SUPABASE_AUTH_ADMIN_KEY", self.supabase_auth_admin_key_rejected),
+                ("SUPABASE_DATABASE_URL", self.supabase_database_url_rejected),
+                ("SERVICE_ROLE_KEY", self.service_role_key_rejected),
+            )
+            if value
+        ]
+        if rejected_supabase_service_role_settings:
+            raise ValueError(
+                "Supabase admin/database settings are not application runtime settings: "
+                f"{', '.join(rejected_supabase_service_role_settings)}. "
+                "Use script-local environment for seed scripts instead."
+            )
+
+        if _database_url_looks_like_supabase(self.database_url):
+            raise ValueError(
+                "DATABASE_URL must point at standalone Postgres, not Supabase Database."
+            )
+
         if self.database_pool_size < 1:
             raise ValueError("DATABASE_POOL_SIZE must be >= 1.")
         if self.database_max_overflow < 0:
@@ -350,6 +432,34 @@ class Settings(BaseSettings):
             if not self.nexus_internal_secret:
                 raise ValueError(
                     f"NEXUS_INTERNAL_SECRET is required for NEXUS_ENV={self.nexus_env.value}"
+                )
+            missing_r2 = []
+            if not self.r2_endpoint_url:
+                missing_r2.append("R2_ENDPOINT_URL")
+            if not self.r2_access_key_id:
+                missing_r2.append("R2_ACCESS_KEY_ID")
+            if not self.r2_secret_access_key:
+                missing_r2.append("R2_SECRET_ACCESS_KEY")
+            if not self.r2_bucket:
+                missing_r2.append("R2_BUCKET")
+            if missing_r2:
+                raise ValueError(
+                    "Cloudflare R2 storage settings are required in staging/prod: "
+                    f"{', '.join(missing_r2)}"
+                )
+            parsed_r2_endpoint = urlparse(self.r2_endpoint_url or "")
+            r2_host = parsed_r2_endpoint.hostname or ""
+            if (
+                parsed_r2_endpoint.scheme != "https"
+                or parsed_r2_endpoint.username
+                or parsed_r2_endpoint.password
+                or parsed_r2_endpoint.path not in ("", "/")
+                or parsed_r2_endpoint.query
+                or parsed_r2_endpoint.fragment
+                or not r2_host.endswith(".r2.cloudflarestorage.com")
+            ):
+                raise ValueError(
+                    "R2_ENDPOINT_URL must be the Cloudflare R2 S3 API endpoint for staging/prod."
                 )
 
         # S5: EPUB archive safety floor validation

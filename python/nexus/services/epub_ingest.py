@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import posixpath
 import re
 import time
@@ -39,9 +40,13 @@ from nexus.errors import ApiErrorCode
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.storage import build_epub_asset_storage_path
+from nexus.storage.client import StorageError
 
 if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Public result types
@@ -561,13 +566,23 @@ def extract_epub_artifacts(
             )
 
         for ae in asset_entries:
-            asset_storage_key = f"media/{media_id}/assets/{ae.asset_key}"
+            asset_storage_key = build_epub_asset_storage_path(media_id, ae.asset_key)
             try:
                 storage_client.put_object(asset_storage_key, ae.content, ae.content_type)
                 uploaded_asset_paths.append(asset_storage_key)
             except Exception as exc:
                 for path in uploaded_asset_paths:
-                    storage_client.delete_object(path)
+                    try:
+                        storage_client.delete_object(path)
+                    except StorageError as cleanup_exc:
+                        # justify-ignore-error: asset cleanup is secondary to the
+                        # primary ingest failure returned below.
+                        logger.warning(
+                            "epub_asset_cleanup_failed media_id=%s storage_path=%s error=%s",
+                            media_id,
+                            path,
+                            cleanup_exc.message,
+                        )
                 db.rollback()
                 return EpubExtractionError(
                     error_code=ApiErrorCode.E_INGEST_FAILED.value,
@@ -615,7 +630,7 @@ def extract_epub_artifacts(
             )
 
         for ae in asset_entries:
-            storage_path = f"media/{media_id}/assets/{ae.asset_key}"
+            storage_path = build_epub_asset_storage_path(media_id, ae.asset_key)
             db.add(
                 EpubResource(
                     media_id=media_id,
@@ -665,7 +680,17 @@ def extract_epub_artifacts(
     except Exception as exc:
         db.rollback()
         for path in uploaded_asset_paths:
-            storage_client.delete_object(path)
+            try:
+                storage_client.delete_object(path)
+            except StorageError as cleanup_exc:
+                # justify-ignore-error: asset cleanup is secondary to the
+                # primary ingest failure returned below.
+                logger.warning(
+                    "epub_asset_cleanup_failed media_id=%s storage_path=%s error=%s",
+                    media_id,
+                    path,
+                    cleanup_exc.message,
+                )
         return EpubExtractionError(
             error_code=ApiErrorCode.E_INGEST_FAILED.value,
             error_message=f"Extraction failed: {exc}",

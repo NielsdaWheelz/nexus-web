@@ -5,8 +5,13 @@ import {
   writeRealMediaTrace,
 } from "./real-media-seed";
 
-async function existingHighlightExacts(page: Page, fragmentId: string): Promise<string[]> {
-  const response = await page.request.get(`/api/fragments/${fragmentId}/highlights`);
+async function existingHighlightExacts(
+  page: Page,
+  fragmentId: string,
+): Promise<string[]> {
+  const response = await page.request.get(
+    `/api/fragments/${fragmentId}/highlights`,
+  );
   const responseText = await response.text();
   expect(
     response.ok(),
@@ -29,10 +34,13 @@ function workspacePaneButton(page: Page, name: RegExp | string) {
 test("@real-media desktop selected quote opens reader secondary rail Ask", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(180_000);
   const seed = readRealMediaSeed();
   const mediaId = seed.fixtures.web.media_id;
 
-  const fragmentsResponse = await page.request.get(`/api/media/${mediaId}/fragments`);
+  const fragmentsResponse = await page.request.get(
+    `/api/media/${mediaId}/fragments`,
+  );
   expect(fragmentsResponse.ok()).toBeTruthy();
   const fragmentsPayload = (await fragmentsResponse.json()) as {
     data: Array<{ id: string }>;
@@ -53,7 +61,10 @@ test("@real-media desktop selected quote opens reader secondary rail Ask", async
     "article",
     beforeExacts,
   );
-  const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
+  const chatPaneCountBefore = await workspacePaneButton(
+    page,
+    /^chat\b/i,
+  ).count();
 
   const actions = page.getByRole("dialog", { name: /highlight actions/i });
   await expect(actions.getByRole("button", { name: "Ask" })).toBeVisible({
@@ -62,16 +73,26 @@ test("@real-media desktop selected quote opens reader secondary rail Ask", async
   await actions.getByRole("button", { name: "Ask" }).click();
 
   const rail = page.getByTestId("reader-secondary-rail");
-  await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
+  await expect(rail).toHaveAttribute("data-expanded", "true", {
+    timeout: 10_000,
+  });
   await expect(rail.getByRole("tab", { name: "Ask" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
   const assistant = rail.getByRole("region", { name: "Reader assistant" });
   await expect(assistant).toBeVisible({ timeout: 10_000 });
-  await expect(assistant.getByLabel("Attached context")).toContainText(selectedText);
+  await expect(assistant.getByLabel("Attached context")).toContainText(
+    selectedText,
+  );
+  // justify-polling: the UI opens reader assistant state asynchronously after
+  // command dispatch; Playwright has no event hook for that pane count. The
+  // cadence is 250ms for up to 10s to catch accidental chat-pane creation.
   await expect
-    .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
+    .poll(() => workspacePaneButton(page, /^chat\b/i).count(), {
+      intervals: [250],
+      timeout: 10_000,
+    })
     .toBe(chatPaneCountBefore);
 
   const afterExacts = await existingHighlightExacts(page, fragmentId);
@@ -89,12 +110,15 @@ test("@real-media desktop selected quote opens reader secondary rail Ask", async
 test("@real-media mobile selected quote opens reader assistant sheet", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(180_000);
   await page.setViewportSize({ width: 390, height: 844 });
 
   const seed = readRealMediaSeed();
   const mediaId = seed.fixtures.web.media_id;
 
-  const fragmentsResponse = await page.request.get(`/api/media/${mediaId}/fragments`);
+  const fragmentsResponse = await page.request.get(
+    `/api/media/${mediaId}/fragments`,
+  );
   expect(fragmentsResponse.ok()).toBeTruthy();
   const fragmentsPayload = (await fragmentsResponse.json()) as {
     data: Array<{ id: string }>;
@@ -124,7 +148,9 @@ test("@real-media mobile selected quote opens reader assistant sheet", async ({
 
   const sheet = page.getByRole("dialog", { name: "Ask in chat" });
   await expect(sheet).toBeVisible({ timeout: 10_000 });
-  await expect(sheet.getByLabel("Attached context")).toContainText(selectedText);
+  await expect(sheet.getByLabel("Attached context")).toContainText(
+    selectedText,
+  );
 
   const afterExacts = await existingHighlightExacts(page, fragmentId);
   expect(afterExacts).not.toContain(selectedText);

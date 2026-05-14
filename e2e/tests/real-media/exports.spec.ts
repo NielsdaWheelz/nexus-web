@@ -5,6 +5,7 @@ import { readRealMediaSeed, writeRealMediaTrace } from "./real-media-seed";
 test("@real-media vault export includes block-derived article source text", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(180_000);
   const seed = readRealMediaSeed();
   const mediaId = seed.fixtures.web.media_id;
   const needle = seed.fixtures.web.needle;

@@ -30,7 +30,9 @@ test("@real-media search evidence can be attached to scoped chat context", async
     "captured article should return attachable evidence",
   ).toBeTruthy();
   if (!result) {
-    throw new Error(`captured article visible search did not return ${mediaId}`);
+    throw new Error(
+      `captured article visible search did not return ${mediaId}`,
+    );
   }
   expect(result.context_ref.type).toBe("content_chunk");
   expect(result.context_ref.evidence_span_ids.length).toBeGreaterThan(0);
@@ -48,8 +50,12 @@ test("@real-media search evidence can be attached to scoped chat context", async
         },
       },
     );
-    const scopedConversationResponseText = await scopedConversationResponse.text();
-    expect(scopedConversationResponse.ok(), scopedConversationResponseText).toBeTruthy();
+    const scopedConversationResponseText =
+      await scopedConversationResponse.text();
+    expect(
+      scopedConversationResponse.ok(),
+      scopedConversationResponseText,
+    ).toBeTruthy();
     preTestConversationId = JSON.parse(scopedConversationResponseText).data.id;
     await deleteE2eResource(
       page.request,
@@ -83,7 +89,9 @@ test("@real-media search evidence can be attached to scoped chat context", async
     await page.getByLabel("Web search mode").selectOption("off");
     await page
       .getByLabel("Ask anything")
-      .fill("What does this source say about SOFIA? Use the attached evidence.");
+      .fill(
+        "What does this source say about SOFIA? Use the attached evidence.",
+      );
     const chatRunResponsePromise = page.waitForResponse(
       (response) =>
         response.url().includes("/api/chat-runs") &&
@@ -108,7 +116,9 @@ test("@real-media search evidence can be attached to scoped chat context", async
       timeout: 30_000,
     });
     const chatLog = page.getByRole("log", { name: "Chat messages" });
-    const evidenceButton = chatLog.getByRole("button", { name: /^Evidence/ }).last();
+    const evidenceButton = chatLog
+      .getByRole("button", { name: /^Evidence/ })
+      .last();
     await expect(evidenceButton).toBeVisible({ timeout: 120_000 });
     await evidenceButton.click();
     await expect(page.getByText("Evidence summary")).toBeVisible({
@@ -119,29 +129,39 @@ test("@real-media search evidence can be attached to scoped chat context", async
     for (let i = 0; i < detailButtonCount; i += 1) {
       await detailButtons.nth(i).click();
     }
-    await expect(page.getByText("retrieval_status: included_in_prompt").first()).toBeVisible();
-    await expect(page.getByText("included_in_prompt: true").first()).toBeVisible();
-    const citationLink = page.locator(`a[href*="/media/${mediaId}?evidence="]`).first();
+    await expect(
+      page.getByText("retrieval_status: included_in_prompt").first(),
+    ).toBeVisible();
+    await expect(
+      page.getByText("included_in_prompt: true").first(),
+    ).toBeVisible();
+    const citationLink = page
+      .locator(`a[href*="/media/${mediaId}?evidence="]`)
+      .first();
     await expect(citationLink).toBeVisible();
 
     await citationLink.click();
     await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
     await expectVisibleTextEvidenceHighlight(page);
 
-    writeRealMediaTrace(testInfo, "real-web-context-chat-citations-trace.json", {
-      fixture_id: "web-nasa-water-on-moon",
-      media_id: mediaId,
-      query,
-      search_api_url: search.api_url,
-      context_ref: result.context_ref,
-      search_result: result,
-      visible_result_href: visibleHref,
-      chat_run: chatRunCreated.data.run,
-      worker_result: workerResult,
-      conversation_id: chatRunCreated.data.conversation.id,
-      assistant_message_id: chatRunCreated.data.assistant_message.id,
-      citation_url: page.url(),
-    });
+    writeRealMediaTrace(
+      testInfo,
+      "real-web-context-chat-citations-trace.json",
+      {
+        fixture_id: "web-nasa-water-on-moon",
+        media_id: mediaId,
+        query,
+        search_api_url: search.api_url,
+        context_ref: result.context_ref,
+        search_result: result,
+        visible_result_href: visibleHref,
+        chat_run: chatRunCreated.data.run,
+        worker_result: workerResult,
+        conversation_id: chatRunCreated.data.conversation.id,
+        assistant_message_id: chatRunCreated.data.assistant_message.id,
+        citation_url: page.url(),
+      },
+    );
   } catch (error) {
     productError = error;
     throw error;
@@ -169,6 +189,10 @@ test("@real-media search evidence can be attached to scoped chat context", async
         cleanupErrors.push(error);
       }
     }
-    throwE2eCleanupFailures("Real-media context chat", productError, cleanupErrors);
+    throwE2eCleanupFailures(
+      "Real-media context chat",
+      productError,
+      cleanupErrors,
+    );
   }
 });

@@ -48,6 +48,22 @@ function seedConversationTree<T>(
     throw new Error("DATABASE_URL is required to seed conversation tree fixtures.");
   }
 
+  const childEnv = {
+    ...process.env,
+    ...extraEnv,
+    DATABASE_URL: databaseUrl.replace(/^postgresql:\/\//, "postgresql+psycopg://"),
+    NEXUS_KEY_ENCRYPTION_KEY:
+      process.env.NEXUS_KEY_ENCRYPTION_KEY ??
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    NEXUS_E2E_OWNER_USER_ID: ownerUserId,
+    NEXUS_E2E_CONVERSATION_SCENARIO: scenario,
+  };
+  delete childEnv.SERVICE_ROLE_KEY;
+  delete childEnv.SUPABASE_AUTH_ADMIN_KEY;
+  delete childEnv.SUPABASE_DATABASE_URL;
+  delete childEnv.SUPABASE_SERVICE_KEY;
+  delete childEnv.SUPABASE_SERVICE_ROLE_KEY;
+
   const output = execFileSync(
     "uv",
     [
@@ -59,16 +75,7 @@ function seedConversationTree<T>(
     ],
     {
       cwd: ROOT_DIR,
-      env: {
-        ...process.env,
-        ...extraEnv,
-        DATABASE_URL: databaseUrl.replace(/^postgresql:\/\//, "postgresql+psycopg://"),
-        NEXUS_KEY_ENCRYPTION_KEY:
-          process.env.NEXUS_KEY_ENCRYPTION_KEY ??
-          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-        NEXUS_E2E_OWNER_USER_ID: ownerUserId,
-        NEXUS_E2E_CONVERSATION_SCENARIO: scenario,
-      },
+      env: childEnv,
       stdio: ["ignore", "pipe", "pipe"],
     },
   ).toString("utf-8");

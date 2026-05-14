@@ -5,15 +5,21 @@
 CADDY_SITE=api.example.com
 CADDY_ACME_EMAIL=you@example.com
 
-# Supabase Postgres. Use the transaction pooler on port 6543 on small VPS/free-tier Supabase.
-DATABASE_URL=postgresql+psycopg://postgres.<project-ref>:<password>@<supabase-pooler-host>:6543/postgres?sslmode=require
+# Hetzner Postgres. The Compose stack injects this same host/DB into API and worker.
+POSTGRES_USER=nexus
+POSTGRES_PASSWORD=<generate-a-long-random-password>
+POSTGRES_DB=nexus
+DATABASE_URL=postgresql+psycopg://nexus:<same-password>@postgres:5432/nexus
 DATABASE_POOL_SIZE=5
 DATABASE_MAX_OVERFLOW=5
 DATABASE_POOL_TIMEOUT_SECONDS=30
 
-# Supabase Storage service-role key.
-SUPABASE_SERVICE_KEY=<supabase-service-role-key>
-STORAGE_BUCKET=media
+# Cloudflare R2. No Supabase Storage fallback exists after cutover.
+R2_ACCESS_KEY_ID=<r2-access-key-id>
+R2_SECRET_ACCESS_KEY=<r2-secret-access-key>
+R2_ENDPOINT_URL=https://<cloudflare-account-id>.r2.cloudflarestorage.com
+R2_BUCKET=media
+# R2_REGION=auto
 
 # Generate both with:
 # python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"

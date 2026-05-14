@@ -5,18 +5,19 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+import psycopg
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.jobs.queue import (
     claim_next_job,
     complete_job,
-    enqueue_job,
+    enqueue_unique_job,
     fail_job,
     heartbeat_job,
 )
@@ -100,13 +101,21 @@ class JobWorker:
             return True
 
         with self.session_factory() as db:
-            heartbeat_job(
+            still_owned = heartbeat_job(
                 db,
                 job_id=claimed.id,
                 worker_id=self.worker_id,
                 lease_seconds=definition.lease_seconds,
             )
             db.commit()
+        if not still_owned:
+            logger.warning(
+                "worker_job_start_rejected_lost_ownership",
+                worker_id=self.worker_id,
+                job_id=str(claimed.id),
+                kind=claimed.kind,
+            )
+            return True
 
         stop_event, heartbeat_thread = self._start_heartbeat_thread(
             job_id=claimed.id,
@@ -170,7 +179,6 @@ class JobWorker:
 
     def run_scheduler_once(self, *, now: datetime | None = None) -> int:
         """Enqueue due periodic jobs with deterministic per-slot dedupe."""
-        now_value = now or datetime.now(UTC)
         definitions = []
         for definition in self.registry.values():
             interval_seconds = definition.periodic_interval_seconds
@@ -191,6 +199,7 @@ class JobWorker:
                     if not db.in_transaction() and not in_outer_transaction:
                         db.connection(execution_options={"isolation_level": "SERIALIZABLE"})
 
+                    now_value = now or db.execute(text("SELECT now()")).scalar_one()
                     inserted = 0
                     for definition in definitions:
                         slot_start = periodic_slot_start(
@@ -202,14 +211,7 @@ class JobWorker:
                             slot_start=slot_start,
                         )
 
-                        existing = db.execute(
-                            text("SELECT id FROM background_jobs WHERE dedupe_key = :dedupe_key"),
-                            {"dedupe_key": dedupe_key},
-                        ).first()
-                        if existing is not None:
-                            continue
-
-                        enqueue_job(
+                        _, was_inserted = enqueue_unique_job(
                             db,
                             kind=definition.kind,
                             payload={
@@ -223,7 +225,8 @@ class JobWorker:
                             available_at=slot_start,
                             dedupe_key=dedupe_key,
                         )
-                        inserted += 1
+                        if was_inserted:
+                            inserted += 1
 
                     db.commit()
                     return inserted
@@ -231,19 +234,6 @@ class JobWorker:
                 if attempt < 2:
                     sqlstate = getattr(exc.orig, "sqlstate", None)
                     if sqlstate == "40001" or "could not serialize access" in str(exc.orig).lower():
-                        continue
-                raise
-            except IntegrityError as exc:
-                if attempt < 2:
-                    constraint_name = getattr(
-                        getattr(exc.orig, "diag", None),
-                        "constraint_name",
-                        None,
-                    )
-                    if (
-                        constraint_name == "idx_background_jobs_dedupe_key_unique"
-                        or "idx_background_jobs_dedupe_key_unique" in str(exc.orig)
-                    ):
                         continue
                 raise
 
@@ -304,11 +294,190 @@ class JobWorker:
                 idle_wait_seconds = self.poll_interval_seconds
                 continue
 
-            # justify-polling: production uses Supabase's transaction pooler, so a
-            # session-scoped LISTEN/NOTIFY worker is not dependable here. Idle
-            # workers fall back to one bounded claim query after each backoff window.
-            stop.wait(idle_wait_seconds)
+            self._wait_for_job_notification(
+                stop_event=stop,
+                timeout=min(
+                    idle_wait_seconds,
+                    max(next_scheduler_at - time.monotonic(), 0.0),
+                ),
+            )
             idle_wait_seconds = min(idle_wait_seconds * 2, self.idle_backoff_max_seconds)
+
+    def _wait_for_job_notification(self, *, stop_event: threading.Event, timeout: float) -> None:
+        """Wait for a transactional enqueue notification with polling as fallback."""
+        if timeout <= 0 or stop_event.is_set():
+            return
+
+        try:
+            with self.session_factory() as db:
+                connection = db.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+                driver_connection = connection.connection.driver_connection
+                if driver_connection is None:
+                    raise RuntimeError("Database driver connection is unavailable for LISTEN.")
+                db.execute(text("LISTEN nexus_background_jobs"))
+
+                try:
+                    if self.allowed_kinds is None:
+                        wait_state = (
+                            db.execute(
+                                text(
+                                    """
+                                    WITH next_wait AS (
+                                        SELECT
+                                            (
+                                                SELECT available_at
+                                                FROM background_jobs
+                                                WHERE status IN ('pending', 'failed')
+                                                  AND available_at > now()
+                                                ORDER BY available_at ASC, id ASC
+                                                LIMIT 1
+                                            ) AS next_available_at,
+                                            (
+                                                SELECT lease_expires_at
+                                                FROM background_jobs
+                                                WHERE status = 'running'
+                                                  AND lease_expires_at IS NOT NULL
+                                                  AND lease_expires_at > now()
+                                                ORDER BY lease_expires_at ASC, id ASC
+                                                LIMIT 1
+                                            ) AS next_lease_expires_at
+                                    )
+                                    SELECT
+                                        (
+                                            EXISTS (
+                                                SELECT 1
+                                                FROM background_jobs
+                                                WHERE status IN ('pending', 'failed')
+                                                  AND available_at <= now()
+                                            )
+                                            OR EXISTS (
+                                                SELECT 1
+                                                FROM background_jobs
+                                                WHERE status = 'running'
+                                                  AND lease_expires_at IS NOT NULL
+                                                  AND lease_expires_at <= now()
+                                            )
+                                        ) AS has_due_job,
+                                        CASE
+                                            WHEN next_available_at IS NULL
+                                              AND next_lease_expires_at IS NULL
+                                            THEN NULL
+                                            WHEN next_available_at IS NULL
+                                            THEN EXTRACT(EPOCH FROM (next_lease_expires_at - now()))
+                                            WHEN next_lease_expires_at IS NULL
+                                            THEN EXTRACT(EPOCH FROM (next_available_at - now()))
+                                            WHEN next_available_at <= next_lease_expires_at
+                                            THEN EXTRACT(EPOCH FROM (next_available_at - now()))
+                                            ELSE EXTRACT(EPOCH FROM (next_lease_expires_at - now()))
+                                        END AS seconds_until_next_job
+                                    FROM next_wait
+                                    """
+                                )
+                            )
+                            .mappings()
+                            .one()
+                        )
+                    else:
+                        wait_state = (
+                            db.execute(
+                                text(
+                                    """
+                                    WITH next_wait AS (
+                                        SELECT
+                                            (
+                                                SELECT available_at
+                                                FROM background_jobs
+                                                WHERE status IN ('pending', 'failed')
+                                                  AND kind = ANY(:allowed_kinds)
+                                                  AND available_at > now()
+                                                ORDER BY available_at ASC, id ASC
+                                                LIMIT 1
+                                            ) AS next_available_at,
+                                            (
+                                                SELECT lease_expires_at
+                                                FROM background_jobs
+                                                WHERE status = 'running'
+                                                  AND lease_expires_at IS NOT NULL
+                                                  AND kind = ANY(:allowed_kinds)
+                                                  AND lease_expires_at > now()
+                                                ORDER BY lease_expires_at ASC, id ASC
+                                                LIMIT 1
+                                            ) AS next_lease_expires_at
+                                    )
+                                    SELECT
+                                        (
+                                            EXISTS (
+                                                SELECT 1
+                                                FROM background_jobs
+                                                WHERE status IN ('pending', 'failed')
+                                                  AND kind = ANY(:allowed_kinds)
+                                                  AND available_at <= now()
+                                            )
+                                            OR EXISTS (
+                                                SELECT 1
+                                                FROM background_jobs
+                                                WHERE status = 'running'
+                                                  AND lease_expires_at IS NOT NULL
+                                                  AND kind = ANY(:allowed_kinds)
+                                                  AND lease_expires_at <= now()
+                                            )
+                                        ) AS has_due_job,
+                                        CASE
+                                            WHEN next_available_at IS NULL
+                                              AND next_lease_expires_at IS NULL
+                                            THEN NULL
+                                            WHEN next_available_at IS NULL
+                                            THEN EXTRACT(EPOCH FROM (next_lease_expires_at - now()))
+                                            WHEN next_lease_expires_at IS NULL
+                                            THEN EXTRACT(EPOCH FROM (next_available_at - now()))
+                                            WHEN next_available_at <= next_lease_expires_at
+                                            THEN EXTRACT(EPOCH FROM (next_available_at - now()))
+                                            ELSE EXTRACT(EPOCH FROM (next_lease_expires_at - now()))
+                                        END AS seconds_until_next_job
+                                    FROM next_wait
+                                    """
+                                ),
+                                {"allowed_kinds": list(self.allowed_kinds)},
+                            )
+                            .mappings()
+                            .one()
+                        )
+                    if wait_state["has_due_job"]:
+                        return
+
+                    wait_timeout = timeout
+                    seconds_until_next_job = wait_state["seconds_until_next_job"]
+                    if seconds_until_next_job is not None:
+                        wait_timeout = min(wait_timeout, max(float(seconds_until_next_job), 0.1))
+
+                    deadline = time.monotonic() + wait_timeout
+                    while not stop_event.is_set():
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            return
+                        for notification in driver_connection.notifies(
+                            timeout=min(remaining, 1.0),
+                            stop_after=1,
+                        ):
+                            if (
+                                self.allowed_kinds is not None
+                                and notification.payload not in self.allowed_kinds
+                            ):
+                                continue
+                            return
+                finally:
+                    db.execute(text("UNLISTEN nexus_background_jobs"))
+        except (SQLAlchemyError, psycopg.Error, OSError, RuntimeError) as exc:
+            logger.exception(
+                "worker_job_notification_wait_failed",
+                worker_id=self.worker_id,
+                sleep_seconds=timeout,
+                error=str(exc),
+            )
+            # justify-polling: LISTEN/NOTIFY can fail during transient DB or driver
+            # disconnects. The bounded idle timeout preserves progress until the
+            # main claim loop retries the database path.
+            stop_event.wait(timeout)
 
     def _start_heartbeat_thread(
         self, *, job_id: UUID, lease_seconds: int

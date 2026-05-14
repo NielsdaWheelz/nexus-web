@@ -2447,6 +2447,14 @@ class TestWorkerRuntime:
                 f"Predicate={row['predicate']}"
             )
 
+        def assert_plan_uses_any_index(sql: str, index_names: tuple[str, ...]) -> None:
+            with Session(migrated_engine) as session:
+                session.execute(text("SET enable_seqscan = off"))
+                plan = "\n".join(row[0] for row in session.execute(text(sql)).fetchall())
+            assert any(index_name in plan for index_name in index_names), (
+                f"Expected plan to use one of {index_names}. Plan:\n{plan}"
+            )
+
         assert_index(
             "idx_background_jobs_due_claim",
             table_name="background_jobs",
@@ -2454,10 +2462,76 @@ class TestWorkerRuntime:
             predicate_fragments=["pending", "failed"],
         )
         assert_index(
+            "idx_background_jobs_due_claim_by_kind",
+            table_name="background_jobs",
+            keys=["kind", "priority", "available_at", "created_at", "id"],
+            predicate_fragments=["pending", "failed"],
+        )
+        assert_index(
             "idx_background_jobs_running_expired_claim",
             table_name="background_jobs",
             keys=["priority", "lease_expires_at", "created_at", "id"],
             predicate_fragments=["running", "lease_expires_at IS NOT NULL"],
+        )
+        assert_index(
+            "idx_background_jobs_running_expired_claim_by_kind",
+            table_name="background_jobs",
+            keys=["kind", "priority", "lease_expires_at", "created_at", "id"],
+            predicate_fragments=["running", "lease_expires_at IS NOT NULL"],
+        )
+        assert_index(
+            "idx_background_jobs_wait_due",
+            table_name="background_jobs",
+            keys=["available_at", "id"],
+            predicate_fragments=["pending", "failed"],
+        )
+        assert_index(
+            "idx_background_jobs_wait_due_by_kind",
+            table_name="background_jobs",
+            keys=["kind", "available_at", "id"],
+            predicate_fragments=["pending", "failed"],
+        )
+        assert_index(
+            "idx_background_jobs_wait_running",
+            table_name="background_jobs",
+            keys=["lease_expires_at", "id"],
+            predicate_fragments=["running", "lease_expires_at IS NOT NULL"],
+        )
+        assert_index(
+            "idx_background_jobs_wait_running_by_kind",
+            table_name="background_jobs",
+            keys=["kind", "lease_expires_at", "id"],
+            predicate_fragments=["running", "lease_expires_at IS NOT NULL"],
+        )
+        assert_plan_uses_any_index(
+            """
+            EXPLAIN (COSTS OFF)
+            SELECT available_at
+            FROM background_jobs
+            WHERE status IN ('pending', 'failed')
+              AND kind = ANY(ARRAY['ingest_pdf'])
+              AND available_at > now()
+            ORDER BY available_at ASC, id ASC
+            LIMIT 1
+            """,
+            ("idx_background_jobs_wait_due", "idx_background_jobs_wait_due_by_kind"),
+        )
+        assert_plan_uses_any_index(
+            """
+            EXPLAIN (COSTS OFF)
+            SELECT lease_expires_at
+            FROM background_jobs
+            WHERE status = 'running'
+              AND lease_expires_at IS NOT NULL
+              AND kind = ANY(ARRAY['ingest_pdf'])
+              AND lease_expires_at > now()
+            ORDER BY lease_expires_at ASC, id ASC
+            LIMIT 1
+            """,
+            (
+                "idx_background_jobs_wait_running",
+                "idx_background_jobs_wait_running_by_kind",
+            ),
         )
         assert_index(
             "idx_background_jobs_terminal_prune",
@@ -2477,6 +2551,18 @@ class TestWorkerRuntime:
                 "epub",
                 "podcast_episode",
                 "processing_started_at IS NOT NULL",
+            ],
+        )
+        assert_index(
+            "idx_media_stale_pending_upload_cleanup",
+            table_name="media",
+            keys=["created_at", "processing_started_at", "id"],
+            predicate_fragments=[
+                "processing_status",
+                "pending",
+                "pdf",
+                "epub",
+                "file_sha256 IS NULL",
             ],
         )
         assert_index(

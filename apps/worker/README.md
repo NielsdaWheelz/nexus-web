@@ -9,7 +9,7 @@ The worker runs two loops:
 - Job loop: claim one due row from `background_jobs`, execute handler, persist state.
 - Scheduler loop: enqueue explicitly enabled periodic jobs with deterministic dedupe keys.
 
-Production defaults are safe for Supabase free/Nano: maintenance jobs are
+Production defaults are safe for a small VPS Postgres: maintenance jobs are
 excluded from the explicit allowlist, periodic schedules use `0` as disabled,
 and the worker claims user/domain jobs only.
 
@@ -25,7 +25,7 @@ Manual run:
 
 ```bash
 cd python
-PYTHONPATH=$PWD:$PWD/.. DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54322/postgres uv run python -m apps.worker.main
+PYTHONPATH=$PWD:$PWD/.. DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:54320/postgres uv run python -m apps.worker.main
 ```
 
 ## Docker

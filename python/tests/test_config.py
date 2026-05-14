@@ -7,6 +7,14 @@ from nexus.config import Settings
 
 pytestmark = pytest.mark.unit
 
+_REQUIRED_R2_SETTINGS = {
+    "R2_ENDPOINT_URL": "https://abc123.r2.cloudflarestorage.com",
+    "R2_ACCESS_KEY_ID": "r2-access",
+    "R2_SECRET_ACCESS_KEY": "r2-secret",
+    "R2_BUCKET": "media",
+    "R2_REGION": "auto",
+}
+
 
 def _make_settings(**overrides) -> Settings:
     """Build a Settings instance with test defaults + overrides."""
@@ -28,7 +36,17 @@ def _make_settings(**overrides) -> Settings:
         "YOUTUBE_DATA_API_KEY": "test-youtube-key",
     }
     defaults.update(overrides)
-    return Settings(**defaults)
+    return Settings(_env_file=None, **defaults)
+
+
+def _make_deploy_settings(**overrides) -> Settings:
+    values = {
+        "NEXUS_ENV": "staging",
+        "NEXUS_INTERNAL_SECRET": "secret",
+        **_REQUIRED_R2_SETTINGS,
+    }
+    values.update(overrides)
+    return _make_settings(**values)
 
 
 class TestEpubArchiveSafetyConfigDefaultsAndFloorValidation:
@@ -86,9 +104,7 @@ class TestEpubArchiveSafetyConfigDefaultsAndFloorValidation:
 class TestPodcastProviderConfiguration:
     def test_staging_requires_podcast_index_credentials(self):
         with pytest.raises(ValidationError, match="PODCAST_INDEX_API_KEY"):
-            _make_settings(
-                NEXUS_ENV="staging",
-                NEXUS_INTERNAL_SECRET="secret",
+            _make_deploy_settings(
                 PODCASTS_ENABLED=True,
                 PODCAST_INDEX_API_KEY="",
                 PODCAST_INDEX_API_SECRET="",
@@ -125,13 +141,13 @@ class TestPodcastProviderConfiguration:
 
 
 class TestDatabasePoolConfiguration:
-    def test_defaults_are_bounded_for_small_production_poolers(self):
+    def test_defaults_are_bounded_for_small_databases(self):
         settings = _make_settings()
         assert settings.database_pool_size == 5
         assert settings.database_max_overflow == 5
         assert settings.database_pool_timeout_seconds == 30.0
 
-    def test_pool_can_be_capped_for_managed_poolers(self):
+    def test_pool_can_be_capped_for_small_databases(self):
         settings = _make_settings(
             DATABASE_POOL_SIZE=2,
             DATABASE_MAX_OVERFLOW=0,
@@ -221,9 +237,7 @@ class TestWorkerMaintenanceConfiguration:
 class TestBrowseProviderConfiguration:
     def test_staging_requires_youtube_data_credentials(self):
         with pytest.raises(ValidationError, match="YOUTUBE_DATA_API_KEY"):
-            _make_settings(
-                NEXUS_ENV="staging",
-                NEXUS_INTERNAL_SECRET="secret",
+            _make_deploy_settings(
                 YOUTUBE_DATA_API_KEY="",
             )
 
@@ -250,9 +264,7 @@ class TestBillingConfiguration:
 
     def test_staging_requires_stripe_settings(self):
         with pytest.raises(ValidationError, match="STRIPE_SECRET_KEY"):
-            _make_settings(
-                NEXUS_ENV="staging",
-                NEXUS_INTERNAL_SECRET="secret",
+            _make_deploy_settings(
                 STRIPE_SECRET_KEY="",
                 STRIPE_WEBHOOK_SECRET="",
                 STRIPE_PLUS_PRICE_ID="",
@@ -261,9 +273,7 @@ class TestBillingConfiguration:
             )
 
     def test_staging_allows_missing_stripe_settings_when_billing_disabled(self):
-        settings = _make_settings(
-            NEXUS_ENV="staging",
-            NEXUS_INTERNAL_SECRET="secret",
+        settings = _make_deploy_settings(
             BILLING_ENABLED=False,
             STRIPE_SECRET_KEY="",
             STRIPE_WEBHOOK_SECRET="",
@@ -272,3 +282,86 @@ class TestBillingConfiguration:
             STRIPE_AI_PRO_PRICE_ID="",
         )
         assert settings.billing_enabled is False
+
+
+class TestR2StorageConfiguration:
+    @pytest.mark.parametrize("env", ["staging", "prod"])
+    @pytest.mark.parametrize(
+        "setting_name",
+        ["R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"],
+    )
+    def test_staging_and_prod_require_r2_settings(self, env: str, setting_name: str):
+        values = {
+            "NEXUS_ENV": env,
+            "NEXUS_INTERNAL_SECRET": "secret",
+            **_REQUIRED_R2_SETTINGS,
+        }
+        values[setting_name] = ""
+
+        with pytest.raises(ValidationError, match=setting_name):
+            _make_settings(**values)
+
+    @pytest.mark.parametrize("env", ["staging", "prod"])
+    def test_staging_and_prod_accept_complete_r2_settings(self, env: str):
+        settings = _make_deploy_settings(NEXUS_ENV=env)
+
+        assert settings.r2_endpoint_url == "https://abc123.r2.cloudflarestorage.com"
+        assert settings.r2_access_key_id == "r2-access"
+        assert settings.r2_secret_access_key == "r2-secret"
+        assert settings.r2_bucket == "media"
+        assert settings.r2_region == "auto"
+
+    @pytest.mark.parametrize(
+        "database_url",
+        [
+            "postgresql+psycopg://postgres:secret@aws-1-us-west-1.pooler.supabase.com:6543/postgres",
+            "postgresql+psycopg://postgres:secret@db.example.supabase.co:5432/postgres",
+            "postgresql+psycopg://postgres:postgres@localhost:54322/postgres",
+            "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres",
+        ],
+    )
+    @pytest.mark.parametrize("env", ["local", "test", "staging", "prod"])
+    def test_all_envs_reject_supabase_database_urls(self, database_url: str, env: str):
+        values = {"NEXUS_ENV": env, "DATABASE_URL": database_url}
+        if env in {"staging", "prod"}:
+            values.update({"NEXUS_INTERNAL_SECRET": "secret", **_REQUIRED_R2_SETTINGS})
+
+        with pytest.raises(ValidationError, match="Supabase Database"):
+            _make_settings(**values)
+
+    @pytest.mark.parametrize("env", ["staging", "prod"])
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "https://s3.example.com",
+            "http://abc123.r2.cloudflarestorage.com",
+            "https://abc123.r2.cloudflarestorage.com/prefix",
+            "https://user:pass@abc123.r2.cloudflarestorage.com",
+            "https://abc123.r2.cloudflarestorage.com?x=1",
+            "https://abc123.r2.cloudflarestorage.com/#fragment",
+        ],
+    )
+    def test_staging_and_prod_reject_invalid_r2_endpoint(self, env: str, endpoint: str):
+        with pytest.raises(ValidationError, match="Cloudflare R2 S3 API endpoint"):
+            _make_deploy_settings(NEXUS_ENV=env, R2_ENDPOINT_URL=endpoint)
+
+
+class TestSupabaseServiceRoleConfiguration:
+    @pytest.mark.parametrize(
+        "setting_name",
+        [
+            "SUPABASE_SERVICE_KEY",
+            "SUPABASE_SERVICE_ROLE_KEY",
+            "SUPABASE_AUTH_ADMIN_KEY",
+            "SUPABASE_DATABASE_URL",
+            "SERVICE_ROLE_KEY",
+        ],
+    )
+    def test_service_role_keys_are_rejected_as_runtime_settings(self, setting_name: str):
+        with pytest.raises(ValidationError, match="admin/database settings are not application"):
+            _make_settings(**{setting_name: "service-role-secret"})
+
+    def test_service_role_key_is_not_exposed_on_settings(self):
+        settings = _make_settings()
+
+        assert not hasattr(settings, "supabase_service_key")

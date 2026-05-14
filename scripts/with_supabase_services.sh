@@ -17,6 +17,7 @@ project_id="${project_id:-$(basename "$PROJECT_ROOT")}"
 lock_root="${TMPDIR:-/tmp}/nexus-supabase-locks"
 lock_dir="$lock_root/$project_id"
 lock_wait_seconds=5
+start_log="$(mktemp)"
 
 mkdir -p "$lock_root"
 while ! mkdir "$lock_dir" 2>/dev/null; do
@@ -62,8 +63,10 @@ wait_for_supabase_ports_to_close() {
     done
 }
 
+# shellcheck disable=SC2329
 cleanup() {
     set +e
+    rm -f "$start_log"
     if [ "${SUPABASE_KEEP_RUNNING:-}" = "1" ]; then
         rm -rf "$lock_dir"
         return
@@ -77,23 +80,28 @@ if [ "${SUPABASE_KEEP_RUNNING:-}" != "1" ]; then
     cleanup_supabase_project
     wait_for_supabase_ports_to_close
 fi
-# Test suites use Supabase Postgres, Kong, Auth, REST, and Storage only.
+# Test suites use Supabase Auth only. App data uses test Postgres and S3-compatible object storage.
 for attempt in 1 2; do
-    supabase start \
-        -x realtime,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,mailpit \
-        --ignore-health-check >/dev/null 2>&1 || true
+    if ! supabase start \
+        -x realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,mailpit,postgrest \
+        >"$start_log" 2>&1; then
+        echo "Supabase Auth startup failed on attempt ${attempt}." >&2
+        cat "$start_log" >&2
+        if [ "$attempt" = "2" ]; then
+            exit 1
+        fi
+        cleanup_supabase_project
+        wait_for_supabase_ports_to_close
+        continue
+    fi
 
     for _ in {1..120}; do
         db_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "supabase_db_${project_id}" 2>/dev/null || true)
-        storage_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "supabase_storage_${project_id}" 2>/dev/null || true)
         auth_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "supabase_auth_${project_id}" 2>/dev/null || true)
         kong_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "supabase_kong_${project_id}" 2>/dev/null || true)
-        rest_health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "supabase_rest_${project_id}" 2>/dev/null || true)
         if [ "$db_health" = "healthy" ] &&
-            [ "$storage_health" = "healthy" ] &&
             [ "$auth_health" = "healthy" ] &&
-            [ "$kong_health" = "healthy" ] &&
-            { [ "$rest_health" = "healthy" ] || [ "$rest_health" = "running" ]; }; then
+            [ "$kong_health" = "healthy" ]; then
             break 2
         fi
         sleep 1

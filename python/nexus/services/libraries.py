@@ -39,6 +39,7 @@ from nexus.schemas.library import (
 from nexus.schemas.media import MediaOut
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 from nexus.storage import get_storage_client
+from nexus.storage.client import StorageError
 
 logger = logging.getLogger(__name__)
 
@@ -253,7 +254,16 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     if storage_paths:
         storage_client = get_storage_client()
         for storage_path in storage_paths:
-            storage_client.delete_object(storage_path)
+            try:
+                storage_client.delete_object(storage_path)
+            except StorageError as exc:
+                # justify-ignore-error: library deletion has already committed
+                # the DB state that makes this object unreachable.
+                logger.warning(
+                    "library_storage_delete_failed storage_path=%s error=%s",
+                    storage_path,
+                    exc.message,
+                )
 
 
 def _delete_library_intelligence_rows(db: Session, library_id: UUID) -> None:

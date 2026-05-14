@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import UUID
@@ -16,9 +18,10 @@ from nexus.jobs.queue import (
     enqueue_job,
     enqueue_unique_job,
     fail_job,
+    heartbeat_job,
     prune_terminal_jobs,
 )
-from tests.utils.db import task_session_factory
+from tests.utils.db import DirectSessionManager, task_session_factory
 
 pytestmark = pytest.mark.integration
 
@@ -42,14 +45,14 @@ def _job_status(db: Session, job_id: UUID) -> str:
 
 
 def test_enqueue_unique_job_returns_existing_row_for_duplicate_dedupe_key(db_session: Session):
-    first = enqueue_unique_job(
+    first, first_inserted = enqueue_unique_job(
         db_session,
         kind="ingest_pdf",
         payload={"media_id": "m1"},
         dedupe_key="dup:ingest_pdf:m1",
         max_attempts=3,
     )
-    second = enqueue_unique_job(
+    second, second_inserted = enqueue_unique_job(
         db_session,
         kind="ingest_pdf",
         payload={"media_id": "m1"},
@@ -58,6 +61,8 @@ def test_enqueue_unique_job_returns_existing_row_for_duplicate_dedupe_key(db_ses
     )
     db_session.commit()
 
+    assert first_inserted is True
+    assert second_inserted is False
     assert second.id == first.id, (
         "Expected enqueue_unique_job to return existing row when dedupe_key collides. "
         f"First job id={first.id}, second job id={second.id}"
@@ -69,6 +74,64 @@ def test_enqueue_unique_job_returns_existing_row_for_duplicate_dedupe_key(db_ses
     assert row_count == 1, (
         "Expected exactly one row for duplicate dedupe_key insertion. "
         f"Found {row_count} rows for dedupe_key dup:ingest_pdf:m1."
+    )
+
+
+def test_enqueue_unique_job_returns_existing_row_for_concurrent_dedupe_race(
+    direct_db: DirectSessionManager,
+):
+    dedupe_key = "dup:test_concurrent_unique_job:m1"
+    direct_db.register_cleanup("background_jobs", "dedupe_key", dedupe_key)
+
+    with direct_db.session() as db:
+        db.execute(
+            text("DELETE FROM background_jobs WHERE dedupe_key = :dedupe_key"),
+            {"dedupe_key": dedupe_key},
+        )
+        db.commit()
+
+    with direct_db.session() as winner:
+        first, first_inserted = enqueue_unique_job(
+            winner,
+            kind="test_concurrent_unique_job",
+            payload={"media_id": "m1", "winner": True},
+            dedupe_key=dedupe_key,
+            max_attempts=1,
+        )
+        assert first_inserted is True
+
+        def race_loser() -> tuple[UUID, bool]:
+            with direct_db.session() as db:
+                row, inserted = enqueue_unique_job(
+                    db,
+                    kind="test_concurrent_unique_job",
+                    payload={"media_id": "m1", "winner": False},
+                    dedupe_key=dedupe_key,
+                    max_attempts=1,
+                )
+                db.commit()
+                return row.id, inserted
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(race_loser)
+            time.sleep(0.2)
+            winner.commit()
+            second_id, second_inserted = future.result(timeout=5)
+
+    assert second_inserted is False
+    assert second_id == first.id, (
+        "Expected concurrent deduped enqueue to return the committed winner row. "
+        f"winner={first.id}, loser={second_id}"
+    )
+
+    with direct_db.session() as db:
+        row_count = db.execute(
+            text("SELECT COUNT(*) FROM background_jobs WHERE dedupe_key = :dedupe_key"),
+            {"dedupe_key": dedupe_key},
+        ).scalar_one()
+
+    assert row_count == 1, (
+        f"Expected concurrent deduped enqueue to leave exactly one row. row_count={row_count}"
     )
 
 
@@ -92,7 +155,7 @@ def test_claim_next_job_orders_by_priority_then_available_time(db_session: Sessi
         kind="job_same_priority_late",
         payload={},
         priority=20,
-        available_at=datetime.now(UTC) + timedelta(seconds=120),
+        available_at=db_session.execute(text("SELECT now() + interval '120 seconds'")).scalar_one(),
         max_attempts=1,
     )
     db_session.commit()
@@ -169,6 +232,143 @@ def test_claim_next_job_reclaims_stale_running_lease(db_session: Session):
     assert reclaimed.claimed_by == "worker-b", (
         f"Expected claim ownership to move to reclaiming worker. claimed_by={reclaimed.claimed_by}"
     )
+
+
+def test_claim_next_job_dead_letters_stale_running_job_at_max_attempts(db_session: Session):
+    job = enqueue_job(
+        db_session,
+        kind="ingest_pdf",
+        payload={"media_id": "m-dead-stale"},
+        max_attempts=1,
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET
+                status = 'running',
+                attempts = 1,
+                claimed_by = 'dead-worker',
+                lease_expires_at = now() - interval '1 minute'
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": job.id},
+    )
+    db_session.commit()
+
+    claimed = claim_next_job(db_session, worker_id="worker-b", lease_seconds=60)
+    db_session.commit()
+
+    assert claimed is None, "Expected max-attempt stale running job not to be reclaimed."
+    row = db_session.execute(
+        text(
+            """
+            SELECT status, claimed_by, lease_expires_at, finished_at, error_code
+            FROM background_jobs
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": job.id},
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "dead"
+    assert row[1] is None
+    assert row[2] is None
+    assert row[3] is not None
+    assert row[4] == "E_JOB_LEASE_EXPIRED"
+
+
+def test_claim_next_job_dead_letters_one_stale_max_attempt_job_per_claim(db_session: Session):
+    first = enqueue_job(
+        db_session,
+        kind="ingest_pdf",
+        payload={"media_id": "m-dead-stale-a"},
+        max_attempts=1,
+    )
+    second = enqueue_job(
+        db_session,
+        kind="ingest_pdf",
+        payload={"media_id": "m-dead-stale-b"},
+        max_attempts=1,
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET
+                status = 'running',
+                attempts = 1,
+                claimed_by = 'dead-worker',
+                lease_expires_at = now() - interval '1 minute'
+            WHERE id IN (:first_id, :second_id)
+            """
+        ),
+        {"first_id": first.id, "second_id": second.id},
+    )
+    db_session.commit()
+
+    claimed = claim_next_job(db_session, worker_id="worker-b", lease_seconds=60)
+    db_session.commit()
+
+    assert claimed is None, "Expected max-attempt stale running jobs not to be reclaimed."
+    statuses = dict(
+        db_session.execute(
+            text("SELECT id, status FROM background_jobs WHERE id IN (:first_id, :second_id)"),
+            {"first_id": first.id, "second_id": second.id},
+        ).fetchall()
+    )
+    assert sorted(statuses.values()) == ["dead", "running"], (
+        f"Expected claim-time stale reconciliation to be bounded to one row. Statuses={statuses}"
+    )
+
+
+def test_claim_next_job_dead_letters_only_allowed_stale_max_attempt_job(db_session: Session):
+    blocked = enqueue_job(
+        db_session,
+        kind="maintenance_job",
+        payload={"media_id": "blocked"},
+        max_attempts=1,
+    )
+    allowed = enqueue_job(
+        db_session,
+        kind="user_job",
+        payload={"media_id": "allowed"},
+        max_attempts=1,
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET
+                status = 'running',
+                attempts = 1,
+                claimed_by = 'dead-worker',
+                lease_expires_at = now() - interval '1 minute'
+            WHERE id IN (:blocked_id, :allowed_id)
+            """
+        ),
+        {"blocked_id": blocked.id, "allowed_id": allowed.id},
+    )
+    db_session.commit()
+
+    claimed = claim_next_job(
+        db_session,
+        worker_id="worker-allowed-stale",
+        lease_seconds=60,
+        allowed_kinds=["user_job"],
+    )
+    db_session.commit()
+
+    assert claimed is None
+    statuses = dict(
+        db_session.execute(
+            text("SELECT id, status FROM background_jobs WHERE id IN (:blocked_id, :allowed_id)"),
+            {"blocked_id": blocked.id, "allowed_id": allowed.id},
+        ).fetchall()
+    )
+    assert statuses[allowed.id] == "dead"
+    assert statuses[blocked.id] == "running"
 
 
 def test_claim_next_job_reclaims_lease_at_exact_expiry_boundary(db_session: Session):
@@ -251,6 +451,64 @@ def test_claim_next_job_empty_allowed_kinds_claims_nothing(db_session: Session):
     assert claimed is None, (
         "Expected empty allowed_kinds to disable claiming instead of falling back to all kinds."
     )
+
+
+def test_worker_owner_transitions_reject_expired_lease(db_session: Session):
+    job = enqueue_job(
+        db_session,
+        kind="ingest_pdf",
+        payload={"media_id": "m-expired-owner"},
+        max_attempts=3,
+    )
+    db_session.commit()
+
+    claimed = claim_next_job(db_session, worker_id="worker-a", lease_seconds=60)
+    assert claimed is not None, "Expected initial claim to succeed."
+    db_session.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET lease_expires_at = now() - interval '1 second'
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": job.id},
+    )
+    db_session.commit()
+
+    assert heartbeat_job(db_session, job_id=job.id, worker_id="worker-a", lease_seconds=60) is False
+    assert (
+        complete_job(db_session, job_id=job.id, worker_id="worker-a", result_payload={"ok": True})
+        is False
+    )
+    assert (
+        fail_job(
+            db_session,
+            job_id=job.id,
+            worker_id="worker-a",
+            error_code="E_EXPIRED",
+            error_message="expired owner",
+            retry_delays_seconds=(0,),
+        )
+        is None
+    )
+    db_session.commit()
+
+    row = db_session.execute(
+        text(
+            """
+            SELECT status, claimed_by, result, error_code
+            FROM background_jobs
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": job.id},
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "running"
+    assert row[1] == "worker-a"
+    assert row[2] is None
+    assert row[3] is None
 
 
 def test_prune_terminal_jobs_deletes_only_old_terminal_rows(db_session: Session):

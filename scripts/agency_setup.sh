@@ -20,17 +20,21 @@ export COMPOSE_PROJECT_NAME="$PROJECT_NAME"
 # Fixed Supabase ports (from supabase/config.toml)
 SUPABASE_API_PORT=54321
 SUPABASE_DB_PORT=54322
-
-canonicalize_loopback_url() {
-    local url=$1
-    echo "$url" | sed 's#://127\.0\.0\.1:#://localhost:#'
-}
+POSTGRES_PORT="${POSTGRES_PORT:-54320}"
+MINIO_PORT="${MINIO_PORT:-9000}"
+LOCAL_COMPOSE_PROJECT="${LOCAL_COMPOSE_PROJECT:-nexus-local}"
+R2_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID:-nexus-local-access-key}"
+R2_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY:-nexus-local-secret-key}"
+R2_BUCKET="${R2_BUCKET:-media}"
+R2_REGION="${R2_REGION:-us-east-1}"
 
 echo "=== Nexus Project Setup ==="
 echo ""
 echo "Project: $PROJECT_NAME"
-echo "Supabase API port: $SUPABASE_API_PORT"
-echo "Supabase DB port: $SUPABASE_DB_PORT"
+echo "App Postgres port: $POSTGRES_PORT"
+echo "MinIO port: $MINIO_PORT"
+echo "Supabase Auth API port: $SUPABASE_API_PORT"
+echo "Supabase Auth backing DB port: $SUPABASE_DB_PORT"
 echo ""
 
 # Check for required tools
@@ -41,21 +45,108 @@ check_tool() {
     fi
 }
 
+is_true() {
+    case "$1" in
+        1|true|TRUE|True|yes|YES|Yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+env_file_value() {
+    awk -v wanted="$1" '
+        /^[[:space:]]*(#|$)/ { next }
+        index($0, "=") == 0 { next }
+        {
+            key = substr($0, 1, index($0, "=") - 1)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+            if (key == wanted) {
+                value = substr($0, index($0, "=") + 1)
+                found = 1
+            }
+        }
+        END {
+            if (found) {
+                print value
+                exit 0
+            }
+            exit 1
+        }
+    ' "$2"
+}
+
 echo "Checking required tools..."
 check_tool uv
 check_tool git
 check_tool docker
+check_tool curl
 check_tool node
 check_tool bun
 check_tool supabase
 echo "Required tools found"
 echo ""
 
-# Start Supabase local
-echo "Starting Supabase local..."
+# Start local app data services.
+echo "Starting local app data services..."
 cd "$PROJECT_ROOT"
-supabase start
-echo "Supabase local started"
+POSTGRES_PORT="$POSTGRES_PORT" \
+    MINIO_PORT="$MINIO_PORT" \
+    R2_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
+    R2_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+    R2_BUCKET="$R2_BUCKET" \
+    COMPOSE_PROJECT_NAME="$LOCAL_COMPOSE_PROJECT" \
+    docker compose -f docker/docker-compose.yml up -d postgres minio minio-init
+echo "Local app data services started"
+echo ""
+
+echo "Waiting for app Postgres..."
+DB_CONTAINER=$(COMPOSE_PROJECT_NAME="$LOCAL_COMPOSE_PROJECT" docker compose -f docker/docker-compose.yml ps -q postgres)
+if [ -z "$DB_CONTAINER" ]; then
+    echo "Error: Could not find app Postgres container"
+    exit 1
+fi
+for i in $(seq 1 30); do
+    if docker exec "$DB_CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then
+        break
+    fi
+    if [ "$i" = "30" ]; then
+        echo "Error: App Postgres did not become ready in time"
+        exit 1
+    fi
+    sleep 1
+done
+echo "App Postgres ready"
+echo ""
+
+echo "Waiting for MinIO and bucket initialization..."
+for i in $(seq 1 30); do
+    if curl -fsS "http://127.0.0.1:${MINIO_PORT}/minio/health/ready" >/dev/null 2>&1; then
+        break
+    fi
+    if [ "$i" = "30" ]; then
+        echo "Error: MinIO did not become ready in time"
+        exit 1
+    fi
+    sleep 1
+done
+MINIO_INIT_CONTAINER=$(COMPOSE_PROJECT_NAME="$LOCAL_COMPOSE_PROJECT" docker compose -f docker/docker-compose.yml ps -a -q minio-init)
+if [ -z "$MINIO_INIT_CONTAINER" ]; then
+    echo "Error: MinIO bucket init container was not created"
+    exit 1
+fi
+MINIO_INIT_EXIT=$(docker wait "$MINIO_INIT_CONTAINER" 2>/dev/null || docker inspect -f '{{.State.ExitCode}}' "$MINIO_INIT_CONTAINER")
+if [ "$MINIO_INIT_EXIT" != "0" ]; then
+    COMPOSE_PROJECT_NAME="$LOCAL_COMPOSE_PROJECT" docker compose -f docker/docker-compose.yml logs minio-init >&2
+    echo "Error: MinIO bucket init failed"
+    exit 1
+fi
+echo "MinIO ready"
+echo ""
+
+# Start Supabase local Auth only. Supabase still runs its internal Postgres for
+# Auth metadata, but application data does not use Supabase Database or Storage.
+echo "Starting Supabase local Auth..."
+supabase start -x realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,mailpit,postgrest
+echo "Supabase local Auth started"
 echo ""
 
 # Get Supabase status as JSON for extracting values
@@ -65,53 +156,30 @@ SUPABASE_STATUS=$(supabase status --output json 2>&1 | grep -v '^Stopped service
 
 # Extract values using grep and sed (portable, no jq dependency)
 # Handle both compact JSON ("key":"value") and pretty JSON ("key": "value")
-SUPABASE_URL=$(echo "$SUPABASE_STATUS" | grep -o '"API_URL": *"[^"]*"' | sed 's/"API_URL": *"//;s/"$//')
-SUPABASE_ANON_KEY=$(echo "$SUPABASE_STATUS" | grep -o '"ANON_KEY": *"[^"]*"' | sed 's/"ANON_KEY": *"//;s/"$//')
-SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_STATUS" | grep -o '"SERVICE_ROLE_KEY": *"[^"]*"' | sed 's/"SERVICE_ROLE_KEY": *"//;s/"$//')
+SUPABASE_URL=$(echo "$SUPABASE_STATUS" | grep -o '"API_URL": *"[^"]*"' | sed 's/"API_URL": *"//;s/"$//' || true)
+SUPABASE_URL="${SUPABASE_URL:-http://127.0.0.1:${SUPABASE_API_PORT}}"
+SUPABASE_ANON_KEY=$(echo "$SUPABASE_STATUS" | grep -o '"ANON_KEY": *"[^"]*"' | sed 's/"ANON_KEY": *"//;s/"$//' || true)
+if [ -z "$SUPABASE_ANON_KEY" ]; then
+    SUPABASE_ANON_KEY=$(echo "$SUPABASE_STATUS" | grep -o '"PUBLISHABLE_KEY": *"[^"]*"' | sed 's/"PUBLISHABLE_KEY": *"//;s/"$//' || true)
+fi
 
-if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
     missing_fields=()
     [ -z "$SUPABASE_URL" ] && missing_fields+=("API_URL")
     [ -z "$SUPABASE_ANON_KEY" ] && missing_fields+=("ANON_KEY")
-    [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && missing_fields+=("SERVICE_ROLE_KEY")
     echo "Error: Failed to extract Supabase configuration"
     echo "Missing fields: ${missing_fields[*]}"
     exit 1
 fi
 
-SUPABASE_URL=$(canonicalize_loopback_url "$SUPABASE_URL")
-
 echo "Supabase URL: $SUPABASE_URL"
 echo ""
 
-# Find Supabase DB container and create test databases
+# Create local app test databases.
 echo "Creating test databases..."
-DB_CONTAINER=$(docker ps --format '{{.Names}}' | grep -m 1 '^supabase_db_' || true)
-if [ -z "$DB_CONTAINER" ]; then
-    echo "Error: Could not find Supabase DB container"
-    exit 1
-fi
 docker exec "$DB_CONTAINER" createdb -U postgres nexus_test 2>/dev/null || true
 docker exec "$DB_CONTAINER" createdb -U postgres nexus_test_migrations 2>/dev/null || true
 echo "Test databases ready (nexus_test, nexus_test_migrations)"
-echo ""
-
-# Create storage bucket for file uploads (idempotent)
-echo "Creating storage bucket..."
-BUCKET_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-    -X POST "${SUPABASE_URL}/storage/v1/bucket" \
-    -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
-    -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
-    -H "Content-Type: application/json" \
-    -d '{"name": "media", "public": false}')
-if [ "$BUCKET_STATUS" = "200" ] || [ "$BUCKET_STATUS" = "201" ]; then
-    echo "Storage bucket 'media' created"
-elif [ "$BUCKET_STATUS" = "409" ]; then
-    echo "Storage bucket 'media' already exists"
-else
-    echo "Warning: Failed to create storage bucket (HTTP $BUCKET_STATUS)"
-    echo "  Create the 'media' bucket manually via Supabase Studio: http://localhost:54323"
-fi
 echo ""
 
 # Install python dependencies
@@ -135,16 +203,31 @@ bun install --frozen-lockfile
 echo "Node ingest worker dependencies installed"
 echo ""
 
-# Generate encryption key for BYOK API keys
-echo "Generating key encryption key..."
-NEXUS_KEY_ENCRYPTION_KEY=$(python3 -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())")
-echo "Key encryption key generated"
+echo "Preparing key encryption key..."
+EXISTING_NEXUS_KEY_ENCRYPTION_KEY=""
+if ! is_true "${NEXUS_RESET_KEY_ENCRYPTION_KEY:-false}"; then
+    EXISTING_NEXUS_KEY_ENCRYPTION_KEY="${NEXUS_KEY_ENCRYPTION_KEY:-}"
+    if [ -z "$EXISTING_NEXUS_KEY_ENCRYPTION_KEY" ] && [ -f "$PROJECT_ROOT/.env" ]; then
+        EXISTING_NEXUS_KEY_ENCRYPTION_KEY=$(env_file_value NEXUS_KEY_ENCRYPTION_KEY "$PROJECT_ROOT/.env" 2>/dev/null || true)
+    fi
+fi
+
+if [ -n "$EXISTING_NEXUS_KEY_ENCRYPTION_KEY" ]; then
+    NEXUS_KEY_ENCRYPTION_KEY="$EXISTING_NEXUS_KEY_ENCRYPTION_KEY"
+    echo "Preserved existing key encryption key"
+else
+    NEXUS_KEY_ENCRYPTION_KEY=$(python3 -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())")
+    echo "Key encryption key generated"
+fi
 echo ""
 
-# Database URLs using Supabase local Postgres
-DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:${SUPABASE_DB_PORT}/postgres"
-DATABASE_URL_TEST="postgresql+psycopg://postgres:postgres@localhost:${SUPABASE_DB_PORT}/nexus_test"
-DATABASE_URL_TEST_MIGRATIONS="postgresql+psycopg://postgres:postgres@localhost:${SUPABASE_DB_PORT}/nexus_test_migrations"
+# Database URLs using standalone local Postgres
+DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:${POSTGRES_PORT}/postgres"
+DATABASE_URL_TEST="postgresql+psycopg://postgres:postgres@localhost:${POSTGRES_PORT}/nexus_test"
+DATABASE_URL_TEST_MIGRATIONS="postgresql+psycopg://postgres:postgres@localhost:${POSTGRES_PORT}/nexus_test_migrations"
+
+# Local MinIO values use the same R2-compatible storage interface as production.
+R2_ENDPOINT_URL="http://127.0.0.1:${MINIO_PORT}"
 
 # Derived Supabase auth settings
 SUPABASE_ISSUER="${SUPABASE_URL}/auth/v1"
@@ -183,21 +266,21 @@ cat > "$PROJECT_ROOT/.env" << EOF
 
 # Application config
 NEXUS_ENV=local
+POSTGRES_PORT=${POSTGRES_PORT}
+MINIO_PORT=${MINIO_PORT}
 DATABASE_URL=${DATABASE_URL}
 DATABASE_URL_TEST=${DATABASE_URL_TEST}
 DATABASE_URL_TEST_MIGRATIONS=${DATABASE_URL_TEST_MIGRATIONS}
 
 # Podcast features are disabled by default for local setup because
-# Podcast Index credentials are not provisioned automatically by `make setup`.
+# Podcast Index credentials are not provisioned automatically by make setup.
 PODCASTS_ENABLED=false
 # PODCAST_INDEX_API_KEY=<podcast-index-api-key>
 # PODCAST_INDEX_API_SECRET=<podcast-index-api-secret>
 
-# Supabase local configuration
+# Supabase local Auth configuration
 SUPABASE_URL=${SUPABASE_URL}
 SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
-SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
 
 # Supabase auth settings (used by FastAPI)
 SUPABASE_ISSUER=${SUPABASE_ISSUER}
@@ -208,6 +291,13 @@ AUTH_ALLOWED_REDIRECT_ORIGINS=${AUTH_ALLOWED_REDIRECT_ORIGINS}
 # Direct browser-to-FastAPI SSE
 STREAM_BASE_URL=${STREAM_BASE_URL}
 STREAM_CORS_ORIGINS=${STREAM_CORS_ORIGINS}
+
+# R2-compatible object storage (MinIO in local development)
+R2_ENDPOINT_URL=${R2_ENDPOINT_URL}
+R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}
+R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}
+R2_BUCKET=${R2_BUCKET}
+R2_REGION=${R2_REGION}
 
 # Key encryption for BYOK API keys (XChaCha20-Poly1305)
 NEXUS_KEY_ENCRYPTION_KEY=${NEXUS_KEY_ENCRYPTION_KEY}
@@ -264,4 +354,4 @@ echo "To run tests:"
 echo "  make test"
 echo ""
 echo "API docs: http://localhost:8000/docs"
-echo "Supabase Studio: http://localhost:54323"
+echo "Supabase local is running for Auth only."

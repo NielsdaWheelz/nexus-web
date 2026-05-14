@@ -22,7 +22,6 @@ const READER_RESUME_SEED = path.join(
   ".seed",
   "reader-resume-media.json",
 );
-const REAL_MEDIA_SEED = path.join(E2E_DIR, ".seed", "real-media.json");
 const SEED_FILES = [
   PDF_SEED,
   NON_PDF_SEED,
@@ -425,79 +424,6 @@ function databaseHasCleanSeededHighlightFixtures(dbUrl) {
   }
 }
 
-function databaseHasReadyRealMediaSeed(dbUrl) {
-  if (!existsSync(REAL_MEDIA_SEED)) {
-    return false;
-  }
-
-  const probeDatabaseUrl = dbUrl.replace(
-    /^postgresql\+psycopg:\/\//,
-    "postgresql://",
-  );
-  const seed = readJson(REAL_MEDIA_SEED);
-  const mediaIds = ["pdf", "epub", "web", "web_url", "video", "podcast"].map(
-    (name) => seed.fixtures?.[name]?.media_id,
-  );
-  const scannedPdfMediaId = seed.fixtures?.scanned_pdf?.media_id;
-  if (
-    mediaIds.some(
-      (mediaId) => typeof mediaId !== "string" || mediaId.length === 0,
-    ) ||
-    typeof scannedPdfMediaId !== "string" ||
-    scannedPdfMediaId.length === 0
-  ) {
-    return false;
-  }
-
-  const command =
-    "uv run --project python python -c " +
-    JSON.stringify(
-      "import json, os, psycopg;" +
-        "ids=json.loads(os.environ['NEXUS_REAL_MEDIA_IDS']);" +
-        "conn=psycopg.connect(os.environ['DATABASE_URL']);" +
-        "cur=conn.cursor();" +
-        "cur.execute(" +
-        JSON.stringify(
-          "select count(*) from media m join media_content_index_states mcis on mcis.media_id = m.id where m.id = any(%s::uuid[]) and m.processing_status = 'ready_for_reading' and mcis.status = 'ready'",
-        ) +
-        ", (ids,));" +
-        "row=cur.fetchone();" +
-        "ready_count=row[0] if row else 0;" +
-        "cur.execute(" +
-        JSON.stringify(
-          "select m.processing_status, mcis.status from media m join media_content_index_states mcis on mcis.media_id = m.id where m.id = %s::uuid",
-        ) +
-        ", (os.environ['NEXUS_SCANNED_PDF_MEDIA_ID'],));" +
-        "scanned=cur.fetchone();" +
-        "print('1' if ready_count == len(ids) and scanned == ('ready_for_reading', 'ocr_required') else '0');" +
-        "cur.close();" +
-        "conn.close()",
-    );
-
-  try {
-    const raw = execSync(command, {
-      cwd: ROOT,
-      stdio: ["ignore", "pipe", "inherit"],
-      env: {
-        ...process.env,
-        DATABASE_URL: probeDatabaseUrl,
-        NEXUS_REAL_MEDIA_IDS: JSON.stringify(mediaIds),
-        NEXUS_SCANNED_PDF_MEDIA_ID: scannedPdfMediaId,
-      },
-    })
-      .toString()
-      .trim();
-    return raw === "1";
-  } catch (error) {
-    throw new Error(
-      "[global-setup] Real-media seed readiness probe failed.\n" +
-        `  Command: ${command}\n` +
-        `  CWD:     ${ROOT}\n` +
-        `  Cause:   ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
 export default function globalSetup() {
   // Mirror Makefile behavior so direct `bun test` runs work too.
   loadEnvFile(path.join(ROOT, ".env"));
@@ -507,7 +433,11 @@ export default function globalSetup() {
     delete process.env.E2E_REAL_MEDIA;
   }
   const requestedNexusEnv = process.env.NEXUS_ENV;
-  if (realMediaEnabled && requestedNexusEnv !== undefined && requestedNexusEnv !== "local") {
+  if (
+    realMediaEnabled &&
+    requestedNexusEnv !== undefined &&
+    requestedNexusEnv !== "local"
+  ) {
     throw new Error(
       `[global-setup] Refusing real-media E2E with NEXUS_ENV=${requestedNexusEnv}.`,
     );
@@ -543,19 +473,20 @@ export default function globalSetup() {
   );
 
   if (realMediaEnabled) {
-    if (!databaseHasReadyRealMediaSeed(dbUrl)) {
-      run(
-        "Seed real-media E2E data",
-        "uv run python scripts/seed_real_media_e2e.py",
-        path.join(ROOT, "python"),
-        {
-          DATABASE_URL: dbUrl,
-          NEXUS_ENV: "local",
-          REAL_MEDIA_PROVIDER_FIXTURES: "1",
-          REAL_MEDIA_FIXTURE_DIR: path.join(ROOT, "python/tests/fixtures/real_media"),
-        },
-      );
-    }
+    run(
+      "Seed real-media E2E data",
+      "uv run python scripts/seed_real_media_e2e.py",
+      path.join(ROOT, "python"),
+      {
+        DATABASE_URL: dbUrl,
+        NEXUS_ENV: "local",
+        REAL_MEDIA_PROVIDER_FIXTURES: "1",
+        REAL_MEDIA_FIXTURE_DIR: path.join(
+          ROOT,
+          "python/tests/fixtures/real_media",
+        ),
+      },
+    );
     console.log(
       "[global-setup] Real-media E2E enabled - using .seed/real-media.json.",
     );

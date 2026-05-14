@@ -5,7 +5,7 @@ This script:
 1) Ensures the E2E user exists (created by e2e/seed-e2e-user.ts).
 2) Bootstraps the app user + default library in Nexus DB.
 3) Creates a PDF upload stub through the real upload service.
-4) Uploads a generated multi-page PDF bytes payload to Supabase Storage.
+4) Uploads a generated multi-page PDF bytes payload to object storage.
 5) Confirms ingest and runs synchronous PDF extraction for quote-ready artifacts.
 6) Seeds one deterministic password-protected failure media row for degrade-path UI tests.
 7) Seeds a non-PDF web article with highlights for linked-items tests.
@@ -20,10 +20,10 @@ from __future__ import annotations
 import base64
 import json
 import os
+import subprocess
 import sys
 import time
 import zipfile
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from html import escape
 from io import BytesIO
@@ -34,7 +34,6 @@ import fitz
 import httpx
 from sqlalchemy import select, text
 
-from nexus.config import get_settings
 from nexus.db.models import FailureStage, Fragment, Media, ProcessingStatus
 from nexus.db.session import create_session_factory
 from nexus.schemas.highlights import CreateHighlightRequest
@@ -50,6 +49,7 @@ from nexus.services.media import create_or_reuse_youtube_video, create_provision
 from nexus.services.notes import set_highlight_note_body
 from nexus.services.pdf_ingest import PdfExtractionError
 from nexus.services.upload import confirm_ingest, init_upload
+from nexus.storage import build_upload_staging_storage_path, get_file_extension, get_storage_client
 from nexus.tasks.ingest_epub import run_epub_ingest_sync
 from nexus.tasks.ingest_pdf import _index_pdf_evidence, run_pdf_ingest_sync
 
@@ -85,6 +85,41 @@ YOUTUBE_TRANSCRIPT_SEGMENTS = [
     },
 ]
 
+
+def _load_supabase_auth_config() -> tuple[str, str]:
+    supabase_url = os.environ.get("SUPABASE_URL")
+    admin_key = os.environ.get("SUPABASE_AUTH_ADMIN_KEY")
+
+    if supabase_url and admin_key:
+        return supabase_url, admin_key
+
+    try:
+        raw_status = subprocess.check_output(
+            ["supabase", "status", "--output", "json"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        status = json.loads(
+            "\n".join(
+                line
+                for line in raw_status.splitlines()
+                if line.strip() and not line.startswith("Stopped services:")
+            )
+        )
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+        status = {}
+
+    supabase_url = supabase_url or status.get("API_URL") or "http://127.0.0.1:54321"
+    admin_key = admin_key or status.get("SECRET_KEY") or status.get("SERVICE_ROLE_KEY")
+    if not supabase_url or not admin_key:
+        print(
+            "ERROR: SUPABASE_URL and SUPABASE_AUTH_ADMIN_KEY must be set, "
+            "or local Supabase CLI status must be available"
+        )
+        sys.exit(1)
+    return str(supabase_url), str(admin_key)
+
+
 # EPUB chapter content for deterministic tests
 EPUB_CHAPTERS = [
     {
@@ -116,64 +151,6 @@ READER_RESUME_WEB_ANCHOR_TEXT = "reader resume anchor target omega"
 READER_RESUME_PDF_PAGE_COUNT = 8
 SUPABASE_READY_ATTEMPTS = 8
 SUPABASE_READY_DELAY_SECONDS = 1.5
-
-
-def _run_with_retries[T](
-    *,
-    label: str,
-    fn: Callable[[], T],
-    attempts: int = SUPABASE_READY_ATTEMPTS,
-    delay_seconds: float = SUPABASE_READY_DELAY_SECONDS,
-) -> T:
-    """Run operation with bounded retries to absorb startup readiness races."""
-    last_error: Exception | None = None
-    for attempt in range(1, attempts + 1):
-        try:
-            return fn()
-        except Exception as exc:  # noqa: BLE001 - seed bootstrap should retry any startup failure.
-            last_error = exc
-            if attempt == attempts:
-                break
-            print(
-                f"{label} failed (attempt {attempt}/{attempts}): {exc}. "
-                f"Retrying in {delay_seconds:.1f}s..."
-            )
-            time.sleep(delay_seconds)
-    raise RuntimeError(f"{label} failed after {attempts} attempts") from last_error
-
-
-def _ensure_storage_bucket(*, supabase_url: str, service_key: str, bucket: str) -> None:
-    """Ensure storage bucket exists (idempotent)."""
-    headers = {
-        "Authorization": f"Bearer {service_key}",
-        "apikey": service_key,
-    }
-    bucket_url = f"{supabase_url.rstrip('/')}/storage/v1/bucket/{bucket}"
-    create_url = f"{supabase_url.rstrip('/')}/storage/v1/bucket"
-    with httpx.Client(timeout=30.0) as client:
-        response = client.get(bucket_url, headers=headers)
-        if response.status_code == 200:
-            return
-        if response.status_code not in (400, 404):
-            raise RuntimeError(
-                f"Failed checking storage bucket {bucket}: {response.status_code} {response.text}"
-            )
-
-        for payload in (
-            {"name": bucket, "public": False},
-            {"id": bucket, "name": bucket, "public": False},
-        ):
-            create_response = client.post(create_url, headers=headers, json=payload)
-            if create_response.status_code in (200, 201, 409):
-                return
-
-            if create_response.status_code not in (400, 422):
-                raise RuntimeError(
-                    "Failed creating storage bucket "
-                    f"{bucket}: {create_response.status_code} {create_response.text}"
-                )
-
-    raise RuntimeError(f"Failed to ensure storage bucket exists: {bucket}")
 
 
 def _build_pdf_bytes(page_count: int) -> bytes:
@@ -351,59 +328,56 @@ def _fetch_e2e_user_id(supabase_url: str, service_key: str, email: str) -> UUID:
         "apikey": service_key,
     }
     with httpx.Client() as client:
-        response = client.get(url, headers=headers, timeout=30.0)
-    if response.status_code != 200:
-        raise RuntimeError(f"Failed to list auth users: {response.status_code} {response.text}")
+        for page in range(1, 101):
+            response = client.get(
+                url,
+                headers=headers,
+                params={"page": page, "per_page": 100},
+                timeout=30.0,
+            )
+            if response.status_code in (401, 403):
+                raise PermissionError(
+                    "Supabase admin auth rejected while listing users: "
+                    f"{response.status_code} {response.text}"
+                )
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Failed to list auth users: {response.status_code} {response.text}"
+                )
 
-    payload = response.json()
-    users = payload.get("users", [])
-    for user in users:
-        if user.get("email") == email:
-            return UUID(user["id"])
+            users = response.json().get("users", [])
+            for user in users:
+                if user.get("email") == email:
+                    return UUID(user["id"])
+            if len(users) < 100:
+                break
 
     raise RuntimeError(f"E2E auth user not found for {email}. Run e2e/seed-e2e-user.ts first.")
 
 
-def _upload_to_signed_url(
-    *,
-    supabase_url: str,
-    service_key: str,
-    bucket: str,
-    storage_path: str,
-    token: str,
-    content: bytes,
-    content_type: str = "application/pdf",
-) -> None:
-    """Upload bytes through Supabase signed-upload endpoint."""
-    url = f"{supabase_url.rstrip('/')}/storage/v1/object/upload/sign/{bucket}/{storage_path}"
-    headers = {
-        "Authorization": f"Bearer {service_key}",
-        "apikey": service_key,
-        "Content-Type": content_type,
-        "x-upsert": "false",
-    }
-    with httpx.Client() as client:
-        response = client.put(
-            url,
-            params={"token": token},
-            headers=headers,
-            content=content,
-            timeout=60.0,
-        )
-        # Some Supabase versions accept POST instead of PUT for signed uploads.
-        if response.status_code == 405:
-            response = client.post(
-                url,
-                params={"token": token},
-                headers=headers,
-                content=content,
-                timeout=60.0,
+def _fetch_e2e_user_id_with_retry(supabase_url: str, service_key: str, email: str) -> UUID:
+    last_error: Exception | None = None
+    # justify-polling: Supabase Auth starts in a separate local service and the
+    # preceding Node seed can be briefly invisible to the admin list endpoint.
+    # The bounded cadence is 8 attempts at 1.5s, then fail loudly.
+    for attempt in range(1, SUPABASE_READY_ATTEMPTS + 1):
+        try:
+            return _fetch_e2e_user_id(supabase_url, service_key, email)
+        except PermissionError:
+            raise
+        except (RuntimeError, ValueError, httpx.HTTPError) as exc:
+            last_error = exc
+            if attempt == SUPABASE_READY_ATTEMPTS:
+                break
+            print(
+                f"Fetch E2E auth user '{email}' failed "
+                f"(attempt {attempt}/{SUPABASE_READY_ATTEMPTS}): {exc}. "
+                f"Retrying in {SUPABASE_READY_DELAY_SECONDS:.1f}s..."
             )
-
-    if response.status_code not in (200, 201):
-        raise RuntimeError(
-            f"Failed to upload via signed URL: {response.status_code} {response.text}"
-        )
+            time.sleep(SUPABASE_READY_DELAY_SECONDS)
+    raise RuntimeError(
+        f"Fetch E2E auth user '{email}' failed after {SUPABASE_READY_ATTEMPTS} attempts"
+    ) from last_error
 
 
 def _write_upload_fixture(content: bytes) -> str:
@@ -1190,7 +1164,7 @@ def _seed_api_key(session_factory, user_id: UUID) -> None:
         print("Seeded E2E test API key (provider=openai)")
 
 
-def _seed_epub_media(session_factory, user_id: UUID, settings) -> None:
+def _seed_epub_media(session_factory, user_id: UUID) -> None:
     """Seed an EPUB with 3 chapters for EPUB reader E2E tests."""
     epub_bytes = _build_epub_bytes()
     filename = f"e2e-epub-seed-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.epub"
@@ -1207,18 +1181,11 @@ def _seed_epub_media(session_factory, user_id: UUID, settings) -> None:
         )
 
     epub_media_id_str = init_data["media_id"]
-    storage_path = init_data["storage_path"]
-    token = init_data["token"]
-
-    _upload_to_signed_url(
-        supabase_url=settings.supabase_url,
-        service_key=settings.supabase_service_key,
-        bucket=settings.storage_bucket,
-        storage_path=storage_path,
-        token=token,
-        content=epub_bytes,
-        content_type="application/epub+zip",
+    storage_path = build_upload_staging_storage_path(
+        UUID(epub_media_id_str),
+        get_file_extension("epub"),
     )
+    get_storage_client().put_object(storage_path, epub_bytes, "application/epub+zip")
 
     with session_factory() as db:
         confirm_result = confirm_ingest(
@@ -1262,7 +1229,7 @@ def _seed_epub_media(session_factory, user_id: UUID, settings) -> None:
     print(f"Seeded EPUB media for E2E: {epub_media_id_str}")
 
 
-def _seed_reader_resume_media(session_factory, user_id: UUID, settings) -> None:
+def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
     """Seed dedicated web/epub/pdf media for reader resume E2E coverage."""
     # ------------------------------------------------------------------
     # Web article (long canonical text with deterministic anchor token)
@@ -1342,14 +1309,10 @@ def _seed_reader_resume_media(session_factory, user_id: UUID, settings) -> None:
         )
 
     epub_media_id_str = epub_init["media_id"]
-    _upload_to_signed_url(
-        supabase_url=settings.supabase_url,
-        service_key=settings.supabase_service_key,
-        bucket=settings.storage_bucket,
-        storage_path=epub_init["storage_path"],
-        token=epub_init["token"],
-        content=epub_bytes,
-        content_type="application/epub+zip",
+    get_storage_client().put_object(
+        build_upload_staging_storage_path(UUID(epub_media_id_str), get_file_extension("epub")),
+        epub_bytes,
+        "application/epub+zip",
     )
 
     with session_factory() as db:
@@ -1400,13 +1363,10 @@ def _seed_reader_resume_media(session_factory, user_id: UUID, settings) -> None:
         )
 
     pdf_media_id_str = pdf_init["media_id"]
-    _upload_to_signed_url(
-        supabase_url=settings.supabase_url,
-        service_key=settings.supabase_service_key,
-        bucket=settings.storage_bucket,
-        storage_path=pdf_init["storage_path"],
-        token=pdf_init["token"],
-        content=resume_pdf_bytes,
+    get_storage_client().put_object(
+        build_upload_staging_storage_path(UUID(pdf_media_id_str), get_file_extension("pdf")),
+        resume_pdf_bytes,
+        "application/pdf",
     )
 
     with session_factory() as db:
@@ -1463,27 +1423,27 @@ def main() -> None:
         print("ERROR: DATABASE_URL must be set")
         sys.exit(1)
 
-    settings = get_settings()
-    if not settings.supabase_url or not settings.supabase_service_key:
-        print("ERROR: SUPABASE_URL and SUPABASE_SERVICE_KEY must be set")
+    supabase_url, supabase_auth_admin_key = _load_supabase_auth_config()
+    for key in (
+        "SUPABASE_AUTH_ADMIN_KEY",
+        "SUPABASE_SERVICE_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SERVICE_ROLE_KEY",
+    ):
+        os.environ.pop(key, None)
+    missing_r2 = [
+        key
+        for key in ("R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
+        if not os.environ.get(key)
+    ]
+    if missing_r2:
+        print(f"ERROR: Cloudflare R2 storage env is required: {', '.join(missing_r2)}")
         sys.exit(1)
 
-    _run_with_retries(
-        label=f"Ensure storage bucket '{settings.storage_bucket}'",
-        fn=lambda: _ensure_storage_bucket(
-            supabase_url=settings.supabase_url,
-            service_key=settings.supabase_service_key,
-            bucket=settings.storage_bucket,
-        ),
-    )
-
-    user_id = _run_with_retries(
-        label=f"Fetch E2E auth user '{E2E_USER_EMAIL}'",
-        fn=lambda: _fetch_e2e_user_id(
-            supabase_url=settings.supabase_url,
-            service_key=settings.supabase_service_key,
-            email=E2E_USER_EMAIL,
-        ),
+    user_id = _fetch_e2e_user_id_with_retry(
+        supabase_url=supabase_url,
+        service_key=supabase_auth_admin_key,
+        email=E2E_USER_EMAIL,
     )
 
     pdf_bytes = _build_pdf_bytes(PDF_PAGE_COUNT)
@@ -1504,17 +1464,11 @@ def main() -> None:
         )
 
     uploaded_media_id_str = init_data["media_id"]
-    storage_path = init_data["storage_path"]
-    token = init_data["token"]
-
-    _upload_to_signed_url(
-        supabase_url=settings.supabase_url,
-        service_key=settings.supabase_service_key,
-        bucket=settings.storage_bucket,
-        storage_path=storage_path,
-        token=token,
-        content=pdf_bytes,
+    storage_path = build_upload_staging_storage_path(
+        UUID(uploaded_media_id_str),
+        get_file_extension("pdf"),
     )
+    get_storage_client().put_object(storage_path, pdf_bytes, "application/pdf")
 
     with session_factory() as db:
         confirm_result = confirm_ingest(
@@ -1592,8 +1546,8 @@ def main() -> None:
     _seed_non_pdf_linked_items_media(session_factory, user_id)
     _seed_youtube_transcript_media(session_factory, user_id)
     _seed_api_key(session_factory, user_id)
-    _seed_epub_media(session_factory, user_id, settings)
-    _seed_reader_resume_media(session_factory, user_id, settings)
+    _seed_epub_media(session_factory, user_id)
+    _seed_reader_resume_media(session_factory, user_id)
 
 
 if __name__ == "__main__":

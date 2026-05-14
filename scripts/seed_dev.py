@@ -19,7 +19,9 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -30,7 +32,6 @@ from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.models import (
-    Annotation,
     Conversation,
     ConversationMedia,
     DefaultLibraryIntrinsic,
@@ -52,9 +53,44 @@ from nexus.db.models import (
 )
 from nexus.db.session import create_session_factory
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.notes import set_highlight_note_body
 
 DEV_EMAIL = "dev@nexus.local"
 DEV_PASSWORD = "devdevdev"
+
+
+def _load_supabase_auth_config() -> tuple[str, str]:
+    supabase_url = os.environ.get("SUPABASE_URL")
+    admin_key = os.environ.get("SUPABASE_AUTH_ADMIN_KEY")
+
+    if supabase_url and admin_key:
+        return supabase_url, admin_key
+
+    try:
+        raw_status = subprocess.check_output(
+            ["supabase", "status", "--output", "json"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        status = json.loads(
+            "\n".join(
+                line
+                for line in raw_status.splitlines()
+                if line.strip() and not line.startswith("Stopped services:")
+            )
+        )
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+        status = {}
+
+    supabase_url = supabase_url or status.get("API_URL") or "http://127.0.0.1:54321"
+    admin_key = admin_key or status.get("SECRET_KEY") or status.get("SERVICE_ROLE_KEY")
+    if not supabase_url or not admin_key:
+        print(
+            "ERROR: SUPABASE_URL and SUPABASE_AUTH_ADMIN_KEY must be set, "
+            "or local Supabase CLI status must be available"
+        )
+        sys.exit(1)
+    return str(supabase_url), str(admin_key)
 
 
 def _sid(name: str) -> UUID:
@@ -71,17 +107,22 @@ def _ensure_supabase_auth_user(supabase_url: str, service_key: str) -> UUID:
     headers = {"Authorization": f"Bearer {service_key}", "apikey": service_key}
     # Search existing users
     with httpx.Client() as client:
-        resp = client.get(
-            f"{supabase_url.rstrip('/')}/auth/v1/admin/users",
-            headers=headers,
-            timeout=30.0,
-        )
-    if resp.status_code != 200:
-        print(f"ERROR: Failed to list Supabase auth users: {resp.status_code}")
-        sys.exit(1)
-    for user in resp.json().get("users", []):
-        if user.get("email") == DEV_EMAIL:
-            return UUID(user["id"])
+        for page in range(1, 101):
+            resp = client.get(
+                f"{supabase_url.rstrip('/')}/auth/v1/admin/users",
+                headers=headers,
+                params={"page": page, "per_page": 100},
+                timeout=30.0,
+            )
+            if resp.status_code != 200:
+                print(f"ERROR: Failed to list Supabase auth users: {resp.status_code}")
+                sys.exit(1)
+            users = resp.json().get("users", [])
+            for user in users:
+                if user.get("email") == DEV_EMAIL:
+                    return UUID(user["id"])
+            if len(users) < 100:
+                break
 
     # Create new user
     with httpx.Client() as client:
@@ -96,14 +137,21 @@ def _ensure_supabase_auth_user(supabase_url: str, service_key: str) -> UUID:
     # Race: another process created it
     if resp.status_code in (409, 422):
         with httpx.Client() as client:
-            resp2 = client.get(
-                f"{supabase_url.rstrip('/')}/auth/v1/admin/users",
-                headers=headers,
-                timeout=30.0,
-            )
-        for user in resp2.json().get("users", []):
-            if user.get("email") == DEV_EMAIL:
-                return UUID(user["id"])
+            for page in range(1, 101):
+                resp2 = client.get(
+                    f"{supabase_url.rstrip('/')}/auth/v1/admin/users",
+                    headers=headers,
+                    params={"page": page, "per_page": 100},
+                    timeout=30.0,
+                )
+                if resp2.status_code != 200:
+                    break
+                users = resp2.json().get("users", [])
+                for user in users:
+                    if user.get("email") == DEV_EMAIL:
+                        return UUID(user["id"])
+                if len(users) < 100:
+                    break
     print(f"ERROR: Failed to create Supabase auth user: {resp.status_code} {resp.text}")
     sys.exit(1)
 
@@ -118,10 +166,15 @@ def main() -> None:
         print("ERROR: DATABASE_URL must be set. Run: make seed")
         sys.exit(1)
 
-    settings = get_settings()
-    if not settings.supabase_url or not settings.supabase_service_key:
-        print("ERROR: SUPABASE_URL and SUPABASE_SERVICE_KEY must be set")
-        sys.exit(1)
+    supabase_url, supabase_auth_admin_key = _load_supabase_auth_config()
+    for key in (
+        "SUPABASE_AUTH_ADMIN_KEY",
+        "SUPABASE_SERVICE_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SERVICE_ROLE_KEY",
+    ):
+        os.environ.pop(key, None)
+    get_settings()
 
     created: list[str] = []
     skipped: list[str] = []
@@ -131,7 +184,7 @@ def main() -> None:
 
     # ── Auth user ─────────────────────────────────────────────────────
     print("Setting up dev auth user...")
-    user_id = _ensure_supabase_auth_user(settings.supabase_url, settings.supabase_service_key)
+    user_id = _ensure_supabase_auth_user(supabase_url, supabase_auth_admin_key)
     print(f"  Auth user: {DEV_EMAIL} (id: {user_id})")
 
     # ── Session ───────────────────────────────────────────────────────
@@ -848,12 +901,12 @@ def main() -> None:
                     end_offset=46,
                 )
             )
-            db.add(
-                Annotation(
-                    id=_sid("annotation:pg:yellow"),
-                    highlight_id=hl1_id,
-                    body="Key insight — the origin story of Viaweb and the decision to use Lisp.",
-                )
+            set_highlight_note_body(
+                db,
+                user_id,
+                hl1_id,
+                "Key insight — the origin story of Viaweb and the decision to use Lisp.",
+                commit=False,
             )
             db.flush()
             track("highlight: PG yellow + annotation", True)
@@ -926,12 +979,12 @@ def main() -> None:
                     end_offset=60,
                 )
             )
-            db.add(
-                Annotation(
-                    id=_sid("annotation:zarathustra:green"),
-                    highlight_id=hl3_id,
-                    body="The beginning of Zarathustra's journey—leaving solitude to share his wisdom.",
-                )
+            set_highlight_note_body(
+                db,
+                user_id,
+                hl3_id,
+                "The beginning of Zarathustra's journey—leaving solitude to share his wisdom.",
+                commit=False,
             )
             db.flush()
             track("highlight: Zarathustra green + annotation", True)
@@ -1065,7 +1118,7 @@ def main() -> None:
             print(f"  • {item}")
     print()
     print(f"Login: {DEV_EMAIL} / {DEV_PASSWORD}")
-    print(f"Supabase Studio: {settings.supabase_url.replace(':54321', ':54323')}")
+    print(f"Supabase Studio: {supabase_url.replace(':54321', ':54323')}")
 
 
 if __name__ == "__main__":

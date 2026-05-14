@@ -13,6 +13,7 @@ Supabase integration tests live in test_supabase_integration.py.
 """
 
 import hashlib
+import threading
 from uuid import UUID, uuid4
 
 import pytest
@@ -21,9 +22,14 @@ from sqlalchemy import text
 
 from nexus.app import create_app
 from nexus.auth.middleware import AuthMiddleware
+from nexus.db.models import MediaFile
 from nexus.db.session import create_session_factory
+from nexus.errors import ApiError, ApiErrorCode, ConflictError
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.storage.client import FakeStorageClient
+from nexus.services.upload import confirm_ingest as confirm_upload_ingest
+from nexus.services.upload import validate_source_integrity
+from nexus.storage import build_storage_path, build_upload_staging_storage_path, get_file_extension
+from nexus.storage.client import FakeStorageClient, StorageError
 from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.mock_verifier import MockJwtVerifier
@@ -111,6 +117,34 @@ def _remove_background_job_insert_failure(direct_db: DirectSessionManager) -> No
         session.commit()
 
 
+def _upload_storage_path(init_data: dict, kind: str) -> str:
+    return build_upload_staging_storage_path(UUID(init_data["media_id"]), get_file_extension(kind))
+
+
+def _final_storage_path(init_data: dict, kind: str) -> str:
+    return build_storage_path(UUID(init_data["media_id"]), get_file_extension(kind))
+
+
+class HeadFailureStorageClient(FakeStorageClient):
+    def head_object(self, path: str):
+        raise StorageError(f"head failed for {path}")
+
+
+class BlockingCopyStorageClient(FakeStorageClient):
+    def __init__(self):
+        super().__init__()
+        self.copy_started = threading.Event()
+        self.release_copy = threading.Event()
+        self.copy_count = 0
+
+    def copy_object(self, source_path: str, destination_path: str) -> None:
+        self.copy_count += 1
+        self.copy_started.set()
+        if not self.release_copy.wait(timeout=5):
+            raise StorageError("copy did not release")
+        super().copy_object(source_path, destination_path)
+
+
 @pytest.fixture
 def fake_storage():
     """Provide a FakeStorageClient for testing."""
@@ -121,6 +155,9 @@ def fake_storage():
 def upload_client(engine, fake_storage, monkeypatch):
     """Create a client with auth middleware and fake storage."""
     from nexus.app import add_request_id_middleware
+
+    monkeypatch.setenv("SUPABASE_SERVICE_KEY", "")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
     session_factory = create_session_factory(engine)
 
@@ -175,13 +212,9 @@ class TestUploadInit:
         data = response.json()["data"]
 
         assert "media_id" in data
-        assert "storage_path" in data
-        assert "token" in data
+        assert "storage_path" not in data
+        assert "upload_url" in data
         assert "expires_at" in data
-
-        # Verify storage path format
-        assert data["storage_path"].endswith("/original.pdf")
-        assert data["media_id"] in data["storage_path"]
 
     def test_upload_init_epub_success(self, upload_client, fake_storage):
         """Upload init for EPUB returns signed URL."""
@@ -201,7 +234,7 @@ class TestUploadInit:
 
         assert response.status_code == 200
         data = response.json()["data"]
-        assert data["storage_path"].endswith("/original.epub")
+        assert "storage_path" not in data
 
     def test_upload_init_invalid_kind(self, upload_client):
         """Upload init rejects invalid kind."""
@@ -297,7 +330,8 @@ class TestConfirmIngest:
         )
         init_data = init_response.json()["data"]
         media_id = init_data["media_id"]
-        storage_path = init_data["storage_path"]
+        storage_path = _upload_storage_path(init_data, "pdf")
+        final_storage_path = _final_storage_path(init_data, "pdf")
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
@@ -320,12 +354,25 @@ class TestConfirmIngest:
         # Verify hash was stored in DB
         with direct_db.session() as session:
             result = session.execute(
-                text("SELECT file_sha256 FROM media WHERE id = :id"),
+                text(
+                    """
+                    SELECT m.file_sha256, mf.storage_path
+                    FROM media m
+                    JOIN media_file mf ON mf.media_id = m.id
+                    WHERE m.id = :id
+                    """
+                ),
                 {"id": media_id},
             )
             row = result.fetchone()
             assert row is not None
             assert row[0] == PDF_SHA256
+            assert row[1] == final_storage_path
+
+        assert fake_storage.get_object(storage_path) is None
+        assert fake_storage.get_object(final_storage_path) == PDF_CONTENT
+        fake_storage.put_object(storage_path, b"%PDF-1.4overwritten staging", "application/pdf")
+        assert fake_storage.get_object(final_storage_path) == PDF_CONTENT
 
     def test_ingest_invalid_file_type(self, upload_client, fake_storage, direct_db):
         """Ingest rejects file with invalid magic bytes."""
@@ -345,7 +392,7 @@ class TestConfirmIngest:
         )
         init_data = init_response.json()["data"]
         media_id = init_data["media_id"]
-        storage_path = init_data["storage_path"]
+        storage_path = _upload_storage_path(init_data, "pdf")
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
@@ -362,6 +409,7 @@ class TestConfirmIngest:
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_FILE_TYPE"
+        assert fake_storage.get_object(storage_path) is None
 
         # Verify media is marked failed
         with direct_db.session() as session:
@@ -408,6 +456,219 @@ class TestConfirmIngest:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_STORAGE_MISSING"
 
+    def test_ingest_rejects_non_staged_storage_path(self, upload_client, fake_storage, direct_db):
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+
+        init_response = upload_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "pdf",
+                "filename": "test.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(PDF_CONTENT),
+            },
+            headers=auth_headers(user_id),
+        )
+        init_data = init_response.json()["data"]
+        media_id = init_data["media_id"]
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        final_storage_path = _final_storage_path(init_data, "pdf")
+        with direct_db.session() as session:
+            session.execute(
+                text("UPDATE media_file SET storage_path = :path WHERE media_id = :media_id"),
+                {"path": final_storage_path, "media_id": media_id},
+            )
+            session.commit()
+
+        fake_storage.put_object(final_storage_path, PDF_CONTENT, "application/pdf")
+        response = upload_client.post(
+            f"/media/{media_id}/ingest",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "E_UPLOAD_CONFLICT"
+        assert fake_storage.get_object(final_storage_path) == PDF_CONTENT
+
+    def test_concurrent_ingest_confirms_do_not_overwrite_final_object(
+        self, engine, upload_client, monkeypatch, direct_db
+    ):
+        storage = BlockingCopyStorageClient()
+        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: storage)
+        session_factory = create_session_factory(engine)
+
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+        init_response = upload_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "pdf",
+                "filename": "race.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(PDF_CONTENT),
+            },
+            headers=auth_headers(user_id),
+        )
+        init_data = init_response.json()["data"]
+        media_id = UUID(init_data["media_id"])
+        storage_path = _upload_storage_path(init_data, "pdf")
+        final_storage_path = _final_storage_path(init_data, "pdf")
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        storage.put_object(storage_path, PDF_CONTENT, "application/pdf")
+
+        results: dict[str, object] = {}
+
+        def first_confirm() -> None:
+            try:
+                with session_factory() as session:
+                    results["first"] = confirm_upload_ingest(session, user_id, media_id)
+            except Exception as exc:
+                results["first_error"] = exc
+
+        def second_confirm() -> None:
+            try:
+                with session_factory() as session:
+                    confirm_upload_ingest(session, user_id, media_id)
+            except ConflictError as exc:
+                results["second_conflict"] = exc.code
+            except Exception as exc:
+                results["second_error"] = exc
+
+        first = threading.Thread(target=first_confirm)
+        first.start()
+        assert storage.copy_started.wait(timeout=5)
+
+        second = threading.Thread(target=second_confirm)
+        second.start()
+        second.join(timeout=5)
+        storage.release_copy.set()
+        first.join(timeout=5)
+
+        assert not first.is_alive()
+        assert not second.is_alive()
+        assert "first_error" not in results
+        assert "second_error" not in results
+        assert results["first"] == {"media_id": str(media_id), "duplicate": False}
+        assert results["second_conflict"] == ApiErrorCode.E_UPLOAD_CONFLICT
+        assert storage.copy_count == 1
+        assert storage.get_object(storage_path) is None
+        assert storage.get_object(final_storage_path) == PDF_CONTENT
+
+    def test_ingest_head_failure_is_storage_error_without_failed_media(
+        self, upload_client, monkeypatch, direct_db
+    ):
+        storage = HeadFailureStorageClient()
+        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: storage)
+
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+        init_response = upload_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "pdf",
+                "filename": "storage-down.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(PDF_CONTENT),
+            },
+            headers=auth_headers(user_id),
+        )
+        init_data = init_response.json()["data"]
+        media_id = init_data["media_id"]
+        storage_path = _upload_storage_path(init_data, "pdf")
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        storage.put_object(storage_path, PDF_CONTENT, "application/pdf")
+
+        response = upload_client.post(f"/media/{media_id}/ingest", headers=auth_headers(user_id))
+
+        assert response.status_code == 500
+        assert response.json()["error"]["code"] == "E_STORAGE_ERROR"
+        assert storage.get_object(storage_path) == PDF_CONTENT
+        with direct_db.session() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT processing_status, failure_stage, processing_started_at
+                    FROM media
+                    WHERE id = :id
+                    """
+                ),
+                {"id": media_id},
+            ).fetchone()
+        assert row is not None
+        assert row[0] == "pending"
+        assert row[1] is None
+        assert row[2] is None
+
+    def test_ingest_empty_object_rejected(self, upload_client, fake_storage, direct_db):
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+
+        init_response = upload_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "pdf",
+                "filename": "empty.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(PDF_CONTENT),
+            },
+            headers=auth_headers(user_id),
+        )
+        init_data = init_response.json()["data"]
+        media_id = init_data["media_id"]
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        storage_path = _upload_storage_path(init_data, "pdf")
+        fake_storage.put_object(storage_path, b"", "application/pdf")
+        response = upload_client.post(
+            f"/media/{media_id}/ingest",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+        assert fake_storage.get_object(storage_path) is None
+
+    def test_ingest_short_object_rejected(self, upload_client, fake_storage, direct_db):
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+
+        init_response = upload_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "pdf",
+                "filename": "short.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(PDF_CONTENT),
+            },
+            headers=auth_headers(user_id),
+        )
+        init_data = init_response.json()["data"]
+        media_id = init_data["media_id"]
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        storage_path = _upload_storage_path(init_data, "pdf")
+        fake_storage.put_object(storage_path, PDF_MAGIC + b"short", "application/pdf")
+        response = upload_client.post(
+            f"/media/{media_id}/ingest",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+        assert fake_storage.get_object(storage_path) is None
+
     def test_ingest_non_creator_forbidden(self, upload_client, fake_storage, direct_db):
         """Non-creator cannot confirm ingest."""
         user_a = create_test_user_id()
@@ -429,7 +690,7 @@ class TestConfirmIngest:
         )
         init_data = init_response.json()["data"]
         media_id = init_data["media_id"]
-        storage_path = init_data["storage_path"]
+        storage_path = _upload_storage_path(init_data, "pdf")
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
@@ -468,7 +729,7 @@ class TestConfirmIngest:
         direct_db.register_cleanup("media_file", "media_id", media_id_1)
         direct_db.register_cleanup("media", "id", media_id_1)
 
-        fake_storage.put_object(init_1["storage_path"], PDF_CONTENT, "application/pdf")
+        fake_storage.put_object(_upload_storage_path(init_1, "pdf"), PDF_CONTENT, "application/pdf")
 
         ingest_1 = upload_client.post(
             f"/media/{media_id_1}/ingest",
@@ -496,7 +757,8 @@ class TestConfirmIngest:
         direct_db.register_cleanup("media_file", "media_id", media_id_2)
         direct_db.register_cleanup("media", "id", media_id_2)
 
-        fake_storage.put_object(init_2["storage_path"], PDF_CONTENT, "application/pdf")
+        init_2_storage_path = _upload_storage_path(init_2, "pdf")
+        fake_storage.put_object(init_2_storage_path, PDF_CONTENT, "application/pdf")
 
         ingest_2 = upload_client.post(
             f"/media/{media_id_2}/ingest",
@@ -506,6 +768,7 @@ class TestConfirmIngest:
         # Should return existing media
         assert ingest_2["duplicate"] is True
         assert ingest_2["media_id"] == media_id_1
+        assert fake_storage.get_object(init_2_storage_path) is None
 
         # Verify second media row was deleted
         with direct_db.session() as session:
@@ -540,7 +803,7 @@ class TestConfirmIngest:
         direct_db.register_cleanup("media_file", "media_id", media_id_a)
         direct_db.register_cleanup("media", "id", media_id_a)
 
-        fake_storage.put_object(init_a["storage_path"], PDF_CONTENT, "application/pdf")
+        fake_storage.put_object(_upload_storage_path(init_a, "pdf"), PDF_CONTENT, "application/pdf")
         upload_client.post(f"/media/{media_id_a}/ingest", headers=auth_headers(user_a))
 
         # User B uploads same content
@@ -560,7 +823,7 @@ class TestConfirmIngest:
         direct_db.register_cleanup("media_file", "media_id", media_id_b)
         direct_db.register_cleanup("media", "id", media_id_b)
 
-        fake_storage.put_object(init_b["storage_path"], PDF_CONTENT, "application/pdf")
+        fake_storage.put_object(_upload_storage_path(init_b, "pdf"), PDF_CONTENT, "application/pdf")
         ingest_b = upload_client.post(
             f"/media/{media_id_b}/ingest",
             headers=auth_headers(user_b),
@@ -596,7 +859,9 @@ class TestFileDownload:
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        fake_storage.put_object(init_response["storage_path"], PDF_CONTENT, "application/pdf")
+        fake_storage.put_object(
+            _upload_storage_path(init_response, "pdf"), PDF_CONTENT, "application/pdf"
+        )
         upload_client.post(f"/media/{media_id}/ingest", headers=auth_headers(user_id))
 
         # Get download URL
@@ -635,7 +900,9 @@ class TestFileDownload:
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        fake_storage.put_object(init_response["storage_path"], PDF_CONTENT, "application/pdf")
+        fake_storage.put_object(
+            _upload_storage_path(init_response, "pdf"), PDF_CONTENT, "application/pdf"
+        )
         upload_client.post(f"/media/{media_id}/ingest", headers=auth_headers(user_a))
 
         # User B tries to download
@@ -713,7 +980,9 @@ class TestMediaWithCapabilities:
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        fake_storage.put_object(init_response["storage_path"], PDF_CONTENT, "application/pdf")
+        fake_storage.put_object(
+            _upload_storage_path(init_response, "pdf"), PDF_CONTENT, "application/pdf"
+        )
         upload_client.post(f"/media/{media_id}/ingest", headers=auth_headers(user_id))
 
         # Get media
@@ -762,7 +1031,9 @@ class TestMediaWithCapabilities:
         direct_db.register_cleanup("media", "id", media_id)
 
         # Put file but don't call ingest
-        fake_storage.put_object(init_response["storage_path"], PDF_CONTENT, "application/pdf")
+        fake_storage.put_object(
+            _upload_storage_path(init_response, "pdf"), PDF_CONTENT, "application/pdf"
+        )
 
         # Get media (before ingest, sha256 not set but file exists)
         response = upload_client.get(
@@ -866,7 +1137,7 @@ class TestUploadProvenance:
         direct_db.register_cleanup("media_file", "media_id", media_id_1)
         direct_db.register_cleanup("media", "id", media_id_1)
 
-        fake_storage.put_object(init1["storage_path"], PDF_CONTENT, "application/pdf")
+        fake_storage.put_object(_upload_storage_path(init1, "pdf"), PDF_CONTENT, "application/pdf")
         upload_client.post(f"/media/{media_id_1}/ingest", headers=auth_headers(user_id))
 
         # Second upload (same content = duplicate)
@@ -886,7 +1157,7 @@ class TestUploadProvenance:
         direct_db.register_cleanup("media_file", "media_id", media_id_2)
         direct_db.register_cleanup("media", "id", media_id_2)
 
-        fake_storage.put_object(init2["storage_path"], PDF_CONTENT, "application/pdf")
+        fake_storage.put_object(_upload_storage_path(init2, "pdf"), PDF_CONTENT, "application/pdf")
         resp = upload_client.post(f"/media/{media_id_2}/ingest", headers=auth_headers(user_id))
         assert resp.status_code == 200
         winner_id = resp.json()["data"]["media_id"]
@@ -937,8 +1208,9 @@ class TestEpubIngestLifecycle:
         direct_db.register_cleanup("media_file", "media_id", mid)
         direct_db.register_cleanup("media", "id", mid)
 
-        fake_storage.put_object(d["storage_path"], content, "application/epub+zip")
-        return mid, d["storage_path"]
+        storage_path = _upload_storage_path(d, "epub")
+        fake_storage.put_object(storage_path, content, "application/epub+zip")
+        return mid, storage_path
 
     def test_ingest_epub_archive_unsafe_fails_preflight_without_dispatch(
         self,
@@ -1120,8 +1392,9 @@ class TestPdfIngestLifecycle:
         direct_db.register_cleanup("media_file", "media_id", mid)
         direct_db.register_cleanup("media", "id", mid)
 
-        fake_storage.put_object(d["storage_path"], content, "application/pdf")
-        return mid, d["storage_path"]
+        storage_path = _upload_storage_path(d, "pdf")
+        fake_storage.put_object(storage_path, content, "application/pdf")
+        return mid, storage_path
 
     def test_pr03_ingest_pdf_confirm_routes_to_pdf_lifecycle_and_dispatches(
         self,
@@ -1194,3 +1467,18 @@ class TestPdfIngestLifecycle:
         data2 = resp2.json()["data"]
         assert data2["ingest_enqueued"] is False
         assert _count_jobs_for_media(direct_db, kind="ingest_pdf", media_id=str(mid)) == 1
+
+
+class TestValidateSourceIntegrity:
+    def test_head_failure_is_storage_error(self):
+        media_file = MediaFile(
+            media_id=uuid4(),
+            storage_path="media/test/original.pdf",
+            content_type="application/pdf",
+            size_bytes=len(PDF_CONTENT),
+        )
+
+        with pytest.raises(ApiError) as exc_info:
+            validate_source_integrity(HeadFailureStorageClient(), media_file, "pdf")
+
+        assert exc_info.value.code == ApiErrorCode.E_STORAGE_ERROR

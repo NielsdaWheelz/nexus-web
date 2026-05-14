@@ -10,9 +10,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import time
-from datetime import UTC, datetime
 from pathlib import Path
+from typing import NotRequired, TypedDict
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
@@ -23,7 +24,7 @@ from sqlalchemy.engine import Engine
 
 from nexus.app import create_app
 from nexus.config import get_settings
-from nexus.storage import get_storage_client
+from nexus.storage import build_upload_staging_storage_path, get_file_extension, get_storage_client
 from nexus.tasks.ingest_web_article import run_ingest_sync as run_web_article_ingest_sync
 from tests.real_media.conftest import (
     FIXTURES_DIR,
@@ -38,6 +39,125 @@ from tests.utils.db import DirectSessionManager
 ROOT = Path(__file__).parents[2]
 SEED_PATH = ROOT / "e2e" / ".seed" / "real-media.json"
 E2E_USER_EMAIL = os.environ.get("E2E_USER_EMAIL", "e2e-test@nexus.local")
+NON_LOCAL_STORAGE_OPT_IN = "REAL_MEDIA_ALLOW_NON_LOCAL_STORAGE"
+
+
+def _load_supabase_auth_config() -> tuple[str, str]:
+    supabase_url = os.environ.get("SUPABASE_URL")
+    admin_key = os.environ.get("SUPABASE_AUTH_ADMIN_KEY")
+
+    if supabase_url and admin_key:
+        return supabase_url, admin_key
+
+    try:
+        raw_status = subprocess.check_output(
+            ["supabase", "status", "--output", "json"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        status = json.loads(
+            "\n".join(
+                line
+                for line in raw_status.splitlines()
+                if line.strip() and not line.startswith("Stopped services:")
+            )
+        )
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+        status = {}
+
+    supabase_url = supabase_url or status.get("API_URL") or "http://127.0.0.1:54321"
+    admin_key = admin_key or status.get("SECRET_KEY") or status.get("SERVICE_ROLE_KEY")
+    if not supabase_url or not admin_key:
+        raise RuntimeError(
+            "SUPABASE_URL and SUPABASE_AUTH_ADMIN_KEY must be set, "
+            "or local Supabase CLI status must be available."
+        )
+    return str(supabase_url), str(admin_key)
+
+
+class ExpectedSeedFixture(TypedDict):
+    path: Path
+    sha256: str
+    query: str
+    needle: str
+    kind: str
+    index_status: str
+    storage: bool
+    content_type: NotRequired[str]
+    size_bytes: NotRequired[int]
+
+
+EXPECTED_SEED_FIXTURES: dict[str, ExpectedSeedFixture] = {
+    "pdf": {
+        "path": FIXTURES_DIR / "pdf" / "attention.pdf",
+        "sha256": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
+        "query": "attention",
+        "needle": "attention",
+        "kind": "pdf",
+        "index_status": "ready",
+        "storage": True,
+        "content_type": "application/pdf",
+        "size_bytes": 2_215_244,
+    },
+    "epub": {
+        "path": FIXTURES_DIR / "epub" / "moby-dick-epub3.epub",
+        "sha256": "1215d453321c51b130e41354355ad159e48154c1e1431bc1c41d6f138f8b1556",
+        "query": "whale",
+        "needle": "whale",
+        "kind": "epub",
+        "index_status": "ready",
+        "storage": True,
+        "content_type": "application/epub+zip",
+        "size_bytes": 815_946,
+    },
+    "scanned_pdf": {
+        "path": REAL_MEDIA_FIXTURES_DIR / "frz-1784-01-03-scanned.pdf",
+        "sha256": "14b6a1729b9047a3738f23b818eac6faee80ff5a2d82731c208775a3b33a0c75",
+        "query": "Freiburger",
+        "needle": "ocr_required",
+        "kind": "pdf",
+        "index_status": "ocr_required",
+        "storage": True,
+        "content_type": "application/pdf",
+        "size_bytes": 827_443,
+    },
+    "web": {
+        "path": REAL_MEDIA_FIXTURES_DIR / "nasa-water-on-moon-capture.html",
+        "sha256": "cedefaeab3c7fb3fab6be4aba68a23db58280e65b71c3914af2c8023e30e4e7a",
+        "query": "SOFIA",
+        "needle": "SOFIA mission",
+        "kind": "web_article",
+        "index_status": "ready",
+        "storage": False,
+    },
+    "web_url": {
+        "path": REAL_MEDIA_FIXTURES_DIR / "nasa-water-on-moon-capture.html",
+        "sha256": "cedefaeab3c7fb3fab6be4aba68a23db58280e65b71c3914af2c8023e30e4e7a",
+        "query": "SOFIA",
+        "needle": "SOFIA mission",
+        "kind": "web_article",
+        "index_status": "ready",
+        "storage": False,
+    },
+    "video": {
+        "path": REAL_MEDIA_FIXTURES_DIR / "nasa-picturing-earth-behind-scenes-captions.srt",
+        "sha256": "f2be864a2e42f94e629245a4a46326258ecaaffa64868caf16b46e75b4f7d237",
+        "query": "International Space Station",
+        "needle": "International Space Station",
+        "kind": "video",
+        "index_status": "ready",
+        "storage": False,
+    },
+    "podcast": {
+        "path": REAL_MEDIA_FIXTURES_DIR / "nasa-hwhap-crew4-transcript.txt",
+        "sha256": "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953",
+        "query": "International Space Station",
+        "needle": "International Space Station",
+        "kind": "podcast_episode",
+        "index_status": "ready",
+        "storage": False,
+    },
+}
 
 
 def main() -> None:
@@ -45,22 +165,35 @@ def main() -> None:
     if not database_url:
         raise RuntimeError("DATABASE_URL must be set for make seed-real-media-e2e.")
 
+    supabase_url, supabase_auth_admin_key = _load_supabase_auth_config()
+    for key in (
+        "SUPABASE_AUTH_ADMIN_KEY",
+        "SUPABASE_SERVICE_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SERVICE_ROLE_KEY",
+    ):
+        os.environ.pop(key, None)
     _ensure_real_media_prerequisites()
+
+    user_id = _fetch_e2e_user_id_with_retry(
+        supabase_url,
+        supabase_auth_admin_key,
+        E2E_USER_EMAIL,
+    )
+
     engine = create_engine(database_url)
     try:
-        if _existing_seed_ready(engine):
-            print(f"Real-media E2E seed already ready: {SEED_PATH}")
-            return
-
-        user_id = _e2e_auth_user_id(engine)
         direct_db = DirectSessionManager(engine)
 
         with TestClient(create_app()) as client:
-            headers = _real_auth_headers()
-            me_response = client.get("/me", headers=headers)
-            if me_response.status_code != 200:
-                raise RuntimeError(f"Real auth bootstrap failed: {me_response.text}")
+            headers = _real_auth_headers(supabase_url, supabase_auth_admin_key)
+            default_library_id = _ensure_e2e_viewer(client, headers, user_id)
             grant_ai_plus(direct_db, user_id)
+
+            if _existing_seed_ready(engine, user_id, default_library_id):
+                print(f"Real-media E2E seed already ready: {SEED_PATH}")
+                return
+            SEED_PATH.unlink(missing_ok=True)
 
             pdf_bytes = (FIXTURES_DIR / "pdf" / "attention.pdf").read_bytes()
             assert len(pdf_bytes) == 2_215_244
@@ -167,16 +300,36 @@ def main() -> None:
                             FROM media m
                             JOIN media_content_index_states mcis ON mcis.media_id = m.id
                             WHERE m.kind = 'web_article'
+                              AND m.created_by_user_id = :user_id
                               AND m.canonical_url = :canonical_url
                               AND m.processing_status = 'ready_for_reading'
                               AND mcis.status = 'ready'
+                              AND EXISTS (
+                                  SELECT 1
+                                  FROM library_entries le
+                                  WHERE le.library_id = :default_library_id
+                                    AND le.media_id = m.id
+                              )
+                              AND EXISTS (
+                                  SELECT 1
+                                  FROM default_library_intrinsics dli
+                                  WHERE dli.default_library_id = :default_library_id
+                                    AND dli.media_id = m.id
+                              )
                             LIMIT 1
                             """
                         ),
-                        {"canonical_url": canonical_url},
+                        {
+                            "canonical_url": canonical_url,
+                            "user_id": user_id,
+                            "default_library_id": default_library_id,
+                        },
                     ).scalar_one_or_none()
                 if existing_web_url_media_id is None:
-                    raise RuntimeError(f"URL article seed dedupe target missing: {web_url_result}")
+                    raise RuntimeError(
+                        "URL article seed deduped to media outside the E2E user/default-library "
+                        f"contract: {web_url_result}"
+                    )
                 web_url_media_id = UUID(str(existing_web_url_media_id))
             elif web_url_result.get("status") != "success":
                 raise RuntimeError(f"URL article seed ingest failed: {web_url_result}")
@@ -188,7 +341,7 @@ def main() -> None:
             assert (
                 caption_sha256 == "f2be864a2e42f94e629245a4a46326258ecaaffa64868caf16b46e75b4f7d237"
             )
-            video_media_id, video_result = create_nasa_captioned_video(
+            video_media_id, _video_result = create_nasa_captioned_video(
                 client, direct_db, headers, user_id
             )
 
@@ -199,7 +352,7 @@ def main() -> None:
             assert (
                 podcast_sha256 == "57769de7add45b9393be2ea4ad23131a197511805920b1612c6bc91e3ed0b953"
             )
-            podcast_media_id, podcast_id, podcast_result = create_nasa_podcast_episode(
+            podcast_media_id, _podcast_id, _podcast_result = create_nasa_podcast_episode(
                 client, direct_db, headers, user_id
             )
 
@@ -207,83 +360,48 @@ def main() -> None:
         SEED_PATH.write_text(
             json.dumps(
                 {
-                    "seeded_at": datetime.now(UTC).isoformat(),
-                    "user_email": E2E_USER_EMAIL,
                     "fixtures": {
                         "pdf": {
                             "media_id": str(pdf_media_id),
-                            "media_kind": "pdf",
-                            "source_url": "https://arxiv.org/abs/1706.03762",
-                            "license": "arXiv-hosted paper fixture used by existing repo tests",
                             "artifact_sha256": pdf_sha256,
-                            "artifact_bytes": len(pdf_bytes),
                             "query": "attention",
                             "needle": "attention",
                         },
                         "epub": {
                             "media_id": str(epub_media_id),
-                            "media_kind": "epub",
-                            "source_url": "https://www.gutenberg.org/ebooks/2701",
-                            "license": "Project Gutenberg public-domain ebook",
                             "artifact_sha256": epub_sha256,
-                            "artifact_bytes": len(epub_bytes),
                             "query": "whale",
                             "needle": "whale",
                         },
                         "scanned_pdf": {
                             "media_id": str(scanned_pdf_media_id),
-                            "media_kind": "pdf",
-                            "source_url": "https://zenodo.org/records/16506766",
-                            "license": "Creative Commons Zero v1.0 Universal",
                             "artifact_sha256": scanned_pdf_sha256,
-                            "artifact_bytes": len(scanned_pdf_bytes),
                             "query": "Freiburger",
                             "needle": "ocr_required",
-                            "retrieval_status": "ocr_required",
                         },
                         "web": {
                             "media_id": str(web_media_id),
-                            "media_kind": "web_article",
-                            "source_url": "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/",
-                            "license": "NASA public web content",
                             "artifact_sha256": web_sha256,
-                            "artifact_bytes": len(web_bytes),
                             "query": "SOFIA",
                             "needle": "SOFIA mission",
                         },
                         "web_url": {
                             "media_id": str(web_url_media_id),
-                            "media_kind": "web_article",
-                            "source_url": "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/",
-                            "license": "NASA public web content",
                             "artifact_sha256": web_sha256,
-                            "artifact_bytes": len(web_bytes),
                             "query": "SOFIA",
                             "needle": "SOFIA mission",
-                            "provider_fixture": web_url_result.get("provider_fixture"),
                         },
                         "video": {
                             "media_id": str(video_media_id),
-                            "media_kind": "video",
-                            "source_url": "https://science.nasa.gov/earth/earth-observatory/picturing-earth-behind-the-scenes/",
-                            "license": "NASA public web content",
                             "artifact_sha256": caption_sha256,
-                            "artifact_bytes": len(caption_bytes),
                             "query": "International Space Station",
                             "needle": "International Space Station",
-                            "provider_fixture": video_result.get("provider_fixture"),
                         },
                         "podcast": {
                             "media_id": str(podcast_media_id),
-                            "podcast_id": str(podcast_id),
-                            "media_kind": "podcast_episode",
-                            "source_url": "https://www.nasa.gov/podcasts/houston-we-have-a-podcast/the-crew-4-astronauts/",
-                            "license": "NASA public web content",
                             "artifact_sha256": podcast_sha256,
-                            "artifact_bytes": len(podcast_bytes),
                             "query": "International Space Station",
                             "needle": "International Space Station",
-                            "provider_fixture": podcast_result.get("provider_fixture"),
                         },
                     },
                 },
@@ -293,6 +411,8 @@ def main() -> None:
             + "\n",
             encoding="utf-8",
         )
+        if not _existing_seed_ready(engine, user_id, default_library_id):
+            raise RuntimeError("Real-media E2E seed wrote but readiness verification failed.")
         print(f"Wrote real-media E2E seed: {SEED_PATH}")
     finally:
         engine.dispose()
@@ -310,109 +430,234 @@ def _ensure_real_media_prerequisites() -> None:
         raise RuntimeError(
             f"REAL_MEDIA_FIXTURE_DIR does not exist: {settings.real_media_fixture_dir}"
         )
-    if not settings.supabase_url or not settings.supabase_service_key:
-        raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set.")
+    missing_r2 = [
+        key
+        for key in ("R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
+        if not os.environ.get(key)
+    ]
+    if missing_r2:
+        raise RuntimeError(f"Cloudflare R2 storage env is required: {', '.join(missing_r2)}")
+    if settings.nexus_env.value == "local" and os.environ.get(NON_LOCAL_STORAGE_OPT_IN) != "1":
+        endpoint_url = settings.r2_endpoint_url or os.environ.get("R2_ENDPOINT_URL") or ""
+        if not _is_local_storage_endpoint(endpoint_url):
+            raise RuntimeError(
+                "Refusing local real-media seeding against non-local R2/MinIO endpoint "
+                f"{endpoint_url!r}. Set {NON_LOCAL_STORAGE_OPT_IN}=1 to opt in explicitly."
+            )
     if not settings.enable_openai:
         raise RuntimeError("ENABLE_OPENAI must be true for real-media embeddings.")
     if not os.environ.get("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY must be set for real-media embeddings.")
 
-    headers = {
-        "apikey": settings.supabase_service_key,
-        "Authorization": f"Bearer {settings.supabase_service_key}",
-    }
-    last_error: str | None = None
-    for _ in range(30):
-        try:
-            with httpx.Client(timeout=30.0) as client:
-                bucket_response = client.get(
-                    f"{settings.supabase_url}/storage/v1/bucket/{settings.storage_bucket}",
-                    headers=headers,
-                )
-                if bucket_response.status_code == 200:
-                    return
-                if bucket_response.status_code not in (400, 404):
-                    raise RuntimeError(
-                        "Unexpected Supabase storage bucket check response: "
-                        f"{bucket_response.status_code} {bucket_response.text}"
-                    )
-                create_response = client.post(
-                    f"{settings.supabase_url}/storage/v1/bucket",
-                    headers=headers,
-                    json={
-                        "id": settings.storage_bucket,
-                        "name": settings.storage_bucket,
-                        "public": False,
-                    },
-                )
-            if create_response.status_code in (200, 201, 409):
-                return
-            last_error = f"{create_response.status_code} {create_response.text}"
-        except httpx.HTTPError as exc:
-            last_error = str(exc)
-        time.sleep(1)
-    raise RuntimeError(
-        f"Failed to create Supabase storage bucket {settings.storage_bucket!r}: {last_error}"
-    )
 
-
-def _existing_seed_ready(engine: Engine) -> bool:
+def _existing_seed_ready(engine: Engine, user_id: UUID, default_library_id: UUID) -> bool:
     if not SEED_PATH.exists():
         return False
     try:
         seed = json.loads(SEED_PATH.read_text(encoding="utf-8"))
+        if set(seed) != {"fixtures"}:
+            return False
         fixtures = seed["fixtures"]
-        ready_media_ids = [
-            fixtures[name]["media_id"]
-            for name in ("pdf", "epub", "web", "web_url", "video", "podcast")
-        ]
-        scanned_pdf_media_id = fixtures["scanned_pdf"]["media_id"]
-    except Exception:
+        if set(fixtures) != set(EXPECTED_SEED_FIXTURES):
+            return False
+        media_ids: dict[str, UUID] = {}
+        for name, fixture in fixtures.items():
+            if set(fixture) != {"media_id", "artifact_sha256", "query", "needle"}:
+                return False
+            expected = EXPECTED_SEED_FIXTURES[name]
+            if fixture["artifact_sha256"] != expected["sha256"]:
+                return False
+            if fixture["query"] != expected["query"] or fixture["needle"] != expected["needle"]:
+                return False
+            expected_hash = hashlib.sha256(Path(expected["path"]).read_bytes()).hexdigest()
+            if expected_hash != expected["sha256"]:
+                raise RuntimeError(f"Fixture hash changed for {expected['path']}")
+            media_ids[name] = UUID(str(fixture["media_id"]))
+        if len(set(media_ids.values())) != len(media_ids):
+            return False
+    except RuntimeError:
+        raise
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
         return False
 
-    with engine.connect() as conn:
-        for media_id in ready_media_ids:
-            row = (
+    try:
+        storage_client = get_storage_client()
+        with engine.connect() as conn:
+            user_row = (
                 conn.execute(
                     text(
                         """
-                        SELECT m.processing_status, mcis.status
-                        FROM media m
-                        JOIN media_content_index_states mcis ON mcis.media_id = m.id
-                        WHERE m.id = :media_id
+                        SELECT
+                            EXISTS(
+                                SELECT 1
+                                FROM users u
+                                WHERE u.id = :user_id
+                            ) AS user_exists,
+                            EXISTS(
+                                SELECT 1
+                                FROM libraries l
+                                JOIN memberships ms
+                                  ON ms.library_id = l.id
+                                 AND ms.user_id = :user_id
+                                 AND ms.role = 'admin'
+                                WHERE l.id = :default_library_id
+                                  AND l.owner_user_id = :user_id
+                                  AND l.is_default = true
+                            ) AS default_library_ready
                         """
                     ),
-                    {"media_id": UUID(media_id)},
+                    {"user_id": user_id, "default_library_id": default_library_id},
                 )
                 .mappings()
-                .one_or_none()
+                .one()
             )
-            if row is None:
+            if not user_row["user_exists"] or not user_row["default_library_ready"]:
                 return False
-            if row["processing_status"] != "ready_for_reading" or row["status"] != "ready":
-                return False
-        scanned_pdf_row = (
-            conn.execute(
-                text(
-                    """
-                    SELECT m.processing_status, mcis.status
-                    FROM media m
-                    JOIN media_content_index_states mcis ON mcis.media_id = m.id
-                    WHERE m.id = :media_id
-                    """
-                ),
-                {"media_id": UUID(scanned_pdf_media_id)},
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if scanned_pdf_row is None:
-            return False
-        if (
-            scanned_pdf_row["processing_status"] != "ready_for_reading"
-            or scanned_pdf_row["status"] != "ocr_required"
-        ):
-            return False
+
+            for name, media_id in media_ids.items():
+                expected = EXPECTED_SEED_FIXTURES[name]
+                row = (
+                    conn.execute(
+                        text(
+                            """
+                            SELECT
+                                m.kind,
+                                m.created_by_user_id,
+                                m.processing_status,
+                                m.file_sha256,
+                                mf.storage_path,
+                                mf.content_type,
+                                mf.size_bytes,
+                                mcis.status,
+                                mcis.active_run_id,
+                                mcis.latest_run_id,
+                                active_run.state AS active_run_state,
+                                active_run.deactivated_at AS active_run_deactivated_at,
+                                latest_run.state AS latest_run_state,
+                                EXISTS(
+                                    SELECT 1
+                                    FROM library_entries le
+                                    WHERE le.library_id = :default_library_id
+                                      AND le.media_id = m.id
+                                ) AS has_default_library_entry,
+                                EXISTS(
+                                    SELECT 1
+                                    FROM default_library_intrinsics dli
+                                    WHERE dli.default_library_id = :default_library_id
+                                      AND dli.media_id = m.id
+                                ) AS has_default_intrinsic,
+                                (
+                                    SELECT count(*)
+                                    FROM source_snapshots ss
+                                    WHERE ss.media_id = m.id
+                                      AND ss.index_run_id = mcis.latest_run_id
+                                ) AS source_snapshot_count,
+                                (
+                                    SELECT count(*)
+                                    FROM content_chunks cc
+                                    WHERE cc.media_id = m.id
+                                      AND cc.index_run_id = mcis.active_run_id
+                                ) AS chunk_count,
+                                (
+                                    SELECT count(*)
+                                    FROM evidence_spans es
+                                    WHERE es.media_id = m.id
+                                      AND es.index_run_id = mcis.active_run_id
+                                ) AS evidence_count,
+                                (
+                                    SELECT count(*)
+                                    FROM content_embeddings ce
+                                    JOIN content_chunks cc ON cc.id = ce.chunk_id
+                                    WHERE cc.media_id = m.id
+                                      AND cc.index_run_id = mcis.active_run_id
+                                ) AS embedding_count,
+                                (
+                                    SELECT count(*)
+                                    FROM content_chunks cc
+                                    WHERE cc.media_id = m.id
+                                      AND cc.index_run_id = mcis.active_run_id
+                                      AND cc.chunk_text ILIKE :needle
+                                ) AS needle_chunk_count
+                            FROM media m
+                            LEFT JOIN media_file mf ON mf.media_id = m.id
+                            LEFT JOIN media_content_index_states mcis ON mcis.media_id = m.id
+                            LEFT JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
+                            LEFT JOIN content_index_runs latest_run ON latest_run.id = mcis.latest_run_id
+                            WHERE m.id = :media_id
+                            """
+                        ),
+                        {
+                            "media_id": media_id,
+                            "user_id": user_id,
+                            "default_library_id": default_library_id,
+                            "needle": f"%{expected['needle']}%",
+                        },
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if row is None:
+                    return False
+                if row["kind"] != expected["kind"]:
+                    return False
+                if row["created_by_user_id"] != user_id:
+                    return False
+                if not row["has_default_library_entry"] or not row["has_default_intrinsic"]:
+                    return False
+                if row["processing_status"] != "ready_for_reading":
+                    return False
+                if row["status"] != expected["index_status"]:
+                    return False
+                if row["latest_run_id"] is None or int(row["source_snapshot_count"] or 0) == 0:
+                    return False
+
+                if expected["index_status"] == "ready":
+                    if row["active_run_id"] is None or row["active_run_id"] != row["latest_run_id"]:
+                        return False
+                    if row["active_run_state"] != "ready" or row["active_run_deactivated_at"]:
+                        return False
+                    if int(row["chunk_count"] or 0) == 0:
+                        return False
+                    if int(row["evidence_count"] or 0) == 0:
+                        return False
+                    if int(row["embedding_count"] or 0) == 0:
+                        return False
+                    if int(row["needle_chunk_count"] or 0) == 0:
+                        return False
+                elif expected["index_status"] == "ocr_required":
+                    if row["latest_run_state"] != "ocr_required":
+                        return False
+                    if row["active_run_id"] is not None:
+                        return False
+                    if int(row["chunk_count"] or 0) != 0:
+                        return False
+                    if int(row["evidence_count"] or 0) != 0:
+                        return False
+
+                if expected["storage"]:
+                    expected_content_type = expected.get("content_type")
+                    expected_size_bytes = expected.get("size_bytes")
+                    if expected_content_type is None or expected_size_bytes is None:
+                        return False
+                    if not row["storage_path"]:
+                        return False
+                    if row["file_sha256"] != expected["sha256"]:
+                        return False
+                    if row["content_type"] != expected_content_type:
+                        return False
+                    if int(row["size_bytes"] or 0) != expected_size_bytes:
+                        return False
+                    metadata = storage_client.head_object(str(row["storage_path"]))
+                    if metadata is None:
+                        return False
+                    if metadata.size_bytes != expected_size_bytes:
+                        return False
+                    if metadata.content_type != expected_content_type:
+                        return False
+                elif row["storage_path"] is not None:
+                    return False
+    except Exception:
+        return False
     return True
 
 
@@ -440,15 +685,83 @@ def _media_has_index_status(engine: Engine, media_id: UUID, expected_status: str
     )
 
 
-def _e2e_auth_user_id(engine: Engine) -> UUID:
-    with engine.connect() as conn:
-        user_id = conn.execute(
-            text("SELECT id FROM auth.users WHERE email = :email"),
-            {"email": E2E_USER_EMAIL},
-        ).scalar_one_or_none()
+def _fetch_e2e_user_id(supabase_url: str, service_key: str, email: str) -> UUID:
+    url = f"{supabase_url.rstrip('/')}/auth/v1/admin/users"
+    headers = {
+        "Authorization": f"Bearer {service_key}",
+        "apikey": service_key,
+    }
+    with httpx.Client(timeout=30.0) as client:
+        for page in range(1, 101):
+            response = client.get(url, headers=headers, params={"page": page, "per_page": 100})
+            if response.status_code in (401, 403):
+                raise PermissionError(
+                    "Supabase admin auth rejected while listing users: "
+                    f"{response.status_code} {response.text}"
+                )
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Failed to list auth users: {response.status_code} {response.text}"
+                )
+
+            users = response.json().get("users", [])
+            for user in users:
+                if user.get("email") == email:
+                    return UUID(user["id"])
+            if len(users) < 100:
+                break
+
+    raise RuntimeError(f"E2E auth user not found for {email}. Run e2e/seed-e2e-user.ts first.")
+
+
+def _fetch_e2e_user_id_with_retry(supabase_url: str, service_key: str, email: str) -> UUID:
+    user_id: UUID | None = None
+    last_error: Exception | None = None
+    # justify-polling: Supabase Auth user creation happens in the preceding
+    # Node seed process; the admin list endpoint can lag briefly.
+    for attempt in range(1, 9):
+        try:
+            user_id = _fetch_e2e_user_id(supabase_url, service_key, email)
+            break
+        except (RuntimeError, ValueError, httpx.HTTPError) as exc:
+            last_error = exc
+            if attempt == 8:
+                break
+            print(
+                f"Fetch E2E auth user '{email}' failed "
+                f"(attempt {attempt}/8): {exc}. Retrying in 1.5s..."
+            )
+            time.sleep(1.5)
     if user_id is None:
-        raise RuntimeError("E2E auth user is missing. Run e2e/seed-e2e-user.ts first.")
-    return UUID(str(user_id))
+        raise RuntimeError(f"Fetch E2E auth user '{email}' failed after 8 attempts") from last_error
+    return user_id
+
+
+def _ensure_e2e_viewer(
+    client: TestClient,
+    headers: dict[str, str],
+    expected_user_id: UUID,
+) -> UUID:
+    me_response = client.get("/me", headers=headers)
+    if me_response.status_code != 200:
+        raise RuntimeError(f"Real auth bootstrap failed: {me_response.text}")
+    data = me_response.json()["data"]
+    user_id = UUID(str(data["user_id"]))
+    if user_id != expected_user_id:
+        raise RuntimeError(
+            f"Real auth bootstrap resolved user {user_id}, expected {expected_user_id}."
+        )
+    return UUID(str(data["default_library_id"]))
+
+
+def _is_local_storage_endpoint(endpoint_url: str) -> bool:
+    try:
+        host = urlparse(endpoint_url).hostname or ""
+    except ValueError:
+        return False
+    return host in {"localhost", "127.0.0.1", "::1", "0.0.0.0", "minio"} or host.endswith(
+        ".localhost"
+    )
 
 
 def _upload_seed_file_media(
@@ -473,7 +786,10 @@ def _upload_seed_file_media(
     if upload_response.status_code != 200:
         raise RuntimeError(f"Upload init failed for {filename}: {upload_response.text}")
     upload = upload_response.json()["data"]
-    storage_path = upload["storage_path"]
+    storage_path = build_upload_staging_storage_path(
+        UUID(upload["media_id"]),
+        get_file_extension(kind),
+    )
     get_storage_client().put_object(storage_path, payload, content_type)
     confirm_response = client.post(f"/media/{upload['media_id']}/ingest", headers=headers)
     if confirm_response.status_code != 200:
@@ -481,15 +797,14 @@ def _upload_seed_file_media(
     return UUID(confirm_response.json()["data"]["media_id"])
 
 
-def _real_auth_headers() -> dict[str, str]:
-    settings = get_settings()
-    if not settings.supabase_url or not settings.supabase_service_key:
-        raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set.")
-
-    base_url = settings.supabase_url.rstrip("/")
+def _real_auth_headers(supabase_url: str, supabase_auth_admin_key: str) -> dict[str, str]:
+    base_url = supabase_url.rstrip("/")
+    app_base_url = (
+        os.environ.get("APP_PUBLIC_URL") or f"http://localhost:{os.environ.get('WEB_PORT', '3000')}"
+    )
     admin_headers = {
-        "Authorization": f"Bearer {settings.supabase_service_key}",
-        "apikey": settings.supabase_service_key,
+        "Authorization": f"Bearer {supabase_auth_admin_key}",
+        "apikey": supabase_auth_admin_key,
         "Content-Type": "application/json",
     }
     with httpx.Client(timeout=30.0, follow_redirects=False) as client:
@@ -499,7 +814,7 @@ def _real_auth_headers() -> dict[str, str]:
             json={
                 "type": "magiclink",
                 "email": E2E_USER_EMAIL,
-                "options": {"redirectTo": "http://localhost:3000/libraries"},
+                "options": {"redirectTo": f"{app_base_url.rstrip('/')}/libraries"},
             },
         )
         if link_response.status_code not in (200, 201):

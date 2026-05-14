@@ -12,6 +12,7 @@ Tests scenarios from s0_spec.md:
 - #20: GET /media/{id}/fragments returns content
 """
 
+import hashlib
 from uuid import UUID, uuid4
 
 import pytest
@@ -19,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
+    EpubResource,
     EpubTocNode,
     Fragment,
     FragmentBlock,
@@ -28,6 +30,7 @@ from nexus.db.models import (
     ProcessingStatus,
 )
 from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.storage import build_epub_asset_storage_path
 from tests.factories import (
     create_failed_epub_media,
     create_ready_epub_with_chapters,
@@ -1252,8 +1255,6 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
 
         fake_storage = FakeStorageClient()
         epub_bytes = b"PK\x03\x04" + b"\x00" * 200
-        import hashlib
-
         sha = hashlib.sha256(epub_bytes).hexdigest()
 
         with direct_db.session() as session:
@@ -1262,6 +1263,8 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         fake_storage.put_object(
             f"media/{media_id}/original.epub", epub_bytes, "application/epub+zip"
         )
+        stale_asset_path = build_epub_asset_storage_path(media_id, "images/stale.png")
+        fake_storage.put_object(stale_asset_path, b"stale-image", "image/png")
 
         # Seed extraction artifacts that should be cleaned up on retry
         with direct_db.session() as session:
@@ -1294,6 +1297,18 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
                 order_key="0001",
             )
             session.add(toc_node)
+            session.add(
+                EpubResource(
+                    media_id=media_id,
+                    manifest_item_id="stale-image",
+                    package_href="images/stale.png",
+                    asset_key="images/stale.png",
+                    storage_path=stale_asset_path,
+                    content_type="image/png",
+                    size_bytes=len(b"stale-image"),
+                    sha256=hashlib.sha256(b"stale-image").hexdigest(),
+                )
+            )
             session.commit()
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
@@ -1302,6 +1317,7 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("epub_resources", "media_id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
         library_id = me_resp.json()["data"]["default_library_id"]
@@ -1326,6 +1342,7 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         assert data["processing_status"] == "extracting"
         assert data["retry_enqueued"] is True
         assert _count_jobs_for_media(direct_db, kind="ingest_epub", media_id=media_id) == 1
+        assert fake_storage.get_object(stale_asset_path) is None
 
         # Artifacts must be gone after retry reset
         with direct_db.session() as session:
@@ -1334,6 +1351,10 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
 
             toc_count = session.query(EpubTocNode).filter(EpubTocNode.media_id == media_id).count()
             assert toc_count == 0, "epub_toc_nodes not cleaned up"
+            resource_count = (
+                session.query(EpubResource).filter(EpubResource.media_id == media_id).count()
+            )
+            assert resource_count == 0, "epub_resources not cleaned up"
 
             # fragment_blocks implicitly gone since fragments deleted
             media_row = session.get(Media, media_id)
@@ -1341,6 +1362,86 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
             assert media_row.processing_status == ProcessingStatus.extracting
             assert media_row.processing_attempts == 2
             assert media_row.last_error_code is None
+
+    def test_retry_epub_enqueue_failure_preserves_artifact_storage_and_db_rows(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        from nexus.storage.client import FakeStorageClient
+
+        fake_storage = FakeStorageClient()
+        epub_bytes = b"PK\x03\x04" + b"\x00" * 200
+        sha = hashlib.sha256(epub_bytes).hexdigest()
+
+        with direct_db.session() as session:
+            media_id = _create_failed_epub(session, user_id, file_sha256=sha)
+
+        fake_storage.put_object(
+            f"media/{media_id}/original.epub", epub_bytes, "application/epub+zip"
+        )
+        stale_asset_path = build_epub_asset_storage_path(media_id, "images/stale.png")
+        fake_storage.put_object(stale_asset_path, b"stale-image", "image/png")
+
+        with direct_db.session() as session:
+            session.add(
+                EpubResource(
+                    media_id=media_id,
+                    manifest_item_id="stale-image",
+                    package_href="images/stale.png",
+                    asset_key="images/stale.png",
+                    storage_path=stale_asset_path,
+                    content_type="image/png",
+                    size_bytes=len(b"stale-image"),
+                    sha256=hashlib.sha256(b"stale-image").hexdigest(),
+                )
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("epub_resources", "media_id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+
+        from unittest.mock import patch
+
+        _install_background_job_insert_failure(direct_db)
+        try:
+            with patch(
+                "nexus.services.epub_lifecycle.get_storage_client",
+                return_value=fake_storage,
+            ):
+                resp = auth_client.post(
+                    f"/media/{media_id}/retry",
+                    headers=auth_headers(user_id),
+                )
+        finally:
+            _remove_background_job_insert_failure(direct_db)
+
+        assert resp.status_code == 500
+        assert resp.json()["error"]["code"] == "E_INTERNAL"
+        assert fake_storage.get_object(stale_asset_path) == b"stale-image"
+
+        with direct_db.session() as session:
+            resource_count = (
+                session.query(EpubResource).filter(EpubResource.media_id == media_id).count()
+            )
+            assert resource_count == 1, "storage-backed resource row rolled forward on failure"
+            media_row = session.get(Media, media_id)
+            assert media_row is not None
+            assert media_row.processing_status == ProcessingStatus.failed
+            assert media_row.processing_attempts == 1
 
 
 class TestGetEpubAssetSuccessAndMasking:
@@ -1389,7 +1490,7 @@ class TestGetEpubAssetSuccessAndMasking:
                     "media_id": media_id,
                     "storage_path": f"media/{media_id}/assets/images/fig1.png",
                     "size_bytes": len(asset_content),
-                    "sha256": "0" * 64,
+                    "sha256": hashlib.sha256(asset_content).hexdigest(),
                 },
             )
             session.commit()
@@ -1430,7 +1531,7 @@ class TestGetEpubAssetSuccessAndMasking:
         from unittest.mock import patch
 
         # STORAGE SEAM EXCEPTION: External storage boundary mock.
-        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
         with patch("nexus.storage.get_storage_client", return_value=fake):
@@ -1467,6 +1568,83 @@ class TestGetEpubAssetSuccessAndMasking:
         )
         assert resp.status_code == 404
 
+    def test_asset_integrity_mismatch_is_500_defect(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        expected_content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
+        stored_content = expected_content + b"extra"
+
+        with direct_db.session() as session:
+            media = Media(
+                id=media_id,
+                kind=MediaKind.epub.value,
+                title="Test EPUB",
+                processing_status=ProcessingStatus.ready_for_reading,
+            )
+            session.add(media)
+            session.flush()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO epub_resources (
+                        media_id,
+                        manifest_item_id,
+                        package_href,
+                        asset_key,
+                        storage_path,
+                        content_type,
+                        size_bytes,
+                        sha256
+                    )
+                    VALUES (
+                        :media_id,
+                        'fig1',
+                        'images/fig1.png',
+                        'images/fig1.png',
+                        :storage_path,
+                        'image/png',
+                        :size_bytes,
+                        :sha256
+                    )
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "storage_path": f"media/{media_id}/assets/images/fig1.png",
+                    "size_bytes": len(expected_content),
+                    "sha256": hashlib.sha256(expected_content).hexdigest(),
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("epub_resources", "media_id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        from nexus.storage.client import FakeStorageClient
+
+        fake = FakeStorageClient()
+        fake.put_object(f"media/{media_id}/assets/images/fig1.png", stored_content, "image/png")
+
+        from unittest.mock import patch
+
+        # STORAGE SEAM EXCEPTION: External storage boundary mock.
+        # Object storage is an external dependency; FakeStorageClient isolates tests
+        # from the real storage service per testing standards Section 6 (Allowed Mocks).
+        # Replacement: Real storage integration in E2E tests.
+        with patch("nexus.storage.get_storage_client", return_value=fake):
+            resp = auth_client.get(
+                f"/media/{media_id}/assets/images/fig1.png",
+                headers=auth_headers(user_id),
+            )
+
+        assert resp.status_code == 500
+        assert resp.json()["error"]["code"] == "E_STORAGE_ERROR"
+
     def test_missing_asset_returns_404(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()
         media_id = uuid4()
@@ -1500,7 +1678,7 @@ class TestGetEpubAssetSuccessAndMasking:
         fake = FakeStorageClient()
 
         # STORAGE SEAM EXCEPTION: External storage boundary mock.
-        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
         with patch("nexus.storage.get_storage_client", return_value=fake):
@@ -1582,7 +1760,7 @@ class TestGetEpubAssetSuccessAndMasking:
                     "media_id": media_id,
                     "storage_path": f"media/{media_id}/assets/images/fig1.png",
                     "size_bytes": len(asset_content),
-                    "sha256": "0" * 64,
+                    "sha256": hashlib.sha256(asset_content).hexdigest(),
                 },
             )
             session.commit()
@@ -1600,7 +1778,7 @@ class TestGetEpubAssetSuccessAndMasking:
         from unittest.mock import patch
 
         # STORAGE SEAM EXCEPTION: External storage boundary mock.
-        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
         with patch("nexus.storage.get_storage_client", return_value=fake):
@@ -1655,7 +1833,7 @@ class TestGetEpubAssetSuccessAndMasking:
                 {
                     "media_id": media_id,
                     "storage_path": f"media/{media_id}/assets/styles/book.css",
-                    "sha256": "0" * 64,
+                    "sha256": hashlib.sha256(b"unused").hexdigest(),
                 },
             )
             session.commit()
@@ -1718,7 +1896,7 @@ class TestGetEpubAssetSuccessAndMasking:
                     "media_id": media_id,
                     "storage_path": f"media/{media_id}/assets/images/fig.svg",
                     "size_bytes": len(asset_content),
-                    "sha256": "0" * 64,
+                    "sha256": hashlib.sha256(asset_content).hexdigest(),
                 },
             )
             session.commit()
@@ -1737,7 +1915,7 @@ class TestGetEpubAssetSuccessAndMasking:
         from unittest.mock import patch
 
         # STORAGE SEAM EXCEPTION: External storage boundary mock.
-        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
         with patch("nexus.storage.get_storage_client", return_value=fake):
@@ -1896,7 +2074,7 @@ class TestRetryEpubEndpoint:
         from unittest.mock import patch
 
         # STORAGE SEAM EXCEPTION: External storage boundary mock.
-        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
         with (
@@ -2096,7 +2274,7 @@ class TestRetryEpubEndpoint:
         from unittest.mock import patch
 
         # STORAGE SEAM EXCEPTION: External storage boundary mock.
-        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
         with patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage):
@@ -2158,7 +2336,7 @@ class TestRetryEpubEndpoint:
         from unittest.mock import patch
 
         # STORAGE SEAM EXCEPTION: External storage boundary mock.
-        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
         with (
@@ -2217,7 +2395,7 @@ class TestRetryEpubEndpoint:
         from unittest.mock import patch
 
         # STORAGE SEAM EXCEPTION: External storage boundary mock.
-        # Supabase Storage is an external dependency; FakeStorageClient isolates tests
+        # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
         with patch("nexus.services.epub_lifecycle.get_storage_client", return_value=fake_storage):

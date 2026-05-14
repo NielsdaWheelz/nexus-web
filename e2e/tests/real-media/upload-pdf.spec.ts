@@ -1,20 +1,23 @@
 import { expect, test } from "@playwright/test";
 import path from "node:path";
+import { deleteE2eResource, throwE2eCleanupFailures } from "../cleanup";
 import {
   cleanupRealMediaHighlight,
   createPdfHighlightThroughVisibleSelection,
+  expectRealMediaEvidenceNeedle,
   expectVisiblePdfEvidenceHighlight,
+  FRESH_REAL_MEDIA_FIXTURES,
   readRealMediaSeed,
   searchRealMediaEvidenceThroughUi,
+  uploadFreshRealMediaFileThroughUi,
   writeRealMediaTrace,
 } from "./real-media-seed";
 
 test("@real-media real PDF opens from upload-backed media and projects evidence", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(180_000);
   const seed = readRealMediaSeed();
-  const mediaId = seed.fixtures.pdf.media_id;
-  const query = seed.fixtures.pdf.query;
   const artifactPath = path.join(
     __dirname,
     "..",
@@ -24,17 +27,22 @@ test("@real-media real PDF opens from upload-backed media and projects evidence"
     "tests",
     "fixtures",
     "pdf",
-    "attention.pdf",
+    "svms.pdf",
   );
+  const query = FRESH_REAL_MEDIA_FIXTURES.pdfSvms.query;
+  const needle = FRESH_REAL_MEDIA_FIXTURES.pdfSvms.needle;
 
-  await page.goto("/libraries");
-  await page.getByRole("button", { name: "Add content" }).click();
-  const addContentDialog = page.getByRole("dialog", { name: "Add content" });
-  await expect(addContentDialog).toBeVisible();
-  await addContentDialog.getByLabel("Upload file").setInputFiles(artifactPath);
-  await expect(page).toHaveURL(new RegExp(`/media/${mediaId}(\\?|$)`), {
-    timeout: 30_000,
+  const upload = await uploadFreshRealMediaFileThroughUi({
+    page,
+    artifactPath,
+    filename: "svms-real-media-fresh.pdf",
+    mimeType: "application/pdf",
+    expectedSha256: FRESH_REAL_MEDIA_FIXTURES.pdfSvms.sha256,
+    seededMediaId: seed.fixtures.pdf.media_id,
+    seededSha256: seed.fixtures.pdf.artifact_sha256,
+    artifactSalt: "upload-pdf",
   });
+  const mediaId = upload.media_id;
 
   const mediaResponse = await page.request.get(`/api/media/${mediaId}`);
   expect(
@@ -66,38 +74,47 @@ test("@real-media real PDF opens from upload-backed media and projects evidence"
   );
   expect(resolverResponse.ok()).toBeTruthy();
   const resolver = await resolverResponse.json();
+  expectRealMediaEvidenceNeedle(
+    { result, resolver },
+    needle,
+    "real PDF evidence should contain the pinned fixture needle",
+  );
 
   const resultLink = page.locator(`a[href*="/media/${mediaId}?"]`).first();
-  await expect(resultLink, "real PDF should render a visible search result").toBeVisible();
+  await expect(
+    resultLink,
+    "real PDF should render a visible search result",
+  ).toBeVisible();
   const visibleHref = await resultLink.getAttribute("href");
   await resultLink.click();
   await expect(page).toHaveURL(new RegExp(`/media/${mediaId}\\?`));
   await expect(page.locator("body")).not.toContainText(
     /not found|failed to load/i,
   );
-  expect(["resolved", "no_geometry"]).toContain(resolver.data.resolver.status);
-  if (resolver.data.resolver.status === "resolved") {
-    await expectVisiblePdfEvidenceHighlight(page);
-  } else {
-    await expect(page.getByRole("toolbar", { name: "PDF controls" })).toBeVisible();
-  }
+  expect(resolver.data.resolver.status).toBe("resolved");
+  await expectVisiblePdfEvidenceHighlight(page);
   let createdHighlightId: string | null = null;
 
   let productError: unknown = null;
   try {
-    const savedHighlight = await createPdfHighlightThroughVisibleSelection(page, mediaId);
+    const savedHighlight = await createPdfHighlightThroughVisibleSelection(
+      page,
+      mediaId,
+    );
     createdHighlightId = savedHighlight.id;
     await page.reload();
     await expect(
-      page.locator(`[data-testid^="pdf-highlight-${savedHighlight.id}-"]`).first(),
+      page
+        .locator(`[data-testid^="pdf-highlight-${savedHighlight.id}-"]`)
+        .first(),
     ).toBeVisible({ timeout: 15_000 });
 
     writeRealMediaTrace(testInfo, "real-pdf-upload-trace.json", {
-      fixture_id: "pdf-attention",
-      artifact_sha256: seed.fixtures.pdf.artifact_sha256,
-      artifact_bytes: seed.fixtures.pdf.artifact_bytes,
+      fixture_id: "pdf-svms",
+      upload,
       media_id: mediaId,
       query,
+      needle,
       search_api_url: search.api_url,
       search_result: result,
       visible_result_href: visibleHref,
@@ -109,8 +126,23 @@ test("@real-media real PDF opens from upload-backed media and projects evidence"
     productError = error;
     throw error;
   } finally {
+    const cleanupErrors: unknown[] = [];
     if (createdHighlightId) {
-      await cleanupRealMediaHighlight(page, createdHighlightId, productError);
+      try {
+        await cleanupRealMediaHighlight(page, createdHighlightId, null);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
     }
+    try {
+      await deleteE2eResource(
+        page.request,
+        `/api/media/${mediaId}`,
+        "real PDF upload media",
+      );
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    throwE2eCleanupFailures("real PDF upload", productError, cleanupErrors);
   }
 });
