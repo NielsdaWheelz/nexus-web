@@ -24,6 +24,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import respx
+from pydantic import ValidationError
 from sqlalchemy import select, text
 
 from nexus.config import clear_settings_cache
@@ -37,7 +38,12 @@ from nexus.services.content_indexing import (
 )
 from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
-from nexus.services.search import _snippet_around_query, _truncate_snippet
+from nexus.services.search import (
+    _snippet_around_query,
+    _truncate_snippet,
+    get_search_result,
+    search,
+)
 from nexus.services.semantic_chunks import build_text_embedding, to_pgvector_literal
 from tests.factories import (
     add_library_member,
@@ -350,16 +356,38 @@ class TestBasicSearch:
             session.commit()
 
         response = auth_client.get(
-            "/search?q=needle+transcript&types=media", headers=auth_headers(user_id)
+            "/search?q=needle+transcript&types=episode,video", headers=auth_headers(user_id)
         )
         assert response.status_code == 200, (
             f"expected media search to succeed, got {response.status_code}: {response.text}"
         )
-        result_ids = {row["id"] for row in response.json()["results"] if row["type"] == "media"}
+        result_ids = {
+            row["id"] for row in response.json()["results"] if row["type"] in {"episode", "video"}
+        }
 
         assert str(ready_video_id) in result_ids
         assert str(unavailable_video_id) in result_ids
         assert str(unavailable_podcast_id) in result_ids
+
+        episode_row = next(row for row in response.json()["results"] if row["type"] == "episode")
+        resolved_episode = auth_client.post(
+            "/search/resolve",
+            json={"result_ref": {"type": "episode", "id": episode_row["id"]}},
+            headers=auth_headers(user_id),
+        )
+        assert resolved_episode.status_code == 200, (
+            f"expected episode resolve to succeed, got "
+            f"{resolved_episode.status_code}: {resolved_episode.text}"
+        )
+        assert resolved_episode.json()["result"]["type"] == "episode"
+        assert resolved_episode.json()["result"]["id"] == episode_row["id"]
+
+        old_context_body = auth_client.post(
+            "/search/resolve",
+            json={"context_ref": episode_row["context_ref"]},
+            headers=auth_headers(user_id),
+        )
+        assert old_context_body.status_code in {400, 422}
 
     def test_fragment_search_excludes_transcript_media_marked_unavailable(
         self, auth_client, direct_db
@@ -481,6 +509,19 @@ class TestBasicSearch:
         fragment_results = [r for r in data["results"] if r["type"] == "content_chunk"]
         assert len(fragment_results) >= 1
 
+        direct_response = auth_client.get(
+            "/search?q=searchable+content&types=fragment",
+            headers=auth_headers(user_id),
+        )
+        assert direct_response.status_code == 200
+        direct_results = [r for r in direct_response.json()["results"] if r["type"] == "fragment"]
+        assert len(direct_results) >= 1
+        direct_row = direct_results[0]
+        assert direct_row["source_version"]
+        assert direct_row["citation_label"]
+        assert direct_row["locator"]["type"] == "web_text_offsets"
+        assert direct_row["locator"]["media_id"] == str(media_id)
+
     def test_search_finds_note_blocks(self, auth_client, direct_db: DirectSessionManager):
         """Search finds note blocks by body text."""
         user_id = create_test_user_id()
@@ -505,6 +546,37 @@ class TestBasicSearch:
         data = response.json()
         note_block_results = [r for r in data["results"] if r["type"] == "note_block"]
         assert len(note_block_results) >= 1
+        note_row = next(r for r in note_block_results if r["id"] == str(note_block_id))
+        assert note_row["source_version"] == f"note_block:{note_block_id}:revision:1"
+        assert note_row["locator"] == {
+            "type": "note_block_offsets",
+            "page_id": note_row["page_id"],
+            "block_id": str(note_block_id),
+            "start_offset": 0,
+            "end_offset": len("My unique note about databases"),
+        }
+
+        page_response = auth_client.get(
+            "/search?q=note+databases&types=page",
+            headers=auth_headers(user_id),
+        )
+        assert page_response.status_code == 200
+        page_results = [r for r in page_response.json()["results"] if r["type"] == "page"]
+        assert len(page_results) >= 1
+        assert page_results[0]["source_version"].startswith("page:")
+
+        highlight_response = auth_client.get(
+            "/search?q=test+exact&types=highlight",
+            headers=auth_headers(user_id),
+        )
+        assert highlight_response.status_code == 200
+        highlight_row = next(
+            r for r in highlight_response.json()["results"] if r["id"] == str(highlight_id)
+        )
+        assert highlight_row["source_version"]
+        assert highlight_row["citation_label"]
+        assert highlight_row["locator"]["type"] == "web_text_offsets"
+        assert highlight_row["locator"]["media_id"] == str(media_id)
 
     def test_search_finds_messages(self, auth_client, direct_db: DirectSessionManager):
         """Search finds messages in conversations."""
@@ -525,6 +597,16 @@ class TestBasicSearch:
         data = response.json()
         message_results = [r for r in data["results"] if r["type"] == "message"]
         assert len(message_results) >= 1
+        message_row = next(r for r in message_results if r["id"] == str(message_id))
+        assert message_row["source_version"] == f"message:{message_id}"
+        assert message_row["locator"] == {
+            "type": "message_offsets",
+            "conversation_id": str(conversation_id),
+            "message_id": str(message_id),
+            "start_offset": 0,
+            "end_offset": len("Important discussion about machine learning"),
+            "message_seq": 1,
+        }
 
 
 # =============================================================================
@@ -1226,11 +1308,11 @@ class TestSearchResultFormat:
             assert result["media_kind"] == "web_article"
             assert result["deep_link"].startswith(f"/media/{media_id}?")
             assert result["citation_label"] == "Source"
-            assert result["resolver"]["kind"] == "web"
-            assert result["resolver"]["route"] == f"/media/{media_id}"
-            assert result["resolver"]["params"]["evidence"] == result["evidence_span_ids"][0]
-            assert result["resolver"]["params"]["fragment"]
-            assert result["resolver"]["highlight"]["kind"] == "web_text"
+            assert result["locator"]["type"] == "web_text_offsets"
+            assert result["locator"]["media_id"] == str(media_id)
+            assert result["locator"]["fragment_id"]
+            assert result["locator"]["start_offset"] >= 0
+            assert result["locator"]["end_offset"] > result["locator"]["start_offset"]
             assert result["context_ref"] == {
                 "type": "content_chunk",
                 "id": result["id"],
@@ -1311,6 +1393,57 @@ class TestSearchResultFormat:
         result_ids = {row["id"] for row in response.json()["results"]}
         assert str(active_chunk_id) not in result_ids
 
+    def test_content_chunk_search_skips_stale_snapshot_text(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = create_searchable_media(session, user_id, title="Stale Snapshot Source")
+            chunk_id = session.execute(
+                text(
+                    """
+                    SELECT cc.id
+                    FROM content_chunks cc
+                    JOIN media_content_index_states mcis
+                      ON mcis.media_id = cc.media_id
+                     AND mcis.active_run_id = cc.index_run_id
+                    WHERE cc.media_id = :media_id
+                    ORDER BY cc.chunk_idx ASC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id},
+            ).scalar_one()
+            fragment = session.query(Fragment).filter(Fragment.media_id == media_id).one()
+            fragment.canonical_text = "Replacement text no longer matches the indexed span."
+            session.execute(
+                text(
+                    """
+                    UPDATE content_blocks
+                    SET canonical_text = 'Replacement text no longer matches the indexed span.'
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.get(
+            "/search?q=canonical+text&types=content_chunk",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        result_ids = {row["id"] for row in response.json()["results"]}
+        assert str(chunk_id) not in result_ids
+
     def test_media_evidence_resolver_returns_reader_payload(
         self, auth_client, direct_db: DirectSessionManager
     ):
@@ -1384,6 +1517,317 @@ class TestSearchResultFormat:
         assert "seq" in result
         assert result["deep_link"] == f"/conversations/{conversation_id}"
         assert result["context_ref"] == {"type": "message", "id": str(message_id)}
+
+    def test_web_result_search_and_resolution_routes(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Persisted web retrievals are searchable only through visible conversations."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        tool_call_id = uuid4()
+        retrieval_id = uuid4()
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            user_message_id = create_test_message(
+                session,
+                conversation_id,
+                1,
+                role="user",
+                content="Find web evidence about the calypso archive.",
+            )
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                role="assistant",
+                content="The calypso archive has a public source.",
+            )
+            session.execute(
+                text("""
+                    INSERT INTO message_tool_calls (
+                        id, conversation_id, user_message_id, assistant_message_id,
+                        tool_name, tool_call_index, scope, requested_types, semantic,
+                        result_refs, selected_context_refs, provider_request_ids,
+                        status
+                    )
+                    VALUES (
+                        :tool_call_id, :conversation_id, :user_message_id,
+                        :assistant_message_id, 'web_search', 1, 'public_web',
+                        '["web_result"]'::jsonb, false, '[]'::jsonb, '[]'::jsonb,
+                        '["provider-request-1"]'::jsonb, 'complete'
+                    )
+                """),
+                {
+                    "tool_call_id": tool_call_id,
+                    "conversation_id": conversation_id,
+                    "user_message_id": user_message_id,
+                    "assistant_message_id": assistant_message_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO message_retrievals (
+                        id, tool_call_id, ordinal, result_type, source_id,
+                        context_ref, result_ref, deep_link, score, selected,
+                        source_title, exact_snippet, locator, retrieval_status,
+                        included_in_prompt, source_version
+                    )
+                    VALUES (
+                        :retrieval_id, :tool_call_id, 0, 'web_result', 'web:calypso',
+                        jsonb_build_object('type', 'web_result', 'id', 'web:calypso'),
+                        jsonb_build_object(
+                            'type', 'web_result',
+                            'id', 'web:calypso',
+                            'result_type', 'web_result',
+                            'result_ref', 'web:calypso',
+                            'source_id', 'web:calypso',
+                            'title', 'Calypso Archive Source',
+                            'url', 'https://example.com/calypso',
+                            'display_url', 'example.com/calypso',
+                            'deep_link', 'https://example.com/calypso',
+                            'snippet', 'Calypso archive public evidence snippet',
+                            'provider', 'test',
+                            'provider_request_id', 'provider-request-1',
+                            'source_version', 'web_search:test:provider-request-1',
+                            'locator', jsonb_build_object(
+                                'type', 'external_url',
+                                'url', 'https://example.com/calypso',
+                                'title', 'Calypso Archive Source',
+                                'display_url', 'example.com/calypso'
+                            ),
+                            'context_ref', jsonb_build_object('type', 'web_result', 'id', 'web:calypso'),
+                            'media_id', NULL,
+                            'media_kind', NULL,
+                            'score', 0.5,
+                            'selected', true
+                        ),
+                        'https://example.com/calypso',
+                        0.5,
+                        true,
+                        'Calypso Archive Source',
+                        'Calypso archive public evidence snippet',
+                        jsonb_build_object(
+                            'type', 'external_url',
+                            'url', 'https://example.com/calypso',
+                            'title', 'Calypso Archive Source',
+                            'display_url', 'example.com/calypso'
+                        ),
+                        'web_result',
+                        true,
+                        'web_search:test:provider-request-1'
+                    )
+                """),
+                {"retrieval_id": retrieval_id, "tool_call_id": tool_call_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)
+        direct_db.register_cleanup("message_retrievals", "id", retrieval_id)
+
+        response = auth_client.get(
+            "/search?q=calypso+archive&types=web_result",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"Expected web result search to succeed, got {response.status_code}: {response.text}"
+        )
+        result = response.json()["results"][0]
+        assert result["type"] == "web_result"
+        assert result["id"] == str(retrieval_id)
+        assert result["source_id"] == "web:calypso"
+        assert result["result_ref"] == "web:calypso"
+        assert result["url"] == "https://example.com/calypso"
+        assert result["deep_link"] == "https://example.com/calypso"
+        assert result["source_version"] == "web_search:test:provider-request-1"
+        assert result["locator"] == {
+            "type": "external_url",
+            "url": "https://example.com/calypso",
+            "title": "Calypso Archive Source",
+            "display_url": "example.com/calypso",
+            "accessed_at": None,
+        }
+        assert result["context_ref"] == {"type": "web_result", "id": str(retrieval_id)}
+
+        resolved = auth_client.get(
+            f"/search/results/{retrieval_id}?type=web_result",
+            headers=auth_headers(user_id),
+        )
+        assert resolved.status_code == 200, (
+            f"Expected web result read to succeed, got {resolved.status_code}: {resolved.text}"
+        )
+        assert resolved.json()["result"]["id"] == str(retrieval_id)
+
+        posted = auth_client.post(
+            "/search/resolve",
+            json={"result_ref": {"type": "web_result", "id": str(retrieval_id)}},
+            headers=auth_headers(user_id),
+        )
+        assert posted.status_code == 200, (
+            f"Expected web result resolve to succeed, got {posted.status_code}: {posted.text}"
+        )
+        assert posted.json()["result"]["id"] == str(retrieval_id)
+        assert posted.json()["result"]["result_ref"] == "web:calypso"
+
+        provider_ref = auth_client.post(
+            "/search/resolve",
+            json={"result_ref": {"type": "web_result", "id": "web:calypso"}},
+            headers=auth_headers(user_id),
+        )
+        assert provider_ref.status_code == 400
+        assert provider_ref.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    UPDATE message_retrievals
+                    SET result_ref = result_ref - 'result_ref'
+                    WHERE id = :retrieval_id
+                """),
+                {"retrieval_id": retrieval_id},
+            )
+            session.commit()
+
+        with direct_db.session() as session:
+            with pytest.raises(ValidationError):
+                get_search_result(
+                    db=session,
+                    viewer_id=user_id,
+                    result_type="web_result",
+                    result_id=str(retrieval_id),
+                )
+
+            with pytest.raises(ValidationError):
+                search(
+                    db=session,
+                    viewer_id=user_id,
+                    q="calypso archive",
+                    types=["web_result"],
+                )
+
+    def test_artifact_part_search_and_resolution_routes(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Artifact parts are searchable and resolvable as strict result refs."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        artifact_id = uuid4()
+        part_id = uuid4()
+        with direct_db.session() as session:
+            conversation_id, message_id = create_test_conversation_with_message(
+                session,
+                user_id,
+                content="assistant generated artifact",
+                role="assistant",
+            )
+            session.execute(
+                text("""
+                    INSERT INTO message_artifacts (
+                        id, conversation_id, message_id, artifact_key, artifact_kind,
+                        title, status, preview_text
+                    )
+                    VALUES (
+                        :artifact_id, :conversation_id, :message_id, 'research-table',
+                        'comparison_table', 'Research Table', 'complete', 'Artifact needle preview'
+                    )
+                """),
+                {
+                    "artifact_id": artifact_id,
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO message_artifact_parts (
+                        id, artifact_id, ordinal, part_key, part_type, text,
+                        source_version, locator, metadata
+                    )
+                    VALUES (
+                        :part_id, :artifact_id, 0, 'row-1', 'table_row',
+                        'Artifact needle row evidence',
+                        concat('artifact_part', chr(58), CAST(:part_id AS text), chr(58), 'v1'),
+                        jsonb_build_object(
+                            'type', 'artifact_part_ref',
+                            'artifact_id', CAST(:artifact_id AS text),
+                            'artifact_part_id', CAST(:part_id AS text),
+                            'message_id', CAST(:message_id AS text),
+                            'conversation_id', CAST(:conversation_id AS text),
+                            'part_key', 'row-1'
+                        ),
+                        '{"support_state":"not_source_grounded"}'::jsonb
+                    )
+                """),
+                {
+                    "part_id": part_id,
+                    "artifact_id": artifact_id,
+                    "message_id": message_id,
+                    "conversation_id": conversation_id,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("message_artifacts", "id", artifact_id)
+        direct_db.register_cleanup("message_artifact_parts", "artifact_id", artifact_id)
+
+        response = auth_client.get(
+            "/search?q=artifact+needle&types=artifact_part",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, (
+            f"Expected artifact part search to succeed, got {response.status_code}: {response.text}"
+        )
+        result = response.json()["results"][0]
+        assert result["type"] == "artifact_part"
+        assert result["id"] == str(part_id)
+        assert result["artifact_id"] == str(artifact_id)
+        assert result["message_id"] == str(message_id)
+        assert result["conversation_id"] == str(conversation_id)
+        assert result["artifact_kind"] == "comparison_table"
+        assert result["artifact_title"] == "Research Table"
+        assert result["part_key"] == "row-1"
+        assert result["part_type"] == "table_row"
+        assert result["deep_link"] == (
+            f"/conversations/{conversation_id}?artifact={artifact_id}&artifactPart={part_id}"
+        )
+        assert result["context_ref"] == {"type": "artifact_part", "id": str(part_id)}
+        assert result["locator"] == {
+            "type": "artifact_part_ref",
+            "artifact_id": str(artifact_id),
+            "artifact_part_id": str(part_id),
+            "message_id": str(message_id),
+            "conversation_id": str(conversation_id),
+            "part_key": "row-1",
+        }
+        if "source_version" in result:
+            assert result["source_version"] == f"artifact_part:{part_id}:v1"
+
+        resolved = auth_client.get(
+            f"/search/results/{part_id}?type=artifact_part",
+            headers=auth_headers(user_id),
+        )
+        assert resolved.status_code == 200, (
+            f"Expected artifact part result read to succeed, got "
+            f"{resolved.status_code}: {resolved.text}"
+        )
+        assert resolved.json()["result"]["id"] == str(part_id)
+
+        posted = auth_client.post(
+            "/search/resolve",
+            json={"result_ref": {"type": "artifact_part", "id": str(part_id)}},
+            headers=auth_headers(user_id),
+        )
+        assert posted.status_code == 200, (
+            f"Expected artifact part resolve to succeed, got {posted.status_code}: {posted.text}"
+        )
+        assert posted.json()["result"]["id"] == str(part_id)
 
     def test_snippet_max_length(self, auth_client, direct_db: DirectSessionManager):
         """Snippets are truncated to max 300 chars."""
@@ -2385,8 +2829,9 @@ class TestSemanticTranscriptChunkSearch:
         assert chunk_results, "expected semantic content chunk results for ready semantic index"
         top = chunk_results[0]
         assert top["source"]["media_id"] == str(media_id)
-        assert top["resolver"]["highlight"]["t_start_ms"] == 1000
-        assert top["resolver"]["highlight"]["t_end_ms"] == 5000
+        assert top["locator"]["type"] == "transcript_time_range"
+        assert top["locator"]["t_start_ms"] == 1000
+        assert top["locator"]["t_end_ms"] == 5000
         assert "transformer" in top["snippet"].lower()
 
     def test_semantic_search_with_omitted_types_includes_content_chunks_by_default(

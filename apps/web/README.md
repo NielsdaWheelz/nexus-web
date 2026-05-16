@@ -15,7 +15,7 @@ This app owns:
 ## Request Topology
 
 - Default: Browser -> Next.js (`/api/*`) -> FastAPI.
-- Streaming: Browser -> FastAPI `/stream/*` with short-lived stream token minted via BFF.
+- Streaming: Browser -> FastAPI stream endpoints with short-lived stream token minted via BFF.
 - Extension capture: Browser extension -> Next.js `/api/media/capture/*` -> FastAPI with scoped, revocable extension auth.
 
 BFF routes are transport-only. Business logic lives in FastAPI services.

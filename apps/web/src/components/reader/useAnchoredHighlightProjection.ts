@@ -21,6 +21,7 @@ const MEASURE_DEBOUNCE_MS = 75;
 export interface AnchoredHighlightRow {
   id: string;
   exact: string;
+  source_version?: string;
   color: HighlightColor;
   linked_note_blocks?: {
     note_block_id: string;
@@ -34,6 +35,7 @@ export interface AnchoredHighlightRow {
     start_offset: number;
     end_offset: number;
     t_start_ms?: number;
+    t_end_ms?: number;
   };
   created_at?: string;
   updated_at?: string;
@@ -393,12 +395,7 @@ export function useAnchoredHighlightProjection({
         scrollFrameRef.current = null;
       }
     };
-  }, [
-    contentRef,
-    orderedHighlights.length,
-    measureKey,
-    syncViewportState,
-  ]);
+  }, [contentRef, orderedHighlights.length, measureKey, syncViewportState]);
 
   useEffect(() => {
     const contentElement = contentRef.current;

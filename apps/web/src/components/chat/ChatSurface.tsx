@@ -10,14 +10,20 @@ import {
   type WheelEvent,
 } from "react";
 import Button from "@/components/ui/Button";
+import type { ContextItem } from "@/lib/api/sse";
 import type {
   BranchDraft,
+  ChatRunResponse,
   ConversationMessage,
   ConversationScope,
   ForkOption,
 } from "@/lib/conversations/types";
 import ConversationScopeChip from "./ConversationScopeChip";
-import { MessageRow, type ReaderSourceTarget } from "./MessageRow";
+import {
+  MessageRow,
+  type ArtifactFocusTarget,
+  type ReaderSourceTarget,
+} from "./MessageRow";
 import styles from "./ChatSurface.module.css";
 
 export default function ChatSurface({
@@ -36,6 +42,11 @@ export default function ChatSurface({
   onRetryAssistantResponse,
   retryingAssistantMessageIds,
   onReaderSourceActivate,
+  onAskAboutSource,
+  onSaveSourceQuote,
+  onAttachContext,
+  onChatRunCreated,
+  artifactFocusTarget,
 }: {
   messages: ConversationMessage[];
   scrollportRef?: RefObject<HTMLDivElement | null>;
@@ -52,6 +63,11 @@ export default function ChatSurface({
   onRetryAssistantResponse?: (assistantMessageId: string) => void;
   retryingAssistantMessageIds?: Set<string>;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
+  onAskAboutSource?: (target: ReaderSourceTarget) => void;
+  onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
+  onAttachContext?: (context: ContextItem) => void;
+  onChatRunCreated?: (runData: ChatRunResponse["data"]) => void;
+  artifactFocusTarget?: ArtifactFocusTarget | null;
 }) {
   const transcriptScrollportRef = useRef<HTMLDivElement | null>(null);
   const setScrollportRef = useCallback(
@@ -157,6 +173,11 @@ export default function ChatSurface({
               retryingAssistantMessageIds={retryingAssistantMessageIds}
               onRetryAssistantResponse={onRetryAssistantResponse}
               onReaderSourceActivate={onReaderSourceActivate}
+              onAskAboutSource={onAskAboutSource}
+              onSaveSourceQuote={onSaveSourceQuote}
+              onAttachContext={onAttachContext}
+              onChatRunCreated={onChatRunCreated}
+              artifactFocusTarget={artifactFocusTarget}
             />
           ))}
         </div>

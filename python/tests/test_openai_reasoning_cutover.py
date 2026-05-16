@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import Model
-from nexus.schemas.conversation import ChatRunCreateRequest, WebSearchOptions
+from nexus.schemas.conversation import ArtifactIntentOptions, ChatRunCreateRequest, WebSearchOptions
 from nexus.services.chat_runs import (
     ERROR_CODE_TO_MESSAGE,
     _max_output_tokens_for_reasoning,
@@ -70,6 +70,7 @@ def test_chat_run_request_defaults_reasoning_to_default():
         content="Summarize this.",
         model_id=uuid4(),
         web_search=WebSearchOptions(mode="off"),
+        artifact_intent=ArtifactIntentOptions(kind="off"),
     )
 
     assert request.reasoning == "default"
@@ -152,6 +153,7 @@ def _post_chat_run(auth_client, user_id: UUID, model_id: UUID, reasoning: str | 
         "conversation_scope": {"type": "general"},
         "contexts": [],
         "web_search": {"mode": "off"},
+        "artifact_intent": {"kind": "off"},
     }
     if reasoning is not None:
         payload["reasoning"] = reasoning
@@ -163,13 +165,16 @@ def _post_chat_run(auth_client, user_id: UUID, model_id: UUID, reasoning: str | 
     )
 
 
-def _register_run_cleanup(
-    direct_db: DirectSessionManager, run_id: UUID, conversation_id: UUID
-) -> None:
+def _register_run_cleanup(direct_db: DirectSessionManager, conversation_id: UUID) -> None:
+    # The "conversations"/"id" and "messages"/"conversation_id" cleanup branches
+    # both cascade-delete every chat_runs child (chat_run_events,
+    # source_manifests, chat_prompt_assemblies, message_artifacts, the
+    # assistant_message_* ledgers, retrieval/rerank ledgers) keyed on the
+    # conversation, then delete chat_runs itself. Registering a bare
+    # "chat_runs"/"id" item instead deletes that row before those cascades run
+    # (cleanup is LIFO), which trips chat_prompt_assemblies_chat_run_id_fkey.
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-    direct_db.register_cleanup("chat_runs", "id", run_id)
-    direct_db.register_cleanup("chat_run_events", "run_id", run_id)
 
 
 @pytest.mark.integration
@@ -190,7 +195,7 @@ def test_omitted_reasoning_stores_explicit_default(
     data = response.json()["data"]
     assert data["run"]["reasoning"] == "default"
 
-    _register_run_cleanup(direct_db, UUID(data["run"]["id"]), UUID(data["conversation"]["id"]))
+    _register_run_cleanup(direct_db, UUID(data["conversation"]["id"]))
 
 
 @pytest.mark.integration
@@ -228,7 +233,7 @@ async def test_default_reasoning_uses_reasoning_aware_output_budget(
     data = response.json()["data"]
     run_id = UUID(data["run"]["id"])
     conversation_id = UUID(data["conversation"]["id"])
-    _register_run_cleanup(direct_db, run_id, conversation_id)
+    _register_run_cleanup(direct_db, conversation_id)
 
     router = _CapturingRouter(
         LLMChunk(
@@ -298,7 +303,7 @@ async def test_incomplete_llm_result_finalizes_error_not_success(
     data = response.json()["data"]
     run_id = UUID(data["run"]["id"])
     conversation_id = UUID(data["conversation"]["id"])
-    _register_run_cleanup(direct_db, run_id, conversation_id)
+    _register_run_cleanup(direct_db, conversation_id)
 
     with direct_db.session() as session:
         result = await execute_chat_run(
@@ -318,7 +323,10 @@ async def test_incomplete_llm_result_finalizes_error_not_success(
     assert fetched_data["run"]["error_code"] == "E_LLM_INCOMPLETE"
     assert fetched_data["assistant_message"]["status"] == "error"
     assert fetched_data["assistant_message"]["error_code"] == "E_LLM_INCOMPLETE"
-    assert "output tokens" in fetched_data["assistant_message"]["content"]
+    assert (
+        "output tokens"
+        in fetched_data["assistant_message"]["message_document"]["blocks"][0]["text"]
+    )
 
 
 @pytest.mark.integration
@@ -348,7 +356,7 @@ async def test_unread_stream_http_errors_keep_provider_error_classification(
     data = response.json()["data"]
     run_id = UUID(data["run"]["id"])
     conversation_id = UUID(data["conversation"]["id"])
-    _register_run_cleanup(direct_db, run_id, conversation_id)
+    _register_run_cleanup(direct_db, conversation_id)
 
     with direct_db.session() as session:
         result = await execute_chat_run(

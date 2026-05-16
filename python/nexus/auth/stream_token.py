@@ -1,4 +1,4 @@
-"""Stream token auth — mint and verify short-lived JWTs for /stream/* endpoints."""
+"""Stream token auth for direct browser-callable SSE endpoints."""
 
 import base64
 import time

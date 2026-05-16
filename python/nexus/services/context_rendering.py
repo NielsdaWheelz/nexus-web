@@ -13,11 +13,13 @@ adapter layer (which must be DB-free per PR-04 spec).
 """
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import assert_never
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
-from sqlalchemy import select
+from pydantic import BaseModel
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -25,6 +27,7 @@ from nexus.db.models import (
     Contributor,
     Conversation,
     EvidenceSpan,
+    Fragment,
     Highlight,
     HighlightPdfAnchor,
     Media,
@@ -37,6 +40,7 @@ from nexus.db.models import (
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
 from nexus.schemas.conversation import ContextItem, MessageContextRef, ReaderSelectionContext
+from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.context_window import get_context_window
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 from nexus.services.pdf_quote_match import MatcherAnomaly, MatchStatus, compute_match
@@ -68,6 +72,22 @@ def _format_timestamp_ms(timestamp_ms: int) -> str:
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _append_source_metadata_xml(
+    lines: list[str],
+    *,
+    locator: dict[str, object] | None = None,
+    source_version: str | None = None,
+) -> None:
+    if locator:
+        lines.append(
+            "<source_locator>"
+            f"{xml_escape(json.dumps(locator, sort_keys=True, separators=(',', ':'), default=str))}"
+            "</source_locator>"
+        )
+    if source_version:
+        lines.append(f"<source_version>{xml_escape(source_version)}</source_version>")
 
 
 def _resolve_renderable_highlight_kind(highlight: Highlight) -> str | None:
@@ -103,7 +123,6 @@ def render_context_blocks(
         Tuple of (rendered_context_text, total_chars).
 
     Note:
-        Contexts that fail to render are logged and skipped.
         Total chars is capped at MAX_CONTEXT_CHARS.
     """
     if not contexts:
@@ -122,34 +141,22 @@ def render_context_blocks(
     total_chars = 0
 
     for ctx in contexts:
-        try:
-            block = _render_single_context(db, ctx)
-            if block:
-                block_chars = len(block)
+        block = _render_single_context(db, ctx)
+        if block:
+            block_chars = len(block)
 
-                # Check if adding this block would exceed limit
-                if total_chars + block_chars > MAX_CONTEXT_CHARS:
-                    logger.info(
-                        "context_char_limit_reached",
-                        current_chars=total_chars,
-                        block_chars=block_chars,
-                        limit=MAX_CONTEXT_CHARS,
-                    )
-                    break
+            # Check if adding this block would exceed limit
+            if total_chars + block_chars > MAX_CONTEXT_CHARS:
+                logger.info(
+                    "context_char_limit_reached",
+                    current_chars=total_chars,
+                    block_chars=block_chars,
+                    limit=MAX_CONTEXT_CHARS,
+                )
+                break
 
-                rendered_blocks.append(block)
-                total_chars += block_chars
-
-        except QuoteContextBlockingError:
-            raise
-        except Exception as e:
-            logger.warning(
-                "context_render_failed",
-                context_type=_context_log_type(ctx),
-                context_id=_context_log_id(ctx),
-                error=str(e),
-            )
-            continue
+            rendered_blocks.append(block)
+            total_chars += block_chars
 
     if rendered_blocks:
         return "\n\n".join(rendered_blocks), total_chars
@@ -222,18 +229,6 @@ def render_conversation_scope_block(scope_metadata: dict[str, object]) -> str:
     return ""
 
 
-def _context_log_type(ctx: ContextItem) -> str:
-    if ctx.kind == "reader_selection":
-        return "reader_selection"
-    return ctx.type
-
-
-def _context_log_id(ctx: ContextItem) -> str:
-    if ctx.kind == "reader_selection":
-        return str(ctx.client_context_id)
-    return str(ctx.id)
-
-
 def _render_single_context(db: Session, ctx: ContextItem) -> str | None:
     """Render a single context item to an XML block."""
     if ctx.kind == "reader_selection":
@@ -246,23 +241,33 @@ def _render_single_context(db: Session, ctx: ContextItem) -> str | None:
         return _render_media_context(db, ctx_id)
     if ctx_type == "highlight":
         return _render_highlight_context(db, ctx_id)
-    if ctx_type in {"page", "note_block"}:
+    if ctx_type == "page":
+        return _render_note_context(db, ctx_type, ctx_id)
+    if ctx_type == "note_block":
         return _render_note_context(db, ctx_type, ctx_id)
     if ctx_type == "conversation":
         return _render_conversation_context(db, ctx_id)
     if ctx_type == "message":
         return _render_message_context(db, ctx_id)
+    if ctx_type == "evidence_span":
+        return _render_evidence_span_context(db, ctx_id)
     if ctx_type == "podcast":
         return _render_podcast_context(db, ctx_id)
     if ctx_type == "content_chunk":
         return _render_content_chunk_context(db, ctx)
+    if ctx_type == "fragment":
+        return _render_fragment_context(db, ctx_id)
     if ctx_type == "contributor":
         return _render_contributor_context(db, ctx_id)
-    logger.warning("unknown_context_type", context_type=ctx_type)
-    return None
+    if ctx_type == "artifact":
+        return _render_artifact_context(db, ctx_id)
+    if ctx_type == "artifact_part":
+        return _render_artifact_part_context(db, ctx_id)
+    assert_never(ctx_type)
 
 
 def _render_reader_selection_context(ctx: ReaderSelectionContext) -> str:
+    locator = _locator_json(ctx.locator)
     lines = [
         "<reader_selection>",
         f"<source>{xml_escape(ctx.media_title)}</source>",
@@ -272,13 +277,23 @@ def _render_reader_selection_context(ctx: ReaderSelectionContext) -> str:
     surrounding = f"{ctx.prefix or ''}{ctx.exact}{ctx.suffix or ''}"
     if surrounding != ctx.exact:
         lines.append(f"<surrounding>{xml_escape(surrounding)}</surrounding>")
-    lines.append(
-        "<source_locator>"
-        f"{xml_escape(json.dumps(ctx.locator, sort_keys=True, separators=(',', ':')))}"
-        "</source_locator>"
+    _append_source_metadata_xml(
+        lines,
+        locator=locator,
+        source_version=ctx.source_version,
     )
     lines.append("</reader_selection>")
     return "\n".join(lines)
+
+
+def _locator_json(value: object) -> dict[str, object]:
+    if isinstance(value, BaseModel):
+        raw = value.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+    elif isinstance(value, Mapping):
+        raw = dict(value)
+    else:
+        return {}
+    return retrieval_locator_json(raw) or {}
 
 
 def _render_media_context(db: Session, media_id: UUID) -> str | None:
@@ -344,6 +359,41 @@ def _render_fragment_highlight_context(db, highlight) -> str | None:
     lines.append(f"<quote>{xml_escape(highlight.exact)}</quote>")
     if context_window.text != highlight.exact:
         lines.append(f"<surrounding>{xml_escape(context_window.text)}</surrounding>")
+    if fragment_anchor.end_offset > fragment_anchor.start_offset:
+        if fragment.t_start_ms is not None and fragment.t_end_ms is not None:
+            locator = {
+                "type": "transcript_time_range",
+                "media_id": str(media.id),
+                "transcript_version_id": str(fragment.transcript_version_id)
+                if fragment.transcript_version_id
+                else None,
+                "t_start_ms": fragment.t_start_ms,
+                "t_end_ms": fragment.t_end_ms,
+                "text_quote_selector": {
+                    "exact": highlight.exact,
+                    "prefix": highlight.prefix,
+                    "suffix": highlight.suffix,
+                },
+            }
+        else:
+            locator = {
+                "type": "epub_fragment_offsets" if media.kind == "epub" else "web_text_offsets",
+                "media_id": str(media.id),
+                "fragment_id": str(fragment.id),
+                "start_offset": fragment_anchor.start_offset,
+                "end_offset": fragment_anchor.end_offset,
+                "media_kind": media.kind,
+                "text_quote_selector": {
+                    "exact": highlight.exact,
+                    "prefix": highlight.prefix,
+                    "suffix": highlight.suffix,
+                },
+            }
+        _append_source_metadata_xml(
+            lines,
+            locator=locator,
+            source_version=f"highlight:{highlight.id}",
+        )
     lines.append("</highlight>")
     return "\n".join(lines)
 
@@ -551,6 +601,36 @@ def _render_pdf_highlight_context(db, highlight) -> str | None:
     nearby_context = _resolve_pdf_nearby_context(db, highlight, media, pdf_anchor)
     if nearby_context and nearby_context != highlight.exact:
         lines.append(f"<surrounding>{xml_escape(nearby_context)}</surrounding>")
+    _append_source_metadata_xml(
+        lines,
+        locator={
+            "type": "pdf_page_geometry",
+            "media_id": str(media.id),
+            "page_number": pdf_anchor.page_number,
+            "quads": [
+                {
+                    "x1": quad.x1,
+                    "y1": quad.y1,
+                    "x2": quad.x2,
+                    "y2": quad.y2,
+                    "x3": quad.x3,
+                    "y3": quad.y3,
+                    "x4": quad.x4,
+                    "y4": quad.y4,
+                }
+                for quad in highlight.pdf_quads
+            ],
+            "exact": highlight.exact,
+            "prefix": highlight.prefix,
+            "suffix": highlight.suffix,
+            "text_quote_selector": {
+                "exact": highlight.exact,
+                "prefix": highlight.prefix,
+                "suffix": highlight.suffix,
+            },
+        },
+        source_version=f"highlight:{highlight.id}",
+    )
     lines.append("</highlight>")
     return "\n".join(lines)
 
@@ -562,14 +642,16 @@ def _render_note_context(db: Session, context_type: str, context_id: UUID) -> st
             return None
         blocks = _ordered_note_blocks_for_page(db, page.id)
         content = _note_outline_markdown(blocks, None)
-        return "\n".join(
-            [
-                "<page>",
-                f"<title>{xml_escape(page.title)}</title>",
-                f"<content>{xml_escape(content)}</content>",
-                "</page>",
-            ]
+        lines = [
+            "<page>",
+            f"<title>{xml_escape(page.title)}</title>",
+            f"<content>{xml_escape(content)}</content>",
+        ]
+        _append_source_metadata_xml(
+            lines, source_version=f"page:{page.id}:revision:{page.revision}"
         )
+        lines.append("</page>")
+        return "\n".join(lines)
 
     block = db.get(NoteBlock, context_id)
     if block is None:
@@ -578,13 +660,21 @@ def _render_note_context(db: Session, context_type: str, context_id: UUID) -> st
     assert page_id is not None
     blocks = _ordered_note_blocks_for_page(db, page_id)
     content = _note_outline_markdown(blocks, block.parent_block_id, root_block=block)
-    return "\n".join(
-        [
-            "<note_block>",
-            f"<content>{xml_escape(content)}</content>",
-            "</note_block>",
-        ]
-    )
+    lines = ["<note_block>", f"<content>{xml_escape(content)}</content>"]
+    if block.body_text:
+        _append_source_metadata_xml(
+            lines,
+            locator={
+                "type": "note_block_offsets",
+                "page_id": str(page_id),
+                "block_id": str(block.id),
+                "start_offset": 0,
+                "end_offset": len(block.body_text),
+            },
+            source_version=f"note_block:{block.id}:revision:{block.revision}",
+        )
+    lines.append("</note_block>")
+    return "\n".join(lines)
 
 
 def _ordered_note_blocks_for_page(db: Session, page_id: UUID) -> list[NoteBlock]:
@@ -676,6 +766,19 @@ def _render_message_context(db: Session, message_id: UUID) -> str | None:
     if message.conversation is not None:
         lines.append(f"<conversation>{xml_escape(message.conversation.title)}</conversation>")
     lines.append(f"<content>{xml_escape(message.content)}</content>")
+    if message.content:
+        _append_source_metadata_xml(
+            lines,
+            locator={
+                "type": "message_offsets",
+                "conversation_id": str(message.conversation_id),
+                "message_id": str(message.id),
+                "message_seq": message.seq,
+                "start_offset": 0,
+                "end_offset": len(message.content),
+            },
+            source_version=f"message:{message.id}",
+        )
     lines.append("</message>")
     return "\n".join(lines)
 
@@ -724,6 +827,61 @@ def _render_content_chunk_context(db: Session, ctx: MessageContextRef) -> str | 
     return "\n".join(lines)
 
 
+def _render_fragment_context(db: Session, fragment_id: UUID) -> str | None:
+    fragment = db.get(Fragment, fragment_id)
+    if fragment is None:
+        return None
+    media = db.get(Media, fragment.media_id)
+    if media is None:
+        return None
+    lines = [
+        "<fragment>",
+        f"<source>{xml_escape(media.title)}</source>",
+        f"<fragment_id>{fragment.id}</fragment_id>",
+        f"<fragment_index>{fragment.idx}</fragment_index>",
+    ]
+    if fragment.speaker_label:
+        lines.append(f"<speaker>{xml_escape(fragment.speaker_label)}</speaker>")
+    lines.append(f"<text>{xml_escape(fragment.canonical_text)}</text>")
+    if fragment.canonical_text:
+        if fragment.t_start_ms is not None and fragment.t_end_ms is not None:
+            locator = {
+                "type": "transcript_time_range",
+                "media_id": str(media.id),
+                "transcript_version_id": str(fragment.transcript_version_id)
+                if fragment.transcript_version_id
+                else None,
+                "t_start_ms": fragment.t_start_ms,
+                "t_end_ms": fragment.t_end_ms,
+                "text_quote_selector": {
+                    "exact": fragment.canonical_text,
+                    "prefix": "",
+                    "suffix": "",
+                },
+            }
+        else:
+            locator = {
+                "type": "epub_fragment_offsets" if media.kind == "epub" else "web_text_offsets",
+                "media_id": str(media.id),
+                "fragment_id": str(fragment.id),
+                "start_offset": 0,
+                "end_offset": len(fragment.canonical_text),
+                "media_kind": media.kind,
+                "text_quote_selector": {
+                    "exact": fragment.canonical_text,
+                    "prefix": "",
+                    "suffix": "",
+                },
+            }
+        _append_source_metadata_xml(
+            lines,
+            locator=locator,
+            source_version=f"fragment:{fragment.id}",
+        )
+    lines.append("</fragment>")
+    return "\n".join(lines)
+
+
 def _render_content_chunk_evidence_spans(
     db: Session,
     media: Media,
@@ -755,6 +913,218 @@ def _render_content_chunk_evidence_spans(
     if rendered == 0:
         return None
     lines.append("</content_chunk>")
+    return "\n".join(lines)
+
+
+def _render_artifact_part_context(db: Session, artifact_part_id: UUID) -> str | None:
+    row = (
+        db.execute(
+            text(
+                """
+            SELECT
+                part.id,
+                part.ordinal,
+                part.part_key,
+                part.part_type,
+                part.text AS part_text,
+                part.source_ref,
+                part.context_ref,
+                part.result_ref,
+                part.evidence_span_id,
+                part.evidence_span_ids,
+                part.source_refs,
+                part.source_version,
+                part.locator,
+                ma.id AS artifact_id,
+                ma.artifact_kind,
+                ma.title,
+                ma.message_id,
+                ma.conversation_id
+            FROM message_artifact_parts part
+            JOIN message_artifacts ma ON ma.id = part.artifact_id
+            WHERE part.id = :artifact_part_id
+            """
+            ),
+            {"artifact_part_id": artifact_part_id},
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        return None
+    try:
+        locator = retrieval_locator_json(
+            row["locator"] if isinstance(row["locator"], dict) else None
+        )
+    except ValueError:
+        return None
+    if (
+        locator is None
+        or locator.get("type") != "artifact_part_ref"
+        or str(locator.get("artifact_part_id")) != str(row["id"])
+        or str(locator.get("artifact_id")) != str(row["artifact_id"])
+        or str(locator.get("message_id")) != str(row["message_id"])
+        or str(locator.get("conversation_id")) != str(row["conversation_id"])
+    ):
+        return None
+
+    lines = [
+        "<artifact_part>",
+        f"<artifact_id>{row['artifact_id']}</artifact_id>",
+        f"<conversation_id>{row['conversation_id']}</conversation_id>",
+        f"<message_id>{row['message_id']}</message_id>",
+        f"<artifact_kind>{xml_escape(str(row['artifact_kind']))}</artifact_kind>",
+        f"<ordinal>{row['ordinal']}</ordinal>",
+    ]
+    if row["title"]:
+        lines.append(f"<artifact_title>{xml_escape(str(row['title']))}</artifact_title>")
+    if row["part_key"]:
+        lines.append(f"<part_key>{xml_escape(str(row['part_key']))}</part_key>")
+    if row["part_type"]:
+        lines.append(f"<part_type>{xml_escape(str(row['part_type']))}</part_type>")
+    lines.append(f"<source_version>{xml_escape(str(row['source_version']))}</source_version>")
+    lines.append(
+        "<source_locator>"
+        f"{xml_escape(json.dumps(locator, sort_keys=True, separators=(',', ':'), default=str))}"
+        "</source_locator>"
+    )
+    if row["part_text"]:
+        lines.append(f"<content>{xml_escape(str(row['part_text']))}</content>")
+    for key in ("source_ref", "context_ref", "result_ref", "evidence_span_id"):
+        if row[key]:
+            lines.append(f"<{key}>{xml_escape(json.dumps(row[key], default=str))}</{key}>")
+    if row["evidence_span_ids"]:
+        evidence_span_ids = xml_escape(json.dumps(row["evidence_span_ids"], default=str))
+        lines.append(f"<evidence_span_ids>{evidence_span_ids}</evidence_span_ids>")
+    if row["source_refs"]:
+        source_refs = xml_escape(json.dumps(row["source_refs"], default=str))
+        lines.append(f"<source_refs>{source_refs}</source_refs>")
+    lines.append("</artifact_part>")
+    return "\n".join(lines)
+
+
+def _render_artifact_context(db: Session, artifact_id: UUID) -> str | None:
+    rows = (
+        db.execute(
+            text(
+                """
+            SELECT
+                ma.id AS artifact_id,
+                ma.artifact_kind,
+                ma.title,
+                ma.message_id,
+                ma.conversation_id,
+                ma.preview_text,
+                part.id AS part_id,
+                part.ordinal,
+                part.part_key,
+                part.part_type,
+                part.text AS part_text,
+                part.source_version,
+                part.locator,
+                part.source_ref,
+                part.context_ref,
+                part.result_ref,
+                part.evidence_span_id,
+                part.evidence_span_ids,
+                part.source_refs
+            FROM message_artifacts ma
+            LEFT JOIN message_artifact_parts part ON part.artifact_id = ma.id
+            WHERE ma.id = :artifact_id
+            ORDER BY part.ordinal ASC, part.id ASC
+            """
+            ),
+            {"artifact_id": artifact_id},
+        )
+        .mappings()
+        .all()
+    )
+    if not rows:
+        return None
+    first = rows[0]
+    lines = [
+        "<artifact>",
+        f"<artifact_id>{first['artifact_id']}</artifact_id>",
+        f"<conversation_id>{first['conversation_id']}</conversation_id>",
+        f"<message_id>{first['message_id']}</message_id>",
+        f"<artifact_kind>{xml_escape(str(first['artifact_kind']))}</artifact_kind>",
+    ]
+    if first["title"]:
+        lines.append(f"<artifact_title>{xml_escape(str(first['title']))}</artifact_title>")
+    if first["preview_text"]:
+        lines.append(f"<preview>{xml_escape(str(first['preview_text']))}</preview>")
+    for row in rows:
+        if row["part_id"] is None:
+            continue
+        lines.append("<part>")
+        lines.append(f"<artifact_part_id>{row['part_id']}</artifact_part_id>")
+        lines.append(f"<ordinal>{row['ordinal']}</ordinal>")
+        if row["part_key"]:
+            lines.append(f"<part_key>{xml_escape(str(row['part_key']))}</part_key>")
+        if row["part_type"]:
+            lines.append(f"<part_type>{xml_escape(str(row['part_type']))}</part_type>")
+        lines.append(f"<source_version>{xml_escape(str(row['source_version']))}</source_version>")
+        lines.append(
+            "<source_locator>"
+            f"{xml_escape(json.dumps(row['locator'], sort_keys=True, separators=(',', ':'), default=str))}"
+            "</source_locator>"
+        )
+        if row["part_text"]:
+            lines.append(f"<content>{xml_escape(str(row['part_text']))}</content>")
+        for key in ("source_ref", "context_ref", "result_ref", "evidence_span_id"):
+            if row[key]:
+                lines.append(f"<{key}>{xml_escape(json.dumps(row[key], default=str))}</{key}>")
+        if row["evidence_span_ids"]:
+            evidence_span_ids = xml_escape(json.dumps(row["evidence_span_ids"], default=str))
+            lines.append(f"<evidence_span_ids>{evidence_span_ids}</evidence_span_ids>")
+        if row["source_refs"]:
+            source_refs = xml_escape(json.dumps(row["source_refs"], default=str))
+            lines.append(f"<source_refs>{source_refs}</source_refs>")
+        lines.append("</part>")
+    lines.append("</artifact>")
+    return "\n".join(lines)
+
+
+def _render_evidence_span_context(db: Session, evidence_span_id: UUID) -> str | None:
+    row = (
+        db.execute(
+            text(
+                """
+            SELECT
+                es.id,
+                es.media_id,
+                es.span_text,
+                es.citation_label,
+                es.resolver_kind,
+                ss.source_version,
+                m.title,
+                m.kind
+            FROM evidence_spans es
+            JOIN media m ON m.id = es.media_id
+            LEFT JOIN source_snapshots ss ON ss.id = es.source_snapshot_id
+            WHERE es.id = :evidence_span_id
+            """
+            ),
+            {"evidence_span_id": evidence_span_id},
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        return None
+    lines = [
+        "<evidence_span>",
+        f"<evidence_span_id>{row['id']}</evidence_span_id>",
+        f"<media_id>{row['media_id']}</media_id>",
+        f"<media_title>{xml_escape(str(row['title']))}</media_title>",
+        f"<media_kind>{xml_escape(str(row['kind']))}</media_kind>",
+        f"<citation_label>{xml_escape(str(row['citation_label']))}</citation_label>",
+        f"<resolver_kind>{xml_escape(str(row['resolver_kind']))}</resolver_kind>",
+        f"<quote>{xml_escape(str(row['span_text'] or ''))}</quote>",
+    ]
+    if row["source_version"]:
+        lines.append(f"<source_version>{xml_escape(str(row['source_version']))}</source_version>")
+    lines.append("</evidence_span>")
     return "\n".join(lines)
 
 

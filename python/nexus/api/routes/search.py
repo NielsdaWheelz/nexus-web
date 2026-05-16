@@ -13,12 +13,17 @@ using PostgreSQL full-text search. Visibility follows s4 canonical predicates.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.schemas.search import SearchResponse
+from nexus.schemas.search import (
+    SEARCH_RESULT_TYPES,
+    SearchResolveRequest,
+    SearchResolveResponse,
+    SearchResponse,
+)
 from nexus.services import search as search_service
 
 router = APIRouter()
@@ -36,7 +41,9 @@ def search(
         default=None,
         description=(
             "Comma-separated list of types to search "
-            "(media, podcast, content_chunk, contributor, page, note_block, message)"
+            "(media, podcast, episode, video, content_chunk, fragment, contributor, page, "
+            "note_block, highlight, message, evidence_span, conversation, artifact, "
+            "artifact_part, web_result)"
         ),
     ),
     contributor_handles: str | None = Query(
@@ -75,10 +82,16 @@ def search(
     **Types:**
     - `media` - Search media titles
     - `podcast` - Search visible podcast metadata
+    - `episode` - Search podcast episode media
+    - `video` - Search video media
     - `content_chunk` - Search indexed document and transcript chunks
+    - `fragment` - Search readable source fragments
     - `page` - Search note pages
     - `note_block` - Search note blocks
+    - `highlight` - Search saved source highlights
     - `message` - Search conversation messages
+    - `web_result` - Search persisted public-web retrievals from visible conversations
+    - `artifact_part` - Search durable generated artifact parts
 
     **Visibility:**
     - Search never returns invisible content
@@ -137,3 +150,43 @@ def search(
         limit=limit,
     )
     return result.model_dump(mode="json")
+
+
+@router.post(
+    "/search/resolve",
+    response_model=SearchResolveResponse,
+    response_model_by_alias=False,
+)
+def resolve_search_result(
+    request: SearchResolveRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    result = search_service.resolve_search_result(
+        db=db,
+        viewer_id=viewer.user_id,
+        result_ref=request.result_ref,
+    )
+    return SearchResolveResponse(result=result).model_dump(mode="json")
+
+
+@router.get(
+    "/search/results/{result_id}",
+    response_model=SearchResolveResponse,
+    response_model_by_alias=False,
+)
+def get_search_result(
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+    result_id: Annotated[str, Path(description="Search result object ID")],
+    result_type: Annotated[
+        SEARCH_RESULT_TYPES, Query(alias="type", description="Search result type")
+    ],
+) -> dict:
+    result = search_service.get_search_result(
+        db=db,
+        viewer_id=viewer.user_id,
+        result_type=result_type,
+        result_id=result_id,
+    )
+    return SearchResolveResponse(result=result).model_dump(mode="json")

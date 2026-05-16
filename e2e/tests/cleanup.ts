@@ -46,8 +46,23 @@ export function throwE2eCleanupFailures(
   if (productError) {
     throw new AggregateError(
       [productError, ...cleanupErrors],
-      `${label} product assertion and cleanup failed`,
+      [
+        `${label} product assertion and cleanup failed`,
+        `product: ${describeError(productError)}`,
+        ...cleanupErrors.map((error, index) => `cleanup ${index + 1}: ${describeError(error)}`),
+      ].join("\n"),
     );
   }
-  throw new AggregateError(cleanupErrors, `${label} cleanup failed`);
+  throw new AggregateError(
+    cleanupErrors,
+    [
+      `${label} cleanup failed`,
+      ...cleanupErrors.map((error, index) => `cleanup ${index + 1}: ${describeError(error)}`),
+    ].join("\n"),
+  );
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  return String(error);
 }

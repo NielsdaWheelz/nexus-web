@@ -257,7 +257,8 @@ describe("ReaderGutter", () => {
       mediaId: "media-1",
       highlightId: "h1",
       locator: {
-        type: "reader_text_offsets",
+        type: "web_text_offsets",
+        media_id: "media-1",
         fragment_id: "fragment-1",
         start_offset: 10,
         end_offset: 20,

@@ -5,10 +5,10 @@ All schemas must match s0_spec.md exactly.
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, JsonValue, model_validator
 
 from nexus.schemas.contributors import ContributorCreditOut
 
@@ -75,6 +75,7 @@ class MediaOut(BaseModel):
     transcript_coverage: str | None = None
     retrieval_status: str | None = None
     retrieval_status_reason: str | None = None
+    source_version: str | None = None
     failure_stage: str | None = None
     last_error_code: str | None = None
     playback_source: PlaybackSourceOut | None = None
@@ -123,6 +124,7 @@ class FragmentOut(BaseModel):
     t_start_ms: int | None = None
     t_end_ms: int | None = None
     speaker_label: str | None = None
+    source_version: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -337,6 +339,142 @@ class FromUrlResponse(BaseModel):
     ingest_enqueued: bool
 
 
+class MediaEvidenceTextQuoteOut(BaseModel):
+    """Text quote payload used by resolved evidence highlights."""
+
+    exact: str
+    prefix: str
+    suffix: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MediaEvidenceWebHighlightOut(BaseModel):
+    """Resolved web article text highlight."""
+
+    kind: Literal["web_text"]
+    evidence_span_id: UUID
+    fragment_id: UUID
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(ge=0)
+    text_quote: MediaEvidenceTextQuoteOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MediaEvidenceEpubHighlightOut(BaseModel):
+    """Resolved EPUB text highlight."""
+
+    kind: Literal["epub_text"]
+    evidence_span_id: UUID
+    fragment_id: UUID
+    section_id: str | None = None
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(ge=0)
+    text_quote: MediaEvidenceTextQuoteOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MediaEvidencePdfQuadOut(BaseModel):
+    """PDF highlight quad in page coordinate space."""
+
+    x1: FiniteFloat
+    y1: FiniteFloat
+    x2: FiniteFloat
+    y2: FiniteFloat
+    x3: FiniteFloat
+    y3: FiniteFloat
+    x4: FiniteFloat
+    y4: FiniteFloat
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MediaEvidencePdfGeometryOut(BaseModel):
+    """PDF geometry payload produced from stored evidence selector geometry."""
+
+    version: int = Field(ge=1)
+    coordinate_space: Literal["pdf_points"]
+    page_width: FiniteFloat = Field(gt=0)
+    page_height: FiniteFloat = Field(gt=0)
+    page_rotation_degrees: int = Field(ge=0)
+    page_box: str | None = None
+    projection: str | None = None
+    quads: list[MediaEvidencePdfQuadOut]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MediaEvidencePdfHighlightOut(BaseModel):
+    """Resolved PDF text highlight."""
+
+    kind: Literal["pdf_text"]
+    evidence_span_id: UUID
+    page_number: int = Field(ge=1)
+    page_label: str | None = None
+    source_fingerprint: str | None = None
+    text_quote: MediaEvidenceTextQuoteOut
+    geometry: MediaEvidencePdfGeometryOut | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MediaEvidenceTranscriptHighlightOut(BaseModel):
+    """Resolved transcript text/time highlight."""
+
+    kind: Literal["transcript_time_text"]
+    evidence_span_id: UUID
+    t_start_ms: int | None = Field(default=None, ge=0)
+    t_end_ms: int | None = Field(default=None, ge=0)
+    text_quote: MediaEvidenceTextQuoteOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+MediaEvidenceHighlightOut = Annotated[
+    MediaEvidenceWebHighlightOut
+    | MediaEvidenceEpubHighlightOut
+    | MediaEvidencePdfHighlightOut
+    | MediaEvidenceTranscriptHighlightOut,
+    Field(discriminator="kind"),
+]
+
+
+class MediaEvidenceResolverOut(BaseModel):
+    """Backend-owned evidence resolver payload."""
+
+    kind: Literal["web", "epub", "pdf", "transcript"]
+    route: str
+    params: dict[str, str]
+    status: Literal["resolved", "unresolved", "no_geometry"]
+    selector: dict[str, JsonValue]
+    highlight: MediaEvidenceHighlightOut | None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MediaEvidenceOut(BaseModel):
+    """Resolved media evidence response payload."""
+
+    evidence_span_id: UUID
+    media_id: UUID
+    citation_label: str
+    span_text: str
+    source_version: str
+    resolver: MediaEvidenceResolverOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MediaEvidenceResponse(BaseModel):
+    """Success envelope for resolved media evidence."""
+
+    data: MediaEvidenceOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class EpubNavigationSectionOut(BaseModel):
     """Canonical EPUB navigation section target."""
 
@@ -349,6 +487,7 @@ class EpubNavigationSectionOut(BaseModel):
     source: Literal["toc", "spine"]
     ordinal: int
     char_count: int
+    source_version: str | None = None
 
 
 class EpubNavigationTocNodeOut(BaseModel):
@@ -401,4 +540,5 @@ class EpubSectionOut(BaseModel):
     canonical_text: str
     char_count: int
     word_count: int
+    source_version: str | None = None
     created_at: datetime

@@ -14,11 +14,12 @@ from nexus.services.agent_tools.app_search import (
     execute_app_search,
     render_retrieved_context_blocks,
 )
-from nexus.services.context_lookup import hydrate_source_ref
 from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.search import ALL_RESULT_TYPES
 from tests.factories import (
     create_searchable_media_in_library,
     create_test_conversation,
+    create_test_highlight_note,
     create_test_library,
     create_test_message,
 )
@@ -74,11 +75,10 @@ def test_execute_app_search_persists_retrieval_metadata(
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            content="App Search Needle",
-            has_user_context=False,
             scope="all",
-            history=[],
-            scope_metadata={"type": "general"},
+            planned_query="App Search Needle",
+            planned_types=list(ALL_RESULT_TYPES),
+            planned_filters={},
         )
 
         assert run is not None
@@ -105,7 +105,12 @@ def test_execute_app_search_persists_retrieval_metadata(
         retrieval_rows = session.execute(
             text(
                 """
-                SELECT exact_snippet, retrieval_status, included_in_prompt
+                SELECT exact_snippet,
+                       retrieval_status,
+                       included_in_prompt,
+                       source_version,
+                       locator,
+                       result_ref
                 FROM message_retrievals
                 WHERE tool_call_id = :tool_call_id
                   AND scope = 'all'
@@ -118,6 +123,56 @@ def test_execute_app_search_persists_retrieval_metadata(
         assert any(row[0] for row in retrieval_rows)
         assert any(row[1] == "selected" for row in retrieval_rows)
         assert all(row[2] is False for row in retrieval_rows)
+        assert any(row[3] for row in retrieval_rows)
+        assert all("resolver" not in row[5] for row in retrieval_rows)
+
+        content_chunk_row = session.execute(
+            text(
+                """
+                SELECT locator, result_ref
+                FROM message_retrievals
+                WHERE tool_call_id = :tool_call_id
+                  AND result_type = 'content_chunk'
+                LIMIT 1
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).one()
+        assert content_chunk_row[0]["type"] == "web_text_offsets"
+        assert "resolver" not in content_chunk_row[1]
+
+        ledger_row = session.execute(
+            text(
+                """
+                SELECT COUNT(*),
+                       COUNT(*) FILTER (WHERE selected),
+                       bool_and(result_ref ? 'type')
+                FROM message_retrieval_candidate_ledgers
+                WHERE tool_call_id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).one()
+        assert ledger_row[0] == len(retrieval_rows)
+        assert ledger_row[1] == len(run.selected_citations)
+        assert ledger_row[2] is True
+
+        rerank_row = session.execute(
+            text(
+                """
+                SELECT strategy, input_count, selected_count, budget_chars, selected_chars, status
+                FROM message_rerank_ledgers
+                WHERE tool_call_id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).one()
+        assert rerank_row[0] == "search_score_then_context_budget"
+        assert rerank_row[1] == len(run.citations)
+        assert rerank_row[2] == len(run.selected_citations)
+        assert rerank_row[3] > 0
+        assert rerank_row[4] == run.context_chars
+        assert rerank_row[5] == run.status
 
     direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
@@ -185,11 +240,7 @@ def test_execute_app_search_persists_normalized_executed_filters(
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            content="Find mixed filters",
-            has_user_context=False,
             scope="all",
-            history=[],
-            scope_metadata={"type": "general"},
             planned_query="Mixed Filter Needle",
             planned_types=["media"],
             planned_filters={
@@ -197,7 +248,6 @@ def test_execute_app_search_persists_normalized_executed_filters(
                 "roles": ["HOST"],
                 "content_kinds": ["WEB_ARTICLE"],
             },
-            force=True,
         )
 
         assert run is not None
@@ -208,32 +258,6 @@ def test_execute_app_search_persists_normalized_executed_filters(
             "content_kinds": ["web_article"],
         }
         assert any(citation.source_id == str(media_id) for citation in run.citations)
-
-        result_ref = session.execute(
-            text(
-                """
-                SELECT result_refs
-                FROM message_tool_calls
-                WHERE id = :tool_call_id
-                """
-            ),
-            {"tool_call_id": run.tool_call_id},
-        ).scalar_one()
-        retrieval_ref = session.execute(
-            text(
-                """
-                SELECT result_ref
-                FROM message_retrievals
-                WHERE tool_call_id = :tool_call_id
-                ORDER BY ordinal ASC
-                LIMIT 1
-                """
-            ),
-            {"tool_call_id": run.tool_call_id},
-        ).scalar_one()
-
-        assert result_ref[0]["filters"] == run.filters
-        assert retrieval_ref["filters"] == run.filters
 
     direct_db.register_cleanup("contributors", "display_name", credited_name)
     direct_db.register_cleanup("contributor_aliases", "source", source)
@@ -286,14 +310,10 @@ def test_execute_app_search_preserves_typed_provider_error_code(
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            content="Find typed provider failure",
-            has_user_context=False,
             scope="all",
-            history=[],
-            scope_metadata={"type": "general"},
             planned_query="typed provider failure",
             planned_types=["content_chunk"],
-            force=True,
+            planned_filters={},
         )
 
         assert run is not None
@@ -319,7 +339,7 @@ def test_execute_app_search_preserves_typed_provider_error_code(
     direct_db.register_cleanup("users", "id", user_id)
 
 
-def test_scoped_app_search_persists_no_indexed_evidence_status(
+def test_scoped_app_search_persists_no_indexed_evidence_as_empty_tool_result(
     direct_db: DirectSessionManager,
 ) -> None:
     user_id = create_test_user_id()
@@ -350,40 +370,46 @@ def test_scoped_app_search_persists_no_indexed_evidence_status(
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            content="Find indexed evidence",
-            has_user_context=False,
             scope=f"library:{library_id}",
-            history=[],
-            scope_metadata={"type": "library", "id": str(library_id)},
             planned_query="indexed evidence",
             planned_types=["content_chunk"],
-            force=True,
+            planned_filters={},
         )
 
         assert run is not None
         assert run.tool_call_id is not None
         assert run.citations == []
+        assert run.empty_status == "no_indexed_evidence"
+        assert run.retrieval_result_event()["results"] == []
         assert 'status="no_indexed_evidence"' in run.context_text
 
-        retrieval_id = session.execute(
+        tool_row = session.execute(
             text(
                 """
-                SELECT id
-                FROM message_retrievals
-                WHERE tool_call_id = :tool_call_id
-                  AND selected = true
+                SELECT result_refs, selected_context_refs
+                FROM message_tool_calls
+                WHERE id = :tool_call_id
                 """
             ),
             {"tool_call_id": run.tool_call_id},
-        ).scalar_one()
-        hydrated = hydrate_source_ref(
-            session,
-            viewer_id=user_id,
-            source_ref={"type": "message_retrieval", "retrieval_id": str(retrieval_id)},
-        )
-
-        assert hydrated.resolved, hydrated.failure
-        assert 'status="no_indexed_evidence"' in hydrated.evidence_text
+        ).one()
+        assert tool_row[0] == []
+        assert tool_row[1] == []
+        retrieval_count = session.execute(
+            text(
+                """
+                SELECT
+                    (SELECT count(*) FROM message_retrievals WHERE tool_call_id = :tool_call_id),
+                    (
+                        SELECT count(*)
+                        FROM message_retrieval_candidate_ledgers
+                        WHERE tool_call_id = :tool_call_id
+                    )
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).one()
+        assert tuple(retrieval_count) == (0, 0)
 
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
@@ -392,7 +418,7 @@ def test_scoped_app_search_persists_no_indexed_evidence_status(
     direct_db.register_cleanup("users", "id", user_id)
 
 
-def test_scoped_app_search_persists_no_results_when_requested_type_has_no_hits(
+def test_scoped_app_search_persists_no_results_as_empty_tool_result(
     direct_db: DirectSessionManager,
 ) -> None:
     user_id = create_test_user_id()
@@ -429,34 +455,47 @@ def test_scoped_app_search_persists_no_results_when_requested_type_has_no_hits(
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            content="Find absent scoped evidence",
-            has_user_context=False,
             scope=f"library:{library_id}",
-            history=[],
-            scope_metadata={"type": "library", "id": str(library_id)},
             planned_query="termthatdoesnotexist",
             planned_types=["media"],
-            force=True,
+            planned_filters={},
         )
 
         assert run is not None
         assert run.tool_call_id is not None
         assert run.citations == []
+        assert run.empty_status == "no_results"
+        assert run.retrieval_result_event()["results"] == []
         assert 'status="no_results"' in run.context_text
         assert 'status="no_indexed_evidence"' not in run.context_text
 
-        result_ref = session.execute(
+        tool_row = session.execute(
             text(
                 """
-                SELECT result_ref
-                FROM message_retrievals
-                WHERE tool_call_id = :tool_call_id
-                  AND selected = true
+                SELECT result_refs, selected_context_refs
+                FROM message_tool_calls
+                WHERE id = :tool_call_id
                 """
             ),
             {"tool_call_id": run.tool_call_id},
-        ).scalar_one()
-        assert result_ref["status"] == "no_results"
+        ).one()
+        assert tool_row[0] == []
+        assert tool_row[1] == []
+        retrieval_count = session.execute(
+            text(
+                """
+                SELECT
+                    (SELECT count(*) FROM message_retrievals WHERE tool_call_id = :tool_call_id),
+                    (
+                        SELECT count(*)
+                        FROM message_retrieval_candidate_ledgers
+                        WHERE tool_call_id = :tool_call_id
+                    )
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).one()
+        assert tuple(retrieval_count) == (0, 0)
 
     direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
@@ -467,6 +506,95 @@ def test_scoped_app_search_persists_no_results_when_requested_type_has_no_hits(
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("libraries", "id", library_id)
     direct_db.register_cleanup("users", "id", user_id)
+
+
+def test_execute_app_search_selects_highlight_result_as_prompt_evidence(
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        library_id = create_test_library(session, user_id, "Highlight App Search Library")
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            role="user",
+            content="Find the saved highlight",
+        )
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=2,
+            role="assistant",
+            content="",
+            status="pending",
+        )
+        media_id = create_searchable_media_in_library(
+            session,
+            user_id,
+            library_id,
+            title="Highlight Search Needle",
+        )
+        highlight_id, _note_block_id = create_test_highlight_note(
+            session,
+            user_id,
+            media_id,
+            body="Linked note for highlight search.",
+        )
+
+        run = execute_app_search(
+            session,
+            viewer_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            scope="all",
+            planned_query="test exact",
+            planned_types=["highlight"],
+            planned_filters={},
+        )
+
+        assert run is not None
+        assert run.status == "complete"
+        assert run.selected_citations
+        assert run.selected_citations[0].result_type == "highlight"
+        assert "<highlight>" in run.context_text
+        assert "<quote>test exact</quote>" in run.context_text
+
+        retrieval_row = session.execute(
+            text(
+                """
+                SELECT result_type, result_ref, exact_snippet, selected
+                FROM message_retrievals
+                WHERE tool_call_id = :tool_call_id
+                """
+            ),
+            {"tool_call_id": run.tool_call_id},
+        ).one()
+        assert retrieval_row[0] == "highlight"
+        assert retrieval_row[1]["type"] == "highlight"
+        assert retrieval_row[1]["id"] == str(highlight_id)
+        assert retrieval_row[1]["result_type"] == "highlight"
+        assert retrieval_row[2]
+        assert retrieval_row[3] is True
+
+    direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("conversation_media", "conversation_id", conversation_id)
+    direct_db.register_cleanup("highlights", "id", highlight_id)
+    direct_db.register_cleanup("highlight_fragment_anchors", "highlight_id", highlight_id)
+    direct_db.register_cleanup("pages", "user_id", user_id)
+    direct_db.register_cleanup("note_blocks", "user_id", user_id)
+    direct_db.register_cleanup("object_links", "user_id", user_id)
 
 
 def test_render_retrieved_context_requires_matching_index_run(
@@ -585,13 +713,14 @@ def test_render_retrieved_context_requires_matching_index_run(
             snippet=span_text,
             deep_link="/media/test",
             citation_label="Wrong Run",
-            resolver=None,
+            locator=None,
             context_ref={
                 "type": "content_chunk",
                 "id": str(row[0]),
                 "evidence_span_ids": [str(mismatch_span_id)],
             },
             evidence_span_id=str(mismatch_span_id),
+            source_version=None,
             media_id=str(media_id),
             media_kind="web_article",
             score=1.0,

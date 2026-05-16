@@ -292,6 +292,7 @@ def reconcile_stale_ingest_media_job(
         semantic_failed = 0
         semantic_skipped = 0
         embedding_model = current_transcript_embedding_model()
+        embedding_version = embedding_model
         embedding_provider = "test" if embedding_model.startswith("test_") else "openai"
         embedding_config_hash = hashlib.sha256(
             f"{embedding_provider}:{embedding_model}:{transcript_embedding_dimensions()}:{CHUNKER_VERSION}".encode()
@@ -323,7 +324,7 @@ def reconcile_stale_ingest_media_job(
                                     AND mcis.status = 'ready'
                                     AND mcis.active_embedding_provider = :embedding_provider
                                     AND mcis.active_embedding_model = :embedding_model
-                                    AND mcis.active_embedding_version = :embedding_model
+                                    AND mcis.active_embedding_version = :embedding_version
                                     AND mcis.active_embedding_config_hash = :embedding_config_hash
                                     AND ss.source_kind = 'transcript'
                                     AND ss.metadata ->> 'transcript_version_id'
@@ -341,6 +342,7 @@ def reconcile_stale_ingest_media_job(
                 "semantic_limit": int(settings.ingest_semantic_repair_batch_limit),
                 "embedding_provider": embedding_provider,
                 "embedding_model": embedding_model,
+                "embedding_version": embedding_version,
                 "embedding_config_hash": embedding_config_hash,
             },
         ).fetchall()

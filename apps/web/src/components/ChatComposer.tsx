@@ -8,7 +8,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { ArrowUp, ChevronDown, Search, X } from "lucide-react";
+import { ArrowUp, ChevronDown, FileText, Search, X } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { toFeedback } from "@/components/feedback/Feedback";
 import {
@@ -79,6 +79,7 @@ export interface ChatComposerProps {
 type ComposerModel = ConversationModel;
 type ReasoningMode = ChatRunCreateRequest["reasoning"];
 type WebSearchMode = ChatRunCreateRequest["web_search"]["mode"];
+type ArtifactIntentKind = ChatRunCreateRequest["artifact_intent"]["kind"];
 
 /** Max contexts per message. */
 const MAX_CONTEXTS = 10;
@@ -90,6 +91,50 @@ const WEB_SEARCH_MODE_LABELS = {
   required: "Required",
   off: "Off",
 } satisfies Record<WebSearchMode, string>;
+const ARTIFACT_INTENT_KINDS = [
+  "off",
+  "auto",
+  "briefing_document",
+  "study_guide",
+  "faq",
+  "timeline",
+  "comparison_table",
+  "extraction_table",
+  "claim_table",
+  "contradiction_report",
+  "source_map",
+  "concept_map",
+  "outline",
+  "flashcards",
+  "quiz",
+  "audio_overview_script",
+  "audio_overview",
+  "video_slide_overview_manifest",
+  "bibliography",
+  "citation_audit",
+] as const;
+const ARTIFACT_INTENT_LABELS = {
+  off: "Off",
+  auto: "Auto",
+  briefing_document: "Briefing document",
+  study_guide: "Study guide",
+  faq: "FAQ",
+  timeline: "Timeline",
+  comparison_table: "Comparison table",
+  extraction_table: "Extraction table",
+  claim_table: "Claim table",
+  contradiction_report: "Contradiction report",
+  source_map: "Source map",
+  concept_map: "Concept map",
+  outline: "Outline",
+  flashcards: "Flashcards",
+  quiz: "Quiz",
+  audio_overview_script: "Audio script",
+  audio_overview: "Audio overview",
+  video_slide_overview_manifest: "Video or slide manifest",
+  bibliography: "Bibliography",
+  citation_audit: "Citation audit",
+} satisfies Record<ArtifactIntentKind, string>;
 const REASONING_LABELS = {
   default: "Default",
   none: "None",
@@ -193,6 +238,8 @@ export default function ChatComposer({
     useState<ReasoningMode>(DEFAULT_REASONING);
   const [onlyUseMyKeys, setOnlyUseMyKeys] = useState(false);
   const [webSearchMode, setWebSearchMode] = useState<WebSearchMode>("auto");
+  const [artifactIntentKind, setArtifactIntentKind] =
+    useState<ArtifactIntentKind>("off");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const isMobile = useIsMobileViewport();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -391,6 +438,7 @@ export default function ChatComposer({
         allowed_domains: [],
         blocked_domains: [],
       },
+      artifact_intent: { kind: artifactIntentKind },
       contexts:
         attachedContexts.length > 0
           ? attachedContexts.slice(0, MAX_CONTEXTS).map(toWireContextItem)
@@ -430,6 +478,7 @@ export default function ChatComposer({
     selectedReasoning,
     onlyUseMyKeys,
     webSearchMode,
+    artifactIntentKind,
     attachedContexts,
     conversationId,
     conversationScope,
@@ -562,6 +611,25 @@ export default function ChatComposer({
               {WEB_SEARCH_MODES.map((mode) => (
                 <option key={mode} value={mode}>
                   {WEB_SEARCH_MODE_LABELS[mode]}
+                </option>
+              ))}
+            </Select>
+          </span>
+
+          <span className={styles.webSearchSelect}>
+            <FileText size={13} aria-hidden="true" />
+            <Select
+              size="sm"
+              value={artifactIntentKind}
+              onChange={(e) =>
+                setArtifactIntentKind(e.target.value as ArtifactIntentKind)
+              }
+              disabled={composerDisabled}
+              aria-label="Artifact intent"
+            >
+              {ARTIFACT_INTENT_KINDS.map((kind) => (
+                <option key={kind} value={kind}>
+                  {ARTIFACT_INTENT_LABELS[kind]}
                 </option>
               ))}
             </Select>

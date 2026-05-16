@@ -24,6 +24,7 @@ from nexus.schemas.media import (
     FromUrlRequest,
     ListeningStateBatchUpsertRequest,
     ListeningStateUpsertRequest,
+    MediaEvidenceResponse,
     TranscriptForecastBatchRequest,
     TranscriptRequestBatchRequest,
     TranscriptRequestBatchResponse,
@@ -257,7 +258,10 @@ def remove_media(
     return success_response(result.model_dump(mode="json"))
 
 
-@router.get("/media/{media_id}/evidence/{evidence_span_id}")
+@router.get(
+    "/media/{media_id}/evidence/{evidence_span_id}",
+    response_model=MediaEvidenceResponse,
+)
 def resolve_media_evidence(
     media_id: UUID,
     evidence_span_id: UUID,

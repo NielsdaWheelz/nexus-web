@@ -9,6 +9,7 @@ Tests cover:
 - Visibility isolation between users
 """
 
+import hashlib
 import json
 from uuid import UUID, uuid4
 
@@ -17,7 +18,17 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ConversationBranch, Message
+from nexus.db.models import (
+    AssistantMessageCitationAudit,
+    AssistantMessageVerifierRun,
+    ChatRun,
+    ConversationBranch,
+    Message,
+    MessageRerankLedger,
+    MessageRetrieval,
+    MessageRetrievalCandidateLedger,
+    MessageToolCall,
+)
 from nexus.services.conversations import (
     DEFAULT_CONVERSATION_TITLE,
     MAX_CONVERSATION_TITLE_LENGTH,
@@ -28,6 +39,7 @@ from tests.factories import (
     create_test_library,
     create_test_media_in_library,
     create_test_message,
+    create_test_model,
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -424,8 +436,8 @@ class TestDeleteConversation:
             create_test_message(session, conversation_id, seq=1)
             create_test_message(session, conversation_id, seq=2)
 
-        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
 
         # Verify messages exist
         with direct_db.session() as session:
@@ -550,7 +562,7 @@ class TestDeleteConversation:
                     )
                     VALUES (
                         :message_id, 'general', NULL, 'included_in_prompt', 'supported',
-                        'verified', 1, 1, 0, 0
+                        'llm_verified', 1, 1, 0, 0
                     )
                 """),
                 {"message_id": assistant_message_id},
@@ -562,7 +574,7 @@ class TestDeleteConversation:
                         answer_end_offset, claim_kind, support_status, verifier_status
                     )
                     VALUES (
-                        :id, :message_id, 0, 'Claim', 0, 5, 'answer', 'supported', 'verified'
+                        :id, :message_id, 0, 'Claim', 0, 5, 'answer', 'supported', 'llm_verified'
                     )
                 """),
                 {"id": claim_id, "message_id": assistant_message_id},
@@ -571,15 +583,23 @@ class TestDeleteConversation:
                 text("""
                     INSERT INTO assistant_message_claim_evidence (
                         id, claim_id, ordinal, evidence_role, source_ref, context_ref,
-                        result_ref, exact_snippet, score, retrieval_status,
-                        selected, included_in_prompt
+                        result_ref, exact_snippet, locator, score, retrieval_status,
+                        selected, included_in_prompt, source_version
                     )
                     VALUES (
                         :id, :claim_id, 0, 'supports',
                         jsonb_build_object('type', 'message_retrieval', 'id', CAST(:retrieval_id AS text)),
                         jsonb_build_object('type', 'message', 'id', CAST(:source_id AS text)),
                         jsonb_build_object('type', 'message', 'id', CAST(:source_id AS text)),
-                        'Evidence', 1.0, 'included_in_prompt', true, true
+                        'Evidence',
+                        jsonb_build_object(
+                            'type', 'message_offsets',
+                            'conversation_id', CAST(:conversation_id AS text),
+                            'message_id', CAST(:source_id AS text),
+                            'start_offset', 0,
+                            'end_offset', 8
+                        ),
+                        1.0, 'included_in_prompt', true, true, 'message:v1'
                     )
                 """),
                 {
@@ -587,6 +607,7 @@ class TestDeleteConversation:
                     "claim_id": claim_id,
                     "retrieval_id": str(retrieval_id),
                     "source_id": str(user_message_id),
+                    "conversation_id": str(conversation_id),
                 },
             )
             session.commit()
@@ -684,8 +705,8 @@ class TestListMessages:
             )
             session.commit()
 
-        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
 
         response = auth_client.get(
             f"/conversations/{conversation_id}/messages", headers=auth_headers(user_id)
@@ -696,12 +717,1224 @@ class TestListMessages:
         assert len(data) == 3
         # Oldest first (ASC order)
         assert data[0]["seq"] == 1
-        assert data[0]["content"] == "First"
+        assert data[0]["message_document"]["blocks"][0]["text"] == "First"
         assert data[0]["contexts"] == []
         assert data[1]["seq"] == 2
         assert data[1]["contexts"] == []
         assert data[2]["seq"] == 3
         assert data[2]["contexts"] == []
+
+    def test_message_artifact_read_path(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        artifact_id = uuid4()
+        part_id = uuid4()
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            user_message_id = create_test_message(session, conversation_id, seq=1, content="Make")
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Done",
+                parent_message_id=user_message_id,
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_artifacts (
+                        id,
+                        conversation_id,
+                        message_id,
+                        artifact_key,
+                        artifact_kind,
+                        title,
+                        status,
+                        preview_text
+                    )
+                    VALUES (
+                        :artifact_id,
+                        :conversation_id,
+                        :message_id,
+                        'artifact-1',
+                        'timeline',
+                        'Timeline',
+                        'complete',
+                        'Durable preview'
+                    )
+                    """
+                ),
+                {
+                    "artifact_id": artifact_id,
+                    "conversation_id": conversation_id,
+                    "message_id": assistant_message_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_artifact_parts (
+                        id,
+                        artifact_id,
+                        ordinal,
+                        part_key,
+                        part_type,
+                        text,
+                        source_version,
+                        locator,
+                        source_ref,
+                        evidence_span_ids
+                    )
+                    VALUES (
+                        :part_id,
+                        :artifact_id,
+                        0,
+                        'part-1',
+                        'event',
+                        'Cited event',
+                        concat('artifact_part', chr(58), CAST(:part_id AS text), chr(58), 'v1'),
+                        jsonb_build_object(
+                            'type', 'artifact_part_ref',
+                            'artifact_id', CAST(:artifact_id AS text),
+                            'artifact_part_id', CAST(:part_id AS text),
+                            'message_id', CAST(:message_id AS text),
+                            'conversation_id', CAST(:conversation_id AS text),
+                            'part_key', 'part-1'
+                        ),
+                        '{"type":"message_retrieval","id":"retrieval-1"}'::jsonb,
+                        jsonb_build_array(to_jsonb(CAST(:evidence_span_id AS text)))
+                    )
+                    """
+                ),
+                {
+                    "part_id": part_id,
+                    "artifact_id": artifact_id,
+                    "message_id": assistant_message_id,
+                    "conversation_id": conversation_id,
+                    "evidence_span_id": str(uuid4()),
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("message_artifacts", "id", artifact_id)
+        direct_db.register_cleanup("message_artifact_parts", "artifact_id", artifact_id)
+        direct_db.register_cleanup("message_artifact_exports", "artifact_id", artifact_id)
+
+        response = auth_client.get(
+            f"/artifacts/{artifact_id}",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["id"] == str(artifact_id)
+        assert data["artifact_key"] == "artifact-1"
+        assert data["artifact_kind"] == "timeline"
+        assert data["parts"][0]["id"] == str(part_id)
+        assert data["parts"][0]["source_ref"]["type"] == "message_retrieval"
+        assert data["parts"][0]["source_ref"]["id"] == "retrieval-1"
+
+        list_response = auth_client.get(
+            f"/artifacts?message_id={assistant_message_id}",
+            headers=auth_headers(user_id),
+        )
+        assert list_response.status_code == 200, list_response.text
+        assert list_response.json()["data"][0]["id"] == str(artifact_id)
+
+    def test_message_artifact_exports_markdown_with_citation_manifest(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        artifact_id = uuid4()
+        part_id = uuid4()
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            user_message_id = create_test_message(session, conversation_id, seq=1, content="Make")
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Done",
+                parent_message_id=user_message_id,
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_artifacts (
+                        id, conversation_id, message_id, artifact_key,
+                        artifact_kind, title, status, preview_text
+                    )
+                    VALUES (
+                        :artifact_id, :conversation_id, :message_id, 'artifact-1',
+                        'timeline', 'Timeline', 'complete', 'Durable preview'
+                    )
+                    """
+                ),
+                {
+                    "artifact_id": artifact_id,
+                    "conversation_id": conversation_id,
+                    "message_id": assistant_message_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_artifact_parts (
+                        id, artifact_id, ordinal, part_key, part_type, text,
+                        source_version, locator, source_ref, evidence_span_ids
+                    )
+                    VALUES (
+                        :part_id, :artifact_id, 0, 'part-1', 'event', 'Cited event',
+                        concat('artifact_part', chr(58), CAST(:part_id AS text), chr(58), 'v1'),
+                        jsonb_build_object(
+                            'type', 'artifact_part_ref',
+                            'artifact_id', CAST(:artifact_id AS text),
+                            'artifact_part_id', CAST(:part_id AS text),
+                            'message_id', CAST(:message_id AS text),
+                            'conversation_id', CAST(:conversation_id AS text),
+                            'part_key', 'part-1'
+                        ),
+                        '{"type":"message_retrieval","id":"retrieval-1"}'::jsonb,
+                        '[]'::jsonb
+                    )
+                    """
+                ),
+                {
+                    "part_id": part_id,
+                    "artifact_id": artifact_id,
+                    "message_id": assistant_message_id,
+                    "conversation_id": conversation_id,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("message_artifacts", "id", artifact_id)
+        direct_db.register_cleanup("message_artifact_parts", "artifact_id", artifact_id)
+        direct_db.register_cleanup("message_artifact_exports", "artifact_id", artifact_id)
+
+        response = auth_client.post(
+            f"/artifacts/{artifact_id}/export?format=markdown",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.headers["content-disposition"] == 'attachment; filename="timeline.md"'
+        assert response.headers["x-nexus-artifact-version"] == "1"
+        assert (
+            response.headers["x-nexus-artifact-content-sha256"]
+            == hashlib.sha256(response.content).hexdigest()
+        )
+        assert "# Timeline" in response.text
+        assert "Cited event [^artifact-part-1]" in response.text
+
+        json_response = auth_client.post(
+            f"/artifacts/{artifact_id}/export?format=json",
+            headers=auth_headers(user_id),
+        )
+        assert json_response.status_code == 200, json_response.text
+        data = json_response.json()
+        assert data["artifact"]["id"] == str(artifact_id)
+        assert data["citation_manifest"]["entries"][0]["artifact_part_id"] == str(part_id)
+        assert data["citation_manifest"]["entries"][0]["source_ref"]["type"] == "message_retrieval"
+        assert data["citation_manifest"]["entries"][0]["source_ref"]["id"] == "retrieval-1"
+        assert (
+            json_response.headers["x-nexus-artifact-content-sha256"]
+            == hashlib.sha256(json_response.content).hexdigest()
+        )
+
+        repeat_markdown_response = auth_client.post(
+            f"/artifacts/{artifact_id}/export?format=markdown",
+            headers=auth_headers(user_id),
+        )
+        assert repeat_markdown_response.status_code == 200, repeat_markdown_response.text
+        assert repeat_markdown_response.content == response.content, (
+            "Re-exporting markdown for an unchanged artifact must be byte-identical"
+        )
+
+        for export_format, content_type in {
+            "html": "text/html",
+            "csv": "text/csv",
+            "pdf": "application/pdf",
+        }.items():
+            format_response = auth_client.post(
+                f"/artifacts/{artifact_id}/export?format={export_format}",
+                headers=auth_headers(user_id),
+            )
+            assert format_response.status_code == 200, format_response.text
+            assert format_response.headers["content-type"].startswith(content_type)
+            assert (
+                format_response.headers["x-nexus-artifact-manifest-sha256"]
+                == response.headers["x-nexus-artifact-manifest-sha256"]
+            )
+
+        with direct_db.session() as session:
+            export_rows = (
+                session.execute(
+                    text(
+                        """
+                        SELECT export_format,
+                               artifact_version,
+                               content_sha256,
+                               manifest_sha256
+                        FROM message_artifact_exports
+                        WHERE artifact_id = :artifact_id
+                        ORDER BY created_at ASC, id ASC
+                        """
+                    ),
+                    {"artifact_id": artifact_id},
+                )
+                .mappings()
+                .all()
+            )
+        assert [row["export_format"] for row in export_rows] == [
+            "markdown",
+            "json",
+            "markdown",
+            "html",
+            "csv",
+            "pdf",
+        ]
+        assert {row["artifact_version"] for row in export_rows} == {1}
+        assert export_rows[0]["content_sha256"] == export_rows[2]["content_sha256"]
+        assert len({row["manifest_sha256"] for row in export_rows}) == 1
+
+        ledger_response = auth_client.get(
+            f"/artifacts/{artifact_id}/exports",
+            headers=auth_headers(user_id),
+        )
+        assert ledger_response.status_code == 200, ledger_response.text
+        ledger_rows = ledger_response.json()["data"]
+        assert [row["format"] for row in ledger_rows] == [
+            "pdf",
+            "csv",
+            "html",
+            "markdown",
+            "json",
+            "markdown",
+        ]
+        assert {row["artifact_version"] for row in ledger_rows} == {1}
+        assert {row["manifest_sha256"] for row in ledger_rows} == {
+            response.headers["x-nexus-artifact-manifest-sha256"]
+        }
+        assert ledger_rows[0]["metadata"] == {
+            "artifact_key": "artifact-1",
+            "artifact_kind": "timeline",
+            "part_count": 1,
+        }
+
+    def test_artifact_export_ledgers_are_visible_to_owner_and_private_to_shared_reader(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        owner_id = create_test_user_id()
+        reader_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(owner_id))
+        auth_client.get("/me", headers=auth_headers(reader_id))
+        artifact_id = uuid4()
+        part_id = uuid4()
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, owner_id)
+            user_message_id = create_test_message(session, conversation_id, seq=1, content="Make")
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Done",
+                parent_message_id=user_message_id,
+            )
+            library_id = create_shared_library(session, owner_id)
+            add_member_to_library(session, library_id, reader_id)
+            share_conversation_to_library(session, conversation_id, library_id)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_artifacts (
+                        id, conversation_id, message_id, artifact_key,
+                        artifact_kind, title, status
+                    )
+                    VALUES (
+                        :artifact_id, :conversation_id, :message_id, 'artifact-1',
+                        'timeline', 'Timeline', 'complete'
+                    )
+                    """
+                ),
+                {
+                    "artifact_id": artifact_id,
+                    "conversation_id": conversation_id,
+                    "message_id": assistant_message_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_artifact_parts (
+                        id, artifact_id, ordinal, part_key, part_type, text,
+                        source_version, locator, source_ref, evidence_span_ids
+                    )
+                    VALUES (
+                        :part_id, :artifact_id, 0, 'part-1', 'event', 'Cited event',
+                        concat('artifact_part', chr(58), CAST(:part_id AS text), chr(58), 'v1'),
+                        jsonb_build_object(
+                            'type', 'artifact_part_ref',
+                            'artifact_id', CAST(:artifact_id AS text),
+                            'artifact_part_id', CAST(:part_id AS text),
+                            'message_id', CAST(:message_id AS text),
+                            'conversation_id', CAST(:conversation_id AS text),
+                            'part_key', 'part-1'
+                        ),
+                        '{"type":"message","id":"reader-visible"}'::jsonb,
+                        '[]'::jsonb
+                    )
+                    """
+                ),
+                {
+                    "part_id": part_id,
+                    "artifact_id": artifact_id,
+                    "message_id": assistant_message_id,
+                    "conversation_id": conversation_id,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("conversation_shares", "conversation_id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("message_artifacts", "id", artifact_id)
+        direct_db.register_cleanup("message_artifact_parts", "artifact_id", artifact_id)
+        direct_db.register_cleanup("message_artifact_exports", "artifact_id", artifact_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+
+        owner_export = auth_client.post(
+            f"/artifacts/{artifact_id}/export?format=markdown",
+            headers=auth_headers(owner_id),
+        )
+        assert owner_export.status_code == 200, owner_export.text
+        reader_export = auth_client.post(
+            f"/artifacts/{artifact_id}/export?format=json",
+            headers=auth_headers(reader_id),
+        )
+        assert reader_export.status_code == 200, reader_export.text
+
+        owner_ledgers = auth_client.get(
+            f"/artifacts/{artifact_id}/exports",
+            headers=auth_headers(owner_id),
+        )
+        assert owner_ledgers.status_code == 200, owner_ledgers.text
+        assert [row["format"] for row in owner_ledgers.json()["data"]] == ["json", "markdown"]
+
+        reader_ledgers = auth_client.get(
+            f"/artifacts/{artifact_id}/exports",
+            headers=auth_headers(reader_id),
+        )
+        assert reader_ledgers.status_code == 200, reader_ledgers.text
+        assert [row["format"] for row in reader_ledgers.json()["data"]] == ["json"]
+        assert reader_ledgers.json()["data"][0]["viewer_user_id"] == str(reader_id)
+
+    def test_create_artifact_requires_assistant_message_parts_and_readable_refs(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            user_message_id = create_test_message(session, conversation_id, seq=1, content="Make")
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Done",
+                parent_message_id=user_message_id,
+            )
+            session.commit()
+
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+
+        missing_key_response = auth_client.post(
+            "/artifacts",
+            headers=auth_headers(user_id),
+            json={
+                "message_id": str(assistant_message_id),
+                "artifact_kind": "timeline",
+                "parts": [
+                    {
+                        "part_key": "part-1",
+                        "text": "Cited event",
+                        "source_ref": {"type": "message", "id": str(user_message_id)},
+                    }
+                ],
+            },
+        )
+        assert missing_key_response.status_code == 400, missing_key_response.text
+
+        user_message_response = auth_client.post(
+            "/artifacts",
+            headers=auth_headers(user_id),
+            json={
+                "message_id": str(user_message_id),
+                "artifact_key": "artifact-1",
+                "artifact_kind": "timeline",
+                "parts": [
+                    {
+                        "part_key": "part-1",
+                        "text": "Cited event",
+                        "source_ref": {"type": "message", "id": str(user_message_id)},
+                    }
+                ],
+            },
+        )
+        assert user_message_response.status_code == 400, user_message_response.text
+
+        empty_response = auth_client.post(
+            "/artifacts",
+            headers=auth_headers(user_id),
+            json={
+                "message_id": str(assistant_message_id),
+                "artifact_key": "artifact-1",
+                "artifact_kind": "timeline",
+            },
+        )
+        assert empty_response.status_code == 400, empty_response.text
+
+        response = auth_client.post(
+            "/artifacts",
+            headers=auth_headers(user_id),
+            json={
+                "message_id": str(assistant_message_id),
+                "artifact_key": "artifact-1",
+                "artifact_kind": "timeline",
+                "title": "Timeline",
+                "parts": [
+                    {
+                        "part_key": "part-1",
+                        "part_type": "event",
+                        "text": "Cited event",
+                        "source_ref": {"type": "message", "id": str(user_message_id)},
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 201, response.text
+        data = response.json()["data"]
+        direct_db.register_cleanup("message_artifacts", "id", data["id"])
+        direct_db.register_cleanup("message_artifact_parts", "artifact_id", data["id"])
+        assert data["message_id"] == str(assistant_message_id)
+        assert data["artifact_version"] == 1
+        assert data["supersedes_artifact_id"] is None
+        assert data["parts"][0]["source_ref"]["type"] == "message"
+        assert data["parts"][0]["source_ref"]["id"] == str(user_message_id)
+
+        next_response = auth_client.post(
+            "/artifacts",
+            headers=auth_headers(user_id),
+            json={
+                "message_id": str(assistant_message_id),
+                "artifact_key": "artifact-1",
+                "artifact_kind": "timeline",
+                "title": "Timeline revised",
+                "parts": [
+                    {
+                        "part_key": "part-1",
+                        "part_type": "event",
+                        "text": "Cited event revised",
+                        "source_ref": {"type": "message", "id": str(user_message_id)},
+                    }
+                ],
+            },
+        )
+        assert next_response.status_code == 201, next_response.text
+        next_data = next_response.json()["data"]
+        direct_db.register_cleanup("message_artifacts", "id", next_data["id"])
+        direct_db.register_cleanup("message_artifact_parts", "artifact_id", next_data["id"])
+        assert next_data["artifact_version"] == 2
+        assert next_data["supersedes_artifact_id"] == data["id"]
+
+    def test_message_artifact_follow_up_returns_chat_run_payload(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        artifact_id = uuid4()
+        part_id = uuid4()
+        model_id = uuid4()
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            user_message_id = create_test_message(session, conversation_id, seq=1, content="Make")
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Done",
+                parent_message_id=user_message_id,
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_artifacts (
+                        id, conversation_id, message_id, artifact_key,
+                        artifact_kind, title, status
+                    )
+                    VALUES (
+                        :artifact_id, :conversation_id, :message_id, 'artifact-1',
+                        'timeline', 'Timeline', 'complete'
+                    )
+                    """
+                ),
+                {
+                    "artifact_id": artifact_id,
+                    "conversation_id": conversation_id,
+                    "message_id": assistant_message_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_artifact_parts (
+                        id, artifact_id, ordinal, part_key, part_type, text,
+                        source_version, locator, evidence_span_ids, metadata
+                    )
+                    VALUES (
+                        :part_id, :artifact_id, 0, 'part-1', 'event', 'Cited event',
+                        concat('artifact_part', chr(58), CAST(:part_id AS text), chr(58), 'v1'),
+                        jsonb_build_object(
+                            'type', 'artifact_part_ref',
+                            'artifact_id', CAST(:artifact_id AS text),
+                            'artifact_part_id', CAST(:part_id AS text),
+                            'message_id', CAST(:message_id AS text),
+                            'conversation_id', CAST(:conversation_id AS text),
+                            'part_key', 'part-1'
+                        ),
+                        '[]'::jsonb,
+                        '{"support_state":"not_source_grounded"}'::jsonb
+                    )
+                    """
+                ),
+                {
+                    "part_id": part_id,
+                    "artifact_id": artifact_id,
+                    "message_id": assistant_message_id,
+                    "conversation_id": conversation_id,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("message_artifacts", "id", artifact_id)
+        direct_db.register_cleanup("message_artifact_parts", "artifact_id", artifact_id)
+
+        response = auth_client.post(
+            f"/artifacts/{artifact_id}/ask",
+            headers=auth_headers(user_id),
+            json={
+                "mode": "chat_run_payload",
+                "content": "Explain this part",
+                "artifact_part_id": str(part_id),
+                "model_id": str(model_id),
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["artifact_part_provenance"]["artifact_part_id"] == str(part_id)
+        payload = data["chat_run_payload"]
+        assert payload["conversation_id"] == str(conversation_id)
+        assert payload["parent_message_id"] == str(assistant_message_id)
+        assert payload["branch_anchor"] == {
+            "kind": "assistant_message",
+            "message_id": str(assistant_message_id),
+        }
+        assert payload["artifact_intent"] == {"kind": "off"}
+        assert payload["contexts"][0]["kind"] == "object_ref"
+        assert payload["contexts"][0]["type"] == "artifact_part"
+        assert payload["contexts"][0]["id"] == str(part_id)
+        assert payload["contexts"][0]["artifact_id"] == str(artifact_id)
+        assert payload["contexts"][0]["artifact_key"] == "artifact-1"
+        assert payload["contexts"][0]["artifact_version"] == 1
+        assert payload["contexts"][0]["source_version"] == f"artifact_part:{part_id}:v1"
+        assert payload["contexts"][0]["locator"] == {
+            "type": "artifact_part_ref",
+            "artifact_id": str(artifact_id),
+            "artifact_part_id": str(part_id),
+            "message_id": str(assistant_message_id),
+            "conversation_id": str(conversation_id),
+            "part_key": "part-1",
+        }
+        assert payload["contexts"][0]["artifact_part_provenance"]["artifact_part_id"] == str(
+            part_id
+        )
+
+    def test_message_artifact_follow_up_creates_context_item(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        artifact_id = uuid4()
+        part_id = uuid4()
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            root_user_message_id = create_test_message(
+                session, conversation_id, seq=1, content="Make"
+            )
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Done",
+                parent_message_id=root_user_message_id,
+            )
+            follow_up_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=3,
+                role="user",
+                content="Explain this part",
+                parent_message_id=assistant_message_id,
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_artifacts (
+                        id, conversation_id, message_id, artifact_key,
+                        artifact_kind, title, status
+                    )
+                    VALUES (
+                        :artifact_id, :conversation_id, :message_id, 'artifact-1',
+                        'timeline', 'Timeline', 'complete'
+                    )
+                    """
+                ),
+                {
+                    "artifact_id": artifact_id,
+                    "conversation_id": conversation_id,
+                    "message_id": assistant_message_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_artifact_parts (
+                        id, artifact_id, ordinal, part_key, part_type, text,
+                        source_version, locator, evidence_span_ids, metadata
+                    )
+                    VALUES (
+                        :part_id, :artifact_id, 0, 'part-1', 'event', 'Cited event',
+                        concat('artifact_part', chr(58), CAST(:part_id AS text), chr(58), 'v1'),
+                        jsonb_build_object(
+                            'type', 'artifact_part_ref',
+                            'artifact_id', CAST(:artifact_id AS text),
+                            'artifact_part_id', CAST(:part_id AS text),
+                            'message_id', CAST(:message_id AS text),
+                            'conversation_id', CAST(:conversation_id AS text),
+                            'part_key', 'part-1'
+                        ),
+                        '[]'::jsonb,
+                        '{"support_state":"not_source_grounded"}'::jsonb
+                    )
+                    """
+                ),
+                {
+                    "part_id": part_id,
+                    "artifact_id": artifact_id,
+                    "message_id": assistant_message_id,
+                    "conversation_id": conversation_id,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("object_links", "user_id", user_id)
+        direct_db.register_cleanup("message_context_items", "message_id", follow_up_message_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("message_artifacts", "id", artifact_id)
+        direct_db.register_cleanup("message_artifact_parts", "artifact_id", artifact_id)
+
+        response = auth_client.post(
+            f"/artifacts/{artifact_id}/ask",
+            headers=auth_headers(user_id),
+            json={
+                "mode": "context_item",
+                "content": "Explain this part",
+                "artifact_part_id": str(part_id),
+                "target_message_id": str(follow_up_message_id),
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["artifact_part_provenance"]["artifact_part_id"] == str(part_id)
+        context_item = data["context_item"]
+        assert context_item["message_id"] == str(follow_up_message_id)
+        assert context_item["object_ref"] == {
+            "objectType": "artifact_part",
+            "objectId": str(part_id),
+        }
+        assert context_item["context_snapshot"]["type"] == "artifact_part"
+        assert context_item["context_snapshot"]["id"] == str(part_id)
+        assert context_item["context_snapshot"]["artifact_part_provenance"][
+            "artifact_part_id"
+        ] == str(part_id)
+
+    def test_source_manifest_read_path_and_message_cleanup(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            model_id = create_test_model(session)
+            user_message_id = create_test_message(session, conversation_id, seq=1, content="Find")
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Done",
+                parent_message_id=user_message_id,
+            )
+            run_id = uuid4()
+            tool_call_id = uuid4()
+            manifest_id = uuid4()
+            session.execute(
+                text(
+                    """
+                    INSERT INTO chat_runs (
+                        id,
+                        owner_user_id,
+                        conversation_id,
+                        user_message_id,
+                        assistant_message_id,
+                        idempotency_key,
+                        payload_hash,
+                        status,
+                        model_id,
+                        reasoning,
+                        key_mode,
+                        web_search
+                    )
+                    VALUES (
+                        :run_id,
+                        :user_id,
+                        :conversation_id,
+                        :user_message_id,
+                        :assistant_message_id,
+                        :idempotency_key,
+                        'payload',
+                        'complete',
+                        :model_id,
+                        'none',
+                        'auto',
+                        '{"mode":"auto"}'::jsonb
+                    )
+                    """
+                ),
+                {
+                    "run_id": run_id,
+                    "user_id": user_id,
+                    "conversation_id": conversation_id,
+                    "user_message_id": user_message_id,
+                    "assistant_message_id": assistant_message_id,
+                    "idempotency_key": str(uuid4()),
+                    "model_id": model_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_tool_calls (
+                        id,
+                        conversation_id,
+                        user_message_id,
+                        assistant_message_id,
+                        tool_name,
+                        tool_call_index,
+                        query_hash,
+                        scope,
+                        requested_types,
+                        semantic,
+                        status
+                    )
+                    VALUES (
+                        :tool_call_id,
+                        :conversation_id,
+                        :user_message_id,
+                        :assistant_message_id,
+                        'web_search',
+                        1,
+                        'sha256:web',
+                        'public_web',
+                        '["web_result"]'::jsonb,
+                        false,
+                        'complete'
+                    )
+                    """
+                ),
+                {
+                    "tool_call_id": tool_call_id,
+                    "conversation_id": conversation_id,
+                    "user_message_id": user_message_id,
+                    "assistant_message_id": assistant_message_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO source_manifests (
+                        id,
+                        conversation_id,
+                        assistant_message_id,
+                        chat_run_id,
+                        tool_call_id,
+                        tool_name,
+                        tool_call_index,
+                        query_hash,
+                        scope,
+                        filters,
+                        requested_types,
+                        candidate_count,
+                        result_count,
+                        selected_count,
+                        included_in_prompt_count,
+                        excluded_by_budget_count,
+                        excluded_by_scope_count,
+                        stale_count,
+                        unreadable_count,
+                        web_search_mode,
+                        index_versions,
+                        metadata,
+                        latency_ms,
+                        status,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        :manifest_id,
+                        :conversation_id,
+                        :assistant_message_id,
+                        :run_id,
+                        :tool_call_id,
+                        'web_search',
+                        1,
+                        'sha256:web',
+                        'public_web',
+                        '{"allowed_domains":["example.com"]}'::jsonb,
+                        '["web_result"]'::jsonb,
+                        3,
+                        3,
+                        2,
+                        1,
+                        1,
+                        0,
+                        0,
+                        0,
+                        'auto',
+                        '["web:index:v1"]'::jsonb,
+                        '{"provider":"test"}'::jsonb,
+                        25,
+                        'complete',
+                        now(),
+                        now()
+                    )
+                    """
+                ),
+                {
+                    "manifest_id": manifest_id,
+                    "conversation_id": conversation_id,
+                    "assistant_message_id": assistant_message_id,
+                    "run_id": run_id,
+                    "tool_call_id": tool_call_id,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("source_manifests", "id", manifest_id)
+        direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)
+        direct_db.register_cleanup("chat_runs", "id", run_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+
+        response = auth_client.get(
+            f"/conversations/{conversation_id}/source-manifests",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert len(data) == 1
+        assert data[0]["id"] == str(manifest_id)
+        assert data[0]["tool_call_id"] == str(tool_call_id)
+        assert data[0]["filters"] == {"allowed_domains": ["example.com"]}
+        assert data[0]["candidate_count"] == 3
+        assert data[0]["included_in_prompt_count"] == 1
+
+        delete_response = auth_client.delete(
+            f"/messages/{assistant_message_id}",
+            headers=auth_headers(user_id),
+        )
+        assert delete_response.status_code == 204, delete_response.text
+
+        with direct_db.session() as session:
+            remaining = session.execute(
+                text("SELECT count(*) FROM source_manifests WHERE id = :id"),
+                {"id": manifest_id},
+            ).scalar_one()
+        assert remaining == 0
+
+    def test_message_ledger_read_paths_include_honest_candidate_prompt_status(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            other_conversation_id = create_test_conversation(session, user_id)
+            model_id = create_test_model(session)
+            user_message_id = create_test_message(session, conversation_id, seq=1, content="Find")
+            assistant_message_id = create_test_message(
+                session,
+                conversation_id,
+                seq=2,
+                role="assistant",
+                content="Done",
+                parent_message_id=user_message_id,
+            )
+            run = ChatRun(
+                id=uuid4(),
+                owner_user_id=user_id,
+                conversation_id=conversation_id,
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+                idempotency_key=str(uuid4()),
+                payload_hash="payload",
+                status="complete",
+                model_id=model_id,
+                reasoning="none",
+                key_mode="auto",
+                web_search={"mode": "off"},
+            )
+            tool_call = MessageToolCall(
+                id=uuid4(),
+                conversation_id=conversation_id,
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+                tool_name="app_search",
+                tool_call_index=0,
+                query_hash="sha256:ledger",
+                scope="all",
+                requested_types=["message"],
+                semantic=True,
+                status="complete",
+            )
+            result_ref = {
+                "type": "message",
+                "id": str(user_message_id),
+                "result_type": "message",
+                "source_id": str(user_message_id),
+                "conversation_id": str(conversation_id),
+                "seq": 1,
+                "title": "Source message",
+                "snippet": "Evidence excerpt",
+                "deep_link": f"/conversations/{conversation_id}",
+                "context_ref": {"type": "message", "id": str(user_message_id)},
+                "source_version": "message:v1",
+                "selected": True,
+            }
+            locator = {
+                "type": "message_offsets",
+                "conversation_id": str(conversation_id),
+                "message_id": str(user_message_id),
+                "start_offset": 0,
+                "end_offset": len("Evidence excerpt"),
+                "message_seq": 1,
+            }
+            result_ref["locator"] = locator
+            retrieval = MessageRetrieval(
+                id=uuid4(),
+                tool_call_id=tool_call.id,
+                ordinal=0,
+                result_type="message",
+                source_id=str(user_message_id),
+                scope="all",
+                context_ref={"type": "message", "id": str(user_message_id)},
+                result_ref=result_ref,
+                deep_link=f"/conversations/{conversation_id}",
+                score=0.9,
+                selected=True,
+                source_title="Source message",
+                exact_snippet="Evidence excerpt",
+                locator=locator,
+                retrieval_status="included_in_prompt",
+                included_in_prompt=True,
+                source_version="message:v1",
+            )
+            candidate = MessageRetrievalCandidateLedger(
+                id=uuid4(),
+                tool_call_id=tool_call.id,
+                retrieval_id=retrieval.id,
+                ordinal=0,
+                result_type="message",
+                source_id=str(user_message_id),
+                score=0.9,
+                selected=True,
+                included_in_prompt=False,
+                selection_status="selected",
+                selection_reason="within_context_budget",
+                result_ref=result_ref,
+                locator=locator,
+                source_version="message:v1",
+            )
+            rerank = MessageRerankLedger(
+                id=uuid4(),
+                tool_call_id=tool_call.id,
+                strategy="search_score_then_context_budget",
+                input_count=1,
+                selected_count=1,
+                budget_chars=12000,
+                selected_chars=17,
+                status="complete",
+                metadata_={"selected_limit": 4},
+            )
+            verifier_run = AssistantMessageVerifierRun(
+                id=uuid4(),
+                message_id=assistant_message_id,
+                chat_run_id=run.id,
+                verifier_name="lexical_matcher",
+                verifier_version="v1",
+                verifier_status="llm_verified",
+                support_status="supported",
+                claim_count=1,
+                supported_claim_count=1,
+                unsupported_claim_count=0,
+                not_enough_evidence_count=0,
+                metadata_={"source": "test"},
+            )
+            citation_audit = AssistantMessageCitationAudit(
+                id=uuid4(),
+                message_id=assistant_message_id,
+                chat_run_id=run.id,
+                verifier_run_id=verifier_run.id,
+                supported_claim_count=1,
+                supported_claims_with_valid_offsets_count=1,
+                supported_claims_with_citation_count=1,
+                missing_locator_count=0,
+                missing_source_version_count=0,
+                supported_claims_have_valid_offsets=True,
+                supported_claims_have_citation_placement=True,
+                claim_evidence_has_required_locators=True,
+                claim_evidence_has_source_versions=True,
+                details={"checked": True},
+            )
+            session.add_all(
+                [
+                    run,
+                    tool_call,
+                    retrieval,
+                    candidate,
+                    rerank,
+                    verifier_run,
+                    citation_audit,
+                ]
+            )
+            session.commit()
+            run_id = run.id
+            tool_call_id = tool_call.id
+            retrieval_id = retrieval.id
+            candidate_id = candidate.id
+            rerank_id = rerank.id
+            verifier_run_id = verifier_run.id
+            citation_audit_id = citation_audit.id
+
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("conversations", "id", other_conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("chat_runs", "id", run_id)
+        direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)
+        direct_db.register_cleanup("message_retrievals", "id", retrieval_id)
+        direct_db.register_cleanup("assistant_message_verifier_runs", "id", verifier_run_id)
+        direct_db.register_cleanup("assistant_message_citation_audits", "id", citation_audit_id)
+        direct_db.register_cleanup("message_rerank_ledgers", "id", rerank_id)
+        direct_db.register_cleanup("message_retrieval_candidate_ledgers", "id", candidate_id)
+
+        verifier_response = auth_client.get(
+            f"/messages/{assistant_message_id}/verifier-runs",
+            headers=auth_headers(user_id),
+        )
+        citation_response = auth_client.get(
+            f"/messages/{assistant_message_id}/citation-audits",
+            headers=auth_headers(user_id),
+        )
+        candidate_response = auth_client.get(
+            f"/messages/{assistant_message_id}/retrieval-candidate-ledgers",
+            headers=auth_headers(user_id),
+        )
+        rerank_response = auth_client.get(
+            f"/conversations/{conversation_id}/messages/{assistant_message_id}/rerank-ledgers",
+            headers=auth_headers(user_id),
+        )
+        filtered_candidate_response = auth_client.get(
+            f"/messages/{assistant_message_id}/retrieval-candidate-ledgers?tool_call_id={uuid4()}",
+            headers=auth_headers(user_id),
+        )
+        mismatched_alias_response = auth_client.get(
+            f"/conversations/{other_conversation_id}/messages/{assistant_message_id}/verifier-runs",
+            headers=auth_headers(user_id),
+        )
+
+        assert verifier_response.status_code == 200, verifier_response.text
+        verifier_data = verifier_response.json()["data"]
+        assert verifier_data[0]["id"] == str(verifier_run_id)
+        assert verifier_data[0]["verifier_name"] == "lexical_matcher"
+        assert verifier_data[0]["metadata"] == {"source": "test"}
+
+        assert citation_response.status_code == 200, citation_response.text
+        citation_data = citation_response.json()["data"]
+        assert citation_data[0]["id"] == str(citation_audit_id)
+        assert citation_data[0]["details"] == {"checked": True}
+
+        assert candidate_response.status_code == 200, candidate_response.text
+        candidate_data = candidate_response.json()["data"]
+        assert candidate_data[0]["id"] == str(candidate_id)
+        assert candidate_data[0]["included_in_prompt"] is True
+        assert candidate_data[0]["ledger_included_in_prompt"] is False
+        assert candidate_data[0]["linked_retrieval_included_in_prompt"] is True
+        assert candidate_data[0]["included_in_prompt_source"] == "linked_retrieval"
+        assert candidate_data[0]["included_in_prompt_reconciled"] is False
+        assert candidate_data[0]["selection_status"] == "selected"
+
+        assert rerank_response.status_code == 200, rerank_response.text
+        rerank_data = rerank_response.json()["data"]
+        assert rerank_data[0]["strategy"] == "search_score_then_context_budget"
+        assert rerank_data[0]["metadata"] == {"selected_limit": 4}
+
+        assert filtered_candidate_response.status_code == 200, filtered_candidate_response.text
+        assert filtered_candidate_response.json()["data"] == []
+
+        assert mismatched_alias_response.status_code == 404, mismatched_alias_response.text
+        assert mismatched_alias_response.json()["error"]["code"] == "E_MESSAGE_NOT_FOUND"
 
     def test_list_messages_preserves_rich_context_snapshot_fields(
         self, auth_client, direct_db: DirectSessionManager
@@ -770,8 +2003,8 @@ class TestListMessages:
             session.commit()
 
         direct_db.register_cleanup("message_context_items", "id", context_id)
-        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
 
         response = auth_client.get(
             f"/conversations/{conversation_id}/messages", headers=auth_headers(user_id)
@@ -809,10 +2042,12 @@ class TestListMessages:
         conversation_id = uuid4()
 
         locator = {
-            "kind": "fragment_offsets",
+            "type": "web_text_offsets",
+            "media_id": str(media_id),
             "fragment_id": str(uuid4()),
             "start_offset": 4,
             "end_offset": 18,
+            "media_kind": "web_article",
         }
         with direct_db.session() as session:
             conversation_id = create_test_conversation(session, user_id)
@@ -863,6 +2098,7 @@ class TestListMessages:
                             "prefix": "before ",
                             "suffix": " after",
                             "locator": locator,
+                            "source_version": "content-index:v1",
                             "route": f"/media/{media_id}",
                         }
                     ),
@@ -891,6 +2127,7 @@ class TestListMessages:
             "media_title": "Reader Source",
             "media_kind": "web_article",
             "locator": locator,
+            "source_version": "content-index:v1",
             "route": f"/media/{media_id}",
         }
 
@@ -921,6 +2158,7 @@ class TestListMessages:
             evidence_id = uuid4()
             retrieval_id = uuid4()
             tool_call_id = uuid4()
+            audit_id = uuid4()
             session.execute(
                 text(
                     """
@@ -967,8 +2205,10 @@ class TestListMessages:
                         deep_link,
                         selected,
                         exact_snippet,
+                        locator,
                         retrieval_status,
-                        included_in_prompt
+                        included_in_prompt,
+                        source_version
                     )
                     VALUES (
                         :retrieval_id,
@@ -981,20 +2221,51 @@ class TestListMessages:
                         :deep_link,
                         true,
                         'Exact source excerpt.',
+                        :locator,
                         'included_in_prompt',
-                        true
+                        true,
+                        'message:v1'
                     )
                     """
                 ).bindparams(
                     bindparam("context_ref", type_=JSONB),
                     bindparam("result_ref", type_=JSONB),
+                    bindparam("locator", type_=JSONB),
                 ),
                 {
                     "retrieval_id": retrieval_id,
                     "tool_call_id": tool_call_id,
                     "source_id": str(assistant_message_id),
                     "context_ref": {"type": "message", "id": str(assistant_message_id)},
-                    "result_ref": {"type": "message", "title": "Source message"},
+                    "result_ref": {
+                        "type": "message",
+                        "id": str(assistant_message_id),
+                        "result_type": "message",
+                        "source_id": str(assistant_message_id),
+                        "conversation_id": str(conversation_id),
+                        "seq": 2,
+                        "title": "Source message",
+                        "snippet": "Exact source excerpt.",
+                        "deep_link": f"/conversations/{conversation_id}",
+                        "context_ref": {"type": "message", "id": str(assistant_message_id)},
+                        "source_version": "message:v1",
+                        "locator": {
+                            "type": "message_offsets",
+                            "conversation_id": str(conversation_id),
+                            "message_id": str(assistant_message_id),
+                            "start_offset": 0,
+                            "end_offset": len("Exact source excerpt."),
+                            "message_seq": 2,
+                        },
+                    },
+                    "locator": {
+                        "type": "message_offsets",
+                        "conversation_id": str(conversation_id),
+                        "message_id": str(assistant_message_id),
+                        "start_offset": 0,
+                        "end_offset": len("Exact source excerpt."),
+                        "message_seq": 2,
+                    },
                     "deep_link": f"/conversations/{conversation_id}",
                 },
             )
@@ -1021,7 +2292,7 @@ class TestListMessages:
                         NULL,
                         'included_in_prompt',
                         'supported',
-                        'verified',
+                        'llm_verified',
                         1,
                         1,
                         0,
@@ -1054,7 +2325,7 @@ class TestListMessages:
                         24,
                         'answer',
                         'supported',
-                        'verified'
+                        'llm_verified'
                     )
                     """
                 ),
@@ -1073,10 +2344,12 @@ class TestListMessages:
                         context_ref,
                         result_ref,
                         exact_snippet,
+                        locator,
                         deep_link,
                         retrieval_status,
                         selected,
-                        included_in_prompt
+                        included_in_prompt,
+                        source_version
                     )
                     VALUES (
                         :evidence_id,
@@ -1088,16 +2361,19 @@ class TestListMessages:
                         :context_ref,
                         :result_ref,
                         'Exact source excerpt.',
+                        :locator,
                         :deep_link,
                         'included_in_prompt',
                         true,
-                        true
+                        true,
+                        'message:v1'
                     )
                     """
                 ).bindparams(
                     bindparam("source_ref", type_=JSONB),
                     bindparam("context_ref", type_=JSONB),
                     bindparam("result_ref", type_=JSONB),
+                    bindparam("locator", type_=JSONB),
                 ),
                 {
                     "evidence_id": evidence_id,
@@ -1109,14 +2385,228 @@ class TestListMessages:
                     },
                     "retrieval_id": retrieval_id,
                     "context_ref": {"type": "message", "id": str(assistant_message_id)},
-                    "result_ref": {"type": "message", "title": "Source message"},
+                    "result_ref": {
+                        "type": "message",
+                        "id": str(assistant_message_id),
+                        "result_type": "message",
+                        "source_id": str(assistant_message_id),
+                        "conversation_id": str(conversation_id),
+                        "seq": 2,
+                        "title": "Source message",
+                        "snippet": "Exact source excerpt.",
+                        "deep_link": f"/conversations/{conversation_id}",
+                        "context_ref": {"type": "message", "id": str(assistant_message_id)},
+                        "source_version": "message:v1",
+                        "locator": {
+                            "type": "message_offsets",
+                            "conversation_id": str(conversation_id),
+                            "message_id": str(assistant_message_id),
+                            "start_offset": 0,
+                            "end_offset": len("Exact source excerpt."),
+                            "message_seq": 2,
+                        },
+                    },
+                    "locator": {
+                        "type": "message_offsets",
+                        "conversation_id": str(conversation_id),
+                        "message_id": str(assistant_message_id),
+                        "start_offset": 0,
+                        "end_offset": len("Exact source excerpt."),
+                        "message_seq": 2,
+                    },
                     "deep_link": f"/conversations/{conversation_id}",
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO assistant_message_citation_audits (
+                        id,
+                        message_id,
+                        chat_run_id,
+                        verifier_run_id,
+                        supported_claim_count,
+                        supported_claims_with_valid_offsets_count,
+                        supported_claims_with_citation_count,
+                        missing_locator_count,
+                        missing_source_version_count,
+                        supported_claims_have_valid_offsets,
+                        supported_claims_have_citation_placement,
+                        claim_evidence_has_required_locators,
+                        claim_evidence_has_source_versions,
+                        details
+                    )
+                    VALUES (
+                        :audit_id,
+                        :message_id,
+                        NULL,
+                        NULL,
+                        1,
+                        1,
+                        1,
+                        0,
+                        0,
+                        true,
+                        true,
+                        true,
+                        true,
+                        :details
+                    )
+                    """
+                ).bindparams(bindparam("details", type_=JSONB)),
+                {
+                    "audit_id": audit_id,
+                    "message_id": assistant_message_id,
+                    "details": {},
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE messages
+                    SET message_document = :message_document
+                    WHERE id = :message_id
+                    """
+                ).bindparams(bindparam("message_document", type_=JSONB)),
+                {
+                    "message_id": assistant_message_id,
+                    "message_document": {
+                        "type": "message_document",
+                        "version": 1,
+                        "blocks": [
+                            {
+                                "type": "text",
+                                "format": "markdown",
+                                "text": "The answer is supported.",
+                            },
+                            {
+                                "type": "verification_summary",
+                                "id": str(summary_id),
+                                "message_id": str(assistant_message_id),
+                                "scope_type": "general",
+                                "scope_ref": None,
+                                "retrieval_status": "included_in_prompt",
+                                "support_status": "supported",
+                                "verifier_status": "llm_verified",
+                                "claim_count": 1,
+                                "supported_claim_count": 1,
+                                "unsupported_claim_count": 0,
+                                "not_enough_evidence_count": 0,
+                                "prompt_assembly_id": None,
+                                "created_at": "2026-01-01T00:00:00Z",
+                                "updated_at": "2026-01-01T00:00:00Z",
+                            },
+                            {
+                                "type": "citation_audit",
+                                "id": str(audit_id),
+                                "message_id": str(assistant_message_id),
+                                "chat_run_id": None,
+                                "verifier_run_id": None,
+                                "supported_claim_count": 1,
+                                "supported_claims_with_valid_offsets_count": 1,
+                                "supported_claims_with_citation_count": 1,
+                                "missing_locator_count": 0,
+                                "missing_source_version_count": 0,
+                                "supported_claims_have_valid_offsets": True,
+                                "supported_claims_have_citation_placement": True,
+                                "claim_evidence_has_required_locators": True,
+                                "claim_evidence_has_source_versions": True,
+                                "details": {},
+                                "created_at": "2026-01-01T00:00:00Z",
+                            },
+                            {
+                                "type": "claim",
+                                "claim_id": str(claim_id),
+                                "message_id": str(assistant_message_id),
+                                "ordinal": 0,
+                                "claim_text": "The answer is supported.",
+                                "answer_start_offset": 0,
+                                "answer_end_offset": 24,
+                                "claim_kind": "answer",
+                                "support_status": "supported",
+                                "unsupported_reason": None,
+                                "confidence": None,
+                                "verifier_status": "llm_verified",
+                                "created_at": "2026-01-01T00:00:00Z",
+                                "evidence_ids": [str(evidence_id)],
+                            },
+                            {
+                                "type": "claim_evidence",
+                                "id": str(evidence_id),
+                                "claim_id": str(claim_id),
+                                "ordinal": 0,
+                                "evidence_role": "supports",
+                                "source_ref": {
+                                    "type": "message_retrieval",
+                                    "id": str(retrieval_id),
+                                    "retrieval_id": str(retrieval_id),
+                                },
+                                "retrieval_id": str(retrieval_id),
+                                "evidence_span_id": None,
+                                "context_ref": {
+                                    "type": "message",
+                                    "id": str(assistant_message_id),
+                                },
+                                "result_ref": {
+                                    "type": "message",
+                                    "id": str(assistant_message_id),
+                                    "result_type": "message",
+                                    "source_id": str(assistant_message_id),
+                                    "conversation_id": str(conversation_id),
+                                    "seq": 2,
+                                    "title": "Source message",
+                                    "snippet": "Exact source excerpt.",
+                                    "deep_link": f"/conversations/{conversation_id}",
+                                    "context_ref": {
+                                        "type": "message",
+                                        "id": str(assistant_message_id),
+                                    },
+                                    "source_version": "message:v1",
+                                    "locator": {
+                                        "type": "message_offsets",
+                                        "conversation_id": str(conversation_id),
+                                        "message_id": str(assistant_message_id),
+                                        "start_offset": 0,
+                                        "end_offset": len("Exact source excerpt."),
+                                        "message_seq": 2,
+                                    },
+                                },
+                                "exact_snippet": "Exact source excerpt.",
+                                "snippet_prefix": None,
+                                "snippet_suffix": None,
+                                "locator": {
+                                    "type": "message_offsets",
+                                    "conversation_id": str(conversation_id),
+                                    "message_id": str(assistant_message_id),
+                                    "start_offset": 0,
+                                    "end_offset": len("Exact source excerpt."),
+                                    "message_seq": 2,
+                                },
+                                "deep_link": f"/conversations/{conversation_id}",
+                                "citation_label": None,
+                                "score": None,
+                                "retrieval_status": "included_in_prompt",
+                                "selected": True,
+                                "included_in_prompt": True,
+                                "source_version": "message:v1",
+                                "created_at": "2026-01-01T00:00:00Z",
+                            },
+                        ],
+                    },
                 },
             )
             session.commit()
 
-        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)
+        direct_db.register_cleanup("message_retrievals", "id", retrieval_id)
+        direct_db.register_cleanup("assistant_message_evidence_summaries", "id", summary_id)
+        direct_db.register_cleanup("assistant_message_claims", "id", claim_id)
+        direct_db.register_cleanup("assistant_message_claim_evidence", "id", evidence_id)
+        direct_db.register_cleanup(
+            "assistant_message_citation_audits", "message_id", assistant_message_id
+        )
 
         response = auth_client.get(
             f"/conversations/{conversation_id}/messages", headers=auth_headers(user_id)
@@ -1126,10 +2616,22 @@ class TestListMessages:
         message = next(
             item for item in response.json()["data"] if item["id"] == str(assistant_message_id)
         )
-        assert message["evidence_summary"]["support_status"] == "supported"
-        assert message["claims"][0]["claim_text"] == "The answer is supported."
-        assert message["claim_evidence"][0]["exact_snippet"] == "Exact source excerpt."
-        assert message["claim_evidence"][0]["retrieval_status"] == "included_in_prompt"
+        assert "evidence_summary" not in message
+        assert "citation_audit" not in message
+        assert "claims" not in message
+        assert "claim_evidence" not in message
+        blocks = message["message_document"]["blocks"]
+        summary = next(block for block in blocks if block["type"] == "verification_summary")
+        audit = next(block for block in blocks if block["type"] == "citation_audit")
+        claim = next(block for block in blocks if block["type"] == "claim")
+        evidence = next(block for block in blocks if block["type"] == "claim_evidence")
+        assert summary["support_status"] == "supported"
+        assert audit["supported_claim_count"] == 1
+        assert audit["supported_claims_have_citation_placement"] is True
+        assert audit["claim_evidence_has_required_locators"] is True
+        assert claim["claim_text"] == "The answer is supported."
+        assert evidence["exact_snippet"] == "Exact source excerpt."
+        assert evidence["retrieval_status"] == "included_in_prompt"
 
     def test_list_messages_pagination(self, auth_client, direct_db: DirectSessionManager):
         """Message pagination works correctly."""
@@ -1435,7 +2937,7 @@ class TestDeleteMessage:
                     )
                     VALUES (
                         :message_id, 'general', NULL, 'included_in_prompt', 'supported',
-                        'verified', 1, 1, 0, 0
+                        'llm_verified', 1, 1, 0, 0
                     )
                 """),
                 {"message_id": assistant_message_id},
@@ -1447,7 +2949,7 @@ class TestDeleteMessage:
                         answer_end_offset, claim_kind, support_status, verifier_status
                     )
                     VALUES (
-                        :id, :message_id, 0, 'Claim', 0, 5, 'answer', 'supported', 'verified'
+                        :id, :message_id, 0, 'Claim', 0, 5, 'answer', 'supported', 'llm_verified'
                     )
                 """),
                 {"id": claim_id, "message_id": assistant_message_id},
@@ -1456,15 +2958,23 @@ class TestDeleteMessage:
                 text("""
                     INSERT INTO assistant_message_claim_evidence (
                         id, claim_id, ordinal, evidence_role, source_ref, context_ref,
-                        result_ref, exact_snippet, score, retrieval_status,
-                        selected, included_in_prompt
+                        result_ref, exact_snippet, locator, score, retrieval_status,
+                        selected, included_in_prompt, source_version
                     )
                     VALUES (
                         :id, :claim_id, 0, 'supports',
                         jsonb_build_object('type', 'message_retrieval', 'id', CAST(:retrieval_id AS text)),
                         jsonb_build_object('type', 'message', 'id', CAST(:source_id AS text)),
                         jsonb_build_object('type', 'message', 'id', CAST(:source_id AS text)),
-                        'Evidence', 1.0, 'included_in_prompt', true, true
+                        'Evidence',
+                        jsonb_build_object(
+                            'type', 'message_offsets',
+                            'conversation_id', CAST(:conversation_id AS text),
+                            'message_id', CAST(:source_id AS text),
+                            'start_offset', 0,
+                            'end_offset', 8
+                        ),
+                        1.0, 'included_in_prompt', true, true, 'message:v1'
                     )
                 """),
                 {
@@ -1472,6 +2982,7 @@ class TestDeleteMessage:
                     "claim_id": claim_id,
                     "retrieval_id": str(retrieval_id),
                     "source_id": str(user_message_id),
+                    "conversation_id": str(conversation_id),
                 },
             )
             session.commit()

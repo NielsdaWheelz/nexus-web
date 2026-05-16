@@ -1,8 +1,13 @@
 import type {
-  CitationEventData,
+  ArtifactIntentOptions,
   ContextItemColor,
   ContextItemType,
+  ChatToolStatus,
+  RetrievalContextRef,
+  RetrievalLocator,
   SearchCitationEventData,
+  SearchCitationResultType,
+  WebCitationEventData,
 } from "@/lib/api/sse";
 import type { ContributorCredit } from "@/lib/contributors/types";
 
@@ -70,25 +75,49 @@ export interface MessageContextSnapshot {
   source_media_id?: string;
   media_title?: string;
   media_kind?: string;
-  locator?: Record<string, unknown> | null;
+  locator?: RetrievalLocator | null;
+  source_version?: string | null;
+  artifact_id?: string | null;
+  artifact_key?: string | null;
+  artifact_version?: number | null;
+  artifact_part_provenance?: Record<string, unknown> | null;
 }
 
 export interface MessageRetrieval {
   id?: string;
   tool_call_id?: string;
+  tool_call_index?: number | null;
   ordinal?: number;
-  result_type: SearchCitationEventData["result_type"] | "web_result";
+  result_type: SearchCitationResultType | "web_result";
   source_id: string;
   media_id: string | null;
-  context_ref: SearchCitationEventData["context_ref"] | { type: "web_result"; id: string };
-  result_ref: CitationEventData;
+  evidence_span_id?: string | null;
+  context_ref: RetrievalContextRef;
+  result_ref: MessageRetrievalResultRef;
   deep_link: string | null;
   citation_label?: string | null;
-  resolver?: SearchCitationEventData["resolver"];
+  locator?: MessageRetrievalLocator | null;
   score: number | null;
   selected: boolean;
+  source_title?: string | null;
+  section_label?: string | null;
+  exact_snippet?: string | null;
+  snippet_prefix?: string | null;
+  snippet_suffix?: string | null;
+  retrieval_status?: MessageEvidenceRetrievalStatus;
+  included_in_prompt?: boolean;
+  source_version?: string | null;
   created_at?: string;
 }
+
+export type MessageRetrievalResultRef =
+  | SearchCitationEventData
+  | WebCitationEventData;
+
+export type MessageRetrievalLocator = RetrievalLocator;
+
+export type AppRetrievalResultRef = SearchCitationEventData;
+export type WebRetrievalResultRef = WebCitationEventData;
 
 export type ConversationSourceRefType =
   | "message"
@@ -114,8 +143,8 @@ export interface ConversationSourceRef {
   message_seq?: number | null;
   tool_call_id?: string | null;
   retrieval_id?: string | null;
-  context_ref?: { type: string; id: string } | null;
-  result_ref?: Record<string, unknown> | null;
+  context_ref?: RetrievalContextRef | null;
+  result_ref?: MessageRetrievalResultRef | null;
   media_id?: string | null;
   deep_link?: string | null;
   location?: ConversationSourceRefLocation | null;
@@ -139,56 +168,20 @@ export type MessageClaimSupportStatus =
   | "out_of_scope"
   | "not_source_grounded";
 
+export type MessageEvidenceVerifierStatus =
+  | "llm_verified"
+  | "parse_failed"
+  | "failed";
+
+export type MessageClaimKind = "answer" | "insufficient_evidence";
+
 export type MessageEvidenceRole =
   | "supports"
   | "contradicts"
   | "context"
   | "scope_boundary";
 
-export type MessageEvidenceLocator =
-  | {
-      type: "epub_fragment_offsets";
-      media_id: string;
-      section_id: string;
-      fragment_id: string;
-      start_offset: number;
-      end_offset: number;
-    }
-  | {
-      type: "pdf_page_geometry";
-      media_id: string;
-      page_number: number;
-      quads: unknown[];
-      exact: string;
-      prefix?: string | null;
-      suffix?: string | null;
-    }
-  | {
-      type: "transcript_time_range";
-      media_id: string;
-      transcript_version_id: string;
-      t_start_ms: number;
-      t_end_ms: number;
-    }
-  | {
-      type: "conversation_message";
-      conversation_id: string;
-      message_id: string;
-      message_seq: number;
-    }
-  | {
-      type: "web_url";
-      url: string;
-      title?: string | null;
-      display_url?: string | null;
-      accessed_at?: string | null;
-    }
-  | {
-      type: "external_source";
-      source_name: string;
-      source_id: string;
-      url?: string | null;
-    };
+export type MessageEvidenceLocator = RetrievalLocator;
 
 export interface MessageEvidenceSummary {
   id: string;
@@ -197,14 +190,32 @@ export interface MessageEvidenceSummary {
   scope_ref: Record<string, unknown> | null;
   retrieval_status: MessageEvidenceRetrievalStatus;
   support_status: MessageClaimSupportStatus;
-  verifier_status: string;
+  verifier_status: MessageEvidenceVerifierStatus;
   claim_count: number;
   supported_claim_count: number;
   unsupported_claim_count: number;
   not_enough_evidence_count: number;
   prompt_assembly_id?: string | null;
+  verifier_run_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface AssistantVerifierRun {
+  id: string;
+  message_id: string;
+  chat_run_id?: string | null;
+  prompt_assembly_id?: string | null;
+  verifier_name: string;
+  verifier_version: string;
+  verifier_status: MessageEvidenceVerifierStatus;
+  support_status: MessageClaimSupportStatus;
+  claim_count: number;
+  supported_claim_count: number;
+  unsupported_claim_count: number;
+  not_enough_evidence_count: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
 }
 
 export interface MessageClaim {
@@ -214,9 +225,11 @@ export interface MessageClaim {
   claim_text: string;
   answer_start_offset?: number | null;
   answer_end_offset?: number | null;
-  claim_kind: string;
+  claim_kind: MessageClaimKind;
   support_status: MessageClaimSupportStatus;
-  verifier_status: string;
+  unsupported_reason?: string | null;
+  confidence?: number | null;
+  verifier_status: MessageEvidenceVerifierStatus;
   created_at: string;
 }
 
@@ -227,15 +240,15 @@ export interface MessageClaimEvidence {
   evidence_role: MessageEvidenceRole;
   source_ref: ConversationSourceRef;
   retrieval_id?: string | null;
-  context_ref?: Record<string, unknown> | null;
-  result_ref?: Record<string, unknown> | null;
+  evidence_span_id?: string | null;
+  context_ref?: RetrievalContextRef | null;
+  result_ref?: MessageRetrievalResultRef | null;
   exact_snippet?: string | null;
   snippet_prefix?: string | null;
   snippet_suffix?: string | null;
   locator?: MessageEvidenceLocator | null;
   deep_link?: string | null;
   citation_label?: string | null;
-  resolver?: SearchCitationEventData["resolver"];
   score?: number | null;
   retrieval_status: MessageEvidenceRetrievalStatus;
   selected: boolean;
@@ -316,36 +329,334 @@ export interface MessageToolCall {
   scope?: string;
   requested_types?: string[];
   semantic?: boolean;
-  result_refs?: unknown[];
-  selected_context_refs?: unknown[];
+  result_refs?: MessageRetrievalResultRef[];
+  selected_context_refs?: RetrievalContextRef[];
   provider_request_ids?: string[];
   latency_ms?: number | null;
-  status: "pending" | "complete" | "error" | "started" | string;
+  result_count?: number;
+  selected_count?: number;
+  status: ChatToolStatus;
   error_code?: string | null;
   created_at?: string;
   updated_at?: string;
-  retrievals: MessageRetrieval[];
+  retrievals?: MessageRetrieval[];
+}
+
+export interface MessageSourceManifestDelta {
+  assistant_message_id: string;
+  tool_call_id?: string | null;
+  tool_name: "app_search" | "web_search";
+  tool_call_index: number;
+  query_hash?: string | null;
+  scope: string;
+  filters: Record<string, unknown>;
+  requested_types: string[];
+  candidate_count: number;
+  result_count: number;
+  selected_count: number;
+  included_in_prompt_count: number;
+  excluded_by_budget_count: number;
+  excluded_by_scope_count: number;
+  stale_count: number;
+  unreadable_count: number;
+  web_search_mode?: "off" | "auto" | "required" | null;
+  index_versions: string[];
+  metadata?: Record<string, unknown>;
+  latency_ms?: number | null;
+  status: ChatToolStatus;
+}
+
+export interface MessageCitationAudit {
+  id: string;
+  message_id: string;
+  chat_run_id?: string | null;
+  verifier_run_id?: string | null;
+  supported_claim_count: number;
+  supported_claims_with_valid_offsets_count: number;
+  supported_claims_with_citation_count: number;
+  missing_locator_count: number;
+  missing_source_version_count: number;
+  supported_claims_have_valid_offsets: boolean;
+  supported_claims_have_citation_placement: boolean;
+  claim_evidence_has_required_locators: boolean;
+  claim_evidence_has_source_versions: boolean;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface MessageRetrievalCandidateLedger {
+  id: string;
+  tool_call_id: string;
+  retrieval_id?: string | null;
+  ordinal: number;
+  result_type: MessageRetrieval["result_type"];
+  source_id: string;
+  score?: number | null;
+  selected: boolean;
+  included_in_prompt: boolean;
+  ledger_included_in_prompt: boolean;
+  linked_retrieval_included_in_prompt?: boolean | null;
+  included_in_prompt_source: "candidate_ledger" | "linked_retrieval";
+  included_in_prompt_reconciled: boolean;
+  selection_status: string;
+  selection_reason: string;
+  result_ref: MessageRetrievalResultRef;
+  locator?: RetrievalLocator | null;
+  source_version?: string | null;
+  created_at: string;
+}
+
+export interface MessageRerankLedger {
+  id: string;
+  tool_call_id: string;
+  strategy: string;
+  input_count: number;
+  selected_count: number;
+  budget_chars?: number | null;
+  selected_chars: number;
+  status: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface MessageArtifactDelta {
+  artifact_id?: string | null;
+  durable_artifact_id?: string | null;
+  artifact_key?: string | null;
+  artifact_version?: number | null;
+  supersedes_artifact_id?: string | null;
+  artifact_kind?: string | null;
+  title?: string | null;
+  status?: string | null;
+  delta?: string | null;
+  parts?: MessageArtifactPart[];
+}
+
+export interface MessageArtifactPart {
+  id?: string | null;
+  artifact_id?: string | null;
+  ordinal?: number | null;
+  part_key?: string | null;
+  part_type?: string | null;
+  text?: string | null;
+  source_version: string;
+  locator: RetrievalLocator;
+  source_ref?: ConversationSourceRef | null;
+  source_refs?: ConversationSourceRef[];
+  context_ref?: RetrievalContextRef | null;
+  result_ref?: MessageRetrievalResultRef | null;
+  evidence_span_id?: string | null;
+  evidence_span_ids?: string[];
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+}
+
+export interface MessageArtifact {
+  id: string;
+  conversation_id: string;
+  message_id: string;
+  chat_run_id?: string | null;
+  artifact_key: string;
+  artifact_version: number;
+  supersedes_artifact_id?: string | null;
+  artifact_kind: string;
+  title?: string | null;
+  status: "streaming" | "complete" | "error";
+  preview_text?: string | null;
+  metadata?: Record<string, unknown>;
+  parts: MessageArtifactPart[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MessageArtifactCitationEntry {
+  artifact_part_id: string;
+  ordinal: number;
+  part_key?: string | null;
+  part_type?: string | null;
+  source_version: string;
+  locator: RetrievalLocator;
+  source_ref?: ConversationSourceRef | null;
+  source_refs?: ConversationSourceRef[];
+  context_ref?: RetrievalContextRef | null;
+  result_ref?: MessageRetrievalResultRef | null;
+  evidence_span_id?: string | null;
+  evidence_span_ids?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface MessageArtifactCitationManifest {
+  artifact_id: string;
+  message_id: string;
+  conversation_id: string;
+  entries: MessageArtifactCitationEntry[];
+}
+
+export interface MessageArtifactExport {
+  export_id: string;
+  format: "markdown" | "json" | "html" | "pdf" | "csv";
+  artifact: MessageArtifact;
+  artifact_version: number;
+  citation_manifest: MessageArtifactCitationManifest;
+  content_sha256: string;
+  manifest_sha256: string;
+  exported_at: string;
+  content: string | Record<string, unknown>;
+}
+
+export interface MessageArtifactExportLedger {
+  id: string;
+  conversation_id: string;
+  message_id: string;
+  artifact_id: string;
+  viewer_user_id: string;
+  format: "markdown" | "json" | "html" | "pdf" | "csv";
+  artifact_version: number;
+  content_sha256: string;
+  manifest_sha256: string;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface MessageArtifactChatRunPayload {
+  conversation_id: string;
+  parent_message_id: string;
+  branch_anchor: BranchAnchor;
+  content: string;
+  model_id: string;
+  reasoning: string;
+  key_mode: string;
+  contexts: Array<{
+    kind: "object_ref";
+    type: ContextItemType;
+    id: string;
+    evidence_span_ids?: string[];
+    artifact_id?: string;
+    artifact_key?: string | null;
+    artifact_version?: number | null;
+    source_version?: string;
+    locator?: RetrievalLocator;
+    artifact_part_provenance?: Record<string, unknown>;
+  }>;
+  web_search: {
+    mode: "off" | "auto" | "required";
+    freshness_days?: number | null;
+    allowed_domains?: string[];
+    blocked_domains?: string[];
+  };
+  artifact_intent: ArtifactIntentOptions;
+}
+
+export interface MessageArtifactFollowUp {
+  mode: "context_item" | "chat_run_payload";
+  artifact_part_provenance: Record<string, unknown>;
+  context_item?: Record<string, unknown> | null;
+  chat_run_payload?: MessageArtifactChatRunPayload | null;
+}
+
+export interface MessageDocument {
+  type: "message_document";
+  version: number;
+  blocks: Array<
+    | {
+        type: "text";
+        format: "plain" | "markdown";
+        text: string;
+      }
+    | {
+        type: "source_manifest";
+        assistant_message_id: string;
+        tool_call_id?: string | null;
+        tool_name: "app_search" | "web_search";
+        tool_call_index: number;
+        query_hash?: string | null;
+        scope?: string;
+        filters: Record<string, unknown>;
+        requested_types: string[];
+        candidate_count: number;
+        result_count: number;
+        selected_count: number;
+        included_in_prompt_count: number;
+        excluded_by_budget_count: number;
+        excluded_by_scope_count: number;
+        stale_count: number;
+        unreadable_count: number;
+        web_search_mode?: "off" | "auto" | "required" | null;
+        index_versions: string[];
+        metadata?: Record<string, unknown>;
+        latency_ms?: number | null;
+        status: "pending" | "running" | "complete" | "error" | "cancelled";
+      }
+    | ({
+        type: "retrieval_result";
+      } & MessageRetrieval)
+    | ({
+        type: "verification_summary";
+      } & MessageEvidenceSummary)
+    | ({
+        type: "citation_audit";
+      } & MessageCitationAudit)
+    | {
+        type: "claim";
+        claim_id: string;
+        message_id?: string;
+        ordinal: number;
+        claim_text: string;
+        answer_start_offset?: number | null;
+        answer_end_offset?: number | null;
+        claim_kind?: MessageClaimKind;
+        support_status: MessageClaimSupportStatus;
+        unsupported_reason?: string | null;
+        confidence?: number | null;
+        verifier_status: MessageEvidenceVerifierStatus;
+        created_at?: string;
+        evidence_ids?: string[];
+      }
+    | ({
+        type: "claim_evidence";
+      } & MessageClaimEvidence)
+    | {
+        type: "artifact_preview";
+        artifact_id?: string | null;
+        durable_artifact_id?: string | null;
+        artifact_key?: string | null;
+        artifact_version?: number | null;
+        supersedes_artifact_id?: string | null;
+        artifact_kind?: string | null;
+        title?: string | null;
+        status?: string | null;
+        delta?: string | null;
+        parts?: MessageArtifactPart[];
+      }
+  >;
 }
 
 export interface ConversationMessage {
   id: string;
   seq: number;
   role: "user" | "assistant" | "system";
-  content: string;
+  message_document?: MessageDocument;
   parent_message_id?: string | null;
   branch_root_message_id?: string | null;
   branch_anchor_kind?: BranchAnchorKind;
   branch_anchor?: BranchAnchor | null;
   contexts?: MessageContextSnapshot[];
   tool_calls?: MessageToolCall[];
-  evidence_summary?: MessageEvidenceSummary | null;
-  claims?: MessageClaim[];
-  claim_evidence?: MessageClaimEvidence[];
+  artifacts?: MessageArtifact[];
   status: "pending" | "complete" | "error" | "cancelled";
   error_code: string | null;
   can_retry_response: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export function conversationMessageText(
+  message: Pick<ConversationMessage, "message_document">,
+): string {
+  return (message.message_document?.blocks ?? [])
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n\n");
 }
 
 export interface ConversationMessagesResponse {

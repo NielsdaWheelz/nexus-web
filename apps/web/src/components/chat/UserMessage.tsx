@@ -10,6 +10,8 @@ import type {
   ConversationMessage,
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
+import { conversationMessageText } from "@/lib/conversations/types";
+import { isRetrievalLocator } from "@/lib/api/sse";
 import type { ReaderSourceTarget } from "./MessageRow";
 import styles from "./MessageRow.module.css";
 
@@ -31,8 +33,9 @@ export default function UserMessage({
   onActivateTarget: (target: ReaderSourceTarget) => void;
 }) {
   const contexts = message.contexts ?? [];
-  const presentation = userPromptPresentation(message.content);
-  const content = message.content || (message.status === "pending" ? "..." : "");
+  const text = conversationMessageText(message);
+  const presentation = userPromptPresentation(text);
+  const content = text || (message.status === "pending" ? "..." : "");
 
   return (
     <div
@@ -67,17 +70,21 @@ export default function UserMessage({
         </div>
         {contexts.length > 0 ? (
           <span className={styles.userCitationRow}>
-            {contexts.map((context, index) => (
-              <ReaderCitation
-                key={contextKey(context, index)}
-                index={index + 1}
-                color={citationColorFromContext(context)}
-                preview={citationPreviewFromContext(context)}
-                target={readerTargetFromContext(context)}
-                onActivate={onActivateTarget}
-                ariaLabel={`Open citation ${index + 1}`}
-              />
-            ))}
+            {contexts.map((context, index) => {
+              const href = contextHref(context);
+              return (
+                <ReaderCitation
+                  key={contextKey(context, index)}
+                  index={index + 1}
+                  color={citationColorFromContext(context)}
+                  preview={citationPreviewFromContext(context)}
+                  target={readerTargetFromContext(context, href)}
+                  href={href}
+                  onActivate={onActivateTarget}
+                  ariaLabel={`Open citation ${index + 1}`}
+                />
+              );
+            })}
           </span>
         ) : null}
         <span className={styles.userPromptBody}>{content}</span>
@@ -144,10 +151,15 @@ function citationPreviewFromContext(context: MessageContextSnapshot) {
 
 function readerTargetFromContext(
   context: MessageContextSnapshot,
+  href: string | null,
 ): ReaderSourceTarget | null {
   if (context.kind !== "reader_selection") return null;
   const mediaId = context.source_media_id ?? context.media_id;
-  if (!mediaId || !context.locator || Object.keys(context.locator).length === 0) {
+  if (
+    !mediaId ||
+    !context.source_version ||
+    !isRetrievalLocator(context.locator)
+  ) {
     return null;
   }
   return {
@@ -155,8 +167,69 @@ function readerTargetFromContext(
     media_id: mediaId,
     locator: context.locator,
     snippet: context.exact ?? context.preview ?? null,
+    source_version: context.source_version,
+    highlight_behavior: "pulse",
+    focus_behavior: "scroll_into_view",
     status: "attached_context",
     label: context.title ?? context.media_title,
+    href,
     context_id: context.client_context_id ?? null,
   };
+}
+
+function contextHref(context: MessageContextSnapshot): string | null {
+  if (context.kind === "reader_selection") {
+    return context.route ?? null;
+  }
+  if (context.route) {
+    return context.route;
+  }
+  if (!context.id) {
+    return null;
+  }
+  const type = context.type;
+  switch (type) {
+    case "highlight":
+      return context.media_id
+        ? `/media/${context.media_id}?highlight=${context.id}`
+        : null;
+    case "content_chunk": {
+      const mediaId = context.media_id ?? context.source_media_id;
+      if (!mediaId) return null;
+      const params = new URLSearchParams();
+      const evidenceSpanId = context.evidence_span_ids?.[0];
+      if (evidenceSpanId) params.set("evidence", evidenceSpanId);
+      const query = params.toString();
+      return query ? `/media/${mediaId}?${query}` : `/media/${mediaId}`;
+    }
+    case "media":
+      return `/media/${context.id}`;
+    case "podcast":
+      return `/podcasts/${context.id}`;
+    case "fragment":
+      return context.media_id || context.source_media_id
+        ? `/media/${context.media_id ?? context.source_media_id}?fragment=${context.id}`
+        : null;
+    case "evidence_span":
+      return context.media_id || context.source_media_id
+        ? `/media/${context.media_id ?? context.source_media_id}?evidence=${context.id}`
+        : null;
+    case "artifact":
+      return null;
+    case "artifact_part":
+      if (context.locator?.type !== "artifact_part_ref") return null;
+      return `/conversations/${context.locator.conversation_id}?artifact=${context.locator.artifact_id}&artifactPart=${context.locator.artifact_part_id}`;
+    case "conversation":
+      return `/conversations/${context.id}`;
+    case "message":
+      return context.locator?.type === "message_offsets"
+        ? `/conversations/${context.locator.conversation_id}`
+        : null;
+    case "page":
+      return `/pages/${context.id}`;
+    case "note_block":
+      return `/notes/${context.id}`;
+    default:
+      return null;
+  }
 }

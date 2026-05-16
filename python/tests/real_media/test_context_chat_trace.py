@@ -78,6 +78,7 @@ async def test_real_web_article_context_chat_persists_retrievals_prompt_and_cita
                 }
             ],
             "web_search": {"mode": "off"},
+            "artifact_intent": {"kind": "off"},
         },
     )
     assert create_response.status_code == 200, create_response.text
@@ -103,9 +104,16 @@ async def test_real_web_article_context_chat_persists_retrievals_prompt_and_cita
     assert fetched_data["assistant_message"]["status"] == "complete", fetched_data[
         "assistant_message"
     ]
-    assert fetched_data["assistant_message"]["content"].strip(), fetched_data["assistant_message"]
-    assert fetched_data["assistant_message"]["tool_calls"], fetched_data["assistant_message"]
-    assert fetched_data["assistant_message"]["claim_evidence"], fetched_data["assistant_message"]
+    blocks = fetched_data["assistant_message"]["message_document"]["blocks"]
+    assert any(block["type"] == "text" and block["text"].strip() for block in blocks), fetched_data[
+        "assistant_message"
+    ]
+    assert any(block["type"] == "source_manifest" for block in blocks), fetched_data[
+        "assistant_message"
+    ]
+    assert any(block["type"] == "claim_evidence" for block in blocks), fetched_data[
+        "assistant_message"
+    ]
 
     chat_trace = assert_context_chat_trace(
         direct_db,
@@ -171,6 +179,7 @@ async def test_real_media_chat_persists_no_results_and_no_indexed_evidence_statu
             "conversation_scope": {"type": "library", "library_id": str(library_id)},
             "contexts": [],
             "web_search": {"mode": "off"},
+            "artifact_intent": {"kind": "off"},
         },
     )
     assert no_results_response.status_code == 200, no_results_response.text
@@ -229,6 +238,7 @@ async def test_real_media_chat_persists_no_results_and_no_indexed_evidence_statu
                 "conversation_scope": {"type": "media", "media_id": str(ocr_media_id)},
                 "contexts": [],
                 "web_search": {"mode": "off"},
+                "artifact_intent": {"kind": "off"},
             },
         )
         assert no_index_response.status_code == 200, no_index_response.text

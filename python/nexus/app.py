@@ -229,7 +229,7 @@ def create_app(
     api_router = create_api_router(include_test_routes=settings.nexus_env == Environment.TEST)
     app.include_router(api_router)
 
-    # PR-08: Include stream router (/stream/*) — browser-callable, stream token auth
+    # PR-08: Include browser-callable stream-token routes
     app.include_router(stream_router)
 
     # PR-08: Include stream token minting route (/internal/stream-tokens) — BFF-only
@@ -254,7 +254,7 @@ def create_app(
             internal_header_required=settings.requires_internal_header,
         )
 
-    # PR-08: Add StreamCORSMiddleware for /stream/* routes
+    # PR-08: Add StreamCORSMiddleware for browser-callable stream routes
     # Must be added AFTER auth middleware (runs before it in the stack)
     cors_origins = settings.stream_cors_origin_list
     if cors_origins:

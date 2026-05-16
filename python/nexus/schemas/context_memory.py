@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from nexus.schemas.retrieval import RetrievalContextRef, RetrievalResultRef
+
 SOURCE_REF_TYPES = Literal[
     "message",
     "message_context",
@@ -67,12 +69,14 @@ class SourceRef(BaseModel):
     label: str | None = Field(default=None, max_length=256)
     conversation_id: UUID | None = None
     message_id: UUID | None = None
+    message_context_id: UUID | None = None
     message_seq: int | None = Field(default=None, ge=1)
     tool_call_id: UUID | None = None
     retrieval_id: UUID | None = None
-    context_ref: dict[str, Any] | None = None
-    result_ref: dict[str, Any] | None = None
+    context_ref: RetrievalContextRef | None = None
+    result_ref: RetrievalResultRef | None = None
     media_id: UUID | None = None
+    evidence_span_id: UUID | None = None
     deep_link: str | None = Field(default=None, max_length=2048)
     location: SourceRefLocation | None = None
     source_version: str | None = Field(default=None, min_length=1, max_length=256)

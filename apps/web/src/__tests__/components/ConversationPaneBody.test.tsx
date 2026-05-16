@@ -3,6 +3,7 @@ import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import type { ChatRunCreateRequest } from "@/lib/api/sse";
 import type {
   ChatRunResponse,
   ConversationMessage,
@@ -21,6 +22,7 @@ vi.mock("@/components/chat/useChatRunTail", () => ({
 }));
 
 const timestamp = "2026-01-01T00:00:00Z";
+const EPUB_MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 
 const MODELS = [
   {
@@ -62,7 +64,19 @@ function message(
     id,
     seq,
     role,
-    content,
+    message_document: {
+      type: "message_document",
+      version: 1,
+      blocks: content.trim()
+        ? [
+            {
+              type: "text",
+              format: role === "assistant" ? "markdown" : "plain",
+              text: content,
+            },
+          ]
+        : [],
+    },
     parent_message_id: parentMessageId,
     contexts: [],
     tool_calls: [],
@@ -541,5 +555,164 @@ describe("ConversationPaneBody", () => {
       ).toHaveLength(3);
     });
     expect(scrollport.scrollTop).toBe(60);
+  });
+
+  it("sends EPUB source actions as EPUB reader-selection context", async () => {
+    const user = userEvent.setup();
+    const root = message("root-user", 1, "user", "Start");
+    const locator = {
+      type: "epub_fragment_offsets",
+      media_id: EPUB_MEDIA_ID,
+      section_id: "section-1",
+      fragment_id: "fragment-1",
+      start_offset: 4,
+      end_offset: 24,
+      text_quote_selector: { exact: "Call me Ishmael" },
+    } as const;
+    const assistant: ConversationMessage = {
+      ...message("assistant-epub", 2, "assistant", "EPUB answer.", "root-user"),
+      message_document: {
+        type: "message_document",
+        version: 1,
+        blocks: [
+          { type: "text", format: "markdown", text: "EPUB answer." },
+          {
+            type: "retrieval_result",
+            id: "retrieval-1",
+            tool_call_id: "tool-1",
+            ordinal: 0,
+            result_type: "content_chunk",
+            source_id: "chunk-1",
+            media_id: EPUB_MEDIA_ID,
+            evidence_span_id: "span-1",
+            context_ref: {
+              type: "content_chunk",
+              id: "chunk-1",
+              evidence_span_ids: ["span-1"],
+            },
+            result_ref: {
+              type: "content_chunk",
+              id: "chunk-1",
+              result_type: "content_chunk",
+              source_id: "chunk-1",
+              title: "Moby-Dick",
+              source_label: "Chapter 1",
+              snippet: "Call me Ishmael",
+              deep_link: `/media/${EPUB_MEDIA_ID}?fragment=fragment-1`,
+              citation_label: "Chapter 1",
+              context_ref: {
+                type: "content_chunk",
+                id: "chunk-1",
+                evidence_span_ids: ["span-1"],
+              },
+              evidence_span_ids: ["span-1"],
+              source_version: "epub-source:v1",
+              locator,
+              media_id: EPUB_MEDIA_ID,
+              media_kind: "epub",
+              score: 0.92,
+              selected: true,
+              source_kind: "epub",
+            },
+            deep_link: `/media/${EPUB_MEDIA_ID}?fragment=fragment-1`,
+            locator,
+            score: 0.92,
+            selected: true,
+            exact_snippet: "Call me Ishmael",
+            retrieval_status: "included_in_prompt",
+            included_in_prompt: true,
+            source_version: "epub-source:v1",
+          },
+        ],
+      },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1/tree") {
+        const conversation = treeResponse().conversation;
+        return jsonResponse({
+          data: {
+            conversation: { ...conversation, message_count: 2 },
+            selected_path: [root, assistant],
+            active_leaf_message_id: assistant.id,
+            fork_options_by_parent_id: {},
+            path_cache_by_leaf_id: { [assistant.id]: [root, assistant] },
+            branch_graph: { root_message_id: root.id, edges: [], nodes: [] },
+            page: { before_cursor: null },
+          },
+        });
+      }
+      if (path === "/api/models") {
+        return jsonResponse({ data: MODELS });
+      }
+      if (path === "/api/chat-runs" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as ChatRunCreateRequest;
+        return jsonResponse({
+          data: {
+            run: {
+              id: "run-epub",
+              status: "queued",
+              conversation_id: "conversation-1",
+              user_message_id: "user-epub",
+              assistant_message_id: "assistant-epub-reply",
+              model_id: body.model_id,
+              reasoning: body.reasoning,
+              key_mode: body.key_mode ?? "auto",
+              cancel_requested_at: null,
+              started_at: null,
+              completed_at: null,
+              error_code: null,
+              created_at: timestamp,
+              updated_at: timestamp,
+            },
+            conversation: treeResponse().conversation,
+            user_message: message("user-epub", 3, "user", body.content, assistant.id),
+            assistant_message: message(
+              "assistant-epub-reply",
+              4,
+              "assistant",
+              "",
+              "user-epub",
+              "pending",
+            ),
+          },
+        });
+      }
+      if (path === "/api/chat-runs") {
+        return jsonResponse({ data: [] });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane();
+
+    expect(await screen.findByText("EPUB answer.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Ask about this" }));
+    await user.click(screen.getByRole("textbox", { name: "Ask anything" }));
+    await user.keyboard("Use this EPUB source");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            pathOf(input) === "/api/chat-runs" && init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+    const chatRunCall = fetchMock.mock.calls.find(
+      ([input, init]) => pathOf(input) === "/api/chat-runs" && init?.method === "POST",
+    );
+    const body = JSON.parse(String(chatRunCall?.[1]?.body)) as ChatRunCreateRequest;
+    expect(body.contexts?.[0]).toMatchObject({
+      kind: "reader_selection",
+      media_id: EPUB_MEDIA_ID,
+      media_kind: "epub",
+      media_title: "Moby-Dick",
+      exact: "Call me Ishmael",
+      source_version: "epub-source:v1",
+      locator,
+    });
   });
 });

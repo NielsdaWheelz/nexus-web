@@ -69,6 +69,7 @@ def _semantic_index_requires_repair(
 ) -> bool:
     """Whether active transcript evidence is absent or stale."""
     embedding_model = current_transcript_embedding_model()
+    embedding_version = embedding_model
     embedding_provider = "test" if embedding_model.startswith("test_") else "openai"
     embedding_config_hash = hashlib.sha256(
         f"{embedding_provider}:{embedding_model}:{transcript_embedding_dimensions()}:{CHUNKER_VERSION}".encode()
@@ -105,7 +106,7 @@ def _semantic_index_requires_repair(
         or row[1] != str(transcript_version_id)
         or row[2] != embedding_provider
         or row[3] != embedding_model
-        or row[4] != embedding_model
+        or row[4] != embedding_version
         or row[5] != embedding_config_hash
     )
 
@@ -1544,7 +1545,7 @@ def repair_podcast_transcript_semantic_index_now(
                                 AND mcis.status = 'ready'
                                 AND mcis.active_embedding_provider = :embedding_provider
                                 AND mcis.active_embedding_model = :embedding_model
-                                AND mcis.active_embedding_version = :embedding_model
+                                AND mcis.active_embedding_version = :embedding_version
                                 AND mcis.active_embedding_config_hash = :embedding_config_hash
                                 AND ss.source_kind = 'transcript'
                                 AND ss.metadata ->> 'transcript_version_id'
@@ -1561,6 +1562,7 @@ def repair_podcast_transcript_semantic_index_now(
             "request_reason": normalized_reason,
             "embedding_provider": embedding_provider,
             "embedding_model": embedding_model,
+            "embedding_version": embedding_model,
             "embedding_config_hash": embedding_config_hash,
             "now": now,
         },

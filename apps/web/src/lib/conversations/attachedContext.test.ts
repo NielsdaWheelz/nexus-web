@@ -153,7 +153,8 @@ describe("signatures", () => {
         media_kind: "article",
         media_title: "Source",
         exact: "Selected text",
-        locator: { type: "web_fragment", fragment_id: "fragment-1" },
+        source_version: "web-source:v1",
+        locator: { type: "external_url", url: "https://example.test/fragment-1" },
       }),
     ).toBe("reader_selection:selection-1");
     expect(

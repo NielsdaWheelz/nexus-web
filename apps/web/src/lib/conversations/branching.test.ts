@@ -30,7 +30,19 @@ function message(
     id,
     seq,
     role,
-    content,
+    message_document: {
+      type: "message_document",
+      version: 1,
+      blocks: content.trim()
+        ? [
+            {
+              type: "text",
+              format: role === "assistant" ? "markdown" : "plain",
+              text: content,
+            },
+          ]
+        : [],
+    },
     parent_message_id: parentMessageId,
   };
 }

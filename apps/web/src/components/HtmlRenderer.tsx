@@ -19,6 +19,7 @@
 
 import { memo, useCallback, useEffect, useRef } from "react";
 import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
+import type { RetrievalLocator } from "@/lib/api/sse";
 import styles from "./HtmlRenderer.module.css";
 
 interface HtmlRendererProps {
@@ -144,11 +145,10 @@ export default memo(function HtmlRenderer({
 
 function collectPulseCandidates(
   root: HTMLElement,
-  locator: unknown,
+  locator: RetrievalLocator,
   snippet: string | null,
   highlightId: string | undefined,
 ): HTMLElement[] {
-  const record = (locator as Record<string, unknown> | null) ?? null;
   if (highlightId) {
     const matches = root.querySelectorAll<HTMLElement>(
       `[data-active-highlight-ids~="${CSS.escape(highlightId)}"]`,
@@ -156,7 +156,10 @@ function collectPulseCandidates(
     if (matches.length > 0) return Array.from(matches);
   }
 
-  const fragmentId = record && typeof record.fragment_id === "string" ? record.fragment_id : null;
+  const fragmentId =
+    locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets"
+      ? locator.fragment_id
+      : null;
   if (fragmentId) {
     const scoped = root.querySelectorAll<HTMLElement>(
       `[data-fragment-id="${CSS.escape(fragmentId)}"] [data-active-highlight-ids]`,

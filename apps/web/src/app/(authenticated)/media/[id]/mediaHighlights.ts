@@ -26,6 +26,7 @@ export interface Highlight {
     start_offset: number;
     end_offset: number;
   };
+  source_version?: string;
   color: HighlightColor;
   exact: string;
   prefix: string;
@@ -38,10 +39,12 @@ export interface Highlight {
   linked_note_blocks?: HighlightLinkedNoteBlock[];
 }
 
-export async function fetchHighlights(fragmentId: string): Promise<Highlight[]> {
+export async function fetchHighlights(
+  fragmentId: string,
+): Promise<Highlight[]> {
   const response = await apiFetch<{ data: { highlights: Highlight[] } }>(
     `/api/fragments/${fragmentId}/highlights`,
-    { cache: "no-store" }
+    { cache: "no-store" },
   );
   return response.data.highlights;
 }
@@ -50,7 +53,7 @@ export async function createHighlight(
   fragmentId: string,
   startOffset: number,
   endOffset: number,
-  color: HighlightColor
+  color: HighlightColor,
 ): Promise<Highlight> {
   const response = await apiFetch<{ data: Highlight }>(
     `/api/fragments/${fragmentId}/highlights`,
@@ -61,7 +64,7 @@ export async function createHighlight(
         end_offset: endOffset,
         color,
       }),
-    }
+    },
   );
   return response.data;
 }
@@ -74,7 +77,7 @@ export async function updateHighlight(
       end_offset: number;
     };
     color?: HighlightColor;
-  }
+  },
 ): Promise<void> {
   const body: {
     color?: HighlightColor;
@@ -114,10 +117,13 @@ export async function saveHighlightNote(
   noteBlockId: string | null,
   createBlockId: string,
   bodyPmJson: Record<string, unknown>,
-  baseRevision: number | null
+  baseRevision: number | null,
 ): Promise<HighlightLinkedNoteBlock> {
   const noteBlock = noteBlockId
-    ? await updateNoteBlock(noteBlockId, { baseRevision: requiredRevision(baseRevision), bodyPmJson })
+    ? await updateNoteBlock(noteBlockId, {
+        baseRevision: requiredRevision(baseRevision),
+        bodyPmJson,
+      })
     : await createNoteBlock({
         id: createBlockId,
         bodyPmJson,
@@ -129,13 +135,13 @@ export async function saveHighlightNote(
 
 export async function deleteHighlightNote(
   noteBlockId: string,
-  baseRevision: number
+  baseRevision: number,
 ): Promise<void> {
   await deleteNoteBlock(noteBlockId, { baseRevision });
 }
 
 export function noteBlockToHighlightLinkedNoteBlock(
-  noteBlock: NoteBlock
+  noteBlock: NoteBlock,
 ): HighlightLinkedNoteBlock {
   return {
     note_block_id: noteBlock.id,
@@ -158,7 +164,7 @@ export function patchHighlightLinkedNoteBlock<
 >(
   highlights: T[],
   highlightId: string,
-  linkedNoteBlock: HighlightLinkedNoteBlock
+  linkedNoteBlock: HighlightLinkedNoteBlock,
 ): T[] {
   let changed = false;
   const nextHighlights = highlights.map((highlight) => {
@@ -168,12 +174,12 @@ export function patchHighlightLinkedNoteBlock<
 
     const linkedNoteBlocks = highlight.linked_note_blocks ?? [];
     const existingIndex = linkedNoteBlocks.findIndex(
-      (noteBlock) => noteBlock.note_block_id === linkedNoteBlock.note_block_id
+      (noteBlock) => noteBlock.note_block_id === linkedNoteBlock.note_block_id,
     );
     const nextLinkedNoteBlocks =
       existingIndex >= 0
         ? linkedNoteBlocks.map((noteBlock, index) =>
-            index === existingIndex ? linkedNoteBlock : noteBlock
+            index === existingIndex ? linkedNoteBlock : noteBlock,
           )
         : [...linkedNoteBlocks, linkedNoteBlock];
 
@@ -194,7 +200,7 @@ export function removeHighlightLinkedNoteBlock<
   const nextHighlights = highlights.map((highlight) => {
     const linkedNoteBlocks = highlight.linked_note_blocks ?? [];
     const nextLinkedNoteBlocks = linkedNoteBlocks.filter(
-      (noteBlock) => noteBlock.note_block_id !== noteBlockId
+      (noteBlock) => noteBlock.note_block_id !== noteBlockId,
     );
 
     if (nextLinkedNoteBlocks.length === linkedNoteBlocks.length) {

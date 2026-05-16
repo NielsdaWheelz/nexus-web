@@ -49,7 +49,13 @@ function stubModelsFetch() {
                 id: "message-1",
                 seq: 1,
                 role: "assistant",
-                content: "Earlier answer",
+                message_document: {
+                  type: "message_document",
+                  version: 1,
+                  blocks: [
+                    { type: "text", format: "markdown", text: "Earlier answer" },
+                  ],
+                },
                 status: "complete",
                 error_code: null,
                 created_at: "2026-01-01T00:00:00Z",
@@ -136,7 +142,8 @@ describe("QuoteChatSheet", () => {
             media_kind: "article",
             media_title: "Source article",
             exact: "A selected passage from the reader.",
-            locator: { type: "web_fragment", fragment_id: "fragment-1" },
+            source_version: "web-source:v1",
+            locator: { type: "external_url", url: "https://example.test/fragment-1" },
           },
         ]}
         conversationId={null}
@@ -319,7 +326,17 @@ describe("QuoteChatSheet", () => {
                 id: "user-message-1",
                 seq: 1,
                 role: "user",
-                content: "What does this mean?",
+                message_document: {
+                  type: "message_document",
+                  version: 1,
+                  blocks: [
+                    {
+                      type: "text",
+                      format: "plain",
+                      text: "What does this mean?",
+                    },
+                  ],
+                },
                 contexts: [],
                 tool_calls: [],
                 status: "complete",
@@ -331,7 +348,11 @@ describe("QuoteChatSheet", () => {
                 id: "assistant-message-1",
                 seq: 2,
                 role: "assistant",
-                content: "",
+                message_document: {
+                  type: "message_document",
+                  version: 1,
+                  blocks: [],
+                },
                 contexts: [],
                 tool_calls: [],
                 status: "pending",

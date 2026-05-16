@@ -41,6 +41,7 @@ def create_chat_run(
         key_mode=body.key_mode,
         contexts=body.contexts,
         web_search=body.web_search,
+        artifact_intent=body.artifact_intent,
         idempotency_key=idempotency_key,
     )
     return success_response(result.model_dump(mode="json"))

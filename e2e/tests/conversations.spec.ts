@@ -1,5 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import {
+  seedArtifactFollowUpConversation,
   seedBranchingConversation,
   seedScrollConversation,
 } from "./conversation-tree-seed";
@@ -20,11 +22,11 @@ async function createConversationViaApi(page: Page) {
   const body = await createResponse.text();
   expect(
     status < 300 || status >= 400,
-    `POST /api/conversations redirected unexpectedly: status=${status}; location=${createResponse.headers()["location"] ?? "<none>"}; body=${body.slice(0, 400)}`
+    `POST /api/conversations redirected unexpectedly: status=${status}; location=${createResponse.headers()["location"] ?? "<none>"}; body=${body.slice(0, 400)}`,
   ).toBeTruthy();
   expect(
     createResponse.ok(),
-    `POST /api/conversations failed: status=${status}; contentType=${createResponse.headers()["content-type"] ?? "<none>"}; body=${body.slice(0, 400)}`
+    `POST /api/conversations failed: status=${status}; contentType=${createResponse.headers()["content-type"] ?? "<none>"}; body=${body.slice(0, 400)}`,
   ).toBeTruthy();
 
   let payload: { data: { id: string } };
@@ -32,24 +34,23 @@ async function createConversationViaApi(page: Page) {
     payload = JSON.parse(body) as { data: { id: string } };
   } catch (error) {
     throw new Error(
-      `POST /api/conversations returned non-JSON response: contentType=${createResponse.headers()["content-type"] ?? "<none>"}; body=${body.slice(0, 400)}; parseError=${String(error)}`
+      `POST /api/conversations returned non-JSON response: contentType=${createResponse.headers()["content-type"] ?? "<none>"}; body=${body.slice(0, 400)}; parseError=${String(error)}`,
     );
   }
   return payload.data.id;
 }
 
-async function deleteConversationViaApi(
-  page: Page,
-  conversationId: string
-) {
+async function deleteConversationViaApi(page: Page, conversationId: string) {
   await ensureAppContext(page);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const response = await page.request.delete(`/api/conversations/${conversationId}`);
+      const response = await page.request.delete(
+        `/api/conversations/${conversationId}`,
+      );
       if (!response.ok() && response.status() !== 404) {
         const body = await response.text();
         throw new Error(
-          `Failed to delete conversation ${conversationId}: status=${response.status()}; body=${body.slice(0, 300)}`
+          `Failed to delete conversation ${conversationId}: status=${response.status()}; body=${body.slice(0, 300)}`,
         );
       }
       return;
@@ -77,7 +78,11 @@ function messageRow(page: Page, messageId: string) {
   return page.locator(`[data-message-id="${messageId}"]`);
 }
 
-async function selectTextInMessage(page: Page, messageId: string, exact: string) {
+async function selectTextInMessage(
+  page: Page,
+  messageId: string,
+  exact: string,
+) {
   const row = messageRow(page, messageId);
   await expect(row).toContainText(exact);
   await selectExactVisibleText(page, `[data-message-id="${messageId}"]`, exact);
@@ -86,7 +91,9 @@ async function selectTextInMessage(page: Page, messageId: string, exact: string)
 async function openForksPanel(page: Page) {
   const panel = page.getByTestId("conversation-context-pane");
   await panel.getByRole("tab", { name: /Forks/ }).click();
-  await expect(panel.getByRole("tree", { name: "Conversation forks" })).toBeVisible();
+  await expect(
+    panel.getByRole("tree", { name: "Conversation forks" }),
+  ).toBeVisible();
   return panel;
 }
 
@@ -106,7 +113,9 @@ test.describe("conversations", () => {
       conversationId = await createConversationViaApi(page);
       await page.goto("/conversations");
 
-      const conversationLink = page.locator(`a[href="/conversations/${conversationId}"]`).first();
+      const conversationLink = page
+        .locator(`a[href="/conversations/${conversationId}"]`)
+        .first();
       await expect(conversationLink).toBeVisible();
       await expect(conversationLink.getByText(/^chat$/i)).toBeVisible();
       await expect(conversationLink).not.toContainText(
@@ -114,9 +123,14 @@ test.describe("conversations", () => {
       );
       await conversationLink.click();
 
-      await expect(page).toHaveURL(new RegExp(`/conversations/${conversationId}$`));
+      await expect(page).toHaveURL(
+        new RegExp(`/conversations/${conversationId}$`),
+      );
       expect(readConversationIdFromUrl(page.url())).toBe(conversationId);
-      const conversationPaneButton = workspacePaneButton(page, /^chat\b/i).first();
+      const conversationPaneButton = workspacePaneButton(
+        page,
+        /^chat\b/i,
+      ).first();
       await expect(conversationPaneButton).toBeVisible();
       await expect(conversationPaneButton).not.toContainText(
         new RegExp(conversationId.slice(0, 8), "i"),
@@ -133,27 +147,36 @@ test.describe("conversations", () => {
     try {
       await page.goto(`/conversations/${conversationId}`);
 
-      const modelSettingsButton = page.getByRole("button", { name: /model settings:/i });
+      const modelSettingsButton = page.getByRole("button", {
+        name: /model settings:/i,
+      });
       const missingKeyError = page.getByText("No API key available for openai");
-      const input = page.getByRole("textbox", { name: /ask anything|type a message/i });
+      const input = page.getByRole("textbox", {
+        name: /ask anything|type a message/i,
+      });
       const sendButton = page.getByRole("button", { name: /send message/i });
 
       await expect(input).toBeVisible({ timeout: 30_000 });
       await expect(modelSettingsButton).toBeVisible();
 
       await expect
-        .poll(async () => {
-          if (await missingKeyError.isVisible().catch(() => false)) {
-            return "ready";
-          }
+        .poll(
+          async () => {
+            if (await missingKeyError.isVisible().catch(() => false)) {
+              return "ready";
+            }
 
-          const modelLabel = await modelSettingsButton.getAttribute("aria-label").catch(() => "");
-          if (modelLabel && modelLabel !== "Model settings: Model") {
-            return "ready";
-          }
+            const modelLabel = await modelSettingsButton
+              .getAttribute("aria-label")
+              .catch(() => "");
+            if (modelLabel && modelLabel !== "Model settings: Model") {
+              return "ready";
+            }
 
-          return "pending";
-        }, { timeout: 15_000 })
+            return "pending";
+          },
+          { timeout: 15_000 },
+        )
         .not.toBe("pending");
 
       if (await missingKeyError.isVisible().catch(() => false)) {
@@ -165,20 +188,25 @@ test.describe("conversations", () => {
       await input.fill("Hello, this is a test message");
       await input.press("Enter");
 
-      const optimisticUserMessage = page.getByText("Hello, this is a test message").first();
+      const optimisticUserMessage = page
+        .getByText("Hello, this is a test message")
+        .first();
 
       await expect
-        .poll(async () => {
-          if (await optimisticUserMessage.isVisible().catch(() => false)) {
-            return "done";
-          }
+        .poll(
+          async () => {
+            if (await optimisticUserMessage.isVisible().catch(() => false)) {
+              return "done";
+            }
 
-          if (await missingKeyError.isVisible().catch(() => false)) {
-            return "done";
-          }
+            if (await missingKeyError.isVisible().catch(() => false)) {
+              return "done";
+            }
 
-          return "pending";
-        }, { timeout: 10_000 })
+            return "pending";
+          },
+          { timeout: 10_000 },
+        )
         .not.toBe("pending");
 
       if (await missingKeyError.isVisible().catch(() => false)) {
@@ -191,7 +219,9 @@ test.describe("conversations", () => {
     }
   });
 
-  test("new chat docks the composer below the empty transcript", async ({ page }) => {
+  test("new chat docks the composer below the empty transcript", async ({
+    page,
+  }) => {
     await page.goto("/conversations/new");
 
     const paneBody = page.getByTestId("pane-shell-body");
@@ -200,8 +230,12 @@ test.describe("conversations", () => {
 
     await expect(paneBody).toHaveAttribute("data-body-mode", "contained");
     await expect(scrollport).toBeVisible();
-    await expect(page.getByRole("log", { name: "Chat messages" })).toBeVisible();
-    await expect(page.getByRole("textbox", { name: "Ask anything" })).toBeVisible();
+    await expect(
+      page.getByRole("log", { name: "Chat messages" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("textbox", { name: "Ask anything" }),
+    ).toBeVisible();
     await expect(composerDock).toBeVisible();
     await expect
       .poll(async () => {
@@ -212,19 +246,26 @@ test.describe("conversations", () => {
         const paneBottom = paneBox.y + paneBox.height;
         const dockBottom = dockBox.y + dockBox.height;
         const scrollportBottom = scrollportBox.y + scrollportBox.height;
-        return Math.abs(dockBottom - paneBottom) <= 2 && scrollportBottom <= dockBox.y + 1;
+        return (
+          Math.abs(dockBottom - paneBottom) <= 2 &&
+          scrollportBottom <= dockBox.y + 1
+        );
       })
       .toBe(true);
   });
 
-  test("main chat pane owns message and composer scrolling", async ({ page }) => {
+  test("main chat pane owns message and composer scrolling", async ({
+    page,
+  }) => {
     const seed = await seedScrollConversation(page, 50);
     const conversationId = seed.conversation_id;
     try {
       await page.goto(`/conversations/${conversationId}`);
 
       const paneBody = page.getByTestId("pane-shell-body");
-      const scrollport = page.getByRole("region", { name: "Chat conversation" });
+      const scrollport = page.getByRole("region", {
+        name: "Chat conversation",
+      });
       const log = page.getByRole("log", { name: "Chat messages" });
       const composerDock = page.getByTestId("chat-composer-dock");
       const finalMessage = messageRow(page, seed.active_leaf_message_id);
@@ -232,16 +273,21 @@ test.describe("conversations", () => {
       await expect(paneBody).toHaveAttribute("data-body-mode", "contained");
       await expect(scrollport).toBeVisible();
       await expect(composerDock).toBeVisible();
-      await expect(log).toContainText("Scroll fixture message 50", { timeout: 10_000 });
-      await expect(finalMessage).toContainText(`Scroll fixture message ${seed.message_count}`);
+      await expect(log).toContainText("Scroll fixture message 50", {
+        timeout: 10_000,
+      });
+      await expect(finalMessage).toContainText(
+        `Scroll fixture message ${seed.message_count}`,
+      );
       await scrollport.evaluate((node) => {
         node.scrollTop = node.scrollHeight;
       });
       await expect
         .poll(async () =>
           scrollport.evaluate(
-            (node) => node.scrollHeight > node.clientHeight && node.scrollTop > 0,
-          )
+            (node) =>
+              node.scrollHeight > node.clientHeight && node.scrollTop > 0,
+          ),
         )
         .toBe(true);
       await expect
@@ -253,11 +299,16 @@ test.describe("conversations", () => {
           const paneBottom = paneBox.y + paneBox.height;
           const dockBottom = dockBox.y + dockBox.height;
           const finalMessageBottom = finalMessageBox.y + finalMessageBox.height;
-          return Math.abs(dockBottom - paneBottom) <= 2 && finalMessageBottom <= dockBox.y + 1;
+          return (
+            Math.abs(dockBottom - paneBottom) <= 2 &&
+            finalMessageBottom <= dockBox.y + 1
+          );
         })
         .toBe(true);
 
-      const bottomScrollTop = await scrollport.evaluate((node) => node.scrollTop);
+      const bottomScrollTop = await scrollport.evaluate(
+        (node) => node.scrollTop,
+      );
       const scrollportBox = await scrollport.boundingBox();
       if (!scrollportBox) {
         throw new Error("Chat scrollport has no bounding box.");
@@ -275,7 +326,9 @@ test.describe("conversations", () => {
       await scrollport.evaluate((node) => {
         node.scrollTop = node.scrollHeight;
       });
-      const beforeComposerWheel = await scrollport.evaluate((node) => node.scrollTop);
+      const beforeComposerWheel = await scrollport.evaluate(
+        (node) => node.scrollTop,
+      );
       await page.getByRole("textbox", { name: "Ask anything" }).hover();
       await page.mouse.wheel(0, -700);
       await expect
@@ -300,15 +353,17 @@ test.describe("conversations", () => {
     try {
       await page.goto(`/conversations/${conversationId}`);
 
-      await expect(page.getByRole("log", { name: "Chat messages" })).toContainText(
-        "Linear branch answer keeps the original path active.",
-      );
+      await expect(
+        page.getByRole("log", { name: "Chat messages" }),
+      ).toContainText("Linear branch answer keeps the original path active.");
       await expect(messageRow(page, seed.root_assistant_id)).toContainText(
         seed.root_assistant_content,
       );
 
       const rootAssistant = messageRow(page, seed.root_assistant_id);
-      await rootAssistant.getByRole("button", { name: "Fork from this answer" }).click();
+      await rootAssistant
+        .getByRole("button", { name: "Fork from this answer" })
+        .click();
       const branchPreview = page.locator('section[aria-label="Fork reply"]');
       await expect(branchPreview).toContainText("Parent message 2");
       await expect(branchPreview).toContainText("selected source phrase");
@@ -329,9 +384,9 @@ test.describe("conversations", () => {
           name: /Current fork[\s\S]*E2E selected quote follow-up/i,
         }),
       ).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByRole("log", { name: "Chat messages" })).toContainText(
-        "E2E selected quote follow-up",
-      );
+      await expect(
+        page.getByRole("log", { name: "Chat messages" }),
+      ).toContainText("E2E selected quote follow-up");
 
       const quoteForkButton = rootAssistant
         .getByRole("region", { name: "Forks from this answer" })
@@ -340,14 +395,23 @@ test.describe("conversations", () => {
       await expect(quoteForkButton).toBeVisible();
       const quoteSwitchResponsePromise = page.waitForResponse(
         (response) =>
-          response.url().includes(`/api/conversations/${conversationId}/active-path`) &&
+          response
+            .url()
+            .includes(`/api/conversations/${conversationId}/active-path`) &&
           response.request().method() === "POST",
       );
-      const chatScrollport = page.getByRole("region", { name: "Chat conversation" });
-      const beforeForkSwitchScrollTop = await chatScrollport.evaluate((node) => {
-        node.scrollTop = Math.min(160, Math.max(0, node.scrollHeight - node.clientHeight));
-        return node.scrollTop;
+      const chatScrollport = page.getByRole("region", {
+        name: "Chat conversation",
       });
+      const beforeForkSwitchScrollTop = await chatScrollport.evaluate(
+        (node) => {
+          node.scrollTop = Math.min(
+            160,
+            Math.max(0, node.scrollHeight - node.clientHeight),
+          );
+          return node.scrollTop;
+        },
+      );
       expect(beforeForkSwitchScrollTop).toBeGreaterThan(0);
       await quoteForkButton.evaluate((button) => {
         button.click();
@@ -359,7 +423,9 @@ test.describe("conversations", () => {
         `POST /active-path failed: status=${quoteSwitchResponse.status()}; body=${quoteSwitchBody.slice(0, 500)}`,
       ).toBeTruthy();
       await expect(
-        page.getByText("Quote branch answer highlights the selected source phrase."),
+        page.getByText(
+          "Quote branch answer highlights the selected source phrase.",
+        ),
       ).toBeVisible();
       await expect
         .poll(() => chatScrollport.evaluate((node) => node.scrollTop))
@@ -374,59 +440,246 @@ test.describe("conversations", () => {
       ).toBeVisible();
 
       await page.reload();
-      await expect(page.getByText("Quote branch answer highlights the selected source phrase.")).toBeVisible();
+      await expect(
+        page.getByText(
+          "Quote branch answer highlights the selected source phrase.",
+        ),
+      ).toBeVisible();
 
       const panel = await openForksPanel(page);
-      await panel.getByRole("textbox", { name: "Search forks" }).fill("summarize it");
+      await panel
+        .getByRole("textbox", { name: "Search forks" })
+        .fill("summarize it");
       await panel.getByRole("button", { name: "Search" }).click();
       await expect(panel.getByText("1 fork found")).toBeVisible();
-      await panel.getByRole("button", { name: "Rename fork Quote branch" }).click();
-      await panel.getByRole("textbox", { name: "Rename fork Quote branch" }).fill(
-        "Renamed quote fork",
-      );
-      await panel.getByRole("button", { name: "Save fork Quote branch" }).click();
-      await expect(panel.getByRole("button", { name: "Switch to fork Renamed quote fork" })).toBeVisible();
+      await panel
+        .getByRole("button", { name: "Rename fork Quote branch" })
+        .click();
+      await panel
+        .getByRole("textbox", { name: "Rename fork Quote branch" })
+        .fill("Renamed quote fork");
+      await panel
+        .getByRole("button", { name: "Save fork Quote branch" })
+        .click();
+      await expect(
+        panel.getByRole("button", {
+          name: "Switch to fork Renamed quote fork",
+        }),
+      ).toBeVisible();
 
       await panel.getByRole("tab", { name: "Graph" }).click();
       await panel
-        .getByRole("button", { name: /Switch to graph leaf[\s\S]*Disposable branch answer/i })
+        .getByRole("button", {
+          name: /Switch to graph leaf[\s\S]*Disposable branch answer/i,
+        })
         .click();
-      await expect(page.getByRole("log", { name: "Chat messages" })).toContainText(
+      await expect(
+        page.getByRole("log", { name: "Chat messages" }),
+      ).toContainText(
         "Disposable branch answer can be switched to from the graph.",
       );
 
       await panel.getByRole("tab", { name: "Tree" }).click();
       await panel.getByRole("textbox", { name: "Search forks" }).fill("");
       await panel.getByRole("button", { name: "Search" }).click();
-      await expect(panel.getByRole("button", { name: "Delete fork Running branch" })).toBeVisible();
-      await expect(panel.getByRole("button", { name: "Delete fork Disposable branch" })).toBeDisabled();
+      await expect(
+        panel.getByRole("button", { name: "Delete fork Running branch" }),
+      ).toBeVisible();
+      await expect(
+        panel.getByRole("button", { name: "Delete fork Disposable branch" }),
+      ).toBeDisabled();
 
       await confirmDeleteFork(panel, "Running branch");
       await expect(panel.getByText("Fork delete failed.")).toBeVisible();
 
       await confirmDeleteFork(panel, "Renamed quote fork");
-      await expect(panel.getByRole("button", { name: "Switch to fork Renamed quote fork" })).toHaveCount(0);
+      await expect(
+        panel.getByRole("button", {
+          name: "Switch to fork Renamed quote fork",
+        }),
+      ).toHaveCount(0);
     } finally {
       await deleteConversationViaApi(page, conversationId);
     }
   });
 
-  test("mobile drawer exposes forks and switches branches", async ({ page }) => {
+  test("durable artifact viewer exports ledger and starts artifact-part follow-up", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(90_000);
+    const seed = await seedArtifactFollowUpConversation(page);
+    const conversationId = seed.conversation_id;
+    try {
+      await page.goto(
+        `/conversations/${conversationId}?artifact=${seed.artifact_id}&artifactPart=${seed.artifact_part_id}`,
+      );
+
+      const artifactRegion = page.getByRole("region", {
+        name: "Generated artifacts",
+      });
+      await expect(artifactRegion).toContainText(seed.artifact_title, {
+        timeout: 15_000,
+      });
+      await expect(artifactRegion).toContainText("timeline");
+
+      const detail = page.getByRole("region", { name: "Artifact detail" });
+      await expect(detail).toBeVisible();
+      await expect(detail).toContainText(seed.part_text);
+      await expect(detail).toContainText("Citation manifest");
+      await expect(detail).toContainText(seed.artifact_part_id);
+      await expect(detail).toContainText("Export ledger");
+      await expect(detail).toContainText("No exports yet.");
+
+      const downloadPromise = page.waitForEvent("download");
+      await artifactRegion
+        .getByRole("button", { name: "Export markdown" })
+        .click();
+      const download = await downloadPromise;
+      expect(download.suggestedFilename()).toBe("e2e-timeline.md");
+      const markdownPath = testInfo.outputPath("e2e-timeline.md");
+      await download.saveAs(markdownPath);
+      expect(readFileSync(markdownPath, "utf-8")).toContain(seed.part_text);
+
+      for (const format of ["json", "html", "csv", "pdf"] as const) {
+        const exportResponse = await page.request.post(
+          `/api/artifacts/${seed.artifact_id}/export?format=${format}`,
+        );
+        const exportBody = await exportResponse.text();
+        expect(
+          exportResponse.ok(),
+          `POST artifact ${format} export failed: status=${exportResponse.status()}; body=${exportBody.slice(0, 500)}`,
+        ).toBeTruthy();
+        expect(exportResponse.headers()["content-disposition"]).toContain(
+          `e2e-timeline.${format}`,
+        );
+        expect(
+          exportResponse.headers()["x-nexus-artifact-content-sha256"],
+        ).toBeTruthy();
+        expect(
+          exportResponse.headers()["x-nexus-artifact-manifest-sha256"],
+        ).toBeTruthy();
+        if (format === "pdf") {
+          expect(exportBody).toContain(
+            "1997: The seeded source note establishes",
+          );
+          expect(exportBody).toContain("artifact-part follow-up path.");
+        } else {
+          expect(exportBody).toContain(seed.part_text);
+        }
+      }
+
+      const ledgerResponsePromise = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname === `/api/artifacts/${seed.artifact_id}/exports` &&
+          response.request().method() === "GET"
+        );
+      });
+      await detail.getByRole("button", { name: "Refresh" }).click();
+      const ledgerResponse = await ledgerResponsePromise;
+      const ledgerBody = await ledgerResponse.text();
+      expect(
+        ledgerResponse.ok(),
+        `GET artifact exports failed: status=${ledgerResponse.status()}; body=${ledgerBody.slice(0, 500)}`,
+      ).toBeTruthy();
+      await expect(detail).toContainText("markdown");
+      await expect(detail).toContainText("json");
+      await expect(detail).toContainText("html");
+      await expect(detail).toContainText("csv");
+      await expect(detail).toContainText("pdf");
+      await expect(detail).toContainText("content");
+      await expect(detail).toContainText("manifest");
+
+      const question = "E2E artifact follow-up question";
+      await detail.getByRole("textbox", { name: "Question" }).fill(question);
+      const askResponsePromise = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname === `/api/artifacts/${seed.artifact_id}/ask` &&
+          response.request().method() === "POST"
+        );
+      });
+      const createRunResponsePromise = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname === "/api/chat-runs" &&
+          response.request().method() === "POST"
+        );
+      });
+      await detail
+        .getByRole("button", { name: "Ask about selected part" })
+        .click();
+      const askResponse = await askResponsePromise;
+      const askBody = await askResponse.text();
+      expect(
+        askResponse.ok(),
+        `POST artifact ask failed: status=${askResponse.status()}; body=${askBody.slice(0, 500)}`,
+      ).toBeTruthy();
+      const createRunResponse = await createRunResponsePromise;
+      const createRunBody = await createRunResponse.text();
+      expect(
+        createRunResponse.ok(),
+        `POST chat-runs failed: status=${createRunResponse.status()}; body=${createRunBody.slice(0, 500)}`,
+      ).toBeTruthy();
+      const createdRun = JSON.parse(createRunBody) as {
+        data: {
+          user_message: {
+            parent_message_id: string | null;
+            branch_anchor: { kind?: string; message_id?: string };
+            contexts?: Array<Record<string, unknown>>;
+          };
+        };
+      };
+      expect(createdRun.data.user_message.parent_message_id).toBe(
+        seed.assistant_message_id,
+      );
+      expect(createdRun.data.user_message.branch_anchor).toMatchObject({
+        kind: "assistant_message",
+        message_id: seed.assistant_message_id,
+      });
+      expect(
+        createdRun.data.user_message.contexts?.some(
+          (context) =>
+            context.kind === "object_ref" &&
+            context.type === "artifact_part" &&
+            context.id === seed.artifact_part_id,
+        ),
+      ).toBeTruthy();
+      await expect(detail).toContainText("Started follow-up chat run.");
+      await expect(
+        page.getByRole("log", { name: "Chat messages" }),
+      ).toContainText(question);
+    } finally {
+      await deleteConversationViaApi(page, conversationId);
+    }
+  });
+
+  test("mobile drawer exposes forks and switches branches", async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const seed = await seedBranchingConversation(page);
     const conversationId = seed.conversation_id;
     try {
       await page.goto(`/conversations/${conversationId}`);
-      await expect(page.getByTestId("conversation-context-pane")).toHaveCount(0);
+      await expect(page.getByTestId("conversation-context-pane")).toHaveCount(
+        0,
+      );
 
       await page.getByRole("button", { name: "Linked context" }).click();
       const drawer = page.getByRole("dialog", { name: "Linked context" });
       await expect(drawer).toBeVisible();
       await drawer.getByRole("tab", { name: /Forks/ }).click();
-      await drawer.getByRole("button", { name: /Switch to fork[\s\S]*Quote branch/i }).click();
+      await drawer
+        .getByRole("button", { name: /Switch to fork[\s\S]*Quote branch/i })
+        .click();
 
       await expect(drawer).toHaveCount(0);
-      await expect(page.getByText("Quote branch answer highlights the selected source phrase.")).toBeVisible();
+      await expect(
+        page.getByText(
+          "Quote branch answer highlights the selected source phrase.",
+        ),
+      ).toBeVisible();
     } finally {
       await deleteConversationViaApi(page, conversationId);
     }

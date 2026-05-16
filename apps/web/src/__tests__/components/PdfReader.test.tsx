@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import PdfReader, { type PdfReaderSelectionQuote } from "@/components/PdfReader";
+import PdfReader, {
+  type PdfReaderSelectionQuote,
+} from "@/components/PdfReader";
 import { apiFetch } from "@/lib/api/client";
 import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 
@@ -25,7 +27,8 @@ vi.mock("@/components/workspace/PaneShell", () => ({
 
 vi.mock("@/lib/api/client", () => ({
   ApiError: class ApiError extends Error {},
-  isApiError: (error: unknown) => error instanceof Error && error.name === "ApiError",
+  isApiError: (error: unknown) =>
+    error instanceof Error && error.name === "ApiError",
   apiFetch: vi.fn(async (path: string, init?: RequestInit) => {
     if (path === "/api/media/media-1/file") {
       return {
@@ -38,7 +41,8 @@ vi.mock("@/lib/api/client", () => ({
 
     if (
       (path === "/api/media/media-1/pdf-highlights?page_number=1" ||
-        path === "/api/media/media-1/pdf-highlights?page_number=1&mine_only=false") &&
+        path ===
+          "/api/media/media-1/pdf-highlights?page_number=1&mine_only=false") &&
       !init
     ) {
       return {
@@ -79,7 +83,7 @@ vi.mock("@/components/pdfReaderRuntime", () => {
       const listeners = this.listeners.get(eventName) ?? [];
       this.listeners.set(
         eventName,
-        listeners.filter((candidate) => candidate !== listener)
+        listeners.filter((candidate) => candidate !== listener),
       );
     }
   }
@@ -141,7 +145,9 @@ vi.mock("@/components/pdfReaderRuntime", () => {
       pdfRuntimeState.textNode = textNode;
 
       window.requestAnimationFrame(() => {
-        pdfRuntimeState.eventBus?.dispatch("pagesloaded", { pagesCount: doc.numPages });
+        pdfRuntimeState.eventBus?.dispatch("pagesloaded", {
+          pagesCount: doc.numPages,
+        });
         pdfRuntimeState.eventBus?.dispatch("pagerendered", {
           pageNumber: 1,
           source: this.getPageView(0),
@@ -203,12 +209,13 @@ describe("PdfReader selection Ask", () => {
   });
 
   it("emits a transient reader-selection quote without creating a saved PDF highlight", async () => {
-    const onAskSelection = vi.fn<(selection: PdfReaderSelectionQuote) => void>();
+    const onAskSelection =
+      vi.fn<(selection: PdfReaderSelectionQuote) => void>();
     vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
-      new DOMRect(110, 140, 160, 20)
+      new DOMRect(110, 140, 160, 20),
     );
     vi.spyOn(Range.prototype, "getClientRects").mockReturnValue(
-      rectList([new DOMRect(110, 140, 160, 20)])
+      rectList([new DOMRect(110, 140, 160, 20)]),
     );
 
     render(<PdfReader mediaId="media-1" onAskSelection={onAskSelection} />);
@@ -240,10 +247,12 @@ describe("PdfReader selection Ask", () => {
       suffix: "Omega",
       preview: "selected quote",
       locator: {
-        type: "pdf_text_quote",
+        type: "pdf_page_geometry",
+        media_id: "media-1",
         page_number: 1,
-        page_text_start_offset: 6,
-        page_text_end_offset: 20,
+        exact: "selected quote",
+        prefix: "Alpha",
+        suffix: "Omega",
         text_quote_selector: {
           exact: "selected quote",
           prefix: "Alpha",
@@ -263,14 +272,22 @@ describe("PdfReader selection Ask", () => {
         ],
       },
     });
-    expect(onAskSelection.mock.calls[0]![0].client_context_id).toEqual(expect.any(String));
+    expect(onAskSelection.mock.calls[0]![0].locator).not.toHaveProperty(
+      "page_text_start_offset",
+    );
+    expect(onAskSelection.mock.calls[0]![0].locator).not.toHaveProperty(
+      "page_text_end_offset",
+    );
+    expect(onAskSelection.mock.calls[0]![0].client_context_id).toEqual(
+      expect.any(String),
+    );
     expect(
       vi
         .mocked(apiFetch)
         .mock.calls.some(
           ([path, init]) =>
-            String(path).includes("/pdf-highlights") && init?.method === "POST"
-        )
+            String(path).includes("/pdf-highlights") && init?.method === "POST",
+        ),
     ).toBe(false);
   });
 
@@ -345,17 +362,26 @@ describe("PdfReader selection Ask", () => {
       highlightId: "h1",
       locator: {
         type: "pdf_page_geometry",
+        media_id: "media-1",
         page_number: 1,
         quads,
+        exact: "First quote",
       },
       snippet: "First quote",
+      sourceVersion: "pdf:media-1:v1",
+      highlightBehavior: "pulse",
+      focusBehavior: "scroll_into_view",
     });
 
     await waitFor(() => {
       const first = screen.getByTestId("pdf-highlight-h1-0");
-      expect(Array.from(first.classList).some((name) => name.includes("pulsing"))).toBe(true);
+      expect(
+        Array.from(first.classList).some((name) => name.includes("pulsing")),
+      ).toBe(true);
     });
     const second = screen.getByTestId("pdf-highlight-h2-0");
-    expect(Array.from(second.classList).some((name) => name.includes("pulsing"))).toBe(false);
+    expect(
+      Array.from(second.classList).some((name) => name.includes("pulsing")),
+    ).toBe(false);
   });
 });

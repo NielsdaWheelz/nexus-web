@@ -723,7 +723,7 @@ def assert_context_chat_trace(
         assert event_rows, f"chat run {run_id} did not persist replay events"
         event_types = [event["event_type"] for event in event_rows]
         assert "tool_call" in event_types, event_types
-        assert "tool_result" in event_types, event_types
+        assert "retrieval_result" in event_types, event_types
         assert event_types[-1] == "done", event_types
 
     return {
@@ -784,17 +784,6 @@ def assert_empty_chat_retrieval_status_trace(
                         mtc.requested_types,
                         mtc.status AS tool_status,
                         mtc.result_refs,
-                        mr.id AS retrieval_id,
-                        mr.result_type,
-                        mr.source_id,
-                        mr.media_id,
-                        mr.evidence_span_id,
-                        mr.context_ref,
-                        mr.result_ref,
-                        mr.exact_snippet,
-                        mr.selected,
-                        mr.included_in_prompt,
-                        mr.retrieval_status,
                         cpa.id AS prompt_assembly_id,
                         cpa.included_retrieval_ids,
                         cpa.prompt_block_manifest,
@@ -806,6 +795,21 @@ def assert_empty_chat_retrieval_status_trace(
                         ac.support_status AS claim_support_status,
                         (
                             SELECT count(*)
+                            FROM message_retrievals mr
+                            WHERE mr.tool_call_id = mtc.id
+                        ) AS retrieval_count,
+                        (
+                            SELECT count(*)
+                            FROM message_retrievals mr
+                            WHERE mr.tool_call_id = mtc.id
+                              AND (
+                                mr.result_type = 'status'
+                                OR mr.context_ref->>'type' = 'status'
+                                OR mr.result_ref->>'type' = 'status'
+                              )
+                        ) AS status_retrieval_count,
+                        (
+                            SELECT count(*)
                             FROM assistant_message_claim_evidence ace
                             WHERE ace.claim_id = ac.id
                         ) AS claim_evidence_count
@@ -813,13 +817,12 @@ def assert_empty_chat_retrieval_status_trace(
                     JOIN messages um ON um.id = cr.user_message_id
                     JOIN messages am ON am.id = cr.assistant_message_id
                     JOIN message_tool_calls mtc ON mtc.assistant_message_id = am.id
-                    JOIN message_retrievals mr ON mr.tool_call_id = mtc.id
                     JOIN chat_prompt_assemblies cpa ON cpa.chat_run_id = cr.id
                     JOIN assistant_message_evidence_summaries ames
                       ON ames.message_id = am.id
                     JOIN assistant_message_claims ac ON ac.message_id = am.id
                     WHERE cr.id = :run_id
-                    ORDER BY mr.ordinal ASC, ac.ordinal ASC
+                    ORDER BY ac.ordinal ASC
                     LIMIT 1
                     """
                 ),
@@ -835,20 +838,10 @@ def assert_empty_chat_retrieval_status_trace(
         assert row["scope"] == expected_scope, row
         assert row["requested_types"] == ["content_chunk"], row
         assert row["tool_status"] == "complete", row
-        assert row["result_refs"][0]["status"] == expected_status, row
-        assert row["result_refs"][0]["scope"] == expected_scope, row
-        assert row["result_type"] == "content_chunk", row
-        assert row["source_id"] == expected_status, row
-        assert row["media_id"] is None, row
-        assert row["evidence_span_id"] is None, row
-        assert row["context_ref"]["type"] == "content_chunk", row
-        assert row["result_ref"]["status"] == expected_status, row
-        assert row["result_ref"]["scope"] == expected_scope, row
-        assert f'status="{expected_status}"' in row["exact_snippet"], row
-        assert row["selected"] is True, row
-        assert row["included_in_prompt"] is True, row
-        assert row["retrieval_status"] == "included_in_prompt", row
-        assert str(row["retrieval_id"]) in row["included_retrieval_ids"], row
+        assert row["result_refs"] == [], row
+        assert row["retrieval_count"] == 0, row
+        assert row["status_retrieval_count"] == 0, row
+        assert row["included_retrieval_ids"] == [], row
         assert isinstance(row["prompt_block_manifest"], dict) and row["prompt_block_manifest"], row
         assert row["evidence_summary_retrieval_status"] == "retrieved", row
         assert row["evidence_summary_support_status"] == "not_enough_evidence", row
@@ -864,11 +857,10 @@ def assert_empty_chat_retrieval_status_trace(
         "user_message_id": str(row["user_message_id"]),
         "assistant_message_id": str(row["assistant_message_id"]),
         "tool_call_id": str(row["tool_call_id"]),
-        "retrieval_id": str(row["retrieval_id"]),
         "prompt_assembly_id": str(row["prompt_assembly_id"]),
         "scope": expected_scope,
         "status": expected_status,
-        "retrieval_status": row["retrieval_status"],
+        "retrieval_count": row["retrieval_count"],
         "support_status": row["evidence_summary_support_status"],
         "claim_kind": row["claim_kind"],
     }

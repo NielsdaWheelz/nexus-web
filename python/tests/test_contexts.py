@@ -9,18 +9,25 @@ Tests cover the helpers in services/contexts.py:
 NO PUBLIC ROUTES use these in PR-02. These are service-layer tests only.
 """
 
+import json
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.db.models import Fragment
+from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import ChatContextInput, MessageContextRef, ReaderSelectionContext
 from nexus.services import contexts as contexts_service
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.content_indexing import rebuild_fragment_content_index
+from nexus.services.context_assembler import load_message_context_refs
 from nexus.services.conversations import load_message_context_snapshots_for_message_ids
+from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from tests.factories import create_searchable_media
 
 pytestmark = pytest.mark.integration
 
@@ -113,6 +120,22 @@ def media_with_highlight(db_session: Session, user_with_library: tuple) -> tuple
             VALUES (:id, :media_id, 0, 'Test canonical text', '<p>Test</p>')
         """),
         {"id": fragment_id, "media_id": media_id},
+    )
+    db_session.flush()
+    fragment = db_session.get(Fragment, fragment_id)
+    assert fragment is not None
+    insert_fragment_blocks(
+        db_session,
+        fragment.id,
+        parse_fragment_blocks(fragment.canonical_text),
+    )
+    rebuild_fragment_content_index(
+        db_session,
+        media_id=media_id,
+        source_kind="web_article",
+        artifact_ref=f"fragments:{fragment_id}",
+        fragments=[fragment],
+        reason="test_contexts",
     )
 
     # Create highlight
@@ -327,21 +350,24 @@ def _context_ref(target_type: str, target_id: UUID) -> MessageContextRef:
     return MessageContextRef(kind="object_ref", type=target_type, id=target_id)
 
 
-def _reader_selection(media_id: UUID) -> ReaderSelectionContext:
+def _reader_selection(media_id: UUID, fragment_id: UUID | None = None) -> ReaderSelectionContext:
+    selected_fragment_id = fragment_id or uuid4()
     return ReaderSelectionContext(
         kind="reader_selection",
         client_context_id=uuid4(),
         media_id=media_id,
         media_kind="web_article",
         media_title="Test Article",
-        exact="selected quote",
-        prefix="before ",
-        suffix=" after",
+        exact="Test",
+        prefix="",
+        suffix=" canonical",
+        source_version="fragments_v1",
         locator={
-            "kind": "fragment_offsets",
-            "fragment_id": str(uuid4()),
-            "start_offset": 10,
-            "end_offset": 24,
+            "type": "web_text_offsets",
+            "media_id": str(media_id),
+            "fragment_id": str(selected_fragment_id),
+            "start_offset": 0,
+            "end_offset": 4,
         },
     )
 
@@ -367,7 +393,25 @@ class TestContextSchema:
                 media_kind="web_article",
                 media_title="Article",
                 exact=" ",
+                source_version="fragments_v1",
                 locator={},
+            )
+
+        with pytest.raises(ValidationError):
+            ReaderSelectionContext(
+                kind="reader_selection",
+                client_context_id=uuid4(),
+                media_id=uuid4(),
+                media_kind="web_article",
+                media_title="Article",
+                exact="Quote",
+                locator={
+                    "type": "web_text_offsets",
+                    "media_id": str(uuid4()),
+                    "fragment_id": str(uuid4()),
+                    "start_offset": 0,
+                    "end_offset": 5,
+                },
             )
 
 
@@ -556,6 +600,67 @@ class TestContextInsertion:
         assert context.locator_json is None
         assert context.context_snapshot_json["kind"] == "object_ref"
 
+    def test_insert_content_chunk_context_persists_citable_provenance(
+        self,
+        db_session: Session,
+        conversation_with_message: tuple,
+    ):
+        _conversation_id, message_id, user_id, _default_library_id = conversation_with_message
+        media_id = create_searchable_media(db_session, user_id, title="Citable Source")
+        row = (
+            db_session.execute(
+                text(
+                    """
+                    SELECT
+                        cc.id AS chunk_id,
+                        cc.primary_evidence_span_id AS evidence_span_id,
+                        ss.source_version AS source_version
+                    FROM content_chunks cc
+                    JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
+                    JOIN source_snapshots ss ON ss.id = es.source_snapshot_id
+                    WHERE cc.media_id = :media_id
+                    ORDER BY cc.chunk_idx ASC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            .mappings()
+            .one()
+        )
+
+        context = contexts_service.insert_context(
+            db=db_session,
+            message_id=message_id,
+            ordinal=0,
+            context=MessageContextRef(
+                kind="object_ref",
+                type="content_chunk",
+                id=row["chunk_id"],
+                evidence_span_ids=[row["evidence_span_id"]],
+            ),
+        )
+
+        snapshot = context.context_snapshot_json
+        assert context.source_media_id == media_id
+        assert snapshot["source_version"] == row["source_version"]
+        assert snapshot["evidence_span_ids"] == [str(row["evidence_span_id"])]
+        assert snapshot["locator"]["type"] == "web_text_offsets"
+        assert snapshot["locator"]["media_id"] == str(media_id)
+
+        refs = load_message_context_refs(db_session, message_id)
+        assert len(refs) == 1
+        ref = refs[0]
+        assert isinstance(ref, MessageContextRef)
+        assert ref.source_version == row["source_version"]
+        assert ref.locator is not None
+        assert ref.locator.model_dump(mode="json") == snapshot["locator"]
+
+        snapshots = load_message_context_snapshots_for_message_ids(db_session, [message_id])
+        readback = snapshots[message_id][0].model_dump(mode="json")
+        assert readback["source_version"] == row["source_version"]
+        assert readback["locator"] == snapshot["locator"]
+
     def test_insert_reader_selection_context(
         self,
         db_session: Session,
@@ -565,7 +670,13 @@ class TestContextInsertion:
         """Insert an unsaved reader selection without creating a fake object ref."""
         conversation_id, message_id, user_id, default_library_id = conversation_with_message
         media_id, fragment_id, highlight_id, note_block_id = media_with_highlight
-        selection = _reader_selection(media_id)
+        selection = _reader_selection(media_id, fragment_id)
+        expected_locator = selection.locator.model_dump(mode="json", exclude_none=True)
+        expected_locator["text_quote_selector"] = {
+            "exact": "Test",
+            "prefix": "",
+            "suffix": " canonical text",
+        }
 
         context = contexts_service.insert_context(
             db=db_session,
@@ -578,10 +689,13 @@ class TestContextInsertion:
         assert context.object_type is None
         assert context.object_id is None
         assert context.source_media_id == media_id
-        assert context.locator_json == selection.locator
+        assert context.locator_json == expected_locator
         assert context.context_snapshot_json["kind"] == "reader_selection"
-        assert context.context_snapshot_json["exact"] == "selected quote"
-        assert context.context_snapshot_json["locator"] == selection.locator
+        assert context.context_snapshot_json["exact"] == "Test"
+        assert context.context_snapshot_json["locator"] == expected_locator
+        assert (
+            context.context_snapshot_json["evidence_verification"] == "source_text_exact_match_v1"
+        )
 
         link = (
             db_session.execute(
@@ -600,9 +714,10 @@ class TestContextInsertion:
             .mappings()
             .one()
         )
-        assert link["b_locator"] == selection.locator
+        assert link["b_locator"] == expected_locator
         assert link["metadata"]["context_kind"] == "reader_selection"
         assert link["metadata"]["context_item_id"] == str(context.id)
+        assert link["metadata"]["evidence_verification"] == "source_text_exact_match_v1"
 
         snapshots = load_message_context_snapshots_for_message_ids(db_session, [message_id])
         snapshot = snapshots[message_id][0].model_dump(mode="json")
@@ -610,8 +725,308 @@ class TestContextInsertion:
         assert snapshot["client_context_id"] == str(selection.client_context_id)
         assert snapshot["media_id"] == str(media_id)
         assert snapshot["source_media_id"] == str(media_id)
-        assert snapshot["exact"] == "selected quote"
-        assert snapshot["locator"] == selection.locator
+        assert snapshot["exact"] == "Test"
+        assert snapshot["locator"] == expected_locator
+        assert snapshot["source_version"] == "fragments_v1"
+
+    def test_insert_reader_selection_context_rejects_exact_mismatch(
+        self,
+        db_session: Session,
+        conversation_with_message: tuple,
+        media_with_highlight: tuple,
+    ):
+        _conversation_id, message_id, _user_id, _default_library_id = conversation_with_message
+        media_id, fragment_id, _highlight_id, _note_block_id = media_with_highlight
+        selection = _reader_selection(media_id, fragment_id).model_copy(
+            update={"exact": "Wrong quote"}
+        )
+
+        with pytest.raises(ApiError) as exc_info:
+            contexts_service.insert_context(
+                db=db_session,
+                message_id=message_id,
+                ordinal=0,
+                context=selection,
+            )
+        assert exc_info.value.code == ApiErrorCode.E_INVALID_REQUEST
+
+    def test_insert_reader_selection_context_rejects_stale_source_version(
+        self,
+        db_session: Session,
+        conversation_with_message: tuple,
+        media_with_highlight: tuple,
+    ):
+        _conversation_id, message_id, _user_id, _default_library_id = conversation_with_message
+        media_id, fragment_id, _highlight_id, _note_block_id = media_with_highlight
+        selection = _reader_selection(media_id, fragment_id).model_copy(
+            update={"source_version": f"fragment:{fragment_id}"}
+        )
+
+        with pytest.raises(ApiError) as exc_info:
+            contexts_service.insert_context(
+                db=db_session,
+                message_id=message_id,
+                ordinal=0,
+                context=selection,
+            )
+        assert exc_info.value.code == ApiErrorCode.E_INVALID_REQUEST
+
+    def test_insert_reader_selection_context_requires_durable_source_index(
+        self,
+        db_session: Session,
+        conversation_with_message: tuple,
+        media_with_highlight: tuple,
+    ):
+        _conversation_id, message_id, _user_id, _default_library_id = conversation_with_message
+        media_id, fragment_id, _highlight_id, _note_block_id = media_with_highlight
+        db_session.execute(
+            text("DELETE FROM media_content_index_states WHERE media_id = :media_id"),
+            {"media_id": media_id},
+        )
+
+        with pytest.raises(ApiError) as exc_info:
+            contexts_service.insert_context(
+                db=db_session,
+                message_id=message_id,
+                ordinal=0,
+                context=_reader_selection(media_id, fragment_id),
+            )
+        assert exc_info.value.code == ApiErrorCode.E_INVALID_REQUEST
+
+    def test_artifact_part_context_replay_and_readback_preserve_provenance(
+        self,
+        db_session: Session,
+        conversation_with_message: tuple,
+    ):
+        conversation_id, message_id, user_id, _default_library_id = conversation_with_message
+        artifact_id = uuid4()
+        part_id = uuid4()
+        source_version = f"artifact_part:{part_id}:v1"
+        locator = {
+            "type": "artifact_part_ref",
+            "artifact_id": str(artifact_id),
+            "artifact_part_id": str(part_id),
+            "message_id": str(message_id),
+            "conversation_id": str(conversation_id),
+            "part_key": "claim-1",
+        }
+        provenance = {
+            "type": "artifact_part",
+            "artifact_id": str(artifact_id),
+            "artifact_kind": "briefing_document",
+            "message_id": str(message_id),
+            "conversation_id": str(conversation_id),
+            "artifact_key": "brief-1",
+            "artifact_version": 2,
+            "artifact_part_id": str(part_id),
+            "ordinal": 0,
+            "part_key": "claim-1",
+            "part_type": "claim",
+            "text": "Durable claim text",
+            "source_version": source_version,
+            "locator": locator,
+        }
+        snapshot = {
+            "kind": "object_ref",
+            "type": "artifact_part",
+            "id": str(part_id),
+            "title": "claim-1",
+            "preview": "Durable claim text",
+            "artifact_id": str(artifact_id),
+            "artifact_key": "brief-1",
+            "artifact_version": 2,
+            "source_version": source_version,
+            "locator": locator,
+            "artifact_part_provenance": provenance,
+        }
+
+        db_session.execute(
+            text(
+                """
+                INSERT INTO message_context_items (
+                    message_id,
+                    user_id,
+                    context_kind,
+                    object_type,
+                    object_id,
+                    ordinal,
+                    context_snapshot
+                )
+                VALUES (
+                    :message_id,
+                    :user_id,
+                    'object_ref',
+                    'artifact_part',
+                    :part_id,
+                    0,
+                    :snapshot
+                )
+                """
+            ).bindparams(bindparam("snapshot", type_=JSONB)),
+            {
+                "message_id": message_id,
+                "user_id": user_id,
+                "part_id": part_id,
+                "snapshot": snapshot,
+            },
+        )
+        db_session.flush()
+
+        refs = load_message_context_refs(db_session, message_id)
+        ref = refs[0]
+        assert isinstance(ref, MessageContextRef)
+        assert ref.type == "artifact_part"
+        assert ref.id == part_id
+        assert ref.artifact_id == artifact_id
+        assert ref.artifact_key == "brief-1"
+        assert ref.artifact_version == 2
+        assert ref.source_version == source_version
+        assert ref.locator is not None
+        assert ref.locator.model_dump(mode="json") == locator
+        assert ref.artifact_part_provenance is not None
+        assert ref.artifact_part_provenance.artifact_part_id == part_id
+        assert ref.artifact_part_provenance.source_version == source_version
+
+        snapshots = load_message_context_snapshots_for_message_ids(db_session, [message_id])
+        readback = snapshots[message_id][0]
+        readback_json = readback.model_dump(mode="json")
+        assert readback.type == "artifact_part"
+        assert readback.id == part_id
+        assert readback.title == "claim-1"
+        assert readback.preview == "Durable claim text"
+        assert readback.locator is not None
+        assert readback.locator.model_dump(mode="json") == locator
+        assert readback_json["artifact_id"] == str(artifact_id)
+        assert readback_json["artifact_key"] == "brief-1"
+        assert readback_json["artifact_version"] == 2
+        assert readback_json["source_version"] == source_version
+        assert readback_json["locator"] == locator
+        assert readback_json["artifact_part_provenance"]["artifact_part_id"] == str(part_id)
+        assert readback_json["artifact_part_provenance"]["source_version"] == source_version
+        assert readback_json["artifact_part_provenance"]["locator"] == locator
+        assert readback.artifact_id == artifact_id
+        assert readback.artifact_key == "brief-1"
+        assert readback.artifact_version == 2
+        assert readback.source_version == source_version
+        assert readback.artifact_part_provenance is not None
+        assert readback.artifact_part_provenance.artifact_part_id == part_id
+
+    def test_insert_artifact_part_context_stores_json_provenance(
+        self,
+        db_session: Session,
+        conversation_with_message: tuple,
+    ):
+        conversation_id, user_message_id, _user_id, _default_library_id = conversation_with_message
+        assistant_message_id = uuid4()
+        artifact_id = uuid4()
+        part_id = uuid4()
+        source_version = f"artifact_part:{part_id}:v1"
+        locator = {
+            "type": "artifact_part_ref",
+            "artifact_id": str(artifact_id),
+            "artifact_part_id": str(part_id),
+            "message_id": str(assistant_message_id),
+            "conversation_id": str(conversation_id),
+            "part_key": "claim-1",
+        }
+        db_session.execute(
+            text(
+                """
+                INSERT INTO messages (
+                    id, conversation_id, seq, role, content, status, parent_message_id
+                )
+                VALUES (
+                    :message_id, :conversation_id, 2, 'assistant', 'Done',
+                    'complete', :parent_message_id
+                )
+                """
+            ),
+            {
+                "message_id": assistant_message_id,
+                "conversation_id": conversation_id,
+                "parent_message_id": user_message_id,
+            },
+        )
+        db_session.execute(
+            text(
+                """
+                INSERT INTO message_artifacts (
+                    id, conversation_id, message_id, artifact_key,
+                    artifact_kind, title, status
+                )
+                VALUES (
+                    :artifact_id, :conversation_id, :message_id, 'brief-1',
+                    'briefing_document', 'Brief', 'complete'
+                )
+                """
+            ),
+            {
+                "artifact_id": artifact_id,
+                "conversation_id": conversation_id,
+                "message_id": assistant_message_id,
+            },
+        )
+        db_session.execute(
+            text(
+                """
+                INSERT INTO message_artifact_parts (
+                    id, artifact_id, ordinal, part_key, part_type, text,
+                    source_version, locator, metadata
+                )
+                VALUES (
+                    :part_id, :artifact_id, 0, 'claim-1', 'claim',
+                    'Durable claim text', :source_version, :locator,
+                    '{"support_state":"not_source_grounded"}'::jsonb
+                )
+                """
+            ).bindparams(bindparam("locator", type_=JSONB)),
+            {
+                "part_id": part_id,
+                "artifact_id": artifact_id,
+                "source_version": source_version,
+                "locator": locator,
+            },
+        )
+        db_session.flush()
+
+        row = contexts_service.insert_context(
+            db=db_session,
+            message_id=user_message_id,
+            ordinal=0,
+            context=MessageContextRef.model_validate(
+                {
+                    "kind": "object_ref",
+                    "type": "artifact_part",
+                    "id": str(part_id),
+                    "artifact_id": str(artifact_id),
+                    "artifact_key": "brief-1",
+                    "artifact_version": 1,
+                    "source_version": source_version,
+                    "locator": locator,
+                    "artifact_part_provenance": {
+                        "type": "artifact_part",
+                        "artifact_id": str(artifact_id),
+                        "artifact_kind": "briefing_document",
+                        "message_id": str(assistant_message_id),
+                        "conversation_id": str(conversation_id),
+                        "artifact_key": "brief-1",
+                        "artifact_version": 1,
+                        "artifact_part_id": str(part_id),
+                        "part_key": "claim-1",
+                        "part_type": "claim",
+                        "text": "Durable claim text",
+                        "source_version": source_version,
+                        "locator": locator,
+                    },
+                }
+            ),
+        )
+
+        json.dumps(row.context_snapshot_json)
+        stored = row.context_snapshot_json["artifact_part_provenance"]
+        assert stored["artifact_part_id"] == str(part_id)
+        assert stored["artifact_id"] == str(artifact_id)
+        assert stored["locator"] == locator
 
     def test_insert_reader_selection_context_requires_media_visibility(
         self,

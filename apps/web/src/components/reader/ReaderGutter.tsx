@@ -13,8 +13,13 @@ import {
 } from "react";
 import { ListOrdered } from "lucide-react";
 import Button from "@/components/ui/Button";
-import HoverPreview, { HOVER_PREVIEW_DELAY_MS } from "@/components/ui/HoverPreview";
-import { dispatchReaderPulse, type ReaderPulseTarget } from "@/lib/reader/pulseEvent";
+import HoverPreview, {
+  HOVER_PREVIEW_DELAY_MS,
+} from "@/components/ui/HoverPreview";
+import {
+  dispatchReaderPulse,
+  type ReaderPulseTarget,
+} from "@/lib/reader/pulseEvent";
 import {
   findScrollParent,
   useAnchoredHighlightProjection,
@@ -65,9 +70,10 @@ export default function ReaderGutter({
   const [hoveredClusterIndex, setHoveredClusterIndex] = useState<number | null>(
     null,
   );
-  const [hoverAnchor, setHoverAnchor] = useState<{ x: number; y: number } | null>(
-    null,
-  );
+  const [hoverAnchor, setHoverAnchor] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   const { projections, viewportState } = useAnchoredHighlightProjection({
     contentRef,
     highlights,
@@ -113,13 +119,24 @@ export default function ReaderGutter({
           highlightId: highlight.id,
           locator: {
             type: "pdf_page_geometry",
+            media_id: mediaId,
             page_number: highlight.page_number,
             quads: highlight.quads,
+            exact: highlight.exact,
+            ...(highlight.prefix ? { prefix: highlight.prefix } : {}),
+            ...(highlight.suffix ? { suffix: highlight.suffix } : {}),
           },
           snippet: highlight.exact,
+          sourceVersion:
+            highlight.source_version ?? `highlight:${highlight.id}`,
+          highlightBehavior: "pulse",
+          focusBehavior: "scroll_into_view",
         };
       } else if (mediaKind === "transcript") {
-        if (highlight.anchor?.t_start_ms == null) {
+        if (
+          highlight.anchor?.t_start_ms == null ||
+          highlight.anchor.t_end_ms == null
+        ) {
           continue;
         }
         target = {
@@ -127,9 +144,20 @@ export default function ReaderGutter({
           highlightId: highlight.id,
           locator: {
             type: "transcript_time_range",
+            media_id: mediaId,
             t_start_ms: highlight.anchor.t_start_ms,
+            t_end_ms: highlight.anchor.t_end_ms,
+            text_quote_selector: {
+              exact: highlight.exact,
+              ...(highlight.prefix ? { prefix: highlight.prefix } : {}),
+              ...(highlight.suffix ? { suffix: highlight.suffix } : {}),
+            },
           },
           snippet: highlight.exact,
+          sourceVersion:
+            highlight.source_version ?? `highlight:${highlight.id}`,
+          highlightBehavior: "pulse",
+          focusBehavior: "scroll_into_view",
         };
       } else {
         if (!highlight.anchor?.fragment_id) {
@@ -142,12 +170,22 @@ export default function ReaderGutter({
             type:
               mediaKind === "epub"
                 ? "epub_fragment_offsets"
-                : "reader_text_offsets",
+                : "web_text_offsets",
+            media_id: mediaId,
             fragment_id: highlight.anchor.fragment_id,
             start_offset: highlight.anchor.start_offset,
             end_offset: highlight.anchor.end_offset,
+            text_quote_selector: {
+              exact: highlight.exact,
+              ...(highlight.prefix ? { prefix: highlight.prefix } : {}),
+              ...(highlight.suffix ? { suffix: highlight.suffix } : {}),
+            },
           },
           snippet: highlight.exact,
+          sourceVersion:
+            highlight.source_version ?? `highlight:${highlight.id}`,
+          highlightBehavior: "pulse",
+          focusBehavior: "scroll_into_view",
         };
       }
 
@@ -254,7 +292,9 @@ export default function ReaderGutter({
   );
 
   const hoveredCluster =
-    hoveredClusterIndex !== null ? clusters[hoveredClusterIndex] ?? null : null;
+    hoveredClusterIndex !== null
+      ? (clusters[hoveredClusterIndex] ?? null)
+      : null;
 
   return (
     <div
@@ -266,7 +306,8 @@ export default function ReaderGutter({
     >
       <div className={styles.markerColumn}>
         {clusters.map((cluster, index) => {
-          const primaryColor = cluster.markers[0]?.color ?? "var(--highlight-yellow)";
+          const primaryColor =
+            cluster.markers[0]?.color ?? "var(--highlight-yellow)";
           const isStacked = cluster.markers.length > 1;
           return (
             <button
@@ -286,7 +327,7 @@ export default function ReaderGutter({
               aria-label={
                 isStacked
                   ? `${cluster.markers.length} highlights at this position`
-                  : cluster.markers[0]?.exact ?? "Highlight"
+                  : (cluster.markers[0]?.exact ?? "Highlight")
               }
             />
           );
@@ -314,7 +355,9 @@ export default function ReaderGutter({
               ))}
             </ul>
           ) : (
-            <p className={styles.previewExcerpt}>{hoveredCluster.markers[0]?.exact}</p>
+            <p className={styles.previewExcerpt}>
+              {hoveredCluster.markers[0]?.exact}
+            </p>
           )}
         </HoverPreview>
       ) : null}

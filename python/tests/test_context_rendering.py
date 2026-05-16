@@ -385,6 +385,8 @@ class TestTypedAnchorRendering:
 
     def test_render_reader_selection_context_includes_quote_surrounding_and_locator(self):
         media_id = uuid4()
+        fragment_id = uuid4()
+        source_version = "content-index:v1"
         rendered, total_chars = context_rendering.render_context_blocks(
             MagicMock(),
             [
@@ -397,9 +399,11 @@ class TestTypedAnchorRendering:
                     exact="selected quote",
                     prefix="before ",
                     suffix=" after",
+                    source_version=source_version,
                     locator={
-                        "kind": "fragment_offsets",
-                        "fragment_id": str(uuid4()),
+                        "type": "web_text_offsets",
+                        "media_id": str(media_id),
+                        "fragment_id": str(fragment_id),
                         "start_offset": 7,
                         "end_offset": 21,
                     },
@@ -413,6 +417,8 @@ class TestTypedAnchorRendering:
         assert "<quote>selected quote</quote>" in rendered
         assert "<surrounding>before selected quote after</surrounding>" in rendered
         assert "<source_locator>" in rendered
+        assert '"type":"web_text_offsets"' in rendered
+        assert f"<source_version>{source_version}</source_version>" in rendered
 
 
 class TestResolvePdfNearbyContext:

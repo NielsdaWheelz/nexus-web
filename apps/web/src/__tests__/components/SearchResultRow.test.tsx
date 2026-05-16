@@ -74,11 +74,11 @@ describe("SearchResultRow", () => {
       key: "content_chunk-chunk-1",
       href: "/media/media-1?evidence=span-1&page=12",
       type: "content_chunk",
-      mediaId: "media-1",
+      mediaId: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
       contextRef: {
         type: "content_chunk",
-        id: "chunk-1",
-        evidenceSpanIds: ["span-1"],
+        id: "c1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        evidenceSpanIds: ["d1b2c3d4-e5f6-7890-abcd-ef1234567890"],
       },
       typeLabel: "p. 12",
       primaryText: "before match after",
@@ -100,8 +100,41 @@ describe("SearchResultRow", () => {
     expect(screen.getByText("p. 12")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Ask with evidence" })).toHaveAttribute(
       "href",
-      "/conversations/new?scope=media%3Amedia-1&attach_context=content_chunk%3Achunk-1%3Aspan-1"
+      "/conversations/new?scope=media%3Ab1b2c3d4-e5f6-7890-abcd-ef1234567890" +
+        "&attach_context=content_chunk%3Ac1b2c3d4-e5f6-7890-abcd-ef1234567890" +
+        "%3Ad1b2c3d4-e5f6-7890-abcd-ef1234567890"
     );
+  });
+
+  it("renders web results as external evidence without object-ref ask attachments", () => {
+    const row: SearchResultRowViewModel = {
+      key: "web_result-result-1",
+      href: "https://example.com/report",
+      type: "web_result",
+      mediaId: null,
+      contextRef: {
+        type: "web_result",
+        id: "provider-result-1",
+        evidenceSpanIds: [],
+      },
+      typeLabel: "web",
+      primaryText: "External report",
+      snippetSegments: [],
+      sourceMeta: "example.com",
+      noteBody: null,
+      scoreLabel: "score 0.40",
+      contributorCredits: [],
+    };
+
+    render(<SearchResultRow row={row} />);
+
+    expect(screen.getByRole("link", { name: /external report/i })).toHaveAttribute(
+      "href",
+      "https://example.com/report"
+    );
+    expect(screen.getByText("web")).toBeInTheDocument();
+    expect(screen.getByText("example.com")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /ask with/i })).toBeNull();
   });
 
   it("renders message metadata without duplicate score text", () => {

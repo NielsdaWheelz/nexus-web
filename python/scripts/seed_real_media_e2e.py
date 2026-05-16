@@ -183,6 +183,7 @@ def main() -> None:
 
     engine = create_engine(database_url)
     try:
+        _release_stale_e2e_user_email(engine, user_id, E2E_USER_EMAIL)
         direct_db = DirectSessionManager(engine)
 
         with TestClient(create_app()) as client:
@@ -752,6 +753,18 @@ def _ensure_e2e_viewer(
             f"Real auth bootstrap resolved user {user_id}, expected {expected_user_id}."
         )
     return UUID(str(data["default_library_id"]))
+
+
+def _release_stale_e2e_user_email(engine: Engine, user_id: UUID, email: str) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                UPDATE users
+                SET email = 'stale-e2e-' || id::text || '@nexus.local'
+                WHERE email = :email AND id != :user_id
+            """),
+            {"email": email, "user_id": user_id},
+        )
 
 
 def _is_local_storage_endpoint(endpoint_url: str) -> bool:

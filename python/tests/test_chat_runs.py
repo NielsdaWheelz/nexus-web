@@ -36,7 +36,7 @@ def _require_chat_runs_schema(engine: Engine) -> None:
     tables = set(inspect(engine).get_table_names())
     missing = {"chat_runs", "chat_run_events"} - tables
     if missing:
-        pytest.skip(f"chat-runs schema not present yet: {', '.join(sorted(missing))}")
+        pytest.fail(f"chat-runs schema missing: {', '.join(sorted(missing))}")
 
 
 @pytest.fixture
@@ -52,6 +52,7 @@ def _create_run_payload(model_id: UUID, **overrides) -> dict:
         "key_mode": "auto",
         "contexts": [],
         "web_search": {"mode": "off"},
+        "artifact_intent": {"kind": "off"},
     }
     if "conversation_id" not in overrides:
         payload["conversation_scope"] = {"type": "general"}
@@ -1449,7 +1450,9 @@ class TestChatResponseRetry:
         assert data["run"]["status"] == "queued"
         assert data["run"]["model_id"] == str(model_id)
         assert data["run"]["reasoning"] == "none"
-        assert data["user_message"]["content"] == "Why did the first answer fail?"
+        assert data["user_message"]["message_document"]["blocks"][0]["text"] == (
+            "Why did the first answer fail?"
+        )
         assert data["user_message"]["parent_message_id"] is None
         assert data["user_message"]["contexts"][0]["title"] == "Retry Source"
         assert data["assistant_message"]["status"] == "pending"
@@ -1589,7 +1592,7 @@ class TestChatResponseRetry:
         retry_assistant_id = UUID(data["assistant_message"]["id"])
         _register_run_cleanup(direct_db, retry_run_id, conversation_id)
 
-        assert data["user_message"]["content"] == "Follow up"
+        assert data["user_message"]["message_document"]["blocks"][0]["text"] == "Follow up"
         assert data["user_message"]["parent_message_id"] == str(parent_assistant_id)
         assert data["user_message"]["branch_anchor_kind"] == "assistant_message"
         assert data["user_message"]["branch_anchor"]["message_id"] == str(parent_assistant_id)

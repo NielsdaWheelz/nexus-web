@@ -1,10 +1,10 @@
-"""Pure ASGI CORS middleware for /stream/* endpoints only.
+"""Pure ASGI CORS middleware for browser-callable stream endpoints only.
 
 Per PR-08 spec §3:
 - Do NOT use starlette's CORSMiddleware (not path-scoped).
 - Do NOT use BaseHTTPMiddleware (buffers StreamingResponse, defeats incremental delivery).
-- This is a pure ASGI middleware that injects CORS headers only on /stream/* paths.
-- Non-/stream/* requests pass through untouched.
+- This is a pure ASGI middleware that injects CORS headers only on stream paths.
+- Non-stream requests pass through untouched.
 - Handles OPTIONS preflight before any auth dependency runs.
 """
 
@@ -14,10 +14,10 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 
 class StreamCORSMiddleware:
-    """Pure ASGI middleware for path-scoped CORS on /stream/* routes.
+    """Pure ASGI middleware for path-scoped CORS on stream routes.
 
     Does not buffer streaming responses. Only injects CORS headers on the
-    initial http.response.start message for /stream/* paths.
+    initial http.response.start message for stream paths.
     """
 
     def __init__(self, app: ASGIApp, allowed_origins: list[str]):
@@ -25,7 +25,7 @@ class StreamCORSMiddleware:
         self.allowed_origins = set(allowed_origins)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not scope["path"].startswith("/stream/"):
+        if scope["type"] != "http" or not _is_stream_path(scope["path"]):
             await self.app(scope, receive, send)
             return
 
@@ -65,3 +65,9 @@ class StreamCORSMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_cors)
+
+
+def _is_stream_path(path: str) -> bool:
+    return (path.startswith("/chat-runs/") and path.endswith("/events")) or (
+        path.startswith("/stream/oracle-readings/") and path.endswith("/events")
+    )

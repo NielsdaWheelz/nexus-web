@@ -17,7 +17,8 @@ vi.mock("@/lib/api/streamToken", () => ({
   fetchStreamToken: streamMocks.fetchStreamToken,
 }));
 
-vi.mock("@/lib/api/sse", () => ({
+vi.mock("@/lib/api/sse", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/sse")>()),
   sseClientDirect: streamMocks.sseClientDirect,
 }));
 
@@ -27,13 +28,20 @@ function message(
   overrides: Partial<ConversationMessage> & Pick<ConversationMessage, "id" | "role" | "seq">,
 ): ConversationMessage {
   return {
-    content: "",
     status: "complete",
     error_code: null,
     can_retry_response: false,
     created_at: baseTimestamp,
     updated_at: baseTimestamp,
     ...overrides,
+  };
+}
+
+function textDocument(text: string): ConversationMessage["message_document"] {
+  return {
+    type: "message_document",
+    version: 1,
+    blocks: [{ type: "text", format: "markdown", text }],
   };
 }
 
@@ -84,7 +92,7 @@ function runData({
       id: `${runId}-user`,
       seq: userSeq,
       role: "user",
-      content: userContent,
+      message_document: textDocument(userContent),
       parent_message_id: parentMessageId,
       created_at: "2026-01-01T12:00:00Z",
     }),
@@ -92,7 +100,7 @@ function runData({
       id: `${runId}-assistant`,
       seq: assistantSeq,
       role: "assistant",
-      content: "",
+      message_document: textDocument(""),
       status: "pending",
       parent_message_id: `${runId}-user`,
       created_at: assistantCreatedAt,
@@ -153,13 +161,13 @@ describe("chat streaming hard cutover", () => {
         id: "existing-user",
         seq: 1,
         role: "user",
-        content: "Earlier question",
+        message_document: textDocument("Earlier question"),
       }),
       message({
         id: "existing-assistant",
         seq: 2,
         role: "assistant",
-        content: "Earlier answer",
+        message_document: textDocument("Earlier answer"),
       }),
     ];
 
@@ -220,6 +228,260 @@ describe("chat streaming hard cutover", () => {
     expect(streamMocks.sseClientDirect).toHaveBeenCalledOnce();
   });
 
+  it("streams source manifest deltas into the visible pending row", async () => {
+    streamMocks.fetchStreamToken.mockResolvedValue({
+      stream_base_url: "https://stream.nexus.test",
+      token: "stream-token",
+    });
+    streamMocks.sseClientDirect.mockImplementation(
+      (_streamBaseUrl, _streamToken, _runId, handlers) => {
+        handlers.onEvent({
+          type: "source_manifest_delta",
+          data: {
+            assistant_message_id: "run-1-assistant",
+            tool_call_id: "tool-1",
+            tool_name: "app_search",
+            tool_call_index: 0,
+            scope: "all",
+            requested_types: ["content_chunk", "highlight"],
+            result_count: 3,
+            selected_count: 1,
+            latency_ms: 18,
+            status: "running",
+          },
+        });
+        return vi.fn();
+      },
+    );
+
+    render(<StreamingHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("region", { name: "Source manifest" })).toBeVisible();
+    });
+    expect(screen.getByRole("region", { name: "Source manifest" })).toHaveTextContent(
+      "content_chunk, highlight",
+    );
+    expect(screen.getByRole("region", { name: "Source manifest" })).toHaveTextContent(
+      "1/3 selected",
+    );
+  });
+
+  it("streams web retrievals only when the backend supplies locators", async () => {
+    streamMocks.fetchStreamToken.mockResolvedValue({
+      stream_base_url: "https://stream.nexus.test",
+      token: "stream-token",
+    });
+    streamMocks.sseClientDirect.mockImplementation(
+      (_streamBaseUrl, _streamToken, _runId, handlers) => {
+        handlers.onEvent({
+          type: "retrieval_result",
+          data: {
+            assistant_message_id: "run-1-assistant",
+            tool_name: "web_search",
+            tool_call_index: 0,
+            status: "complete",
+            result_count: 1,
+            selected_count: 1,
+            filters: {},
+            results: [
+              {
+                type: "web_result",
+                id: "web:result:1",
+                result_type: "web_result",
+                result_ref: "web:result:1",
+                source_id: "web:result:1",
+                title: "External result",
+                url: "https://example.com/source",
+                display_url: "example.com/source",
+                deep_link: "https://example.com/source",
+                source_name: "Example",
+                snippet: "External web evidence snippet.",
+                provider: "test",
+                selected: true,
+                source_version: "web_search:test:web:result:1",
+                context_ref: { type: "web_result", id: "web:result:1" },
+                media_id: null,
+                media_kind: null,
+                score: 1,
+                locator: {
+                  type: "external_url",
+                  url: "https://example.com/source",
+                  title: "External result",
+                  display_url: "example.com/source",
+                },
+              },
+            ],
+          },
+        });
+        return vi.fn();
+      },
+    );
+
+    render(<StreamingHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("region", { name: "Retrieved sources" })).toBeVisible();
+    });
+    expect(screen.getByRole("region", { name: "Retrieved sources" })).toHaveTextContent(
+      "External web evidence snippet.",
+    );
+    expect(
+      screen.getByRole("region", { name: "Retrieved sources" }),
+    ).not.toHaveTextContent("in prompt");
+    expect(screen.getByRole("link", { name: "Open source" })).toHaveAttribute(
+      "href",
+      "https://example.com/source",
+    );
+  });
+
+  it("streams only evidence-backed artifact parts as cited", async () => {
+    streamMocks.fetchStreamToken.mockResolvedValue({
+      stream_base_url: "https://stream.nexus.test",
+      token: "stream-token",
+    });
+    streamMocks.sseClientDirect.mockImplementation(
+      (_streamBaseUrl, _streamToken, _runId, handlers) => {
+        handlers.onEvent({
+          type: "artifact_delta",
+          data: {
+            artifact_id: "artifact-1",
+            artifact_kind: "timeline",
+            title: "Timeline",
+            status: "streaming",
+            delta: "Draft timeline",
+            parts: [
+              {
+                id: "part-1",
+                source_version: "artifact_part:part-1:v1",
+                locator: {
+                  type: "artifact_part_ref",
+                  artifact_id: "artifact-1",
+                  artifact_part_id: "part-1",
+                  message_id: "run-1-assistant",
+                  conversation_id: "conversation-1",
+                  part_key: "part-1",
+                },
+              },
+              {
+                id: "part-2",
+                source_version: "artifact_part:part-2:v1",
+                locator: {
+                  type: "artifact_part_ref",
+                  artifact_id: "artifact-1",
+                  artifact_part_id: "part-2",
+                  message_id: "run-1-assistant",
+                  conversation_id: "conversation-1",
+                  part_key: "part-2",
+                },
+                source_ref: {
+                  type: "message_retrieval",
+                  id: "retrieval-1",
+                  retrieval_id: "retrieval-1",
+                },
+              },
+            ],
+          },
+        });
+        return vi.fn();
+      },
+    );
+
+    render(<StreamingHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("region", { name: "Generated artifacts" })).toBeVisible();
+    });
+    expect(screen.getByText("Timeline")).toBeVisible();
+    expect(screen.getByText("Draft timeline")).toBeVisible();
+    expect(screen.getByText("1 cited parts")).toBeVisible();
+    expect(screen.queryByText("2 cited parts")).not.toBeInTheDocument();
+  });
+
+  it("streams claim events into the visible pending row", async () => {
+    streamMocks.fetchStreamToken.mockResolvedValue({
+      stream_base_url: "https://stream.nexus.test",
+      token: "stream-token",
+    });
+    streamMocks.sseClientDirect.mockImplementation(
+      (_streamBaseUrl, _streamToken, _runId, handlers) => {
+        handlers.onEvent({
+          type: "claim",
+          data: {
+            id: "claim-1",
+            message_id: "run-1-assistant",
+            ordinal: 0,
+            claim_text: "Scoped evidence is not enough yet.",
+            claim_kind: "insufficient_evidence",
+            support_status: "not_enough_evidence",
+            verifier_status: "llm_verified",
+            created_at: "2026-01-01T00:00:00Z",
+          },
+        });
+        return vi.fn();
+      },
+    );
+
+    render(<StreamingHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^Evidence/ })).toBeVisible();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Evidence/ }));
+    expect(screen.getByText("Scoped evidence is not enough yet.")).toBeVisible();
+    expect(screen.getAllByText("Not enough evidence")[0]).toBeVisible();
+  });
+
+  it("dedupes streamed claim updates by id", async () => {
+    streamMocks.fetchStreamToken.mockResolvedValue({
+      stream_base_url: "https://stream.nexus.test",
+      token: "stream-token",
+    });
+    streamMocks.sseClientDirect.mockImplementation(
+      (_streamBaseUrl, _streamToken, _runId, handlers) => {
+        handlers.onEvent({
+          type: "claim",
+          data: {
+            id: "claim-1",
+            message_id: "run-1-assistant",
+            ordinal: 0,
+            claim_text: "The claim can be checked.",
+            claim_kind: "answer",
+            support_status: "not_enough_evidence",
+            verifier_status: "llm_verified",
+          },
+        });
+        handlers.onEvent({
+          type: "claim",
+          data: {
+            id: "claim-1",
+            message_id: "run-1-assistant",
+            ordinal: 0,
+            claim_text: "The claim can be checked.",
+            claim_kind: "answer",
+            support_status: "supported",
+            verifier_status: "llm_verified",
+          },
+        });
+        return vi.fn();
+      },
+    );
+
+    render(<StreamingHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^Evidence/ })).toBeVisible();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Evidence/ }));
+    expect(screen.getAllByText("The claim can be checked.")).toHaveLength(1);
+    expect(screen.getAllByText("Supported")[0]).toBeVisible();
+  });
+
   it("does not let a hidden sibling stream replace the selected transcript", async () => {
     streamMocks.fetchStreamToken.mockResolvedValue({
       stream_base_url: "https://stream.nexus.test",
@@ -239,21 +501,21 @@ describe("chat streaming hard cutover", () => {
         id: "root-assistant",
         seq: 1,
         role: "assistant",
-        content: "Common branch point",
+        message_document: textDocument("Common branch point"),
       }),
       message({
         id: "selected-user",
         seq: 2,
         role: "user",
-        content: "Selected branch",
+        message_document: textDocument("Selected branch"),
         parent_message_id: "root-assistant",
       }),
       message({
         id: "selected-assistant",
         seq: 3,
         role: "assistant",
-        content: "Selected answer",
         parent_message_id: "selected-user",
+        message_document: textDocument("Selected answer"),
       }),
     ];
 

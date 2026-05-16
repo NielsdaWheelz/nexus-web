@@ -32,6 +32,7 @@ def resolve_evidence_span(
                 es.selector,
                 es.citation_label,
                 es.resolver_kind,
+                ss.source_version,
                 ss.source_fingerprint,
                 ss.metadata AS snapshot_metadata
             FROM evidence_spans es
@@ -191,6 +192,7 @@ def resolve_evidence_span(
         "media_id": str(media_id),
         "citation_label": str(row["citation_label"]),
         "span_text": str(row["span_text"] or ""),
+        "source_version": str(row["source_version"] or ""),
         "resolver": {
             "kind": resolver_kind,
             "route": f"/media/{media_id}",

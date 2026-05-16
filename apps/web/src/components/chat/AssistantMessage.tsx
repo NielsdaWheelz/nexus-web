@@ -3,14 +3,15 @@
 import { useCallback, useRef, useState } from "react";
 import { GitBranch, Search } from "lucide-react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
-import { StreamingMarkdownMessage } from "@/components/ui/MarkdownMessage";
 import Button from "@/components/ui/Button";
 import {
   assistantSelectionAnchor,
   mapAssistantSelectionToSource,
 } from "@/lib/conversations/assistantSelection";
+import type { ContextItem } from "@/lib/api/sse";
 import type {
   BranchDraft,
+  ChatRunResponse,
   ConversationMessage,
   ForkOption,
   MessageToolCall,
@@ -21,7 +22,7 @@ import AssistantSelectionPopover, {
 import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
 import ForkStrip from "./ForkStrip";
 import StreamingGutterCue from "./StreamingGutterCue";
-import type { ReaderSourceTarget } from "./MessageRow";
+import type { ArtifactFocusTarget, ReaderSourceTarget } from "./MessageRow";
 import styles from "./MessageRow.module.css";
 
 export default function AssistantMessage({
@@ -31,6 +32,11 @@ export default function AssistantMessage({
   onSelectFork,
   onReplyToAssistant,
   onActivateTarget,
+  onAskAboutSource,
+  onSaveSourceQuote,
+  onAttachContext,
+  onChatRunCreated,
+  artifactFocusTarget,
   hasReaderActivator,
   errorLabel,
   timestampLabel,
@@ -41,6 +47,11 @@ export default function AssistantMessage({
   onSelectFork?: (fork: ForkOption) => void;
   onReplyToAssistant?: (draft: BranchDraft) => void;
   onActivateTarget: (target: ReaderSourceTarget) => void;
+  onAskAboutSource?: (target: ReaderSourceTarget) => void;
+  onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
+  onAttachContext?: (context: ContextItem) => void;
+  onChatRunCreated?: (runData: ChatRunResponse["data"]) => void;
+  artifactFocusTarget?: ArtifactFocusTarget | null;
   hasReaderActivator: boolean;
   errorLabel: string;
   timestampLabel: string;
@@ -48,19 +59,20 @@ export default function AssistantMessage({
   const answerRef = useRef<HTMLDivElement>(null);
   const [selectionDraft, setSelectionDraft] =
     useState<AssistantSelectionDraft | null>(null);
+  const assistantText = assistantMessageText(message);
   const toolCalls = message.tool_calls ?? [];
   const canBranchFromAssistant =
     message.status === "complete" && Boolean(onReplyToAssistant);
   const renderAssistantBody =
     message.status !== "error" ||
-    (message.content.trim().length > 0 &&
-      !isGenericAssistantFailureContent(message.content));
+    (assistantText.trim().length > 0 &&
+      !isGenericAssistantFailureContent(assistantText));
 
   const createBranchDraft = useCallback(
     (selection?: AssistantSelectionDraft): BranchDraft => ({
       parentMessageId: message.id,
       parentMessageSeq: message.seq,
-      parentMessagePreview: message.content,
+      parentMessagePreview: assistantText,
       anchor: selection
         ? assistantSelectionAnchor({
             messageId: message.id,
@@ -75,7 +87,7 @@ export default function AssistantMessage({
             message_id: message.id,
           },
     }),
-    [message.content, message.id, message.seq],
+    [assistantText, message.id, message.seq],
   );
 
   const captureAssistantSelection = useCallback(() => {
@@ -104,7 +116,7 @@ export default function AssistantMessage({
 
     const renderedContext = renderedSelectionContext(container, range);
     const mapping = mapAssistantSelectionToSource(
-      message.content,
+      assistantText,
       container.innerText.trim(),
       exact,
     );
@@ -116,11 +128,11 @@ export default function AssistantMessage({
       typeof mapping.end_offset === "number"
     ) {
       prefix =
-        message.content.slice(
+        assistantText.slice(
           Math.max(0, mapping.start_offset - 80),
           mapping.start_offset,
         ) || null;
-      suffix = message.content.slice(mapping.end_offset, mapping.end_offset + 80) || null;
+      suffix = assistantText.slice(mapping.end_offset, mapping.end_offset + 80) || null;
     }
     const rect = range.getBoundingClientRect();
     const fallbackRect = container.getBoundingClientRect();
@@ -141,7 +153,7 @@ export default function AssistantMessage({
         left: left + width / 2,
       },
     });
-  }, [canBranchFromAssistant, message.content]);
+  }, [assistantText, canBranchFromAssistant]);
 
   const branchFromSelection = useCallback(() => {
     if (!selectionDraft) return;
@@ -172,18 +184,17 @@ export default function AssistantMessage({
         </div>
       ) : null}
       <ToolActivity toolCalls={toolCalls} />
-      {message.status === "pending" ? (
-        <div ref={answerRef} className={styles.assistantBody}>
-          <StreamingGutterCue />
-          {message.content ? (
-            <StreamingMarkdownMessage content={message.content} />
-          ) : null}
-        </div>
-      ) : renderAssistantBody ? (
+      {message.status === "pending" ? <StreamingGutterCue /> : null}
+      {renderAssistantBody ? (
         <AssistantEvidenceDisclosure
           message={message}
           answerRef={answerRef}
           onActivateTarget={onActivateTarget}
+          onAskAboutSource={onAskAboutSource}
+          onSaveSourceQuote={onSaveSourceQuote}
+          onAttachContext={onAttachContext}
+          onChatRunCreated={onChatRunCreated}
+          artifactFocusTarget={artifactFocusTarget}
           hasReaderActivator={hasReaderActivator}
         />
       ) : null}
@@ -236,16 +247,23 @@ function renderedSelectionContext(container: HTMLElement, range: Range) {
   return { prefix, suffix };
 }
 
+function assistantMessageText(message: ConversationMessage): string {
+  return (message.message_document?.blocks ?? [])
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n\n");
+}
+
 function ToolActivity({ toolCalls }: { toolCalls: MessageToolCall[] }) {
   const active = toolCalls.find((toolCall) =>
-    ["started", "pending"].includes(toolCall.status),
+    ["running", "pending"].includes(toolCall.status),
   );
   if (!active) return null;
   const label = active.tool_name === "web_search" ? "Searching web" : "Searching library";
 
   return (
-    <div className={styles.toolActivity}>
-      <Search size={14} />
+    <div className={styles.toolActivity} role="status" aria-live="polite">
+      <Search size={14} aria-hidden="true" />
       <span>{label}</span>
     </div>
   );

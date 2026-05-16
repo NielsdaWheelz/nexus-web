@@ -25,6 +25,13 @@ def test_general_scope_can_plan_all_app_search():
     assert plan.app_search.enabled is True
     assert plan.app_search.scope == "all"
     assert plan.app_search.types == APP_SEARCH_TYPES_ALL
+    assert {
+        "fragment",
+        "evidence_span",
+        "conversation",
+        "artifact",
+        "artifact_part",
+    }.issubset(plan.app_search.types)
     assert plan.web_search.enabled is False
 
 
@@ -40,6 +47,7 @@ def test_media_scope_never_expands_outside_media_scope():
     assert plan.app_search.enabled is True
     assert plan.app_search.scope == f"media:{media_id}"
     assert plan.app_search.types == APP_SEARCH_TYPES_SCOPED
+    assert plan.app_search.types == ("content_chunk", "fragment", "evidence_span")
     assert "Attention Paper" in (plan.app_search.query or "")
     assert plan.web_search.enabled is False
 
@@ -58,6 +66,7 @@ def test_media_scope_reader_selection_adds_quote_signal_without_changing_scope()
                 "media_title": "Attention Paper",
                 "media_kind": "pdf",
                 "exact": "scaled dot product attention quote",
+                "source_version": "pdf-source:v1",
                 "locator": {"kind": "pdf_text_quote", "page_number": 3},
             }
         ],
@@ -84,6 +93,7 @@ def test_library_scope_reader_selection_seeds_query_without_excluding_library_ev
                 "media_title": "Selected Source",
                 "media_kind": "web_article",
                 "exact": "distinct selected quote signal",
+                "source_version": "web-source:v1",
                 "locator": {"kind": "fragment_offsets"},
             }
         ],
@@ -108,6 +118,9 @@ def test_library_scope_never_includes_message_search():
     )
 
     assert "message" not in plan.app_search.types
+    assert "conversation" not in plan.app_search.types
+    assert "artifact" not in plan.app_search.types
+    assert "artifact_part" not in plan.app_search.types
 
 
 def test_contributor_conversation_scope_is_not_planned_until_persistable():

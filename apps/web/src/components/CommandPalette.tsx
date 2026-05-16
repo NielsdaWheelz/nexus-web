@@ -8,6 +8,7 @@ import {
   FileText,
   FolderPlus,
   Globe,
+  Highlighter,
   Keyboard,
   KeyRound,
   Link,
@@ -24,6 +25,7 @@ import {
   Type,
   Upload,
   UserRound,
+  Video,
   X,
 } from "lucide-react";
 import Palette from "@/components/palette/Palette";
@@ -276,10 +278,19 @@ const SEARCH_TYPE_ICON: Record<SearchType, PaletteCommand["icon"]> = {
   contributor: UserRound,
   media: Globe,
   podcast: Mic,
+  episode: Mic,
+  video: Video,
   content_chunk: FileText,
+  fragment: FileText,
   page: FileText,
   note_block: FileText,
+  highlight: Highlighter,
   message: MessageSquare,
+  evidence_span: FileText,
+  conversation: MessageSquare,
+  artifact: Sparkles,
+  artifact_part: Sparkles,
+  web_result: Globe,
 };
 
 const PANE_TYPE_LABELS = {

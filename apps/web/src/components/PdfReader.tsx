@@ -61,6 +61,7 @@ export interface PdfHighlightOut {
     page_number: number;
     quads: PdfHighlightQuad[];
   };
+  source_version?: string;
   color: HighlightColor;
   exact: string;
   prefix: string;
@@ -125,16 +126,18 @@ export interface PdfReaderSelectionQuote {
   suffix?: string;
   preview: string;
   locator: {
-    type: "pdf_text_quote";
+    type: "pdf_page_geometry";
+    media_id: string;
     page_number: number;
     quads: PdfHighlightQuad[];
+    exact: string;
+    prefix?: string;
+    suffix?: string;
     text_quote_selector: {
       exact: string;
       prefix?: string;
       suffix?: string;
     };
-    page_text_start_offset?: number;
-    page_text_end_offset?: number;
   };
 }
 
@@ -171,7 +174,10 @@ interface PdfReaderProps {
   focusedHighlightId?: string | null;
   editingHighlightId?: string | null;
   highlightRefreshToken?: number;
-  onPageHighlightsChange?: (pageNumber: number, highlights: PdfHighlightOut[]) => void;
+  onPageHighlightsChange?: (
+    pageNumber: number,
+    highlights: PdfHighlightOut[],
+  ) => void;
   navigateToHighlight?: PdfHighlightNavigationRequest | null;
   onHighlightNavigationComplete?: () => void;
   onHighlightsMutated?: () => void;
@@ -305,7 +311,7 @@ function isLikelySignedUrlExpiryError(error: unknown): boolean {
   }
 
   return /(expired|signature|forbidden|unauthorized|403|401|unexpected server response)/i.test(
-    errorMessage(error)
+    errorMessage(error),
   );
 }
 
@@ -313,29 +319,49 @@ function toUserFacingError(error: unknown): string {
   if (isPasswordPdfError(error)) {
     return "This PDF is password-protected and cannot be opened in v1.";
   }
-  return toFeedback(error, { fallback: "Unable to load this PDF right now. Please retry." }).title;
+  return toFeedback(error, {
+    fallback: "Unable to load this PDF right now. Please retry.",
+  }).title;
 }
 
-function isTextLayerEligibleNode(node: Node | null, textLayerRoot: HTMLElement | null): boolean {
+function isTextLayerEligibleNode(
+  node: Node | null,
+  textLayerRoot: HTMLElement | null,
+): boolean {
   if (!node || !textLayerRoot) {
     return false;
   }
-  const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  const element =
+    node.nodeType === Node.ELEMENT_NODE
+      ? (node as Element)
+      : node.parentElement;
   return !!element && textLayerRoot.contains(element);
 }
 
-function isSelectionRangeInTextLayer(range: Range, textLayerRoot: HTMLElement | null): boolean {
+function isSelectionRangeInTextLayer(
+  range: Range,
+  textLayerRoot: HTMLElement | null,
+): boolean {
   if (!textLayerRoot) {
     return false;
   }
-  const startsInLayer = isTextLayerEligibleNode(range.startContainer, textLayerRoot);
-  const endsInLayer = isTextLayerEligibleNode(range.endContainer, textLayerRoot);
+  const startsInLayer = isTextLayerEligibleNode(
+    range.startContainer,
+    textLayerRoot,
+  );
+  const endsInLayer = isTextLayerEligibleNode(
+    range.endContainer,
+    textLayerRoot,
+  );
   if (startsInLayer && endsInLayer) {
     return true;
   }
 
   const selectionRect = range.getBoundingClientRect();
-  if (selectionRect.width <= PDF_QUAD_EPSILON || selectionRect.height <= PDF_QUAD_EPSILON) {
+  if (
+    selectionRect.width <= PDF_QUAD_EPSILON ||
+    selectionRect.height <= PDF_QUAD_EPSILON
+  ) {
     return false;
   }
   const layerRect = textLayerRoot.getBoundingClientRect();
@@ -357,15 +383,20 @@ function clampZoom(value: number): number {
 
 function projectQuadToRect(
   quad: PdfHighlightQuad,
-  transform: PdfPageViewportTransform
-): Omit<ProjectedHighlightRect, "highlightId" | "color" | "index" | "isTemporary"> {
+  transform: PdfPageViewportTransform,
+): Omit<
+  ProjectedHighlightRect,
+  "highlightId" | "color" | "index" | "isTemporary"
+> {
   return projectPdfQuadToViewportRect(quad, transform);
 }
 
-function readPageNumberFromTextLayer(textLayerRoot: HTMLElement | null): number | null {
+function readPageNumberFromTextLayer(
+  textLayerRoot: HTMLElement | null,
+): number | null {
   const parsedPageNumber = Number.parseInt(
     textLayerRoot?.closest(".page")?.getAttribute("data-page-number") ?? "",
-    10
+    10,
   );
   if (!Number.isFinite(parsedPageNumber) || parsedPageNumber <= 0) {
     return null;
@@ -376,14 +407,16 @@ function readPageNumberFromTextLayer(textLayerRoot: HTMLElement | null): number 
 function toSelectionSnapshot(
   range: Range,
   textLayerRoot: HTMLElement | null,
-  pageNumber: number
+  pageNumber: number,
 ): SelectionState {
   const rect = range.getBoundingClientRect();
   const lineRects = Array.from(range.getClientRects()).filter(
-    (clientRect) => clientRect.width > 0 && clientRect.height > 0
+    (clientRect) => clientRect.width > 0 && clientRect.height > 0,
   );
   const effectiveRect =
-    rect.width > 0 && rect.height > 0 ? rect : textLayerRoot?.getBoundingClientRect() ?? rect;
+    rect.width > 0 && rect.height > 0
+      ? rect
+      : (textLayerRoot?.getBoundingClientRect() ?? rect);
   return {
     range: range.cloneRange(),
     rect: effectiveRect,
@@ -417,7 +450,10 @@ function clipQuoteSuffix(value: string): string {
 }
 
 function createPdfSelectionContextId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID();
   }
   return `pdf-selection-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -425,7 +461,7 @@ function createPdfSelectionContextId(): string {
 
 function readPdfQuoteTextWindow(
   range: Range,
-  textLayerRoot: HTMLElement | null
+  textLayerRoot: HTMLElement | null,
 ): {
   exact: string;
   prefix?: string;
@@ -504,7 +540,9 @@ function destroyPdfLoadingTask(task: PdfDocumentLoadingTaskLike | null): void {
   }
 }
 
-function deriveScaleFromPageView(pageView: PdfPageViewLike | undefined): number | null {
+function deriveScaleFromPageView(
+  pageView: PdfPageViewLike | undefined,
+): number | null {
   if (!pageView?.viewport) {
     return null;
   }
@@ -529,7 +567,7 @@ function deriveScaleFromPageView(pageView: PdfPageViewLike | undefined): number 
 
 function deriveViewportTransformFromPageView(
   pageView: PdfPageViewLike | undefined,
-  fallbackScale: number
+  fallbackScale: number,
 ): PdfPageViewportTransform | null {
   const viewport = pageView?.viewport;
   if (!viewport || viewport.width <= 0 || viewport.height <= 0) {
@@ -541,9 +579,13 @@ function deriveViewportTransformFromPageView(
   }
   const rotation = normalizeQuarterTurnRotation(viewport.rotation ?? 0);
   const pageWidthPoints =
-    rotation === 90 || rotation === 270 ? viewport.height / scale : viewport.width / scale;
+    rotation === 90 || rotation === 270
+      ? viewport.height / scale
+      : viewport.width / scale;
   const pageHeightPoints =
-    rotation === 90 || rotation === 270 ? viewport.width / scale : viewport.height / scale;
+    rotation === 90 || rotation === 270
+      ? viewport.width / scale
+      : viewport.height / scale;
 
   return {
     scale,
@@ -559,7 +601,11 @@ function toViewerLifecycleError(context: string, error: unknown): Error {
   return new Error(`PDF viewer lifecycle failure (${context}): ${detail}`);
 }
 
-function applyViewerScale(viewer: PdfViewerLike, scale: string | number, context: string): void {
+function applyViewerScale(
+  viewer: PdfViewerLike,
+  scale: string | number,
+  context: string,
+): void {
   try {
     viewer.currentScaleValue = scale;
     viewer.update?.();
@@ -568,7 +614,11 @@ function applyViewerScale(viewer: PdfViewerLike, scale: string | number, context
   }
 }
 
-function applyViewerPageNumber(viewer: PdfViewerLike, pageNumber: number, context: string): void {
+function applyViewerPageNumber(
+  viewer: PdfViewerLike,
+  pageNumber: number,
+  context: string,
+): void {
   try {
     viewer.currentPageNumber = pageNumber;
   } catch (error) {
@@ -576,7 +626,9 @@ function applyViewerPageNumber(viewer: PdfViewerLike, pageNumber: number, contex
   }
 }
 
-function computePageLayerAlignmentDelta(pageElement: HTMLElement): number | null {
+function computePageLayerAlignmentDelta(
+  pageElement: HTMLElement,
+): number | null {
   const textLayer = pageElement.querySelector<HTMLElement>(".textLayer");
   const canvasSurface =
     pageElement.querySelector<HTMLElement>(".canvasWrapper") ??
@@ -597,17 +649,21 @@ function computePageLayerAlignmentDelta(pageElement: HTMLElement): number | null
 
   const widthScaleDrift = Math.abs(textRect.width / canvasRect.width - 1);
   const heightScaleDrift = Math.abs(textRect.height / canvasRect.height - 1);
-  const leftOffsetDrift = Math.abs(textRect.left - canvasRect.left) / canvasRect.width;
-  const topOffsetDrift = Math.abs(textRect.top - canvasRect.top) / canvasRect.height;
-  const rightOffsetDrift = Math.abs(textRect.right - canvasRect.right) / canvasRect.width;
-  const bottomOffsetDrift = Math.abs(textRect.bottom - canvasRect.bottom) / canvasRect.height;
+  const leftOffsetDrift =
+    Math.abs(textRect.left - canvasRect.left) / canvasRect.width;
+  const topOffsetDrift =
+    Math.abs(textRect.top - canvasRect.top) / canvasRect.height;
+  const rightOffsetDrift =
+    Math.abs(textRect.right - canvasRect.right) / canvasRect.width;
+  const bottomOffsetDrift =
+    Math.abs(textRect.bottom - canvasRect.bottom) / canvasRect.height;
   return Math.max(
     widthScaleDrift,
     heightScaleDrift,
     leftOffsetDrift,
     topOffsetDrift,
     rightOffsetDrift,
-    bottomOffsetDrift
+    bottomOffsetDrift,
   );
 }
 
@@ -654,9 +710,11 @@ export default function PdfReader({
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [pageHighlights, setPageHighlights] = useState<PdfHighlightOut[]>([]);
-  const [pulsingHighlightId, setPulsingHighlightId] = useState<string | null>(null);
+  const [pulsingHighlightId, setPulsingHighlightId] = useState<string | null>(
+    null,
+  );
   const [createTelemetry, setCreateTelemetry] = useState<CreateTelemetryState>(
-    createInitialCreateTelemetry
+    createInitialCreateTelemetry,
   );
 
   const viewerContainerRef = useRef<HTMLDivElement>(null);
@@ -675,7 +733,9 @@ export default function PdfReader({
   const zoomRef = useRef(startZoomRef.current ?? 1);
   const runRef = useRef(0);
   const pageNumberRef = useRef(startPageNumberRef.current ?? 1);
-  const pendingStartPageProgressionRef = useRef(startPageProgressionRef.current ?? null);
+  const pendingStartPageProgressionRef = useRef(
+    startPageProgressionRef.current ?? null,
+  );
   const pageScaleByNumberRef = useRef<Map<number, number>>(new Map());
   const pageGeometryReliabilityRef = useRef<Map<number, boolean>>(new Map());
   const pendingViewerPageRef = useRef<number | null>(null);
@@ -725,7 +785,11 @@ export default function PdfReader({
   }, [onResumeStateChange]);
 
   const publishResumeLocator = useCallback(
-    (nextPageNumber: number, nextZoom: number, nextPageProgression: number | null) => {
+    (
+      nextPageNumber: number,
+      nextZoom: number,
+      nextPageProgression: number | null,
+    ) => {
       onResumeStateChangeRef.current?.({
         kind: "pdf",
         position: nextPageNumber,
@@ -734,7 +798,7 @@ export default function PdfReader({
         zoom: nextZoom,
       });
     },
-    []
+    [],
   );
 
   const setContentNode = useCallback(
@@ -744,7 +808,7 @@ export default function PdfReader({
         contentRef.current = node;
       }
     },
-    [contentRef]
+    [contentRef],
   );
 
   const handleViewerContainerScroll = useCallback(
@@ -755,14 +819,15 @@ export default function PdfReader({
         clientHeight: event.currentTarget.clientHeight,
       });
     },
-    [paneMobileChrome]
+    [paneMobileChrome],
   );
 
   useEffect(() => {
     if (!isMobile || !paneMobileChrome || selection === null) {
       return;
     }
-    const releaseChromeLock = paneMobileChrome.acquireVisibleLock("pdf-selection");
+    const releaseChromeLock =
+      paneMobileChrome.acquireVisibleLock("pdf-selection");
     return () => {
       releaseChromeLock();
     };
@@ -791,18 +856,24 @@ export default function PdfReader({
     return pdfJsViewer;
   }, []);
 
-  const getPageElement = useCallback((targetPage: number): HTMLElement | null => {
-    const root = internalContentRef.current;
-    if (!root) {
-      return null;
-    }
-    const byNumber = root.querySelector<HTMLElement>(`.page[data-page-number="${targetPage}"]`);
-    if (byNumber) {
-      return byNumber;
-    }
-    const fallback = root.querySelectorAll<HTMLElement>(".page")[targetPage - 1];
-    return fallback ?? null;
-  }, []);
+  const getPageElement = useCallback(
+    (targetPage: number): HTMLElement | null => {
+      const root = internalContentRef.current;
+      if (!root) {
+        return null;
+      }
+      const byNumber = root.querySelector<HTMLElement>(
+        `.page[data-page-number="${targetPage}"]`,
+      );
+      if (byNumber) {
+        return byNumber;
+      }
+      const fallback =
+        root.querySelectorAll<HTMLElement>(".page")[targetPage - 1];
+      return fallback ?? null;
+    },
+    [],
+  );
 
   const readPageMetrics = useCallback(
     (targetPage: number): { pageTop: number; pageHeight: number } | null => {
@@ -818,11 +889,12 @@ export default function PdfReader({
         Number.parseFloat(pageElement.style.height) ||
         0;
       const pageTop =
-        pageElement.offsetTop || (pageHeight > 0 ? (targetPage - 1) * pageHeight : 0);
+        pageElement.offsetTop ||
+        (pageHeight > 0 ? (targetPage - 1) * pageHeight : 0);
 
       return pageHeight > 0 ? { pageTop, pageHeight } : null;
     },
-    [getPageElement]
+    [getPageElement],
   );
 
   const readCurrentPageProgression = useCallback((): number | null => {
@@ -835,7 +907,10 @@ export default function PdfReader({
       return null;
     }
     const localScrollTop = Math.max(0, container.scrollTop - metrics.pageTop);
-    const maxLocalScroll = Math.max(0, metrics.pageHeight - container.clientHeight);
+    const maxLocalScroll = Math.max(
+      0,
+      metrics.pageHeight - container.clientHeight,
+    );
     if (maxLocalScroll === 0) {
       return 0;
     }
@@ -855,9 +930,13 @@ export default function PdfReader({
     if (!metrics) {
       return;
     }
-    const maxLocalScroll = Math.max(0, metrics.pageHeight - container.clientHeight);
+    const maxLocalScroll = Math.max(
+      0,
+      metrics.pageHeight - container.clientHeight,
+    );
     container.scrollTop =
-      metrics.pageTop + maxLocalScroll * Math.max(0, Math.min(1, targetProgression));
+      metrics.pageTop +
+      maxLocalScroll * Math.max(0, Math.min(1, targetProgression));
     pendingStartPageProgressionRef.current = null;
   }, [readPageMetrics]);
 
@@ -865,7 +944,13 @@ export default function PdfReader({
     if (onResumeStateChangeRef.current && numPages > 0) {
       publishResumeLocator(pageNumber, zoom, readCurrentPageProgression());
     }
-  }, [numPages, pageNumber, publishResumeLocator, readCurrentPageProgression, zoom]);
+  }, [
+    numPages,
+    pageNumber,
+    publishResumeLocator,
+    readCurrentPageProgression,
+    zoom,
+  ]);
 
   useEffect(() => {
     const container = viewerContainerRef.current;
@@ -882,7 +967,7 @@ export default function PdfReader({
         publishResumeLocator(
           pageNumberRef.current,
           zoomRef.current,
-          readCurrentPageProgression()
+          readCurrentPageProgression(),
         );
       });
     };
@@ -898,46 +983,74 @@ export default function PdfReader({
 
   const getTextLayerRootForPage = useCallback(
     (targetPage: number): HTMLElement | null => {
-      return getPageElement(targetPage)?.querySelector<HTMLElement>(".textLayer") ?? null;
+      return (
+        getPageElement(targetPage)?.querySelector<HTMLElement>(".textLayer") ??
+        null
+      );
     },
-    [getPageElement]
+    [getPageElement],
   );
 
   const markPageSurfaceForTesting = useCallback(
     (targetPage: number, explicitPageView?: PdfPageViewLike) => {
       const pageElement = getPageElement(targetPage);
       if (pageElement) {
-        pageElement.setAttribute("data-testid", `pdf-page-surface-${targetPage}`);
+        pageElement.setAttribute(
+          "data-testid",
+          `pdf-page-surface-${targetPage}`,
+        );
         pageElement
           .querySelector<HTMLElement>(".textLayer")
           ?.setAttribute("data-testid", `pdf-page-text-layer-${targetPage}`);
         pageElement
           .querySelector<HTMLElement>(".canvasWrapper")
-          ?.setAttribute("data-testid", `pdf-page-canvas-wrapper-${targetPage}`);
+          ?.setAttribute(
+            "data-testid",
+            `pdf-page-canvas-wrapper-${targetPage}`,
+          );
         pageElement
           .querySelector<HTMLElement>(".canvasWrapper canvas")
           ?.setAttribute("data-testid", `pdf-page-canvas-${targetPage}`);
         const pageView =
           explicitPageView ??
           pdfViewerRef.current?.getPageView?.(Math.max(0, targetPage - 1));
-        const fallbackScale = pageScaleByNumberRef.current.get(targetPage) ?? zoomRef.current;
-        const viewportTransform = deriveViewportTransformFromPageView(pageView, fallbackScale);
+        const fallbackScale =
+          pageScaleByNumberRef.current.get(targetPage) ?? zoomRef.current;
+        const viewportTransform = deriveViewportTransformFromPageView(
+          pageView,
+          fallbackScale,
+        );
         if (viewportTransform) {
-          pageElement.setAttribute("data-nexus-page-scale", String(viewportTransform.scale));
-          pageElement.setAttribute("data-nexus-page-rotation", String(viewportTransform.rotation));
+          pageElement.setAttribute(
+            "data-nexus-page-scale",
+            String(viewportTransform.scale),
+          );
+          pageElement.setAttribute(
+            "data-nexus-page-rotation",
+            String(viewportTransform.rotation),
+          );
           pageElement.setAttribute(
             "data-nexus-page-viewport-width",
-            String(pageView?.viewport?.width ?? viewportTransform.pageWidthPoints * viewportTransform.scale)
+            String(
+              pageView?.viewport?.width ??
+                viewportTransform.pageWidthPoints * viewportTransform.scale,
+            ),
           );
           pageElement.setAttribute(
             "data-nexus-page-viewport-height",
-            String(pageView?.viewport?.height ?? viewportTransform.pageHeightPoints * viewportTransform.scale)
+            String(
+              pageView?.viewport?.height ??
+                viewportTransform.pageHeightPoints * viewportTransform.scale,
+            ),
           );
-          pageElement.setAttribute("data-nexus-page-dpi-scale", String(viewportTransform.dpiScale));
+          pageElement.setAttribute(
+            "data-nexus-page-dpi-scale",
+            String(viewportTransform.dpiScale),
+          );
         }
       }
     },
-    [getPageElement]
+    [getPageElement],
   );
 
   const removeOverlayLayers = useCallback(() => {
@@ -952,7 +1065,10 @@ export default function PdfReader({
         explicitPageView ??
         pdfViewerRef.current?.getPageView?.(Math.max(0, targetPage - 1));
       const derivedScale = deriveScaleFromPageView(pageView);
-      const resolvedScale = derivedScale ?? pageScaleByNumberRef.current.get(targetPage) ?? zoomRef.current;
+      const resolvedScale =
+        derivedScale ??
+        pageScaleByNumberRef.current.get(targetPage) ??
+        zoomRef.current;
       pageScaleByNumberRef.current.set(targetPage, resolvedScale);
       if (targetPage === pageNumberRef.current) {
         activePageScaleRef.current = resolvedScale;
@@ -960,14 +1076,17 @@ export default function PdfReader({
       }
       return resolvedScale;
     },
-    []
+    [],
   );
 
   const readPageScale = useCallback(
     (targetPage: number): number => {
-      return pageScaleByNumberRef.current.get(targetPage) ?? rememberPageScale(targetPage);
+      return (
+        pageScaleByNumberRef.current.get(targetPage) ??
+        rememberPageScale(targetPage)
+      );
     },
-    [rememberPageScale]
+    [rememberPageScale],
   );
 
   const isTextLayerUsableForPage = useCallback(
@@ -978,7 +1097,7 @@ export default function PdfReader({
       }
       return (textLayerRoot.textContent ?? "").trim().length > 0;
     },
-    [getTextLayerRootForPage]
+    [getTextLayerRootForPage],
   );
 
   const evaluatePageGeometryReliability = useCallback(
@@ -989,14 +1108,15 @@ export default function PdfReader({
       }
       const alignmentDelta = computePageLayerAlignmentDelta(pageElement);
       const isReliable =
-        alignmentDelta === null || alignmentDelta <= PDF_GEOMETRY_ALIGNMENT_DELTA_THRESHOLD;
+        alignmentDelta === null ||
+        alignmentDelta <= PDF_GEOMETRY_ALIGNMENT_DELTA_THRESHOLD;
       pageGeometryReliabilityRef.current.set(targetPage, isReliable);
       if (targetPage === pageNumberRef.current) {
         setTextGeometryReliable(isReliable);
       }
       return isReliable;
     },
-    [getPageElement]
+    [getPageElement],
   );
 
   const scheduleTextLayerStateRefresh = useCallback(
@@ -1035,9 +1155,10 @@ export default function PdfReader({
         attemptsRemaining -= 1;
         activeRefresh.frameId = window.requestAnimationFrame(refresh);
       };
-      textLayerRefreshFrameRef.current.frameId = window.requestAnimationFrame(refresh);
+      textLayerRefreshFrameRef.current.frameId =
+        window.requestAnimationFrame(refresh);
     },
-    [evaluatePageGeometryReliability, isTextLayerUsableForPage]
+    [evaluatePageGeometryReliability, isTextLayerUsableForPage],
   );
 
   const clearPendingMobileSelectionPublish = useCallback(() => {
@@ -1048,22 +1169,29 @@ export default function PdfReader({
     mobileSelectionTimerRef.current = null;
   }, []);
 
-  const publishSelection = useCallback((nextSelection: SelectionState | null) => {
-    selectionVisibleRef.current = nextSelection !== null;
-    setSelection(nextSelection);
-  }, []);
+  const publishSelection = useCallback(
+    (nextSelection: SelectionState | null) => {
+      selectionVisibleRef.current = nextSelection !== null;
+      setSelection(nextSelection);
+    },
+    [],
+  );
 
   const resetSelectionState = useCallback(
     (keepVisibleMobileSelection = false) => {
       clearPendingMobileSelectionPublish();
-      if (keepVisibleMobileSelection && isMobileRef.current && selectionVisibleRef.current) {
+      if (
+        keepVisibleMobileSelection &&
+        isMobileRef.current &&
+        selectionVisibleRef.current
+      ) {
         return;
       }
       selectionSnapshotRef.current = null;
       selectionSnapshotKeyRef.current = null;
       publishSelection(null);
     },
-    [clearPendingMobileSelectionPublish, publishSelection]
+    [clearPendingMobileSelectionPublish, publishSelection],
   );
 
   const clearSelection = useCallback(() => {
@@ -1086,11 +1214,13 @@ export default function PdfReader({
     (updater: (prev: CreateTelemetryState) => CreateTelemetryState) => {
       setCreateTelemetry((prev) => updater(prev));
     },
-    []
+    [],
   );
 
   const fetchSignedUrl = useCallback(async () => {
-    const response = await apiFetch<PdfFileAccessResponse>(`/api/media/${mediaId}/file`);
+    const response = await apiFetch<PdfFileAccessResponse>(
+      `/api/media/${mediaId}/file`,
+    );
     const expiresAtMs = Date.parse(response.data.expires_at);
     return {
       url: response.data.url,
@@ -1101,15 +1231,15 @@ export default function PdfReader({
   const fetchPageHighlights = useCallback(
     async (targetPage: number): Promise<PdfHighlightOut[]> => {
       const response = await apiFetch<PdfHighlightListResponse>(
-        `/api/media/${mediaId}/pdf-highlights?page_number=${targetPage}&mine_only=false`
+        `/api/media/${mediaId}/pdf-highlights?page_number=${targetPage}&mine_only=false`,
       );
       return response.data.highlights.filter(
         (highlight) =>
           highlight.anchor.type === "pdf_page_geometry" &&
-          highlight.anchor.page_number === targetPage
+          highlight.anchor.page_number === targetPage,
       );
     },
-    [mediaId]
+    [mediaId],
   );
 
   const openDocument = useCallback(
@@ -1125,7 +1255,7 @@ export default function PdfReader({
       const doc = await task.promise;
       return { doc, loadingTask: task };
     },
-    [ensurePdfJs]
+    [ensurePdfJs],
   );
 
   const replaceDocument = useCallback(async (nextOpened: OpenedPdfDocument) => {
@@ -1173,7 +1303,11 @@ export default function PdfReader({
 
   const initializeViewerIfNeeded = useCallback(
     async (runId: number) => {
-      if (pdfViewerRef.current && eventBusRef.current && linkServiceRef.current) {
+      if (
+        pdfViewerRef.current &&
+        eventBusRef.current &&
+        linkServiceRef.current
+      ) {
         return;
       }
       const viewerModule = await ensurePdfJsViewer();
@@ -1190,7 +1324,8 @@ export default function PdfReader({
       const eventBus = new viewerModule.EventBus();
       const linkService = new viewerModule.PDFLinkService({
         eventBus,
-        externalLinkTarget: viewerModule.LinkTarget?.BLANK ?? PDF_LINK_TARGET_BLANK,
+        externalLinkTarget:
+          viewerModule.LinkTarget?.BLANK ?? PDF_LINK_TARGET_BLANK,
         externalLinkRel: "noopener noreferrer nofollow",
       });
       const pdfViewer = new viewerModule.PDFViewer({
@@ -1239,14 +1374,18 @@ export default function PdfReader({
         const pagesCount =
           Number.isFinite(event.pagesCount) && (event.pagesCount as number) > 0
             ? Math.floor(event.pagesCount as number)
-            : documentRef.current?.numPages ?? 0;
+            : (documentRef.current?.numPages ?? 0);
         setNumPages(pagesCount);
         const viewer = pdfViewerRef.current;
         const pendingScale = pendingViewerScaleRef.current;
         const pendingPage = pendingViewerPageRef.current;
         if (viewer && pendingScale != null) {
           try {
-            applyViewerScale(viewer, pendingScale, "pagesloaded/currentScaleValue");
+            applyViewerScale(
+              viewer,
+              pendingScale,
+              "pagesloaded/currentScaleValue",
+            );
           } catch (error) {
             setError(toUserFacingError(error));
           } finally {
@@ -1255,21 +1394,33 @@ export default function PdfReader({
         }
         if (viewer && typeof pendingPage === "number" && pendingPage > 1) {
           try {
-            const boundedPage = Math.max(1, Math.min(pendingPage, Math.max(pagesCount, 1)));
-            applyViewerPageNumber(viewer, boundedPage, "pagesloaded/currentPageNumber");
+            const boundedPage = Math.max(
+              1,
+              Math.min(pendingPage, Math.max(pagesCount, 1)),
+            );
+            applyViewerPageNumber(
+              viewer,
+              boundedPage,
+              "pagesloaded/currentPageNumber",
+            );
           } catch (error) {
             setError(toUserFacingError(error));
           } finally {
             pendingViewerPageRef.current = null;
           }
         }
-        setTextGeometryReliable(evaluatePageGeometryReliability(pageNumberRef.current));
+        setTextGeometryReliable(
+          evaluatePageGeometryReliability(pageNumberRef.current),
+        );
         window.requestAnimationFrame(() => {
           if (runId !== runRef.current) {
             return;
           }
           for (let index = 1; index <= pagesCount; index += 1) {
-            markPageSurfaceForTesting(index, viewer?.getPageView?.(Math.max(0, index - 1)));
+            markPageSurfaceForTesting(
+              index,
+              viewer?.getPageView?.(Math.max(0, index - 1)),
+            );
           }
         });
       };
@@ -1302,7 +1453,10 @@ export default function PdfReader({
             onPageHighlightsChangeRef.current?.(renderedPage, highlights);
           })
           .catch(() => {
-            if (runId === runRef.current && renderedPage === pageNumberRef.current) {
+            if (
+              runId === runRef.current &&
+              renderedPage === pageNumberRef.current
+            ) {
               setSelectionError("Failed to load PDF highlights for this page.");
             }
           });
@@ -1313,11 +1467,8 @@ export default function PdfReader({
           !recoveringFromRenderErrorRef.current
         ) {
           recoveringFromRenderErrorRef.current = true;
-          void recoverAndRenderRef.current
-            ?.(
-              pageNumberRef.current,
-              runRef.current
-            )
+          void recoverAndRenderRef
+            .current?.(pageNumberRef.current, runRef.current)
             .finally(() => {
               if (runId === runRef.current) {
                 recoveringFromRenderErrorRef.current = false;
@@ -1360,11 +1511,13 @@ export default function PdfReader({
         const expiryError = isLikelySignedUrlExpiryError(event.error);
         if (expiryError && !recoveringFromRenderErrorRef.current) {
           recoveringFromRenderErrorRef.current = true;
-          void recoverAndRenderRef.current?.(renderedPage, runRef.current).finally(() => {
-            if (runId === runRef.current) {
-              recoveringFromRenderErrorRef.current = false;
-            }
-          });
+          void recoverAndRenderRef
+            .current?.(renderedPage, runRef.current)
+            .finally(() => {
+              if (runId === runRef.current) {
+                recoveringFromRenderErrorRef.current = false;
+              }
+            });
           return;
         }
         if (!expiryError) {
@@ -1399,7 +1552,7 @@ export default function PdfReader({
       markPageSurfaceForTesting,
       rememberPageScale,
       scheduleTextLayerStateRefresh,
-    ]
+    ],
   );
 
   const attachDocumentToViewer = useCallback(
@@ -1426,14 +1579,16 @@ export default function PdfReader({
       setTextLayerUsable(false);
       setTextGeometryReliable(true);
 
-      const shouldFitPageWidth = isMobileRef.current && !initialMobileFitDoneRef.current;
+      const shouldFitPageWidth =
+        isMobileRef.current && !initialMobileFitDoneRef.current;
       if (shouldFitPageWidth) {
         initialMobileFitDoneRef.current = true;
       }
       const effectiveScale: string | number = shouldFitPageWidth
         ? "page-width"
         : zoomRef.current;
-      const numericFallback = typeof effectiveScale === "number" ? effectiveScale : zoomRef.current;
+      const numericFallback =
+        typeof effectiveScale === "number" ? effectiveScale : zoomRef.current;
       setPageScale(numericFallback);
       activePageScaleRef.current = numericFallback;
 
@@ -1442,7 +1597,7 @@ export default function PdfReader({
       linkService.setDocument(doc, null);
       viewer.setDocument(doc);
     },
-    [initializeViewerIfNeeded, removeOverlayLayers]
+    [initializeViewerIfNeeded, removeOverlayLayers],
   );
 
   const recoverAndRender = useCallback(
@@ -1474,7 +1629,7 @@ export default function PdfReader({
         }
       }
     },
-    [attachDocumentToViewer, fetchSignedUrl, openDocument, replaceDocument]
+    [attachDocumentToViewer, fetchSignedUrl, openDocument, replaceDocument],
   );
 
   useEffect(() => {
@@ -1493,18 +1648,24 @@ export default function PdfReader({
       setPageHighlights(highlights);
       onPageHighlightsChangeRef.current?.(targetPage, highlights);
     },
-    [fetchPageHighlights]
+    [fetchPageHighlights],
   );
 
   const resolveTextLayerRootFromRange = useCallback(
-    (targetRange: Range): { textLayerRoot: HTMLElement; pageNumber: number } | null => {
+    (
+      targetRange: Range,
+    ): { textLayerRoot: HTMLElement; pageNumber: number } | null => {
       const contexts = [targetRange.startContainer, targetRange.endContainer]
         .map((node) => {
           const element =
-            node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+            node.nodeType === Node.ELEMENT_NODE
+              ? (node as Element)
+              : node.parentElement;
           return element?.closest(".textLayer");
         })
-        .filter((element): element is HTMLElement => element instanceof HTMLElement);
+        .filter(
+          (element): element is HTMLElement => element instanceof HTMLElement,
+        );
       for (const candidate of contexts) {
         if (!isSelectionRangeInTextLayer(targetRange, candidate)) {
           continue;
@@ -1523,7 +1684,7 @@ export default function PdfReader({
       }
       return null;
     },
-    [getTextLayerRootForPage]
+    [getTextLayerRootForPage],
   );
 
   const captureSelectionSnapshotFromWindow = useCallback(() => {
@@ -1539,7 +1700,7 @@ export default function PdfReader({
     const snapshot = toSelectionSnapshot(
       range,
       selectionContext.textLayerRoot,
-      selectionContext.pageNumber
+      selectionContext.pageNumber,
     );
     selectionSnapshotRef.current = snapshot;
     selectionSnapshotKeyRef.current = buildSelectionSnapshotKey(snapshot);
@@ -1547,30 +1708,42 @@ export default function PdfReader({
 
   const buildSelectionQuads = useCallback(
     (range: Range, targetPage: number): PdfHighlightQuad[] => {
-      const layerRect = getTextLayerRootForPage(targetPage)?.getBoundingClientRect();
+      const layerRect =
+        getTextLayerRootForPage(targetPage)?.getBoundingClientRect();
       const pageScaleValue = readPageScale(targetPage);
       if (!layerRect || pageScaleValue <= 0) {
         return [];
       }
 
       const rectsFromRange = Array.from(range.getClientRects()).filter(
-        (rect) => rect.width > PDF_QUAD_EPSILON && rect.height > PDF_QUAD_EPSILON
+        (rect) =>
+          rect.width > PDF_QUAD_EPSILON && rect.height > PDF_QUAD_EPSILON,
       );
       const fallbackRect = range.getBoundingClientRect();
       const rects =
         rectsFromRange.length > 0
           ? rectsFromRange
-          : fallbackRect.width > PDF_QUAD_EPSILON && fallbackRect.height > PDF_QUAD_EPSILON
+          : fallbackRect.width > PDF_QUAD_EPSILON &&
+              fallbackRect.height > PDF_QUAD_EPSILON
             ? [fallbackRect]
-            : layerRect.width > PDF_QUAD_EPSILON && layerRect.height > PDF_QUAD_EPSILON
+            : layerRect.width > PDF_QUAD_EPSILON &&
+                layerRect.height > PDF_QUAD_EPSILON
               ? [layerRect]
               : [];
 
       return rects.map((rect) => {
-        const left = toCanonicalPoint((rect.left - layerRect.left) / pageScaleValue);
-        const right = toCanonicalPoint((rect.right - layerRect.left) / pageScaleValue);
-        const top = toCanonicalPoint((rect.top - layerRect.top) / pageScaleValue);
-        const bottom = toCanonicalPoint((rect.bottom - layerRect.top) / pageScaleValue);
+        const left = toCanonicalPoint(
+          (rect.left - layerRect.left) / pageScaleValue,
+        );
+        const right = toCanonicalPoint(
+          (rect.right - layerRect.left) / pageScaleValue,
+        );
+        const top = toCanonicalPoint(
+          (rect.top - layerRect.top) / pageScaleValue,
+        );
+        const bottom = toCanonicalPoint(
+          (rect.bottom - layerRect.top) / pageScaleValue,
+        );
 
         return {
           x1: left,
@@ -1584,7 +1757,7 @@ export default function PdfReader({
         };
       });
     },
-    [getTextLayerRootForPage, readPageScale]
+    [getTextLayerRootForPage, readPageScale],
   );
 
   const buildAreaSelectionQuads = useCallback(
@@ -1596,7 +1769,10 @@ export default function PdfReader({
       }
 
       const pageRect = pageElement.getBoundingClientRect();
-      if (pageRect.width <= PDF_QUAD_EPSILON || pageRect.height <= PDF_QUAD_EPSILON) {
+      if (
+        pageRect.width <= PDF_QUAD_EPSILON ||
+        pageRect.height <= PDF_QUAD_EPSILON
+      ) {
         return [];
       }
 
@@ -1605,14 +1781,21 @@ export default function PdfReader({
       const rightPx = Math.min(pageRect.right, selectedRect.right);
       const topPx = Math.max(pageRect.top, selectedRect.top);
       const bottomPx = Math.min(pageRect.bottom, selectedRect.bottom);
-      if (rightPx - leftPx <= PDF_QUAD_EPSILON || bottomPx - topPx <= PDF_QUAD_EPSILON) {
+      if (
+        rightPx - leftPx <= PDF_QUAD_EPSILON ||
+        bottomPx - topPx <= PDF_QUAD_EPSILON
+      ) {
         return [];
       }
 
       const left = toCanonicalPoint((leftPx - pageRect.left) / pageScaleValue);
-      const right = toCanonicalPoint((rightPx - pageRect.left) / pageScaleValue);
+      const right = toCanonicalPoint(
+        (rightPx - pageRect.left) / pageScaleValue,
+      );
       const top = toCanonicalPoint((topPx - pageRect.top) / pageScaleValue);
-      const bottom = toCanonicalPoint((bottomPx - pageRect.top) / pageScaleValue);
+      const bottom = toCanonicalPoint(
+        (bottomPx - pageRect.top) / pageScaleValue,
+      );
 
       return [
         {
@@ -1627,7 +1810,7 @@ export default function PdfReader({
         },
       ];
     },
-    [getPageElement, readPageScale]
+    [getPageElement, readPageScale],
   );
 
   const syncSelectionFromWindow = useCallback(() => {
@@ -1650,7 +1833,9 @@ export default function PdfReader({
     }
 
     const selectionText =
-      selectedTextFromSelection.length > 0 ? selectedTextFromSelection : range.toString().trim();
+      selectedTextFromSelection.length > 0
+        ? selectedTextFromSelection
+        : range.toString().trim();
     if (selectionText.length === 0) {
       resetSelectionState(true);
       return;
@@ -1659,7 +1844,7 @@ export default function PdfReader({
     const snapshot = toSelectionSnapshot(
       range,
       selectionContext.textLayerRoot,
-      selectionContext.pageNumber
+      selectionContext.pageNumber,
     );
     const nextSelectionKey = buildSelectionSnapshotKey(snapshot);
     const previousSelectionKey = selectionSnapshotKeyRef.current;
@@ -1705,7 +1890,11 @@ export default function PdfReader({
       const shouldUseAreaFallback = !textGeometryReliable;
       const fallbackSelection: SelectionState | null = (() => {
         const sel = getPdfSelection();
-        if (!sel || sel.rangeCount === 0 || sel.toString().trim().length === 0) {
+        if (
+          !sel ||
+          sel.rangeCount === 0 ||
+          sel.toString().trim().length === 0
+        ) {
           return null;
         }
         const range = sel.getRangeAt(0);
@@ -1716,12 +1905,16 @@ export default function PdfReader({
         return toSelectionSnapshot(
           range,
           selectionContext.textLayerRoot,
-          selectionContext.pageNumber
+          selectionContext.pageNumber,
         );
       })();
 
-      const activeSelection = selection ?? selectionSnapshotRef.current ?? fallbackSelection;
-      if ((!(textLayerUsable || shouldUseAreaFallback || activeSelection)) || isCreating) {
+      const activeSelection =
+        selection ?? selectionSnapshotRef.current ?? fallbackSelection;
+      if (
+        !(textLayerUsable || shouldUseAreaFallback || activeSelection) ||
+        isCreating
+      ) {
         updateCreateTelemetry((prev) => ({
           ...prev,
           lastOutcome: "skipped_not_usable_or_creating",
@@ -1737,10 +1930,15 @@ export default function PdfReader({
         return null;
       }
 
-      const exact = shouldUseAreaFallback ? "" : activeSelection.range.toString().trim();
+      const exact = shouldUseAreaFallback
+        ? ""
+        : activeSelection.range.toString().trim();
       const quads = shouldUseAreaFallback
         ? buildAreaSelectionQuads(activeSelection)
-        : buildSelectionQuads(activeSelection.range, activeSelection.pageNumber);
+        : buildSelectionQuads(
+            activeSelection.range,
+            activeSelection.pageNumber,
+          );
       if (quads.length === 0) {
         updateCreateTelemetry((prev) => ({
           ...prev,
@@ -1749,7 +1947,7 @@ export default function PdfReader({
         setSelectionError(
           shouldUseAreaFallback
             ? "No selectable area geometry was found for this selection."
-            : "No selectable text geometry was found for this selection."
+            : "No selectable text geometry was found for this selection.",
         );
         clearSelection();
         return null;
@@ -1792,7 +1990,7 @@ export default function PdfReader({
                 exact,
                 color,
               }),
-            }
+            },
           );
           createdHighlightId = response.data.id;
         }
@@ -1832,7 +2030,7 @@ export default function PdfReader({
       textLayerUsable,
       updateCreateTelemetry,
       onHighlightsMutated,
-    ]
+    ],
   );
 
   const goToPage = useCallback(
@@ -1850,7 +2048,10 @@ export default function PdfReader({
       const currentRun = runRef.current;
       try {
         const expiryMs = signedUrlExpiryRef.current;
-        if (typeof expiryMs === "number" && Date.now() >= expiryMs - SIGNED_URL_REFRESH_SKEW_MS) {
+        if (
+          typeof expiryMs === "number" &&
+          Date.now() >= expiryMs - SIGNED_URL_REFRESH_SKEW_MS
+        ) {
           await recoverAndRender(nextPage, currentRun);
           return;
         }
@@ -1867,7 +2068,7 @@ export default function PdfReader({
         }
       }
     },
-    [clearSelection, numPages, recoverAndRender]
+    [clearSelection, numPages, recoverAndRender],
   );
 
   const scrollToProjectedHighlight = useCallback(
@@ -1884,15 +2085,19 @@ export default function PdfReader({
       if (pageScaleValue <= 0) {
         return false;
       }
-      const pageView = pdfViewerRef.current?.getPageView?.(Math.max(0, targetPage - 1));
-      const viewportTransform =
-        deriveViewportTransformFromPageView(pageView, pageScaleValue) ?? {
-          scale: pageScaleValue,
-          rotation: 0 as const,
-          pageWidthPoints: 0,
-          pageHeightPoints: 0,
-          dpiScale: 1,
-        };
+      const pageView = pdfViewerRef.current?.getPageView?.(
+        Math.max(0, targetPage - 1),
+      );
+      const viewportTransform = deriveViewportTransformFromPageView(
+        pageView,
+        pageScaleValue,
+      ) ?? {
+        scale: pageScaleValue,
+        rotation: 0 as const,
+        pageWidthPoints: 0,
+        pageHeightPoints: 0,
+        dpiScale: 1,
+      };
       const projectedRect = projectQuadToRect(quads[0], viewportTransform);
       const targetTop =
         pageElement.offsetTop +
@@ -1902,7 +2107,7 @@ export default function PdfReader({
       container.scrollTop = Math.max(0, targetTop);
       return true;
     },
-    [getPageElement, readPageScale]
+    [getPageElement, readPageScale],
   );
 
   useEffect(() => {
@@ -1931,7 +2136,10 @@ export default function PdfReader({
         return;
       }
       if (
-        scrollToProjectedHighlight(navigateToHighlight.pageNumber, navigateToHighlight.quads) ||
+        scrollToProjectedHighlight(
+          navigateToHighlight.pageNumber,
+          navigateToHighlight.quads,
+        ) ||
         remainingAttempts <= 0
       ) {
         complete();
@@ -1958,7 +2166,12 @@ export default function PdfReader({
     return () => {
       cancelled = true;
     };
-  }, [goToPage, navigateToHighlight, onHighlightNavigationComplete, scrollToProjectedHighlight]);
+  }, [
+    goToPage,
+    navigateToHighlight,
+    onHighlightNavigationComplete,
+    scrollToProjectedHighlight,
+  ]);
 
   useEffect(() => {
     if (!temporaryHighlight || temporaryHighlight.quads.length === 0) {
@@ -1980,7 +2193,10 @@ export default function PdfReader({
         return;
       }
       if (
-        scrollToProjectedHighlight(temporaryHighlight.pageNumber, temporaryHighlight.quads) ||
+        scrollToProjectedHighlight(
+          temporaryHighlight.pageNumber,
+          temporaryHighlight.quads,
+        ) ||
         remainingAttempts <= 0
       ) {
         return;
@@ -2009,15 +2225,9 @@ export default function PdfReader({
       (target) => {
         if (target.mediaId !== mediaId) return;
         const locator = target.locator;
-        if (typeof locator !== "object" || locator === null) return;
-        const record = locator as Record<string, unknown>;
-        const pageNumberRaw = record.page_number;
-        if (typeof pageNumberRaw !== "number") return;
-        const quadsRaw = record.quads;
-        const quads: PdfHighlightQuad[] = Array.isArray(quadsRaw)
-          ? (quadsRaw as PdfHighlightQuad[])
-          : [];
-        const pageNumber = pageNumberRaw;
+        if (locator.type !== "pdf_page_geometry") return;
+        const pageNumber = locator.page_number;
+        const quads = locator.quads as PdfHighlightQuad[];
         const highlightId =
           typeof target.highlightId === "string" ? target.highlightId : null;
         const pulseOverlaysOnPage = () => {
@@ -2083,7 +2293,9 @@ export default function PdfReader({
     setPageScale(zoom);
     setPageRenderEpoch((value) => value + 1);
     window.requestAnimationFrame(() => {
-      setTextGeometryReliable(evaluatePageGeometryReliability(pageNumberRef.current));
+      setTextGeometryReliable(
+        evaluatePageGeometryReliability(pageNumberRef.current),
+      );
     });
   }, [evaluatePageGeometryReliability, zoom]);
 
@@ -2242,15 +2454,19 @@ export default function PdfReader({
     if (activeScale <= 0) {
       return [] as ProjectedHighlightRect[];
     }
-    const pageView = pdfViewerRef.current?.getPageView?.(Math.max(0, pageNumber - 1));
-    const viewportTransform =
-      deriveViewportTransformFromPageView(pageView, activeScale) ?? {
-        scale: activeScale,
-        rotation: 0 as const,
-        pageWidthPoints: 0,
-        pageHeightPoints: 0,
-        dpiScale: 1,
-      };
+    const pageView = pdfViewerRef.current?.getPageView?.(
+      Math.max(0, pageNumber - 1),
+    );
+    const viewportTransform = deriveViewportTransformFromPageView(
+      pageView,
+      activeScale,
+    ) ?? {
+      scale: activeScale,
+      rotation: 0 as const,
+      pageWidthPoints: 0,
+      pageHeightPoints: 0,
+      dpiScale: 1,
+    };
     const projected: ProjectedHighlightRect[] = [];
     for (const highlight of pageHighlights) {
       if (
@@ -2282,7 +2498,13 @@ export default function PdfReader({
     }
     return projected;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- pageRenderEpoch is an intentional invalidation trigger
-  }, [pageHighlights, pageNumber, pageRenderEpoch, pageScale, temporaryHighlight]);
+  }, [
+    pageHighlights,
+    pageNumber,
+    pageRenderEpoch,
+    pageScale,
+    temporaryHighlight,
+  ]);
 
   useEffect(() => {
     removeOverlayLayers();
@@ -2309,7 +2531,10 @@ export default function PdfReader({
       if (pulsingHighlightId === rect.highlightId) {
         rectEl.classList.add(styles.pulsing);
       }
-      rectEl.setAttribute("data-testid", `pdf-highlight-${rect.highlightId}-${rect.index}`);
+      rectEl.setAttribute(
+        "data-testid",
+        `pdf-highlight-${rect.highlightId}-${rect.index}`,
+      );
       rectEl.setAttribute("data-highlight-color", rect.color);
       rectEl.setAttribute("data-highlight-id", rect.highlightId);
       if (rect.index === 0) {
@@ -2329,7 +2554,10 @@ export default function PdfReader({
         rectEl.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
-          onHighlightTapRef.current?.(rect.highlightId, rectEl.getBoundingClientRect());
+          onHighlightTapRef.current?.(
+            rect.highlightId,
+            rectEl.getBoundingClientRect(),
+          );
         });
         rectEl.addEventListener("keydown", (event) => {
           if (event.key !== "Enter" && event.key !== " ") {
@@ -2337,7 +2565,10 @@ export default function PdfReader({
           }
           event.preventDefault();
           event.stopPropagation();
-          onHighlightTapRef.current?.(rect.highlightId, rectEl.getBoundingClientRect());
+          onHighlightTapRef.current?.(
+            rect.highlightId,
+            rectEl.getBoundingClientRect(),
+          );
         });
       }
       overlayLayer.append(rectEl);
@@ -2378,7 +2609,7 @@ export default function PdfReader({
     (color: HighlightColor = "yellow") => {
       void handleCreateHighlight(color);
     },
-    [handleCreateHighlight]
+    [handleCreateHighlight],
   );
 
   const handleAskSelection = useCallback(
@@ -2398,15 +2629,23 @@ export default function PdfReader({
       }
 
       const textLayerRoot = getTextLayerRootForPage(activeSelection.pageNumber);
-      const quoteText = readPdfQuoteTextWindow(activeSelection.range, textLayerRoot);
+      const quoteText = readPdfQuoteTextWindow(
+        activeSelection.range,
+        textLayerRoot,
+      );
       if (quoteText.exact.length === 0) {
         setSelectionError("Select text in the PDF before asking.");
         return;
       }
 
-      const quads = buildSelectionQuads(activeSelection.range, activeSelection.pageNumber);
+      const quads = buildSelectionQuads(
+        activeSelection.range,
+        activeSelection.pageNumber,
+      );
       if (quads.length === 0) {
-        setSelectionError("No selectable text geometry was found for this selection.");
+        setSelectionError(
+          "No selectable text geometry was found for this selection.",
+        );
         return;
       }
 
@@ -2426,16 +2665,14 @@ export default function PdfReader({
         ...(quoteText.suffix ? { suffix: quoteText.suffix } : {}),
         preview: quoteText.exact.slice(0, 120),
         locator: {
-          type: "pdf_text_quote",
+          type: "pdf_page_geometry",
+          media_id: mediaId,
           page_number: activeSelection.pageNumber,
           quads,
+          exact: quoteText.exact,
+          ...(quoteText.prefix ? { prefix: quoteText.prefix } : {}),
+          ...(quoteText.suffix ? { suffix: quoteText.suffix } : {}),
           text_quote_selector: textQuoteSelector,
-          ...(typeof quoteText.pageTextStartOffset === "number"
-            ? { page_text_start_offset: quoteText.pageTextStartOffset }
-            : {}),
-          ...(typeof quoteText.pageTextEndOffset === "number"
-            ? { page_text_end_offset: quoteText.pageTextEndOffset }
-            : {}),
         },
       });
       clearSelection();
@@ -2449,7 +2686,7 @@ export default function PdfReader({
       selection,
       textGeometryReliable,
       textLayerUsable,
-    ]
+    ],
   );
 
   useEffect(() => {
@@ -2491,7 +2728,9 @@ export default function PdfReader({
       canZoomIn: canZoomIn && !showBusy,
       canZoomOut: canZoomOut && !showBusy,
       canCreateHighlight: canCreateHighlight && !showBusy,
-      highlightLabel: usingAreaHighlightFallback ? "Highlight area" : "Highlight selection",
+      highlightLabel: usingAreaHighlightFallback
+        ? "Highlight area"
+        : "Highlight selection",
       isCreating,
       createTelemetry: {
         attempts: createTelemetry.attempts,
@@ -2528,7 +2767,9 @@ export default function PdfReader({
 
   return (
     <div className={styles.viewer}>
-      {recovering && <div className={styles.notice}>Refreshing secure file access…</div>}
+      {recovering && (
+        <div className={styles.notice}>Refreshing secure file access…</div>
+      )}
 
       {error ? (
         <div className={styles.error} role="alert">
@@ -2536,7 +2777,12 @@ export default function PdfReader({
         </div>
       ) : (
         <div className={styles.canvasWrap}>
-          <p className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">
+          <p
+            className={styles.srOnly}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
             Page {pageNumber} of {numPages}
           </p>
           {(loading || navigating) && (
@@ -2545,7 +2791,11 @@ export default function PdfReader({
             </div>
           )}
           <div className={styles.pdfViewport} data-testid="pdf-viewport">
-            <div className={styles.viewerA11yMarker} role="img" aria-label="PDF page" />
+            <div
+              className={styles.viewerA11yMarker}
+              role="img"
+              aria-label="PDF page"
+            />
             <div
               ref={viewerContainerRef}
               className={styles.viewerContainer}
@@ -2553,19 +2803,25 @@ export default function PdfReader({
               aria-label="PDF document"
               onScroll={handleViewerContainerScroll}
             >
-              <div ref={setContentNode} className={`pdfViewer ${styles.viewerHost}`} />
+              <div
+                ref={setContentNode}
+                className={`pdfViewer ${styles.viewerHost}`}
+              />
             </div>
           </div>
         </div>
       )}
 
       {!loading && !error && !textLayerUsable && !selection && (
-        <div className={styles.notice}>Text selection is unavailable on this page.</div>
+        <div className={styles.notice}>
+          Text selection is unavailable on this page.
+        </div>
       )}
 
       {!loading && !error && textLayerUsable && !textGeometryReliable && (
         <div className={styles.notice}>
-          Text geometry is misaligned on this page. Highlights will use area-based bounds.
+          Text geometry is misaligned on this page. Highlights will use
+          area-based bounds.
         </div>
       )}
 
@@ -2581,7 +2837,11 @@ export default function PdfReader({
           selectionLineRects={selection.lineRects}
           containerRef={viewerContainerRef}
           onCreateHighlight={handleCreateHighlight}
-          onAsk={onAskSelection && textGeometryReliable ? handleAskSelection : undefined}
+          onAsk={
+            onAskSelection && textGeometryReliable
+              ? handleAskSelection
+              : undefined
+          }
           onDismiss={clearSelection}
           isCreating={isCreating}
         />

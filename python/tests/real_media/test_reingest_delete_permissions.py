@@ -119,6 +119,7 @@ def test_real_web_article_reingest_replaces_active_index_and_hides_stale_evidenc
                 }
             ],
             "web_search": {"mode": "off"},
+            "artifact_intent": {"kind": "off"},
         },
     )
     assert stale_context_response.status_code == 400, stale_context_response.text

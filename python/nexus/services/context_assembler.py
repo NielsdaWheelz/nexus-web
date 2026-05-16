@@ -10,6 +10,7 @@ from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
 from llm_calling.types import LLMRequest, Turn
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -31,6 +32,7 @@ from nexus.schemas.conversation import (
     MessageContextRef,
     ReaderSelectionContext,
 )
+from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.chat_prompt import (
     SYSTEM_PROMPT_VERSION,
     PromptPlan,
@@ -118,8 +120,7 @@ class ContextAssembly:
     retrieval_plan: RetrievalPlan
     lookup_results: tuple[ContextLookupResult, ...]
     tool_call_events: tuple[Mapping[str, object], ...]
-    tool_result_events: tuple[Mapping[str, object], ...]
-    citation_events: tuple[Mapping[str, object], ...]
+    retrieval_result_events: tuple[Mapping[str, object], ...]
     ledger: AssemblyLedger
 
 
@@ -257,7 +258,7 @@ def assemble_chat_context(
                         lane="attached_context",
                         text=rendered_context,
                         source_refs=[context_ref],
-                        source_version=_context_source_version(ref),
+                        source_version=_context_source_version(ref, context_ref),
                     ),
                     context_ref,
                 )
@@ -277,7 +278,7 @@ def assemble_chat_context(
                     lane="attached_context",
                     text=result.evidence_text,
                     source_refs=[context_ref],
-                    source_version=_context_source_version(ref),
+                    source_version=_context_source_version(ref, context_ref),
                 ),
                 context_ref,
             )
@@ -332,7 +333,7 @@ def assemble_chat_context(
         for retrieval_id, text_block, metadata in raw_retrieval_blocks
     ]
     lookup_results.extend(retrieval_lookup_results)
-    tool_call_events, tool_result_events, citation_events = _load_tool_events(
+    tool_call_events, retrieval_result_events = _load_tool_events(
         db,
         assistant_message_id=run.assistant_message_id,
     )
@@ -591,8 +592,7 @@ def assemble_chat_context(
         retrieval_plan=retrieval_plan,
         lookup_results=tuple(lookup_results),
         tool_call_events=tuple(tool_call_events),
-        tool_result_events=tuple(tool_result_events),
-        citation_events=tuple(citation_events),
+        retrieval_result_events=tuple(retrieval_result_events),
         ledger=ledger,
     )
 
@@ -633,7 +633,7 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
     existing = db.execute(
         text(
             """
-            SELECT id
+            SELECT id, provider_request_hash
             FROM chat_prompt_assemblies
             WHERE chat_run_id = :chat_run_id
             FOR UPDATE
@@ -709,44 +709,9 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
         assert result.rowcount == 1  # justify-service-invariant-check: ledger insert is one row.
         return
 
-    update_statement = text(
-        """
-        UPDATE chat_prompt_assemblies
-        SET conversation_id = :conversation_id,
-            assistant_message_id = :assistant_message_id,
-            model_id = :model_id,
-            prompt_version = :prompt_version,
-            prompt_plan_version = :prompt_plan_version,
-            assembler_version = :assembler_version,
-            stable_prefix_hash = :stable_prefix_hash,
-            cacheable_input_tokens_estimate = :cacheable_input_tokens_estimate,
-            prompt_block_manifest = :prompt_block_manifest,
-            provider_request_hash = :provider_request_hash,
-            snapshot_id = :snapshot_id,
-            max_context_tokens = :max_context_tokens,
-            reserved_output_tokens = :reserved_output_tokens,
-            reserved_reasoning_tokens = :reserved_reasoning_tokens,
-            input_budget_tokens = :input_budget_tokens,
-            estimated_input_tokens = :estimated_input_tokens,
-            included_message_ids = :included_message_ids,
-            included_memory_item_ids = :included_memory_item_ids,
-            included_retrieval_ids = :included_retrieval_ids,
-            included_context_refs = :included_context_refs,
-            dropped_items = :dropped_items,
-            budget_breakdown = :budget_breakdown
-        WHERE id = :assembly_id
-        """
-    ).bindparams(
-        bindparam("included_message_ids", type_=JSONB),
-        bindparam("included_memory_item_ids", type_=JSONB),
-        bindparam("included_retrieval_ids", type_=JSONB),
-        bindparam("included_context_refs", type_=JSONB),
-        bindparam("dropped_items", type_=JSONB),
-        bindparam("budget_breakdown", type_=JSONB),
-        bindparam("prompt_block_manifest", type_=JSONB),
-    )
-    result = cast(Any, db.execute(update_statement, {**payload, "assembly_id": existing[0]}))
-    assert result.rowcount == 1  # justify-service-invariant-check: selected ledger row vanished.
+    if existing[1] == payload["provider_request_hash"]:
+        return
+    raise ValueError("prompt assembly already persisted with different provider request hash")
 
 
 def message_context_ref_payloads(
@@ -768,15 +733,34 @@ def _context_block_key(ref: ContextItem) -> str:
     return f"attached_context:{ref.type}:{ref.id}"
 
 
-def _context_source_version(ref: ContextItem) -> str:
+def _context_source_version(
+    ref: ContextItem,
+    payload: Mapping[str, object] | None = None,
+) -> str:
+    if payload is not None:
+        source_version = payload.get("source_version")
+        if isinstance(source_version, str) and source_version:
+            return source_version
     if ref.kind == "reader_selection":
-        return f"reader_selection:{ref.client_context_id}"
+        return ref.source_version
     return f"{ref.type}:{ref.id}"
 
 
 def _context_ref_payload(db: Session, ref: ContextItem) -> dict[str, object]:
     if ref.kind == "reader_selection":
-        return ref.model_dump(mode="json")
+        locator = _locator_json(ref.locator)
+        payload = ref.model_dump(mode="json", exclude_none=True)
+        payload["type"] = "reader_selection"
+        payload["id"] = str(ref.client_context_id)
+        payload["source_media_id"] = str(ref.media_id)
+        payload["locator"] = locator
+        payload["source_version"] = ref.source_version
+        payload["exact_snippet"] = ref.exact
+        if ref.prefix is not None:
+            payload["snippet_prefix"] = ref.prefix
+        if ref.suffix is not None:
+            payload["snippet_suffix"] = ref.suffix
+        return payload
 
     if ref.type == "contributor":
         contributor_handle = db.scalar(
@@ -795,7 +779,40 @@ def _context_ref_payload(db: Session, ref: ContextItem) -> dict[str, object]:
     payload: dict[str, object] = {"type": ref.type, "id": str(ref.id)}
     if ref.type == "content_chunk" and ref.evidence_span_ids:
         payload["evidence_span_ids"] = [str(span_id) for span_id in ref.evidence_span_ids]
+    if ref.source_version is not None:
+        payload["source_version"] = ref.source_version
+    if ref.locator is not None:
+        payload["locator"] = ref.locator.model_dump(mode="json")
+    if ref.type == "artifact_part":
+        payload.update(
+            _artifact_part_context_fields(ref.model_dump(mode="json", exclude_none=True))
+        )
     return payload
+
+
+def _artifact_part_context_fields(snapshot: Mapping[str, Any]) -> dict[str, object]:
+    provenance = snapshot.get("artifact_part_provenance")
+    provenance_map = provenance if isinstance(provenance, Mapping) else {}
+    fields: dict[str, object] = {}
+    for key in ("artifact_id", "artifact_key", "artifact_version", "source_version", "locator"):
+        value = snapshot.get(key)
+        if value is None:
+            value = provenance_map.get(key)
+        if value is not None:
+            fields[key] = value
+    if provenance is not None:
+        fields["artifact_part_provenance"] = provenance
+    return fields
+
+
+def _locator_json(value: object) -> dict[str, object]:
+    if isinstance(value, BaseModel):
+        raw = value.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+    elif isinstance(value, Mapping):
+        raw = dict(value)
+    else:
+        return {}
+    return retrieval_locator_json(raw) or {}
 
 
 def _context_snapshot_evidence_span_ids(snapshot: Mapping[str, Any] | None) -> list[UUID]:
@@ -803,11 +820,7 @@ def _context_snapshot_evidence_span_ids(snapshot: Mapping[str, Any] | None) -> l
         return []
     raw_values = snapshot.get("evidence_span_ids")
     if raw_values is None:
-        raw_values = snapshot.get("evidenceSpanIds")
-    if raw_values is None:
         raw_values = snapshot.get("evidence_span_id")
-    if raw_values is None:
-        raw_values = snapshot.get("evidenceSpanId")
     if isinstance(raw_values, str):
         values = [raw_values]
     elif isinstance(raw_values, Sequence) and not isinstance(raw_values, (str, bytes)):
@@ -841,53 +854,69 @@ def load_message_context_refs(db: Session, user_message_id: UUID) -> list[Contex
     )
     refs: list[ContextItem] = []
     for row in rows:
+        snapshot = (
+            row.context_snapshot_json if isinstance(row.context_snapshot_json, Mapping) else {}
+        )
         if row.context_kind == "reader_selection":
-            snapshot = (
-                row.context_snapshot_json if isinstance(row.context_snapshot_json, Mapping) else {}
-            )
             if row.source_media_id is None:
                 raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found")
-            raw_locator = snapshot.get("locator")
             if isinstance(row.locator_json, dict) and row.locator_json:
-                locator = cast(dict[str, Any], row.locator_json)
-            elif isinstance(raw_locator, Mapping):
-                locator = dict(cast(Mapping[str, Any], raw_locator))
+                try:
+                    locator = retrieval_locator_json(cast(dict[str, Any], row.locator_json))
+                except ValidationError as exc:
+                    raise NotFoundError(
+                        ApiErrorCode.E_NOT_FOUND, "Message context not found"
+                    ) from exc
+                if locator is None:
+                    raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found")
             else:
-                locator = {"type": "unknown"}
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found")
             refs.append(
-                ReaderSelectionContext(
-                    kind="reader_selection",
-                    client_context_id=_context_snapshot_uuid(
-                        snapshot.get("client_context_id") or snapshot.get("clientContextId"),
-                        fallback=row.id,
-                    ),
-                    media_id=row.source_media_id,
-                    media_kind=_context_snapshot_string(
-                        snapshot.get("media_kind") or snapshot.get("mediaKind"),
-                        fallback="media",
-                    ),
-                    media_title=_context_snapshot_string(
-                        snapshot.get("media_title") or snapshot.get("mediaTitle"),
-                        fallback="Selected source",
-                    ),
-                    exact=_context_snapshot_string(snapshot.get("exact"), fallback=""),
-                    prefix=_context_snapshot_optional_string(snapshot.get("prefix")),
-                    suffix=_context_snapshot_optional_string(snapshot.get("suffix")),
-                    locator=locator,
+                ReaderSelectionContext.model_validate(
+                    {
+                        "kind": "reader_selection",
+                        "client_context_id": _context_snapshot_uuid(
+                            snapshot.get("client_context_id") or snapshot.get("clientContextId"),
+                            fallback=row.id,
+                        ),
+                        "media_id": row.source_media_id,
+                        "media_kind": _context_snapshot_string(
+                            snapshot.get("media_kind") or snapshot.get("mediaKind"),
+                            fallback="media",
+                        ),
+                        "media_title": _context_snapshot_string(
+                            snapshot.get("media_title") or snapshot.get("mediaTitle"),
+                            fallback="Selected source",
+                        ),
+                        "exact": _context_snapshot_string(snapshot.get("exact"), fallback=""),
+                        "prefix": _context_snapshot_optional_string(snapshot.get("prefix")),
+                        "suffix": _context_snapshot_optional_string(snapshot.get("suffix")),
+                        "locator": locator,
+                        "source_version": _context_snapshot_optional_string(
+                            snapshot.get("source_version")
+                        ),
+                    }
                 )
             )
             continue
 
         if row.object_type is None or row.object_id is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found")
-        refs.append(
-            MessageContextRef(
-                kind="object_ref",
-                type=cast(MESSAGE_CONTEXT_TYPES, row.object_type),
-                id=row.object_id,
-                evidence_span_ids=_context_snapshot_evidence_span_ids(row.context_snapshot_json),
-            )
-        )
+        payload: dict[str, object] = {
+            "kind": "object_ref",
+            "type": cast(MESSAGE_CONTEXT_TYPES, row.object_type),
+            "id": row.object_id,
+            "evidence_span_ids": _context_snapshot_evidence_span_ids(snapshot),
+        }
+        source_version = snapshot.get("source_version")
+        if isinstance(source_version, str) and source_version:
+            payload["source_version"] = source_version
+        locator = snapshot.get("locator")
+        if isinstance(locator, Mapping) and locator:
+            payload["locator"] = dict(locator)
+        if row.object_type == "artifact_part":
+            payload.update(_artifact_part_context_fields(snapshot))
+        refs.append(MessageContextRef.model_validate(payload))
     return refs
 
 
@@ -1047,7 +1076,7 @@ def _load_tool_events(
     db: Session,
     *,
     assistant_message_id: UUID,
-) -> tuple[list[Mapping[str, object]], list[Mapping[str, object]], list[Mapping[str, object]]]:
+) -> tuple[list[Mapping[str, object]], list[Mapping[str, object]]]:
     rows = db.execute(
         text(
             """
@@ -1062,7 +1091,6 @@ def _load_tool_events(
     ).fetchall()
     call_events: list[Mapping[str, object]] = []
     result_events: list[Mapping[str, object]] = []
-    citation_events: list[Mapping[str, object]] = []
     for row in rows:
         retrievals = _tool_retrieval_refs(db, row[0])
         selected = [retrieval for retrieval in retrievals if bool(retrieval.get("selected"))]
@@ -1072,7 +1100,7 @@ def _load_tool_events(
                 "assistant_message_id": str(row[1]),
                 "tool_name": row[2],
                 "tool_call_index": row[3],
-                "status": "started",
+                "status": row[7],
                 "scope": row[4],
                 "types": row[5] or [],
                 "semantic": bool(row[6]),
@@ -1092,24 +1120,7 @@ def _load_tool_events(
                 "citations": [retrieval["result_ref"] for retrieval in selected],
             }
         )
-        if row[2] == "web_search":
-            for retrieval in selected:
-                result_ref = retrieval["result_ref"]
-                if isinstance(result_ref, Mapping):
-                    citation_events.append(
-                        {
-                            "assistant_message_id": str(row[1]),
-                            "tool_name": row[2],
-                            "tool_call_index": row[3],
-                            "title": result_ref.get("title"),
-                            "url": result_ref.get("url"),
-                            "display_url": result_ref.get("display_url"),
-                            "source_name": result_ref.get("source_name"),
-                            "snippet": result_ref.get("snippet"),
-                            "provider": result_ref.get("provider"),
-                        }
-                    )
-    return call_events, result_events, citation_events
+    return call_events, result_events
 
 
 def _tool_retrieval_refs(db: Session, tool_call_id: UUID) -> list[Mapping[str, object]]:

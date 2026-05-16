@@ -79,10 +79,10 @@ def test_memory_models_expose_finite_constraints() -> None:
             "snapshot_id",
         }
     } == {
-        "chat_run_id": "CASCADE",
-        "conversation_id": "CASCADE",
-        "assistant_message_id": "CASCADE",
-        "snapshot_id": "SET NULL",
+        "chat_run_id": None,
+        "conversation_id": None,
+        "assistant_message_id": None,
+        "snapshot_id": None,
     }
 
     active_snapshot_indexes = [

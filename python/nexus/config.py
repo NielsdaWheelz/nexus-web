@@ -355,9 +355,9 @@ class Settings(BaseSettings):
     # HS256 signing key for short-lived stream tokens (base64-encoded 32+ bytes)
     # Required in staging/prod; auto-generated deterministic key in local/test
     stream_token_signing_key: str | None = Field(default=None, alias="STREAM_TOKEN_SIGNING_KEY")
-    # Public URL browsers use for /stream/* (e.g. https://api.nexus.example.com)
+    # Public URL browsers use for direct stream endpoints.
     stream_base_url: str | None = Field(default=None, alias="STREAM_BASE_URL")
-    # Comma-separated list of allowed CORS origins for /stream/* endpoints
+    # Comma-separated list of allowed CORS origins for direct stream endpoints.
     stream_cors_origins: str | None = Field(default=None, alias="STREAM_CORS_ORIGINS")
     # Default max output tokens for budget reservation
     stream_max_output_tokens_default: int = Field(

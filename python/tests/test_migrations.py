@@ -433,6 +433,220 @@ class TestMigrationUpgradeDowngrade:
         assert "hard cutover migration and has no downgrade path" in result.stderr
         reset_test_schema()
 
+    def test_0084_rewrites_tool_result_events_without_dropping_replay_data(self):
+        """Chat event cutover preserves replay payloads while renaming tool_result."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0083")
+            assert result.returncode == 0, f"upgrade to 0083 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            user_message_id = uuid4()
+            assistant_message_id = uuid4()
+            model_id = uuid4()
+            run_id = uuid4()
+            event_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO models (
+                            id, provider, model_name, max_context_tokens, is_available
+                        )
+                        VALUES (:id, 'openai', :model_name, 4096, true)
+                        """
+                    ),
+                    {"id": model_id, "model_name": f"migration-test-{model_id}"},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                        VALUES (:id, :owner_user_id, 'private', 3)
+                        """
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                        VALUES (:id, :conversation_id, 1, 'user', 'find sources', 'complete')
+                        """
+                    ),
+                    {"id": user_message_id, "conversation_id": conversation_id},
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO messages (
+                            id, conversation_id, seq, role, content, status, parent_message_id
+                        )
+                        VALUES (
+                            :id, :conversation_id, 2, 'assistant', '', 'pending',
+                            :parent_message_id
+                        )
+                        """
+                    ),
+                    {
+                        "id": assistant_message_id,
+                        "conversation_id": conversation_id,
+                        "parent_message_id": user_message_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_runs (
+                            id,
+                            owner_user_id,
+                            conversation_id,
+                            user_message_id,
+                            assistant_message_id,
+                            idempotency_key,
+                            payload_hash,
+                            status,
+                            model_id,
+                            reasoning,
+                            key_mode,
+                            web_search,
+                            next_event_seq
+                        )
+                        VALUES (
+                            :id,
+                            :owner_user_id,
+                            :conversation_id,
+                            :user_message_id,
+                            :assistant_message_id,
+                            :idempotency_key,
+                            'hash',
+                            'running',
+                            :model_id,
+                            'none',
+                            'auto',
+                            '{"mode": "off"}'::jsonb,
+                            2
+                        )
+                        """
+                    ),
+                    {
+                        "id": run_id,
+                        "owner_user_id": user_id,
+                        "conversation_id": conversation_id,
+                        "user_message_id": user_message_id,
+                        "assistant_message_id": assistant_message_id,
+                        "idempotency_key": f"migration-{run_id}",
+                        "model_id": model_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO chat_run_events (id, run_id, seq, event_type, payload)
+                        VALUES (
+                            :id,
+                            :run_id,
+                            1,
+                            'tool_result',
+                            jsonb_build_object(
+                                'tool_name', 'app_search',
+                                'result_count', 2,
+                                'citations', jsonb_build_array(
+                                    jsonb_build_object('result_type', 'media', 'source_id', 'm1')
+                                )
+                            )
+                        )
+                        """
+                    ),
+                    {"id": event_id, "run_id": run_id},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                row = session.execute(
+                    text(
+                        """
+                        SELECT event_type, payload
+                        FROM chat_run_events
+                        WHERE id = :id
+                        """
+                    ),
+                    {"id": event_id},
+                ).one()
+                assert row[0] == "retrieval_result"
+                assert row[1]["tool_name"] == "app_search"
+                assert row[1]["result_count"] == 2
+                assert row[1]["citations"][0]["source_id"] == "m1"
+
+                message_document = session.execute(
+                    text(
+                        """
+                        SELECT message_document
+                        FROM messages
+                        WHERE id = :id
+                        """
+                    ),
+                    {"id": user_message_id},
+                ).scalar_one()
+                assert message_document["type"] == "message_document"
+                assert message_document["blocks"][0]["text"] == "find sources"
+
+                for seq, event_type in enumerate(
+                    ("source_manifest_delta", "artifact_delta", "claim"),
+                    start=2,
+                ):
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+                            VALUES (
+                                :run_id,
+                                :seq,
+                                :event_type,
+                                jsonb_build_object('tool_name', 'app_search')
+                            )
+                            """
+                        ),
+                        {"run_id": run_id, "seq": seq, "event_type": event_type},
+                    )
+                session.commit()
+
+                with pytest.raises(IntegrityError) as exc_info:
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+                            VALUES (:run_id, 5, 'tool_result', '{}'::jsonb)
+                            """
+                        ),
+                        {"run_id": run_id},
+                    )
+                    session.commit()
+                session.rollback()
+                assert "ck_chat_run_events_event_type" in str(exc_info.value)
+                with pytest.raises(IntegrityError) as exc_info:
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+                            VALUES (:run_id, 6, 'citation', '{}'::jsonb)
+                            """
+                        ),
+                        {"run_id": run_id},
+                    )
+                    session.commit()
+                session.rollback()
+                assert "ck_chat_run_events_event_type" in str(exc_info.value)
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
     def test_0070_rejects_annotations_without_valid_owned_highlights(self):
         """Annotation cutover must not drop notes that cannot attach to a valid highlight."""
         reset_test_schema()
@@ -1047,6 +1261,46 @@ class TestMigrationUpgradeDowngrade:
                     ),
                     {"tool_call_id": tool_call_id, "source_id": contributor_source_id},
                 )
+                for result_type in ("episode", "video"):
+                    source_id = str(uuid4())
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO message_retrievals (
+                                tool_call_id,
+                                ordinal,
+                                result_type,
+                                source_id,
+                                context_ref,
+                                result_ref
+                            )
+                            VALUES (
+                                :tool_call_id,
+                                :ordinal,
+                                :result_type,
+                                :source_id,
+                                jsonb_build_object(
+                                    'type',
+                                    CAST(:result_type AS text),
+                                    'id',
+                                    CAST(:source_id AS text)
+                                ),
+                                jsonb_build_object(
+                                    'type',
+                                    CAST(:result_type AS text),
+                                    'id',
+                                    CAST(:source_id AS text)
+                                )
+                            )
+                            """
+                        ),
+                        {
+                            "tool_call_id": tool_call_id,
+                            "ordinal": 2 if result_type == "episode" else 3,
+                            "result_type": result_type,
+                            "source_id": source_id,
+                        },
+                    )
                 session.commit()
 
                 with pytest.raises(IntegrityError) as exc_info:
@@ -1063,7 +1317,7 @@ class TestMigrationUpgradeDowngrade:
                             )
                             VALUES (
                                 :tool_call_id,
-                                2,
+                                4,
                                 'annotation',
                                 :source_id,
                                 jsonb_build_object('type', 'annotation', 'id', CAST(:source_id AS text)),
@@ -3939,6 +4193,52 @@ class TestS3SchemaConstraints:
             session.rollback()
             assert "ck_chat_runs_idempotency_key_length" in str(exc_info.value)
 
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO chat_runs (
+                            owner_user_id,
+                            conversation_id,
+                            user_message_id,
+                            assistant_message_id,
+                            idempotency_key,
+                            payload_hash,
+                            status,
+                            model_id,
+                            reasoning,
+                            key_mode,
+                            web_search,
+                            artifact_intent
+                        )
+                        VALUES (
+                            :user_id,
+                            :conversation_id,
+                            :msg1,
+                            :msg2,
+                            :key,
+                            'hash',
+                            'queued',
+                            :model_id,
+                            'none',
+                            'auto',
+                            '{"mode": "off"}'::jsonb,
+                            '{"kind": "legacy"}'::jsonb
+                        )
+                    """),
+                    {
+                        "user_id": user_id,
+                        "conversation_id": conversation_id,
+                        "key": f"artifact-intent-{uuid4()}",
+                        "msg1": msg1_id,
+                        "msg2": msg2_id,
+                        "model_id": model_id,
+                    },
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_chat_runs_artifact_intent_kind" in str(exc_info.value)
+
     def test_chat_branching_foreign_keys_are_not_cascading(self, migrated_engine):
         """Branch-path ownership cleanup is explicit in services, not FK cascades."""
         with Session(migrated_engine) as session:
@@ -3993,6 +4293,115 @@ class TestS3SchemaConstraints:
         assert {delete_rules[column] for column in expected_columns} == {"NO ACTION"}, (
             f"Branching FKs must be non-cascading; got {delete_rules}"
         )
+
+    def test_chat_retrieval_foreign_keys_are_not_cascading(self, migrated_engine):
+        """Chat retrieval cleanup is explicit in services, not FK cascades."""
+        expected_constraints = {
+            "message_tool_calls_conversation_id_fkey",
+            "message_tool_calls_user_message_id_fkey",
+            "message_tool_calls_assistant_message_id_fkey",
+            "message_retrievals_tool_call_id_fkey",
+            "message_retrievals_media_id_fkey",
+            "chat_runs_owner_user_id_fkey",
+            "chat_runs_conversation_id_fkey",
+            "chat_runs_user_message_id_fkey",
+            "chat_runs_assistant_message_id_fkey",
+            "chat_prompt_assemblies_chat_run_id_fkey",
+            "chat_prompt_assemblies_conversation_id_fkey",
+            "chat_prompt_assemblies_assistant_message_id_fkey",
+            "chat_prompt_assemblies_snapshot_id_fkey",
+            "chat_run_events_run_id_fkey",
+            "assistant_message_evidence_summaries_message_id_fkey",
+            "assistant_message_evidence_summaries_prompt_assembly_id_fkey",
+            "assistant_message_claims_message_id_fkey",
+            "assistant_message_claim_evidence_claim_id_fkey",
+            "assistant_message_claim_evidence_retrieval_id_fkey",
+            "message_artifact_exports_conversation_id_fkey",
+            "message_artifact_exports_message_id_fkey",
+            "message_artifact_exports_artifact_id_fkey",
+            "message_artifact_exports_viewer_user_id_fkey",
+        }
+        with Session(migrated_engine) as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT constraint_name, delete_rule
+                    FROM information_schema.referential_constraints
+                    WHERE constraint_name = ANY(:constraint_names)
+                    """
+                ),
+                {"constraint_names": list(expected_constraints)},
+            ).fetchall()
+
+        delete_rules = {row[0]: row[1] for row in rows}
+        assert expected_constraints == set(delete_rules), delete_rules
+        assert set(delete_rules.values()) == {"NO ACTION"}, delete_rules
+
+    def test_citation_audits_are_append_only_per_message(self, migrated_engine):
+        """Append-only ledgers/artifacts must not retain old one-row unique constraints."""
+        with Session(migrated_engine) as session:
+            unique_rows = session.execute(
+                text(
+                    """
+                    SELECT constraint_name
+                    FROM information_schema.table_constraints
+                    WHERE constraint_name IN (
+                        'uix_assistant_citation_audits_message',
+                        'uix_message_artifacts_message_key'
+                    )
+                    """
+                )
+            ).fetchall()
+            index_rows = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'assistant_message_citation_audits'
+                      AND indexname = 'idx_assistant_citation_audits_message_created'
+                    """
+                )
+            ).fetchall()
+            artifact_index_rows = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'message_artifacts'
+                      AND indexname = 'idx_message_artifacts_message_key_created'
+                    """
+                )
+            ).fetchall()
+
+        assert unique_rows == []
+        assert len(index_rows) == 1
+        assert len(artifact_index_rows) == 1
+
+    def test_message_artifacts_require_stable_keys(self, migrated_engine):
+        """Durable artifact versioning depends on a stable non-null key."""
+        with Session(migrated_engine) as session:
+            nullable = session.execute(
+                text(
+                    """
+                    SELECT is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name = 'message_artifacts'
+                      AND column_name = 'artifact_key'
+                    """
+                )
+            ).scalar_one()
+            check_sql = session.execute(
+                text(
+                    """
+                    SELECT pg_get_constraintdef(oid)
+                    FROM pg_constraint
+                    WHERE conname = 'ck_message_artifacts_key_length'
+                    """
+                )
+            ).scalar_one()
+
+        assert nullable == "NO"
+        assert "artifact_key IS NULL" not in check_sql
 
     def test_fragment_block_offsets_constraint(self, migrated_engine):
         """CHECK constraint: end_offset >= start_offset."""

@@ -1,6 +1,7 @@
 """Integration tests for chat context lookup hydration."""
 
 import hashlib
+import json
 from uuid import UUID
 
 import pytest
@@ -89,6 +90,45 @@ def test_hydrate_content_chunk_context_ref_checks_media_permission(
     assert "canonical text" in result.evidence_text
 
 
+def test_hydrate_media_backed_context_refs_include_episode_video_and_fragment(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    library_id = create_test_library(db_session, bootstrapped_user, "Research Library")
+    video_id = create_test_media(db_session, title="Readable Video")
+    episode_id = create_test_media(db_session, title="Readable Episode")
+    fragment_media_id = create_test_media(db_session, title="Readable Fragment Source")
+    fragment_id = create_test_fragment(
+        db_session, fragment_media_id, content="fragment evidence text"
+    )
+    db_session.execute(
+        text("UPDATE media SET kind = 'video' WHERE id = :media_id"),
+        {"media_id": video_id},
+    )
+    db_session.execute(
+        text("UPDATE media SET kind = 'podcast_episode' WHERE id = :media_id"),
+        {"media_id": episode_id},
+    )
+    add_media_to_library(db_session, library_id, video_id)
+    add_media_to_library(db_session, library_id, episode_id)
+    add_media_to_library(db_session, library_id, fragment_media_id)
+    db_session.commit()
+
+    for context_type, context_id, expected in (
+        ("video", video_id, "Readable Video"),
+        ("episode", episode_id, "Readable Episode"),
+        ("fragment", fragment_id, "fragment evidence text"),
+    ):
+        result = hydrate_context_ref(
+            db_session,
+            viewer_id=bootstrapped_user,
+            context_ref={"type": context_type, "id": str(context_id)},
+        )
+
+        assert result.resolved is True
+        assert expected in result.evidence_text
+
+
 def test_hydrate_content_chunk_context_ref_uses_exact_evidence_span(
     db_session: Session,
     bootstrapped_user: UUID,
@@ -171,23 +211,65 @@ def test_hydrate_content_chunk_context_ref_uses_exact_evidence_span(
     assert "various topics" not in result.evidence_text
 
 
+def test_hydrate_content_chunk_context_ref_rejects_malformed_evidence_span_ids(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    media_id = create_searchable_media(db_session, bootstrapped_user, title="Malformed Span")
+    chunk_id = db_session.execute(
+        text(
+            """
+            SELECT id
+            FROM content_chunks
+            WHERE media_id = :media_id
+            ORDER BY chunk_idx ASC
+            LIMIT 1
+            """
+        ),
+        {"media_id": media_id},
+    ).scalar_one()
+
+    result = hydrate_context_ref(
+        db_session,
+        viewer_id=bootstrapped_user,
+        context_ref={
+            "type": "content_chunk",
+            "id": str(chunk_id),
+            "evidence_span_ids": ["not-a-uuid"],
+        },
+    )
+
+    assert result.resolved is False
+    assert result.failure is not None
+    assert result.failure.code == "invalid"
+
+
 def test_hydrate_message_retrieval_preserves_citation_and_evidence_span_id(
     db_session: Session,
     bootstrapped_user: UUID,
 ):
     media_id = create_searchable_media(db_session, bootstrapped_user, title="Retrieved Source")
-    chunk_id, evidence_span_id = db_session.execute(
+    chunk_id, evidence_span_id, source_version, locator = db_session.execute(
         text(
             """
-            SELECT cc.id, es.id
+            SELECT cc.id, es.id, cir.source_version, cc.summary_locator
             FROM content_chunks cc
             JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
+            JOIN content_index_runs cir ON cir.id = cc.index_run_id
             WHERE cc.media_id = :media_id
             LIMIT 1
             """
         ),
         {"media_id": media_id},
     ).one()
+    locator = {
+        "type": "web_text_offsets",
+        "media_id": str(media_id),
+        "fragment_id": str(locator["fragment_id"]),
+        "start_offset": int(locator["start_offset"]),
+        "end_offset": int(locator["end_offset"]),
+        "media_kind": "web_article",
+    }
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     user_message_id = create_test_message(
         db_session,
@@ -264,7 +346,9 @@ def test_hydrate_message_retrieval_preserves_citation_and_evidence_span_id(
                 selected,
                 source_title,
                 exact_snippet,
-                retrieval_status
+                retrieval_status,
+                locator,
+                source_version
             )
             VALUES (
                 :tool_call_id,
@@ -276,17 +360,36 @@ def test_hydrate_message_retrieval_preserves_citation_and_evidence_span_id(
                 'all',
                 jsonb_build_object('type', 'content_chunk', 'id', CAST(:source_id AS text)),
                 jsonb_build_object(
+                    'type', 'content_chunk',
+                    'id', CAST(:source_id AS text),
                     'result_type', 'content_chunk',
                     'source_id', CAST(:source_id AS text),
+                    'source_kind', 'web_article',
+                    'title', 'Retrieved Source',
+                    'source_label', 'Retrieved Source',
                     'evidence_span_id', CAST(:evidence_span_id_text AS text),
-                    'snippet', 'retrieved snippet'
+                    'snippet', 'retrieved snippet',
+                    'deep_link', '/media/test',
+                    'citation_label', 'Retrieved Source',
+                    'context_ref', jsonb_build_object(
+                        'type', 'content_chunk',
+                        'id', CAST(:source_id AS text)
+                    ),
+                    'source_version', CAST(:source_version AS text),
+                    'locator', CAST(:locator AS jsonb),
+                    'media_id', CAST(:media_id AS text),
+                    'media_kind', 'web_article',
+                    'score', 1.0,
+                    'selected', true
                 ),
                 '/media/test',
                 1.0,
                 true,
                 'Retrieved Source',
                 'retrieved snippet',
-                'selected'
+                'selected',
+                CAST(:locator AS jsonb),
+                  CAST(:source_version AS text)
             )
             RETURNING id
             """
@@ -297,6 +400,8 @@ def test_hydrate_message_retrieval_preserves_citation_and_evidence_span_id(
             "media_id": media_id,
             "evidence_span_id": evidence_span_id,
             "evidence_span_id_text": str(evidence_span_id),
+            "locator": json.dumps(locator),
+            "source_version": source_version,
         },
     ).scalar_one()
 
@@ -317,11 +422,12 @@ def test_hydrate_message_retrieval_rejects_evidence_span_from_other_chunk_run(
     bootstrapped_user: UUID,
 ):
     media_id = create_searchable_media(db_session, bootstrapped_user, title="Replay Source")
-    old_chunk_id, old_run_id = db_session.execute(
+    old_chunk_id, old_run_id, source_version, locator = db_session.execute(
         text(
             """
-            SELECT cc.id, cc.index_run_id
+            SELECT cc.id, cc.index_run_id, cir.source_version, cc.summary_locator
             FROM content_chunks cc
+            JOIN content_index_runs cir ON cir.id = cc.index_run_id
             WHERE cc.media_id = :media_id
             ORDER BY cc.chunk_idx ASC
             LIMIT 1
@@ -329,6 +435,14 @@ def test_hydrate_message_retrieval_rejects_evidence_span_from_other_chunk_run(
         ),
         {"media_id": media_id},
     ).one()
+    locator = {
+        "type": "web_text_offsets",
+        "media_id": str(media_id),
+        "fragment_id": str(locator["fragment_id"]),
+        "start_offset": int(locator["start_offset"]),
+        "end_offset": int(locator["end_offset"]),
+        "media_kind": "web_article",
+    }
     fragment = db_session.query(Fragment).filter(Fragment.media_id == media_id).one()
     rebuild_fragment_content_index(
         db_session,
@@ -427,7 +541,9 @@ def test_hydrate_message_retrieval_rejects_evidence_span_from_other_chunk_run(
                 selected,
                 source_title,
                 exact_snippet,
-                retrieval_status
+                retrieval_status,
+                locator,
+                source_version
             )
             VALUES (
                 :tool_call_id,
@@ -439,17 +555,36 @@ def test_hydrate_message_retrieval_rejects_evidence_span_from_other_chunk_run(
                 'all',
                 jsonb_build_object('type', 'content_chunk', 'id', CAST(:source_id AS text)),
                 jsonb_build_object(
+                    'type', 'content_chunk',
+                    'id', CAST(:source_id AS text),
                     'result_type', 'content_chunk',
                     'source_id', CAST(:source_id AS text),
+                    'source_kind', 'web_article',
+                    'title', 'Replay Source',
+                    'source_label', 'Replay Source',
                     'evidence_span_id', CAST(:evidence_span_id_text AS text),
-                    'snippet', 'stale replay snippet'
+                    'snippet', 'stale replay snippet',
+                    'deep_link', '/media/test',
+                    'citation_label', 'Replay Source',
+                    'context_ref', jsonb_build_object(
+                        'type', 'content_chunk',
+                        'id', CAST(:source_id AS text)
+                    ),
+                    'source_version', CAST(:source_version AS text),
+                    'locator', CAST(:locator AS jsonb),
+                    'media_id', CAST(:media_id AS text),
+                    'media_kind', 'web_article',
+                    'score', 1.0,
+                    'selected', true
                 ),
                 '/media/test',
                 1.0,
                 true,
                 'Replay Source',
                 'stale replay snippet',
-                'selected'
+                'selected',
+                CAST(:locator AS jsonb),
+                  CAST(:source_version AS text)
             )
             RETURNING id
             """
@@ -460,6 +595,8 @@ def test_hydrate_message_retrieval_rejects_evidence_span_from_other_chunk_run(
             "media_id": media_id,
             "evidence_span_id": new_span_id,
             "evidence_span_id_text": str(new_span_id),
+            "locator": json.dumps(locator),
+            "source_version": source_version,
         },
     ).scalar_one()
 
@@ -541,6 +678,42 @@ def test_hydrate_web_result_source_ref_renders_embedded_result_ref(
             "type": "web_result",
             "id": "web_1",
             "result_ref": {
+                "type": "web_result",
+                "id": "web_1",
+                "result_type": "web_result",
+                "result_ref": "web_1",
+                "source_id": "https://platform.openai.com/docs",
+                "title": "OpenAI Docs",
+                "url": "https://platform.openai.com/docs",
+                "deep_link": "https://platform.openai.com/docs",
+                "snippet": "Documentation snippet",
+                "source_version": "web:https://platform.openai.com/docs",
+                "locator": {
+                    "type": "external_url",
+                    "url": "https://platform.openai.com/docs",
+                    "title": "OpenAI Docs",
+                },
+                "context_ref": {"type": "web_result", "id": "web_1"},
+            },
+        },
+    )
+
+    assert result.resolved is True
+    assert "<title>OpenAI Docs</title>" in result.evidence_text
+    assert result.citations[0]["url"] == "https://platform.openai.com/docs"
+
+
+def test_hydrate_web_result_source_ref_rejects_untyped_result_ref(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    result = hydrate_source_ref(
+        db_session,
+        viewer_id=bootstrapped_user,
+        source_ref={
+            "type": "web_result",
+            "id": "web_1",
+            "result_ref": {
                 "result_ref": "web_1",
                 "title": "OpenAI Docs",
                 "url": "https://platform.openai.com/docs",
@@ -549,6 +722,6 @@ def test_hydrate_web_result_source_ref_renders_embedded_result_ref(
         },
     )
 
-    assert result.resolved is True
-    assert "<title>OpenAI Docs</title>" in result.evidence_text
-    assert result.citations[0]["url"] == "https://platform.openai.com/docs"
+    assert result.resolved is False
+    assert result.failure is not None
+    assert result.failure.code == "invalid"

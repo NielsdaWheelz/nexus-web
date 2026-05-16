@@ -14,15 +14,22 @@ import {
   useRef,
   useMemo,
   useLayoutEffect,
+  type Dispatch,
+  type SetStateAction,
 } from "react";
 import { PanelRightOpen } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { type ContextItem } from "@/lib/api/sse";
+import { mergeContextItems } from "@/lib/conversations/attachedContext";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
 import ChatComposer from "@/components/ChatComposer";
 import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
+import type {
+  ArtifactFocusTarget,
+  ReaderSourceTarget,
+} from "@/components/chat/MessageRow";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
@@ -83,11 +90,20 @@ export default function ConversationPaneBody() {
   const searchParams = usePaneSearchParams();
   const {
     attachedContexts,
+    setAttachedContexts,
     removeContext,
     clearContexts,
     stripAttachState,
   } = useAttachedContextsFromUrl(searchParams);
   const runIdFromUrl = searchParams.get("run");
+  const artifactFocusTarget = useMemo<ArtifactFocusTarget | null>(() => {
+    const artifactId = searchParams.get("artifact");
+    if (!artifactId) return null;
+    return {
+      artifactId,
+      artifactPartId: searchParams.get("artifactPart"),
+    };
+  }, [searchParams]);
 
   const clearAttachState = useCallback(() => {
     clearContexts();
@@ -102,7 +118,9 @@ export default function ConversationPaneBody() {
       const cleaned = new URLSearchParams(searchParams);
       cleaned.delete("run");
       const qs = cleaned.toString();
-      router.replace(qs ? `/conversations/${id}?${qs}` : `/conversations/${id}`);
+      router.replace(
+        qs ? `/conversations/${id}?${qs}` : `/conversations/${id}`,
+      );
     },
     [id, router, searchParams],
   );
@@ -111,7 +129,9 @@ export default function ConversationPaneBody() {
     <ChatView
       id={id}
       runIdFromUrl={runIdFromUrl}
+      artifactFocusTarget={artifactFocusTarget}
       attachedContexts={attachedContexts}
+      setAttachedContexts={setAttachedContexts}
       onRemoveContext={removeContext}
       onMessageSent={clearAttachState}
       onRunFinished={clearRunParam}
@@ -129,7 +149,9 @@ function captureBranchScroll(
   let anchorOffsetTop = 0;
   let activationAnchorOffsetTop: number | null = null;
 
-  for (const element of scrollport.querySelectorAll<HTMLElement>("[data-message-id]")) {
+  for (const element of scrollport.querySelectorAll<HTMLElement>(
+    "[data-message-id]",
+  )) {
     const messageId = element.dataset.messageId ?? null;
     if (!messageId) continue;
 
@@ -158,7 +180,11 @@ function captureBranchScroll(
 function restoreBranchScroll(scrollport: HTMLElement, scroll: BranchScroll) {
   if (
     scroll.anchorMessageId &&
-    restoreMessageOffset(scrollport, scroll.anchorMessageId, scroll.anchorOffsetTop)
+    restoreMessageOffset(
+      scrollport,
+      scroll.anchorMessageId,
+      scroll.anchorOffsetTop,
+    )
   ) {
     return;
   }
@@ -188,7 +214,9 @@ function restoreMessageOffset(
 }
 
 function findRenderedMessage(scrollport: HTMLElement, messageId: string) {
-  for (const element of scrollport.querySelectorAll<HTMLElement>("[data-message-id]")) {
+  for (const element of scrollport.querySelectorAll<HTMLElement>(
+    "[data-message-id]",
+  )) {
     if (element.dataset.messageId === messageId) {
       return element;
     }
@@ -203,14 +231,18 @@ function findRenderedMessage(scrollport: HTMLElement, messageId: string) {
 function ChatView({
   id,
   runIdFromUrl,
+  artifactFocusTarget,
   attachedContexts,
+  setAttachedContexts,
   onRemoveContext,
   onMessageSent,
   onRunFinished,
 }: {
   id: string;
   runIdFromUrl: string | null;
+  artifactFocusTarget: ArtifactFocusTarget | null;
   attachedContexts: ContextItem[];
+  setAttachedContexts: Dispatch<SetStateAction<ContextItem[]>>;
   onRemoveContext: (index: number) => void;
   onMessageSent: () => void;
   onRunFinished: (runId: string) => void;
@@ -230,16 +262,17 @@ function ChatView({
     edges: [],
     root_message_id: null,
   });
-  const [activeLeafMessageId, setActiveLeafMessageId] = useState<string | null>(null);
+  const [activeLeafMessageId, setActiveLeafMessageId] = useState<string | null>(
+    null,
+  );
   const [branchDraft, setBranchDraft] = useState<BranchDraft | null>(null);
   const [branchFocusKey, setBranchFocusKey] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [retryingAssistantMessageIds, setRetryingAssistantMessageIds] = useState<
-    Set<string>
-  >(new Set());
+  const [retryingAssistantMessageIds, setRetryingAssistantMessageIds] =
+    useState<Set<string>>(new Set());
   const [contextRailExpanded, setContextRailExpanded] = useState(true);
   const conversationScope = conversation?.scope ?? { type: "general" as const };
   useSetPaneTitle(
@@ -336,7 +369,11 @@ function ChatView({
     }> = [];
 
     for (const message of messages) {
-      if (message.role !== "user" || !message.contexts || message.contexts.length === 0) {
+      if (
+        message.role !== "user" ||
+        !message.contexts ||
+        message.contexts.length === 0
+      ) {
         continue;
       }
       for (const context of message.contexts) {
@@ -351,19 +388,22 @@ function ChatView({
     return rows;
   }, [messages]);
 
-  const applyConversationTree = useCallback((tree: ConversationTreeResponse) => {
-    setConversation(tree.conversation);
-    setMessages(tree.selected_path);
-    selectedPathIdsRef.current = messageIdsForPath(
-      tree.selected_path,
-      tree.active_leaf_message_id,
-    );
-    setForkOptionsByParentId(tree.fork_options_by_parent_id);
-    setPathCacheByLeafId(tree.path_cache_by_leaf_id);
-    setBranchGraph(tree.branch_graph);
-    setActiveLeafMessageId(tree.active_leaf_message_id);
-    setOlderCursor(tree.page.before_cursor);
-  }, [messageIdsForPath]);
+  const applyConversationTree = useCallback(
+    (tree: ConversationTreeResponse) => {
+      setConversation(tree.conversation);
+      setMessages(tree.selected_path);
+      selectedPathIdsRef.current = messageIdsForPath(
+        tree.selected_path,
+        tree.active_leaf_message_id,
+      );
+      setForkOptionsByParentId(tree.fork_options_by_parent_id);
+      setPathCacheByLeafId(tree.path_cache_by_leaf_id);
+      setBranchGraph(tree.branch_graph);
+      setActiveLeafMessageId(tree.active_leaf_message_id);
+      setOlderCursor(tree.page.before_cursor);
+    },
+    [messageIdsForPath],
+  );
 
   const loadConversationTree = useCallback(async () => {
     const response = await apiFetch<{ data: ConversationTreeResponse }>(
@@ -479,7 +519,8 @@ function ChatView({
     if (pendingScrollRestoreRef.current) {
       const restore = pendingScrollRestoreRef.current;
       pendingScrollRestoreRef.current = null;
-      scrollport.scrollTop = scrollport.scrollHeight - restore.scrollHeight + restore.scrollTop;
+      scrollport.scrollTop =
+        scrollport.scrollHeight - restore.scrollHeight + restore.scrollTop;
       shouldScrollRef.current = false;
       return;
     }
@@ -492,7 +533,10 @@ function ChatView({
     const scrollport = scrollportRef.current;
     if (!scrollport) return;
     shouldScrollRef.current =
-      scrollport.scrollHeight - scrollport.scrollTop - scrollport.clientHeight <= 48;
+      scrollport.scrollHeight -
+        scrollport.scrollTop -
+        scrollport.clientHeight <=
+      48;
   }, []);
 
   // --------------------------------------------------------------------------
@@ -513,12 +557,14 @@ function ChatView({
         before_cursor: olderCursor,
       });
       const response = await apiFetch<{ data: ConversationTreeResponse }>(
-        `/api/conversations/${id}/tree?${params}`
+        `/api/conversations/${id}/tree?${params}`,
       );
       // Prepend older messages, deduplicate by ID
       setMessages((prev) => {
         const existingIds = new Set(prev.map((m) => m.id));
-        const newMsgs = response.data.selected_path.filter((m) => !existingIds.has(m.id));
+        const newMsgs = response.data.selected_path.filter(
+          (m) => !existingIds.has(m.id),
+        );
         return [...newMsgs, ...prev];
       });
       setForkOptionsByParentId(response.data.fork_options_by_parent_id);
@@ -551,13 +597,16 @@ function ChatView({
 
   const handleReplyToAssistant = useCallback((draft: BranchDraft) => {
     setBranchDraft(draft);
-    setBranchFocusKey(`${draft.parentMessageId}:${draft.anchor.kind}:${Date.now()}`);
+    setBranchFocusKey(
+      `${draft.parentMessageId}:${draft.anchor.kind}:${Date.now()}`,
+    );
     shouldScrollRef.current = true;
   }, []);
 
   const handleRetryAssistantResponse = useCallback(
     async (assistantMessageId: string) => {
-      if (retryingAssistantMessageIdsRef.current.has(assistantMessageId)) return;
+      if (retryingAssistantMessageIdsRef.current.has(assistantMessageId))
+        return;
 
       retryingAssistantMessageIdsRef.current = new Set([
         ...retryingAssistantMessageIdsRef.current,
@@ -632,7 +681,9 @@ function ChatView({
       ) {
         setBranchDraft(null);
       }
-      setForkOptionsByParentId((prev) => activeForkOptionsForPath(prev, nextPath));
+      setForkOptionsByParentId((prev) =>
+        activeForkOptionsForPath(prev, nextPath),
+      );
       setBranchGraph((prev) => activeBranchGraphForPath(prev, nextPath));
       setError(null);
       shouldScrollRef.current = false;
@@ -647,7 +698,10 @@ function ChatView({
         );
         if (activePathSwitchSeqRef.current !== switchSeq) return;
         pendingBranchScrollRef.current = scrollportRef.current
-          ? captureBranchScroll(scrollportRef.current, activationAnchorMessageId)
+          ? captureBranchScroll(
+              scrollportRef.current,
+              activationAnchorMessageId,
+            )
           : branchScroll;
         applyConversationTree(response.data);
         void tailVisibleActiveRuns(
@@ -659,14 +713,13 @@ function ChatView({
       } catch (err) {
         if (activePathSwitchSeqRef.current !== switchSeq) return;
         setError(toFeedback(err, { fallback: "Failed to switch fork" }));
-        pendingBranchScrollRef.current =
-          previous.branchScroll ?? {
-            anchorMessageId: null,
-            anchorOffsetTop: 0,
-            activationAnchorMessageId: null,
-            activationAnchorOffsetTop: null,
-            scrollTop: previous.scrollTop,
-          };
+        pendingBranchScrollRef.current = previous.branchScroll ?? {
+          anchorMessageId: null,
+          anchorOffsetTop: 0,
+          activationAnchorMessageId: null,
+          activationAnchorOffsetTop: null,
+          scrollTop: previous.scrollTop,
+        };
         setMessages(previous.messages);
         selectedPathIdsRef.current = messageIdsForPath(
           previous.messages,
@@ -702,14 +755,125 @@ function ChatView({
   const switchToGraphLeaf = useCallback(
     async (leafMessageId: string) => {
       const graphNode =
-        branchGraph.nodes.find((node) => node.leaf && node.leaf_message_id === leafMessageId) ??
-        branchGraph.nodes.find((node) => node.leaf_message_id === leafMessageId);
+        branchGraph.nodes.find(
+          (node) => node.leaf && node.leaf_message_id === leafMessageId,
+        ) ??
+        branchGraph.nodes.find(
+          (node) => node.leaf_message_id === leafMessageId,
+        );
       await switchToLeaf(
         leafMessageId,
         graphNode?.parent_message_id ?? graphNode?.message_id ?? null,
       );
     },
     [branchGraph.nodes, switchToLeaf],
+  );
+
+  const handleReaderSourceActivate = useCallback(
+    (target: ReaderSourceTarget) => {
+      router.push(target.href || `/media/${target.media_id}`);
+    },
+    [router],
+  );
+
+  const handleAskAboutSource = useCallback(
+    (target: ReaderSourceTarget) => {
+      const exact = target.snippet?.trim();
+      if (!exact) {
+        handleReaderSourceActivate(target);
+        return;
+      }
+      const locator = target.locator;
+      setAttachedContexts((current) =>
+        mergeContextItems(current, [
+          {
+            kind: "reader_selection",
+            client_context_id: crypto.randomUUID(),
+            media_id: target.media_id,
+            media_kind:
+              locator.type === "pdf_page_geometry"
+                ? "pdf"
+                : locator.type === "transcript_time_range"
+                  ? "transcript"
+                  : locator.type === "epub_fragment_offsets"
+                    ? "epub"
+                    : "web_article",
+            media_title: target.label ?? "Source",
+            exact,
+            ...("prefix" in locator &&
+            typeof locator.prefix === "string" &&
+            locator.prefix
+              ? { prefix: locator.prefix }
+              : {}),
+            ...("suffix" in locator &&
+            typeof locator.suffix === "string" &&
+            locator.suffix
+              ? { suffix: locator.suffix }
+              : {}),
+            preview: exact.slice(0, 120),
+            locator: target.locator,
+            source_version: target.source_version,
+            color: "yellow",
+          },
+        ]),
+      );
+    },
+    [handleReaderSourceActivate, setAttachedContexts],
+  );
+
+  const handleAttachContext = useCallback(
+    (context: ContextItem) => {
+      setAttachedContexts((current) => mergeContextItems(current, [context]));
+    },
+    [setAttachedContexts],
+  );
+
+  const handleSaveSourceQuote = useCallback(
+    async (target: ReaderSourceTarget) => {
+      const locator = target.locator;
+      try {
+        if (
+          (locator.type === "epub_fragment_offsets" ||
+            locator.type === "web_text_offsets") &&
+          typeof locator.fragment_id === "string" &&
+          typeof locator.start_offset === "number" &&
+          typeof locator.end_offset === "number" &&
+          locator.end_offset > locator.start_offset
+        ) {
+          await apiFetch(`/api/fragments/${locator.fragment_id}/highlights`, {
+            method: "POST",
+            body: JSON.stringify({
+              start_offset: locator.start_offset,
+              end_offset: locator.end_offset,
+              color: "yellow",
+            }),
+          });
+          return;
+        }
+        if (
+          locator.type === "pdf_page_geometry" &&
+          typeof locator.page_number === "number" &&
+          Array.isArray(locator.quads) &&
+          locator.quads.length > 0
+        ) {
+          await apiFetch(`/api/media/${target.media_id}/pdf-highlights`, {
+            method: "POST",
+            body: JSON.stringify({
+              page_number: locator.page_number,
+              quads: locator.quads,
+              exact:
+                (typeof locator.exact === "string" && locator.exact) ||
+                target.snippet ||
+                "",
+              color: "yellow",
+            }),
+          });
+        }
+      } catch (err) {
+        setError(toFeedback(err, { fallback: "Failed to save quote" }));
+      }
+    },
+    [],
   );
 
   usePaneChromeOverride({
@@ -726,7 +890,9 @@ function ChatView({
   // --------------------------------------------------------------------------
 
   if (loading) {
-    return <FeedbackNotice severity="info">Loading conversation...</FeedbackNotice>;
+    return (
+      <FeedbackNotice severity="info">Loading conversation...</FeedbackNotice>
+    );
   }
 
   if (!conversation) {
@@ -746,6 +912,12 @@ function ChatView({
             <ChatSurface
               messages={messages}
               scope={conversationScope}
+              onReaderSourceActivate={handleReaderSourceActivate}
+              onAskAboutSource={handleAskAboutSource}
+              onSaveSourceQuote={handleSaveSourceQuote}
+              onAttachContext={handleAttachContext}
+              onChatRunCreated={handleChatRunCreated}
+              artifactFocusTarget={artifactFocusTarget}
               forkOptionsByParentId={forkOptionsByParentId}
               switchableLeafIds={switchableLeafIds}
               onSelectFork={(fork) => {

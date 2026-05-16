@@ -27,6 +27,8 @@ export default function QuoteChatSheet({
   onConversationCreated,
   onOpenFullChat,
   onReaderSourceActivate,
+  onAskAboutSource,
+  onSaveSourceQuote,
 }: {
   contexts: ContextItem[];
   conversationId: string | null;
@@ -38,6 +40,8 @@ export default function QuoteChatSheet({
   onConversationCreated: (conversationId: string, runId?: string) => void;
   onOpenFullChat: (conversationId: string) => void;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
+  onAskAboutSource?: (target: ReaderSourceTarget) => void;
+  onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
 }) {
   const sheetRef = useRef<HTMLElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -106,6 +110,8 @@ export default function QuoteChatSheet({
           onConversationAvailable={onConversationCreated}
           onOpenFullChat={onOpenFullChat}
           onReaderSourceActivate={onReaderSourceActivate}
+          onAskAboutSource={onAskAboutSource}
+          onSaveSourceQuote={onSaveSourceQuote}
           autoFocusComposer
         />
       </aside>

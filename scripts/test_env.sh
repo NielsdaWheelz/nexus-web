@@ -10,6 +10,18 @@ test_env_require_tool() {
     fi
 }
 
+test_env_port_is_busy() {
+    local port="$1"
+
+    if lsof -nP -i ":$port" >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Ports}}' 2>/dev/null | grep -Eq "(^|[ ,])([0-9.]+|\\[::\\]):$port->"; then
+        return 0
+    fi
+    return 1
+}
+
 test_env_resolve_ports() {
     local preferred_port
     local port
@@ -50,7 +62,7 @@ test_env_resolve_ports() {
         if mkdir "$lock_dir" 2>/dev/null; then
             printf '%s\n' "$$" > "$lock_dir/pid"
 
-            if ! lsof -i ":$port" >/dev/null 2>&1; then
+            if ! test_env_port_is_busy "$port"; then
                 POSTGRES_PORT="$port"
                 TEST_POSTGRES_PORT_LOCK_DIR="$lock_dir"
                 export POSTGRES_PORT TEST_POSTGRES_PORT_LOCK_DIR
@@ -123,7 +135,7 @@ test_env_resolve_minio_port() {
         if mkdir "$lock_dir" 2>/dev/null; then
             printf '%s\n' "$$" > "$lock_dir/pid"
 
-            if ! lsof -i ":$port" >/dev/null 2>&1; then
+            if ! test_env_port_is_busy "$port"; then
                 MINIO_PORT="$port"
                 TEST_MINIO_PORT_LOCK_DIR="$lock_dir"
                 export MINIO_PORT TEST_MINIO_PORT_LOCK_DIR

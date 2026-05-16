@@ -18,6 +18,7 @@ from nexus.auth.permissions import (
 )
 from nexus.db.models import (
     Conversation,
+    Fragment,
     Highlight,
     Media,
     Message,
@@ -185,6 +186,103 @@ def hydrate_object_ref(db: Session, viewer_id: UUID, ref: ObjectRef) -> Hydrated
             icon="text",
         )
 
+    if ref.object_type == "fragment":
+        fragment = db.get(Fragment, ref.object_id)
+        if fragment is None or not can_read_media(db, viewer_id, fragment.media_id):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
+        return HydratedObjectRef(
+            object_type="fragment",
+            object_id=fragment.id,
+            label=f"Fragment {fragment.idx + 1}",
+            snippet=fragment.canonical_text[:300],
+            route=f"/media/{fragment.media_id}?fragment={fragment.id}",
+            icon="text",
+        )
+
+    if ref.object_type == "evidence_span":
+        row = db.execute(
+            text(
+                """
+                SELECT es.id, es.media_id, es.span_text, es.citation_label, m.title
+                FROM evidence_spans es
+                JOIN media m ON m.id = es.media_id
+                WHERE es.id = :id
+                """
+            ),
+            {"id": ref.object_id},
+        ).fetchone()
+        if row is None or not can_read_media(db, viewer_id, row[1]):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
+        return HydratedObjectRef(
+            object_type="evidence_span",
+            object_id=row[0],
+            label=f"{row[4]} - {row[3]}",
+            snippet=str(row[2] or "")[:300],
+            route=f"/media/{row[1]}?evidence={row[0]}",
+            icon="quote",
+        )
+
+    if ref.object_type == "artifact":
+        row = db.execute(
+            text(
+                """
+                SELECT id, conversation_id, artifact_kind, title, preview_text
+                FROM message_artifacts
+                WHERE id = :id
+                """
+            ),
+            {"id": ref.object_id},
+        ).fetchone()
+        if row is None or not can_read_conversation(db, viewer_id, row[1]):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
+        return HydratedObjectRef(
+            object_type="artifact",
+            object_id=row[0],
+            label=str(row[3] or row[2]),
+            snippet=str(row[4] or "")[:300],
+            route=f"/conversations/{row[1]}?artifact={row[0]}",
+            icon="sparkles",
+        )
+
+    if ref.object_type == "artifact_part":
+        row = (
+            db.execute(
+                text(
+                    """
+                SELECT
+                    part.id,
+                    part.part_key,
+                    part.part_type,
+                    part.text AS part_text,
+                    ma.id AS artifact_id,
+                    ma.artifact_kind,
+                    ma.title,
+                    ma.conversation_id
+                FROM message_artifact_parts part
+                JOIN message_artifacts ma ON ma.id = part.artifact_id
+                WHERE part.id = :id
+                """
+                ),
+                {"id": ref.object_id},
+            )
+            .mappings()
+            .first()
+        )
+        if row is None or not can_read_conversation(db, viewer_id, row["conversation_id"]):
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
+        label = row["part_key"] or row["part_type"] or row["title"] or row["artifact_kind"]
+        return HydratedObjectRef(
+            object_type="artifact_part",
+            object_id=row["id"],
+            label=str(label),
+            snippet=str(row["part_text"] or "")[:300],
+            route=(
+                f"/conversations/{row['conversation_id']}"
+                f"?artifact={row['artifact_id']}&artifactPart={row['id']}"
+            ),
+            icon="sparkles",
+        )
+
     raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
 
 
@@ -318,6 +416,31 @@ def search_object_refs(
         results.append(
             hydrate_object_ref(
                 db, viewer_id, ObjectRef(object_type="content_chunk", object_id=object_id)
+            )
+        )
+        if len(results) >= limit:
+            return results
+
+    fragment_rows = db.execute(
+        text(
+            f"""
+            WITH visible_media AS ({visible_media_ids_cte_sql()})
+            SELECT f.id
+            FROM fragments f
+            JOIN media m ON m.id = f.media_id
+            JOIN visible_media vm ON vm.media_id = f.media_id
+            WHERE f.canonical_text ILIKE :pattern
+               OR m.title ILIKE :pattern
+            ORDER BY f.created_at DESC, f.id ASC
+            LIMIT :limit
+            """
+        ),
+        {"viewer_id": viewer_id, "pattern": pattern, "limit": limit},
+    ).scalars()
+    for object_id in fragment_rows:
+        results.append(
+            hydrate_object_ref(
+                db, viewer_id, ObjectRef(object_type="fragment", object_id=object_id)
             )
         )
         if len(results) >= limit:
@@ -475,6 +598,91 @@ def search_object_refs(
             continue
         results.append(
             hydrate_object_ref(db, viewer_id, ObjectRef(object_type="message", object_id=object_id))
+        )
+        if len(results) >= limit:
+            return results
+
+    evidence_span_rows = db.execute(
+        text(
+            """
+            WITH visible_media AS (
+                SELECT media_id FROM library_entries le
+                JOIN memberships m ON m.library_id = le.library_id
+                WHERE m.user_id = :viewer_id
+            )
+            SELECT es.id
+            FROM evidence_spans es
+            JOIN visible_media vm ON vm.media_id = es.media_id
+            WHERE es.span_text ILIKE :pattern
+               OR es.citation_label ILIKE :pattern
+            ORDER BY es.created_at DESC, es.id ASC
+            LIMIT :limit
+            """
+        ),
+        {"viewer_id": viewer_id, "pattern": pattern, "limit": limit * 3},
+    )
+    for (object_id,) in evidence_span_rows:
+        results.append(
+            hydrate_object_ref(
+                db,
+                viewer_id,
+                ObjectRef(object_type="evidence_span", object_id=object_id),
+            )
+        )
+        if len(results) >= limit:
+            return results
+
+    artifact_rows = db.execute(
+        text(
+            """
+            SELECT id, conversation_id
+            FROM message_artifacts
+            WHERE COALESCE(title, '') ILIKE :pattern
+               OR artifact_kind ILIKE :pattern
+               OR COALESCE(preview_text, '') ILIKE :pattern
+            ORDER BY created_at DESC, id ASC
+            LIMIT :limit
+            """
+        ),
+        {"pattern": pattern, "limit": limit * 3},
+    )
+    for object_id, conversation_id in artifact_rows:
+        if not can_read_conversation(db, viewer_id, conversation_id):
+            continue
+        results.append(
+            hydrate_object_ref(
+                db, viewer_id, ObjectRef(object_type="artifact", object_id=object_id)
+            )
+        )
+        if len(results) >= limit:
+            return results
+
+    artifact_part_rows = db.execute(
+        text(
+            """
+            SELECT part.id, ma.conversation_id
+            FROM message_artifact_parts part
+            JOIN message_artifacts ma ON ma.id = part.artifact_id
+            WHERE part.text ILIKE :pattern
+               OR COALESCE(part.part_key, '') ILIKE :pattern
+               OR COALESCE(part.part_type, '') ILIKE :pattern
+               OR COALESCE(ma.title, '') ILIKE :pattern
+               OR ma.artifact_kind ILIKE :pattern
+            ORDER BY ma.created_at DESC, part.ordinal ASC, part.id ASC
+            LIMIT :limit
+            """
+        ),
+        {"pattern": pattern, "limit": limit * 3},
+    )
+    for object_id, conversation_id in artifact_part_rows:
+        if not can_read_conversation(db, viewer_id, conversation_id):
+            continue
+        results.append(
+            hydrate_object_ref(
+                db,
+                viewer_id,
+                ObjectRef(object_type="artifact_part", object_id=object_id),
+            )
         )
         if len(results) >= limit:
             return results

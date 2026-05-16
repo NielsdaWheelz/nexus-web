@@ -38,10 +38,19 @@ const SEARCH_TYPE_LABELS: Record<SearchType, string> = {
   contributor: "Authors",
   media: "Media",
   podcast: "Podcasts",
+  episode: "Episodes",
+  video: "Videos",
   content_chunk: "Evidence",
+  fragment: "Fragments",
   page: "Pages",
   note_block: "Notes",
+  highlight: "Highlights",
   message: "Messages",
+  evidence_span: "Evidence spans",
+  conversation: "Conversations",
+  artifact: "Artifacts",
+  artifact_part: "Artifacts",
+  web_result: "Web",
 };
 
 const SEARCH_ROLE_FILTERS = [

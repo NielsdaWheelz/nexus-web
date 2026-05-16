@@ -17,6 +17,7 @@ const PDF_SEED = path.join(E2E_DIR, ".seed", "pdf-media.json");
 const NON_PDF_SEED = path.join(E2E_DIR, ".seed", "non-pdf-media.json");
 const EPUB_SEED = path.join(E2E_DIR, ".seed", "epub-media.json");
 const YOUTUBE_SEED = path.join(E2E_DIR, ".seed", "youtube-media.json");
+const E2E_USER_SEED = path.join(E2E_DIR, ".seed", "e2e-user.json");
 const READER_RESUME_SEED = path.join(
   E2E_DIR,
   ".seed",
@@ -136,7 +137,7 @@ function readSeededMediaIds() {
   );
 }
 
-function databaseHasSeededMedia(dbUrl) {
+function databaseHasSeededMedia(dbUrl, ownerUserId) {
   if (!seedArtifactsExist()) {
     return false;
   }
@@ -155,9 +156,20 @@ function databaseHasSeededMedia(dbUrl) {
     JSON.stringify(
       "import json, os, psycopg;" +
         "ids=json.loads(os.environ['NEXUS_E2E_MEDIA_IDS']);" +
+        "owner_id=os.environ['NEXUS_E2E_OWNER_USER_ID'];" +
         "conn=psycopg.connect(os.environ['DATABASE_URL']);" +
         "cur=conn.cursor();" +
-        "cur.execute('select count(*) from media where id = any(%s::uuid[])', (ids,));" +
+        "cur.execute(" +
+        JSON.stringify(
+          "select count(distinct media.id) "
+            + "from media "
+            + "join default_library_intrinsics intrinsic on intrinsic.media_id = media.id "
+            + "join libraries library on library.id = intrinsic.default_library_id "
+            + "where media.id = any(%s::uuid[]) "
+            + "and library.owner_user_id = %s::uuid "
+            + "and library.is_default = true",
+        ) +
+        ", (ids, owner_id));" +
         "row=cur.fetchone();" +
         "print(row[0] if row else 0);" +
         "cur.close();" +
@@ -172,6 +184,7 @@ function databaseHasSeededMedia(dbUrl) {
         ...process.env,
         DATABASE_URL: probeDatabaseUrl,
         NEXUS_E2E_MEDIA_IDS: JSON.stringify(mediaIds),
+        NEXUS_E2E_OWNER_USER_ID: ownerUserId,
       },
     })
       .toString()
@@ -461,6 +474,11 @@ export default function globalSetup() {
   run("Seed E2E user", "bunx tsx seed-e2e-user.ts", E2E_DIR, {
     NEXUS_ENV: process.env.NEXUS_ENV,
   });
+  const e2eUserSeed = readJson(E2E_USER_SEED);
+  const e2eOwnerUserId = e2eUserSeed.user_id;
+  if (typeof e2eOwnerUserId !== "string" || !e2eOwnerUserId) {
+    throw new Error("[global-setup] e2e/.seed/e2e-user.json is missing user_id.");
+  }
 
   run(
     "Apply DB migrations",
@@ -494,7 +512,7 @@ export default function globalSetup() {
   }
 
   if (
-    databaseHasSeededMedia(dbUrl) &&
+    databaseHasSeededMedia(dbUrl, e2eOwnerUserId) &&
     databaseHasReadyEvidenceIndexes(dbUrl) &&
     databaseHasSeededBilling(dbUrl) &&
     databaseHasSeededYoutubeTranscriptStates(dbUrl) &&

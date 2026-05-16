@@ -25,7 +25,7 @@ def create_stream_token(
     """Mint a short-lived stream token for direct browser→fastapi SSE.
 
     The BFF proxies to this endpoint with supabase bearer + X-Nexus-Internal.
-    Returns a JWT the browser can use for /stream/* endpoints.
+    Returns a JWT the browser can use for direct SSE endpoints.
 
     Response:
         {

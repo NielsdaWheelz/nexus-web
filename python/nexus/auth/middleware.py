@@ -132,11 +132,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.url.path in PUBLIC_PATHS:
             return await call_next(request)
 
-        # PR-08: Skip supabase auth + internal header for /stream/* paths.
-        # Stream routes use Depends(verify_stream_token) instead.
+        # Stream routes use Depends(verify_stream_token) instead of Supabase auth.
         # The iss/aud requirement on stream tokens prevents accidental acceptance
-        # of supabase JWTs even if someone hits /stream/* with regular auth.
-        if request.url.path.startswith("/stream/"):
+        # of supabase JWTs even if someone hits a stream endpoint with regular auth.
+        path = request.url.path
+        if (
+            (path.startswith("/chat-runs/") and path.endswith("/events"))
+            or (path.startswith("/stream/oracle-readings/") and path.endswith("/events"))
+            or (path.startswith("/stream/conversations/") and path.endswith("/messages"))
+            or path == "/stream/conversations/messages"
+        ):
             return await call_next(request)
 
         # Step 1: Check internal header if required

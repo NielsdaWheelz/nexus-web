@@ -125,6 +125,16 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "mts.transcript_coverage",
     "COALESCE(mcis.status, 'pending') AS retrieval_status",
     "mcis.status_reason AS retrieval_status_reason",
+    """(
+        SELECT ss.source_version
+        FROM content_blocks cb
+        JOIN source_snapshots ss
+          ON ss.id = cb.source_snapshot_id
+        WHERE cb.media_id = m.id
+          AND cb.index_run_id = mcis.active_run_id
+        ORDER BY cb.block_idx ASC
+        LIMIT 1
+    ) AS source_version""",
     """EXISTS(
         SELECT 1
         WHERE m.kind IN ('pdf', 'epub', 'web_article')
@@ -382,6 +392,7 @@ def _media_out_from_row(
         transcript_coverage=row["transcript_coverage"],
         retrieval_status=row["retrieval_status"],
         retrieval_status_reason=row["retrieval_status_reason"],
+        source_version=row["source_version"] if isinstance(row["source_version"], str) else None,
         failure_stage=row["failure_stage"],
         last_error_code=row["last_error_code"],
         playback_source=playback_source,
@@ -2002,10 +2013,33 @@ def list_fragments_for_viewer(
                 f.t_start_ms,
                 f.t_end_ms,
                 f.speaker_label,
+                f_source.source_version,
                 f.created_at
             FROM fragments f
             LEFT JOIN media_transcript_states mts
               ON mts.media_id = f.media_id
+            LEFT JOIN media_content_index_states mcis
+              ON mcis.media_id = f.media_id
+            LEFT JOIN LATERAL (
+                SELECT ss.source_version
+                FROM content_blocks cb
+                JOIN source_snapshots ss
+                  ON ss.id = cb.source_snapshot_id
+                WHERE cb.media_id = f.media_id
+                  AND cb.index_run_id = mcis.active_run_id
+                  AND (
+                      cb.locator->>'fragment_id' = f.id::text
+                      OR (
+                          cb.locator->>'kind' = 'transcript_time_text'
+                          AND f.t_start_ms IS NOT NULL
+                          AND f.t_end_ms IS NOT NULL
+                          AND CAST(cb.locator->>'t_start_ms' AS integer) < f.t_end_ms
+                          AND CAST(cb.locator->>'t_end_ms' AS integer) > f.t_start_ms
+                      )
+                  )
+                ORDER BY cb.block_idx ASC
+                LIMIT 1
+            ) f_source ON TRUE
             WHERE f.media_id = :media_id
               AND (
                   f.transcript_version_id IS NULL
@@ -2027,7 +2061,8 @@ def list_fragments_for_viewer(
             t_start_ms=row[5],
             t_end_ms=row[6],
             speaker_label=row[7],
-            created_at=row[8],
+            source_version=row[8],
+            created_at=row[9],
         )
         for row in result.fetchall()
     ]

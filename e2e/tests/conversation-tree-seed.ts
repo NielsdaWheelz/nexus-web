@@ -30,28 +30,46 @@ export interface BranchingConversationSeed {
   disposable_leaf_message_id: string;
 }
 
+export interface ArtifactFollowUpConversationSeed {
+  conversation_id: string;
+  assistant_message_id: string;
+  artifact_id: string;
+  artifact_part_id: string;
+  artifact_title: string;
+  origin_chat_run_id: string;
+  part_text: string;
+}
+
 async function e2eOwnerUserId(page: Page): Promise<string> {
   const response = await page.request.get("/api/me");
   const body = await response.text();
-  expect(response.ok(), `GET /api/me failed: ${response.status()} ${body}`).toBeTruthy();
+  expect(
+    response.ok(),
+    `GET /api/me failed: ${response.status()} ${body}`,
+  ).toBeTruthy();
   const payload = JSON.parse(body) as MeResponse;
   return payload.data.user_id;
 }
 
 function seedConversationTree<T>(
   ownerUserId: string,
-  scenario: "branching" | "scroll",
+  scenario: "artifact_follow_up" | "branching" | "scroll",
   extraEnv: Record<string, string> = {},
 ): T {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required to seed conversation tree fixtures.");
+    throw new Error(
+      "DATABASE_URL is required to seed conversation tree fixtures.",
+    );
   }
 
   const childEnv = {
     ...process.env,
     ...extraEnv,
-    DATABASE_URL: databaseUrl.replace(/^postgresql:\/\//, "postgresql+psycopg://"),
+    DATABASE_URL: databaseUrl.replace(
+      /^postgresql:\/\//,
+      "postgresql+psycopg://",
+    ),
     NEXUS_KEY_ENCRYPTION_KEY:
       process.env.NEXUS_KEY_ENCRYPTION_KEY ??
       "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
@@ -66,13 +84,7 @@ function seedConversationTree<T>(
 
   const output = execFileSync(
     "uv",
-    [
-      "run",
-      "--project",
-      "python",
-      "python",
-      "e2e/seed-conversation-tree.py",
-    ],
+    ["run", "--project", "python", "python", "e2e/seed-conversation-tree.py"],
     {
       cwd: ROOT_DIR,
       env: childEnv,
@@ -81,7 +93,9 @@ function seedConversationTree<T>(
   ).toString("utf-8");
   const jsonLine = output.trim().split("\n").at(-1);
   if (!jsonLine) {
-    throw new Error(`Conversation tree seed produced no JSON output for ${scenario}.`);
+    throw new Error(
+      `Conversation tree seed produced no JSON output for ${scenario}.`,
+    );
   }
   return JSON.parse(jsonLine) as T;
 }
@@ -103,5 +117,14 @@ export async function seedBranchingConversation(
   return seedConversationTree<BranchingConversationSeed>(
     await e2eOwnerUserId(page),
     "branching",
+  );
+}
+
+export async function seedArtifactFollowUpConversation(
+  page: Page,
+): Promise<ArtifactFollowUpConversationSeed> {
+  return seedConversationTree<ArtifactFollowUpConversationSeed>(
+    await e2eOwnerUserId(page),
+    "artifact_follow_up",
   );
 }

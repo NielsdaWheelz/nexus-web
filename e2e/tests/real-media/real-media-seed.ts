@@ -596,16 +596,50 @@ function assertRealMediaStorageIsLocal() {
   }
 }
 
-export async function expectVisibleTextEvidenceHighlight(page: Page) {
+export async function expectVisibleTextEvidenceHighlight(
+  page: Page,
+  evidenceSpanId?: string,
+) {
+  if (!evidenceSpanId) {
+    await expect(
+      page.locator('[data-highlight-anchor^="evidence-"]').first(),
+    ).toBeAttached({ timeout: 15_000 });
+    await expect(page.locator(".hl-evidence").first()).toBeVisible({
+      timeout: 15_000,
+    });
+    return;
+  }
+
+  const highlightId = evidenceSpanId.startsWith("evidence-")
+    ? evidenceSpanId
+    : `evidence-${evidenceSpanId}`;
+  const escaped = cssAttributeValue(highlightId);
   await expect(
-    page.locator('[data-highlight-anchor^="evidence-"]').first(),
-  ).toBeAttached({ timeout: 15_000 });
-  await expect(page.locator(".hl-evidence").first()).toBeVisible({
-    timeout: 15_000,
-  });
+    page
+      .locator(
+        `[data-highlight-anchor="${escaped}"], [data-active-highlight-ids~="${escaped}"]`,
+      )
+      .first(),
+  ).toBeVisible({ timeout: 15_000 });
 }
 
-export async function expectVisiblePdfEvidenceHighlight(page: Page) {
+export async function expectVisiblePdfEvidenceHighlight(
+  page: Page,
+  evidenceSpanId?: string,
+) {
+  if (evidenceSpanId) {
+    const highlightId = evidenceSpanId.startsWith("evidence-")
+      ? evidenceSpanId
+      : `evidence-${evidenceSpanId}`;
+    await expect(
+      page
+        .locator(
+          `[data-testid^="pdf-highlight-${cssAttributeValue(highlightId)}-"]`,
+        )
+        .first(),
+    ).toBeVisible({ timeout: 15_000 });
+    return;
+  }
   await expect(
     page.locator('[data-testid^="pdf-highlight-evidence-"]').first(),
   ).toBeVisible({ timeout: 15_000 });
@@ -678,6 +712,10 @@ export async function openTranscriptEvidenceSegment(
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function cssAttributeValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 export async function createPdfHighlightThroughVisibleSelection(

@@ -2,6 +2,7 @@
 
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import type { ConversationMessage } from "@/lib/conversations/types";
+import { conversationMessageText } from "@/lib/conversations/types";
 import styles from "./MessageRow.module.css";
 
 export default function SystemMessage({
@@ -16,7 +17,7 @@ export default function SystemMessage({
   return (
     <div className={styles.message} data-message-id={message.id} data-role="system">
       <span className={styles.systemBody}>
-        {message.content || (message.status === "pending" ? "..." : "")}
+        {conversationMessageText(message) || (message.status === "pending" ? "..." : "")}
       </span>
       {message.status === "error" && errorLabel ? (
         <FeedbackNotice

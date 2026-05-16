@@ -60,7 +60,11 @@ function chatRunResponse(body: ChatRunCreateRequest) {
         id: "user-message-1",
         seq: 1,
         role: "user",
-        content: body.content,
+        message_document: {
+          type: "message_document",
+          version: 1,
+          blocks: [{ type: "text", format: "plain", text: body.content }],
+        },
         contexts: [],
         tool_calls: [],
         status: "complete",
@@ -72,7 +76,11 @@ function chatRunResponse(body: ChatRunCreateRequest) {
         id: "assistant-message-1",
         seq: 2,
         role: "assistant",
-        content: "",
+        message_document: {
+          type: "message_document",
+          version: 1,
+          blocks: [],
+        },
         contexts: [],
         tool_calls: [],
         status: "pending",
@@ -407,7 +415,17 @@ describe("ReaderAssistantPane", () => {
               id: "user-existing",
               seq: 1,
               role: "user",
-              content: "Existing prompt without an answer yet.",
+              message_document: {
+                type: "message_document",
+                version: 1,
+                blocks: [
+                  {
+                    type: "text",
+                    format: "plain",
+                    text: "Existing prompt without an answer yet.",
+                  },
+                ],
+              },
               contexts: [],
               tool_calls: [],
               status: "complete",
@@ -470,7 +488,13 @@ describe("ReaderAssistantPane", () => {
               id: "user-existing",
               seq: 1,
               role: "user",
-              content: "Earlier question",
+              message_document: {
+                type: "message_document",
+                version: 1,
+                blocks: [
+                  { type: "text", format: "plain", text: "Earlier question" },
+                ],
+              },
               contexts: [],
               tool_calls: [],
               status: "complete",
@@ -482,7 +506,17 @@ describe("ReaderAssistantPane", () => {
               id: "assistant-existing",
               seq: 2,
               role: "assistant",
-              content: "Existing answer",
+              message_document: {
+                type: "message_document",
+                version: 1,
+                blocks: [
+                  {
+                    type: "text",
+                    format: "markdown",
+                    text: "Existing answer",
+                  },
+                ],
+              },
               contexts: [],
               tool_calls: [],
               status: "complete",

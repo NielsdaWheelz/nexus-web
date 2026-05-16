@@ -744,7 +744,7 @@ def test_delete_branch_removes_subtree_and_dependent_rows(
                     'general',
                     'included_in_prompt',
                     'supported',
-                    'verified',
+                    'llm_verified',
                     1,
                     1,
                     0,
@@ -778,7 +778,7 @@ def test_delete_branch_removes_subtree_and_dependent_rows(
                     'A claim',
                     'answer',
                     'supported',
-                    'verified'
+                    'llm_verified'
                 )
                 """
             ),
@@ -795,9 +795,11 @@ def test_delete_branch_removes_subtree_and_dependent_rows(
                     source_ref,
                     retrieval_id,
                     exact_snippet,
+                    locator,
                     retrieval_status,
                     selected,
-                    included_in_prompt
+                    included_in_prompt,
+                    source_version
                 )
                 VALUES (
                     :id,
@@ -807,9 +809,17 @@ def test_delete_branch_removes_subtree_and_dependent_rows(
                     '{}'::jsonb,
                     :retrieval_id,
                     'Evidence',
+                    jsonb_build_object(
+                        'type', 'message_offsets',
+                        'conversation_id', CAST(:conversation_id AS text),
+                        'message_id', CAST(:message_id AS text),
+                        'start_offset', 0,
+                        'end_offset', 8
+                    ),
                     'included_in_prompt',
                     true,
-                    true
+                    true,
+                    'message:v1'
                 )
                 """
             ),
@@ -817,6 +827,8 @@ def test_delete_branch_removes_subtree_and_dependent_rows(
                 "id": claim_evidence_id,
                 "claim_id": claim_id,
                 "retrieval_id": retrieval_id,
+                "conversation_id": conversation_id,
+                "message_id": delete_assistant_id,
             },
         )
         session.execute(

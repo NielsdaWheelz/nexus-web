@@ -17,6 +17,7 @@ import type {
   ConversationMessage,
   ForkOption,
 } from "@/lib/conversations/types";
+import { conversationMessageText } from "@/lib/conversations/types";
 import { useChatMessageUpdates } from "@/components/chat/useChatMessageUpdates";
 import {
   selectedPathAfterRun,
@@ -77,7 +78,10 @@ export function useChatRunTail({
     handleDelta,
     handleToolCall,
     handleToolResult,
-    handleCitation,
+    handleSourceManifestDelta,
+    handleArtifactDelta,
+    handleClaim,
+    handleClaimEvidence,
     handleDone,
     flushDeltas,
   } = useChatMessageUpdates({ setMessages, shouldScrollRef });
@@ -240,7 +244,9 @@ export function useChatRunTail({
           return;
         }
         if (persisted) {
-          replayDeltaCharsToSkip = persisted.assistant_message.content.length;
+          replayDeltaCharsToSkip = conversationMessageText(
+            persisted.assistant_message,
+          ).length;
         }
         const delayMs = chatStreamRetryDelayMs(retryAttempt);
         retryAttempt += 1;
@@ -321,13 +327,25 @@ export function useChatRunTail({
                   if (!currentRunIsVisible()) break;
                   handleToolCall(currentAssistantId, event.data);
                   break;
-                case "tool_result":
+                case "retrieval_result":
                   if (!currentRunIsVisible()) break;
                   handleToolResult(currentAssistantId, event.data);
                   break;
-                case "citation":
+                case "source_manifest_delta":
                   if (!currentRunIsVisible()) break;
-                  handleCitation(currentAssistantId, event.data);
+                  handleSourceManifestDelta(currentAssistantId, event.data);
+                  break;
+                case "artifact_delta":
+                  if (!currentRunIsVisible()) break;
+                  handleArtifactDelta(currentAssistantId, event.data);
+                  break;
+                case "claim":
+                  if (!currentRunIsVisible()) break;
+                  handleClaim(currentAssistantId, event.data);
+                  break;
+                case "claim_evidence":
+                  if (!currentRunIsVisible()) break;
+                  handleClaimEvidence(currentAssistantId, event.data);
                   break;
                 case "done":
                   if (currentRunIsVisible()) {
@@ -366,12 +384,15 @@ export function useChatRunTail({
       await startStream();
     },
     [
-      handleCitation,
       handleDelta,
       handleDone,
       handleMetaReceived,
       handleToolCall,
       handleToolResult,
+      handleSourceManifestDelta,
+      handleArtifactDelta,
+      handleClaim,
+      handleClaimEvidence,
       flushDeltas,
       mergeRunMessages,
       onFirstDelta,

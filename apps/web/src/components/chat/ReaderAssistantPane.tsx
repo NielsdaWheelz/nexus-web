@@ -71,6 +71,8 @@ export default function ReaderAssistantPane({
   onConversationAvailable,
   onOpenFullChat,
   onReaderSourceActivate,
+  onAskAboutSource,
+  onSaveSourceQuote,
   autoFocusComposer = true,
   className,
 }: {
@@ -85,6 +87,8 @@ export default function ReaderAssistantPane({
   onConversationAvailable?: (conversationId: string, runId?: string) => void;
   onOpenFullChat: (conversationId: string) => void;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
+  onAskAboutSource?: (target: ReaderSourceTarget) => void;
+  onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
   autoFocusComposer?: boolean;
   className?: string;
 }) {
@@ -635,6 +639,8 @@ export default function ReaderAssistantPane({
         onRetryAssistantResponse={handleRetryAssistantResponse}
         retryingAssistantMessageIds={retryingAssistantMessageIds}
         onReaderSourceActivate={onReaderSourceActivate}
+        onAskAboutSource={onAskAboutSource}
+        onSaveSourceQuote={onSaveSourceQuote}
         olderCursor={olderCursor}
         onLoadOlder={loadOlder}
         emptyState={

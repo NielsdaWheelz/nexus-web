@@ -11,9 +11,24 @@ from llm_calling.types import Turn
 from nexus.errors import ApiError, ApiErrorCode
 
 APP_SEARCH_QUERY_MAX_CHARS = 512
-APP_SEARCH_TYPES_ALL = ("media", "podcast", "content_chunk", "contributor", "note_block", "message")
-APP_SEARCH_TYPES_SCOPED = ("content_chunk",)
-
+APP_SEARCH_TYPES_ALL = (
+    "media",
+    "podcast",
+    "episode",
+    "video",
+    "content_chunk",
+    "fragment",
+    "contributor",
+    "page",
+    "note_block",
+    "highlight",
+    "message",
+    "evidence_span",
+    "conversation",
+    "artifact",
+    "artifact_part",
+)
+APP_SEARCH_TYPES_SCOPED = ("content_chunk", "fragment", "evidence_span")
 _SHORT_NON_SEARCH_MESSAGES = {
     "hi",
     "hello",

@@ -9,45 +9,215 @@ import {
   type SetStateAction,
 } from "react";
 import type {
-  SSECitationEvent,
+  SSEArtifactDeltaEvent,
+  SSEClaimEvidenceEvent,
+  SSEClaimEvent,
+  SearchCitationEventData,
+  SSESourceManifestDeltaEvent,
   SSEToolCallEvent,
-  SSEToolResultEvent,
+  SSERetrievalResultEvent,
+  WebCitationEventData,
 } from "@/lib/api/sse";
+import { isRetrievalLocator } from "@/lib/api/sse";
 import {
   isSearchCitation,
   isWebCitation,
-  toWebCitationChipData,
-  type WebCitationChipData,
 } from "@/lib/chat/citations";
+import { conversationMessageText } from "@/lib/conversations/types";
 import type {
   ConversationMessage,
+  MessageArtifactPart,
+  MessageDocument,
+  MessageRetrievalResultRef,
+  MessageSourceManifestDelta,
   MessageRetrieval,
   MessageToolCall,
 } from "@/lib/conversations/types";
 
-type MessageWithWebCitations = ConversationMessage & {
-  citations?: WebCitationChipData[];
-};
-
-function appendWebCitations(
-  existing: WebCitationChipData[] | undefined,
-  incoming: WebCitationChipData[],
-): WebCitationChipData[] {
-  if (incoming.length === 0) return existing ?? [];
-
-  const next = [...(existing ?? [])];
-  const seen = new Set(
-    next.map((citation) => citation.result_ref || citation.url),
-  );
-
-  for (const citation of incoming) {
-    const key = citation.result_ref || citation.url;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    next.push(citation);
+function artifactPartHasEvidence(part: unknown): part is MessageArtifactPart {
+  if (!part || typeof part !== "object") return false;
+  const record = part as Record<string, unknown>;
+  if (
+    typeof record.source_version !== "string" ||
+    !isRetrievalLocator(record.locator)
+  ) {
+    return false;
   }
+  return (
+    Boolean(record.source_ref && typeof record.source_ref === "object") ||
+    Boolean(record.context_ref && typeof record.context_ref === "object") ||
+    Boolean(record.result_ref && typeof record.result_ref === "object") ||
+    (Array.isArray(record.source_refs) && record.source_refs.length > 0) ||
+    typeof record.evidence_span_id === "string" ||
+    (Array.isArray(record.evidence_span_ids) && record.evidence_span_ids.length > 0)
+  );
+}
 
-  return next;
+function artifactPartIsVisible(part: unknown): part is MessageArtifactPart {
+  if (artifactPartHasEvidence(part)) return true;
+  if (!part || typeof part !== "object") return false;
+  const record = part as Record<string, unknown>;
+  if (
+    typeof record.source_version !== "string" ||
+    !isRetrievalLocator(record.locator)
+  ) {
+    return false;
+  }
+  const metadata = record.metadata;
+  return (
+    metadata !== null &&
+    typeof metadata === "object" &&
+    !Array.isArray(metadata) &&
+    (metadata as Record<string, unknown>).support_state === "not_source_grounded"
+  );
+}
+
+function retrievalFromSearchCitation(
+  citation: SearchCitationEventData,
+  data: {
+    tool_call_id?: string | null;
+    tool_call_index?: number | null;
+    tool_name?: string;
+  },
+  index: number,
+): MessageRetrieval {
+  const result_ref = citation as MessageRetrievalResultRef;
+  return {
+    tool_call_id: data.tool_call_id ?? undefined,
+    tool_call_index: data.tool_call_index ?? null,
+    ordinal: index,
+    result_type: citation.result_type,
+    source_id: citation.source_id,
+    media_id: citation.media_id,
+    evidence_span_id: citation.evidence_span_id ?? null,
+    context_ref: citation.context_ref,
+    result_ref,
+    deep_link: citation.deep_link,
+    citation_label: citation.citation_label ?? null,
+    locator: citation.locator,
+    score: citation.score,
+    selected: citation.selected,
+    source_title: citation.title,
+    section_label: citation.source_label,
+    exact_snippet: citation.snippet,
+    retrieval_status: citation.selected ? "selected" : "retrieved",
+    included_in_prompt: false,
+    source_version: citation.source_version ?? null,
+  };
+}
+
+function retrievalFromWebCitation(
+  citation: WebCitationEventData,
+  data: SSERetrievalResultEvent["data"],
+  index: number,
+): MessageRetrieval {
+  const result_ref: MessageRetrievalResultRef = citation;
+  return {
+    tool_call_id: data.tool_call_id ?? undefined,
+    tool_call_index: data.tool_call_index ?? null,
+    ordinal: index,
+    result_type: "web_result",
+    source_id: citation.source_id,
+    media_id: citation.media_id ?? null,
+    context_ref: citation.context_ref,
+    result_ref,
+    deep_link: citation.deep_link,
+    citation_label: citation.display_url ?? citation.source_name ?? null,
+    locator: citation.locator,
+    score: citation.score ?? null,
+    selected: citation.selected ?? true,
+    source_title: citation.title,
+    exact_snippet: citation.snippet,
+    retrieval_status: "web_result",
+    included_in_prompt: false,
+    source_version: citation.source_version,
+  };
+}
+
+function sameToolBlock(
+  block: {
+    tool_call_id?: string | null;
+    tool_call_index?: number | null;
+    tool_name?: string | null;
+  },
+  data: {
+    tool_call_id?: string | null;
+    tool_call_index: number;
+    tool_name?: string | null;
+  },
+): boolean {
+  if (block.tool_name && data.tool_name && block.tool_name !== data.tool_name) {
+    return false;
+  }
+  return data.tool_call_id
+    ? block.tool_call_id === data.tool_call_id
+    : block.tool_call_index === data.tool_call_index;
+}
+
+function messageDocumentWithText(
+  message: ConversationMessage,
+  content: string,
+): MessageDocument {
+  const existingBlocks = message.message_document?.blocks ?? [];
+  return {
+    type: "message_document",
+    version: message.message_document?.version ?? 1,
+    blocks: [
+      ...(content.trim().length > 0
+        ? [
+            {
+              type: "text" as const,
+              format: "markdown" as const,
+              text: content,
+            },
+          ]
+        : []),
+      ...existingBlocks.filter((block) => block.type !== "text"),
+    ],
+  };
+}
+
+function messageDocumentWithRetrievals(
+  message: ConversationMessage,
+  data: SSERetrievalResultEvent["data"],
+  retrievals: MessageRetrieval[],
+): MessageDocument {
+  const existingBlocks = message.message_document?.blocks ?? [];
+  return {
+    type: "message_document",
+    version: message.message_document?.version ?? 1,
+    blocks: [
+      ...existingBlocks.filter(
+        (block) =>
+          block.type !== "retrieval_result" || !sameToolBlock(block, data),
+      ),
+      ...retrievals.map((retrieval) => ({
+        type: "retrieval_result" as const,
+        ...retrieval,
+      })),
+    ],
+  };
+}
+
+function messageDocumentWithSourceManifest(
+  message: ConversationMessage,
+  data: MessageSourceManifestDelta,
+): MessageDocument {
+  const existingBlocks = message.message_document?.blocks ?? [];
+  return {
+    type: "message_document",
+    version: message.message_document?.version ?? 1,
+    blocks: [
+      ...existingBlocks.filter(
+        (block) =>
+          block.type !== "source_manifest" || !sameToolBlock(block, data),
+      ),
+      {
+        type: "source_manifest" as const,
+        ...data,
+      },
+    ],
+  };
 }
 
 export function useChatMessageUpdates({
@@ -69,7 +239,12 @@ export function useChatMessageUpdates({
     setMessages((prev) =>
       prev.map((m) => {
         const delta = snapshot.get(m.id);
-        return delta ? { ...m, content: m.content + delta } : m;
+        if (!delta) return m;
+        const content = conversationMessageText(m) + delta;
+        return {
+          ...m,
+          message_document: messageDocumentWithText(m, content),
+        };
       }),
     );
   }, [setMessages]);
@@ -134,7 +309,6 @@ export function useChatMessageUpdates({
             scope: data.scope,
             requested_types: data.types,
             semantic: data.semantic,
-            retrievals: [],
           };
           const index = existing.findIndex(
             (call) => call.tool_call_index === data.tool_call_index,
@@ -153,40 +327,20 @@ export function useChatMessageUpdates({
   );
 
   const handleToolResult = useCallback(
-    (assistantId: string, data: SSEToolResultEvent["data"]) => {
-      const retrievals: MessageRetrieval[] = data.citations.filter(isSearchCitation).map(
-        (citation, index) => ({
-          tool_call_id: data.tool_call_id ?? undefined,
-          ordinal: index,
-          result_type: citation.result_type,
-          source_id: citation.source_id,
-          media_id: citation.media_id,
-          context_ref: citation.context_ref,
-          result_ref: citation,
-          deep_link: citation.deep_link,
-          citation_label: citation.citation_label ?? null,
-          resolver: citation.resolver,
-          score: citation.score,
-          selected: citation.selected,
-        }),
+    (assistantId: string, data: SSERetrievalResultEvent["data"]) => {
+      const results = Array.isArray(data.results) ? data.results : [];
+      const retrievals: MessageRetrieval[] = results.flatMap(
+        (citation, index) => {
+          if (isWebCitation(citation)) {
+            return [retrievalFromWebCitation(citation, data, index)];
+          }
+          if (!isSearchCitation(citation)) return [];
+          return [retrievalFromSearchCitation(citation, data, index)];
+        },
       );
-      const webCitations = data.citations
-        .filter(isWebCitation)
-        .map((citation, index) =>
-          toWebCitationChipData({
-            ...citation,
-            assistant_message_id:
-              citation.assistant_message_id ?? data.assistant_message_id,
-            tool_call_id: citation.tool_call_id ?? data.tool_call_id,
-            tool_call_index: citation.tool_call_index ?? data.tool_call_index,
-            citation_index: citation.citation_index ?? citation.index ?? index,
-          }),
-        );
-
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== assistantId) return m;
-          const message = m as MessageWithWebCitations;
           const existing = m.tool_calls ?? [];
           const index = existing.findIndex(
             (call) => call.tool_call_index === data.tool_call_index,
@@ -200,7 +354,8 @@ export function useChatMessageUpdates({
             status: data.status,
             error_code: data.error_code ?? null,
             latency_ms: data.latency_ms,
-            retrievals,
+            result_count: data.result_count,
+            selected_count: data.selected_count,
           };
           const toolCalls =
             index >= 0
@@ -209,7 +364,11 @@ export function useChatMessageUpdates({
           return {
             ...m,
             tool_calls: toolCalls,
-            citations: appendWebCitations(message.citations, webCitations),
+            message_document: messageDocumentWithRetrievals(
+              m,
+              data,
+              retrievals,
+            ),
           };
         }),
       );
@@ -217,16 +376,170 @@ export function useChatMessageUpdates({
     [setMessages],
   );
 
-  const handleCitation = useCallback(
-    (assistantId: string, data: SSECitationEvent["data"]) => {
-      const citation = toWebCitationChipData(data);
+  const handleSourceManifestDelta = useCallback(
+    (assistantId: string, data: SSESourceManifestDeltaEvent["data"]) => {
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== assistantId) return m;
-          const message = m as MessageWithWebCitations;
           return {
             ...m,
-            citations: appendWebCitations(message.citations, [citation]),
+            message_document: messageDocumentWithSourceManifest(m, data),
+          };
+        }),
+      );
+    },
+    [setMessages],
+  );
+
+  const handleArtifactDelta = useCallback(
+    (assistantId: string, data: SSEArtifactDeltaEvent["data"]) => {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== assistantId) return m;
+          const artifact = {
+            artifact_id: typeof data.artifact_id === "string" ? data.artifact_id : null,
+            durable_artifact_id:
+              typeof data.durable_artifact_id === "string" ? data.durable_artifact_id : null,
+            artifact_key:
+              typeof data.artifact_key === "string" ? data.artifact_key : null,
+            artifact_version:
+              typeof data.artifact_version === "number" ? data.artifact_version : null,
+            supersedes_artifact_id:
+              typeof data.supersedes_artifact_id === "string"
+                ? data.supersedes_artifact_id
+                : null,
+            artifact_kind:
+              typeof data.artifact_kind === "string" ? data.artifact_kind : null,
+            title: typeof data.title === "string" ? data.title : null,
+            status: typeof data.status === "string" ? data.status : null,
+            delta: typeof data.delta === "string" ? data.delta : null,
+            parts: Array.isArray(data.parts)
+              ? data.parts.filter(artifactPartIsVisible)
+              : [],
+          };
+          const blocks = m.message_document?.blocks ?? [];
+          return {
+            ...m,
+            message_document: {
+              type: "message_document",
+              version: 1,
+              blocks: [
+                ...blocks.filter(
+                  (block) =>
+                    block.type !== "artifact_preview" ||
+                    !artifact.artifact_id ||
+                    block.artifact_id !== artifact.artifact_id,
+                ),
+                {
+                  type: "artifact_preview",
+                  artifact_id: artifact.artifact_id,
+                  durable_artifact_id: artifact.durable_artifact_id,
+                  artifact_key: artifact.artifact_key,
+                  artifact_version: artifact.artifact_version,
+                  supersedes_artifact_id: artifact.supersedes_artifact_id,
+                  artifact_kind: artifact.artifact_kind,
+                  title: artifact.title,
+                  status: artifact.status,
+                  delta: artifact.delta,
+                  parts: artifact.parts,
+                },
+              ],
+            },
+          };
+        }),
+      );
+    },
+    [setMessages],
+  );
+
+  const handleClaim = useCallback(
+    (assistantId: string, data: SSEClaimEvent["data"]) => {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (
+            m.id !== assistantId ||
+            typeof data.claim_text !== "string" ||
+            !(
+              data.claim_kind === "answer" ||
+              data.claim_kind === "insufficient_evidence"
+            ) ||
+            !(
+              data.support_status === "supported" ||
+              data.support_status === "partially_supported" ||
+              data.support_status === "contradicted" ||
+              data.support_status === "not_enough_evidence" ||
+              data.support_status === "out_of_scope" ||
+              data.support_status === "not_source_grounded"
+            ) ||
+            !(
+              data.verifier_status === "llm_verified" ||
+              data.verifier_status === "parse_failed" ||
+              data.verifier_status === "failed"
+            )
+          ) {
+            return m;
+          }
+          const createdAt = data.created_at ?? new Date().toISOString();
+          const blocks = m.message_document?.blocks ?? [];
+          const ordinal =
+            data.ordinal ?? blocks.filter((block) => block.type === "claim").length;
+          const claimId = data.id ?? `${assistantId}-claim-${ordinal}`;
+          return {
+            ...m,
+            message_document: {
+              type: "message_document",
+              version: 1,
+              blocks: [
+                ...blocks.filter(
+                  (block) => block.type !== "claim" || block.claim_id !== claimId,
+                ),
+                {
+                  type: "claim",
+                  claim_id: claimId,
+                  message_id: data.message_id ?? assistantId,
+                  ordinal,
+                  claim_text: data.claim_text,
+                  answer_start_offset: data.answer_start_offset ?? null,
+                  answer_end_offset: data.answer_end_offset ?? null,
+                  claim_kind: data.claim_kind,
+                  support_status: data.support_status,
+                  unsupported_reason: data.unsupported_reason ?? null,
+                  confidence:
+                    typeof data.confidence === "number" ? data.confidence : null,
+                  verifier_status: data.verifier_status,
+                  created_at: createdAt,
+                },
+              ],
+            },
+          };
+        }),
+      );
+    },
+    [setMessages],
+  );
+
+  const handleClaimEvidence = useCallback(
+    (assistantId: string, evidence: SSEClaimEvidenceEvent["data"]) => {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== assistantId) return m;
+          const blocks = m.message_document?.blocks ?? [];
+          return {
+            ...m,
+            message_document: {
+              type: "message_document",
+              version: 1,
+              blocks: [
+                ...blocks.filter(
+                  (block) =>
+                    block.type !== "claim_evidence" || block.id !== evidence.id,
+                ),
+                {
+                  type: "claim_evidence",
+                  ...evidence,
+                },
+              ],
+            },
           };
         }),
       );
@@ -240,10 +553,6 @@ export function useChatMessageUpdates({
       status: "complete" | "error" | "cancelled",
       errorCode: string | null,
     ) => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
       const buffer = deltaBufferRef.current;
       const remaining = buffer.get(assistantId);
       buffer.delete(assistantId);
@@ -251,9 +560,12 @@ export function useChatMessageUpdates({
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== assistantId) return m;
+          const content = remaining
+            ? conversationMessageText(m) + remaining
+            : conversationMessageText(m);
           return {
             ...m,
-            content: remaining ? m.content + remaining : m.content,
+            message_document: messageDocumentWithText(m, content),
             status,
             error_code: errorCode,
           };
@@ -270,7 +582,10 @@ export function useChatMessageUpdates({
     handleDelta,
     handleToolCall,
     handleToolResult,
-    handleCitation,
+    handleSourceManifestDelta,
+    handleArtifactDelta,
+    handleClaim,
+    handleClaimEvidence,
     handleDone,
   };
 }

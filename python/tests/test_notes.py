@@ -555,10 +555,40 @@ def test_object_ref_search_returns_visible_note_editor_targets(db_session, boots
     assert ("page", page.id) in ref_keys
     assert ("note_block", block.id) in ref_keys
     assert ("media", media_id) in ref_keys
+    assert ("fragment", fragment_id) in ref_keys
     assert ("highlight", highlight_id) in ref_keys
     assert ("conversation", conversation_id) in ref_keys
     assert ("message", message_id) in ref_keys
     assert ("page", other_page.id) not in ref_keys
+
+
+@pytest.mark.integration
+def test_hydrate_fragment_object_ref_returns_media_fragment_route(db_session, bootstrapped_user):
+    default_library_id = ensure_user_and_default_library(db_session, bootstrapped_user)
+    media_id = create_test_media_in_library(
+        db_session,
+        bootstrapped_user,
+        default_library_id,
+        title="Fragment route source",
+    )
+    fragment_id = create_test_fragment(
+        db_session,
+        media_id,
+        "Fragment route passage for object refs",
+    )
+
+    ref = object_refs.hydrate_object_ref(
+        db_session,
+        bootstrapped_user,
+        ObjectRef(object_type="fragment", object_id=fragment_id),
+    )
+
+    assert ref.object_type == "fragment"
+    assert ref.object_id == fragment_id
+    assert ref.label == "Fragment 1"
+    assert ref.route == f"/media/{media_id}?fragment={fragment_id}"
+    assert "Fragment route passage" in (ref.snippet or "")
+    assert ref.icon == "text"
 
 
 @pytest.mark.integration

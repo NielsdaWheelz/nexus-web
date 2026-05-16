@@ -5,6 +5,7 @@
  * Uses Supabase admin API to create/ensure a test user exists.
  */
 
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyResolvedSupabaseEnv } from "./supabase-env.mjs";
@@ -13,6 +14,7 @@ const ROOT_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+const SEED_USER_FILE = path.join(ROOT_DIR, "e2e/.seed/e2e-user.json");
 applyResolvedSupabaseEnv(ROOT_DIR, process.env, { includeAdminKey: true });
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -79,6 +81,7 @@ async function seedUser() {
   const existing = await findExistingUserByEmail();
   if (existing) {
     console.log(`E2E user already exists (id: ${existing.id})`);
+    writeSeedUser(existing);
     return;
   }
 
@@ -100,9 +103,14 @@ async function seedUser() {
       (createRes.status === 409 || createRes.status === 422) &&
       /(already|exists|duplicate)/i.test(errorBody)
     ) {
+      const raced = await findExistingUserByEmail();
+      if (!raced) {
+        throw new Error("E2E user create raced, but the user could not be listed.");
+      }
       console.log(
         "E2E user already exists (create raced with another setup run).",
       );
+      writeSeedUser(raced);
       return;
     }
 
@@ -111,6 +119,19 @@ async function seedUser() {
 
   const created = (await createRes.json()) as AdminUser;
   console.log(`E2E user created (id: ${created.id ?? "unknown"})`);
+  writeSeedUser(created);
+}
+
+function writeSeedUser(user: AdminUser) {
+  if (!user.id) {
+    throw new Error("E2E user seed did not return a user id.");
+  }
+  mkdirSync(path.dirname(SEED_USER_FILE), { recursive: true });
+  writeFileSync(
+    SEED_USER_FILE,
+    `${JSON.stringify({ user_id: user.id, email: E2E_USER_EMAIL }, null, 2)}\n`,
+    "utf-8",
+  );
 }
 
 seedUser().catch((err) => {

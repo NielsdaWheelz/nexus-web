@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
+from pydantic import ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -17,6 +17,11 @@ from nexus.db.models import Contributor, MessageContextItem, MessageRetrieval
 from nexus.errors import NotFoundError
 from nexus.schemas.conversation import MessageContextRef
 from nexus.schemas.notes import ObjectRef
+from nexus.schemas.retrieval import (
+    retrieval_context_ref_json,
+    retrieval_locator_json,
+    retrieval_result_ref_json,
+)
 from nexus.services.context_rendering import render_context_blocks
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 from nexus.services.contributors import get_contributor_by_handle, get_contributor_by_id
@@ -35,13 +40,20 @@ LookupFailureCode = Literal[
 
 SUPPORTED_CONTEXT_REF_TYPES = {
     "media",
+    "episode",
+    "video",
     "highlight",
     "page",
     "note_block",
     "content_chunk",
+    "fragment",
     "message",
+    "conversation",
+    "evidence_span",
     "podcast",
     "contributor",
+    "artifact",
+    "artifact_part",
     "web_result",
 }
 SUPPORTED_SOURCE_REF_TYPES = {
@@ -100,7 +112,7 @@ def hydrate_context_ref(
     if context_type not in {"web_result", "contributor"} and context_id is None:
         return _failed(source_ref, context_ref, "invalid", "context_ref id is invalid")
 
-    if context_type == "media":
+    if context_type in {"media", "episode", "video"}:
         assert context_id is not None
         if not can_read_media(db, viewer_id, context_id):
             return _failed(source_ref, context_ref, "forbidden", "Context not readable")
@@ -148,6 +160,10 @@ def hydrate_context_ref(
 
     if context_type == "content_chunk":
         assert context_id is not None
+        try:
+            evidence_span_ids = _evidence_span_ids_from_context_ref(context_ref)
+        except ValueError:
+            return _failed(source_ref, context_ref, "invalid", "evidence_span_ids are invalid")
         return _resolve_text_result(
             source_ref,
             context_ref,
@@ -155,10 +171,26 @@ def hydrate_context_ref(
                 db,
                 viewer_id,
                 context_id,
-                _evidence_span_ids_from_context_ref(context_ref),
+                evidence_span_ids,
             ),
             max_chars=max_chars,
         )
+
+    if context_type == "fragment":
+        assert context_id is not None
+        row = db.execute(
+            text("SELECT media_id FROM fragments WHERE id = :fragment_id"),
+            {"fragment_id": context_id},
+        ).fetchone()
+        if row is None:
+            return _failed(source_ref, context_ref, "not_found", "Context not found")
+        if not can_read_media(db, viewer_id, row[0]):
+            return _failed(source_ref, context_ref, "forbidden", "Context not readable")
+        text_block = _render_message_context_ref(
+            db,
+            MessageContextRef(type="fragment", id=context_id),
+        )
+        return _resolve_text_result(source_ref, context_ref, text_block, max_chars=max_chars)
 
     if context_type == "message":
         assert context_id is not None
@@ -205,16 +237,84 @@ def hydrate_context_ref(
             max_chars=max_chars,
         )
 
+    if context_type == "artifact_part":
+        assert context_id is not None
+        try:
+            message_context_ref = MessageContextRef.model_validate(dict(context_ref))
+        except ValidationError:
+            return _failed(
+                source_ref,
+                context_ref,
+                "invalid",
+                "artifact_part context_ref requires durable provenance",
+            )
+        row = db.execute(
+            text(
+                """
+                SELECT ma.conversation_id
+                FROM message_artifact_parts part
+                JOIN message_artifacts ma ON ma.id = part.artifact_id
+                WHERE part.id = :artifact_part_id
+                """
+            ),
+            {"artifact_part_id": context_id},
+        ).fetchone()
+        if row is None:
+            return _failed(source_ref, context_ref, "not_found", "Context not found")
+        if not can_read_conversation(db, viewer_id, row[0]):
+            return _failed(source_ref, context_ref, "forbidden", "Context not readable")
+        text_block = _render_message_context_ref(
+            db,
+            message_context_ref,
+        )
+        return _resolve_text_result(source_ref, context_ref, text_block, max_chars=max_chars)
+
+    if context_type == "artifact":
+        assert context_id is not None
+        row = db.execute(
+            text("SELECT conversation_id FROM message_artifacts WHERE id = :artifact_id"),
+            {"artifact_id": context_id},
+        ).fetchone()
+        if row is None:
+            return _failed(source_ref, context_ref, "not_found", "Context not found")
+        if not can_read_conversation(db, viewer_id, row[0]):
+            return _failed(source_ref, context_ref, "forbidden", "Context not readable")
+        text_block = _render_message_context_ref(
+            db,
+            MessageContextRef(type="artifact", id=context_id),
+        )
+        return _resolve_text_result(source_ref, context_ref, text_block, max_chars=max_chars)
+
+    if context_type == "evidence_span":
+        assert context_id is not None
+        row = db.execute(
+            text("SELECT media_id FROM evidence_spans WHERE id = :evidence_span_id"),
+            {"evidence_span_id": context_id},
+        ).fetchone()
+        if row is None:
+            return _failed(source_ref, context_ref, "not_found", "Context not found")
+        if not can_read_media(db, viewer_id, row[0]):
+            return _failed(source_ref, context_ref, "forbidden", "Context not readable")
+        text_block = _render_message_context_ref(
+            db,
+            MessageContextRef(type="evidence_span", id=context_id),
+        )
+        return _resolve_text_result(source_ref, context_ref, text_block, max_chars=max_chars)
+
     if context_type == "web_result":
         result_ref = context_ref.get("result_ref")
         if not isinstance(result_ref, Mapping):
             return _failed(source_ref, context_ref, "invalid", "web_result requires result_ref")
+        try:
+            validated_ref = retrieval_result_ref_json(dict(result_ref))
+        except ValueError:
+            return _failed(source_ref, context_ref, "invalid", "web_result result_ref is invalid")
         return _resolved(
             source_ref,
             context_ref,
-            _render_web_result(result_ref),
+            _render_web_result(validated_ref),
             max_chars=max_chars,
-            citations=(dict(result_ref),),
+            citations=(validated_ref,),
         )
 
     return _failed(source_ref, context_ref, "unsupported", "Unsupported context_ref type")
@@ -287,12 +387,16 @@ def hydrate_source_ref(
         result_ref = source_ref.get("result_ref")
         if not isinstance(result_ref, Mapping):
             return _failed(source_ref, None, "invalid", "web_result requires result_ref")
+        try:
+            validated_ref = retrieval_result_ref_json(dict(result_ref))
+        except ValueError:
+            return _failed(source_ref, None, "invalid", "web_result result_ref is invalid")
         return _resolved(
             source_ref,
-            {"type": "web_result", "id": str(source_ref.get("id") or result_ref.get("result_ref"))},
-            _render_web_result(result_ref),
+            {"type": "web_result", "id": str(source_ref.get("id") or validated_ref["result_ref"])},
+            _render_web_result(validated_ref),
             max_chars=max_chars,
-            citations=(dict(result_ref),),
+            citations=(validated_ref,),
         )
 
     return _failed(source_ref, None, "unsupported", "Unsupported source_ref type")
@@ -325,48 +429,58 @@ def _hydrate_message_retrieval(
     tool_call = retrieval.tool_call
     if tool_call is None or not can_read_conversation(db, viewer_id, tool_call.conversation_id):
         return _failed(source_ref, None, "forbidden", "Retrieval not readable")
-    if retrieval.result_ref.get("status") in {"no_indexed_evidence", "no_results"}:
-        return _resolved(
-            source_ref,
-            retrieval.context_ref,
-            _render_app_search_status(retrieval.result_ref),
-            max_chars=max_chars,
-            citations=(retrieval.result_ref,),
-        )
+    try:
+        context_ref = retrieval_context_ref_json(retrieval.context_ref)
+        result_ref = retrieval_result_ref_json(retrieval.result_ref)
+        locator = retrieval_locator_json(retrieval.locator)
+    except ValidationError:
+        return _failed(source_ref, retrieval.context_ref, "invalid", "Retrieval ref is invalid")
+    source_version = retrieval.source_version
+    result_source_version = result_ref.get("source_version")
+    result_locator = result_ref.get("locator")
+    if (
+        result_ref.get("type") != retrieval.result_type
+        or not isinstance(source_version, str)
+        or not source_version.strip()
+        or result_source_version != source_version
+        or not isinstance(result_locator, dict)
+        or locator != result_locator
+    ):
+        return _failed(source_ref, context_ref, "invalid", "Retrieval evidence is not citable")
     if retrieval.result_type == "web_result":
         return _resolved(
             source_ref,
-            retrieval.context_ref,
-            _render_web_result(retrieval.result_ref),
+            context_ref,
+            _render_web_result(result_ref),
             max_chars=max_chars,
-            citations=(retrieval.result_ref,),
+            citations=(result_ref,),
         )
     if retrieval.evidence_span_id is not None:
         text_block = _render_evidence_span_context(
             db,
             viewer_id,
             retrieval.evidence_span_id,
-            index_run_id=_index_run_id_from_content_chunk_context_ref(db, retrieval.context_ref),
+            index_run_id=_index_run_id_from_content_chunk_context_ref(db, context_ref),
         )
         if isinstance(text_block, ContextLookupFailure):
-            return _failed(source_ref, retrieval.context_ref, text_block.code, text_block.message)
+            return _failed(source_ref, context_ref, text_block.code, text_block.message)
         return _resolved(
             source_ref,
             _context_ref_with_evidence_span_id(
-                retrieval.context_ref,
+                context_ref,
                 retrieval.evidence_span_id,
             ),
             text_block,
             max_chars=max_chars,
-            citations=(retrieval.result_ref,),
+            citations=(result_ref,),
         )
     nested = hydrate_context_ref(
         db,
         viewer_id=viewer_id,
-        context_ref=retrieval.context_ref,
+        context_ref=context_ref,
         max_chars=max_chars,
     )
-    return _with_source_ref(nested, source_ref, citations=(retrieval.result_ref,))
+    return _with_source_ref(nested, source_ref, citations=(result_ref,))
 
 
 def _context_ref_from_message_context(
@@ -397,11 +511,31 @@ def _context_ref_from_message_context(
         }
     context_ref: dict[str, object] = {"type": row.object_type, "id": str(row.object_id)}
     if row.object_type == "content_chunk":
-        evidence_span_ids = _evidence_span_ids_from_context_ref(row.context_snapshot_json)
+        try:
+            evidence_span_ids = _evidence_span_ids_from_context_ref(row.context_snapshot_json)
+        except ValueError:
+            return None
         if evidence_span_ids:
             context_ref["evidence_span_ids"] = [
                 str(evidence_span_id) for evidence_span_id in evidence_span_ids
             ]
+    if row.object_type == "artifact_part":
+        snapshot = row.context_snapshot_json if isinstance(row.context_snapshot_json, dict) else {}
+        for key in (
+            "artifact_id",
+            "artifact_key",
+            "artifact_version",
+            "source_version",
+            "locator",
+            "artifact_part_provenance",
+        ):
+            value = snapshot.get(key)
+            if value is not None:
+                context_ref[key] = value
+        try:
+            MessageContextRef.model_validate(context_ref)
+        except ValidationError:
+            return None
     return context_ref
 
 
@@ -796,14 +930,6 @@ def _render_contributor_context(
     return handle, "\n".join(lines)
 
 
-def _render_app_search_status(result_ref: Mapping[str, object]) -> str:
-    return (
-        f'<app_search_results status="{xml_escape(str(result_ref.get("status") or "no_results"))}" '
-        f'scope="{xml_escape(str(result_ref.get("scope") or "all"))}" '
-        f'filters="{xml_escape(json.dumps(result_ref.get("filters") or {}, sort_keys=True))}" />'
-    )
-
-
 def _render_web_result(result_ref: Mapping[str, object]) -> str:
     title = str(result_ref.get("title") or "")
     url = str(result_ref.get("url") or "")
@@ -843,11 +969,7 @@ def _format_timestamp_ms(timestamp_ms: int | None) -> str | None:
 def _evidence_span_ids_from_context_ref(context_ref: Mapping[str, object]) -> list[UUID]:
     raw_values = context_ref.get("evidence_span_ids")
     if raw_values is None:
-        raw_values = context_ref.get("evidenceSpanIds")
-    if raw_values is None:
         raw_values = context_ref.get("evidence_span_id")
-    if raw_values is None:
-        raw_values = context_ref.get("evidenceSpanId")
     if isinstance(raw_values, str):
         values = [raw_values]
     elif isinstance(raw_values, Sequence) and not isinstance(raw_values, (str, bytes)):
@@ -859,7 +981,9 @@ def _evidence_span_ids_from_context_ref(context_ref: Mapping[str, object]) -> li
     seen: set[UUID] = set()
     for value in values:
         evidence_span_id = _parse_uuid(value)
-        if evidence_span_id is None or evidence_span_id in seen:
+        if evidence_span_id is None:
+            raise ValueError("evidence_span_ids must be UUIDs")
+        if evidence_span_id in seen:
             continue
         seen.add(evidence_span_id)
         evidence_span_ids.append(evidence_span_id)

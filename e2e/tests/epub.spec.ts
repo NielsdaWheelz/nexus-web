@@ -287,8 +287,12 @@ async function putReaderState(
   const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
     data: locator,
   });
-  expect(response.ok()).toBeTruthy();
-  const payload = (await response.json()) as ReaderStateResponse;
+  const body = await response.text();
+  expect(
+    response.ok(),
+    `PUT reader state failed: status=${response.status()} body=${body}`,
+  ).toBeTruthy();
+  const payload = JSON.parse(body) as ReaderStateResponse;
   return payload.data;
 }
 

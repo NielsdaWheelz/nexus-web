@@ -5,6 +5,7 @@ import type {
   ForkOption,
   ForkStatus,
 } from "@/lib/conversations/types";
+import { conversationMessageText } from "@/lib/conversations/types";
 
 type ChatRunData = ChatRunResponse["data"];
 
@@ -70,7 +71,7 @@ export function upsertForkOptionForRun(
     assistant_message_id: runData.assistant_message.id,
     leaf_message_id: runData.assistant_message.id,
     title: null,
-    preview: runData.user_message.content,
+    preview: conversationMessageText(runData.user_message),
     branch_anchor_kind: runData.user_message.branch_anchor_kind ?? "assistant_message",
     branch_anchor_preview:
       branchAnchorPreview(runData.user_message.branch_anchor) ?? null,

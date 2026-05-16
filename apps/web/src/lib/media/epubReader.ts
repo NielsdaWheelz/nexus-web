@@ -21,6 +21,7 @@ export interface EpubSectionContent {
   canonical_text: string;
   char_count: number;
   word_count: number;
+  source_version?: string | null;
   created_at: string;
 }
 
@@ -34,6 +35,7 @@ export interface EpubNavigationSection {
   source: "toc" | "spine";
   ordinal: number;
   char_count: number;
+  source_version?: string | null;
 }
 
 export interface EpubNavigationTocNode {

@@ -10,7 +10,12 @@ from sqlalchemy.orm import Session
 from nexus.db.models import ChatRun, Message, MessageRetrieval, MessageToolCall, Model
 from nexus.services.context_assembler import assemble_chat_context
 from nexus.services.context_rendering import PROMPT_VERSION
-from tests.factories import create_test_conversation, create_test_message, create_test_model
+from tests.factories import (
+    create_test_conversation,
+    create_test_media,
+    create_test_message,
+    create_test_model,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -109,6 +114,126 @@ def test_assemble_chat_context_selects_recent_history_as_pairs(
     assert assembly.history[0].role == "user"
     assert assembly.history[-1].role == "assistant"
     assert "older assistant 9" in assembly.history[-1].content
+
+
+def test_assemble_chat_context_exposes_reader_selection_locator_and_source_version(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    model_id = create_test_model(db_session)
+    model = db_session.get(Model, model_id)
+    assert model is not None
+    model.max_context_tokens = 5000
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    media_id = create_test_media(db_session, title="Stable Reader Source")
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=1,
+        role="user",
+        content="Use the attached quote.",
+    )
+    assistant_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=2,
+        role="assistant",
+        content="",
+        status="pending",
+        model_id=model_id,
+    )
+    client_context_id = uuid4()
+    fragment_id = uuid4()
+    locator = {
+        "type": "web_text_offsets",
+        "media_id": str(media_id),
+        "fragment_id": str(fragment_id),
+        "start_offset": 4,
+        "end_offset": 17,
+    }
+    source_version = f"fragment:{fragment_id}"
+    db_session.execute(
+        text(
+            """
+            INSERT INTO message_context_items (
+                message_id,
+                user_id,
+                context_kind,
+                source_media_id,
+                locator_json,
+                ordinal,
+                context_snapshot
+            )
+            VALUES (
+                :message_id,
+                :user_id,
+                'reader_selection',
+                :source_media_id,
+                :locator_json,
+                0,
+                :context_snapshot
+            )
+            """
+        ).bindparams(
+            bindparam("locator_json", type_=JSONB),
+            bindparam("context_snapshot", type_=JSONB),
+        ),
+        {
+            "message_id": user_message_id,
+            "user_id": bootstrapped_user,
+            "source_media_id": media_id,
+            "locator_json": locator,
+            "context_snapshot": {
+                "kind": "reader_selection",
+                "client_context_id": str(client_context_id),
+                "media_id": str(media_id),
+                "source_media_id": str(media_id),
+                "media_kind": "web_article",
+                "media_title": "Stable Reader Source",
+                "exact": "attached quote",
+                "prefix": "Use ",
+                "suffix": " here.",
+                "locator": locator,
+                "source_version": source_version,
+            },
+        },
+    )
+    db_session.commit()
+    run = _create_run(
+        db_session,
+        user_id=bootstrapped_user,
+        model_id=model_id,
+        conversation_id=conversation_id,
+        user_message_id=user_message_id,
+        assistant_message_id=assistant_id,
+    )
+
+    assembly = assemble_chat_context(
+        db_session,
+        run=run,
+        model=model,
+        environment="test",
+        key_mode_used="platform",
+        provider_account_boundary="platform",
+        max_output_tokens=128,
+    )
+
+    attached_block = next(
+        block for block in assembly.prompt_plan.blocks() if block.lane == "attached_context"
+    )
+    attached_ref = dict(attached_block.source_refs[0])
+
+    assert attached_block.source_version == source_version
+    assert attached_ref["type"] == "reader_selection"
+    assert attached_ref["id"] == str(client_context_id)
+    assert attached_ref["source_media_id"] == str(media_id)
+    assert attached_ref["locator"] == locator
+    assert attached_ref["source_version"] == source_version
+    assert attached_ref["exact_snippet"] == "attached quote"
+    assert any(
+        ref.get("source_version") == source_version and ref.get("locator") == locator
+        for ref in assembly.ledger.included_context_refs
+    )
 
 
 def test_assemble_chat_context_uses_only_ancestor_path_for_branch(
@@ -425,7 +550,7 @@ def test_assemble_chat_context_filters_memory_from_sibling_branch(
     assert sibling_memory_id not in assembly.ledger.included_memory_item_ids
 
 
-def test_assemble_chat_context_returns_tool_and_citation_events_from_persisted_retrievals(
+def test_assemble_chat_context_returns_tool_and_retrieval_events_from_persisted_retrievals(
     db_session: Session,
     bootstrapped_user: UUID,
 ):
@@ -476,14 +601,38 @@ def test_assemble_chat_context_returns_tool_and_citation_events_from_persisted_r
                 source_id="web_1",
                 context_ref={"type": "web_result", "id": "web_1"},
                 result_ref={
+                    "type": "web_result",
+                    "id": "web_1",
+                    "result_type": "web_result",
                     "result_ref": "web_1",
+                    "source_id": "web_1",
                     "title": "Docs",
                     "url": "https://example.com/docs",
                     "display_url": "example.com/docs",
+                    "deep_link": "https://example.com/docs",
                     "snippet": "Docs snippet",
                     "provider": "test",
+                    "source_version": "web_search:test:web_1",
+                    "locator": {
+                        "type": "external_url",
+                        "url": "https://example.com/docs",
+                        "title": "Docs",
+                        "display_url": "example.com/docs",
+                    },
+                    "context_ref": {"type": "web_result", "id": "web_1"},
+                    "media_id": None,
+                    "media_kind": None,
+                    "score": 1.0,
+                    "selected": True,
                 },
                 deep_link="https://example.com/docs",
+                locator={
+                    "type": "external_url",
+                    "url": "https://example.com/docs",
+                    "title": "Docs",
+                    "display_url": "example.com/docs",
+                },
+                source_version="web_search:test:web_1",
                 score=1.0,
                 selected=True,
             )
@@ -504,8 +653,10 @@ def test_assemble_chat_context_returns_tool_and_citation_events_from_persisted_r
 
     assert "web_search" in assembly.context_types
     assert assembly.tool_call_events[0]["tool_name"] == "web_search"
-    assert assembly.tool_result_events[0]["selected_count"] == 1
-    assert assembly.citation_events[0]["url"] == "https://example.com/docs"
+    assert assembly.retrieval_result_events[0]["selected_count"] == 1
+    assert assembly.retrieval_result_events[0]["citations"][0]["url"] == (
+        "https://example.com/docs"
+    )
     assert any("Docs snippet" in block for block in assembly.context_blocks)
     assert len(assembly.ledger.included_retrieval_ids) == 1
 

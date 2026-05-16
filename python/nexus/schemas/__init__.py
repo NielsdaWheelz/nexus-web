@@ -14,6 +14,7 @@ from nexus.schemas.conversation import (
     ConversationShareTargetOut,
     MessageClaimEvidenceOut,
     MessageClaimOut,
+    MessageDocument,
     MessageEvidenceSummaryOut,
     MessageListResponse,
     MessageOut,
@@ -93,6 +94,7 @@ __all__ = [
     # Conversation schemas (Slice 3)
     "ConversationOut",
     "MessageOut",
+    "MessageDocument",
     "MessageEvidenceSummaryOut",
     "MessageClaimOut",
     "MessageClaimEvidenceOut",

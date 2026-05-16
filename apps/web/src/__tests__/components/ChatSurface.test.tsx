@@ -13,6 +13,22 @@ const baseMessage = {
   updated_at: "2026-01-01T00:00:00Z",
 } as const;
 
+function messageDocument(text: string, role: ConversationMessage["role"]) {
+  return {
+    type: "message_document" as const,
+    version: 1 as const,
+    blocks: text.trim()
+      ? [
+          {
+            type: "text" as const,
+            format: role === "assistant" ? ("markdown" as const) : ("plain" as const),
+            text,
+          },
+        ]
+      : [],
+  };
+}
+
 describe("ChatSurface", () => {
   it("keeps the message log in the named scrollport and docks the composer outside it", () => {
     render(
@@ -41,14 +57,14 @@ describe("ChatSurface", () => {
         ...baseMessage,
         id: "user-1",
         role: "user",
-        content: "What does this quote mean?",
+        message_document: messageDocument("What does this quote mean?", "user"),
       },
       {
         ...baseMessage,
         id: "assistant-1",
         seq: 2,
         role: "assistant",
-        content: "It is about the tradeoff.",
+        message_document: messageDocument("It is about the tradeoff.", "assistant"),
       },
     ];
 
@@ -70,14 +86,14 @@ describe("ChatSurface", () => {
         ...baseMessage,
         id: "user-1",
         role: "user",
-        content: "Try this",
+        message_document: messageDocument("Try this", "user"),
       },
       {
         ...baseMessage,
         id: "assistant-1",
         seq: 2,
         role: "assistant",
-        content: "",
+        message_document: messageDocument("", "assistant"),
         status: "error",
         error_code: "E_INTERNAL",
         parent_message_id: "user-1",
@@ -88,14 +104,14 @@ describe("ChatSurface", () => {
         id: "user-2",
         seq: 3,
         role: "user",
-        content: "Try that",
+        message_document: messageDocument("Try that", "user"),
       },
       {
         ...baseMessage,
         id: "assistant-2",
         seq: 4,
         role: "assistant",
-        content: "",
+        message_document: messageDocument("", "assistant"),
         status: "error",
         error_code: "E_CONTEXT_TOO_LARGE",
         parent_message_id: "user-2",
@@ -123,14 +139,14 @@ describe("ChatSurface", () => {
         ...baseMessage,
         id: "user-1",
         role: "user",
-        content: "First prompt",
+        message_document: messageDocument("First prompt", "user"),
       },
       {
         ...baseMessage,
         id: "assistant-1",
         seq: 2,
         role: "assistant",
-        content: "",
+        message_document: messageDocument("", "assistant"),
         status: "error",
         error_code: "E_INTERNAL",
         parent_message_id: "user-1",
@@ -141,14 +157,14 @@ describe("ChatSurface", () => {
         id: "user-2",
         seq: 3,
         role: "user",
-        content: "Second prompt",
+        message_document: messageDocument("Second prompt", "user"),
       },
       {
         ...baseMessage,
         id: "assistant-2",
         seq: 4,
         role: "assistant",
-        content: "",
+        message_document: messageDocument("", "assistant"),
         status: "error",
         error_code: "E_INTERNAL",
         parent_message_id: "user-2",
@@ -177,7 +193,7 @@ describe("ChatSurface", () => {
         ...baseMessage,
         id: "assistant-1",
         role: "assistant",
-        content: "Choose a direction.",
+        message_document: messageDocument("Choose a direction.", "assistant"),
       },
     ];
     const forks: ForkOption[] = [

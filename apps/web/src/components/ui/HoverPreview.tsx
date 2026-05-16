@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import styles from "./HoverPreview.module.css";
 
 export interface HoverPreviewAnchor {
@@ -53,8 +54,7 @@ export default function HoverPreview({
     setPosition({ left, top });
   }, [anchor, touchSheet]);
 
-  if (touchSheet) {
-    return (
+  const preview = touchSheet ? (
       <div className={styles.sheetBackdrop} onClick={onClose} role="presentation">
         <div
           ref={cardRef}
@@ -66,10 +66,7 @@ export default function HoverPreview({
           {children}
         </div>
       </div>
-    );
-  }
-
-  return (
+    ) : (
     <div
       ref={cardRef}
       className={styles.card}
@@ -80,6 +77,8 @@ export default function HoverPreview({
       {children}
     </div>
   );
+
+  return typeof document === "undefined" ? preview : createPortal(preview, document.body);
 }
 
 export const HOVER_PREVIEW_DELAY_MS = 150;

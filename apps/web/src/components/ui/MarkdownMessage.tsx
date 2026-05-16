@@ -8,13 +8,13 @@
 "use client";
 
 import {
-  Fragment,
   memo,
   useState,
   useCallback,
   useRef,
   type ReactNode,
   type HTMLAttributes,
+  type ComponentProps,
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -29,6 +29,7 @@ import styles from "./MarkdownMessage.module.css";
 
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeHighlight];
+const CITATION_HREF_PREFIX = "#nexus-reader-citation-";
 
 export interface ReaderCitationData {
   index: number;
@@ -38,27 +39,10 @@ export interface ReaderCitationData {
   href?: string | null;
 }
 
-const CITATION_PLACEHOLDER = /<<cite:(\d+)>>/g;
-
-function splitContentIntoSegments(
-  content: string,
-): Array<{ kind: "text"; value: string } | { kind: "citation"; index: number }> {
-  const segments: Array<
-    { kind: "text"; value: string } | { kind: "citation"; index: number }
-  > = [];
-  let cursor = 0;
-  for (const match of content.matchAll(CITATION_PLACEHOLDER)) {
-    const start = match.index ?? 0;
-    if (start > cursor) {
-      segments.push({ kind: "text", value: content.slice(cursor, start) });
-    }
-    segments.push({ kind: "citation", index: Number(match[1]) });
-    cursor = start + match[0].length;
-  }
-  if (cursor < content.length) {
-    segments.push({ kind: "text", value: content.slice(cursor) });
-  }
-  return segments;
+export interface ReaderCitationRange {
+  start: number;
+  end: number;
+  citation: ReaderCitationData;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +133,110 @@ function TableBlock({
   );
 }
 
-const components = { code: CodeBlock, pre: PreBlock, table: TableBlock };
+function MarkdownLink({
+  href,
+  children,
+  node: _node,
+  ...rest
+}: HTMLAttributes<HTMLAnchorElement> & {
+  href?: string;
+  children?: ReactNode;
+  node?: unknown;
+}) {
+  if (!href) return <>{children}</>;
+  return <a href={href} {...rest}>{children}</a>;
+}
+
+const baseComponents = { code: CodeBlock, pre: PreBlock, table: TableBlock, a: MarkdownLink };
+type MarkdownComponents = ComponentProps<typeof ReactMarkdown>["components"];
+
+function citationHref(index: number): string {
+  return `${CITATION_HREF_PREFIX}${index}`;
+}
+
+function citationIndexFromHref(href: string | undefined): number | null {
+  if (!href?.startsWith(CITATION_HREF_PREFIX)) return null;
+  const index = Number(href.slice(CITATION_HREF_PREFIX.length));
+  return Number.isInteger(index) && index > 0 ? index : null;
+}
+
+function contentWithCitationMarkers(
+  content: string,
+  citationRanges: ReaderCitationRange[],
+): string {
+  const sortedRanges = [...citationRanges].sort((a, b) => a.end - b.end);
+  let cursor = 0;
+  let lastCitationEnd = 0;
+  let nextContent = "";
+
+  for (const range of sortedRanges) {
+    if (
+      range.start < lastCitationEnd ||
+      range.end <= range.start ||
+      range.end > content.length
+    ) {
+      continue;
+    }
+    nextContent += content.slice(cursor, range.end);
+    nextContent += `[${range.citation.index}](${citationHref(range.citation.index)})`;
+    cursor = range.end;
+    lastCitationEnd = range.end;
+  }
+
+  return nextContent + content.slice(cursor);
+}
+
+function escapeModelCitationPlaceholders(content: string): string {
+  return content.replace(/<<cite:(\d+)>>/g, "\\<\\<cite:$1\\>\\>");
+}
+
+function createMarkdownComponents({
+  citationByIndex,
+  onActivate,
+  onAskAboutSource,
+  onSaveSourceQuote,
+}: {
+  citationByIndex?: Map<number, ReaderCitationData>;
+  onActivate?: (target: ReaderSourceTarget) => void;
+  onAskAboutSource?: (target: ReaderSourceTarget) => void;
+  onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
+}): MarkdownComponents {
+  if (!citationByIndex) return baseComponents;
+  const citations = citationByIndex;
+
+  function LinkBlock({
+    href,
+    children,
+    node: _node,
+    ...rest
+  }: HTMLAttributes<HTMLAnchorElement> & {
+    href?: string;
+    children?: ReactNode;
+    node?: unknown;
+  }) {
+    const citationIndex = citationIndexFromHref(href);
+    const citation =
+      citationIndex !== null ? citations.get(citationIndex) : undefined;
+    if (citation) {
+      return (
+        <ReaderCitation
+          index={citation.index}
+          color={citation.color}
+          preview={citation.preview}
+          target={citation.target}
+          href={citation.href}
+          onActivate={onActivate ?? (() => undefined)}
+          onAskAboutSource={onAskAboutSource}
+          onSaveSourceQuote={onSaveSourceQuote}
+        />
+      );
+    }
+
+    return <MarkdownLink href={href} {...rest}>{children}</MarkdownLink>;
+  }
+
+  return { ...baseComponents, a: LinkBlock };
+}
 
 // ---------------------------------------------------------------------------
 // Full render (completed messages)
@@ -157,63 +244,66 @@ const components = { code: CodeBlock, pre: PreBlock, table: TableBlock };
 
 function renderWithCitations(
   content: string,
-  citations: ReaderCitationData[] | undefined,
+  citationRanges: ReaderCitationRange[] | undefined,
   onActivate: ((target: ReaderSourceTarget) => void) | undefined,
+  onAskAboutSource: ((target: ReaderSourceTarget) => void) | undefined,
+  onSaveSourceQuote: ((target: ReaderSourceTarget) => void) | undefined,
 ): ReactNode {
-  if (!citations || citations.length === 0 || !content.includes("<<cite:")) {
+  if (citationRanges && citationRanges.length > 0) {
+    const citationByIndex = new Map(
+      citationRanges.map((range) => [range.citation.index, range.citation]),
+    );
     return (
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}
-        components={components}
+        components={createMarkdownComponents({
+          citationByIndex,
+          onActivate,
+          onAskAboutSource,
+          onSaveSourceQuote,
+        })}
       >
-        {content}
+        {escapeModelCitationPlaceholders(
+          contentWithCitationMarkers(content, citationRanges),
+        )}
       </ReactMarkdown>
     );
   }
-  const byIndex = new Map(citations.map((entry) => [entry.index, entry]));
-  const segments = splitContentIntoSegments(content);
-  return segments.map((segment, position) => {
-    if (segment.kind === "text") {
-      return (
-        <ReactMarkdown
-          key={position}
-          remarkPlugins={remarkPlugins}
-          rehypePlugins={rehypePlugins}
-          components={components}
-        >
-          {segment.value}
-        </ReactMarkdown>
-      );
-    }
-    const data = byIndex.get(segment.index);
-    if (!data) return <Fragment key={position} />;
-    return (
-      <ReaderCitation
-        key={position}
-        index={data.index}
-        color={data.color}
-        preview={data.preview}
-        target={data.target}
-        href={data.href}
-        onActivate={onActivate ?? (() => undefined)}
-      />
-    );
-  });
+
+  return (
+    <ReactMarkdown
+      remarkPlugins={remarkPlugins}
+      rehypePlugins={rehypePlugins}
+      components={baseComponents}
+    >
+      {escapeModelCitationPlaceholders(content)}
+    </ReactMarkdown>
+  );
 }
 
 function MarkdownMessageInner({
   content,
-  citations,
+  citationRanges,
   onCitationActivate,
+  onAskAboutSource,
+  onSaveSourceQuote,
 }: {
   content: string;
-  citations?: ReaderCitationData[];
+  citationRanges?: ReaderCitationRange[];
   onCitationActivate?: (target: ReaderSourceTarget) => void;
+  onAskAboutSource?: (target: ReaderSourceTarget) => void;
+  onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
 }) {
   return (
     <div className={styles.markdown}>
-      {renderWithCitations(content, citations, onCitationActivate)}
+      {renderWithCitations(
+        content,
+        citationRanges,
+        onCitationActivate,
+        onAskAboutSource,
+        onSaveSourceQuote,
+      )}
     </div>
   );
 }
@@ -229,9 +319,9 @@ const SettledBlock = memo(function SettledBlock({ content }: { content: string }
     <ReactMarkdown
       remarkPlugins={remarkPlugins}
       rehypePlugins={rehypePlugins}
-      components={components}
+      components={baseComponents}
     >
-      {content}
+      {escapeModelCitationPlaceholders(content)}
     </ReactMarkdown>
   );
 });
@@ -251,9 +341,9 @@ export function StreamingMarkdownMessage({ content }: { content: string }) {
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}
-        components={components}
+        components={baseComponents}
       >
-        {active}
+        {escapeModelCitationPlaceholders(active)}
       </ReactMarkdown>
     </div>
   );

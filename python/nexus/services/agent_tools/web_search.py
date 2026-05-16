@@ -23,6 +23,11 @@ from web_search_tool.types import (
 
 from nexus.logging import get_logger
 from nexus.schemas.conversation import WebSearchOptions
+from nexus.schemas.retrieval import (
+    retrieval_context_ref_json,
+    retrieval_locator_json,
+    retrieval_result_ref_json,
+)
 from nexus.services.search import hash_query
 
 logger = get_logger(__name__)
@@ -98,14 +103,32 @@ class WebSearchCitation:
     provider_request_id: str | None
     selected: bool = False
 
+    def locator_json(self) -> dict[str, Any]:
+        locator = retrieval_locator_json(
+            {
+                "type": "external_url",
+                "url": self.url,
+                "title": self.title,
+                "display_url": self.display_url,
+            }
+        )
+        if locator is None:
+            raise ValueError("web search citation is missing external_url locator")
+        return locator
+
     def to_json(self) -> dict[str, Any]:
+        source_version = f"web_search:{self.provider}:{self.provider_request_id or self.result_ref}"
         return {
+            "type": "web_result",
+            "id": self.result_ref,
             "result_type": "web_result",
             "result_ref": self.result_ref,
             "source_id": self.result_ref,
             "title": self.title,
             "url": self.url,
             "display_url": self.display_url,
+            "deep_link": self.url,
+            "locator": self.locator_json(),
             "snippet": self.snippet,
             "extra_snippets": list(self.extra_snippets),
             "published_at": self.published_at,
@@ -113,20 +136,12 @@ class WebSearchCitation:
             "rank": self.rank,
             "provider": self.provider,
             "provider_request_id": self.provider_request_id,
+            "source_version": source_version,
+            "context_ref": {"type": "web_result", "id": self.result_ref},
+            "media_id": None,
+            "media_kind": None,
+            "score": 1.0 / max(self.rank, 1),
             "selected": self.selected,
-        }
-
-    def citation_event(self, assistant_message_id: UUID, tool_call_index: int) -> dict[str, Any]:
-        return {
-            "assistant_message_id": str(assistant_message_id),
-            "tool_name": WEB_SEARCH_TOOL_NAME,
-            "tool_call_index": tool_call_index,
-            "title": self.title,
-            "url": self.url,
-            "display_url": self.display_url,
-            "source_name": self.source_name,
-            "snippet": self.snippet,
-            "provider": self.provider,
         }
 
 
@@ -149,6 +164,7 @@ class WebSearchRun:
     status: str
     error_code: str | None = None
     provider_request_ids: list[str] = field(default_factory=list)
+    empty_status: str | None = None
     tool_call_id: UUID | None = None
     tool_call_index: int = WEB_SEARCH_TOOL_CALL_INDEX
 
@@ -158,13 +174,13 @@ class WebSearchRun:
             "assistant_message_id": str(self.assistant_message_id),
             "tool_name": WEB_SEARCH_TOOL_NAME,
             "tool_call_index": self.tool_call_index,
-            "status": "started",
+            "status": "running",
             "scope": "public_web",
             "types": [self.result_type],
             "semantic": False,
         }
 
-    def tool_result_event(self) -> dict[str, Any]:
+    def retrieval_result_event(self) -> dict[str, Any]:
         return {
             "tool_call_id": str(self.tool_call_id) if self.tool_call_id else None,
             "assistant_message_id": str(self.assistant_message_id),
@@ -175,7 +191,12 @@ class WebSearchRun:
             "result_count": len(self.citations),
             "selected_count": len(self.selected_citations),
             "latency_ms": self.latency_ms,
-            "citations": [citation.to_json() for citation in self.selected_citations],
+            "filters": {
+                "freshness_days": self.requested_freshness_days,
+                "allowed_domains": self.requested_domains.get("allowed", []),
+                "blocked_domains": self.requested_domains.get("blocked", []),
+            },
+            "results": [citation.to_json() for citation in self.citations],
         }
 
 
@@ -246,6 +267,7 @@ async def execute_web_search(
     context_chars = 0
     status = "complete"
     error_code: str | None = None
+    empty_status: str | None = None
     result_type = "mixed"
 
     try:
@@ -274,6 +296,7 @@ async def execute_web_search(
             provider_request_ids.append(response.provider_request_id)
         context_text, context_chars, selected = render_web_context_blocks(citations)
         if not context_text and not citations:
+            empty_status = "no_results"
             context_text = '<web_search_results status="no_results" />'
             context_chars = len(context_text)
     except WebSearchError as exc:
@@ -285,17 +308,22 @@ async def execute_web_search(
         )
         status = "error"
         error_code = f"E_WEB_SEARCH_{str(exc.code).upper()}"
+        empty_status = None
         context_text = f'<web_search_results status="error" code="{xml_escape(error_code)}" />'
         context_chars = len(context_text)
-    except Exception as exc:
+    except ValueError as exc:
+        # WebSearchRequest.__post_init__ rejects out-of-bounds queries and
+        # malformed user-supplied domain filters. Provider/render failures are
+        # defects and propagate instead of becoming a UI error state.
         logger.warning(
-            "agent_web_search_failed",
+            "agent_web_search_invalid_request",
             query_hash=hash_query(query),
             error=str(exc),
         )
         status = "error"
-        error_code = "E_WEB_SEARCH_FAILED"
-        context_text = '<web_search_results status="error" code="E_WEB_SEARCH_FAILED" />'
+        error_code = "E_WEB_SEARCH_INVALID_REQUEST"
+        empty_status = None
+        context_text = '<web_search_results status="error" code="E_WEB_SEARCH_INVALID_REQUEST" />'
         context_chars = len(context_text)
 
     latency_ms = int((time.monotonic() - start) * 1000)
@@ -318,6 +346,7 @@ async def execute_web_search(
         status=status,
         error_code=error_code,
         provider_request_ids=provider_request_ids,
+        empty_status=empty_status,
     )
     await run_in_threadpool(persist_web_search_run, db, run)
     return run
@@ -385,15 +414,16 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
     """Persist the web-search tool call and retrieval rows."""
 
     selected_context_refs = [
-        {"type": "web_result", "id": citation.result_ref} for citation in run.selected_citations
+        retrieval_context_ref_json(
+            {
+                "type": "web_result",
+                "id": citation.result_ref,
+            }
+        )
+        for citation in run.selected_citations
     ]
-    result_refs = [citation.to_json() for citation in run.citations]
-    requested_types = [
-        run.result_type,
-        *(f"freshness:{run.requested_freshness_days}" for _ in [0] if run.requested_freshness_days),
-        *(f"allow:{domain}" for domain in run.requested_domains["allowed"]),
-        *(f"block:{domain}" for domain in run.requested_domains["blocked"]),
-    ]
+    result_refs = [retrieval_result_ref_json(citation.to_json()) for citation in run.citations]
+    requested_types = [run.result_type]
 
     existing = db.execute(
         text(
@@ -514,11 +544,40 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
         )
     run.tool_call_id = tool_call_id
 
-    db.execute(
-        text("DELETE FROM message_retrievals WHERE tool_call_id = :tool_call_id"),
-        {"tool_call_id": tool_call_id},
+    select_retrieval = text(
+        """
+        SELECT id
+        FROM message_retrievals
+        WHERE tool_call_id = :tool_call_id
+          AND ordinal = :ordinal
+        """
     )
-
+    update_retrieval = text(
+        """
+        UPDATE message_retrievals
+        SET result_type = :result_type,
+            source_id = :source_id,
+            media_id = NULL,
+            context_ref = :context_ref,
+            result_ref = :result_ref,
+            deep_link = :deep_link,
+            score = :score,
+            selected = :selected,
+            source_title = :source_title,
+            exact_snippet = :exact_snippet,
+            snippet_prefix = NULL,
+            snippet_suffix = NULL,
+            locator = :locator,
+            retrieval_status = :retrieval_status,
+            included_in_prompt = :included_in_prompt,
+            source_version = :source_version
+        WHERE id = :retrieval_id
+        """
+    ).bindparams(
+        bindparam("context_ref", type_=JSONB),
+        bindparam("result_ref", type_=JSONB),
+        bindparam("locator", type_=JSONB),
+    )
     insert_retrieval = text(
         """
         INSERT INTO message_retrievals (
@@ -535,12 +594,14 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             source_title,
             exact_snippet,
             locator,
-            retrieval_status
+            retrieval_status,
+            included_in_prompt,
+            source_version
         )
         VALUES (
             :tool_call_id,
             :ordinal,
-            'web_result',
+            :result_type,
             :source_id,
             NULL,
             :context_ref,
@@ -551,35 +612,179 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             :source_title,
             :exact_snippet,
             :locator,
-            'web_result'
+            :retrieval_status,
+            :included_in_prompt,
+            :source_version
         )
+        RETURNING id
         """
     ).bindparams(
         bindparam("context_ref", type_=JSONB),
         bindparam("result_ref", type_=JSONB),
         bindparam("locator", type_=JSONB),
     )
+    insert_candidate_ledger = text(
+        """
+        INSERT INTO message_retrieval_candidate_ledgers (
+            tool_call_id,
+            retrieval_id,
+            ordinal,
+            result_type,
+            source_id,
+            score,
+            selected,
+            included_in_prompt,
+            selection_status,
+            selection_reason,
+            result_ref,
+            locator,
+            source_version
+        )
+        VALUES (
+            :tool_call_id,
+            :retrieval_id,
+            :ordinal,
+            :result_type,
+            :source_id,
+            :score,
+            :selected,
+            false,
+            :selection_status,
+            :selection_reason,
+            :result_ref,
+            :locator,
+            :source_version
+        )
+        """
+    ).bindparams(
+        bindparam("result_ref", type_=JSONB),
+        bindparam("locator", type_=JSONB),
+    )
     selected_refs = {citation.result_ref for citation in run.selected_citations}
+    persisted_count = 0
     for ordinal, citation in enumerate(run.citations):
+        selected = citation.result_ref in selected_refs
+        score = 1.0 / max(citation.rank, 1)
+        result_ref = retrieval_result_ref_json(citation.to_json())
+        locator = citation.locator_json()
+        source_version = (
+            f"web_search:{citation.provider}:{citation.provider_request_id or citation.result_ref}"
+        )
+        retrieval_payload = {
+            "tool_call_id": tool_call_id,
+            "ordinal": ordinal,
+            "result_type": "web_result",
+            "source_id": citation.result_ref,
+            "context_ref": retrieval_context_ref_json(
+                {"type": "web_result", "id": citation.result_ref}
+            ),
+            "result_ref": result_ref,
+            "deep_link": citation.url,
+            "score": score,
+            "selected": selected,
+            "source_title": citation.title,
+            "exact_snippet": citation.snippet,
+            "locator": locator,
+            "retrieval_status": "web_result",
+            "included_in_prompt": False,
+            "source_version": source_version,
+        }
+        existing_retrieval = db.execute(select_retrieval, retrieval_payload).first()
+        if existing_retrieval is None:
+            retrieval_id = db.execute(insert_retrieval, retrieval_payload).scalar_one()
+        else:
+            retrieval_id = existing_retrieval[0]
+            db.execute(update_retrieval, {**retrieval_payload, "retrieval_id": retrieval_id})
         db.execute(
-            insert_retrieval,
+            insert_candidate_ledger,
             {
                 "tool_call_id": tool_call_id,
+                "retrieval_id": retrieval_id,
                 "ordinal": ordinal,
+                "result_type": "web_result",
                 "source_id": citation.result_ref,
-                "context_ref": {"type": "web_result", "id": citation.result_ref},
-                "result_ref": citation.to_json(),
-                "deep_link": citation.url,
-                "score": 1.0 / max(citation.rank, 1),
-                "selected": citation.result_ref in selected_refs,
-                "source_title": citation.title,
-                "exact_snippet": citation.snippet,
-                "locator": {
-                    "type": "web_url",
-                    "url": citation.url,
-                    "title": citation.title,
-                    "display_url": citation.display_url,
-                },
+                "score": score,
+                "selected": selected,
+                "selection_status": "web_result" if selected else "retrieved",
+                "selection_reason": "within_context_budget" if selected else "below_selected_limit",
+                "result_ref": result_ref,
+                "locator": locator,
+                "source_version": source_version,
             },
         )
+        persisted_count = ordinal + 1
+    db.execute(
+        text(
+            """
+            UPDATE message_retrieval_candidate_ledgers
+            SET retrieval_id = NULL
+            WHERE retrieval_id IN (
+                SELECT id
+                FROM message_retrievals
+                WHERE tool_call_id = :tool_call_id
+                  AND ordinal >= :persisted_count
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM assistant_message_claim_evidence e
+                      WHERE e.retrieval_id = message_retrievals.id
+                  )
+            )
+            """
+        ),
+        {"tool_call_id": tool_call_id, "persisted_count": persisted_count},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM message_retrievals
+            WHERE tool_call_id = :tool_call_id
+              AND ordinal >= :persisted_count
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM assistant_message_claim_evidence e
+                  WHERE e.retrieval_id = message_retrievals.id
+              )
+            """
+        ),
+        {"tool_call_id": tool_call_id, "persisted_count": persisted_count},
+    )
+    db.execute(
+        text(
+            """
+            INSERT INTO message_rerank_ledgers (
+                tool_call_id,
+                strategy,
+                input_count,
+                selected_count,
+                budget_chars,
+                selected_chars,
+                status,
+                metadata
+            )
+            VALUES (
+                :tool_call_id,
+                'provider_rank_then_context_budget',
+                :input_count,
+                :selected_count,
+                :budget_chars,
+                :selected_chars,
+                :status,
+                :metadata
+            )
+            """
+        ).bindparams(bindparam("metadata", type_=JSONB)),
+        {
+            "tool_call_id": tool_call_id,
+            "input_count": len(run.citations),
+            "selected_count": len(run.selected_citations),
+            "budget_chars": WEB_SEARCH_CONTEXT_CHARS,
+            "selected_chars": run.context_chars,
+            "status": run.status,
+            "metadata": {
+                "selected_limit": WEB_SEARCH_SELECTED_LIMIT,
+                "result_type": run.result_type,
+                "provider_request_ids": run.provider_request_ids,
+            },
+        },
+    )
     db.commit()

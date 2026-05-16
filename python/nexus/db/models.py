@@ -30,6 +30,14 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import UserDefinedType
 
+MESSAGE_ARTIFACT_KIND_VALUES = (
+    "'briefing_document', 'study_guide', 'faq', 'timeline', "
+    "'comparison_table', 'extraction_table', 'claim_table', "
+    "'contradiction_report', 'source_map', 'concept_map', 'outline', "
+    "'flashcards', 'quiz', 'audio_overview_script', 'audio_overview', "
+    "'video_slide_overview_manifest', 'bibliography', 'citation_audit'"
+)
+
 
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
@@ -402,12 +410,14 @@ class ObjectLink(Base):
     __table_args__ = (
         CheckConstraint(
             "a_type IN ('page', 'note_block', 'media', 'highlight', 'conversation', "
-            "'message', 'podcast', 'content_chunk', 'contributor')",
+            "'message', 'podcast', 'content_chunk', 'fragment', 'contributor', "
+            "'evidence_span', 'artifact', 'artifact_part')",
             name="ck_object_links_a_type",
         ),
         CheckConstraint(
             "b_type IN ('page', 'note_block', 'media', 'highlight', 'conversation', "
-            "'message', 'podcast', 'content_chunk', 'contributor')",
+            "'message', 'podcast', 'content_chunk', 'fragment', 'contributor', "
+            "'evidence_span', 'artifact', 'artifact_part')",
             name="ck_object_links_b_type",
         ),
         CheckConstraint(
@@ -478,7 +488,8 @@ class PinnedObjectRef(Base):
     __table_args__ = (
         CheckConstraint(
             "object_type IN ('page', 'note_block', 'media', 'highlight', 'conversation', "
-            "'message', 'podcast', 'content_chunk', 'contributor')",
+            "'message', 'podcast', 'content_chunk', 'fragment', 'contributor', "
+            "'evidence_span', 'artifact', 'artifact_part')",
             name="ck_user_pinned_objects_type",
         ),
         CheckConstraint(
@@ -3566,8 +3577,11 @@ class ChatRunEventType(str, PyEnum):
 
     meta = "meta"
     tool_call = "tool_call"
-    tool_result = "tool_result"
-    citation = "citation"
+    retrieval_result = "retrieval_result"
+    source_manifest_delta = "source_manifest_delta"
+    artifact_delta = "artifact_delta"
+    claim = "claim"
+    claim_evidence = "claim_evidence"
     delta = "delta"
     done = "done"
 
@@ -3577,11 +3591,19 @@ class AppSearchResultType(str, PyEnum):
 
     page = "page"
     note_block = "note_block"
+    highlight = "highlight"
     media = "media"
     podcast = "podcast"
+    episode = "episode"
+    video = "video"
     content_chunk = "content_chunk"
+    fragment = "fragment"
     message = "message"
     contributor = "contributor"
+    evidence_span = "evidence_span"
+    conversation = "conversation"
+    artifact = "artifact"
+    artifact_part = "artifact_part"
     web_result = "web_result"
 
 
@@ -3882,6 +3904,11 @@ class Message(Base):
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    message_document: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("""'{"type":"message_document","version"\\:1,"blocks":[]}'::jsonb"""),
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="complete")
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_id: Mapped[UUID | None] = mapped_column(
@@ -3943,6 +3970,10 @@ class Message(Base):
             name="ck_messages_branch_anchor_object",
         ),
         CheckConstraint(
+            "jsonb_typeof(message_document) = 'object'",
+            name="ck_messages_message_document_object",
+        ),
+        CheckConstraint(
             "(role = 'user' AND parent_message_id IS NULL) "
             "OR (role IN ('user', 'assistant') AND parent_message_id IS NOT NULL) "
             "OR (role = 'system')",
@@ -3983,12 +4014,346 @@ class Message(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    citation_audits: Mapped[list["AssistantMessageCitationAudit"]] = relationship(
+        "AssistantMessageCitationAudit",
+        back_populates="message",
+        cascade="all, delete-orphan",
+        order_by="AssistantMessageCitationAudit.created_at",
+    )
     claims: Mapped[list["AssistantMessageClaim"]] = relationship(
         "AssistantMessageClaim",
         back_populates="message",
         cascade="all, delete-orphan",
         order_by="AssistantMessageClaim.ordinal",
     )
+    artifacts: Mapped[list["MessageArtifact"]] = relationship(
+        "MessageArtifact",
+        back_populates="message",
+        cascade="all, delete-orphan",
+        order_by="MessageArtifact.created_at",
+    )
+
+
+class MessageArtifact(Base):
+    """Durable generated artifact preview linked to one assistant message."""
+
+    __tablename__ = "message_artifacts"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id"),
+        nullable=False,
+    )
+    message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id"),
+        nullable=False,
+    )
+    chat_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("chat_runs.id"),
+        nullable=True,
+    )
+    artifact_key: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    supersedes_artifact_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("message_artifacts.id"),
+        nullable=True,
+    )
+    artifact_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="complete")
+    preview_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(btrim(artifact_kind)) BETWEEN 1 AND 128",
+            name="ck_message_artifacts_kind_length",
+        ),
+        CheckConstraint(
+            f"artifact_kind IN ({MESSAGE_ARTIFACT_KIND_VALUES})",
+            name="ck_message_artifacts_kind_supported",
+        ),
+        CheckConstraint(
+            "char_length(btrim(artifact_key)) BETWEEN 1 AND 128",
+            name="ck_message_artifacts_key_length",
+        ),
+        CheckConstraint(
+            "artifact_version >= 1",
+            name="ck_message_artifacts_version_positive",
+        ),
+        CheckConstraint(
+            "supersedes_artifact_id IS NULL OR supersedes_artifact_id != id",
+            name="ck_message_artifacts_not_self_supersedes",
+        ),
+        CheckConstraint(
+            "status IN ('streaming', 'complete', 'error')",
+            name="ck_message_artifacts_status",
+        ),
+        CheckConstraint(
+            "title IS NULL OR char_length(btrim(title)) BETWEEN 1 AND 500",
+            name="ck_message_artifacts_title_length",
+        ),
+        CheckConstraint(
+            "preview_text IS NULL OR char_length(preview_text) <= 20000",
+            name="ck_message_artifacts_preview_length",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(metadata) = 'object'",
+            name="ck_message_artifacts_metadata_object",
+        ),
+        Index(
+            "idx_message_artifacts_message_key_created",
+            "message_id",
+            "artifact_key",
+            "created_at",
+            "id",
+        ),
+        UniqueConstraint(
+            "message_id",
+            "artifact_key",
+            "artifact_version",
+            name="uix_message_artifacts_message_key_version",
+        ),
+        Index("idx_message_artifacts_message_created", "message_id", "created_at", "id"),
+    )
+
+    conversation: Mapped["Conversation"] = relationship("Conversation")
+    message: Mapped["Message"] = relationship("Message", back_populates="artifacts")
+    chat_run: Mapped["ChatRun | None"] = relationship("ChatRun")
+    supersedes_artifact: Mapped["MessageArtifact | None"] = relationship(
+        "MessageArtifact",
+        remote_side=[id],
+    )
+    parts: Mapped[list["MessageArtifactPart"]] = relationship(
+        "MessageArtifactPart",
+        back_populates="artifact",
+        cascade="all, delete-orphan",
+        order_by="MessageArtifactPart.ordinal",
+    )
+
+
+class MessageArtifactPart(Base):
+    """Ordered generated artifact part with optional evidence references."""
+
+    __tablename__ = "message_artifact_parts"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    artifact_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("message_artifacts.id"),
+        nullable=False,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    part_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    part_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    part_text: Mapped[str | None] = mapped_column("text", Text, nullable=True)
+    source_version: Mapped[str] = mapped_column(Text, nullable=False)
+    locator: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    source_ref: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True),
+        nullable=True,
+    )
+    context_ref: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True),
+        nullable=True,
+    )
+    result_ref: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True),
+        nullable=True,
+    )
+    evidence_span_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("evidence_spans.id"),
+        nullable=True,
+    )
+    evidence_span_ids: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    source_refs: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("ordinal >= 0", name="ck_message_artifact_parts_ordinal"),
+        CheckConstraint(
+            "part_key IS NULL OR char_length(btrim(part_key)) BETWEEN 1 AND 128",
+            name="ck_message_artifact_parts_key_length",
+        ),
+        CheckConstraint(
+            "part_type IS NULL OR char_length(btrim(part_type)) BETWEEN 1 AND 128",
+            name="ck_message_artifact_parts_type_length",
+        ),
+        CheckConstraint(
+            "char_length(btrim(source_version)) BETWEEN 1 AND 256",
+            name="ck_message_artifact_parts_source_version",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(locator) = 'object'",
+            name="ck_message_artifact_parts_locator_object",
+        ),
+        CheckConstraint(
+            "source_ref IS NULL OR jsonb_typeof(source_ref) = 'object'",
+            name="ck_message_artifact_parts_source_ref_object",
+        ),
+        CheckConstraint(
+            "context_ref IS NULL OR jsonb_typeof(context_ref) = 'object'",
+            name="ck_message_artifact_parts_context_ref_object",
+        ),
+        CheckConstraint(
+            "result_ref IS NULL OR jsonb_typeof(result_ref) = 'object'",
+            name="ck_message_artifact_parts_result_ref_object",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(evidence_span_ids) = 'array'",
+            name="ck_message_artifact_parts_evidence_span_ids_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(source_refs) = 'array'",
+            name="ck_message_artifact_parts_source_refs_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(metadata) = 'object'",
+            name="ck_message_artifact_parts_metadata_object",
+        ),
+        CheckConstraint(
+            """
+            source_ref IS NOT NULL
+            OR context_ref IS NOT NULL
+            OR result_ref IS NOT NULL
+            OR evidence_span_id IS NOT NULL
+            OR jsonb_array_length(evidence_span_ids) > 0
+            OR jsonb_array_length(source_refs) > 0
+            OR metadata ->> 'support_state' = 'not_source_grounded'
+            """,
+            name="ck_message_artifact_parts_evidence_required",
+        ),
+        UniqueConstraint("artifact_id", "ordinal", name="uix_message_artifact_parts_ordinal"),
+        Index(
+            "idx_message_artifact_parts_artifact_ordinal",
+            "artifact_id",
+            "ordinal",
+            "id",
+        ),
+        Index("idx_message_artifact_parts_evidence_span", "evidence_span_id"),
+    )
+
+    artifact: Mapped["MessageArtifact"] = relationship("MessageArtifact", back_populates="parts")
+
+
+class MessageArtifactExport(Base):
+    """Append-only ledger row for one generated artifact export."""
+
+    __tablename__ = "message_artifact_exports"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id"),
+        nullable=False,
+    )
+    message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id"),
+        nullable=False,
+    )
+    artifact_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("message_artifacts.id"),
+        nullable=False,
+    )
+    viewer_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    export_format: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    manifest_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "export_format IN ('markdown', 'json', 'html', 'pdf', 'csv')",
+            name="ck_message_artifact_exports_format",
+        ),
+        CheckConstraint(
+            "artifact_version >= 1",
+            name="ck_message_artifact_exports_version_positive",
+        ),
+        CheckConstraint(
+            "char_length(content_sha256) = 64 AND char_length(manifest_sha256) = 64",
+            name="ck_message_artifact_exports_sha256_length",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(metadata) = 'object'",
+            name="ck_message_artifact_exports_metadata_object",
+        ),
+        Index("idx_message_artifact_exports_artifact_created", "artifact_id", "created_at", "id"),
+        Index("idx_message_artifact_exports_message_created", "message_id", "created_at", "id"),
+        Index("idx_message_artifact_exports_viewer_created", "viewer_user_id", "created_at", "id"),
+    )
+
+    conversation: Mapped["Conversation"] = relationship("Conversation")
+    message: Mapped["Message"] = relationship("Message")
+    artifact: Mapped["MessageArtifact"] = relationship("MessageArtifact")
+    viewer: Mapped["User"] = relationship("User")
 
 
 class ConversationActivePath(Base):
@@ -4196,17 +4561,17 @@ class MessageToolCall(Base):
     )
     conversation_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id", ondelete="CASCADE"),
+        ForeignKey("conversations.id"),
         nullable=False,
     )
     user_message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
+        ForeignKey("messages.id"),
         nullable=False,
     )
     assistant_message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
+        ForeignKey("messages.id"),
         nullable=False,
     )
     tool_name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -4286,7 +4651,7 @@ class MessageToolCall(Base):
             name="ck_message_tool_calls_latency_non_negative",
         ),
         CheckConstraint(
-            "status IN ('pending', 'complete', 'error')",
+            "status IN ('pending', 'running', 'complete', 'error', 'cancelled')",
             name="ck_message_tool_calls_status",
         ),
         UniqueConstraint(
@@ -4342,7 +4707,7 @@ class MessageRetrieval(Base):
     )
     tool_call_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("message_tool_calls.id", ondelete="CASCADE"),
+        ForeignKey("message_tool_calls.id"),
         nullable=False,
     )
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -4350,7 +4715,7 @@ class MessageRetrieval(Base):
     source_id: Mapped[str] = mapped_column(Text, nullable=False)
     media_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="SET NULL"),
+        ForeignKey("media.id"),
         nullable=True,
     )
     evidence_span_id: Mapped[UUID | None] = mapped_column(
@@ -4397,11 +4762,19 @@ class MessageRetrieval(Base):
             result_type IN (
                 'page',
                 'note_block',
+                'highlight',
                 'media',
                 'podcast',
+                'episode',
+                'video',
                 'content_chunk',
+                'fragment',
                 'message',
                 'contributor',
+                'evidence_span',
+                'conversation',
+                'artifact',
+                'artifact_part',
                 'web_result'
             )
             """,
@@ -4468,6 +4841,411 @@ class MessageRetrieval(Base):
     media: Mapped["Media | None"] = relationship("Media")
 
 
+class SourceManifest(Base):
+    """Durable source manifest for one assistant retrieval tool call."""
+
+    __tablename__ = "source_manifests"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id"),
+        nullable=False,
+    )
+    assistant_message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id"),
+        nullable=False,
+    )
+    chat_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("chat_runs.id"),
+        nullable=False,
+    )
+    tool_call_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("message_tool_calls.id"),
+        nullable=True,
+    )
+    tool_name: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_call_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    query_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope: Mapped[str] = mapped_column(Text, nullable=False)
+    filters: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    requested_types: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    selected_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    included_in_prompt_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+    excluded_by_budget_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+    excluded_by_scope_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+    stale_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    unreadable_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    web_search_mode: Mapped[str | None] = mapped_column(Text, nullable=True)
+    index_versions: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(tool_name) BETWEEN 1 AND 128",
+            name="ck_source_manifests_tool_name_length",
+        ),
+        CheckConstraint(
+            "tool_call_index >= 0",
+            name="ck_source_manifests_tool_call_index",
+        ),
+        CheckConstraint(
+            "query_hash IS NULL OR char_length(query_hash) BETWEEN 1 AND 128",
+            name="ck_source_manifests_query_hash_length",
+        ),
+        CheckConstraint(
+            "char_length(scope) BETWEEN 1 AND 256",
+            name="ck_source_manifests_scope_length",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(filters) = 'object'",
+            name="ck_source_manifests_filters_object",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(requested_types) = 'array'",
+            name="ck_source_manifests_requested_types_array",
+        ),
+        CheckConstraint(
+            "candidate_count >= 0 AND result_count >= 0 AND selected_count >= 0 "
+            "AND included_in_prompt_count >= 0 AND excluded_by_budget_count >= 0 "
+            "AND excluded_by_scope_count >= 0 AND stale_count >= 0 AND unreadable_count >= 0",
+            name="ck_source_manifests_counts_non_negative",
+        ),
+        CheckConstraint(
+            "web_search_mode IS NULL OR web_search_mode IN ('off', 'auto', 'required')",
+            name="ck_source_manifests_web_search_mode",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(index_versions) = 'array'",
+            name="ck_source_manifests_index_versions_array",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(metadata) = 'object'",
+            name="ck_source_manifests_metadata_object",
+        ),
+        CheckConstraint(
+            "latency_ms IS NULL OR latency_ms >= 0",
+            name="ck_source_manifests_latency_non_negative",
+        ),
+        CheckConstraint(
+            "char_length(status) BETWEEN 1 AND 64",
+            name="ck_source_manifests_status_length",
+        ),
+        Index(
+            "idx_source_manifests_run_tool_call_created",
+            "chat_run_id",
+            "tool_call_index",
+            "created_at",
+            "id",
+        ),
+        UniqueConstraint(
+            "chat_run_id",
+            "tool_call_index",
+            name="uix_source_manifests_run_tool_call_index",
+        ),
+    )
+
+    conversation: Mapped["Conversation"] = relationship("Conversation")
+    assistant_message: Mapped["Message"] = relationship("Message")
+    chat_run: Mapped["ChatRun"] = relationship("ChatRun")
+    tool_call: Mapped["MessageToolCall | None"] = relationship("MessageToolCall")
+
+
+class MessageRetrievalCandidateLedger(Base):
+    """Durable ledger row for one retrieval candidate and its selection outcome."""
+
+    __tablename__ = "message_retrieval_candidate_ledgers"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    tool_call_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("message_tool_calls.id"),
+        nullable=False,
+    )
+    retrieval_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("message_retrievals.id"),
+        nullable=True,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    result_type: Mapped[str] = mapped_column(Text, nullable=False)
+    source_id: Mapped[str] = mapped_column(Text, nullable=False)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selected: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    included_in_prompt: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+    )
+    selection_status: Mapped[str] = mapped_column(Text, nullable=False)
+    selection_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    result_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    source_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("ordinal >= 0", name="ck_retrieval_candidate_ledgers_ordinal"),
+        CheckConstraint(
+            "char_length(result_type) BETWEEN 1 AND 64",
+            name="ck_retrieval_candidate_ledgers_result_type",
+        ),
+        CheckConstraint(
+            "char_length(source_id) BETWEEN 1 AND 256",
+            name="ck_retrieval_candidate_ledgers_source_id",
+        ),
+        CheckConstraint(
+            "score IS NULL OR score >= 0",
+            name="ck_retrieval_candidate_ledgers_score",
+        ),
+        CheckConstraint(
+            """
+            selection_status IN (
+                'retrieved',
+                'selected',
+                'included_in_prompt',
+                'excluded_by_budget',
+                'excluded_by_scope',
+                'web_result'
+            )
+            """,
+            name="ck_retrieval_candidate_ledgers_status",
+        ),
+        CheckConstraint(
+            "char_length(selection_reason) BETWEEN 1 AND 128",
+            name="ck_retrieval_candidate_ledgers_reason",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(result_ref) = 'object'",
+            name="ck_retrieval_candidate_ledgers_result_ref_object",
+        ),
+        CheckConstraint(
+            "locator IS NULL OR locator = 'null'::jsonb OR jsonb_typeof(locator) = 'object'",
+            name="ck_retrieval_candidate_ledgers_locator_object",
+        ),
+        Index(
+            "idx_retrieval_candidate_ledgers_tool_call",
+            "tool_call_id",
+            "ordinal",
+        ),
+        Index("idx_retrieval_candidate_ledgers_retrieval", "retrieval_id"),
+    )
+
+    tool_call: Mapped["MessageToolCall"] = relationship("MessageToolCall")
+    retrieval: Mapped["MessageRetrieval | None"] = relationship("MessageRetrieval")
+
+
+class MessageRerankLedger(Base):
+    """Durable ledger row for the selection/rerank pass of one retrieval tool call."""
+
+    __tablename__ = "message_rerank_ledgers"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    tool_call_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("message_tool_calls.id"),
+        nullable=False,
+    )
+    strategy: Mapped[str] = mapped_column(Text, nullable=False)
+    input_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    selected_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    budget_chars: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    selected_chars: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_: Mapped[dict[str, object]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(strategy) BETWEEN 1 AND 128",
+            name="ck_message_rerank_ledgers_strategy",
+        ),
+        CheckConstraint(
+            "input_count >= 0 AND selected_count >= 0 AND selected_chars >= 0",
+            name="ck_message_rerank_ledgers_counts",
+        ),
+        CheckConstraint(
+            "budget_chars IS NULL OR budget_chars >= 0",
+            name="ck_message_rerank_ledgers_budget_chars",
+        ),
+        CheckConstraint(
+            "char_length(status) BETWEEN 1 AND 64",
+            name="ck_message_rerank_ledgers_status",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(metadata) = 'object'",
+            name="ck_message_rerank_ledgers_metadata_object",
+        ),
+        Index("idx_message_rerank_ledgers_tool_call", "tool_call_id", "created_at", "id"),
+    )
+
+    tool_call: Mapped["MessageToolCall"] = relationship("MessageToolCall")
+
+
+class AssistantMessageVerifierRun(Base):
+    """Append-only verifier ledger for one assistant message verification pass."""
+
+    __tablename__ = "assistant_message_verifier_runs"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id"),
+        nullable=False,
+    )
+    chat_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("chat_runs.id"),
+        nullable=True,
+    )
+    prompt_assembly_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("chat_prompt_assemblies.id"),
+        nullable=True,
+    )
+    verifier_name: Mapped[str] = mapped_column(Text, nullable=False)
+    verifier_version: Mapped[str] = mapped_column(Text, nullable=False)
+    verifier_status: Mapped[str] = mapped_column(Text, nullable=False)
+    support_status: Mapped[str] = mapped_column(Text, nullable=False)
+    claim_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    supported_claim_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    unsupported_claim_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    not_enough_evidence_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    metadata_: Mapped[dict[str, object]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(verifier_name) BETWEEN 1 AND 128",
+            name="ck_assistant_verifier_runs_name_length",
+        ),
+        CheckConstraint(
+            "char_length(verifier_version) BETWEEN 1 AND 128",
+            name="ck_assistant_verifier_runs_version_length",
+        ),
+        CheckConstraint(
+            "verifier_status IN ('llm_verified', 'parse_failed', 'failed')",
+            name="ck_assistant_verifier_runs_status",
+        ),
+        CheckConstraint(
+            """
+            support_status IN (
+                'supported',
+                'partially_supported',
+                'contradicted',
+                'not_enough_evidence',
+                'out_of_scope',
+                'not_source_grounded'
+            )
+            """,
+            name="ck_assistant_verifier_runs_support_status",
+        ),
+        CheckConstraint(
+            """
+            claim_count >= 0
+            AND supported_claim_count >= 0
+            AND unsupported_claim_count >= 0
+            AND not_enough_evidence_count >= 0
+            """,
+            name="ck_assistant_verifier_runs_counts",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(metadata) = 'object'",
+            name="ck_assistant_verifier_runs_metadata_object",
+        ),
+        Index("idx_assistant_verifier_runs_message_created", "message_id", "created_at", "id"),
+        Index("idx_assistant_verifier_runs_chat_run", "chat_run_id"),
+    )
+
+    message: Mapped["Message"] = relationship("Message")
+    chat_run: Mapped["ChatRun | None"] = relationship("ChatRun")
+    prompt_assembly: Mapped["ChatPromptAssembly | None"] = relationship("ChatPromptAssembly")
+
+
 class AssistantMessageEvidenceSummary(Base):
     """Final evidence status for one assistant message."""
 
@@ -4480,7 +5258,7 @@ class AssistantMessageEvidenceSummary(Base):
     )
     message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
+        ForeignKey("messages.id"),
         nullable=False,
     )
     scope_type: Mapped[str] = mapped_column(Text, nullable=False)
@@ -4488,13 +5266,18 @@ class AssistantMessageEvidenceSummary(Base):
     retrieval_status: Mapped[str] = mapped_column(Text, nullable=False)
     support_status: Mapped[str] = mapped_column(Text, nullable=False)
     verifier_status: Mapped[str] = mapped_column(Text, nullable=False)
+    verifier_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("assistant_message_verifier_runs.id"),
+        nullable=True,
+    )
     claim_count: Mapped[int] = mapped_column(Integer, nullable=False)
     supported_claim_count: Mapped[int] = mapped_column(Integer, nullable=False)
     unsupported_claim_count: Mapped[int] = mapped_column(Integer, nullable=False)
     not_enough_evidence_count: Mapped[int] = mapped_column(Integer, nullable=False)
     prompt_assembly_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("chat_prompt_assemblies.id", ondelete="SET NULL"),
+        ForeignKey("chat_prompt_assemblies.id"),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -4545,7 +5328,7 @@ class AssistantMessageEvidenceSummary(Base):
             name="ck_assistant_evidence_summaries_support_status",
         ),
         CheckConstraint(
-            "verifier_status IN ('verified', 'failed')",
+            "verifier_status IN ('llm_verified', 'parse_failed', 'failed')",
             name="ck_assistant_evidence_summaries_verifier_status",
         ),
         CheckConstraint(
@@ -4561,6 +5344,83 @@ class AssistantMessageEvidenceSummary(Base):
     )
 
     message: Mapped["Message"] = relationship("Message", back_populates="evidence_summary")
+    verifier_run: Mapped["AssistantMessageVerifierRun | None"] = relationship(
+        "AssistantMessageVerifierRun"
+    )
+
+
+class AssistantMessageCitationAudit(Base):
+    """Append-only citation audit ledger row for one assistant message."""
+
+    __tablename__ = "assistant_message_citation_audits"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("messages.id"),
+        nullable=False,
+    )
+    chat_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("chat_runs.id"),
+        nullable=True,
+    )
+    verifier_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("assistant_message_verifier_runs.id"),
+        nullable=True,
+    )
+    supported_claim_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    supported_claims_with_valid_offsets_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+    supported_claims_with_citation_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    missing_locator_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    missing_source_version_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    supported_claims_have_valid_offsets: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    supported_claims_have_citation_placement: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    claim_evidence_has_required_locators: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    claim_evidence_has_source_versions: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    details: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            """
+            supported_claim_count >= 0
+            AND supported_claims_with_valid_offsets_count >= 0
+            AND supported_claims_with_citation_count >= 0
+            AND missing_locator_count >= 0
+            AND missing_source_version_count >= 0
+            """,
+            name="ck_assistant_citation_audits_counts",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(details) = 'object'",
+            name="ck_assistant_citation_audits_details_object",
+        ),
+        Index("idx_assistant_citation_audits_message_created", "message_id", "created_at", "id"),
+        Index("idx_assistant_citation_audits_chat_run", "chat_run_id"),
+    )
+
+    message: Mapped["Message"] = relationship("Message", back_populates="citation_audits")
+    chat_run: Mapped["ChatRun | None"] = relationship("ChatRun")
+    verifier_run: Mapped["AssistantMessageVerifierRun | None"] = relationship(
+        "AssistantMessageVerifierRun"
+    )
 
 
 class AssistantMessageClaim(Base):
@@ -4575,7 +5435,7 @@ class AssistantMessageClaim(Base):
     )
     message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
+        ForeignKey("messages.id"),
         nullable=False,
     )
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -4584,7 +5444,14 @@ class AssistantMessageClaim(Base):
     answer_end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
     claim_kind: Mapped[str] = mapped_column(Text, nullable=False)
     support_status: Mapped[str] = mapped_column(Text, nullable=False)
+    unsupported_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     verifier_status: Mapped[str] = mapped_column(Text, nullable=False)
+    verifier_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("assistant_message_verifier_runs.id"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -4628,7 +5495,15 @@ class AssistantMessageClaim(Base):
             name="ck_assistant_claims_support_status",
         ),
         CheckConstraint(
-            "verifier_status IN ('verified', 'failed')",
+            "unsupported_reason IS NULL OR char_length(btrim(unsupported_reason)) BETWEEN 1 AND 2000",
+            name="ck_assistant_claims_unsupported_reason",
+        ),
+        CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
+            name="ck_assistant_claims_confidence",
+        ),
+        CheckConstraint(
+            "verifier_status IN ('llm_verified', 'parse_failed', 'failed')",
             name="ck_assistant_claims_verifier_status",
         ),
         UniqueConstraint("message_id", "ordinal", name="uix_assistant_claims_message_ordinal"),
@@ -4636,6 +5511,9 @@ class AssistantMessageClaim(Base):
     )
 
     message: Mapped["Message"] = relationship("Message", back_populates="claims")
+    verifier_run: Mapped["AssistantMessageVerifierRun | None"] = relationship(
+        "AssistantMessageVerifierRun"
+    )
     evidence: Mapped[list["AssistantMessageClaimEvidence"]] = relationship(
         "AssistantMessageClaimEvidence",
         back_populates="claim",
@@ -4656,7 +5534,7 @@ class AssistantMessageClaimEvidence(Base):
     )
     claim_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("assistant_message_claims.id", ondelete="CASCADE"),
+        ForeignKey("assistant_message_claims.id"),
         nullable=False,
     )
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -4664,7 +5542,7 @@ class AssistantMessageClaimEvidence(Base):
     source_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     retrieval_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("message_retrievals.id", ondelete="SET NULL"),
+        ForeignKey("message_retrievals.id"),
         nullable=True,
     )
     evidence_span_id: Mapped[UUID | None] = mapped_column(
@@ -4717,6 +5595,16 @@ class AssistantMessageClaimEvidence(Base):
             name="ck_assistant_claim_evidence_locator_object",
         ),
         CheckConstraint(
+            "evidence_role NOT IN ('supports', 'contradicts') OR "
+            "(locator IS NOT NULL AND locator != 'null'::jsonb)",
+            name="ck_assistant_claim_evidence_support_locator_required",
+        ),
+        CheckConstraint(
+            "evidence_role NOT IN ('supports', 'contradicts') OR "
+            "(source_version IS NOT NULL AND char_length(btrim(source_version)) > 0)",
+            name="ck_assistant_claim_evidence_support_source_version_required",
+        ),
+        CheckConstraint(
             "score IS NULL OR score >= 0",
             name="ck_assistant_claim_evidence_score",
         ),
@@ -4737,7 +5625,7 @@ class AssistantMessageClaimEvidence(Base):
         CheckConstraint(
             """
             evidence_role NOT IN ('supports', 'contradicts')
-            OR exact_snippet IS NOT NULL
+            OR (exact_snippet IS NOT NULL AND char_length(btrim(exact_snippet)) > 0)
             """,
             name="ck_assistant_claim_evidence_snippet_required",
         ),
@@ -5102,22 +5990,22 @@ class ChatRun(Base):
     )
     owner_user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id"),
         nullable=False,
     )
     conversation_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id", ondelete="CASCADE"),
+        ForeignKey("conversations.id"),
         nullable=False,
     )
     user_message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
+        ForeignKey("messages.id"),
         nullable=False,
     )
     assistant_message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
+        ForeignKey("messages.id"),
         nullable=False,
     )
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
@@ -5131,6 +6019,12 @@ class ChatRun(Base):
     reasoning: Mapped[str] = mapped_column(Text, nullable=False)
     key_mode: Mapped[str] = mapped_column(Text, nullable=False)
     web_search: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    artifact_intent: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=lambda: {"kind": "off"},
+        server_default=text("""'{"kind":"off"}'::jsonb"""),
+    )
     next_event_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     cancel_requested_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -5160,6 +6054,13 @@ class ChatRun(Base):
             name="ck_chat_runs_idempotency_key_length",
         ),
         CheckConstraint("next_event_seq >= 1", name="ck_chat_runs_next_event_seq_positive"),
+        CheckConstraint(
+            "jsonb_typeof(artifact_intent) = 'object' "
+            "AND artifact_intent->>'kind' IN ("
+            f"'off', 'auto', {MESSAGE_ARTIFACT_KIND_VALUES}"
+            ")",
+            name="ck_chat_runs_artifact_intent_kind",
+        ),
         UniqueConstraint(
             "owner_user_id",
             "idempotency_key",
@@ -5181,14 +6082,12 @@ class ChatRun(Base):
         back_populates="run",
         order_by="ChatRunEvent.seq",
         cascade="all, delete-orphan",
-        passive_deletes=True,
     )
     prompt_assembly: Mapped["ChatPromptAssembly | None"] = relationship(
         "ChatPromptAssembly",
         back_populates="chat_run",
         uselist=False,
         cascade="all, delete-orphan",
-        passive_deletes=True,
     )
 
 
@@ -5204,17 +6103,17 @@ class ChatPromptAssembly(Base):
     )
     chat_run_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("chat_runs.id", ondelete="CASCADE"),
+        ForeignKey("chat_runs.id"),
         nullable=False,
     )
     conversation_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id", ondelete="CASCADE"),
+        ForeignKey("conversations.id"),
         nullable=False,
     )
     assistant_message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("messages.id", ondelete="CASCADE"),
+        ForeignKey("messages.id"),
         nullable=False,
     )
     model_id: Mapped[UUID] = mapped_column(
@@ -5235,7 +6134,7 @@ class ChatPromptAssembly(Base):
     provider_request_hash: Mapped[str] = mapped_column(Text, nullable=False)
     snapshot_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("conversation_state_snapshots.id", ondelete="SET NULL"),
+        ForeignKey("conversation_state_snapshots.id"),
         nullable=True,
     )
     max_context_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -5372,7 +6271,7 @@ class ChatRunEvent(Base):
     )
     run_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("chat_runs.id", ondelete="CASCADE"),
+        ForeignKey("chat_runs.id"),
         nullable=False,
     )
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -5387,7 +6286,9 @@ class ChatRunEvent(Base):
     __table_args__ = (
         CheckConstraint("seq >= 1", name="ck_chat_run_events_seq_positive"),
         CheckConstraint(
-            "event_type IN ('meta', 'tool_call', 'tool_result', 'citation', 'delta', 'done')",
+            "event_type IN ('meta', 'tool_call', 'retrieval_result', "
+            "'source_manifest_delta', 'artifact_delta', 'claim', "
+            "'claim_evidence', 'delta', 'done')",
             name="ck_chat_run_events_event_type",
         ),
         UniqueConstraint("run_id", "seq", name="uix_chat_run_events_run_seq"),
@@ -5647,7 +6548,7 @@ class MessageContextItem(Base):
         CheckConstraint(
             "object_type IS NULL OR object_type IN ('page', 'note_block', 'media', "
             "'highlight', 'conversation', 'message', 'podcast', 'content_chunk', "
-            "'contributor')",
+            "'fragment', 'contributor', 'evidence_span', 'artifact', 'artifact_part')",
             name="ck_message_context_items_object_type",
         ),
         CheckConstraint(

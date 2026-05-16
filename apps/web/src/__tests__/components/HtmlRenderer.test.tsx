@@ -40,18 +40,26 @@ describe("HtmlRenderer", () => {
       mediaId: "media-1",
       highlightId: "h2",
       locator: {
-        type: "reader_text_offsets",
+        type: "web_text_offsets",
+        media_id: "media-1",
         fragment_id: "fragment-1",
         start_offset: 20,
         end_offset: 32,
       },
       snippet: "Second quote",
+      sourceVersion: "web:media-1:v1",
+      highlightBehavior: "pulse",
+      focusBehavior: "scroll_into_view",
     });
 
     await waitFor(() => {
-      expect(Array.from(second.classList).some((name) => name.includes("pulsing"))).toBe(true);
+      expect(
+        Array.from(second.classList).some((name) => name.includes("pulsing")),
+      ).toBe(true);
     });
-    expect(Array.from(first.classList).some((name) => name.includes("pulsing"))).toBe(false);
+    expect(
+      Array.from(first.classList).some((name) => name.includes("pulsing")),
+    ).toBe(false);
   });
 
   it("renders links with proper attributes", () => {
@@ -114,7 +122,7 @@ describe("HtmlRenderer", () => {
     render(
       <div style={style}>
         <HtmlRenderer htmlSanitized={html} />
-      </div>
+      </div>,
     );
 
     const renderer = screen.getByTestId("html-renderer");
@@ -126,9 +134,15 @@ describe("HtmlRenderer", () => {
 
     expect(getComputedStyle(renderer).color).toBe("rgb(10, 20, 30)");
     expect(getComputedStyle(blockquote).color).toBe("rgb(40, 50, 60)");
-    expect(getComputedStyle(blockquote).backgroundColor).toBe("rgb(70, 80, 90)");
-    expect(getComputedStyle(blockquote).borderLeftColor).toBe("rgb(160, 170, 180)");
-    expect(getComputedStyle(inlineCode).backgroundColor).toBe("rgb(100, 110, 120)");
+    expect(getComputedStyle(blockquote).backgroundColor).toBe(
+      "rgb(70, 80, 90)",
+    );
+    expect(getComputedStyle(blockquote).borderLeftColor).toBe(
+      "rgb(160, 170, 180)",
+    );
+    expect(getComputedStyle(inlineCode).backgroundColor).toBe(
+      "rgb(100, 110, 120)",
+    );
     expect(getComputedStyle(link).color).toBe("rgb(160, 170, 180)");
     expect(getComputedStyle(th).backgroundColor).toBe("rgb(70, 80, 90)");
     expect(getComputedStyle(td).borderTopColor).toBe("rgb(130, 140, 150)");
@@ -140,7 +154,7 @@ describe("HtmlRenderer", () => {
     render(
       <div style={{ width: "320px" }}>
         <HtmlRenderer htmlSanitized={html} />
-      </div>
+      </div>,
     );
 
     const renderer = screen.getByTestId("html-renderer");
@@ -152,7 +166,7 @@ describe("HtmlRenderer", () => {
     render(
       <div style={{ width: "320px" }}>
         <HtmlRenderer htmlSanitized={html} />
-      </div>
+      </div>,
     );
 
     const renderer = screen.getByTestId("html-renderer");
@@ -175,7 +189,7 @@ describe("HtmlRenderer", () => {
     render(
       <div style={style}>
         <HtmlRenderer htmlSanitized={html} />
-      </div>
+      </div>,
     );
 
     const renderer = screen.getByTestId("html-renderer");
@@ -184,7 +198,9 @@ describe("HtmlRenderer", () => {
 
     expect(getComputedStyle(renderer).color).toBe("rgb(11, 22, 33)");
     expect(getComputedStyle(blockquote).color).toBe("rgb(44, 55, 66)");
-    expect(getComputedStyle(blockquote).backgroundColor).toBe("rgb(77, 88, 99)");
+    expect(getComputedStyle(blockquote).backgroundColor).toBe(
+      "rgb(77, 88, 99)",
+    );
     expect(getComputedStyle(link).color).toBe("rgb(111, 122, 133)");
   });
 });

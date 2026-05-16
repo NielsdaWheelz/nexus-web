@@ -122,6 +122,34 @@ class DirectSessionManager:
 
                 if table == "users" and column == "id":
                     session.execute(
+                        text(
+                            """
+                            DELETE FROM message_retrieval_candidate_ledgers
+                            WHERE tool_call_id IN (
+                                SELECT mtc.id
+                                FROM message_tool_calls mtc
+                                JOIN conversations c ON c.id = mtc.conversation_id
+                                WHERE c.owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_rerank_ledgers
+                            WHERE tool_call_id IN (
+                                SELECT mtc.id
+                                FROM message_tool_calls mtc
+                                JOIN conversations c ON c.id = mtc.conversation_id
+                                WHERE c.owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
                         text("DELETE FROM object_search_embeddings WHERE user_id = :value"),
                         {"value": value},
                     )
@@ -141,8 +169,213 @@ class DirectSessionManager:
                         text("DELETE FROM object_links WHERE user_id = :value"),
                         {"value": value},
                     )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM assistant_message_claim_evidence
+                            WHERE claim_id IN (
+                                SELECT ac.id
+                                FROM assistant_message_claims ac
+                                JOIN messages m ON m.id = ac.message_id
+                                JOIN conversations c ON c.id = m.conversation_id
+                                WHERE c.owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    for table_name in (
+                        "assistant_message_citation_audits",
+                        "assistant_message_evidence_summaries",
+                        "assistant_message_claims",
+                        "assistant_message_verifier_runs",
+                    ):
+                        session.execute(
+                            text(
+                                f"""
+                                DELETE FROM {table_name}
+                                WHERE message_id IN (
+                                    SELECT m.id
+                                    FROM messages m
+                                    JOIN conversations c ON c.id = m.conversation_id
+                                    WHERE c.owner_user_id = :value
+                                )
+                                """
+                            ),
+                            {"value": value},
+                        )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM source_manifests
+                            WHERE conversation_id IN (
+                                SELECT id FROM conversations WHERE owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_artifact_exports
+                            WHERE viewer_user_id = :value
+                               OR conversation_id IN (
+                                   SELECT id FROM conversations WHERE owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_artifact_parts
+                            WHERE artifact_id IN (
+                                SELECT ma.id
+                                FROM message_artifacts ma
+                                JOIN messages m ON m.id = ma.message_id
+                                JOIN conversations c ON c.id = m.conversation_id
+                                WHERE c.owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_artifacts
+                            WHERE message_id IN (
+                                SELECT m.id
+                                FROM messages m
+                                JOIN conversations c ON c.id = m.conversation_id
+                                WHERE c.owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM chat_run_events
+                            WHERE run_id IN (
+                                SELECT cr.id
+                                FROM chat_runs cr
+                                JOIN conversations c ON c.id = cr.conversation_id
+                                WHERE c.owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM chat_prompt_assemblies
+                            WHERE conversation_id IN (
+                                SELECT id FROM conversations WHERE owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM chat_runs
+                            WHERE conversation_id IN (
+                                SELECT id FROM conversations WHERE owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_retrievals
+                            WHERE tool_call_id IN (
+                                SELECT mtc.id
+                                FROM message_tool_calls mtc
+                                JOIN conversations c ON c.id = mtc.conversation_id
+                                WHERE c.owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_tool_calls
+                            WHERE conversation_id IN (
+                                SELECT id FROM conversations WHERE owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_context_items
+                            WHERE message_id IN (
+                                SELECT m.id
+                                FROM messages m
+                                JOIN conversations c ON c.id = m.conversation_id
+                                WHERE c.owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM conversation_active_paths
+                            WHERE conversation_id IN (
+                                SELECT id FROM conversations WHERE owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM conversation_branches
+                            WHERE conversation_id IN (
+                                SELECT id FROM conversations WHERE owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM messages
+                            WHERE conversation_id IN (
+                                SELECT id FROM conversations WHERE owner_user_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM conversations WHERE owner_user_id = :value"),
+                        {"value": value},
+                    )
 
                 if table == "media" and column == "id":
+                    session.execute(
+                        text(
+                            "UPDATE message_retrievals SET media_id = NULL WHERE media_id = :value"
+                        ),
+                        {"value": value},
+                    )
                     session.execute(
                         text("DELETE FROM media_content_index_states WHERE media_id = :value"),
                         {"value": value},
@@ -227,12 +460,146 @@ class DirectSessionManager:
                 if table == "conversations" and column == "id":
                     session.execute(
                         text(
+                            """
+                            DELETE FROM message_retrieval_candidate_ledgers
+                            WHERE tool_call_id IN (
+                                SELECT mtc.id
+                                FROM message_tool_calls mtc
+                                WHERE mtc.conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_rerank_ledgers
+                            WHERE tool_call_id IN (
+                                SELECT mtc.id
+                                FROM message_tool_calls mtc
+                                WHERE mtc.conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM assistant_message_claim_evidence
+                            WHERE claim_id IN (
+                                SELECT ac.id
+                                FROM assistant_message_claims ac
+                                JOIN messages m ON m.id = ac.message_id
+                                WHERE m.conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    for table_name in (
+                        "assistant_message_citation_audits",
+                        "assistant_message_evidence_summaries",
+                        "assistant_message_claims",
+                        "assistant_message_verifier_runs",
+                    ):
+                        session.execute(
+                            text(
+                                f"""
+                                DELETE FROM {table_name}
+                                WHERE message_id IN (
+                                    SELECT id FROM messages WHERE conversation_id = :value
+                                )
+                                """
+                            ),
+                            {"value": value},
+                        )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_artifact_exports
+                            WHERE conversation_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_artifact_parts
+                            WHERE artifact_id IN (
+                                SELECT ma.id
+                                FROM message_artifacts ma
+                                JOIN messages m ON m.id = ma.message_id
+                                WHERE m.conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_artifacts
+                            WHERE message_id IN (
+                                SELECT id FROM messages WHERE conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
                             "DELETE FROM conversation_active_paths WHERE conversation_id = :value"
                         ),
                         {"value": value},
                     )
                     session.execute(
                         text("DELETE FROM conversation_branches WHERE conversation_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM source_manifests
+                            WHERE conversation_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM chat_run_events
+                            WHERE run_id IN (
+                                SELECT id FROM chat_runs WHERE conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM chat_prompt_assemblies WHERE conversation_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM chat_runs WHERE conversation_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_retrievals
+                            WHERE tool_call_id IN (
+                                SELECT id FROM message_tool_calls WHERE conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM message_tool_calls WHERE conversation_id = :value"),
                         {"value": value},
                     )
                     session.execute(
@@ -249,11 +616,363 @@ class DirectSessionManager:
 
                 if table == "messages" and column == "id":
                     session.execute(
+                        text(
+                            """
+                            DELETE FROM message_retrieval_candidate_ledgers
+                            WHERE tool_call_id IN (
+                                SELECT id
+                                FROM message_tool_calls
+                                WHERE user_message_id = :value
+                                   OR assistant_message_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_rerank_ledgers
+                            WHERE tool_call_id IN (
+                                SELECT id
+                                FROM message_tool_calls
+                                WHERE user_message_id = :value
+                                   OR assistant_message_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM assistant_message_claim_evidence
+                            WHERE retrieval_id IN (
+                                SELECT mr.id
+                                FROM message_retrievals mr
+                                JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
+                                WHERE mtc.user_message_id = :value
+                                   OR mtc.assistant_message_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM assistant_message_claim_evidence
+                            WHERE claim_id IN (
+                                SELECT id
+                                FROM assistant_message_claims
+                                WHERE message_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    for table_name in (
+                        "assistant_message_citation_audits",
+                        "assistant_message_evidence_summaries",
+                        "assistant_message_claims",
+                        "assistant_message_verifier_runs",
+                    ):
+                        session.execute(
+                            text(f"DELETE FROM {table_name} WHERE message_id = :value"),
+                            {"value": value},
+                        )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM source_manifests
+                            WHERE assistant_message_id = :value
+                               OR tool_call_id IN (
+                                   SELECT id
+                                   FROM message_tool_calls
+                                   WHERE user_message_id = :value
+                                      OR assistant_message_id = :value
+                               )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM message_artifact_exports WHERE message_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_artifact_parts
+                            WHERE artifact_id IN (
+                                SELECT id FROM message_artifacts WHERE message_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM message_artifacts WHERE message_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM chat_run_events
+                            WHERE run_id IN (
+                                SELECT id
+                                FROM chat_runs
+                                WHERE user_message_id = :value
+                                   OR assistant_message_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM chat_prompt_assemblies
+                            WHERE assistant_message_id = :value
+                               OR chat_run_id IN (
+                                   SELECT id
+                                   FROM chat_runs
+                                   WHERE user_message_id = :value
+                                      OR assistant_message_id = :value
+                               )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_retrievals
+                            WHERE tool_call_id IN (
+                                SELECT id
+                                FROM message_tool_calls
+                                WHERE user_message_id = :value
+                                   OR assistant_message_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_tool_calls
+                            WHERE user_message_id = :value
+                               OR assistant_message_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM chat_runs
+                            WHERE user_message_id = :value
+                               OR assistant_message_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM conversation_active_paths
+                            WHERE active_leaf_message_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM conversation_branches
+                            WHERE branch_user_message_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_context_items
+                            WHERE message_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_retrieval_candidate_ledgers
+                            WHERE tool_call_id IN (
+                                SELECT id
+                                FROM message_tool_calls
+                                WHERE user_message_id = :value
+                                   OR assistant_message_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_rerank_ledgers
+                            WHERE tool_call_id IN (
+                                SELECT id
+                                FROM message_tool_calls
+                                WHERE user_message_id = :value
+                                   OR assistant_message_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
                         text("DELETE FROM message_context_items WHERE message_id = :value"),
                         {"value": value},
                     )
 
                 if table == "messages" and column == "conversation_id":
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_retrieval_candidate_ledgers
+                            WHERE tool_call_id IN (
+                                SELECT mtc.id
+                                FROM message_tool_calls mtc
+                                WHERE mtc.conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_rerank_ledgers
+                            WHERE tool_call_id IN (
+                                SELECT mtc.id
+                                FROM message_tool_calls mtc
+                                WHERE mtc.conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM assistant_message_claim_evidence
+                            WHERE claim_id IN (
+                                SELECT ac.id
+                                FROM assistant_message_claims ac
+                                JOIN messages m ON m.id = ac.message_id
+                                WHERE m.conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    for table_name in (
+                        "assistant_message_citation_audits",
+                        "assistant_message_evidence_summaries",
+                        "assistant_message_claims",
+                        "assistant_message_verifier_runs",
+                    ):
+                        session.execute(
+                            text(
+                                f"""
+                                DELETE FROM {table_name}
+                                WHERE message_id IN (
+                                    SELECT id FROM messages WHERE conversation_id = :value
+                                )
+                                """
+                            ),
+                            {"value": value},
+                        )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM source_manifests
+                            WHERE conversation_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_artifact_exports
+                            WHERE conversation_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_artifact_parts
+                            WHERE artifact_id IN (
+                                SELECT ma.id
+                                FROM message_artifacts ma
+                                JOIN messages m ON m.id = ma.message_id
+                                WHERE m.conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_artifacts
+                            WHERE message_id IN (
+                                SELECT id FROM messages WHERE conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM chat_run_events
+                            WHERE run_id IN (
+                                SELECT id FROM chat_runs WHERE conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM chat_prompt_assemblies WHERE conversation_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM message_retrievals
+                            WHERE tool_call_id IN (
+                                SELECT id FROM message_tool_calls WHERE conversation_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM message_tool_calls WHERE conversation_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM chat_runs WHERE conversation_id = :value"),
+                        {"value": value},
+                    )
                     session.execute(
                         text(
                             "DELETE FROM conversation_active_paths WHERE conversation_id = :value"

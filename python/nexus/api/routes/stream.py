@@ -19,10 +19,15 @@ from nexus.logging import set_stream_jti
 from nexus.services import chat_runs as chat_runs_service
 from nexus.services import oracle as oracle_service
 
-router = APIRouter(prefix="/stream", tags=["streaming"])
+router = APIRouter(tags=["streaming"])
 
 STREAM_IDLE_TTL_SECONDS = 45.0
 KEEPALIVE_INTERVAL_SECONDS = STREAM_IDLE_TTL_SECONDS / 3.0
+# justify-polling: chat run events are produced by a separate worker process
+# and persisted to chat_run_events; the API process has no push channel to the
+# worker, so the SSE tail polls the table. 0.5s keeps streaming near-real-time
+# without excessive load; the tail loop is self-bounding — it returns on the
+# `done` event or a terminal run state.
 POLL_INTERVAL_SECONDS = 0.5
 
 
@@ -88,17 +93,22 @@ async def _tail_chat_run_events(
             return
 
         with db_factory() as db:
-            events = chat_runs_service.get_chat_run_events(
-                db,
-                viewer_id=viewer_id,
-                run_id=run_id,
-                after=cursor,
-            )
-            terminal = chat_runs_service.is_chat_run_terminal(
-                db,
-                viewer_id=viewer_id,
-                run_id=run_id,
-            )
+            try:
+                events = chat_runs_service.get_chat_run_events(
+                    db,
+                    viewer_id=viewer_id,
+                    run_id=run_id,
+                    after=cursor,
+                )
+                terminal = chat_runs_service.is_chat_run_terminal(
+                    db,
+                    viewer_id=viewer_id,
+                    run_id=run_id,
+                )
+            except ApiError as exc:
+                if exc.code == ApiErrorCode.E_NOT_FOUND:
+                    return
+                raise
 
         for event in events:
             cursor = event.seq
@@ -134,7 +144,7 @@ def _format_sse_event(seq: int, event_type: str, payload: dict) -> str:
     return f"id: {seq}\nevent: {event_type}\ndata: {data}\n\n"
 
 
-@router.get("/oracle-readings/{reading_id}/events")
+@router.get("/stream/oracle-readings/{reading_id}/events")
 async def stream_oracle_reading_events(
     request: Request,
     reading_id: UUID,

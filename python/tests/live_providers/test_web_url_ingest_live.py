@@ -115,6 +115,7 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
                 }
             ],
             "web_search": {"mode": "off"},
+            "artifact_intent": {"kind": "off"},
         },
     )
     assert stale_context_response.status_code == 400, stale_context_response.text

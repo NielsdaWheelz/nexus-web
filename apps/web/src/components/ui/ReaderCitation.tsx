@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import HoverPreview, { HOVER_PREVIEW_DELAY_MS } from "@/components/ui/HoverPreview";
 import { truncateText } from "@/lib/conversations/display";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
@@ -18,6 +18,8 @@ export interface ReaderCitationPreview {
   title?: string;
   excerpt?: string;
   meta?: string[];
+  copyText?: string;
+  saveable?: boolean;
 }
 
 const colorClass = {
@@ -36,6 +38,8 @@ export default function ReaderCitation({
   target,
   href,
   onActivate,
+  onAskAboutSource,
+  onSaveSourceQuote,
   ariaLabel,
 }: {
   index: number;
@@ -44,12 +48,18 @@ export default function ReaderCitation({
   target: ReaderSourceTarget | null;
   href?: string | null;
   onActivate: (target: ReaderSourceTarget) => void;
+  onAskAboutSource?: (target: ReaderSourceTarget) => void;
+  onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
   ariaLabel?: string;
 }) {
   const [showPreview, setShowPreview] = useState(false);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   const hoverTimerRef = useRef<number | null>(null);
   const citationRef = useRef<HTMLElement | null>(null);
+  const activationTarget = useMemo(
+    () => (target && href && target.href !== href ? { ...target, href } : target),
+    [href, target],
+  );
 
   const captureAnchor = useCallback(() => {
     const element = citationRef.current;
@@ -79,24 +89,12 @@ export default function ReaderCitation({
     setShowPreview(false);
   }, [cancelHoverTimer]);
 
-  const handleClick = useCallback(() => {
-    if (!target) return;
-    onActivate(target);
-  }, [onActivate, target]);
-
-  const handleKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLElement>) => {
-      if (!target) return;
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        onActivate(target);
-      }
-    },
-    [onActivate, target],
-  );
+  const copyText = preview.copyText;
+  const hasPreviewActions = Boolean(activationTarget || href || copyText);
+  const externalHref = href?.startsWith("http://") || href?.startsWith("https://");
 
   const previewBody =
-    preview.title || preview.excerpt || (preview.meta && preview.meta.length > 0) ? (
+    preview.title || preview.excerpt || (preview.meta && preview.meta.length > 0) || hasPreviewActions ? (
       <>
         {preview.title ? <div className={styles.previewTitle}>{truncateText(preview.title, 96)}</div> : null}
         {preview.excerpt ? (
@@ -107,15 +105,80 @@ export default function ReaderCitation({
             {entry}
           </div>
         ))}
+        {hasPreviewActions ? (
+          <div className={styles.previewActions}>
+            {activationTarget ? (
+              <button
+                type="button"
+                className={styles.previewAction}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onActivate(activationTarget);
+                  closePreview();
+                }}
+              >
+                Open in context
+              </button>
+            ) : href ? (
+              <a
+                className={styles.previewAction}
+                href={href}
+                target={externalHref ? "_blank" : undefined}
+                rel={externalHref ? "noopener noreferrer" : undefined}
+                onClick={closePreview}
+              >
+                Open source
+              </a>
+            ) : null}
+            {activationTarget && onAskAboutSource ? (
+              <button
+                type="button"
+                className={styles.previewAction}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onAskAboutSource(activationTarget);
+                  closePreview();
+                }}
+              >
+                Ask about this
+              </button>
+            ) : null}
+            {activationTarget && preview.saveable && onSaveSourceQuote ? (
+              <button
+                type="button"
+                className={styles.previewAction}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSaveSourceQuote(activationTarget);
+                  closePreview();
+                }}
+              >
+                Save quote
+              </button>
+            ) : null}
+            {copyText ? (
+              <button
+                type="button"
+                className={styles.previewAction}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void navigator.clipboard.writeText(copyText);
+                  closePreview();
+                }}
+              >
+                Copy citation
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </>
     ) : null;
 
   const className = `${styles.citation} ${colorClass[color]} ${
-    target || href ? "" : styles.unavailable
+    activationTarget || href ? "" : styles.unavailable
   }`.trim();
 
-  const label = ariaLabel ?? (target || href ? `Open citation ${index}` : `Citation ${index}`);
-  const externalHref = href?.startsWith("http://") || href?.startsWith("https://");
+  const label = ariaLabel ?? (activationTarget || href ? `Open citation ${index}` : `Citation ${index}`);
   const previewNode =
     showPreview && anchor && previewBody ? (
       <HoverPreview anchor={anchor} onClose={closePreview}>
@@ -125,42 +188,61 @@ export default function ReaderCitation({
 
   if (href && !target) {
     return (
-      <a
-        ref={(element) => {
-          citationRef.current = element;
-        }}
-        className={className}
-        href={href}
-        target={externalHref ? "_blank" : undefined}
-        rel={externalHref ? "noopener noreferrer" : undefined}
-        aria-label={label}
-        onPointerEnter={openWithDelay}
-        onPointerLeave={closePreview}
-        onFocus={openWithDelay}
-        onBlur={closePreview}
-      >
-        {index}
+      <>
+        <a
+          ref={(element) => {
+            citationRef.current = element;
+          }}
+          className={className}
+          href={href}
+          target={externalHref ? "_blank" : undefined}
+          rel={externalHref ? "noopener noreferrer" : undefined}
+          aria-label={label}
+          onPointerEnter={openWithDelay}
+          onPointerLeave={cancelHoverTimer}
+          onFocus={openWithDelay}
+        >
+          {index}
+        </a>
         {previewNode}
-      </a>
+      </>
+    );
+  }
+
+  if (activationTarget) {
+    return (
+      <>
+        <button
+          ref={(element) => {
+            citationRef.current = element;
+          }}
+          type="button"
+          className={`${className} ${styles.citationButton}`}
+          aria-label={label}
+          onPointerEnter={openWithDelay}
+          onPointerLeave={cancelHoverTimer}
+          onFocus={openWithDelay}
+          onClick={() => onActivate(activationTarget)}
+        >
+          {index}
+        </button>
+        {previewNode}
+      </>
     );
   }
 
   return (
-    <sup
-      ref={citationRef}
-      className={className}
-      role={target ? "button" : undefined}
-      tabIndex={target ? 0 : -1}
-      aria-label={label}
-      onPointerEnter={openWithDelay}
-      onPointerLeave={closePreview}
-      onFocus={openWithDelay}
-      onBlur={closePreview}
-      onClick={handleClick}
-      onKeyDown={handleKeyDown}
-    >
-      {index}
+    <>
+      <sup
+        ref={citationRef}
+        className={className}
+        aria-label={label}
+        onPointerEnter={openWithDelay}
+        onPointerLeave={cancelHoverTimer}
+      >
+        {index}
+      </sup>
       {previewNode}
-    </sup>
+    </>
   );
 }

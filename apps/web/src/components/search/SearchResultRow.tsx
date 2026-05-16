@@ -3,7 +3,11 @@
 import ContextRow from "@/components/ui/ContextRow";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import type { SearchResultRowViewModel } from "@/lib/search/resultRowAdapter";
+import { isObjectType } from "@/lib/objectRefs";
 import styles from "./SearchResultRow.module.css";
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface SearchResultRowProps {
   row: SearchResultRowViewModel;
@@ -33,11 +37,21 @@ function buildAskHref(row: SearchResultRowViewModel): string | null {
   if (!row.contextRef) {
     return null;
   }
+  if (!isObjectType(row.contextRef.type) || !UUID_RE.test(row.contextRef.id)) {
+    return null;
+  }
+  if (
+    row.contextRef.evidenceSpanIds.length > 0 &&
+    !row.contextRef.evidenceSpanIds.every((id) => UUID_RE.test(id))
+  ) {
+    return null;
+  }
 
   const params = new URLSearchParams();
   if (
     row.type === "content_chunk" &&
     row.mediaId &&
+    UUID_RE.test(row.mediaId) &&
     row.contextRef.evidenceSpanIds.length > 0
   ) {
     params.set("scope", `media:${row.mediaId}`);

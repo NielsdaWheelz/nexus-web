@@ -57,6 +57,7 @@ export interface Fragment {
   t_start_ms?: number | null;
   t_end_ms?: number | null;
   speaker_label?: string | null;
+  source_version?: string | null;
   created_at: string;
 }
 

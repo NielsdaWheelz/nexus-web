@@ -137,6 +137,23 @@ def create_test_conversation(
     return conv.id
 
 
+def _message_document(role: str, content: str) -> dict[str, object]:
+    text = content.strip()
+    return {
+        "type": "message_document",
+        "version": 1,
+        "blocks": []
+        if not text
+        else [
+            {
+                "type": "text",
+                "format": "markdown" if role == "assistant" else "plain",
+                "text": content,
+            }
+        ],
+    }
+
+
 def create_test_message(
     session: Session,
     conversation_id: UUID,
@@ -174,6 +191,7 @@ def create_test_message(
         seq=seq,
         role=role,
         content=content,
+        message_document=_message_document(role, content),
         status=status,
         model_id=model_id,
         parent_message_id=parent_message_id,
@@ -215,6 +233,7 @@ def create_test_conversation_with_message(
             seq=1,
             role="user",
             content="Test setup message",
+            message_document=_message_document("user", "Test setup message"),
             status="complete",
         )
         session.add(parent)
@@ -227,6 +246,7 @@ def create_test_conversation_with_message(
         seq=seq,
         role=role,
         content=content,
+        message_document=_message_document(role, content),
         status=status,
         parent_message_id=parent_message_id,
     )

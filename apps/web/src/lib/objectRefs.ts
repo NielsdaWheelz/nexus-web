@@ -9,7 +9,11 @@ export const OBJECT_TYPES = [
   "message",
   "podcast",
   "content_chunk",
+  "fragment",
   "contributor",
+  "evidence_span",
+  "artifact",
+  "artifact_part",
 ] as const;
 
 export type ObjectType = (typeof OBJECT_TYPES)[number];

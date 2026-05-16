@@ -19,8 +19,9 @@ from pydantic import (
     model_validator,
 )
 
-from nexus.schemas.context_memory import ConversationMemoryInspectionOut
+from nexus.schemas.context_memory import ConversationMemoryInspectionOut, SourceRef
 from nexus.schemas.contributors import ContributorCreditOut
+from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 
 # Valid sharing modes - must match DB constraint
 SHARING_MODES = Literal["private", "library", "public"]
@@ -41,7 +42,11 @@ MESSAGE_CONTEXT_TYPES = Literal[
     "message",
     "podcast",
     "content_chunk",
+    "fragment",
     "contributor",
+    "evidence_span",
+    "artifact",
+    "artifact_part",
 ]
 
 MESSAGE_CONTEXT_KINDS = Literal["object_ref", "reader_selection"]
@@ -56,18 +61,68 @@ HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
 APP_SEARCH_RESULT_TYPES = Literal[
     "page",
     "note_block",
+    "highlight",
     "media",
     "podcast",
+    "episode",
+    "video",
     "content_chunk",
+    "fragment",
     "message",
     "contributor",
+    "evidence_span",
+    "conversation",
+    "artifact",
+    "artifact_part",
     "web_result",
 ]
 
 # Valid assistant tool-call statuses - must match message_tool_calls.status
-MESSAGE_TOOL_STATUSES = Literal["pending", "complete", "error"]
+MESSAGE_TOOL_STATUSES = Literal["pending", "running", "complete", "error", "cancelled"]
 WEB_SEARCH_MODES = Literal["off", "auto", "required"]
 WEB_SEARCH_RESULT_TYPES = Literal["web", "news", "mixed"]
+MESSAGE_ARTIFACT_KINDS = Literal[
+    "briefing_document",
+    "study_guide",
+    "faq",
+    "timeline",
+    "comparison_table",
+    "extraction_table",
+    "claim_table",
+    "contradiction_report",
+    "source_map",
+    "concept_map",
+    "outline",
+    "flashcards",
+    "quiz",
+    "audio_overview_script",
+    "audio_overview",
+    "video_slide_overview_manifest",
+    "bibliography",
+    "citation_audit",
+]
+ARTIFACT_INTENT_KINDS = Literal[
+    "off",
+    "auto",
+    "briefing_document",
+    "study_guide",
+    "faq",
+    "timeline",
+    "comparison_table",
+    "extraction_table",
+    "claim_table",
+    "contradiction_report",
+    "source_map",
+    "concept_map",
+    "outline",
+    "flashcards",
+    "quiz",
+    "audio_overview_script",
+    "audio_overview",
+    "video_slide_overview_manifest",
+    "bibliography",
+    "citation_audit",
+]
 CHAT_RUN_STATUSES = Literal["queued", "running", "complete", "error", "cancelled"]
 BRANCH_ANCHOR_KINDS = Literal[
     "none",
@@ -76,7 +131,17 @@ BRANCH_ANCHOR_KINDS = Literal[
     "reader_context",
 ]
 BRANCH_ANCHOR_OFFSET_STATUSES = Literal["mapped", "unmapped"]
-CHAT_RUN_EVENT_TYPES = Literal["meta", "tool_call", "tool_result", "citation", "delta", "done"]
+CHAT_RUN_EVENT_TYPES = Literal[
+    "meta",
+    "tool_call",
+    "retrieval_result",
+    "source_manifest_delta",
+    "artifact_delta",
+    "claim",
+    "claim_evidence",
+    "delta",
+    "done",
+]
 EVIDENCE_RETRIEVAL_STATUSES = Literal[
     "attached_context",
     "retrieved",
@@ -95,7 +160,8 @@ CLAIM_SUPPORT_STATUSES = Literal[
     "not_source_grounded",
 ]
 CLAIM_EVIDENCE_ROLES = Literal["supports", "contradicts", "context", "scope_boundary"]
-EVIDENCE_VERIFIER_STATUSES = Literal["verified", "failed"]
+EVIDENCE_VERIFIER_STATUSES = Literal["llm_verified", "parse_failed", "failed"]
+CANDIDATE_INCLUDED_IN_PROMPT_SOURCES = Literal["candidate_ledger", "linked_retrieval"]
 
 
 class ConversationScopeRequest(BaseModel):
@@ -166,36 +232,291 @@ class ConversationOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class MessageDocumentTextBlock(BaseModel):
+    type: Literal["text"]
+    format: Literal["plain", "markdown"]
+    text: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageDocumentSourceManifestBlock(BaseModel):
+    type: Literal["source_manifest"]
+    assistant_message_id: UUID
+    tool_call_id: UUID | None = None
+    tool_name: Literal["app_search", "web_search"]
+    tool_call_index: int = Field(ge=0)
+    query_hash: str | None = None
+    scope: str | None = None
+    filters: dict[str, Any] = Field(default_factory=dict)
+    requested_types: list[str] = Field(default_factory=list)
+    candidate_count: int = Field(ge=0)
+    result_count: int = Field(ge=0)
+    selected_count: int = Field(ge=0)
+    included_in_prompt_count: int = Field(ge=0)
+    excluded_by_budget_count: int = Field(ge=0)
+    excluded_by_scope_count: int = Field(ge=0)
+    stale_count: int = Field(ge=0)
+    unreadable_count: int = Field(ge=0)
+    web_search_mode: WEB_SEARCH_MODES | None = None
+    index_versions: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    latency_ms: int | None = Field(default=None, ge=0)
+    status: MESSAGE_TOOL_STATUSES
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageDocumentRetrievalResultBlock(BaseModel):
+    type: Literal["retrieval_result"]
+    id: UUID | None = None
+    tool_call_id: UUID | None = None
+    tool_call_index: int | None = Field(default=None, ge=0)
+    ordinal: int | None = Field(default=None, ge=0)
+    result_type: APP_SEARCH_RESULT_TYPES
+    source_id: str
+    media_id: UUID | None = None
+    evidence_span_id: UUID | None = None
+    context_ref: RetrievalContextRef
+    result_ref: RetrievalResultRef
+    deep_link: str | None = None
+    locator: RetrievalLocator | None = None
+    score: float | None = None
+    selected: bool
+    source_title: str | None = None
+    section_label: str | None = None
+    exact_snippet: str | None = None
+    snippet_prefix: str | None = None
+    snippet_suffix: str | None = None
+    retrieval_status: EVIDENCE_RETRIEVAL_STATUSES | None = None
+    included_in_prompt: bool | None = None
+    source_version: str | None = None
+    created_at: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_ref_type_parity(self) -> "MessageDocumentRetrievalResultBlock":
+        expected_context_type = (
+            "media" if self.result_type in {"episode", "video"} else self.result_type
+        )
+        if self.context_ref.type != expected_context_type:
+            raise ValueError("context_ref.type must match result_type")
+        if self.result_ref.type != self.result_type:
+            raise ValueError("result_ref.type must match result_type")
+        result_source_version = getattr(self.result_ref, "source_version", None)
+        if self.source_version != result_source_version:
+            raise ValueError("source_version must match result_ref.source_version")
+        result_locator = getattr(self.result_ref, "locator", None)
+        if result_locator is None:
+            if self.locator is not None:
+                raise ValueError("locator must match result_ref.locator")
+        elif self.locator is None or self.locator.model_dump(
+            mode="json",
+            exclude_none=True,
+            exclude_defaults=True,
+        ) != result_locator.model_dump(
+            mode="json",
+            exclude_none=True,
+            exclude_defaults=True,
+        ):
+            raise ValueError("locator must match result_ref.locator")
+        return self
+
+
+class MessageDocumentVerificationSummaryBlock(BaseModel):
+    type: Literal["verification_summary"]
+    id: UUID
+    message_id: UUID
+    scope_type: CONVERSATION_SCOPE_TYPES
+    scope_ref: dict[str, Any] | None = None
+    retrieval_status: EVIDENCE_RETRIEVAL_STATUSES
+    support_status: CLAIM_SUPPORT_STATUSES
+    verifier_status: EVIDENCE_VERIFIER_STATUSES
+    claim_count: int = Field(ge=0)
+    supported_claim_count: int = Field(ge=0)
+    unsupported_claim_count: int = Field(ge=0)
+    not_enough_evidence_count: int = Field(ge=0)
+    prompt_assembly_id: UUID | None = None
+    verifier_run_id: UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageDocumentCitationAuditBlock(BaseModel):
+    type: Literal["citation_audit"]
+    id: UUID
+    message_id: UUID
+    chat_run_id: UUID | None = None
+    verifier_run_id: UUID | None = None
+    supported_claim_count: int = Field(ge=0)
+    supported_claims_with_valid_offsets_count: int = Field(ge=0)
+    supported_claims_with_citation_count: int = Field(ge=0)
+    missing_locator_count: int = Field(ge=0)
+    missing_source_version_count: int = Field(ge=0)
+    supported_claims_have_valid_offsets: bool
+    supported_claims_have_citation_placement: bool
+    claim_evidence_has_required_locators: bool
+    claim_evidence_has_source_versions: bool
+    details: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageDocumentClaimBlock(BaseModel):
+    type: Literal["claim"]
+    claim_id: UUID
+    message_id: UUID | None = None
+    ordinal: int = Field(ge=0)
+    claim_text: str
+    answer_start_offset: int | None = Field(default=None, ge=0)
+    answer_end_offset: int | None = Field(default=None, ge=0)
+    claim_kind: Literal["answer", "insufficient_evidence"]
+    support_status: CLAIM_SUPPORT_STATUSES
+    unsupported_reason: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    verifier_status: EVIDENCE_VERIFIER_STATUSES
+    created_at: datetime | None = None
+    evidence_ids: list[UUID] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> "MessageDocumentClaimBlock":
+        if (
+            self.answer_start_offset is not None
+            and self.answer_end_offset is not None
+            and self.answer_end_offset <= self.answer_start_offset
+        ):
+            raise ValueError("answer_end_offset must be greater than answer_start_offset")
+        return self
+
+
+class MessageDocumentClaimEvidenceBlock(BaseModel):
+    type: Literal["claim_evidence"]
+    id: UUID
+    claim_id: UUID
+    ordinal: int = Field(ge=0)
+    evidence_role: CLAIM_EVIDENCE_ROLES
+    source_ref: SourceRef
+    retrieval_id: UUID | None = None
+    evidence_span_id: UUID | None = None
+    context_ref: RetrievalContextRef | None = None
+    result_ref: RetrievalResultRef | None = None
+    exact_snippet: str | None = None
+    snippet_prefix: str | None = None
+    snippet_suffix: str | None = None
+    locator: RetrievalLocator | None = None
+    deep_link: str | None = None
+    citation_label: str | None = None
+    score: float | None = None
+    retrieval_status: EVIDENCE_RETRIEVAL_STATUSES
+    selected: bool
+    included_in_prompt: bool
+    source_version: str | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_citable_evidence(self) -> "MessageDocumentClaimEvidenceBlock":
+        if self.evidence_role in {"supports", "contradicts"}:
+            if self.locator is None:
+                raise ValueError("supporting claim evidence requires a locator")
+            if self.source_version is None:
+                raise ValueError("supporting claim evidence requires a source_version")
+            if not isinstance(self.exact_snippet, str) or not self.exact_snippet.strip():
+                raise ValueError("supporting claim evidence requires an exact_snippet")
+        return self
+
+
+class MessageDocumentArtifactPart(BaseModel):
+    id: UUID | str | None = None
+    artifact_id: UUID | str | None = None
+    ordinal: int | None = Field(default=None, ge=0)
+    part_key: str | None = None
+    part_type: str | None = None
+    text: str | None = None
+    source_version: str
+    locator: RetrievalLocator
+    source_ref: SourceRef | None = None
+    source_refs: list[SourceRef] = Field(default_factory=list)
+    context_ref: RetrievalContextRef | None = None
+    result_ref: RetrievalResultRef | None = None
+    evidence_span_id: UUID | None = None
+    evidence_span_ids: list[UUID] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageDocumentArtifactPreviewBlock(BaseModel):
+    type: Literal["artifact_preview"]
+    artifact_id: UUID | str | None = None
+    durable_artifact_id: UUID | str | None = None
+    artifact_key: str | None = None
+    artifact_version: int | None = Field(default=None, ge=1)
+    supersedes_artifact_id: UUID | str | None = None
+    artifact_kind: MESSAGE_ARTIFACT_KINDS | None = None
+    title: str | None = None
+    status: Literal["streaming", "complete", "error"] | None = None
+    delta: str | None = None
+    parts: list[MessageDocumentArtifactPart] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+MessageDocumentBlock = Annotated[
+    MessageDocumentTextBlock
+    | MessageDocumentSourceManifestBlock
+    | MessageDocumentRetrievalResultBlock
+    | MessageDocumentVerificationSummaryBlock
+    | MessageDocumentCitationAuditBlock
+    | MessageDocumentClaimBlock
+    | MessageDocumentClaimEvidenceBlock
+    | MessageDocumentArtifactPreviewBlock,
+    Field(discriminator="type"),
+]
+
+
+class MessageDocument(BaseModel):
+    type: Literal["message_document"] = "message_document"
+    version: Literal[1] = 1
+    blocks: list[MessageDocumentBlock] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class MessageOut(BaseModel):
     """Response schema for a message.
 
-    Messages are immutable after creation (content immutable after status=complete).
+    Message text and evidence render from message_document blocks.
     Messages are ordered by seq within a conversation.
     """
 
     id: UUID
     seq: int
     role: str  # "user" | "assistant" | "system"
-    content: str
+    message_document: MessageDocument = Field(default_factory=MessageDocument)
     parent_message_id: UUID | None = None
     branch_root_message_id: UUID | None = None
     branch_anchor_kind: BRANCH_ANCHOR_KINDS = "none"
     branch_anchor: dict[str, Any] = Field(default_factory=dict)
     contexts: list["MessageContextSnapshot"] = Field(default_factory=list)
-    tool_calls: list["MessageToolCallOut"] = Field(default_factory=list)
-    evidence_summary: "MessageEvidenceSummaryOut | None" = None
-    claims: list["MessageClaimOut"] = Field(default_factory=list)
-    claim_evidence: list["MessageClaimEvidenceOut"] = Field(default_factory=list)
     status: str  # "pending" | "complete" | "error"
     error_code: str | None = None
     can_retry_response: bool = False
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
 
 class MessageRetrievalOut(BaseModel):
@@ -209,8 +530,8 @@ class MessageRetrievalOut(BaseModel):
     media_id: UUID | None = None
     evidence_span_id: UUID | None = None
     scope: str
-    context_ref: dict[str, Any]
-    result_ref: dict[str, Any]
+    context_ref: RetrievalContextRef
+    result_ref: RetrievalResultRef
     deep_link: str | None = None
     score: float | None = None
     selected: bool
@@ -219,13 +540,41 @@ class MessageRetrievalOut(BaseModel):
     exact_snippet: str | None = None
     snippet_prefix: str | None = None
     snippet_suffix: str | None = None
-    locator: dict[str, Any] | None = None
+    locator: RetrievalLocator | None = None
     retrieval_status: EVIDENCE_RETRIEVAL_STATUSES = "retrieved"
     included_in_prompt: bool = False
     source_version: str | None = None
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_ref_type_parity(self) -> "MessageRetrievalOut":
+        expected_context_type = (
+            "media" if self.result_type in {"episode", "video"} else self.result_type
+        )
+        if self.context_ref.type != expected_context_type:
+            raise ValueError("context_ref.type must match result_type")
+        if self.result_ref.type != self.result_type:
+            raise ValueError("result_ref.type must match result_type")
+        result_source_version = getattr(self.result_ref, "source_version", None)
+        if self.source_version != result_source_version:
+            raise ValueError("source_version must match result_ref.source_version")
+        result_locator = getattr(self.result_ref, "locator", None)
+        if result_locator is None:
+            if self.locator is not None:
+                raise ValueError("locator must match result_ref.locator")
+        elif self.locator is None or self.locator.model_dump(
+            mode="json",
+            exclude_none=True,
+            exclude_defaults=True,
+        ) != result_locator.model_dump(
+            mode="json",
+            exclude_none=True,
+            exclude_defaults=True,
+        ):
+            raise ValueError("locator must match result_ref.locator")
+        return self
 
 
 class MessageEvidenceSummaryOut(BaseModel):
@@ -238,6 +587,7 @@ class MessageEvidenceSummaryOut(BaseModel):
     retrieval_status: EVIDENCE_RETRIEVAL_STATUSES
     support_status: CLAIM_SUPPORT_STATUSES
     verifier_status: EVIDENCE_VERIFIER_STATUSES
+    verifier_run_id: UUID | None = None
     claim_count: int
     supported_claim_count: int
     unsupported_claim_count: int
@@ -246,7 +596,29 @@ class MessageEvidenceSummaryOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class MessageCitationAuditOut(BaseModel):
+    """Citation audit snapshot for one finalized assistant message."""
+
+    id: UUID
+    message_id: UUID
+    chat_run_id: UUID | None = None
+    verifier_run_id: UUID | None = None
+    supported_claim_count: int
+    supported_claims_with_valid_offsets_count: int
+    supported_claims_with_citation_count: int
+    missing_locator_count: int
+    missing_source_version_count: int
+    supported_claims_have_valid_offsets: bool
+    supported_claims_have_citation_placement: bool
+    claim_evidence_has_required_locators: bool
+    claim_evidence_has_source_versions: bool
+    details: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
 
 class MessageClaimOut(BaseModel):
@@ -260,10 +632,19 @@ class MessageClaimOut(BaseModel):
     answer_end_offset: int | None = None
     claim_kind: str
     support_status: CLAIM_SUPPORT_STATUSES
+    unsupported_reason: str | None = None
+    confidence: float | None = None
     verifier_status: EVIDENCE_VERIFIER_STATUSES
+    verifier_run_id: UUID | None = None
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_confidence(self) -> "MessageClaimOut":
+        if self.confidence is not None and not 0 <= self.confidence <= 1:
+            raise ValueError("claim confidence must be between 0 and 1")
+        return self
 
 
 class MessageClaimEvidenceOut(BaseModel):
@@ -273,15 +654,15 @@ class MessageClaimEvidenceOut(BaseModel):
     claim_id: UUID
     ordinal: int
     evidence_role: CLAIM_EVIDENCE_ROLES
-    source_ref: dict[str, Any]
+    source_ref: SourceRef
     retrieval_id: UUID | None = None
     evidence_span_id: UUID | None = None
-    context_ref: dict[str, Any] | None = None
-    result_ref: dict[str, Any] | None = None
+    context_ref: RetrievalContextRef | None = None
+    result_ref: RetrievalResultRef | None = None
     exact_snippet: str | None = None
     snippet_prefix: str | None = None
     snippet_suffix: str | None = None
-    locator: dict[str, Any] | None = None
+    locator: RetrievalLocator | None = None
     deep_link: str | None = None
     score: float | None = None
     retrieval_status: EVIDENCE_RETRIEVAL_STATUSES
@@ -290,7 +671,362 @@ class MessageClaimEvidenceOut(BaseModel):
     source_version: str | None = None
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_support_evidence(self) -> "MessageClaimEvidenceOut":
+        if self.evidence_role in {"supports", "contradicts"}:
+            if self.locator is None:
+                raise ValueError("supporting or contradicting evidence requires locator")
+            if not self.source_version:
+                raise ValueError("supporting or contradicting evidence requires source_version")
+        return self
+
+
+class ChatRunClaimEventPayload(BaseModel):
+    """Strict SSE payload for a finalized assistant claim."""
+
+    id: UUID
+    message_id: UUID
+    ordinal: int = Field(ge=0)
+    claim_text: str = Field(min_length=1)
+    answer_start_offset: int | None = Field(default=None, ge=0)
+    answer_end_offset: int | None = Field(default=None, ge=0)
+    claim_kind: Literal["answer", "insufficient_evidence"]
+    support_status: CLAIM_SUPPORT_STATUSES
+    unsupported_reason: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    verifier_status: EVIDENCE_VERIFIER_STATUSES
+    verifier_run_id: UUID
+    created_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> "ChatRunClaimEventPayload":
+        if (
+            self.answer_start_offset is not None
+            and self.answer_end_offset is not None
+            and self.answer_end_offset <= self.answer_start_offset
+        ):
+            raise ValueError("answer_end_offset must be greater than answer_start_offset")
+        if self.support_status in {
+            "not_enough_evidence",
+            "out_of_scope",
+            "not_source_grounded",
+        } and not (self.unsupported_reason and self.unsupported_reason.strip()):
+            raise ValueError("unsupported claims require unsupported_reason")
+        return self
+
+
+class ChatRunClaimEvidenceEventPayload(BaseModel):
+    """Strict SSE payload for one source snapshot attached to a claim."""
+
+    id: UUID
+    claim_id: UUID
+    ordinal: int = Field(ge=0)
+    evidence_role: CLAIM_EVIDENCE_ROLES
+    source_ref: SourceRef
+    retrieval_id: UUID | None = None
+    evidence_span_id: UUID | None = None
+    context_ref: RetrievalContextRef | None = None
+    result_ref: RetrievalResultRef | None = None
+    exact_snippet: str | None = None
+    snippet_prefix: str | None = None
+    snippet_suffix: str | None = None
+    locator: RetrievalLocator | None = None
+    deep_link: str | None = None
+    score: float | None = None
+    retrieval_status: EVIDENCE_RETRIEVAL_STATUSES
+    selected: bool
+    included_in_prompt: bool
+    source_version: str | None = Field(default=None, min_length=1)
+    created_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_citable_evidence(self) -> "ChatRunClaimEvidenceEventPayload":
+        if self.evidence_role in {"supports", "contradicts"}:
+            if self.locator is None:
+                raise ValueError("supporting claim evidence requires a locator")
+            if self.source_version is None:
+                raise ValueError("supporting claim evidence requires a source_version")
+            if not isinstance(self.exact_snippet, str) or not self.exact_snippet.strip():
+                raise ValueError("supporting claim evidence requires an exact_snippet")
+        return self
+
+
+class ChatRunMetaEventPayload(BaseModel):
+    """Strict SSE payload emitted when a durable run is created."""
+
+    run_id: UUID
+    conversation_id: UUID
+    user_message_id: UUID
+    assistant_message_id: UUID
+    model_id: UUID
+    provider: str = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatRunToolCallEventPayload(BaseModel):
+    """Strict SSE payload for a started or updated assistant tool call."""
+
+    tool_call_id: UUID | None = None
+    assistant_message_id: UUID
+    tool_name: Literal["app_search", "web_search"]
+    tool_call_index: int = Field(ge=0)
+    status: MESSAGE_TOOL_STATUSES
+    scope: str = Field(min_length=1)
+    types: list[str]
+    semantic: bool
+    filters: dict[str, Any]
+    freshness_days: int | None = Field(default=None, ge=0)
+    allowed_domains: list[str] = Field(default_factory=list)
+    blocked_domains: list[str] = Field(default_factory=list)
+    error_code: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatRunRetrievalResultEventPayload(BaseModel):
+    """Strict SSE payload for app/web retrieval results."""
+
+    tool_call_id: UUID | None = None
+    assistant_message_id: UUID
+    tool_name: Literal["app_search", "web_search"]
+    tool_call_index: int = Field(ge=0)
+    status: MESSAGE_TOOL_STATUSES
+    error_code: str | None = None
+    result_count: int = Field(ge=0)
+    selected_count: int = Field(ge=0)
+    latency_ms: int | None = Field(default=None, ge=0)
+    filters: dict[str, Any]
+    results: list[RetrievalResultRef] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatRunSourceManifestDeltaEventPayload(BaseModel):
+    """Strict SSE payload for the visible source-manifest ledger."""
+
+    assistant_message_id: UUID
+    tool_call_id: UUID | None = None
+    tool_name: Literal["app_search", "web_search"]
+    tool_call_index: int = Field(ge=0)
+    query_hash: str | None = None
+    scope: str = Field(min_length=1)
+    filters: dict[str, Any]
+    requested_types: list[str]
+    candidate_count: int = Field(ge=0)
+    result_count: int = Field(ge=0)
+    selected_count: int = Field(ge=0)
+    included_in_prompt_count: int = Field(ge=0)
+    excluded_by_budget_count: int = Field(ge=0)
+    excluded_by_scope_count: int = Field(ge=0)
+    stale_count: int = Field(ge=0)
+    unreadable_count: int = Field(ge=0)
+    web_search_mode: WEB_SEARCH_MODES | None = None
+    index_versions: list[str]
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    latency_ms: int | None = Field(default=None, ge=0)
+    status: MESSAGE_TOOL_STATUSES
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatRunArtifactDeltaPartPayload(BaseModel):
+    """Strict artifact part preview carried by artifact_delta events."""
+
+    id: str | None = Field(default=None, min_length=1)
+    artifact_id: UUID | str | None = None
+    ordinal: int | None = Field(default=None, ge=0)
+    part_key: str | None = Field(default=None, min_length=1)
+    part_type: str | None = Field(default=None, min_length=1)
+    text: str | None = None
+    source_version: str = Field(min_length=1)
+    locator: RetrievalLocator
+    source_ref: SourceRef | None = None
+    source_refs: list[SourceRef] = Field(default_factory=list)
+    context_ref: RetrievalContextRef | None = None
+    result_ref: RetrievalResultRef | None = None
+    evidence_span_id: UUID | None = None
+    evidence_span_ids: list[UUID] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_evidence_refs(self) -> "ChatRunArtifactDeltaPartPayload":
+        if (
+            self.source_ref is not None
+            or self.source_refs
+            or self.context_ref is not None
+            or self.result_ref is not None
+            or self.evidence_span_id is not None
+            or self.evidence_span_ids
+            or self.metadata.get("support_state") == "not_source_grounded"
+        ):
+            return self
+        raise ValueError(
+            "artifact_delta parts require evidence refs or support_state=not_source_grounded"
+        )
+
+
+class ChatRunArtifactDeltaEventPayload(BaseModel):
+    """Strict SSE payload for generated artifact previews."""
+
+    artifact_id: str = Field(min_length=1)
+    durable_artifact_id: UUID | str | None = None
+    artifact_key: str | None = Field(default=None, min_length=1)
+    artifact_version: int | None = Field(default=None, ge=1)
+    supersedes_artifact_id: UUID | str | None = None
+    artifact_kind: MESSAGE_ARTIFACT_KINDS | None = None
+    title: str | None = None
+    status: Literal["streaming", "complete", "error"] | None = None
+    delta: str | None = None
+    parts: list[ChatRunArtifactDeltaPartPayload] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatRunDeltaEventPayload(BaseModel):
+    """Strict SSE payload for assistant text deltas."""
+
+    delta: str = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatRunDoneEventPayload(BaseModel):
+    """Strict SSE payload emitted when a run reaches a terminal status."""
+
+    status: Literal["complete", "error", "cancelled"]
+    usage: dict[str, Any] | None = None
+    error_code: str | None = None
+    final_chars: int | None = Field(default=None, ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+def chat_run_event_payload_json(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate strict chat-run SSE payloads before storage/replay."""
+
+    if event_type == "meta":
+        return ChatRunMetaEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "tool_call":
+        return ChatRunToolCallEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "retrieval_result":
+        return ChatRunRetrievalResultEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "source_manifest_delta":
+        return ChatRunSourceManifestDeltaEventPayload.model_validate(payload).model_dump(
+            mode="json"
+        )
+    if event_type == "artifact_delta":
+        return ChatRunArtifactDeltaEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "claim":
+        return ChatRunClaimEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "claim_evidence":
+        return ChatRunClaimEvidenceEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "delta":
+        return ChatRunDeltaEventPayload.model_validate(payload).model_dump(mode="json")
+    if event_type == "done":
+        return ChatRunDoneEventPayload.model_validate(payload).model_dump(mode="json")
+    raise ValueError("unknown chat-run event type")
+
+
+class MessageArtifactPartOut(BaseModel):
+    """Ordered generated artifact part with optional evidence refs."""
+
+    id: UUID
+    artifact_id: UUID
+    ordinal: int
+    part_key: str | None = None
+    part_type: str | None = None
+    text: str | None = None
+    source_version: str
+    locator: RetrievalLocator
+    source_ref: SourceRef | None = None
+    context_ref: RetrievalContextRef | None = None
+    result_ref: RetrievalResultRef | None = None
+    evidence_span_id: UUID | None = None
+    evidence_span_ids: list[UUID] = Field(default_factory=list)
+    source_refs: list[SourceRef] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactOut(BaseModel):
+    """Durable generated artifact preview for one assistant message."""
+
+    id: UUID
+    conversation_id: UUID
+    message_id: UUID
+    chat_run_id: UUID | None = None
+    artifact_key: str
+    artifact_version: int
+    supersedes_artifact_id: UUID | None = None
+    artifact_kind: MESSAGE_ARTIFACT_KINDS
+    title: str | None = None
+    status: Literal["streaming", "complete", "error"]
+    preview_text: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    parts: list[MessageArtifactPartOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactPartCreateRequest(BaseModel):
+    """Create one durable artifact part with explicit provenance."""
+
+    part_key: str | None = Field(default=None, min_length=1, max_length=128)
+    part_type: str | None = Field(default=None, min_length=1, max_length=128)
+    text: str | None = Field(default=None, max_length=20000)
+    source_ref: SourceRef | None = None
+    context_ref: RetrievalContextRef | None = None
+    result_ref: RetrievalResultRef | None = None
+    evidence_span_id: UUID | None = None
+    evidence_span_ids: list[UUID] = Field(default_factory=list)
+    source_refs: list[SourceRef] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_evidence(self) -> "MessageArtifactPartCreateRequest":
+        if (
+            self.source_ref is not None
+            or self.context_ref is not None
+            or self.result_ref is not None
+            or self.evidence_span_id is not None
+            or self.evidence_span_ids
+            or self.source_refs
+            or self.metadata.get("support_state") == "not_source_grounded"
+        ):
+            return self
+        raise ValueError(
+            "artifact parts require evidence refs or support_state=not_source_grounded"
+        )
+
+
+class MessageArtifactCreateRequest(BaseModel):
+    """Create a durable generated artifact for an existing assistant message."""
+
+    message_id: UUID
+    artifact_key: str = Field(..., min_length=1, max_length=128)
+    artifact_kind: MESSAGE_ARTIFACT_KINDS
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    status: Literal["streaming", "complete", "error"] = "complete"
+    preview_text: str | None = Field(default=None, max_length=20000)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    parts: list[MessageArtifactPartCreateRequest] = Field(default_factory=list)
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
 
 class MessageToolCallOut(BaseModel):
@@ -306,8 +1042,8 @@ class MessageToolCallOut(BaseModel):
     scope: str
     requested_types: list[str] = Field(default_factory=list)
     semantic: bool
-    result_refs: list[dict[str, Any]] = Field(default_factory=list)
-    selected_context_refs: list[dict[str, Any]] = Field(default_factory=list)
+    result_refs: list[RetrievalResultRef] = Field(default_factory=list)
+    selected_context_refs: list[RetrievalContextRef] = Field(default_factory=list)
     provider_request_ids: list[str] = Field(default_factory=list)
     latency_ms: int | None = None
     status: MESSAGE_TOOL_STATUSES
@@ -316,7 +1052,107 @@ class MessageToolCallOut(BaseModel):
     updated_at: datetime
     retrievals: list[MessageRetrievalOut] = Field(default_factory=list)
 
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class SourceManifestOut(BaseModel):
+    """Durable source manifest for one assistant retrieval tool call."""
+
+    id: UUID
+    conversation_id: UUID
+    assistant_message_id: UUID
+    chat_run_id: UUID
+    tool_call_id: UUID | None = None
+    tool_name: str
+    tool_call_index: int
+    query_hash: str | None = None
+    scope: str
+    filters: dict[str, Any] = Field(default_factory=dict)
+    requested_types: list[str] = Field(default_factory=list)
+    candidate_count: int
+    result_count: int
+    selected_count: int
+    included_in_prompt_count: int
+    excluded_by_budget_count: int
+    excluded_by_scope_count: int
+    stale_count: int
+    unreadable_count: int
+    web_search_mode: WEB_SEARCH_MODES | None = None
+    index_versions: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    latency_ms: int | None = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
     model_config = ConfigDict(from_attributes=True)
+
+
+class AssistantVerifierRunOut(BaseModel):
+    """Append-only verifier run ledger for one assistant message."""
+
+    id: UUID
+    message_id: UUID
+    chat_run_id: UUID | None = None
+    prompt_assembly_id: UUID | None = None
+    verifier_name: str
+    verifier_version: str
+    verifier_status: EVIDENCE_VERIFIER_STATUSES
+    support_status: CLAIM_SUPPORT_STATUSES
+    claim_count: int
+    supported_claim_count: int
+    unsupported_claim_count: int
+    not_enough_evidence_count: int
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class MessageRetrievalCandidateLedgerOut(BaseModel):
+    """Retrieval candidate ledger row with honest prompt-inclusion status."""
+
+    id: UUID
+    tool_call_id: UUID
+    retrieval_id: UUID | None = None
+    ordinal: int
+    result_type: APP_SEARCH_RESULT_TYPES
+    source_id: str
+    score: float | None = None
+    selected: bool
+    included_in_prompt: bool
+    ledger_included_in_prompt: bool
+    linked_retrieval_included_in_prompt: bool | None = None
+    included_in_prompt_source: CANDIDATE_INCLUDED_IN_PROMPT_SOURCES
+    included_in_prompt_reconciled: bool
+    selection_status: str
+    selection_reason: str
+    result_ref: RetrievalResultRef
+    locator: RetrievalLocator | None = None
+    source_version: str | None = None
+    created_at: datetime
+
+
+class MessageRerankLedgerOut(BaseModel):
+    """Selection/rerank pass ledger for one retrieval tool call."""
+
+    id: UUID
+    tool_call_id: UUID
+    strategy: str
+    input_count: int
+    selected_count: int
+    budget_chars: int | None = None
+    selected_chars: int
+    status: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+# Valid key modes for LLM calls
+KEY_MODES = Literal["auto", "byok_only", "platform_only"]
+REASONING_MODES = Literal["default", "none", "minimal", "low", "medium", "high", "max"]
+
+# Max content length
+MAX_MESSAGE_CONTENT_LENGTH = 20000
+MAX_CONTEXTS = 10
 
 
 class WebSearchOptions(BaseModel):
@@ -327,7 +1163,302 @@ class WebSearchOptions(BaseModel):
     allowed_domains: list[str] = Field(default_factory=list)
     blocked_domains: list[str] = Field(default_factory=list)
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+
+class ArtifactIntentOptions(BaseModel):
+    """Explicit generated-artifact intent for chat runs."""
+
+    kind: ARTIFACT_INTENT_KINDS
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+
+class MessageArtifactCitationEntryOut(BaseModel):
+    """Citation manifest entry for one exported artifact part."""
+
+    artifact_part_id: UUID
+    ordinal: int
+    part_key: str | None = None
+    part_type: str | None = None
+    source_version: str
+    locator: RetrievalLocator
+    source_ref: SourceRef | None = None
+    context_ref: RetrievalContextRef | None = None
+    result_ref: RetrievalResultRef | None = None
+    evidence_span_id: UUID | None = None
+    evidence_span_ids: list[UUID] = Field(default_factory=list)
+    source_refs: list[SourceRef] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactCitationManifestOut(BaseModel):
+    """Source manifest for an exported generated artifact."""
+
+    artifact_id: UUID
+    message_id: UUID
+    conversation_id: UUID
+    entries: list[MessageArtifactCitationEntryOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactExportOut(BaseModel):
+    """Strict export payload for a durable message artifact."""
+
+    export_id: UUID
+    format: Literal["markdown", "json", "html", "pdf", "csv"]
+    artifact: MessageArtifactOut
+    artifact_version: int
+    citation_manifest: MessageArtifactCitationManifestOut
+    content_sha256: str
+    manifest_sha256: str
+    exported_at: datetime
+    content: str | dict[str, Any]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactExportLedgerOut(BaseModel):
+    """Append-only export ledger metadata for a durable message artifact."""
+
+    id: UUID
+    conversation_id: UUID
+    message_id: UUID
+    artifact_id: UUID
+    viewer_user_id: UUID
+    format: Literal["markdown", "json", "html", "pdf", "csv"]
+    artifact_version: int
+    content_sha256: str
+    manifest_sha256: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactPartProvenance(BaseModel):
+    """Strict provenance for artifact and artifact-part follow-up context."""
+
+    type: Literal["artifact", "artifact_part"]
+    artifact_id: UUID
+    artifact_kind: MESSAGE_ARTIFACT_KINDS | None = None
+    message_id: UUID | None = None
+    conversation_id: UUID | None = None
+    artifact_key: str | None = None
+    artifact_version: int | None = Field(default=None, ge=1)
+    artifact_title: str | None = None
+    artifact_part_id: UUID | None = None
+    ordinal: int | None = None
+    part_key: str | None = None
+    part_type: str | None = None
+    text: str | None = None
+    source_version: str | None = None
+    locator: RetrievalLocator | None = None
+    source_ref: SourceRef | None = None
+    context_ref: RetrievalContextRef | None = None
+    result_ref: RetrievalResultRef | None = None
+    evidence_span_id: UUID | None = None
+    evidence_span_ids: list[UUID] = Field(default_factory=list)
+    source_refs: list[SourceRef] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_artifact_part(self) -> "MessageArtifactPartProvenance":
+        if self.type == "artifact":
+            return self
+        if self.artifact_part_id is None or self.source_version is None or self.locator is None:
+            raise ValueError(
+                "artifact_part provenance requires artifact_part_id, source_version, and locator"
+            )
+        if self.locator.type != "artifact_part_ref":
+            raise ValueError("artifact_part provenance locator must be artifact_part_ref")
+        return self
+
+
+class MessageArtifactFollowUpRequest(BaseModel):
+    """Create artifact follow-up context or return a chat-run creation payload."""
+
+    mode: Literal["context_item", "chat_run_payload"]
+    content: str = Field(..., min_length=1, max_length=MAX_MESSAGE_CONTENT_LENGTH)
+    artifact_part_id: UUID | None = None
+    target_message_id: UUID | None = None
+    model_id: UUID | None = None
+    reasoning: REASONING_MODES = "default"
+    key_mode: KEY_MODES = "auto"
+    web_search: WebSearchOptions = Field(default_factory=lambda: WebSearchOptions(mode="off"))
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_mode_payload(self) -> "MessageArtifactFollowUpRequest":
+        if self.mode == "context_item":
+            if self.target_message_id is None or self.model_id is not None:
+                raise ValueError("context_item mode requires target_message_id only")
+            return self
+        if self.mode == "chat_run_payload":
+            if self.model_id is None or self.target_message_id is not None:
+                raise ValueError("chat_run_payload mode requires model_id only")
+            return self
+        raise ValueError("invalid artifact follow-up mode")
+
+
+class MessageArtifactFollowUpObjectRef(BaseModel):
+    objectType: MESSAGE_CONTEXT_TYPES
+    objectId: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactFollowUpContextSnapshot(BaseModel):
+    kind: Literal["object_ref"]
+    type: MESSAGE_CONTEXT_TYPES
+    id: UUID
+    title: str | None = None
+    preview: str | None = None
+    route: str | None = None
+    artifact_part_provenance: MessageArtifactPartProvenance
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactFollowUpContextItemOut(BaseModel):
+    id: UUID
+    message_id: UUID
+    object_ref: MessageArtifactFollowUpObjectRef
+    ordinal: int
+    context_snapshot: MessageArtifactFollowUpContextSnapshot
+    created_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactFollowUpBranchAnchor(BaseModel):
+    kind: Literal["assistant_message"]
+    message_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactChatRunContext(BaseModel):
+    kind: Literal["object_ref"] = "object_ref"
+    type: MESSAGE_CONTEXT_TYPES
+    id: UUID
+    evidence_span_ids: list[UUID] = Field(default_factory=list)
+    artifact_id: UUID | None = None
+    artifact_key: str | None = Field(default=None, min_length=1, max_length=128)
+    artifact_version: int | None = Field(default=None, ge=1)
+    source_version: str | None = Field(default=None, min_length=1, max_length=256)
+    locator: RetrievalLocator | None = None
+    artifact_part_provenance: MessageArtifactPartProvenance | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_artifact_part_context(self) -> "MessageArtifactChatRunContext":
+        if self.type != "artifact_part":
+            return self
+        if self.artifact_id is None or self.source_version is None or self.locator is None:
+            raise ValueError(
+                "artifact_part contexts require artifact_id, source_version, and locator"
+            )
+        if self.locator.type != "artifact_part_ref":
+            raise ValueError("artifact_part context locator must be artifact_part_ref")
+        return self
+
+
+class MessageArtifactChatRunPayload(BaseModel):
+    conversation_id: UUID
+    parent_message_id: UUID
+    branch_anchor: MessageArtifactFollowUpBranchAnchor
+    content: str
+    model_id: UUID
+    reasoning: REASONING_MODES
+    key_mode: KEY_MODES
+    contexts: list[MessageArtifactChatRunContext]
+    web_search: WebSearchOptions
+    artifact_intent: ArtifactIntentOptions
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactFollowUpOut(BaseModel):
+    """Artifact follow-up response."""
+
+    mode: Literal["context_item", "chat_run_payload"]
+    artifact_part_provenance: MessageArtifactPartProvenance
+    context_item: MessageArtifactFollowUpContextItemOut | None = None
+    chat_run_payload: MessageArtifactChatRunPayload | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_mode_payload(self) -> "MessageArtifactFollowUpOut":
+        if self.mode == "context_item":
+            if self.context_item is None or self.chat_run_payload is not None:
+                raise ValueError("context_item follow-up requires context_item only")
+            return self
+        if self.chat_run_payload is None or self.context_item is not None:
+            raise ValueError("chat_run_payload follow-up requires chat_run_payload only")
+        return self
+
+
+class AssistantVerifierRunListResponse(BaseModel):
+    data: list[AssistantVerifierRunOut]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageCitationAuditListResponse(BaseModel):
+    data: list[MessageCitationAuditOut]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageRetrievalCandidateLedgerListResponse(BaseModel):
+    data: list[MessageRetrievalCandidateLedgerOut]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageRerankLedgerListResponse(BaseModel):
+    data: list[MessageRerankLedgerOut]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SourceManifestListResponse(BaseModel):
+    data: list[SourceManifestOut]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactListResponse(BaseModel):
+    data: list[MessageArtifactOut]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactResponse(BaseModel):
+    data: MessageArtifactOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactExportLedgerListResponse(BaseModel):
+    data: list[MessageArtifactExportLedgerOut]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageArtifactFollowUpResponse(BaseModel):
+    data: MessageArtifactFollowUpOut
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class PageInfo(BaseModel):
@@ -365,15 +1496,6 @@ class MessageListResponse(BaseModel):
 # =============================================================================
 
 
-# Valid key modes for LLM calls
-KEY_MODES = Literal["auto", "byok_only", "platform_only"]
-REASONING_MODES = Literal["default", "none", "minimal", "low", "medium", "high", "max"]
-
-# Max content length
-MAX_MESSAGE_CONTENT_LENGTH = 20000
-MAX_CONTEXTS = 10
-
-
 class MessageContextRef(BaseModel):
     """Canonical typed object reference for chat-run inputs."""
 
@@ -381,8 +1503,26 @@ class MessageContextRef(BaseModel):
     type: MESSAGE_CONTEXT_TYPES
     id: UUID
     evidence_span_ids: list[UUID] = Field(default_factory=list)
+    artifact_id: UUID | None = None
+    artifact_key: str | None = Field(default=None, min_length=1, max_length=128)
+    artifact_version: int | None = Field(default=None, ge=1)
+    source_version: str | None = Field(default=None, min_length=1, max_length=256)
+    locator: RetrievalLocator | None = None
+    artifact_part_provenance: MessageArtifactPartProvenance | None = None
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_artifact_part_provenance(self) -> "MessageContextRef":
+        if self.type != "artifact_part":
+            return self
+        if self.artifact_id is None or self.source_version is None or self.locator is None:
+            raise ValueError(
+                "artifact_part contexts require artifact_id, source_version, and locator"
+            )
+        if self.locator.type != "artifact_part_ref":
+            raise ValueError("artifact_part context locator must be artifact_part_ref")
+        return self
 
 
 class ReaderSelectionContext(BaseModel):
@@ -396,9 +1536,10 @@ class ReaderSelectionContext(BaseModel):
     exact: str = Field(..., min_length=1, max_length=20000)
     prefix: str | None = Field(default=None, max_length=1000)
     suffix: str | None = Field(default=None, max_length=1000)
-    locator: dict[str, Any]
+    locator: RetrievalLocator
+    source_version: str = Field(min_length=1, max_length=256)
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_reader_selection(self) -> "ReaderSelectionContext":
@@ -572,7 +1713,8 @@ class MessageContextSnapshot(BaseModel):
     source_media_id: UUID | None = None
     media_title: str | None = None
     media_kind: str | None = None
-    locator: dict[str, Any] | None = None
+    locator: RetrievalLocator | None = None
+    source_version: str | None = None
     title: str | None = None
     route: str | None = None
 
@@ -597,6 +1739,10 @@ class MessageContextSnapshot(BaseModel):
             and serialized.get("evidence_span_ids") == []
         ):
             serialized.pop("evidence_span_ids")
+        if isinstance(serialized.get("locator"), dict):
+            serialized["locator"] = {
+                key: value for key, value in serialized["locator"].items() if value is not None
+            }
         return serialized
 
 
@@ -613,6 +1759,7 @@ class ChatRunCreateRequest(BaseModel):
     key_mode: KEY_MODES = "auto"
     contexts: list[ChatContextInput] = Field(default_factory=list)
     web_search: WebSearchOptions
+    artifact_intent: ArtifactIntentOptions
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -628,6 +1775,7 @@ class ChatRunOut(BaseModel):
     model_id: UUID
     reasoning: str
     key_mode: str
+    artifact_intent: ArtifactIntentOptions
     cancel_requested_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -655,6 +1803,11 @@ class ChatRunEventOut(BaseModel):
     payload: dict[str, Any]
     created_at: datetime
 
+    @model_validator(mode="after")
+    def validate_payload(self) -> "ChatRunEventOut":
+        self.payload = chat_run_event_payload_json(self.event_type, self.payload)
+        return self
+
 
 class StreamMetaEvent(BaseModel):
     """SSE meta event at stream start."""
@@ -679,20 +1832,6 @@ class StreamDoneEvent(BaseModel):
     usage: dict | None = None
     error_code: str | None = None
     final_chars: int | None = None
-
-
-class StreamCitationEvent(BaseModel):
-    """SSE citation event emitted when a tool selects a web citation."""
-
-    assistant_message_id: UUID
-    tool_name: str
-    tool_call_index: int
-    title: str
-    url: str
-    display_url: str
-    source_name: str | None = None
-    snippet: str | None = None
-    provider: str | None = None
 
 
 # =============================================================================

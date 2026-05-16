@@ -20,12 +20,14 @@ import { PanelRightOpen } from "lucide-react";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
 import {
   getConversationScopeSignature,
+  mergeContextItems,
   parseConversationScopeFromUrl,
   setConversationScopeParam,
 } from "@/lib/conversations/attachedContext";
 import ChatComposer from "@/components/ChatComposer";
 import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
+import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import {
@@ -63,15 +65,23 @@ export default function ConversationNewPaneBody() {
   const resolveGenerationRef = useRef(0);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [contextRailExpanded, setContextRailExpanded] = useState(true);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [resolvingScopedConversation, setResolvingScopedConversation] = useState(false);
-  const [resolveError, setResolveError] = useState<FeedbackContent | null>(null);
-  const [scopedContinuationBlocked, setScopedContinuationBlocked] = useState(false);
+  const [activeConversationId, setActiveConversationId] = useState<
+    string | null
+  >(null);
+  const [resolvingScopedConversation, setResolvingScopedConversation] =
+    useState(false);
+  const [resolveError, setResolveError] = useState<FeedbackContent | null>(
+    null,
+  );
+  const [scopedContinuationBlocked, setScopedContinuationBlocked] =
+    useState(false);
   const conversationScope = parseConversationScopeFromUrl(searchParams);
   const conversationScopeKey = getConversationScopeSignature(conversationScope);
   const scopeType = conversationScope.type;
-  const scopeMediaId = scopeType === "media" ? conversationScope.media_id : null;
-  const scopeLibraryId = scopeType === "library" ? conversationScope.library_id : null;
+  const scopeMediaId =
+    scopeType === "media" ? conversationScope.media_id : null;
+  const scopeLibraryId =
+    scopeType === "library" ? conversationScope.library_id : null;
   const activeReplyParentMessageId = useMemo(() => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
@@ -92,6 +102,7 @@ export default function ConversationNewPaneBody() {
   const isMobileViewport = useIsMobileViewport();
   const {
     attachedContexts,
+    setAttachedContexts,
     removeContext,
     clearContexts,
     stripAttachState,
@@ -145,7 +156,8 @@ export default function ConversationNewPaneBody() {
         setMessages(messagesResponse.data);
         if (
           messagesResponse.data.some(
-            (message) => message.role === "assistant" && message.status === "complete",
+            (message) =>
+              message.role === "assistant" && message.status === "complete",
           )
         ) {
           setActiveConversationId(response.data.id);
@@ -160,7 +172,9 @@ export default function ConversationNewPaneBody() {
       })
       .catch((err) => {
         if (!isCurrentResolution()) return;
-        setResolveError(toFeedback(err, { fallback: "Failed to load scoped chat" }));
+        setResolveError(
+          toFeedback(err, { fallback: "Failed to load scoped chat" }),
+        );
       })
       .finally(() => {
         if (isCurrentResolution()) {
@@ -181,7 +195,10 @@ export default function ConversationNewPaneBody() {
     const scrollport = scrollportRef.current;
     if (!scrollport) return;
     shouldScrollRef.current =
-      scrollport.scrollHeight - scrollport.scrollTop - scrollport.clientHeight <= 48;
+      scrollport.scrollHeight -
+        scrollport.scrollTop -
+        scrollport.clientHeight <=
+      48;
   }, []);
 
   const handleChatRunCreated = useCallback(
@@ -204,10 +221,112 @@ export default function ConversationNewPaneBody() {
   }, [clearContexts]);
 
   const clearConversationScope = useCallback(() => {
-    const cleaned = setConversationScopeParam(searchParams, { type: "general" });
+    const cleaned = setConversationScopeParam(searchParams, {
+      type: "general",
+    });
     const qs = cleaned.toString();
     router.replace(qs ? `/conversations/new?${qs}` : `/conversations/new`);
   }, [router, searchParams]);
+
+  const handleReaderSourceActivate = useCallback(
+    (target: ReaderSourceTarget) => {
+      router.push(target.href || `/media/${target.media_id}`);
+    },
+    [router],
+  );
+
+  const handleAskAboutSource = useCallback(
+    (target: ReaderSourceTarget) => {
+      const exact = target.snippet?.trim();
+      if (!exact) {
+        handleReaderSourceActivate(target);
+        return;
+      }
+      const locator = target.locator;
+      setAttachedContexts((current) =>
+        mergeContextItems(current, [
+          {
+            kind: "reader_selection",
+            client_context_id: crypto.randomUUID(),
+            media_id: target.media_id,
+            media_kind:
+              locator.type === "pdf_page_geometry"
+                ? "pdf"
+                : locator.type === "transcript_time_range"
+                  ? "transcript"
+                  : locator.type === "epub_fragment_offsets"
+                    ? "epub"
+                    : "web_article",
+            media_title: target.label ?? "Source",
+            exact,
+            ...("prefix" in locator &&
+            typeof locator.prefix === "string" &&
+            locator.prefix
+              ? { prefix: locator.prefix }
+              : {}),
+            ...("suffix" in locator &&
+            typeof locator.suffix === "string" &&
+            locator.suffix
+              ? { suffix: locator.suffix }
+              : {}),
+            preview: exact.slice(0, 120),
+            locator: target.locator,
+            source_version: target.source_version,
+            color: "yellow",
+          },
+        ]),
+      );
+    },
+    [handleReaderSourceActivate, setAttachedContexts],
+  );
+
+  const handleSaveSourceQuote = useCallback(
+    async (target: ReaderSourceTarget) => {
+      const locator = target.locator;
+      try {
+        if (
+          (locator.type === "epub_fragment_offsets" ||
+            locator.type === "web_text_offsets") &&
+          typeof locator.fragment_id === "string" &&
+          typeof locator.start_offset === "number" &&
+          typeof locator.end_offset === "number" &&
+          locator.end_offset > locator.start_offset
+        ) {
+          await apiFetch(`/api/fragments/${locator.fragment_id}/highlights`, {
+            method: "POST",
+            body: JSON.stringify({
+              start_offset: locator.start_offset,
+              end_offset: locator.end_offset,
+              color: "yellow",
+            }),
+          });
+          return;
+        }
+        if (
+          locator.type === "pdf_page_geometry" &&
+          typeof locator.page_number === "number" &&
+          Array.isArray(locator.quads) &&
+          locator.quads.length > 0
+        ) {
+          await apiFetch(`/api/media/${target.media_id}/pdf-highlights`, {
+            method: "POST",
+            body: JSON.stringify({
+              page_number: locator.page_number,
+              quads: locator.quads,
+              exact:
+                (typeof locator.exact === "string" && locator.exact) ||
+                target.snippet ||
+                "",
+              color: "yellow",
+            }),
+          });
+        }
+      } catch (err) {
+        setResolveError(toFeedback(err, { fallback: "Failed to save quote" }));
+      }
+    },
+    [],
+  );
   const composerConversationId =
     conversationScope.type === "general" ? activeConversationId : null;
   const composerDisabledReason = scopedContinuationBlocked
@@ -222,6 +341,10 @@ export default function ConversationNewPaneBody() {
             <ChatSurface
               messages={messages}
               scope={conversationScope}
+              onReaderSourceActivate={handleReaderSourceActivate}
+              onAskAboutSource={handleAskAboutSource}
+              onSaveSourceQuote={handleSaveSourceQuote}
+              onChatRunCreated={handleChatRunCreated}
               scrollportRef={scrollportRef}
               onScroll={handleChatScroll}
               composer={

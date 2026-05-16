@@ -380,6 +380,18 @@ def _fetch_e2e_user_id_with_retry(supabase_url: str, service_key: str, email: st
     ) from last_error
 
 
+def _release_stale_e2e_user_email(db, user_id: UUID, email: str) -> None:
+    db.execute(
+        text("""
+            UPDATE users
+            SET email = 'stale-e2e-' || id::text || '@nexus.local'
+            WHERE email = :email AND id != :user_id
+        """),
+        {"email": email, "user_id": user_id},
+    )
+    db.commit()
+
+
 def _write_upload_fixture(content: bytes) -> str:
     """Persist a deterministic upload fixture used by Playwright."""
     repo_root = Path(__file__).resolve().parents[2]
@@ -1448,6 +1460,9 @@ def main() -> None:
 
     pdf_bytes = _build_pdf_bytes(PDF_PAGE_COUNT)
     session_factory = create_session_factory()
+    with session_factory() as db:
+        _release_stale_e2e_user_email(db, user_id, E2E_USER_EMAIL)
+
     filename = f"e2e-pdf-expiry-seed-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.pdf"
     upload_fixture_path = _write_upload_fixture(pdf_bytes)
 
