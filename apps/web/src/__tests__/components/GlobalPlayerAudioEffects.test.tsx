@@ -260,7 +260,7 @@ function createFrame(amplitude: number): Float32Array {
   return new Float32Array(128).fill(amplitude);
 }
 
-describe("GlobalPlayer audio effects cutover", () => {
+describe("GlobalPlayer audio effects", () => {
   beforeEach(() => {
     setViewportWidth(1280);
     window.localStorage.clear();

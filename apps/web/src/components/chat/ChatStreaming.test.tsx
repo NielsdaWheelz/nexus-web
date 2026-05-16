@@ -132,7 +132,7 @@ function StreamingHarness({
   );
 }
 
-describe("chat streaming hard cutover", () => {
+describe("chat streaming", () => {
   beforeEach(() => {
     streamMocks.fetchStreamToken.mockReset();
     streamMocks.sseClientDirect.mockReset();

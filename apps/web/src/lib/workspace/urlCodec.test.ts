@@ -60,7 +60,7 @@ describe("workspace url codec", () => {
     expect(decoded.state.panes[0]?.widthPx).toBe(2200);
   });
 
-  it("does not migrate legacy v3 URL state", () => {
+  it("falls back when the URL state version is unsupported", () => {
     const params = new URLSearchParams();
     params.set("wsv", "3");
     params.set("ws", "abc");

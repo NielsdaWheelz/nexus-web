@@ -131,12 +131,6 @@ workflow uploads stable assets for `/android` plus versioned assets such as
 - `apps/worker/` -> worker entrypoint: see `apps/worker/README.md`
 - `docs/rules/` -> repository rules and boundaries: start at `docs/rules/index.md`
 - `docs/reader-implementation.md` -> current reader behavior contract
-- `docs/reader-protected-width-outward-rail-hard-cutover.md` -> desktop reader protected-width and rail target-state contract
-- `docs/chat-unified-components-hard-cutover.md` -> shared chat component spine and reader Ask target-state contract
-- `docs/chat-workbench-hard-cutover.md` -> branch-aware full chat workbench target-state contract
-- `docs/chat-branch-switch-viewport-hard-cutover.md` -> stable chat branch-switch viewport target-state contract
-- `docs/chat-response-retry-hard-cutover.md` -> chat response retry target-state contract
-- `docs/real-media-test-target-state.md` -> deterministic real-media test and fixture contract
 
 ## Documentation Rules
 

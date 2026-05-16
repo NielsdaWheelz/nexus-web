@@ -1,32 +1,42 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchSpy = vi.spyOn(globalThis, "fetch");
-const mockGetSession = vi.fn();
-const mockBuildLoginRedirectUrl = vi.fn((url: URL) => new URL("/login", url.origin));
+const SUPABASE_URL = "https://project-ref.supabase.co";
+const AUTH_COOKIE_NAME = "sb-project-ref-auth-token";
+const NOW_SECONDS = 1_900_000_000;
 const previousFastApiBaseUrl = process.env.FASTAPI_BASE_URL;
 const previousInternalSecret = process.env.NEXUS_INTERNAL_SECRET;
 const previousRedirectOrigins = process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS;
+const previousSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
-vi.mock("@/lib/auth/redirects", () => ({
-  buildLoginRedirectUrl: mockBuildLoginRedirectUrl,
-}));
+function encodeSessionCookie(session: Record<string, unknown>): string {
+  return `base64-${Buffer.from(JSON.stringify(session), "utf8").toString(
+    "base64url"
+  )}`;
+}
 
-vi.mock("@/lib/supabase/server", () => ({
-  createClient: vi.fn(async () => ({
-    auth: {
-      getSession: mockGetSession,
-    },
-  })),
-}));
+function authCookie(overrides: Record<string, unknown> = {}): string {
+  return `${AUTH_COOKIE_NAME}=${encodeSessionCookie({
+    access_token: "web-session-token",
+    expires_at: NOW_SECONDS + 60,
+    token_type: "bearer",
+    ...overrides,
+  })}`;
+}
 
 describe("GET /extension/connect/start", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW_SECONDS * 1000);
     fetchSpy.mockReset();
-    mockGetSession.mockReset();
-    mockBuildLoginRedirectUrl.mockClear();
     process.env.FASTAPI_BASE_URL = "http://api.local";
     process.env.NEXUS_INTERNAL_SECRET = "test-internal-secret";
     process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS = "https://extension.chromiumapp.org";
+    process.env.NEXT_PUBLIC_SUPABASE_URL = SUPABASE_URL;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("rejects missing redirect_uri", async () => {
@@ -56,8 +66,6 @@ describe("GET /extension/connect/start", () => {
   });
 
   it("redirects unauthenticated users through login", async () => {
-    mockGetSession.mockResolvedValue({ data: { session: null } });
-
     const { GET } = await import("./route");
     const response = await GET(
       new Request(
@@ -66,18 +74,25 @@ describe("GET /extension/connect/start", () => {
     );
 
     expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toBe("http://localhost:3000/login");
+    expect(new URL(response.headers.get("location") || "").pathname).toBe("/login");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("redirects users with an invalid session cookie through login", async () => {
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request(
+        "http://localhost:3000/extension/connect/start?redirect_uri=https%3A%2F%2Fextension.chromiumapp.org%2F",
+        { headers: { cookie: `${AUTH_COOKIE_NAME}=not-a-supabase-session` } }
+      )
+    );
+
+    expect(response.status).toBe(307);
+    expect(new URL(response.headers.get("location") || "").pathname).toBe("/login");
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("mints an extension session and redirects the token to the extension", async () => {
-    mockGetSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: "web-session-token",
-        },
-      },
-    });
     fetchSpy.mockResolvedValue(
       new Response(JSON.stringify({ data: { token: "nx_ext_session" } }), {
         status: 201,
@@ -88,7 +103,8 @@ describe("GET /extension/connect/start", () => {
     const { GET } = await import("./route");
     const response = await GET(
       new Request(
-        "http://localhost:3000/extension/connect/start?redirect_uri=https%3A%2F%2Fextension.chromiumapp.org%2Fcallback"
+        "http://localhost:3000/extension/connect/start?redirect_uri=https%3A%2F%2Fextension.chromiumapp.org%2Fcallback",
+        { headers: { cookie: authCookie() } }
       )
     );
 
@@ -126,5 +142,11 @@ afterEach(() => {
     delete process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS;
   } else {
     process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS = previousRedirectOrigins;
+  }
+
+  if (previousSupabaseUrl === undefined) {
+    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+  } else {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = previousSupabaseUrl;
   }
 });

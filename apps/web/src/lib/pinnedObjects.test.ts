@@ -23,7 +23,7 @@ describe("pinnedObjects", () => {
     });
   });
 
-  it("pins navbar objects through the hard-cutover endpoint", async () => {
+  it("pins navbar objects", async () => {
     mockApiFetch.mockResolvedValueOnce({ data: {} });
 
     await pinObjectToNavbar("page", "page-1");

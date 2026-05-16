@@ -90,25 +90,6 @@ class SearchResultContextRefOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultRefOut(BaseModel):
-    """Durable search result identity for resolving a typed result."""
-
-    type: SEARCH_RESULT_TYPES
-    id: UUID | str
-    evidence_span_ids: list[UUID] = Field(default_factory=list)
-
-    @model_serializer
-    def serialize(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {"type": self.type, "id": str(self.id)}
-        if self.evidence_span_ids:
-            payload["evidence_span_ids"] = [
-                str(evidence_span_id) for evidence_span_id in self.evidence_span_ids
-            ]
-        return payload
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class SearchResultModelFields(BaseModel):
     """Common model-facing fields shared by every typed search row."""
 
@@ -552,7 +533,7 @@ class SearchResponse(BaseModel):
 class SearchResolveRequest(BaseModel):
     """Request body for resolving a durable search result ref."""
 
-    result_ref: SearchResultRefOut
+    result_ref: SearchResultContextRefOut
 
     model_config = ConfigDict(extra="forbid")
 

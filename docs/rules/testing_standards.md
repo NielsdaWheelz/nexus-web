@@ -39,7 +39,7 @@ Definitions used throughout this document:
 - `make check-workflows` validates GitHub Actions files.
 - `make audit` is the dependency/security gate.
 - `make test-unit`, `make test`, `make test-e2e`, `make test-real-media`, `make test-live-providers`, `make verify`, and `make verify-full` are the main local quality gates.
-- `make test-real-media` follows the deterministic fixture contract in `docs/real-media-test-target-state.md`.
+- `make test-real-media` is the deterministic real-media backend and Playwright acceptance gate.
 - `make test-back-unit` runs backend unit tests with `pytest-xdist`.
 - `make test-e2e` stays a single local command; CI shards Playwright across jobs.
 
@@ -347,7 +347,7 @@ Rule:
 ### E2E Determinism and Pane-Aware Assertions
 
 - Normalize persisted per-media state before asserting initial reader UI (for example, reset reader state and explicitly select chapter/page where applicable)
-- Quote-to-chat acceptance details are owned by `docs/chat-unified-components-hard-cutover.md`; E2E tests must assert those user-visible contracts without implementation mocks.
+- E2E tests must assert user-visible quote-to-chat contracts without implementation mocks.
 - Prefer explicit action-menu interactions (`Actions` -> `menuitem`) over styling-dependent selectors
 - Keep single-flow E2E tests focused on one behavior; use API setup for prerequisites already covered by separate UI stress/interaction tests
 

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { buildLoginRedirectUrl } from "@/lib/auth/redirects";
-import { createClient } from "@/lib/supabase/server";
+import {
+  parseCookieHeader,
+  readSupabaseSessionCookie,
+} from "@/lib/auth/session-cookie";
 
 export async function GET(req: Request) {
   const requestUrl = new URL(req.url);
@@ -33,11 +36,10 @@ export async function GET(req: Request) {
     );
   }
 
-  const supabase = await createClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session?.access_token) {
+  const session = readSupabaseSessionCookie(
+    parseCookieHeader(req.headers.get("cookie"))
+  );
+  if (!session.ok) {
     return NextResponse.redirect(buildLoginRedirectUrl(requestUrl));
   }
 
@@ -68,7 +70,7 @@ export async function GET(req: Request) {
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${session.access_token}`,
+        Authorization: `Bearer ${session.accessToken}`,
         "X-Request-ID": requestId,
         ...(internalSecret ? { "X-Nexus-Internal": internalSecret } : {}),
       },

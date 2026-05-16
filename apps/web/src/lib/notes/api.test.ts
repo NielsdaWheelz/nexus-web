@@ -80,7 +80,7 @@ describe("notes api", () => {
     );
   });
 
-  it("sends the hard-cutover document save shape and normalizes revisions", async () => {
+  it("sends the document save shape and normalizes revisions", async () => {
     let requestBody: Record<string, unknown> | null = null;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");

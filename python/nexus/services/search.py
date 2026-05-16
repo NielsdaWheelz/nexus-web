@@ -62,7 +62,6 @@ from nexus.schemas.search import (
     SearchResultOut,
     SearchResultPageOut,
     SearchResultPodcastOut,
-    SearchResultRefOut,
     SearchResultSourceOut,
     SearchResultVideoOut,
     SearchResultWebOut,
@@ -903,7 +902,7 @@ def search(
 def resolve_search_result(
     db: Session,
     viewer_id: UUID,
-    result_ref: SearchResultRefOut,
+    result_ref: SearchResultContextRefOut,
 ) -> SearchResultOut:
     return get_search_result(
         db=db,
