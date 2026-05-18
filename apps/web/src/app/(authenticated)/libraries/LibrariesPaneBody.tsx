@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { FolderOpen, Library as LibraryIcon } from "lucide-react";
+import { Library as LibraryIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { libraryResourceOptions } from "@/lib/actions/resourceActions";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
@@ -308,13 +308,7 @@ export default function LibrariesPaneBody() {
                   key={library.id}
                   href={`/libraries/${library.id}`}
                   paneTitleHint={library.name}
-                  icon={
-                    library.is_default ? (
-                      <FolderOpen size={18} />
-                    ) : (
-                      <LibraryIcon size={18} />
-                    )
-                  }
+                  icon={<LibraryIcon size={18} />}
                   title={library.name}
                   meta={
                     library.is_default

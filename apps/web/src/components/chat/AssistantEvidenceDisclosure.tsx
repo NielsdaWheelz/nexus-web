@@ -18,7 +18,6 @@ import {
   Globe,
   ListTree,
   Search,
-  Video,
 } from "lucide-react";
 import {
   MarkdownMessage,
@@ -31,6 +30,7 @@ import type {
 import Button from "@/components/ui/Button";
 import { isRetrievalLocator, type ContextItem } from "@/lib/api/sse";
 import { apiFetch } from "@/lib/api/client";
+import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
 import type {
   AssistantVerifierRun,
   ChatRunResponse,
@@ -731,6 +731,7 @@ function AssistantRetrievalResults({
         const target = hasReaderActivator
           ? readerTargetFromRetrieval(retrieval)
           : null;
+        const ResultIcon = SEARCH_TYPE_ICON[retrieval.result_type];
         return (
           <article
             key={
@@ -741,15 +742,7 @@ function AssistantRetrievalResults({
             }`}
           >
             <div className={styles.retrievalResultHeader}>
-              {retrieval.result_type === "web_result" ? (
-                <Globe size={14} aria-hidden="true" />
-              ) : retrieval.result_type === "video" ? (
-                <Video size={14} aria-hidden="true" />
-              ) : retrieval.result_type === "content_chunk" ? (
-                <BookOpen size={14} aria-hidden="true" />
-              ) : (
-                <FileText size={14} aria-hidden="true" />
-              )}
+              <ResultIcon size={14} aria-hidden="true" />
               <span>{retrievalTitle(retrieval)}</span>
               {retrieval.selected ? <strong>selected</strong> : null}
             </div>

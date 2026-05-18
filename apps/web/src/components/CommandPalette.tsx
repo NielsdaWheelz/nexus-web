@@ -2,30 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  BookOpen,
   CalendarDays,
-  Compass,
   FileText,
   FolderPlus,
-  Globe,
-  Highlighter,
-  Keyboard,
-  KeyRound,
   Link,
-  Link2,
-  MessageSquare,
   MessageSquarePlus,
-  Mic,
   PanelLeft,
   Pin,
   Plus,
-  Search,
-  Settings,
   Sparkles,
   Type,
   Upload,
-  UserRound,
-  Video,
   X,
 } from "lucide-react";
 import Palette from "@/components/palette/Palette";
@@ -40,14 +27,18 @@ import { apiFetch } from "@/lib/api/client";
 import { loadKeybindings, matchesKeyEvent, formatKeyCombo } from "@/lib/keybindings";
 import { createNotePage, todayLocalDate } from "@/lib/notes/api";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
-import { resolvePaneRoute, type PaneRouteId } from "@/lib/panes/paneRouteRegistry";
+import {
+  getPaneRouteIcon,
+  resolvePaneRoute,
+  type PaneRouteId,
+} from "@/lib/panes/paneRouteRegistry";
 import { pinObjectToNavbar } from "@/lib/pinnedObjects";
 import {
   ALL_SEARCH_TYPES,
   fetchSearchResultPage,
   type SearchResultRowViewModel,
-  type SearchType,
 } from "@/lib/search/resultRowAdapter";
+import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
 import { isAndroidShell, isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import {
   resolveWorkspacePaneTitle,
@@ -70,7 +61,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     title: "Libraries",
     keywords: ["collections", "sources"],
     sectionId: "navigate",
-    icon: BookOpen,
+    icon: getPaneRouteIcon("/libraries"),
     target: { kind: "href", href: "/libraries", externalShell: false },
     source: "static",
     rank: {},
@@ -80,7 +71,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     title: "Browse",
     keywords: ["discover", "podcasts", "videos", "documents"],
     sectionId: "navigate",
-    icon: Compass,
+    icon: getPaneRouteIcon("/browse"),
     target: { kind: "href", href: "/browse", externalShell: false },
     source: "static",
     rank: {},
@@ -90,7 +81,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     title: "Podcasts",
     keywords: ["audio", "feeds", "episodes"],
     sectionId: "navigate",
-    icon: Mic,
+    icon: getPaneRouteIcon("/podcasts"),
     target: { kind: "href", href: "/podcasts", externalShell: false },
     source: "static",
     rank: {},
@@ -100,7 +91,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     title: "Chats",
     keywords: ["conversations", "messages"],
     sectionId: "navigate",
-    icon: MessageSquare,
+    icon: getPaneRouteIcon("/conversations"),
     target: { kind: "href", href: "/conversations", externalShell: false },
     source: "static",
     rank: {},
@@ -110,7 +101,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     title: "Today's note",
     keywords: ["daily", "journal", "notes"],
     sectionId: "navigate",
-    icon: CalendarDays,
+    icon: getPaneRouteIcon("/daily"),
     target: { kind: "href", href: "/daily", externalShell: false },
     source: "static",
     rank: {},
@@ -120,7 +111,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     title: "Notes",
     keywords: ["pages", "outline", "knowledge"],
     sectionId: "navigate",
-    icon: FileText,
+    icon: getPaneRouteIcon("/notes"),
     target: { kind: "href", href: "/notes", externalShell: false },
     source: "static",
     rank: {},
@@ -130,7 +121,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     title: "Search",
     keywords: ["find", "query"],
     sectionId: "navigate",
-    icon: Search,
+    icon: getPaneRouteIcon("/search"),
     target: { kind: "href", href: "/search", externalShell: false },
     source: "static",
     rank: {},
@@ -140,7 +131,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     title: "Settings",
     keywords: ["preferences", "account"],
     sectionId: "navigate",
-    icon: Settings,
+    icon: getPaneRouteIcon("/settings"),
     target: { kind: "href", href: "/settings", externalShell: false },
     source: "static",
     rank: {},
@@ -150,7 +141,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     title: "Appearance",
     keywords: ["theme", "light", "dark"],
     sectionId: "settings",
-    icon: Settings,
+    icon: getPaneRouteIcon("/settings/appearance"),
     target: { kind: "href", href: "/settings/appearance", externalShell: false },
     source: "static",
     rank: {},
@@ -160,7 +151,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     title: "Reader Settings",
     keywords: ["typography", "font", "theme"],
     sectionId: "settings",
-    icon: Type,
+    icon: getPaneRouteIcon("/settings/reader"),
     target: { kind: "href", href: "/settings/reader", externalShell: false },
     source: "static",
     rank: {},
@@ -170,7 +161,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     title: "API Keys",
     keywords: ["credentials", "providers"],
     sectionId: "settings",
-    icon: KeyRound,
+    icon: getPaneRouteIcon("/settings/keys"),
     target: { kind: "href", href: "/settings/keys", externalShell: false },
     source: "static",
     rank: {},
@@ -180,7 +171,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     title: "Linked Identities",
     keywords: ["google", "github", "oauth"],
     sectionId: "settings",
-    icon: Link2,
+    icon: getPaneRouteIcon("/settings/identities"),
     target: { kind: "href", href: "/settings/identities", externalShell: false },
     source: "static",
     rank: {},
@@ -190,7 +181,7 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     title: "Keyboard Shortcuts",
     keywords: ["keybindings", "hotkeys", "shortcuts"],
     sectionId: "settings",
-    icon: Keyboard,
+    icon: getPaneRouteIcon("/settings/keybindings"),
     target: { kind: "href", href: "/settings/keybindings", externalShell: false },
     source: "static",
     rank: {},
@@ -273,25 +264,6 @@ const STATIC_COMMANDS: PaletteCommand[] = [
     scopeAffinity: ["library", "libraries", "podcasts", "podcastDetail"],
   },
 ];
-
-const SEARCH_TYPE_ICON: Record<SearchType, PaletteCommand["icon"]> = {
-  contributor: UserRound,
-  media: Globe,
-  podcast: Mic,
-  episode: Mic,
-  video: Video,
-  content_chunk: FileText,
-  fragment: FileText,
-  page: FileText,
-  note_block: FileText,
-  highlight: Highlighter,
-  message: MessageSquare,
-  evidence_span: FileText,
-  conversation: MessageSquare,
-  artifact: Sparkles,
-  artifact_part: Sparkles,
-  web_result: Globe,
-};
 
 const PANE_TYPE_LABELS = {
   libraries: "Libraries",
@@ -542,48 +514,6 @@ function matchesCommand(command: PaletteCommand, query: string): boolean {
   return command.keywords.some((keyword) => keyword.toLowerCase().includes(normalized));
 }
 
-function getDestinationIcon(href: string): PaletteCommand["icon"] {
-  const route = resolvePaneRoute(href);
-  switch (route?.id) {
-    case "libraries":
-    case "library":
-      return BookOpen;
-    case "media":
-      return FileText;
-    case "browse":
-      return Compass;
-    case "conversations":
-    case "conversation":
-    case "conversationNew":
-      return MessageSquare;
-    case "podcasts":
-    case "podcastDetail":
-      return Mic;
-    case "author":
-      return UserRound;
-    case "daily":
-    case "dailyDate":
-      return CalendarDays;
-    case "notes":
-    case "page":
-    case "note":
-      return FileText;
-    case "search":
-      return Search;
-    case "settings":
-    case "settingsBilling":
-    case "settingsReader":
-    case "settingsAppearance":
-    case "settingsKeys":
-    case "settingsLocalVault":
-    case "settingsIdentities":
-    case "settingsKeybindings":
-      return Settings;
-    default:
-      return Globe;
-  }
-}
-
 interface PaletteScope {
   paneRouteId: PaneRouteId;
   paneTitle: string;
@@ -790,7 +720,7 @@ export default function CommandPalette() {
         subtitle: row.target_href,
         keywords: [row.target_href],
         sectionId: "recent",
-        icon: getDestinationIcon(row.target_href),
+        icon: getPaneRouteIcon(row.target_href),
         target: { kind: "href", href: row.target_href, externalShell: false },
         source: "recent",
         rank: { frecencyBoost: frecencyBoosts.get(row.target_key) ?? 0 },

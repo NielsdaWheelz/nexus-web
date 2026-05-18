@@ -1,23 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
-import {
-  BookOpen,
-  CalendarDays,
-  ChevronLeft,
-  ChevronRight,
-  Compass,
-  FileText,
-  LogOut,
-  MessageSquare,
-  Mic,
-  Plus,
-  Search,
-  Settings,
-  Sparkles,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, LogOut, Plus, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
+import { getPaneRouteIcon, resolvePaneRoute } from "@/lib/panes/paneRouteRegistry";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import { fetchPinnedObjects, type PinnedObject } from "@/lib/pinnedObjects";
@@ -34,6 +20,11 @@ function pathnameFromHref(href: string): string {
   } catch {
     return "";
   }
+}
+
+function NavIcon({ href }: { href: string }) {
+  const Icon = getPaneRouteIcon(href);
+  return <Icon size={18} strokeWidth={2} />;
 }
 
 export default function Navbar({ onToggle }: NavbarProps) {
@@ -149,7 +140,7 @@ export default function Navbar({ onToggle }: NavbarProps) {
           onClick={(e) => handleNavClick(e, "/libraries")}
         >
           <span className={styles.icon} aria-hidden="true">
-            <BookOpen size={18} strokeWidth={2} />
+            <NavIcon href="/libraries" />
           </span>
           {!collapsed && <span className={styles.label}>Libraries</span>}
         </Link>
@@ -159,7 +150,7 @@ export default function Navbar({ onToggle }: NavbarProps) {
           onClick={(e) => handleNavClick(e, "/browse")}
         >
           <span className={styles.icon} aria-hidden="true">
-            <Compass size={18} strokeWidth={2} />
+            <NavIcon href="/browse" />
           </span>
           {!collapsed && <span className={styles.label}>Browse</span>}
         </Link>
@@ -169,7 +160,7 @@ export default function Navbar({ onToggle }: NavbarProps) {
           onClick={(e) => handleNavClick(e, "/podcasts")}
         >
           <span className={styles.icon} aria-hidden="true">
-            <Mic size={18} strokeWidth={2} />
+            <NavIcon href="/podcasts" />
           </span>
           {!collapsed && <span className={styles.label}>Podcasts</span>}
         </Link>
@@ -179,7 +170,7 @@ export default function Navbar({ onToggle }: NavbarProps) {
           onClick={(e) => handleNavClick(e, "/daily")}
         >
           <span className={styles.icon} aria-hidden="true">
-            <CalendarDays size={18} strokeWidth={2} />
+            <NavIcon href="/daily" />
           </span>
           {!collapsed && <span className={styles.label}>Today</span>}
         </Link>
@@ -189,7 +180,7 @@ export default function Navbar({ onToggle }: NavbarProps) {
           onClick={(e) => handleNavClick(e, "/notes")}
         >
           <span className={styles.icon} aria-hidden="true">
-            <FileText size={18} strokeWidth={2} />
+            <NavIcon href="/notes" />
           </span>
           {!collapsed && <span className={styles.label}>Notes</span>}
         </Link>
@@ -207,7 +198,7 @@ export default function Navbar({ onToggle }: NavbarProps) {
               onClick={(e) => handleNavClick(e, href)}
             >
               <span className={styles.icon} aria-hidden="true">
-                <FileText size={18} strokeWidth={2} />
+                <NavIcon href={href} />
               </span>
               {!collapsed && <span className={styles.label}>{pin.objectRef.label}</span>}
             </Link>
@@ -219,7 +210,7 @@ export default function Navbar({ onToggle }: NavbarProps) {
           onClick={(e) => handleNavClick(e, "/conversations")}
         >
           <span className={styles.icon} aria-hidden="true">
-            <MessageSquare size={18} strokeWidth={2} />
+            <NavIcon href="/conversations" />
           </span>
           {!collapsed && <span className={styles.label}>Chats</span>}
         </Link>
@@ -229,7 +220,7 @@ export default function Navbar({ onToggle }: NavbarProps) {
           onClick={(e) => handleNavClick(e, "/search")}
         >
           <span className={styles.icon} aria-hidden="true">
-            <Search size={18} strokeWidth={2} />
+            <NavIcon href="/search" />
           </span>
           {!collapsed && <span className={styles.label}>Search</span>}
         </a>
@@ -249,7 +240,7 @@ export default function Navbar({ onToggle }: NavbarProps) {
           onClick={(e) => handleNavClick(e, "/settings")}
         >
           <span className={styles.icon} aria-hidden="true">
-            <Settings size={18} strokeWidth={2} />
+            <NavIcon href="/settings" />
           </span>
           {!collapsed && <span className={styles.label}>Settings</span>}
         </a>

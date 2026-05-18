@@ -1,10 +1,10 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Book, FolderOpen, Globe } from "lucide-react";
 import Chip from "@/components/ui/Chip";
 import type { ContextItem, ContextItemColor } from "@/lib/api/sse";
 import {
+  CONVERSATION_SCOPE_ICONS,
   formatConversationScopeLabel,
   getContextChipLabel,
 } from "@/lib/conversations/display";
@@ -67,17 +67,8 @@ export default function ComposerContextRail({
 }
 
 function scopeIcon(scope: ConversationScope): ReactNode {
-  if (scope.type === "general") {
-    return <Globe size={14} aria-hidden="true" />;
-  }
-  if (scope.type === "media") {
-    return <Book size={14} aria-hidden="true" />;
-  }
-  if (scope.type === "library") {
-    return <FolderOpen size={14} aria-hidden="true" />;
-  }
-  const exhaustive: never = scope;
-  return exhaustive;
+  const Icon = CONVERSATION_SCOPE_ICONS[scope.type];
+  return <Icon size={14} aria-hidden="true" />;
 }
 
 function contextSwatch(color: ContextItemColor | undefined): ReactNode {

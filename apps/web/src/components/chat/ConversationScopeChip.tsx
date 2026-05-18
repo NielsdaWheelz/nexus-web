@@ -1,9 +1,10 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { BookOpen, FileText, MessageSquare } from "lucide-react";
 import Chip from "@/components/ui/Chip";
-import { formatConversationScopeLabel } from "@/lib/conversations/display";
+import {
+  CONVERSATION_SCOPE_ICONS,
+  formatConversationScopeLabel,
+} from "@/lib/conversations/display";
 import type { ConversationScope } from "@/lib/conversations/types";
 
 export default function ConversationScopeChip({
@@ -13,20 +14,14 @@ export default function ConversationScopeChip({
   scope: ConversationScope;
   compact?: boolean;
 }) {
-  let icon: ReactNode;
-  if (scope.type === "general") {
-    icon = <MessageSquare size={14} aria-hidden="true" />;
-  } else if (scope.type === "media") {
-    icon = <FileText size={14} aria-hidden="true" />;
-  } else if (scope.type === "library") {
-    icon = <BookOpen size={14} aria-hidden="true" />;
-  } else {
-    const exhaustive: never = scope;
-    return exhaustive;
-  }
+  const Icon = CONVERSATION_SCOPE_ICONS[scope.type];
 
   return (
-    <Chip size={compact ? "sm" : "md"} leadingIcon={icon} truncate>
+    <Chip
+      size={compact ? "sm" : "md"}
+      leadingIcon={<Icon size={14} aria-hidden="true" />}
+      truncate
+    >
       {formatConversationScopeLabel(scope)}
     </Chip>
   );

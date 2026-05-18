@@ -1,6 +1,26 @@
 "use client";
 
 import type { ReactNode } from "react";
+import {
+  BookOpen,
+  CalendarDays,
+  Compass,
+  CreditCard,
+  FileText,
+  FolderOpen,
+  Globe,
+  Keyboard,
+  KeyRound,
+  Library,
+  Link2,
+  MessageSquare,
+  Mic,
+  Palette,
+  Search,
+  Settings,
+  UserRound,
+  type LucideIcon,
+} from "lucide-react";
 import { MAX_MEDIA_PANE_WIDTH_PX, parseWorkspaceHref } from "@/lib/workspace/schema";
 import LibrariesPaneBody from "@/app/(authenticated)/libraries/LibrariesPaneBody";
 import LibraryPaneBody from "@/app/(authenticated)/libraries/[id]/LibraryPaneBody";
@@ -74,6 +94,7 @@ interface PaneRouteDefinition {
   id: PaneRouteId;
   pattern: RoutePattern;
   staticTitle: string;
+  icon: LucideIcon;
   resourceRef?: (params: RouteParams) => string | null;
   render: () => ReactNode;
   bodyMode?: PaneBodyMode;
@@ -102,6 +123,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "libraries",
     pattern: ["libraries"],
     staticTitle: "Libraries",
+    icon: Library,
     render: () => <LibrariesPaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
@@ -116,6 +138,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "library",
     pattern: ["libraries", ":id"],
     staticTitle: "Library",
+    icon: Library,
     resourceRef: (params) => {
       const id = params.id;
       return id ? `library:${id}` : null;
@@ -131,6 +154,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "media",
     pattern: ["media", ":id"],
     staticTitle: "Media",
+    icon: FileText,
     resourceRef: (params) => {
       const id = params.id;
       return id ? `media:${id}` : null;
@@ -146,6 +170,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "conversations",
     pattern: ["conversations"],
     staticTitle: "Chats",
+    icon: MessageSquare,
     render: () => <ConversationsPaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
@@ -160,6 +185,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "conversationNew",
     pattern: ["conversations", "new"],
     staticTitle: "New chat",
+    icon: MessageSquare,
     render: () => <ConversationNewPaneBody />,
     bodyMode: "contained",
     defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
@@ -171,6 +197,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "conversation",
     pattern: ["conversations", ":id"],
     staticTitle: "Chat",
+    icon: MessageSquare,
     resourceRef: (params) => {
       const id = params.id;
       return id ? `conversation:${id}` : null;
@@ -189,6 +216,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "browse",
     pattern: ["browse"],
     staticTitle: "Browse",
+    icon: Compass,
     render: () => <BrowsePaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
@@ -203,6 +231,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "podcasts",
     pattern: ["podcasts"],
     staticTitle: "Podcasts",
+    icon: Mic,
     render: () => <PodcastsPaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
@@ -217,6 +246,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "podcastDetail",
     pattern: ["podcasts", ":podcastId"],
     staticTitle: "Podcast",
+    icon: Mic,
     resourceRef: (params) => {
       const podcastId = params.podcastId;
       return podcastId ? `podcast:${podcastId}` : null;
@@ -232,6 +262,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "search",
     pattern: ["search"],
     staticTitle: "Search",
+    icon: Search,
     render: () => <SearchPaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
@@ -246,6 +277,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "author",
     pattern: ["authors", ":handle"],
     staticTitle: "Author",
+    icon: UserRound,
     resourceRef: (params) => {
       const handle = params.handle;
       return handle ? `contributor:${handle}` : null;
@@ -261,6 +293,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "notes",
     pattern: ["notes"],
     staticTitle: "Notes",
+    icon: FileText,
     render: () => <NotesPaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
@@ -272,6 +305,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "page",
     pattern: ["pages", ":pageId"],
     staticTitle: "Page",
+    icon: FileText,
     resourceRef: (params) => (params.pageId ? `page:${params.pageId}` : null),
     render: () => <PagePaneBody />,
     bodyMode: "document",
@@ -284,6 +318,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "note",
     pattern: ["notes", ":blockId"],
     staticTitle: "Note",
+    icon: FileText,
     resourceRef: (params) => (params.blockId ? `note_block:${params.blockId}` : null),
     render: () => <NotePaneBody />,
     bodyMode: "document",
@@ -296,6 +331,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "daily",
     pattern: ["daily"],
     staticTitle: "Today",
+    icon: CalendarDays,
     render: () => <DailyNotePaneBody />,
     bodyMode: "document",
     defaultWidthPx: 760,
@@ -307,6 +343,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "dailyDate",
     pattern: ["daily", ":localDate"],
     staticTitle: "Daily note",
+    icon: CalendarDays,
     resourceRef: (params) => (params.localDate ? `daily:${params.localDate}` : null),
     render: () => <DailyNotePaneBody />,
     bodyMode: "document",
@@ -319,6 +356,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settings",
     pattern: ["settings"],
     staticTitle: "Settings",
+    icon: Settings,
     render: () => <SettingsPaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
@@ -333,6 +371,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settingsBilling",
     pattern: ["settings", "billing"],
     staticTitle: "Billing",
+    icon: CreditCard,
     render: () => <SettingsBillingPaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
@@ -347,6 +386,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settingsReader",
     pattern: ["settings", "reader"],
     staticTitle: "Reader settings",
+    icon: BookOpen,
     render: () => <SettingsReaderPaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
@@ -361,6 +401,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settingsAppearance",
     pattern: ["settings", "appearance"],
     staticTitle: "Appearance",
+    icon: Palette,
     render: () => <SettingsAppearancePaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
@@ -375,6 +416,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settingsKeys",
     pattern: ["settings", "keys"],
     staticTitle: "API Keys",
+    icon: KeyRound,
     render: () => <SettingsKeysPaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
@@ -389,6 +431,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settingsLocalVault",
     pattern: ["settings", "local-vault"],
     staticTitle: "Local vault",
+    icon: FolderOpen,
     render: () => <SettingsLocalVaultPaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
@@ -410,6 +453,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settingsIdentities",
     pattern: ["settings", "identities"],
     staticTitle: "Linked identities",
+    icon: Link2,
     render: () => <SettingsIdentitiesPaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
@@ -424,6 +468,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settingsKeybindings",
     pattern: ["settings", "keybindings"],
     staticTitle: "Keyboard shortcuts",
+    icon: Keyboard,
     render: () => <KeybindingsPaneBody />,
     bodyMode: "standard",
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
@@ -523,4 +568,12 @@ export function resolvePaneRoute(href: string): ResolvedPaneRoute {
     render: null,
     definition: null,
   };
+}
+
+/**
+ * Resolves the icon for a destination href. Falls back to a neutral glyph for
+ * hrefs that do not match a pane route.
+ */
+export function getPaneRouteIcon(href: string): LucideIcon {
+  return resolvePaneRoute(href).definition?.icon ?? Globe;
 }

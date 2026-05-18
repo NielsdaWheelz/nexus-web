@@ -1,3 +1,4 @@
+import { FileText, Globe, Library, type LucideIcon } from "lucide-react";
 import type { ContextItem, ContextItemColor, ContextItemType } from "@/lib/api/sse";
 import type {
   ConversationScope,
@@ -87,6 +88,12 @@ export function formatContextMeta(
   }
   return parts.join(" - ");
 }
+
+export const CONVERSATION_SCOPE_ICONS: Record<ConversationScope["type"], LucideIcon> = {
+  general: Globe,
+  media: FileText,
+  library: Library,
+};
 
 export function formatConversationScopeLabel(scope: ConversationScope): string {
   if (scope.type === "general") {
