@@ -141,12 +141,12 @@ http_status_and_location() {
   local url="$1"
   local cookie="${2:-}"
   if [ -n "$cookie" ]; then
-    curl -sS -o /dev/null -w '%{http_code}\t%{redirect_url}' \
+    curl -sS -o /dev/null -w '%{http_code}\t%{redirect_url}\n' \
       --max-time "$REQUEST_TIMEOUT_SECONDS" \
       -H "Cookie: ${cookie}" \
       "$url"
   else
-    curl -sS -o /dev/null -w '%{http_code}\t%{redirect_url}' \
+    curl -sS -o /dev/null -w '%{http_code}\t%{redirect_url}\n' \
       --max-time "$REQUEST_TIMEOUT_SECONDS" \
       "$url"
   fi
