@@ -67,6 +67,31 @@ def list_highlights(
     return success_response({"highlights": [h.model_dump(mode="json") for h in result]})
 
 
+@router.get("/media/{media_id}/highlights")
+def list_media_highlights(
+    media_id: UUID,
+    request: Request,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """List every highlight of a media across all fragments and PDF pages."""
+    mine_only_raw = request.query_params.get("mine_only", "true")
+    if mine_only_raw not in ("true", "false"):
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "mine_only must be 'true' or 'false'",
+        )
+    mine_only = mine_only_raw == "true"
+
+    result = highlights_service.list_highlights_for_media(
+        db=db,
+        viewer_id=viewer.user_id,
+        media_id=media_id,
+        mine_only=mine_only,
+    )
+    return success_response({"highlights": [h.model_dump(mode="json") for h in result]})
+
+
 # =============================================================================
 # PDF Highlight Endpoints (S6 PR-04)
 # =============================================================================

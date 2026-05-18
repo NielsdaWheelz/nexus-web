@@ -480,6 +480,7 @@ class EpubNavigationSectionOut(BaseModel):
 
     section_id: str
     label: str
+    fragment_id: UUID
     fragment_idx: int
     href_path: str | None
     anchor_id: str | None

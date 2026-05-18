@@ -101,6 +101,7 @@ def get_epub_navigation_for_viewer(
             WITH nav AS (
                 SELECT n.location_id,
                        n.label,
+                       f.id AS fragment_id,
                        n.fragment_idx,
                        n.href_path,
                        n.href_fragment,
@@ -134,6 +135,7 @@ def get_epub_navigation_for_viewer(
             )
             SELECT location_id,
                    label,
+                   fragment_id,
                    fragment_idx,
                    href_path,
                    href_fragment,
@@ -155,14 +157,15 @@ def get_epub_navigation_for_viewer(
         EpubNavigationSectionOut(
             section_id=row[0],
             label=row[1],
-            fragment_idx=row[2],
-            href_path=row[3],
-            anchor_id=row[4],
-            source_node_id=row[5],
-            source=row[6],
-            ordinal=row[7],
-            char_count=row[8],
-            source_version=row[9],
+            fragment_id=row[2],
+            fragment_idx=row[3],
+            href_path=row[4],
+            anchor_id=row[5],
+            source_node_id=row[6],
+            source=row[7],
+            ordinal=row[8],
+            char_count=row[9],
+            source_version=row[10],
         )
         for row in section_rows
     ]

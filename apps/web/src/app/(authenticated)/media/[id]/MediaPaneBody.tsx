@@ -22,11 +22,13 @@ import ReaderAssistantPane, {
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import QuoteChatSheet from "@/components/chat/QuoteChatSheet";
 import HtmlRenderer from "@/components/HtmlRenderer";
-import ReaderGutter from "@/components/reader/ReaderGutter";
 import AnchoredHighlightsRail from "@/components/reader/AnchoredHighlightsRail";
+import ReaderOverviewRuler, {
+  OVERVIEW_RULER_WIDTH_PX,
+} from "@/components/reader/ReaderOverviewRuler";
+import { positionHighlights } from "@/components/reader/overviewPositions";
 import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
 import SecondaryRail, {
-  SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
   SECONDARY_RAIL_EXPANDED_WIDTH_PX,
 } from "@/components/secondaryRail/SecondaryRail";
 import PdfReader, {
@@ -125,7 +127,9 @@ import {
 } from "./transcriptView";
 import {
   type Highlight,
+  type MediaHighlight,
   fetchHighlights,
+  fetchMediaHighlights,
   createHighlight,
   updateHighlight,
   deleteHighlight,
@@ -146,12 +150,11 @@ import {
   buildEpubLocationHref,
   resolveSectionAnchorId,
 } from "./epubHelpers";
+import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import {
-  ChevronLeft,
-  ChevronRight,
-  PanelRightOpen,
-  RefreshCw,
-} from "lucide-react";
+  dispatchReaderPulse,
+  type ReaderPulseTarget,
+} from "@/lib/reader/pulseEvent";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import styles from "./page.module.css";
@@ -1062,6 +1065,10 @@ export default function MediaPaneBody() {
 
   // ---- Highlight interaction state ----
   const [highlights, setHighlights] = useState<Highlight[]>([]);
+  // Media-wide highlights (every fragment/page), feeding the overview ruler.
+  // Loaded once per media open and re-fetched after each highlight mutation;
+  // distinct from the per-fragment `highlights` above.
+  const [mediaHighlights, setMediaHighlights] = useState<MediaHighlight[]>([]);
   const [pdfHighlightsPaneState, setPdfHighlightsPaneState] =
     useState<PdfHighlightsPaneState>(createEmptyPdfHighlightsPaneState);
   // Accumulated PDF highlights across rendered pages. The reader streams page
@@ -1204,7 +1211,9 @@ export default function MediaPaneBody() {
   const [secondaryRailMode, setSecondaryRailMode] = useState<
     "highlights" | "ask"
   >("highlights");
-  const [isSecondaryRailExpanded, setSecondaryRailExpanded] = useState(false);
+  // Whether the highlights/assistant rail is open. The reader rail is
+  // open-or-absent — there is no collapsed strip.
+  const [isHighlightsRailOpen, setHighlightsRailOpen] = useState(false);
   const [isMobileHighlightsDrawerOpen, setMobileHighlightsDrawerOpen] =
     useState(false);
   const [readerAssistantState, setReaderAssistantState] = useState<{
@@ -1221,6 +1230,12 @@ export default function MediaPaneBody() {
   const contentRef = useRef<HTMLDivElement>(null);
   const pdfContentRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef<CanonicalCursorResult | null>(null);
+  // A ruler activation that had to navigate to a non-active fragment/section
+  // before its highlight could be pulsed; dispatched once that content renders.
+  const pendingRulerPulseRef = useRef<{
+    fragmentId: string;
+    target: ReaderPulseTarget;
+  } | null>(null);
 
   const beginRestoreSession = useCallback(
     (phase: Exclude<ReaderRestorePhase, "settled" | "cancelled">) => {
@@ -2470,6 +2485,37 @@ export default function MediaPaneBody() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-fetch when active fragment changes
   }, [activeContent?.fragmentId]);
 
+  // Media-wide highlights for the overview ruler: loaded once per media open.
+  useEffect(() => {
+    if (!canRead) {
+      setMediaHighlights([]);
+      return;
+    }
+    let cancelled = false;
+    void fetchMediaHighlights(id)
+      .then((loaded) => {
+        if (!cancelled) {
+          setMediaHighlights(loaded);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load media highlights:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canRead, id]);
+
+  // Re-fetch the media-wide highlights after a highlight mutation so the
+  // overview ruler trails the per-fragment `highlights` by one fetch.
+  const refreshMediaHighlights = useCallback(() => {
+    void fetchMediaHighlights(id)
+      .then(setMediaHighlights)
+      .catch((err) => {
+        console.error("Failed to refresh media highlights:", err);
+      });
+  }, [id]);
+
   // ==========================================================================
   // Highlight Rendering
   // ==========================================================================
@@ -3112,6 +3158,7 @@ export default function MediaPaneBody() {
         );
         focusHighlight(createdHighlight.id);
         clearRetainedSelection(true);
+        refreshMediaHighlights();
 
         void fetchHighlights(activeContent.fragmentId)
           .then((newHighlights) => {
@@ -3180,6 +3227,7 @@ export default function MediaPaneBody() {
       highlights,
       focusHighlight,
       feedback,
+      refreshMediaHighlights,
     ],
   );
 
@@ -3274,6 +3322,7 @@ export default function MediaPaneBody() {
           return;
         }
         setHighlights(newHighlights);
+        refreshMediaHighlights();
 
         const newIds = new Set(newHighlights.map((h) => h.id));
         const reconciledFocus = reconcileFocusAfterRefetch(
@@ -3308,6 +3357,7 @@ export default function MediaPaneBody() {
     focusHighlight,
     cancelEditBounds,
     feedback,
+    refreshMediaHighlights,
   ]);
 
   // ==========================================================================
@@ -3319,6 +3369,7 @@ export default function MediaPaneBody() {
       if (isPdf) {
         await updateHighlight(highlightId, { color });
         setPdfRefreshToken((v) => v + 1);
+        refreshMediaHighlights();
         return;
       }
       if (!activeContent) return;
@@ -3329,8 +3380,9 @@ export default function MediaPaneBody() {
         return;
       }
       setHighlights(newHighlights);
+      refreshMediaHighlights();
     },
-    [activeContent, isPdf],
+    [activeContent, isPdf, refreshMediaHighlights],
   );
 
   const handleDelete = useCallback(
@@ -3338,6 +3390,7 @@ export default function MediaPaneBody() {
       if (isPdf) {
         await deleteHighlight(highlightId);
         setPdfRefreshToken((v) => v + 1);
+        refreshMediaHighlights();
         clearFocus();
         return;
       }
@@ -3349,9 +3402,10 @@ export default function MediaPaneBody() {
         return;
       }
       setHighlights(newHighlights);
+      refreshMediaHighlights();
       clearFocus();
     },
-    [activeContent, clearFocus, isPdf],
+    [activeContent, clearFocus, isPdf, refreshMediaHighlights],
   );
 
   const patchLocalHighlightNote = useCallback(
@@ -3510,7 +3564,6 @@ export default function MediaPaneBody() {
         };
       });
       setSecondaryRailMode("ask");
-      setSecondaryRailExpanded(true);
       setMobileHighlightsDrawerOpen(false);
     },
     [buildMediaConversationScope],
@@ -3626,11 +3679,15 @@ export default function MediaPaneBody() {
       : styles.readerThemeLight
   }`;
   const showDesktopSecondaryRail =
-    !isMobileViewport && (showHighlightsPane || readerAssistantState !== null);
+    !isMobileViewport && (isHighlightsRailOpen || readerAssistantState !== null);
   const desktopSecondaryRailWidthPx = showDesktopSecondaryRail
-    ? isSecondaryRailExpanded
-      ? SECONDARY_RAIL_EXPANDED_WIDTH_PX
-      : SECONDARY_RAIL_COLLAPSED_WIDTH_PX
+    ? SECONDARY_RAIL_EXPANDED_WIDTH_PX
+    : 0;
+  // The overview ruler is always on for desktop readable media; the rail opens
+  // to its right. Both occupy width the pane must reserve.
+  const showDesktopOverviewRuler = !isMobileViewport && showHighlightsPane;
+  const desktopOverviewRulerWidthPx = showDesktopOverviewRuler
+    ? OVERVIEW_RULER_WIDTH_PX
     : 0;
 
   useEffect(() => {
@@ -3638,7 +3695,7 @@ export default function MediaPaneBody() {
       !showHighlightsPane ||
       isPdf ||
       isMobileViewport ||
-      !isSecondaryRailExpanded ||
+      !isHighlightsRailOpen ||
       secondaryRailMode !== "highlights" ||
       !focusState.focusedId ||
       !activeContent ||
@@ -3684,7 +3741,7 @@ export default function MediaPaneBody() {
     focusState.focusedId,
     isMobileViewport,
     isPdf,
-    isSecondaryRailExpanded,
+    isHighlightsRailOpen,
     renderedHtml,
     secondaryRailMode,
     showHighlightsPane,
@@ -3753,12 +3810,15 @@ export default function MediaPaneBody() {
     }
 
     paneRuntime.setPaneMinWidth(
-      protectedReaderWidthPx + desktopSecondaryRailWidthPx,
+      protectedReaderWidthPx +
+        desktopOverviewRulerWidthPx +
+        desktopSecondaryRailWidthPx,
     );
     return () => {
       paneRuntime.setPaneMinWidth(null);
     };
   }, [
+    desktopOverviewRulerWidthPx,
     desktopSecondaryRailWidthPx,
     hasProtectedReaderTextWidth,
     isMobileViewport,
@@ -4864,7 +4924,7 @@ export default function MediaPaneBody() {
       setSecondaryRailMode("ask");
       return;
     }
-    setSecondaryRailExpanded(false);
+    setHighlightsRailOpen(false);
   }, [readerAssistantState, showHighlightsPane]);
 
   useEffect(() => {
@@ -5345,6 +5405,270 @@ export default function MediaPaneBody() {
     });
   }, [fragments, highlights, isPdf, isTranscriptMedia, pdfDocumentHighlights]);
 
+  // Media-wide highlights mapped to overview-ruler rows. Separate from
+  // `anchoredHighlights` (per-fragment, projected for the rail): this maps the
+  // typed-union `mediaHighlights` straight from stored anchors.
+  const mediaAnchoredHighlights = useMemo<AnchoredHighlightRow[]>(() => {
+    return mediaHighlights.map((highlight) => {
+      const anchor = highlight.anchor;
+      if (anchor.type === "pdf_page_geometry") {
+        const firstQuad = anchor.quads[0];
+        return {
+          id: highlight.id,
+          exact: highlight.exact,
+          source_version: highlight.source_version,
+          color: highlight.color,
+          linked_note_blocks: highlight.linked_note_blocks,
+          created_at: highlight.created_at,
+          updated_at: highlight.updated_at,
+          prefix: highlight.prefix,
+          suffix: highlight.suffix,
+          is_owner: highlight.is_owner,
+          linked_conversations: highlight.linked_conversations,
+          page_number: anchor.page_number,
+          quads: anchor.quads,
+          stable_order_key: [
+            String(anchor.page_number).padStart(6, "0"),
+            (firstQuad?.y1 ?? 0).toFixed(3).padStart(12, "0"),
+            (firstQuad?.x1 ?? 0).toFixed(3).padStart(12, "0"),
+            highlight.created_at,
+            highlight.id,
+          ].join(":"),
+        };
+      }
+      const fragment = isTranscriptMedia
+        ? fragments.find((item) => item.id === anchor.fragment_id)
+        : null;
+      return {
+        id: highlight.id,
+        exact: highlight.exact,
+        source_version: highlight.source_version,
+        color: highlight.color,
+        linked_note_blocks: highlight.linked_note_blocks,
+        created_at: highlight.created_at,
+        updated_at: highlight.updated_at,
+        prefix: highlight.prefix,
+        suffix: highlight.suffix,
+        is_owner: highlight.is_owner,
+        linked_conversations: highlight.linked_conversations,
+        anchor: {
+          fragment_id: anchor.fragment_id,
+          start_offset: anchor.start_offset,
+          end_offset: anchor.end_offset,
+          ...(fragment
+            ? {
+                t_start_ms: fragment.t_start_ms ?? undefined,
+                t_end_ms: fragment.t_end_ms ?? undefined,
+              }
+            : {}),
+        },
+        stable_order_key: [
+          String(anchor.start_offset).padStart(12, "0"),
+          String(anchor.end_offset).padStart(12, "0"),
+          highlight.created_at,
+          highlight.id,
+        ].join(":"),
+      };
+    });
+  }, [fragments, isTranscriptMedia, mediaHighlights]);
+
+  const positioned = useMemo(
+    () =>
+      positionHighlights({
+        mediaKind: isPdf
+          ? "pdf"
+          : isEpub
+            ? "epub"
+            : isTranscriptMedia
+              ? "transcript"
+              : "web",
+        highlights: mediaAnchoredHighlights,
+        fragments,
+        epubSections: epubSections ?? [],
+        numPages: pdfControlsState?.numPages ?? null,
+      }),
+    [
+      epubSections,
+      fragments,
+      isEpub,
+      isPdf,
+      isTranscriptMedia,
+      mediaAnchoredHighlights,
+      pdfControlsState?.numPages,
+    ],
+  );
+
+  // Whole-document 0..1 fraction range of the currently-scrollable content.
+  // For text the active fragment/section spans `[start, end]` of the document;
+  // for PDF the scroll container holds every page, so it is the full range.
+  const documentSpan = useMemo(() => {
+    if (isPdf) {
+      return { start: 0, end: 1 };
+    }
+    if (totalTextLength <= 0) {
+      return { start: 0, end: 1 };
+    }
+    const start = activeTextStartOffset / totalTextLength;
+    const end =
+      (activeTextStartOffset +
+        (activeContent
+          ? canonicalCpLength(activeContent.canonicalText)
+          : 0)) /
+      totalTextLength;
+    return { start, end };
+  }, [activeContent, activeTextStartOffset, isPdf, totalTextLength]);
+
+  // Dispatch a ruler pulse that was deferred behind a cross-fragment navigation,
+  // once the navigated-to content is the active, rendered fragment/section and
+  // its highlight is in the per-fragment list (so it is rendered inline).
+  useEffect(() => {
+    const pending = pendingRulerPulseRef.current;
+    if (
+      !pending ||
+      epubSectionLoading ||
+      activeContent?.fragmentId !== pending.fragmentId ||
+      !highlights.some((item) => item.id === pending.target.highlightId)
+    ) {
+      return;
+    }
+    pendingRulerPulseRef.current = null;
+    dispatchReaderPulse(pending.target);
+  }, [activeContent, epubSectionLoading, highlights, renderedHtml]);
+
+  const onActivateHighlight = useCallback(
+    (highlightId: string) => {
+      const highlight = mediaHighlights.find((item) => item.id === highlightId);
+      if (!highlight) {
+        return;
+      }
+      const anchor = highlight.anchor;
+
+      if (anchor.type === "pdf_page_geometry") {
+        // The PDF pulse handler performs its own cross-page navigation.
+        dispatchReaderPulse({
+          mediaId: id,
+          highlightId: highlight.id,
+          locator: {
+            type: "pdf_page_geometry",
+            media_id: id,
+            page_number: anchor.page_number,
+            quads: anchor.quads,
+            exact: highlight.exact,
+            ...(highlight.prefix ? { prefix: highlight.prefix } : {}),
+            ...(highlight.suffix ? { suffix: highlight.suffix } : {}),
+          },
+          snippet: highlight.exact,
+          sourceVersion: highlight.source_version ?? `highlight:${highlight.id}`,
+          highlightBehavior: "pulse",
+          focusBehavior: "scroll_into_view",
+        });
+        return;
+      }
+
+      const fragmentId = anchor.fragment_id;
+      const fragment = fragments.find((item) => item.id === fragmentId);
+      const target: ReaderPulseTarget = isTranscriptMedia
+        ? {
+            mediaId: id,
+            highlightId: highlight.id,
+            locator: {
+              type: "transcript_time_range",
+              media_id: id,
+              t_start_ms: fragment?.t_start_ms ?? 0,
+              t_end_ms: fragment?.t_end_ms ?? 0,
+              text_quote_selector: {
+                exact: highlight.exact,
+                ...(highlight.prefix ? { prefix: highlight.prefix } : {}),
+                ...(highlight.suffix ? { suffix: highlight.suffix } : {}),
+              },
+            },
+            snippet: highlight.exact,
+            sourceVersion:
+              highlight.source_version ?? `highlight:${highlight.id}`,
+            highlightBehavior: "pulse",
+            focusBehavior: "scroll_into_view",
+          }
+        : {
+            mediaId: id,
+            highlightId: highlight.id,
+            locator: {
+              type: isEpub ? "epub_fragment_offsets" : "web_text_offsets",
+              media_id: id,
+              fragment_id: fragmentId,
+              start_offset: anchor.start_offset,
+              end_offset: anchor.end_offset,
+              text_quote_selector: {
+                exact: highlight.exact,
+                ...(highlight.prefix ? { prefix: highlight.prefix } : {}),
+                ...(highlight.suffix ? { suffix: highlight.suffix } : {}),
+              },
+            },
+            snippet: highlight.exact,
+            sourceVersion:
+              highlight.source_version ?? `highlight:${highlight.id}`,
+            highlightBehavior: "pulse",
+            focusBehavior: "scroll_into_view",
+          };
+
+      // Already on the highlight's fragment/section: pulse now. Otherwise
+      // navigate via the reader's existing fragment/section path and let the
+      // pending-pulse effect fire once that content renders.
+      if (isEpub) {
+        const section = (epubSections ?? []).find(
+          (item) => item.fragment_id === fragmentId,
+        );
+        if (!section) {
+          return;
+        }
+        if (section.section_id === activeSectionId) {
+          dispatchReaderPulse(target);
+          return;
+        }
+        pendingRulerPulseRef.current = { fragmentId, target };
+        navigateToSection(section.section_id);
+        return;
+      }
+
+      if (fragmentId === activeContent?.fragmentId) {
+        dispatchReaderPulse(target);
+        return;
+      }
+
+      if (isTranscriptMedia) {
+        if (!fragment) {
+          return;
+        }
+        pendingRulerPulseRef.current = { fragmentId, target };
+        handleTranscriptSegmentSelect(fragment);
+        return;
+      }
+
+      pendingRulerPulseRef.current = { fragmentId, target };
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("fragment", fragmentId);
+      router.push(`/media/${id}?${params.toString()}`);
+    },
+    [
+      activeContent?.fragmentId,
+      activeSectionId,
+      epubSections,
+      fragments,
+      handleTranscriptSegmentSelect,
+      id,
+      isEpub,
+      isTranscriptMedia,
+      mediaHighlights,
+      navigateToSection,
+      router,
+      searchParams,
+    ],
+  );
+
+  const onOpenHighlights = useCallback(() => {
+    setSecondaryRailMode("highlights");
+    setHighlightsRailOpen(true);
+  }, []);
+
   const anchoredHighlightsMeasureKey = useMemo(
     () =>
       [
@@ -5668,6 +5992,7 @@ export default function MediaPaneBody() {
                   }
                   highlightRefreshToken={pdfRefreshToken}
                   onPageHighlightsChange={handlePdfPageHighlightsChange}
+                  onHighlightsMutated={refreshMediaHighlights}
                   onHighlightTap={handlePdfHighlightTap}
                   temporaryHighlight={temporaryPdfHighlight}
                   onAskSelection={
@@ -5768,11 +6093,28 @@ export default function MediaPaneBody() {
           )}
         </div>
 
+        {showDesktopOverviewRuler ? (
+          <ReaderOverviewRuler
+            positioned={positioned}
+            contentRef={isPdf ? pdfContentRef : contentRef}
+            documentSpan={documentSpan}
+            onActivateHighlight={onActivateHighlight}
+            onOpenHighlights={onOpenHighlights}
+          />
+        ) : null}
+
         {showDesktopSecondaryRail ? (
           <SecondaryRail
             ariaLabel="Reader tools"
-            expanded={isSecondaryRailExpanded}
-            onExpandedChange={setSecondaryRailExpanded}
+            expanded={true}
+            onExpandedChange={(next) => {
+              // The reader rail is open-or-absent; its header close control
+              // dismisses the rail entirely (both highlights and assistant).
+              if (!next) {
+                setHighlightsRailOpen(false);
+                setReaderAssistantState(null);
+              }
+            }}
             bodyClassName={styles.readerSecondaryRailBody}
             testId="reader-secondary-rail"
             tabs={
@@ -5795,74 +6137,6 @@ export default function MediaPaneBody() {
               }
               setSecondaryRailMode("ask");
             }}
-            collapsed={
-              showHighlightsPane ? (
-                isTranscriptMedia ? (
-                  <ReaderGutter
-                    mediaId={id}
-                    mediaKind="transcript"
-                    highlights={anchoredHighlights}
-                    contentRef={contentRef}
-                    measureKey={anchoredHighlightsMeasureKey}
-                    onFocusHighlight={focusHighlight}
-                    onExpand={() => {
-                      setSecondaryRailMode("highlights");
-                      setSecondaryRailExpanded(true);
-                    }}
-                  />
-                ) : isPdf ? (
-                  <ReaderGutter
-                    mediaId={id}
-                    mediaKind="pdf"
-                    highlights={anchoredHighlights}
-                    contentRef={pdfContentRef}
-                    measureKey={anchoredHighlightsMeasureKey}
-                    onFocusHighlight={focusHighlight}
-                    onExpand={() => {
-                      setSecondaryRailMode("highlights");
-                      setSecondaryRailExpanded(true);
-                    }}
-                  />
-                ) : isEpub ? (
-                  <ReaderGutter
-                    mediaId={id}
-                    mediaKind="epub"
-                    highlights={anchoredHighlights}
-                    contentRef={contentRef}
-                    measureKey={anchoredHighlightsMeasureKey}
-                    onFocusHighlight={focusHighlight}
-                    onExpand={() => {
-                      setSecondaryRailMode("highlights");
-                      setSecondaryRailExpanded(true);
-                    }}
-                  />
-                ) : (
-                  <ReaderGutter
-                    mediaId={id}
-                    mediaKind="web"
-                    highlights={anchoredHighlights}
-                    contentRef={contentRef}
-                    measureKey={anchoredHighlightsMeasureKey}
-                    onFocusHighlight={focusHighlight}
-                    onExpand={() => {
-                      setSecondaryRailMode("highlights");
-                      setSecondaryRailExpanded(true);
-                    }}
-                  />
-                )
-              ) : (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  className={styles.readerSecondaryRailCollapsedButton}
-                  aria-label="Expand reader tools"
-                  onClick={() => setSecondaryRailExpanded(true)}
-                >
-                  <PanelRightOpen size={15} aria-hidden="true" />
-                </Button>
-              )
-            }
           >
             {showHighlightsPane && secondaryRailMode === "highlights" ? (
               highlightsRail
@@ -5881,11 +6155,7 @@ export default function MediaPaneBody() {
                 }
                 onClose={() => {
                   setReaderAssistantState(null);
-                  if (showHighlightsPane) {
-                    setSecondaryRailMode("highlights");
-                    return;
-                  }
-                  setSecondaryRailExpanded(false);
+                  setSecondaryRailMode("highlights");
                 }}
                 onConversationAvailable={
                   handleReaderAssistantConversationAvailable

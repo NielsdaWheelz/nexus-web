@@ -33,6 +33,7 @@ from tests.factories import (
 from tests.factories import (
     create_epub_chapter_fragment,
     create_epub_media_in_library,
+    create_pdf_media_with_text,
     get_user_default_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
@@ -1997,3 +1998,309 @@ class TestS6PR02ResponseContract:
                 assert "fragment_id" not in data
                 assert "start_offset" not in data
                 assert "end_offset" not in data
+
+
+# =============================================================================
+# GET /media/{media_id}/highlights — media-wide highlight read path
+# =============================================================================
+
+
+MEDIA_HIGHLIGHTS_QUADS = [
+    {
+        "x1": 72.0,
+        "y1": 700.0,
+        "x2": 200.0,
+        "y2": 700.0,
+        "x3": 200.0,
+        "y3": 712.0,
+        "x4": 72.0,
+        "y4": 712.0,
+    },
+]
+
+
+class TestListMediaHighlights:
+    """Tests for GET /media/{media_id}/highlights."""
+
+    def test_returns_highlights_from_every_fragment(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """A fragment-based media returns highlights from all of its fragments."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            lib_id = get_user_default_library(session, user_id)
+            media_id = create_epub_media_in_library(session, user_id, lib_id)
+            frag_ids = [
+                create_epub_chapter_fragment(session, media_id, idx, text_content)
+                for idx, text_content in enumerate([EPUB_CH0_TEXT, EPUB_CH1_TEXT, EPUB_CH2_TEXT])
+            ]
+
+        for fid in frag_ids:
+            register_fragment_highlight_cleanup(direct_db, fid)
+            direct_db.register_cleanup("fragments", "id", fid)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # Highlight in chapter 0 and chapter 2 (skip chapter 1).
+        resp_0 = auth_client.post(
+            f"/fragments/{frag_ids[0]}/highlights",
+            json={"start_offset": 0, "end_offset": 13, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert resp_0.status_code == 201, resp_0.text
+        resp_2 = auth_client.post(
+            f"/fragments/{frag_ids[2]}/highlights",
+            json={"start_offset": 0, "end_offset": 12, "color": "green"},
+            headers=auth_headers(user_id),
+        )
+        assert resp_2.status_code == 201, resp_2.text
+
+        resp = auth_client.get(
+            f"/media/{media_id}/highlights",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 200, resp.text
+        highlights = resp.json()["data"]["highlights"]
+        assert len(highlights) == 2, f"expected both fragments' highlights, got {highlights}"
+        fragment_ids = {h["anchor"]["fragment_id"] for h in highlights}
+        assert fragment_ids == {str(frag_ids[0]), str(frag_ids[2])}
+        # Ordered by fragment idx ASC.
+        assert highlights[0]["anchor"]["fragment_id"] == str(frag_ids[0])
+        assert highlights[1]["anchor"]["fragment_id"] == str(frag_ids[2])
+        for h in highlights:
+            assert h["anchor"]["type"] == "fragment_offsets"
+
+    def test_returns_pdf_highlights_from_every_page(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """A PDF media returns highlights from all of its pages."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            lib_id = get_user_default_library(session, user_id)
+            media_id = create_pdf_media_with_text(
+                session,
+                user_id,
+                lib_id,
+                plain_text="This is page one content. And this is page two content here.",
+                page_count=2,
+                page_spans=[(0, 26), (26, 60)],
+            )
+        direct_db.register_cleanup("highlight_pdf_anchors", "media_id", media_id)
+        direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        auth_client.post(
+            f"/media/{media_id}/pdf-highlights",
+            json={
+                "page_number": 1,
+                "quads": MEDIA_HIGHLIGHTS_QUADS,
+                "exact": "p1",
+                "color": "yellow",
+            },
+            headers=auth_headers(user_id),
+        )
+        auth_client.post(
+            f"/media/{media_id}/pdf-highlights",
+            json={
+                "page_number": 2,
+                "quads": MEDIA_HIGHLIGHTS_QUADS,
+                "exact": "p2",
+                "color": "green",
+            },
+            headers=auth_headers(user_id),
+        )
+
+        resp = auth_client.get(
+            f"/media/{media_id}/highlights",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 200, resp.text
+        highlights = resp.json()["data"]["highlights"]
+        assert len(highlights) == 2, f"expected both pages' highlights, got {highlights}"
+        # Ordered by page_number ASC.
+        assert [h["anchor"]["page_number"] for h in highlights] == [1, 2]
+        for h in highlights:
+            assert h["anchor"]["type"] == "pdf_page_geometry"
+
+    def test_populates_linked_notes_and_conversations(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """linked_note_blocks and linked_conversations are populated per highlight."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        direct_db.register_cleanup("pages", "user_id", user_id)
+        direct_db.register_cleanup("note_blocks", "user_id", user_id)
+        direct_db.register_cleanup("object_links", "user_id", user_id)
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_library(auth_client, user_id, media_id)
+
+        create_resp = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        highlight_id = create_resp.json()["data"]["id"]
+
+        note_resp = create_linked_highlight_note(auth_client, user_id, highlight_id, "My note")
+        assert note_resp.status_code == 201
+        note_id = note_resp.json()["data"]["id"]
+
+        conversation_id = uuid4()
+        message_id = uuid4()
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO conversations (id, owner_user_id, title, sharing, next_seq)
+                    VALUES (:id, :owner_user_id, 'Linked chat', 'private', 2)
+                """),
+                {"id": conversation_id, "owner_user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                    VALUES (:id, :conversation_id, 1, 'user', 'hello', 'complete')
+                """),
+                {"id": message_id, "conversation_id": conversation_id},
+            )
+            session.commit()
+        context_resp = auth_client.post(
+            "/message-context-items",
+            json={
+                "message_id": str(message_id),
+                "object_type": "highlight",
+                "object_id": highlight_id,
+                "ordinal": 0,
+            },
+            headers=auth_headers(user_id),
+        )
+        assert context_resp.status_code == 201, context_resp.text
+        context_id = context_resp.json()["data"]["id"]
+        direct_db.register_cleanup("message_context_items", "id", context_id)
+        direct_db.register_cleanup("messages", "id", message_id)
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        resp = auth_client.get(
+            f"/media/{media_id}/highlights",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 200, resp.text
+        highlights = resp.json()["data"]["highlights"]
+        assert len(highlights) == 1
+        assert highlights[0]["linked_note_blocks"][0]["note_block_id"] == note_id
+        assert highlights[0]["linked_note_blocks"][0]["body_text"] == "My note"
+        assert highlights[0]["linked_conversations"] == [
+            {"conversation_id": str(conversation_id), "title": "Linked chat"}
+        ]
+
+    def test_mine_only_true_by_default_excludes_others(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Default mine_only=true: only viewer-authored highlights are returned."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        auth_client.get("/me", headers=auth_headers(user_a))
+        auth_client.get("/me", headers=auth_headers(user_b))
+        add_media_to_library(auth_client, user_a, media_id)
+        add_media_to_library(auth_client, user_b, media_id)
+
+        with direct_db.session() as session:
+            lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
+
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
+        direct_db.register_cleanup("library_entries", "library_id", lib_id)
+        direct_db.register_cleanup("memberships", "library_id", lib_id)
+        direct_db.register_cleanup("libraries", "id", lib_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_a),
+        )
+        auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 6, "end_offset": 11, "color": "green"},
+            headers=auth_headers(user_b),
+        )
+
+        # User B, default mine_only -> only B's highlight.
+        mine_resp = auth_client.get(
+            f"/media/{media_id}/highlights",
+            headers=auth_headers(user_b),
+        )
+        assert mine_resp.status_code == 200, mine_resp.text
+        mine = mine_resp.json()["data"]["highlights"]
+        assert len(mine) == 1
+        assert mine[0]["author_user_id"] == str(user_b)
+
+        # mine_only=false -> both A's and B's highlights.
+        all_resp = auth_client.get(
+            f"/media/{media_id}/highlights?mine_only=false",
+            headers=auth_headers(user_b),
+        )
+        assert all_resp.status_code == 200, all_resp.text
+        all_highlights = all_resp.json()["data"]["highlights"]
+        assert len(all_highlights) == 2
+        assert {h["author_user_id"] for h in all_highlights} == {str(user_a), str(user_b)}
+
+    def test_invalid_mine_only_returns_400(self, auth_client, direct_db: DirectSessionManager):
+        """A non-boolean mine_only value returns 400 E_INVALID_REQUEST, not 422."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        add_media_to_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(
+            f"/media/{media_id}/highlights?mine_only=yes",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_non_reader_gets_404(self, auth_client, direct_db: DirectSessionManager):
+        """A viewer who cannot read the media gets a masked 404."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(session)
+
+        register_fragment_highlight_cleanup(direct_db, fragment_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_library(auth_client, user_a, media_id)
+        auth_client.get("/me", headers=auth_headers(user_b))
+
+        resp = auth_client.get(
+            f"/media/{media_id}/highlights",
+            headers=auth_headers(user_b),
+        )
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"

@@ -2593,7 +2593,7 @@ class TestGetEpubNavigationReturnsCanonicalSectionsAndTocTargets:
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
-            media_id, _ = _create_ready_epub(session, num_chapters=3, with_toc=True)
+            media_id, frag_ids = _create_ready_epub(session, num_chapters=3, with_toc=True)
 
         direct_db.register_cleanup("epub_toc_nodes", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
@@ -2609,6 +2609,11 @@ class TestGetEpubNavigationReturnsCanonicalSectionsAndTocTargets:
         sections = body["sections"]
         assert [section["ordinal"] for section in sections] == [0, 1, 2]
         assert [section["fragment_idx"] for section in sections] == [0, 1, 2]
+        assert [section["fragment_id"] for section in sections] == [
+            str(frag_ids[0]),
+            str(frag_ids[1]),
+            str(frag_ids[2]),
+        ]
         assert [section["section_id"] for section in sections] == [
             "ch0.xhtml",
             "ch1.xhtml",
@@ -2632,7 +2637,7 @@ class TestGetEpubNavigationReturnsCanonicalSectionsAndTocTargets:
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
-            media_id, _ = _create_ready_epub(session, num_chapters=2, with_toc=False)
+            media_id, frag_ids = _create_ready_epub(session, num_chapters=2, with_toc=False)
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -2647,6 +2652,10 @@ class TestGetEpubNavigationReturnsCanonicalSectionsAndTocTargets:
         assert body["toc_nodes"] == []
         assert [section["source"] for section in body["sections"]] == ["spine", "spine"]
         assert [section["section_id"] for section in body["sections"]] == ["ch0.xhtml", "ch1.xhtml"]
+        assert [section["fragment_id"] for section in body["sections"]] == [
+            str(frag_ids[0]),
+            str(frag_ids[1]),
+        ]
 
 
 class TestGetEpubSectionReturnsPayloadAndNavigation:

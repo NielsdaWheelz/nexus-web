@@ -23,12 +23,18 @@ const READER_RESUME_SEED = path.join(
   ".seed",
   "reader-resume-media.json",
 );
+const READER_OVERVIEW_RULER_SEED = path.join(
+  E2E_DIR,
+  ".seed",
+  "reader-overview-ruler-media.json",
+);
 const SEED_FILES = [
   PDF_SEED,
   NON_PDF_SEED,
   EPUB_SEED,
   YOUTUBE_SEED,
   READER_RESUME_SEED,
+  READER_OVERVIEW_RULER_SEED,
 ];
 const E2E_USER_EMAIL = process.env.E2E_USER_EMAIL ?? "e2e-test@nexus.local";
 
@@ -119,6 +125,7 @@ function readSeededMediaIds() {
   const epub = readJson(EPUB_SEED);
   const youtube = readJson(YOUTUBE_SEED);
   const readerResume = readJson(READER_RESUME_SEED);
+  const readerOverviewRuler = readJson(READER_OVERVIEW_RULER_SEED);
 
   return Array.from(
     new Set(
@@ -132,6 +139,7 @@ function readSeededMediaIds() {
         readerResume.web_media_id,
         readerResume.epub_media_id,
         readerResume.pdf_media_id,
+        readerOverviewRuler.media_id,
       ].filter((value) => typeof value === "string" && value.length > 0),
     ),
   );

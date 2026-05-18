@@ -28,6 +28,7 @@ export interface EpubSectionContent {
 export interface EpubNavigationSection {
   section_id: string;
   label: string;
+  fragment_id: string;
   fragment_idx: number;
   href_path: string | null;
   anchor_id: string | null;

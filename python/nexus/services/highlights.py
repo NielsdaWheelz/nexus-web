@@ -12,6 +12,7 @@ from nexus.db.models import (
     Fragment,
     Highlight,
     HighlightFragmentAnchor,
+    HighlightPdfAnchor,
     LibraryEntry,
     Media,
     Membership,
@@ -496,6 +497,87 @@ def list_highlights_for_fragment(
         Highlight.created_at.asc(),
         Highlight.id.asc(),
     ).all()
+
+    highlight_ids = [h.id for h in highlights]
+    conv_map = _batch_linked_conversations(db, highlight_ids, viewer_id)
+    note_map = _batch_linked_note_blocks(db, highlight_ids, viewer_id)
+    return [
+        _highlight_to_typed_out(h, viewer_id).model_copy(
+            update={
+                "linked_conversations": conv_map.get(h.id, []),
+                "linked_note_blocks": note_map.get(h.id, []),
+            }
+        )
+        for h in highlights
+    ]
+
+
+def list_highlights_for_media(
+    db: Session, viewer_id: UUID, media_id: UUID, mine_only: bool = True
+) -> list[TypedHighlightOut]:
+    """List every highlight of a media across all fragments and PDF pages.
+
+    NO ready check - read-only operation. A media is one kind: PDF media yield
+    PDF highlights on every page; all other kinds yield fragment highlights in
+    every fragment.
+
+    Args:
+        db: Database session.
+        viewer_id: The ID of the viewer.
+        media_id: The ID of the media.
+        mine_only: If True (default), return only viewer-authored highlights.
+            If False, return all highlights visible under s4 canonical predicate.
+
+    Returns:
+        List of canonical typed highlights ordered by anchor position then
+        created_at ASC, id ASC.
+
+    Raises:
+        NotFoundError(E_MEDIA_NOT_FOUND): If media doesn't exist or not readable.
+    """
+    media = db.get(Media, media_id)
+    if media is None or not can_read_media(db, viewer_id, media_id):
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+
+    if media.kind == "pdf":
+        query = (
+            db.query(Highlight)
+            .join(HighlightPdfAnchor, Highlight.id == HighlightPdfAnchor.highlight_id)
+            .filter(
+                HighlightPdfAnchor.media_id == media_id,
+                Highlight.anchor_kind == "pdf_page_geometry",
+            )
+        )
+        order_by = (
+            HighlightPdfAnchor.page_number.asc(),
+            HighlightPdfAnchor.sort_top.asc(),
+            HighlightPdfAnchor.sort_left.asc(),
+            Highlight.created_at.asc(),
+            Highlight.id.asc(),
+        )
+    else:
+        query = (
+            db.query(Highlight)
+            .join(HighlightFragmentAnchor, Highlight.id == HighlightFragmentAnchor.highlight_id)
+            .join(Fragment, Fragment.id == HighlightFragmentAnchor.fragment_id)
+            .filter(
+                Fragment.media_id == media_id,
+                Highlight.anchor_kind == "fragment_offsets",
+            )
+        )
+        order_by = (
+            Fragment.idx.asc(),
+            HighlightFragmentAnchor.start_offset.asc(),
+            Highlight.created_at.asc(),
+            Highlight.id.asc(),
+        )
+
+    if mine_only:
+        query = query.filter(Highlight.user_id == viewer_id)
+    else:
+        query = query.filter(highlight_visibility_filter(viewer_id, media_id))
+
+    highlights = query.order_by(*order_by).all()
 
     highlight_ids = [h.id for h in highlights]
     conv_map = _batch_linked_conversations(db, highlight_ids, viewer_id)

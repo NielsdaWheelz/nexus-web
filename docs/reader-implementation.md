@@ -26,10 +26,63 @@ this records the current reader model and the constraints we actively ship.
 
 ## architecture
 
+### highlight surfaces
+
+the reader has two right-side highlight surfaces with distinct scopes.
+
+- desktop has an always-on **overview ruler**: a whole-document highlight map,
+  one tick per highlight in the entire media, positioned by document fraction,
+  with a viewport-position band, a read-only hover preview, and click-to-jump
+  that navigates cross-fragment. it is `~28px` wide and present for every
+  desktop readable media whether or not highlights exist.
+- the **highlights rail** (`AnchoredHighlightsRail`) is visible-only: it shows
+  only highlights in the current viewport, with their notes and actions. it is
+  the `SecondaryRail` "Visible highlights" tab, opened on demand from the
+  ruler's open-highlights button.
+- the ruler and the rail are decoupled instruments, not two states of one
+  widget: *map* (ruler, always on) vs *here, with notes* (rail, on demand).
+- mobile has no ruler. highlights are reached through a drawer opened from the
+  reader menu or by tapping an existing highlight; the drawer is the same
+  `AnchoredHighlightsRail` component on the same visible-only model.
+
+### overview ruler positioning
+
+the ruler positions each highlight as a fraction `0..1` through the whole
+document, computed from stored anchors plus document metadata
+(`overviewPositions.ts`), never from rendered DOM geometry.
+
+- web/transcript: cumulative codepoint offset over `fragments` ordered by
+  `idx`, length = canonical-text codepoint length
+- epub: cumulative `char_count` over navigation sections ordered by `ordinal`;
+  a stored highlight anchors by `fragment_id`, and each navigation section
+  carries the `fragment_id` of its one fragment, so highlights position
+  directly against the section list
+- pdf: `(page_number - 0.5) / numPages`; ticks are page-granular
+- highlights that cannot be positioned (unknown fragment/section, missing
+  `numPages`) are dropped; the rest are sorted ascending by position
+- the viewport band spans the active fragment/section's global offset range
+  (`documentSpan`), narrowed by the in-fragment scroll fraction
+- ruler activation routes through `MediaPaneBody`, which navigates to the
+  highlight's fragment/section/page when it is not the active one, then
+  dispatches a reader pulse
+
+### highlight read paths
+
+there are two highlight read paths by design, with different scopes and update
+cadences.
+
+- per-fragment: `GET /api/fragments/{id}/highlights` (per-page for pdf), fed
+  to inline highlight rendering of the active fragment and the visible-only
+  rail; re-fetched on every fragment switch
+- media-wide: `GET /api/media/{id}/highlights` returns every highlight of the
+  media across all fragments and pages; fed to the overview ruler only,
+  fetched once per media open and after mutations
+
 ### anchored highlight projection
 
 Anchored projection is the reader-owned bridge from stored highlight anchors to
-visible rail rows.
+visible rail rows. It is the highlights rail's mechanism only; the overview
+ruler never uses it.
 
 - Reflowable readers project highlights from rendered DOM segments tagged with
   `data-active-highlight-ids`.
@@ -147,6 +200,8 @@ pure black/white to reduce halation under long sessions.
 ### epub reader surface
 
 - epub reader bootstraps from `GET /api/media/{id}/navigation`
+- navigation sections carry `fragment_id`, so an epub highlight can be mapped
+  to its section
 - active epub content loads from
   `GET /api/media/{id}/sections/{section_id}`
 - `section_id` is treated as a path-encoded identifier and may contain `/`

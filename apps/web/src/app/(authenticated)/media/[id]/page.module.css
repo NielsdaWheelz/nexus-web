@@ -155,6 +155,7 @@
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .readerContentRoot {
@@ -753,12 +754,6 @@
 
 .readerSecondaryRailBody {
   overflow: hidden;
-}
-
-.readerSecondaryRailCollapsedButton.readerSecondaryRailCollapsedButton {
-  width: 100%;
-  height: var(--size-md);
-  border-radius: 0;
 }
 
 .readerSecondaryRailEmpty {

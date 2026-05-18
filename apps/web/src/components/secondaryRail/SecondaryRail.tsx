@@ -9,7 +9,7 @@ interface SecondaryRailProps {
   ariaLabel: string;
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
-  collapsed: ReactNode;
+  collapsed?: ReactNode;
   children: ReactNode;
   tabs?: Array<{ id: string; label: string; disabled?: boolean }>;
   activeTabId?: string;

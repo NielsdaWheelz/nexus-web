@@ -2,6 +2,7 @@
 
 import { apiFetch } from "@/lib/api/client";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
+import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 import {
   createNoteBlock,
   deleteNoteBlock,
@@ -44,6 +45,29 @@ export async function fetchHighlights(
 ): Promise<Highlight[]> {
   const response = await apiFetch<{ data: { highlights: Highlight[] } }>(
     `/api/fragments/${fragmentId}/highlights`,
+    { cache: "no-store" },
+  );
+  return response.data.highlights;
+}
+
+/** A highlight anchored to a PDF page's geometry, as returned by the API. */
+export interface PdfHighlight extends Omit<Highlight, "anchor"> {
+  anchor: {
+    type: "pdf_page_geometry";
+    media_id: string;
+    page_number: number;
+    quads: PdfHighlightQuad[];
+  };
+}
+
+/** A highlight from the media-wide endpoint: fragment-offset or PDF-page anchor. */
+export type MediaHighlight = Highlight | PdfHighlight;
+
+export async function fetchMediaHighlights(
+  mediaId: string,
+): Promise<MediaHighlight[]> {
+  const response = await apiFetch<{ data: { highlights: MediaHighlight[] } }>(
+    `/api/media/${mediaId}/highlights?mine_only=false`,
     { cache: "no-store" },
   );
   return response.data.highlights;

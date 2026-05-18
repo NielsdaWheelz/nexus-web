@@ -1,39 +1,44 @@
-.gutter {
-  position: relative;
-  width: 36px;
+.ruler {
+  display: flex;
+  flex-direction: column;
+  width: 28px;
   height: 100%;
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   background: var(--surface-2);
   overflow: hidden;
 }
 
-.expandSlot {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 2;
+.openSlot {
   display: flex;
   align-items: center;
   justify-content: center;
   padding: var(--space-1) 0;
   border-bottom: 1px solid var(--edge-subtle);
-  background: var(--surface-2);
 }
 
-.markerColumn {
+.track {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.band {
   position: absolute;
-  inset: 0;
+  left: 0;
+  right: 0;
+  background: var(--accent);
+  opacity: 0.16;
+  pointer-events: none;
 }
 
-.marker {
+.tick {
   position: absolute;
   left: 50%;
-  width: 24px;
-  height: 15px;
-  margin-left: -12px;
-  padding: 6px 0;
+  width: 16px;
+  height: 4px;
+  margin-left: -8px;
+  padding: 5px 0;
   background-clip: content-box;
   border: 0;
   border-radius: var(--radius-sm);
@@ -42,24 +47,30 @@
   transition: transform var(--duration-fast) var(--ease-glide);
 }
 
-.marker:hover,
-.marker:focus-visible {
+.tick:hover,
+.tick:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  transform: translateY(-50%) scaleY(1.2);
+  outline-offset: 1px;
+  transform: translateY(-50%) scaleX(1.25);
 }
 
-.markerStacked {
-  height: 17px;
+.tickStacked {
+  height: 7px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .marker {
+  .tick {
     transition: none;
   }
 }
 
-.previewExcerpt {
+.previewRich {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.previewNote {
   margin: 0;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -68,7 +79,7 @@
   overflow: hidden;
 }
 
-.previewList {
+.previewStack {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -77,10 +88,6 @@
   gap: var(--space-1);
 }
 
-.previewListItem {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow: hidden;
+.previewCount {
+  margin: 0;
 }
