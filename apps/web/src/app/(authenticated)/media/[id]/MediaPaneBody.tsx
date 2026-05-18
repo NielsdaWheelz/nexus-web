@@ -4657,6 +4657,14 @@ export default function MediaPaneBody() {
     });
   }
 
+  if (isMobileViewport && showHighlightsPane) {
+    mediaReaderOptions.push({
+      id: "show-highlights",
+      label: "Show highlights",
+      onSelect: () => setMobileHighlightsDrawerOpen(true),
+    });
+  }
+
   if (isReflowableReader) {
     mediaReaderOptions.push({
       id: "reader-theme-light",
@@ -5451,10 +5459,6 @@ export default function MediaPaneBody() {
       })),
   ];
 
-  const showMobileHighlightsGutter = isMobileViewport && showHighlightsPane;
-  const readerFrameClassName = showMobileHighlightsGutter
-    ? styles.readerWithGutter
-    : `${styles.readerWithGutter} ${styles.readerWithoutGutter}`;
   const highlightsRail = showHighlightsPane ? (
     <AnchoredHighlightsRail
       title="Visible highlights"
@@ -5582,7 +5586,7 @@ export default function MediaPaneBody() {
           ) : null}
 
           {isTranscriptMedia ? (
-            <div className={readerFrameClassName}>
+            <div className={styles.readerFrame}>
               <div
                 className={styles.documentViewport}
                 data-testid="document-viewport"
@@ -5610,17 +5614,6 @@ export default function MediaPaneBody() {
                   {transcriptPaneBody}
                 </div>
               </div>
-              {showMobileHighlightsGutter ? (
-                <ReaderGutter
-                  mediaId={id}
-                  mediaKind="transcript"
-                  highlights={anchoredHighlights}
-                  contentRef={contentRef}
-                  measureKey={anchoredHighlightsMeasureKey}
-                  onFocusHighlight={focusHighlight}
-                  onExpand={() => setMobileHighlightsDrawerOpen(true)}
-                />
-              ) : null}
             </div>
           ) : !canRead ? (
             <div className={styles.notReady}>
@@ -5664,7 +5657,7 @@ export default function MediaPaneBody() {
                 <p>Loading reader state...</p>
               </div>
             ) : (
-              <div className={readerFrameClassName}>
+              <div className={styles.readerFrame}>
                 <PdfReader
                   key={`${id}:${activeRequestedPdfPageNumber ?? resolvedPdfPageNumber ?? "resume"}`}
                   mediaId={id}
@@ -5700,21 +5693,10 @@ export default function MediaPaneBody() {
                   startZoom={pdfReaderResumeState?.zoom ?? undefined}
                   onResumeStateChange={saveReaderResumeState}
                 />
-                {showMobileHighlightsGutter ? (
-                  <ReaderGutter
-                    mediaId={id}
-                    mediaKind="pdf"
-                    highlights={anchoredHighlights}
-                    contentRef={pdfContentRef}
-                    measureKey={anchoredHighlightsMeasureKey}
-                    onFocusHighlight={focusHighlight}
-                    onExpand={() => setMobileHighlightsDrawerOpen(true)}
-                  />
-                ) : null}
               </div>
             )
           ) : isEpub ? (
-            <div className={readerFrameClassName}>
+            <div className={styles.readerFrame}>
               <div
                 className={styles.documentViewport}
                 data-testid="document-viewport"
@@ -5747,24 +5729,13 @@ export default function MediaPaneBody() {
                   </div>
                 </div>
               </div>
-              {showMobileHighlightsGutter ? (
-                <ReaderGutter
-                  mediaId={id}
-                  mediaKind="epub"
-                  highlights={anchoredHighlights}
-                  contentRef={contentRef}
-                  measureKey={anchoredHighlightsMeasureKey}
-                  onFocusHighlight={focusHighlight}
-                  onExpand={() => setMobileHighlightsDrawerOpen(true)}
-                />
-              ) : null}
             </div>
           ) : fragments.length === 0 ? (
             <div className={styles.empty}>
               <p>No content available for this media.</p>
             </div>
           ) : (
-            <div className={readerFrameClassName}>
+            <div className={styles.readerFrame}>
               <div
                 className={styles.documentViewport}
                 data-testid="document-viewport"
@@ -5793,17 +5764,6 @@ export default function MediaPaneBody() {
                   </div>
                 </div>
               </div>
-              {showMobileHighlightsGutter ? (
-                <ReaderGutter
-                  mediaId={id}
-                  mediaKind="web"
-                  highlights={anchoredHighlights}
-                  contentRef={contentRef}
-                  measureKey={anchoredHighlightsMeasureKey}
-                  onFocusHighlight={focusHighlight}
-                  onExpand={() => setMobileHighlightsDrawerOpen(true)}
-                />
-              ) : null}
             </div>
           )}
         </div>

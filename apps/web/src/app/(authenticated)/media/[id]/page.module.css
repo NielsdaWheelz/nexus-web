@@ -743,18 +743,12 @@
   overflow: hidden;
 }
 
-/* --- Reader-with-gutter layout (Phase 1B P5) --- */
+/* --- Reader frame --- */
 
-.readerWithGutter {
+.readerFrame {
   flex: 1 1 0%;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 1fr 36px;
   position: relative;
-}
-
-.readerWithoutGutter {
-  grid-template-columns: 1fr;
 }
 
 .readerSecondaryRailBody {
@@ -821,14 +815,4 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-}
-
-@media (max-width: 600px) {
-  .readerWithGutter {
-    grid-template-columns: 1fr 24px;
-  }
-
-  .readerWithoutGutter {
-    grid-template-columns: 1fr;
-  }
 }

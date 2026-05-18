@@ -19,6 +19,9 @@ this records the current reader model and the constraints we actively ship.
   Cmd/Ctrl+Shift+F; auto-suspends during active selection
 - mobile-safe reader layout and controls; mobile document panes keep reader
   controls local to the active pane and do not mount the persistent desktop rail
+- on mobile, highlights are reached through a drawer opened from the reader
+  menu or by tapping an existing highlight; the persistent highlights rail is
+  desktop-only
 - resume that survives reflow where possible
 
 ## architecture

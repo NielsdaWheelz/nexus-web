@@ -4,15 +4,8 @@
   height: 100%;
   min-height: 0;
   flex: 1 1 auto;
-  background: var(--reader-bg-secondary, var(--surface-2));
-  border-left: 1px solid var(--reader-border-subtle, var(--edge-subtle));
+  background: var(--surface-2);
   overflow: hidden;
-}
-
-@media (max-width: 600px) {
-  .gutter {
-    width: 24px;
-  }
 }
 
 .expandSlot {
@@ -25,8 +18,8 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-1) 0;
-  border-bottom: 1px solid var(--reader-border-subtle, var(--edge-subtle));
-  background: var(--reader-bg-secondary, var(--surface-2));
+  border-bottom: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
 }
 
 .markerColumn {
@@ -49,14 +42,6 @@
   transition: transform var(--duration-fast) var(--ease-glide);
 }
 
-@media (max-width: 600px) {
-  .marker {
-    width: 20px;
-    height: 16px;
-    margin-left: -10px;
-  }
-}
-
 .marker:hover,
 .marker:focus-visible {
   outline: 2px solid var(--accent);
@@ -66,12 +51,6 @@
 
 .markerStacked {
   height: 17px;
-}
-
-@media (max-width: 600px) {
-  .markerStacked {
-    height: 18px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
