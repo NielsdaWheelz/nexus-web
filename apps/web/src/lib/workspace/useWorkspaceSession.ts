@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { getInstallationId } from "@/lib/workspace/deviceId";
 import {
   getWorkspaceSession,
@@ -9,7 +9,6 @@ import {
   prepareRestoredState,
   putWorkspaceSession,
   workspaceStatesEqual,
-  type WorkspaceSessionOffer,
 } from "@/lib/workspace/sessionSync";
 import type { WorkspaceStateV4 } from "@/lib/workspace/schema";
 
@@ -19,23 +18,17 @@ export function useWorkspaceSession(
   state: WorkspaceStateV4,
   mounted: boolean,
   applyRestoredState: (state: WorkspaceStateV4) => void
-): {
-  restoreOffer: WorkspaceSessionOffer | null;
-  reopenSession: () => void;
-  dismissOffer: () => void;
-} {
-  const [restoreOffer, setRestoreOffer] = useState<WorkspaceSessionOffer | null>(
-    null
-  );
+): void {
   const captureArmedRef = useRef(false);
   const stateRef = useRef(state);
   const lastSavedRef = useRef(state);
-  const offerBaselineRef = useRef<WorkspaceStateV4 | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   stateRef.current = state;
 
-  // (1) RESTORE — on cold open, fetch a session before arming capture.
+  // (1) RESTORE — on a cold open, fetch the last session and apply it
+  // silently. Capture stays suspended until the fetch resolves, so the
+  // default workspace cannot overwrite the saved session.
   useEffect(() => {
     if (!mounted) {
       return;
@@ -46,6 +39,7 @@ export function useWorkspaceSession(
     }
 
     let cancelled = false;
+    const baseline = stateRef.current;
     void (async () => {
       try {
         const { own, mostRecentElsewhere } = await getWorkspaceSession(
@@ -55,47 +49,35 @@ export function useWorkspaceSession(
           return;
         }
         const ownState = own != null ? prepareRestoredState(own) : null;
-        if (ownState && isNonTrivialSession(ownState)) {
-          offerBaselineRef.current = stateRef.current;
-          setRestoreOffer({ source: "own", state: ownState });
-          return;
-        }
         const elsewhereState =
           mostRecentElsewhere != null
             ? prepareRestoredState(mostRecentElsewhere)
             : null;
-        if (elsewhereState && isNonTrivialSession(elsewhereState)) {
-          offerBaselineRef.current = stateRef.current;
-          setRestoreOffer({ source: "other-device", state: elsewhereState });
-          return;
+        const restored =
+          ownState && isNonTrivialSession(ownState)
+            ? ownState
+            : elsewhereState && isNonTrivialSession(elsewhereState)
+              ? elsewhereState
+              : null;
+        // Skip the restore if the user already changed the workspace while
+        // the fetch was in flight.
+        if (restored && workspaceStatesEqual(stateRef.current, baseline)) {
+          applyRestoredState(restored);
         }
-        captureArmedRef.current = true;
       } catch {
-        if (!cancelled) {
-          captureArmedRef.current = true;
-        }
+        // Network or parse failure — proceed without restoring.
+      }
+      if (!cancelled) {
+        captureArmedRef.current = true;
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [mounted]);
+  }, [mounted, applyRestoredState]);
 
-  // (2) USER-MUTATION auto-dismiss — the user changed the workspace while an
-  // offer was showing, so they have moved on.
-  useEffect(() => {
-    if (
-      restoreOffer &&
-      offerBaselineRef.current &&
-      !workspaceStatesEqual(state, offerBaselineRef.current)
-    ) {
-      setRestoreOffer(null);
-      captureArmedRef.current = true;
-    }
-  }, [state, restoreOffer]);
-
-  // (3) CAPTURE — debounced PUT of the current state once capture is armed.
+  // (2) CAPTURE — debounced PUT of the current state once capture is armed.
   useEffect(() => {
     if (!captureArmedRef.current) {
       return;
@@ -114,7 +96,7 @@ export function useWorkspaceSession(
     }, WORKSPACE_SESSION_SYNC_DEBOUNCE_MS);
   }, [state]);
 
-  // (4) FLUSH — keepalive PUT of any pending write on page hide / background.
+  // (3) FLUSH — keepalive PUT of any pending write on page hide / background.
   useEffect(() => {
     const flush = () => {
       if (!captureArmedRef.current || !debounceRef.current) {
@@ -139,20 +121,4 @@ export function useWorkspaceSession(
       document.removeEventListener("visibilitychange", flushOnVisibilityChange);
     };
   }, []);
-
-  const reopenSession = useCallback(() => {
-    if (!restoreOffer) {
-      return;
-    }
-    applyRestoredState(restoreOffer.state);
-    captureArmedRef.current = true;
-    setRestoreOffer(null);
-  }, [restoreOffer, applyRestoredState]);
-
-  const dismissOffer = useCallback(() => {
-    captureArmedRef.current = true;
-    setRestoreOffer(null);
-  }, []);
-
-  return { restoreOffer, reopenSession, dismissOffer };
 }

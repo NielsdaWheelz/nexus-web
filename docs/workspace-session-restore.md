@@ -9,12 +9,12 @@ feature is verified in production and migrate any durable rule into
 
 ## Summary
 
-When a user reopens the app on a device, restore the set of workspace
-panes ("tabs") that were open the last time the app was used **on that
-device** — via a non-blocking prompt, not silently. Persist the workspace
-to the backend, keyed per device. If the device has no session of its own
-(new install, cleared storage), the prompt instead offers the most recent
-session from another of the user's devices.
+When a user reopens the app on a device, **silently restore** the set of
+workspace panes ("tabs") that were open the last time the app was used
+**on that device** — no prompt, no banner, no confirmation. Persist the
+workspace to the backend, keyed per device. If the device has no session
+of its own (new install, cleared storage), the app instead silently
+restores the most recent session from another of the user's devices.
 
 Today the workspace lives only in the URL (`?wsv=4&ws=<base64>` via
 `apps/web/src/lib/workspace/urlCodec.ts`). A cold open of the base URL —
@@ -24,9 +24,9 @@ all tabs. This feature adds a server-side mirror of the already-serialized
 
 ## Goals
 
-- A returning device restores its own last workspace, behind a prompt.
-- A device with no session of its own can pick up the most recent session
-  from another device (cross-device fallback).
+- A returning device silently restores its own last workspace on cold open.
+- A device with no session of its own silently picks up the most recent
+  session from another device (cross-device fallback).
 - Capture is reliable on web, mobile web, and inside the Android WebView,
   with **no native Android code and no JS bridge**.
 - The persisted state stays byte-compatible with the existing
@@ -39,6 +39,8 @@ all tabs. This feature adds a server-side mirror of the already-serialized
 - **Live mirroring / realtime propagation.** A device sees another device's
   changes only on its own next cold open. No websockets, no polling.
 - **A user setting** to enable/disable sync. The feature is always on.
+- **A restore prompt, banner, or confirmation UI.** Restore is silent —
+  it never asks. See [D4](#key-decisions).
 - **Per-pane scroll position and typography.** Already owned by
   `reader_media_state` and `reader_profiles`; the workspace session stores
   only *which* panes are open. The layers compose — see [D8](#key-decisions).
@@ -87,12 +89,14 @@ all tabs. This feature adds a server-side mirror of the already-serialized
 
 1. On boot, the workspace hydrates from the URL exactly as today.
 2. If the entry is **not** a cold open (URL carries `ws=`), stop. The URL is
-   authoritative; no session fetch, no prompt.
+   authoritative; no session fetch, no restore.
 3. If the entry **is** a cold open, fire `GET /me/workspace-session` for this
    device while the default workspace renders.
-4. When the response arrives, decide what to offer (see below). If there is
-   something worth restoring, show the **restore prompt**. The workspace is
-   **not** changed until the user accepts.
+4. When the response arrives, decide what to restore (see below). If there is
+   something worth restoring, **apply it silently** — `applyRestoredState`
+   replaces the workspace with no prompt and no banner. The user simply sees
+   their tabs come back, the same way the reader silently resumes a reading
+   position.
 
 A fetched session is always passed through `sanitizeWorkspaceState`
 (`apps/web/src/lib/workspace/schema.ts`) — which version-gates, caps at
@@ -101,41 +105,31 @@ filter** that drops panes whose `href` is not permitted on the current
 platform (`isAndroidShellRestrictedHref` in
 `apps/web/src/lib/androidShell.ts`).
 
-A session is **non-trivial** (worth a prompt) if, after sanitize + filter, it
-has more than one pane, or its single pane's `href` is not
+A session is **non-trivial** (worth restoring) if, after sanitize + filter,
+it has more than one pane, or its single pane's `href` is not
 `WORKSPACE_DEFAULT_FALLBACK_HREF` (`/libraries`).
 
-What the prompt offers, in priority order:
+What is restored, in priority order:
 
-1. If this device's **own** session is non-trivial → offer the own session.
+1. If this device's **own** session is non-trivial → restore the own session.
 2. Else if the **most recent session from another device** is non-trivial →
-   offer that (cross-device fallback).
-3. Else → no prompt.
+   restore that (cross-device fallback).
+3. Else → restore nothing; the default workspace stands.
 
-### The restore prompt
-
-- A **non-blocking** banner rendered by the workspace host. It does not gate
-  the app; the user can ignore it and work normally.
-- Copy: own session → `Reopen your last N tabs?`; cross-device → `Pick up N
-  tabs from another device?`. Actions: **Reopen** and **Dismiss**.
-- **Reopen** replaces the current workspace with the restored state
-  (`dispatch({ type: "hydrate", state })`), which also writes the restored
-  state into the URL and arms capture.
-- **Dismiss** keeps the current (default) workspace and arms capture; the
-  default state then overwrites the saved session on the next change.
-- The prompt **auto-dismisses** on the first user-initiated workspace
-  mutation — the user has moved on.
-- Dismissal is per-launch only; nothing is persisted. There is no
-  "don't ask again."
+The restore is applied **only if the user has not already changed the
+workspace** while the fetch was in flight — a baseline equality check
+(`workspaceStatesEqual`) compares the live state against the state captured
+at fetch start. If the user opened, closed, or navigated a pane in that
+window, the restore is skipped so it cannot clobber a deliberate action.
 
 ### Capture suspension on cold open (critical correctness rule)
 
 On a cold open the default workspace renders *before* the session fetch
 resolves. If capture ran immediately it would `PUT` the default workspace
-and **destroy the saved session before the user could accept the prompt**.
+and **destroy the saved session before it could be restored**.
 
-Therefore capture is **suspended on cold open** and armed only when the
-restore decision is made. State machine:
+Therefore capture is **suspended on cold open** and armed only once the
+fetch resolves and the restore decision is made. State machine:
 
 ```
                  ┌────────────── boot ──────────────┐
@@ -149,19 +143,28 @@ restore decision is made. State machine:
    │             │               │           device's session)
 non-trivial   trivial / none   fetch fails
 session        │               │
-   │           └──── capture = ARMED ────┘
-   ▼
-show prompt
-   │
-   ├── Reopen ──────► workspace replaced ──► capture = ARMED
-   ├── Dismiss ─────► capture = ARMED
-   └── user mutates workspace ──► prompt auto-dismissed ──► capture = ARMED
+   │           │               │
+   ▼           │               │
+user has NOT changed workspace? │
+   │ yes  │ no │               │
+   ▼      │    │               │
+apply     │    │               │
+restored  │    │               │
+state     │    │               │
+silently  │    │               │
+   │      │    │               │
+   └──────┴────┴──── capture = ARMED ────┘
 ```
 
 Once armed, capture stays armed for the rest of the session. While
 suspended, both the debounced write and the `visibilitychange`/`pagehide`
-flush are no-ops. Consequence: a user who cold-opens and closes again
-without acting **preserves** their previous saved session.
+flush are no-ops. Two consequences:
+
+- A user who cold-opens and closes again before the fetch resolves
+  **preserves** their previous saved session — capture never armed.
+- A user who changes the workspace during the in-flight fetch keeps that
+  change: the baseline equality check skips the silent restore, then
+  capture arms and the deliberate change is what gets persisted.
 
 ### Platform notes
 
@@ -186,10 +189,17 @@ without acting **preserves** their previous saved session.
   restores its own session; this is also why there is **no cross-device
   write conflict** — two devices never write the same row.
 - **D3 — Cross-device fallback.** When a device has no non-trivial session
-  of its own, the prompt offers the most recent session from another device.
-  This is a read-only feature, not a compatibility fallback.
-- **D4 — Non-blocking prompt, never silent restore.** The user always
-  confirms. Reopening tabs is a visible, reversible action.
+  of its own, the app silently restores the most recent session from another
+  device. This is a read-only feature, not a compatibility fallback.
+- **D4 — Silent restore, no prompt.** A cold open silently restores the last
+  saved session — no banner, no confirmation. This matches the extant
+  `apps/web/src/lib/reader/useReaderResumeState.ts` pattern: the reader
+  restores the last reading position silently, without asking. A workspace
+  is the same kind of resumable state, so it restores the same way; a
+  confirmation prompt was the un-idiomatic part. The restore stays safe
+  without a prompt because (a) a `ws=` URL is authoritative and suppresses
+  restore entirely, and (b) a workspace change made during the in-flight
+  fetch is detected by a baseline equality check and is never clobbered.
 - **D5 — No user setting.** Sync is always on. No toggle, no persisted
   preference.
 - **D6 — Capture is continuous + debounced, not close-triggered.** Mirrors
@@ -234,8 +244,8 @@ Layering follows `docs/rules/layers.md`:
   ┌─────────────────────────── apps/web (one client; web + mobile + Android WebView) ──┐
   │  WorkspaceStoreProvider (store.tsx)                                                │
   │    ├─ capture:  useWorkspaceSession → debounced PUT + visibilitychange flush        │
-  │    ├─ restore:  cold-open detect → GET → sanitize + platform filter → prompt        │
-  │    └─ SessionRestorePrompt (non-blocking banner)                                    │
+  │    └─ restore:  cold-open detect → GET → sanitize + platform filter →               │
+  │                 applyRestoredState (silent hydrate, baseline-guarded)               │
   └───────────────┬─────────────────────────────────────────────────────────────────┘
                   │  /api/me/workspace-session   (client calls /api/* only)
   ┌───────────────▼─────────────────────────────────────────────────────────────────┐
@@ -256,7 +266,7 @@ Data flow:
   FastAPI → service `SELECT`+`UPDATE`/`INSERT` (SERIALIZABLE) → row updated.
 - **Restore:** cold open → BFF `GET` → FastAPI → service two `SELECT`s
   (`own`, `most_recent_elsewhere`) → client `sanitizeWorkspaceState` +
-  platform filter → prompt → on accept, `hydrate` dispatch.
+  platform filter → baseline equality check → silent `hydrate` dispatch.
 
 ## Data Model
 
@@ -381,32 +391,35 @@ synchronous; safe to call before the first capture write.
 
 ### Capture + restore — `lib/workspace/useWorkspaceSession.ts`
 
-A hook consumed by `WorkspaceStoreProvider` (`store.tsx`). It owns the
-`captureArmed` flag and implements the [state machine](#capture-suspension-on-cold-open-critical-correctness-rule):
+A hook consumed by `WorkspaceStoreProvider` (`store.tsx`). Its signature is
+`useWorkspaceSession(state, mounted, applyRestoredState)`; it returns
+nothing. It owns the `captureArmed` flag (a ref) and implements the
+[state machine](#capture-suspension-on-cold-open-critical-correctness-rule):
 
+- **Restore:** on mount, once `mounted`, if not a cold open it arms capture
+  immediately and stops (the URL is authoritative). On a cold open it
+  captures the current state as a `baseline`, then fetches the session.
+  When the fetch resolves it picks the own session if non-trivial, else the
+  most-recent-elsewhere session if non-trivial. It applies that session
+  **silently** via `applyRestoredState` — *unless* the live state no longer
+  equals the `baseline` (`workspaceStatesEqual`), meaning the user changed
+  the workspace mid-fetch, in which case the restore is skipped. Either way
+  it then arms capture.
 - **Capture:** on every workspace state change, if `captureArmed` and the
   state differs (`workspaceStatesEqual`) from the last saved state, schedule
   a debounced `putWorkspaceSession`. Register `visibilitychange` and
-  `pagehide` listeners that flush immediately with `keepalive`. The initial
-  hydrated state is guarded by a `hydratedRef` so it is never written back
-  (the pattern in `useReaderResumeState.ts`).
-- **Restore:** on mount, if `isColdOpen`, fetch the session; compute the
-  prompt offer; expose it to `SessionRestorePrompt`. Arm capture per the
-  state machine.
-
-### Restore prompt — `components/workspace/SessionRestorePrompt.tsx`
-
-A non-blocking banner rendered by `WorkspaceHost.tsx`. Shows the offer copy
-and **Reopen** / **Dismiss**. **Reopen** calls
-`dispatch({ type: "hydrate", state })` with the prepared restored state.
-Both actions, and any user-initiated workspace mutation, resolve the prompt
-and arm capture.
+  `pagehide` listeners that flush a pending write immediately with
+  `keepalive`. The last-saved ref is seeded with the initial state so the
+  hydrated state is never written back (the pattern in
+  `useReaderResumeState.ts`).
 
 ### Store integration — `store.tsx`
 
-`WorkspaceStoreProvider` calls `useWorkspaceSession(...)`, passing the
-current state and a setter for the prompt offer. No reducer actions change;
-restore reuses the existing `hydrate` action.
+`WorkspaceStoreProvider` calls `useWorkspaceSession(state, mounted,
+applyRestoredState)`, where `applyRestoredState` is a memoized callback that
+dispatches `{ type: "hydrate", state }`. No reducer actions change; restore
+reuses the existing `hydrate` action. There is no prompt component and no
+restore-offer state to thread through.
 
 ## Final State
 
@@ -419,8 +432,8 @@ When complete, the codebase has — as a single un-flagged code path:
   registered in `routes/__init__.py`.
 - BFF route `apps/web/src/app/api/me/workspace-session/route.ts`.
 - `lib/workspace/deviceId.ts`, `sessionSync.ts`, `useWorkspaceSession.ts`.
-- `components/workspace/SessionRestorePrompt.tsx` (+ `.module.css`).
-- `WorkspaceStoreProvider` captures continuously and restores on cold open.
+- `WorkspaceStoreProvider` captures continuously and silently restores on
+  cold open. No prompt component.
 - The user-deletion path explicitly deletes `workspace_sessions` rows.
 - Tests at every layer (see [Test Plan](#test-plan)).
 
@@ -440,11 +453,10 @@ no code branch that references this document.
 | `apps/web/src/app/api/me/workspace-session/route.ts` | BFF proxy (`GET` + `PUT`). |
 | `apps/web/src/lib/workspace/deviceId.ts` | `installationId` accessor. |
 | `apps/web/src/lib/workspace/sessionSync.ts` | API client + cold-open / sanitize / non-trivial helpers. |
-| `apps/web/src/lib/workspace/useWorkspaceSession.ts` | Capture + restore hook; `captureArmed` state machine. |
-| `apps/web/src/components/workspace/SessionRestorePrompt.tsx` (+ `.module.css`) | Non-blocking restore banner. |
+| `apps/web/src/lib/workspace/useWorkspaceSession.ts` | Capture + silent-restore hook; `captureArmed` state machine. |
 | `python/tests/test_workspace_sessions.py` | Backend unit + integration tests. |
-| `apps/web/src/lib/workspace/sessionSync.test.ts`, `useWorkspaceSession.test.tsx` | Client tests. |
-| `e2e/workspace-session-restore.spec.ts` (under `e2e/`) | End-to-end restore flow. |
+| `apps/web/src/lib/workspace/sessionSync.test.ts` | Client unit tests. |
+| `e2e/tests/workspace-session-restore.spec.ts` | End-to-end restore flow. |
 
 ### Modified
 
@@ -453,7 +465,6 @@ no code branch that references this document.
 | `python/nexus/db/models.py` | Add `WorkspaceSession` model. |
 | `python/nexus/api/routes/__init__.py` | Register the new router. |
 | `apps/web/src/lib/workspace/store.tsx` | Wire `useWorkspaceSession` into `WorkspaceStoreProvider`. |
-| `apps/web/src/components/workspace/WorkspaceHost.tsx` | Render `SessionRestorePrompt`. |
 | User-deletion code path | Call `delete_sessions_for_user` (see Edge Cases). |
 
 Exact module paths follow the established structure; confirm against the repo
@@ -482,20 +493,23 @@ at implementation time.
 
 ## Edge Cases & Failure Modes
 
-- **Cold open, user closes without acting** — capture never armed → no write
-  → previous saved session preserved.
+- **Cold open, user closes before the fetch resolves** — capture never armed
+  → no write → previous saved session preserved.
+- **Cold open, user changes the workspace while the fetch is in flight** —
+  the baseline equality check fails → silent restore is skipped → the
+  deliberate change stands and is what capture persists.
 - **Stale pane (deleted resource)** — restored; the pane renders its own
   not-found state. No pre-flight liveness check (D8, Non-Goals).
 - **Platform-forbidden pane** — dropped by the platform filter before the
-  prompt (e.g. `/settings/local-vault` on Android).
+  restore is applied (e.g. `/settings/local-vault` on Android).
 - **Restore yields an empty set after filtering** — fall back to the default
-  workspace; do not prompt into nothing.
+  workspace; restore nothing.
 - **Schema-drifted / corrupt `state`** — `sanitizeWorkspaceState` returns the
-  default workspace; no crash, no prompt.
+  default workspace; no crash, nothing restored.
 - **Two browser tabs of the app on one device** — both write the same row;
   LWW + SERIALIZABLE resolve it; last close wins. Acceptable.
 - **Session fetch fails on cold open** — treated as "no session": arm
-  capture, no prompt; the error is narrowed and justified-ignored.
+  capture, restore nothing; the error is narrowed and justified-ignored.
 - **Dropped `pagehide`/`beforeunload`** — tolerated; the debounced write is
   the guarantee, the close flush is best-effort.
 - **`localStorage` cleared** — new `installationId` → device treated as new →
@@ -512,32 +526,31 @@ at implementation time.
 
 ## Acceptance Criteria
 
-1. With ≥2 panes open, closing the app and reopening the base URL shows a
-   non-blocking prompt `Reopen your last N tabs?`; **Reopen** restores the
-   exact pane set, order, `widthPx`, `visibility`, and `activePaneId`.
-2. **Dismiss** leaves the default workspace; the saved session is then
-   overwritten once the user makes a workspace change.
-3. Opening a URL that carries `ws=` never fetches a session and never prompts.
+1. With ≥2 panes open, closing the app and reopening the base URL silently
+   restores the exact pane set, order, `widthPx`, `visibility`, and
+   `activePaneId` — with no prompt, no banner, and no confirmation.
+2. The restore is silent end to end: no UI element asks the user to confirm,
+   dismiss, or reopen anything.
+3. Opening a URL that carries `ws=` never fetches a session and never
+   restores; the URL is authoritative.
 4. A pane whose `href` is forbidden on the current platform is absent from
    the restored set.
-5. Cold-opening, seeing the prompt, and closing again **without acting** does
-   not change the saved session.
+5. A workspace change made between the cold-open fetch starting and
+   resolving is **not** clobbered: the silent restore is skipped and the
+   user's change is preserved.
 6. Capture is debounced: rapid pane operations produce ≲1 write/second; a
    `visibilitychange → hidden` flushes a pending write immediately.
 7. Each device restores its **own** last session.
-8. A device with no non-trivial session of its own is offered the most
-   recent session from another device (`Pick up N tabs from another
-   device?`); a device that has its own non-trivial session is **not**
-   offered another device's.
+8. A device with no non-trivial session of its own silently restores the
+   most recent session from another device; a device that has its own
+   non-trivial session restores **its own**, not another device's.
 9. Two web tabs of the app on one device produce no error; the last close
    wins.
 10. Schema-drifted or corrupt saved state degrades to the default workspace
-    with no crash and no prompt.
+    with no crash and nothing restored.
 11. A `PUT` with extra fields, a non-object `state`, or `state` over the
     size cap is rejected with a typed `E_INVALID_REQUEST`.
 12. The feature has no environment flag and is active for all users on merge.
-13. The first user-initiated workspace mutation auto-dismisses a pending
-    prompt.
 
 ## Test Plan
 
@@ -549,11 +562,13 @@ at implementation time.
   Assert via API responses, not raw SQL.
 - **Client unit:** `getInstallationId` generates once and persists;
   `isColdOpen`, `isNonTrivialSession`, `prepareRestoredState` (sanitize +
-  platform filter); the `captureArmed` state machine across all transitions;
-  debounce and `visibilitychange`/`pagehide` flush.
-- **E2E** (`e2e/`, real stack): close→reopen restore; **Reopen**/**Dismiss**;
-  `ws=` deep-link bypass; forbidden-`href` drop; "close without acting
-  preserves session"; cross-device fallback (seed another device's row).
+  platform filter); the `captureArmed` state machine across all transitions,
+  including the silent apply and the baseline-skip when the workspace
+  changes mid-fetch; debounce and `visibilitychange`/`pagehide` flush.
+- **E2E** (`e2e/`, real stack): close→reopen silently restores the pane set;
+  `ws=` deep-link bypass; forbidden-`href` drop; "close before the fetch
+  resolves preserves the session"; "a change during the in-flight fetch is
+  not clobbered"; cross-device fallback (seed another device's row).
 
 ## Implementation Phases
 
@@ -568,15 +583,15 @@ state behind a flag):
 5. Client foundation: `deviceId.ts`, `sessionSync.ts`.
 6. Capture: `useWorkspaceSession.ts` debounced write + flush + `captureArmed`
    machine, integrated into `WorkspaceStoreProvider`.
-7. Restore: cold-open detection, fetch, sanitize + filter,
-   `SessionRestorePrompt`, accept/dismiss wiring in `WorkspaceHost.tsx`.
+7. Restore: cold-open detection, fetch, sanitize + filter, baseline-guarded
+   silent `applyRestoredState` in `useWorkspaceSession.ts`.
 8. Tests at each layer; E2E last.
 
 ## Risks
 
 - **The capture-suspension rule is the one place a bug silently destroys
   user data** (a default workspace overwriting a real saved session). It
-  needs dedicated unit tests (AC5) and an E2E case.
+  needs dedicated unit tests and an E2E case.
 - **`schema.ts` ↔ Pydantic coupling.** The `state` shape is owned by
   `schema.ts`; the backend only checks it is an object with an integer
   `schemaVersion`. Keeping the backend dumb (D9) is what avoids a two-sided
@@ -584,10 +599,14 @@ state behind a flag):
   model later without accepting that cost.
 - **User-deletion wiring** (Edge Cases) is mandatory; missing it makes
   affected users undeletable.
-- **Prompt fatigue** — a prompt on every cold open. Mitigated by the
-  non-trivial gate (no prompt for a single default pane). If it still
-  annoys, revisit silent-restore-for-own-session — but that is a follow-up,
-  not v1.
+- **Silent restore surprising the user** — the workspace changes under them
+  on a cold open with no announcement. Mitigated three ways: it only happens
+  on a cold open (a fresh launch, where seeing the last tabs return is
+  expected); the non-trivial gate means a default single-pane session
+  restores to the same thing the user would see anyway; and the
+  baseline-equality check ensures any action the user takes during the fetch
+  is never overwritten. This matches `useReaderResumeState` (D4), which
+  resumes a reading position with no prompt and has not needed one.
 
 ## Cutover & Cleanup
 

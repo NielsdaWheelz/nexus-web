@@ -41,7 +41,6 @@ import {
   type ResolvedPaneRoute,
 } from "@/lib/panes/paneRouteRegistry";
 import { useWorkspaceSession } from "./useWorkspaceSession";
-import type { WorkspaceSessionOffer } from "./sessionSync";
 
 type HistoryMode = "replace" | "push";
 
@@ -330,9 +329,6 @@ interface WorkspaceStoreValue {
   minimizePane: (paneId: string) => void;
   restorePane: (paneId: string) => void;
   publishPaneTitle: (paneId: string, title: string | null) => void;
-  restoreOffer: WorkspaceSessionOffer | null;
-  reopenSession: () => void;
-  dismissOffer: () => void;
 }
 
 const WorkspaceStoreContext = createContext<WorkspaceStoreValue | null>(null);
@@ -384,11 +380,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
     (restored: WorkspaceStateV4) => dispatch({ type: "hydrate", state: restored }),
     []
   );
-  const { restoreOffer, reopenSession, dismissOffer } = useWorkspaceSession(
-    state,
-    mounted,
-    applyRestoredState
-  );
+  useWorkspaceSession(state, mounted, applyRestoredState);
 
   const dispatchAndSync = useCallback(
     (action: WorkspaceAction, historyMode: HistoryMode = "replace") => {
@@ -616,9 +608,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       minimizePane,
       restorePane,
       publishPaneTitle,
-      restoreOffer,
-      reopenSession,
-      dismissOffer,
     }),
     [
       state,
@@ -631,9 +620,6 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
       minimizePane,
       restorePane,
       publishPaneTitle,
-      restoreOffer,
-      reopenSession,
-      dismissOffer,
     ]
   );
 

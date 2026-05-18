@@ -9,7 +9,6 @@ import {
 import { PaneRuntimeProvider, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import PaneShell, { type PaneBodyMode } from "@/components/workspace/PaneShell";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
-import SessionRestorePrompt from "./SessionRestorePrompt";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import {
@@ -310,9 +309,6 @@ export default function WorkspaceHost() {
     minimizePane,
     restorePane,
     publishPaneTitle,
-    restoreOffer,
-    reopenSession,
-    dismissOffer,
   } = useWorkspaceStore();
   const titleTelemetryByPaneIdRef = useRef<Map<string, string>>(new Map());
   const [runtimeMinWidthByPaneId, setRuntimeMinWidthByPaneId] = useState<Map<string, number>>(
@@ -493,13 +489,6 @@ export default function WorkspaceHost() {
 
   return (
     <section className={styles.host} aria-label="Workspace host">
-      {restoreOffer && (
-        <SessionRestorePrompt
-          offer={restoreOffer}
-          onReopen={reopenSession}
-          onDismiss={dismissOffer}
-        />
-      )}
       {!isMobile && (
         <WorkspacePaneStrip
           items={stripItems}

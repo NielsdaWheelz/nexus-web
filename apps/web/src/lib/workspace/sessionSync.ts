@@ -13,11 +13,6 @@ import {
 
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
 
-export interface WorkspaceSessionOffer {
-  source: "own" | "other-device";
-  state: WorkspaceStateV4;
-}
-
 export async function getWorkspaceSession(
   deviceId: string
 ): Promise<{ own: unknown; mostRecentElsewhere: unknown }> {

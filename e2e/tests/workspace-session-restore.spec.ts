@@ -32,7 +32,7 @@ interface WorkspaceSessionResponse {
   };
 }
 
-// A non-trivial two-pane session: more than one pane makes it worth a prompt.
+// A non-trivial two-pane session: more than one pane makes it worth restoring.
 function twoPaneSession(): WorkspaceStateV4 {
   return {
     schemaVersion: 4,
@@ -47,6 +47,30 @@ function twoPaneSession(): WorkspaceStateV4 {
       {
         id: "pane-session-notes",
         href: "/notes",
+        widthPx: 520,
+        visibility: "visible",
+      },
+    ],
+  };
+}
+
+// A distinct two-pane session whose second pane differs from `twoPaneSession`.
+// Seeding this lets a test prove the deep-link URL — not the saved session —
+// drove what rendered.
+function conversationsPaneSession(): WorkspaceStateV4 {
+  return {
+    schemaVersion: 4,
+    activePaneId: "pane-session-libraries",
+    panes: [
+      {
+        id: "pane-session-libraries",
+        href: "/libraries",
+        widthPx: 480,
+        visibility: "visible",
+      },
+      {
+        id: "pane-session-conversations",
+        href: "/conversations",
         widthPx: 520,
         visibility: "visible",
       },
@@ -114,10 +138,6 @@ async function fetchWorkspaceSession(
   return payload.data;
 }
 
-function restorePrompt(page: Page) {
-  return page.getByRole("status").filter({ hasText: /Reopen your last/ });
-}
-
 function workspacePaneButton(page: Page, name: RegExp | string) {
   return page
     .getByRole("toolbar", { name: "Workspace panes" })
@@ -125,7 +145,7 @@ function workspacePaneButton(page: Page, name: RegExp | string) {
 }
 
 test.describe("workspace session restore", () => {
-  test("cold open restores a saved session through the prompt", async ({ page }) => {
+  test("cold open silently restores a saved session", async ({ page }) => {
     await pinDeviceId(page);
     await putWorkspaceSession(page.request, twoPaneSession());
 
@@ -133,42 +153,17 @@ test.describe("workspace session restore", () => {
       // Cold open: a base URL with no `ws=` param.
       await page.goto("/libraries");
 
-      const prompt = restorePrompt(page);
-      await expect(prompt).toBeVisible({ timeout: 15_000 });
-      await expect(prompt).toContainText("Reopen your last 2 tabs?");
+      // The saved two-pane workspace is restored silently — no banner, no
+      // clicks. Both panes appear once the fetch + restore resolves.
+      await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(workspacePaneButton(page, /^Notes\b/)).toBeVisible({
+        timeout: 15_000,
+      });
 
-      // Until the user accepts, the workspace stays at the default single pane.
-      await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
-      await expect(workspacePaneButton(page, /^Notes\b/)).toHaveCount(0);
-
-      await prompt.getByRole("button", { name: "Reopen" }).click();
-
-      // The restored two-pane workspace is now present.
-      await expect(prompt).toHaveCount(0);
-      await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
-      await expect(workspacePaneButton(page, /^Notes\b/)).toBeVisible();
+      // Applying the restored state writes it into the URL as a `ws=` param.
       await expect(page).toHaveURL(/[?&]ws=/);
-    } finally {
-      await putWorkspaceSession(page.request, trivialSession());
-    }
-  });
-
-  test("dismiss keeps the default workspace", async ({ page }) => {
-    await pinDeviceId(page);
-    await putWorkspaceSession(page.request, twoPaneSession());
-
-    try {
-      await page.goto("/libraries");
-
-      const prompt = restorePrompt(page);
-      await expect(prompt).toBeVisible({ timeout: 15_000 });
-
-      await prompt.getByRole("button", { name: "Dismiss" }).click();
-
-      // The prompt is gone and the default single-pane workspace remains.
-      await expect(prompt).toHaveCount(0);
-      await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
-      await expect(workspacePaneButton(page, /^Notes\b/)).toHaveCount(0);
     } finally {
       await putWorkspaceSession(page.request, trivialSession());
     }
@@ -176,12 +171,12 @@ test.describe("workspace session restore", () => {
 
   test("a workspace change is captured to the saved session", async ({ page }) => {
     await pinDeviceId(page);
-    // Start from a trivial session so the cold open arms capture without a prompt.
+    // Start from a trivial session so the cold open arms capture without
+    // restoring anything.
     await putWorkspaceSession(page.request, trivialSession());
 
     try {
       await page.goto("/libraries");
-      await expect(restorePrompt(page)).toHaveCount(0);
       await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
 
       // Open a second pane: shift-click an in-pane library link.
@@ -208,19 +203,24 @@ test.describe("workspace session restore", () => {
     }
   });
 
-  test("a deep link carrying ws= never shows the restore prompt", async ({ page }) => {
+  test("a ws= URL is authoritative and silent restore does not override it", async ({
+    page,
+  }) => {
     await pinDeviceId(page);
-    // A non-trivial session exists, yet a `ws=` URL must bypass restore entirely.
+    // Seed a saved session that is DISTINCT from the deep link below: silent
+    // restore, if it ran, would surface a "Notes" pane.
     await putWorkspaceSession(page.request, twoPaneSession());
 
     try {
-      const deepLinkState = encodeWorkspaceStateParam(twoPaneSession());
+      // The deep link carries its own panes (Libraries + Conversations).
+      const deepLinkState = encodeWorkspaceStateParam(conversationsPaneSession());
       await page.goto(`/libraries?wsv=4&ws=${deepLinkState}`);
 
-      // The URL is authoritative: both panes render from it, no prompt.
+      // The URL is authoritative: its panes render and silent restore stays
+      // out of the way — the saved session's "Notes" pane never appears.
       await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
-      await expect(workspacePaneButton(page, /^Notes\b/)).toBeVisible();
-      await expect(restorePrompt(page)).toHaveCount(0);
+      await expect(workspacePaneButton(page, /^Conversations\b/)).toBeVisible();
+      await expect(workspacePaneButton(page, /^Notes\b/)).toHaveCount(0);
     } finally {
       await putWorkspaceSession(page.request, trivialSession());
     }
