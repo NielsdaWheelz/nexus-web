@@ -122,6 +122,7 @@ interface PaneShellProps {
   widthPx: number;
   minWidthPx: number;
   maxWidthPx: number;
+  extraWidthPx: number;
   bodyMode: PaneBodyMode;
   onResizePane: (paneId: string, widthPx: number) => void;
   isActive?: boolean;
@@ -141,6 +142,7 @@ export default function PaneShell({
   widthPx,
   minWidthPx,
   maxWidthPx,
+  extraWidthPx,
   bodyMode,
   onResizePane,
   isActive = false,
@@ -373,7 +375,13 @@ export default function PaneShell({
 
   const shellStyle: PaneShellStyle = isMobile
     ? { width: "100%", minWidth: "100%", maxWidth: "100%" }
-    : { width: `${widthPx}px`, minWidth: `${minWidthPx}px`, maxWidth: `${maxWidthPx}px` };
+    : {
+        // extraWidthPx is reserved outward of the resizable width; add it to
+        // width and the min/max bounds so the rail extends the pane, not eats it.
+        width: `${widthPx + extraWidthPx}px`,
+        minWidth: `${minWidthPx + extraWidthPx}px`,
+        maxWidth: `${maxWidthPx + extraWidthPx}px`,
+      };
   if (isMobile && mobileChromeHeight > 0) {
     shellStyle["--mobile-pane-chrome-height"] = `${mobileChromeHeight}px`;
   }

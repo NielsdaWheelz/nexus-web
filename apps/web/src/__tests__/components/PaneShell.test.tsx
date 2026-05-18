@@ -17,6 +17,7 @@ describe("PaneShell", () => {
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
+        extraWidthPx={0}
         bodyMode="standard"
         onResizePane={onResizePane}
       >
@@ -45,6 +46,7 @@ describe("PaneShell", () => {
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
+        extraWidthPx={0}
         bodyMode="standard"
         onResizePane={onResizePane}
       >
@@ -71,6 +73,7 @@ describe("PaneShell", () => {
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
+        extraWidthPx={0}
         bodyMode="standard"
         onResizePane={() => {}}
       >
@@ -93,6 +96,7 @@ describe("PaneShell", () => {
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
+        extraWidthPx={0}
         bodyMode="standard"
         onResizePane={() => {}}
         isMobile
@@ -123,6 +127,7 @@ describe("PaneShell", () => {
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
+        extraWidthPx={0}
         bodyMode="contained"
         onResizePane={() => {}}
         isMobile
@@ -161,6 +166,7 @@ describe("PaneShell", () => {
         widthPx={920}
         minWidthPx={420}
         maxWidthPx={1800}
+        extraWidthPx={0}
         bodyMode="document"
         onResizePane={() => {}}
         isMobile
@@ -218,6 +224,7 @@ describe("PaneShell", () => {
         widthPx={920}
         minWidthPx={420}
         maxWidthPx={1800}
+        extraWidthPx={0}
         bodyMode="document"
         onResizePane={() => {}}
         isMobile
@@ -260,6 +267,7 @@ describe("PaneShell", () => {
         widthPx={920}
         minWidthPx={420}
         maxWidthPx={1800}
+        extraWidthPx={0}
         bodyMode="document"
         onResizePane={() => {}}
         isMobile
@@ -321,6 +329,7 @@ describe("PaneShell", () => {
           widthPx={920}
           minWidthPx={420}
           maxWidthPx={1800}
+          extraWidthPx={0}
           bodyMode="document"
           onResizePane={() => {}}
           isMobile
@@ -361,6 +370,7 @@ describe("PaneShell", () => {
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
+        extraWidthPx={0}
         bodyMode="standard"
         onResizePane={() => {}}
       >
@@ -382,6 +392,7 @@ describe("PaneShell", () => {
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
+        extraWidthPx={0}
         bodyMode="standard"
         onResizePane={() => {}}
       >
@@ -407,6 +418,7 @@ describe("PaneShell", () => {
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
+        extraWidthPx={0}
         bodyMode="standard"
         onResizePane={() => {}}
       >
@@ -428,6 +440,7 @@ describe("PaneShell", () => {
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
+        extraWidthPx={0}
         bodyMode="standard"
         onResizePane={() => {}}
       >
@@ -454,6 +467,7 @@ describe("PaneShell", () => {
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
+        extraWidthPx={0}
         bodyMode="standard"
         onResizePane={() => {}}
         isMobile
@@ -469,6 +483,39 @@ describe("PaneShell", () => {
 
     expect(onOpen).toHaveBeenCalledTimes(1);
     window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen as EventListener);
+  });
+
+  it("grows by the secondary rail width and shrinks back when the rail closes", () => {
+    const props = {
+      paneId: "pane-a",
+      title: "Reader",
+      widthPx: 700,
+      minWidthPx: 684,
+      maxWidthPx: 2400,
+      bodyMode: "document" as const,
+      onResizePane: () => {},
+    };
+    const { rerender } = render(
+      <PaneShell {...props} extraWidthPx={0}>
+        <div>Body content</div>
+      </PaneShell>
+    );
+    const shell = screen.getByTestId("pane-shell-root");
+    expect(shell).toHaveStyle({ width: "700px" });
+
+    rerender(
+      <PaneShell {...props} extraWidthPx={360}>
+        <div>Body content</div>
+      </PaneShell>
+    );
+    expect(shell).toHaveStyle({ width: "1060px" });
+
+    rerender(
+      <PaneShell {...props} extraWidthPx={0}>
+        <div>Body content</div>
+      </PaneShell>
+    );
+    expect(shell).toHaveStyle({ width: "700px" });
   });
 });
 

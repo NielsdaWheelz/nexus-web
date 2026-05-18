@@ -3806,16 +3806,19 @@ export default function MediaPaneBody() {
       protectedReaderWidthPx <= 0
     ) {
       paneRuntime.setPaneMinWidth(null);
+      paneRuntime.setPaneExtraWidth(0);
       return;
     }
 
+    // Protected text + always-on overview ruler are the pane's floor; the
+    // secondary rail is added outward, so closing it shrinks the pane back.
     paneRuntime.setPaneMinWidth(
-      protectedReaderWidthPx +
-        desktopOverviewRulerWidthPx +
-        desktopSecondaryRailWidthPx,
+      protectedReaderWidthPx + desktopOverviewRulerWidthPx,
     );
+    paneRuntime.setPaneExtraWidth(desktopSecondaryRailWidthPx);
     return () => {
       paneRuntime.setPaneMinWidth(null);
+      paneRuntime.setPaneExtraWidth(0);
     };
   }, [
     desktopOverviewRulerWidthPx,

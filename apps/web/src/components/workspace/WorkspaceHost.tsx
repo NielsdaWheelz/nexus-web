@@ -42,6 +42,7 @@ interface WorkspaceShellPane {
   widthPx: number;
   minWidthPx: number;
   maxWidthPx: number;
+  extraWidthPx: number;
   isActive: boolean;
   visibility: "visible" | "minimized";
   content: React.ReactNode;
@@ -180,6 +181,7 @@ const PaneContent = memo(function PaneContent({
   openPane,
   publishPaneTitle,
   publishPaneMinWidth,
+  publishPaneExtraWidth,
 }: {
   paneId: string;
   href: string;
@@ -191,6 +193,7 @@ const PaneContent = memo(function PaneContent({
   openPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
   publishPaneTitle: (paneId: string, title: string | null) => void;
   publishPaneMinWidth: (paneId: string, widthPx: number | null) => void;
+  publishPaneExtraWidth: (paneId: string, widthPx: number) => void;
 }) {
   const handleReplacePane = useCallback(
     (pid: string, h: string) => navigatePane(pid, h, { replace: true }),
@@ -223,6 +226,7 @@ const PaneContent = memo(function PaneContent({
         onOpenInNewPane={handleOpenInNewPane}
         onSetPaneTitle={handleSetPaneTitle}
         onSetPaneMinWidth={publishPaneMinWidth}
+        onSetPaneExtraWidth={publishPaneExtraWidth}
       >
         <PaneRouteBoundary>
           <PaneRouteErrorBoundary resetKey={href}>
@@ -249,8 +253,10 @@ function buildShellPane(input: {
   onOpenPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
   onPublishPaneTitle: (paneId: string, title: string | null) => void;
   onPublishPaneMinWidth: (paneId: string, widthPx: number | null) => void;
+  onPublishPaneExtraWidth: (paneId: string, widthPx: number) => void;
   isActive: boolean;
   runtimeMinWidthPx: number | null;
+  runtimeExtraWidthPx: number;
 }): WorkspaceShellPane {
   const { chrome, route, title } = input.descriptor;
   const parentHref = getParentHref(route);
@@ -277,6 +283,7 @@ function buildShellPane(input: {
     widthPx: input.pane.widthPx,
     minWidthPx,
     maxWidthPx,
+    extraWidthPx: input.runtimeExtraWidthPx,
     isActive: input.isActive,
     visibility: input.pane.visibility,
     content: (
@@ -287,6 +294,7 @@ function buildShellPane(input: {
         openPane={input.onOpenPane}
         publishPaneTitle={input.onPublishPaneTitle}
         publishPaneMinWidth={input.onPublishPaneMinWidth}
+        publishPaneExtraWidth={input.onPublishPaneExtraWidth}
       />
     ),
   };
@@ -314,6 +322,9 @@ export default function WorkspaceHost() {
   const [runtimeMinWidthByPaneId, setRuntimeMinWidthByPaneId] = useState<Map<string, number>>(
     () => new Map()
   );
+  const [runtimeExtraWidthByPaneId, setRuntimeExtraWidthByPaneId] = useState<
+    Map<string, number>
+  >(() => new Map());
 
   // --- Mobile / focus management (inlined from WorkspaceShell) ---
   const isMobile = useIsMobileViewport();
@@ -345,6 +356,25 @@ export default function WorkspaceHost() {
       }
       const next = new Map(current);
       next.set(paneId, roundedWidthPx);
+      return next;
+    });
+  }, []);
+
+  const publishPaneExtraWidth = useCallback((paneId: string, widthPx: number) => {
+    setRuntimeExtraWidthByPaneId((current) => {
+      if (widthPx <= 0) {
+        if (!current.has(paneId)) {
+          return current;
+        }
+        const next = new Map(current);
+        next.delete(paneId);
+        return next;
+      }
+      if (current.get(paneId) === widthPx) {
+        return current;
+      }
+      const next = new Map(current);
+      next.set(paneId, widthPx);
       return next;
     });
   }, []);
@@ -384,8 +414,10 @@ export default function WorkspaceHost() {
           onOpenPane: openPane,
           onPublishPaneTitle: publishPaneTitle,
           onPublishPaneMinWidth: publishPaneMinWidth,
+          onPublishPaneExtraWidth: publishPaneExtraWidth,
           isActive: pane.id === state.activePaneId,
           runtimeMinWidthPx: runtimeMinWidthByPaneId.get(pane.id) ?? null,
+          runtimeExtraWidthPx: runtimeExtraWidthByPaneId.get(pane.id) ?? 0,
         })
       ),
     [
@@ -395,7 +427,9 @@ export default function WorkspaceHost() {
       openPane,
       publishPaneTitle,
       publishPaneMinWidth,
+      publishPaneExtraWidth,
       runtimeMinWidthByPaneId,
+      runtimeExtraWidthByPaneId,
     ]
   );
 
@@ -541,6 +575,7 @@ export default function WorkspaceHost() {
               widthPx={pane.widthPx}
               minWidthPx={pane.minWidthPx}
               maxWidthPx={pane.maxWidthPx}
+              extraWidthPx={pane.extraWidthPx}
               bodyMode={pane.bodyMode}
               onResizePane={resizePane}
               isActive={pane.isActive}

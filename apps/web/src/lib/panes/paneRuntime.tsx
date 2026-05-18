@@ -24,6 +24,9 @@ interface PaneRuntimeContextValue {
   openInNewPane: (href: string) => void;
   setPaneTitle: (title: string | null) => void;
   setPaneMinWidth: (widthPx: number | null) => void;
+  // Width reserved outward of the resizable pane width (e.g. the reader
+  // highlights rail). Added to the rendered pane width, never persisted into it.
+  setPaneExtraWidth: (widthPx: number) => void;
 }
 
 const PaneRuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
@@ -39,6 +42,7 @@ interface PaneRuntimeProviderProps {
   onOpenInNewPane: (href: string) => void;
   onSetPaneTitle?: (paneId: string, title: string | null) => void;
   onSetPaneMinWidth?: (paneId: string, widthPx: number | null) => void;
+  onSetPaneExtraWidth?: (paneId: string, widthPx: number) => void;
   children: React.ReactNode;
 }
 
@@ -67,6 +71,7 @@ export function PaneRuntimeProvider({
   onOpenInNewPane,
   onSetPaneTitle,
   onSetPaneMinWidth,
+  onSetPaneExtraWidth,
   children,
 }: PaneRuntimeProviderProps) {
   const parsed = useMemo(() => parsePaneHref(href), [href]);
@@ -108,6 +113,9 @@ export function PaneRuntimeProvider({
       setPaneMinWidth: (widthPx: number | null) => {
         onSetPaneMinWidth?.(paneId, widthPx);
       },
+      setPaneExtraWidth: (widthPx: number) => {
+        onSetPaneExtraWidth?.(paneId, widthPx);
+      },
     }),
     [
       href,
@@ -116,6 +124,7 @@ export function PaneRuntimeProvider({
       onReplacePane,
       onSetPaneTitle,
       onSetPaneMinWidth,
+      onSetPaneExtraWidth,
       paneId,
       parsed.pathname,
       parsed.searchParams,
