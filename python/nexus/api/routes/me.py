@@ -10,15 +10,25 @@ from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.db.models import WorkspaceSession
 from nexus.responses import success_response
 from nexus.schemas.command_palette import CommandPaletteSelectionRecordRequest
 from nexus.schemas.reader import ReaderProfilePatch
 from nexus.schemas.user import UpdateProfileRequest
+from nexus.schemas.workspace_session import WorkspaceSessionPutRequest
 from nexus.services import command_palette as command_palette_service
 from nexus.services import reader as reader_service
 from nexus.services import users as users_service
+from nexus.services import workspace_sessions as workspace_sessions_service
 
 router = APIRouter()
+
+
+def _workspace_session_payload(session: WorkspaceSession | None) -> dict | None:
+    """Shape a workspace session row for the API, or None when absent."""
+    if session is None:
+        return None
+    return {"state": session.state, "updated_at": session.updated_at.isoformat()}
 
 
 @router.get("/me")
@@ -96,3 +106,35 @@ def post_palette_selection(
         body,
     )
     return success_response(result.model_dump(mode="json"))
+
+
+@router.get("/me/workspace-session")
+def get_workspace_session(
+    device_id: str,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Get this device's own workspace session and the most recent one elsewhere."""
+    own = workspace_sessions_service.get_workspace_session(db, viewer.user_id, device_id)
+    other = workspace_sessions_service.get_most_recent_session_elsewhere(
+        db, viewer.user_id, device_id
+    )
+    return success_response(
+        {
+            "own": _workspace_session_payload(own),
+            "most_recent_elsewhere": _workspace_session_payload(other),
+        }
+    )
+
+
+@router.put("/me/workspace-session")
+def put_workspace_session(
+    body: WorkspaceSessionPutRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Upsert this device's workspace session (last-write-wins)."""
+    result = workspace_sessions_service.upsert_workspace_session(
+        db, viewer.user_id, body.device_id, body.state
+    )
+    return success_response(_workspace_session_payload(result))

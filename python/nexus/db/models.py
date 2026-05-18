@@ -7276,6 +7276,43 @@ class ReaderMediaState(Base):
     media: Mapped["Media"] = relationship("Media")
 
 
+class WorkspaceSession(Base):
+    """Per user + device persisted workspace pane set."""
+
+    __tablename__ = "workspace_sessions"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    device_id: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "device_id", name="uq_workspace_sessions_user_device"),
+        CheckConstraint(
+            "jsonb_typeof(state) = 'object'",
+            name="ck_workspace_sessions_state_object",
+        ),
+    )
+
+
 class OracleCorpusSetVersion(Base):
     """Versioned, immutable oracle corpus release."""
 
