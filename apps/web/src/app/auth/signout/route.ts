@@ -13,7 +13,11 @@ export async function POST(request: Request) {
   const cookieNames = getSupabaseAuthCookieNames(requestCookies);
   const session = readSupabaseSessionCookie(requestCookies);
 
-  if (session.ok && process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+  if (
+    session.state === "active" &&
+    process.env.NEXT_PUBLIC_SUPABASE_URL &&
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  ) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
       controller.abort(new DOMException("Supabase sign-out timed out", "AbortError"));

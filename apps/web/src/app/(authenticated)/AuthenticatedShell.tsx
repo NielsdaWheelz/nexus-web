@@ -7,6 +7,7 @@ import AddContentTray from "@/components/AddContentTray";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import LocalVaultAutoSync from "./LocalVaultAutoSync";
+import SessionRefresher from "@/lib/auth/SessionRefresher";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { ReaderProvider } from "@/lib/reader/ReaderContext";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
@@ -17,6 +18,7 @@ export default function AuthenticatedShell() {
 
   return (
     <>
+      <SessionRefresher />
       <LocalVaultAutoSync />
       <ReaderProvider>
         <Suspense fallback={null}>

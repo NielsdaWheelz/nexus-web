@@ -54,6 +54,12 @@
   max-width: 24rem;
 }
 
+/* The provider form is a GET-submit wrapper with no layout of its own; its
+   button is the real flex child of .providers and stretches to full width. */
+.providerForm {
+  display: contents;
+}
+
 .legal {
   margin: var(--space-6) 0 0;
   color: var(--ink-muted);

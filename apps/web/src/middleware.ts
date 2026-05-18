@@ -3,26 +3,28 @@ import { updateSession } from "@/lib/supabase/middleware";
 
 /**
  * Middleware for:
- * - Session refresh (Supabase auth)
- * - Auth redirects (unauthenticated → /login)
- * - CSP headers with nonces
+ * - Four-state session classification and auth redirects (network-free)
+ * - Nonce-based Content-Security-Policy headers
  */
-export async function middleware(request: NextRequest) {
-  // Handle session and auth redirects
-  const response = await updateSession(request);
+export function middleware(request: NextRequest) {
+  // A fresh per-request nonce. updateSession sets it on the request `x-nonce`
+  // header; it is also placed in the CSP below so Next.js applies it to
+  // framework and page scripts automatically.
+  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
+
+  const response = updateSession(request, nonce);
 
   // E2E runner can disable CSP to allow stable Playwright auth/session bootstrapping.
   if (process.env.E2E_DISABLE_CSP === "1") {
     return response;
   }
 
-  // Build CSP header
-  // Using 'unsafe-inline' for scripts because Next.js injects inline scripts
-  // for hydration/RSC that don't carry the middleware nonce on Vercel.
-  // TODO: re-introduce nonce-based CSP once Next.js nonce propagation is wired up.
+  // Next.js dev mode requires 'unsafe-eval' for hot module reloading (HMR).
   const isDev = process.env.NODE_ENV === "development";
   const cspHeader = [
-    `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${
+      isDev ? " 'unsafe-eval'" : ""
+    }`,
     `style-src 'self' 'unsafe-inline'`,
     `font-src 'self'`,
     `frame-src https://www.youtube.com https://www.youtube-nocookie.com`,
@@ -34,7 +36,6 @@ export async function middleware(request: NextRequest) {
     `upgrade-insecure-requests`,
   ].join("; ");
 
-  // Set CSP header
   response.headers.set("Content-Security-Policy", cspHeader);
 
   return response;

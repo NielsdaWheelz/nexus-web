@@ -17,11 +17,19 @@ import { NextResponse } from "next/server";
 import {
   parseCookieHeader,
   readSupabaseSessionCookie,
-  type SessionCookieResult,
+  type SessionState,
 } from "@/lib/auth/session-cookie";
+import { refreshSession } from "@/lib/auth/refresh";
+import { type CookieToSet } from "@/lib/supabase/types";
 
 const REQUEST_ID_HEADER = "x-request-id";
 const FASTAPI_FETCH_TIMEOUT_MS = 30_000;
+
+// Browsers send Origin on every cross-origin request and on same-origin
+// state-changing requests, so a state-changing request whose Origin does not
+// match the app's own origin is a cross-site forgery. SameSite alone is not a
+// complete CSRF defense.
+const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /**
  * Request headers allowed to be forwarded from browser to FastAPI.
@@ -79,7 +87,7 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
 ]);
 
 interface ProxyDeps {
-  readSession: (request: Request) => SessionCookieResult;
+  readSession: (request: Request) => SessionState;
   fetch: typeof fetch;
   generateRequestId: () => string;
   config: {
@@ -223,32 +231,106 @@ export async function proxyToFastAPIWithDeps(
     );
   }
 
-  const session = deps.readSession(request);
-  if (!session.ok) {
-    const response = NextResponse.json(
+  // Extract query string from request URL
+  const requestUrl = new URL(request.url);
+  const queryString = requestUrl.search; // includes leading '?' if present
+
+  // CSRF defense for state-changing methods: a same-origin browser request and
+  // the Android WebView shell (which hosts the web origin) both send the app's
+  // own Origin; any other Origin is a cross-site forgery.
+  if (
+    STATE_CHANGING_METHODS.has(request.method) &&
+    request.headers.get("origin") !== requestUrl.origin
+  ) {
+    return NextResponse.json(
       {
         error: {
-          code: "E_UNAUTHENTICATED",
-          message: "Authentication required",
+          code: "E_FORBIDDEN",
+          message: "Cross-origin request rejected",
           request_id: requestId,
         },
       },
       {
-        status: 401,
+        status: 403,
         headers: {
           [REQUEST_ID_HEADER]: requestId,
         },
       }
     );
-    for (const name of session.cookieNames) {
-      response.cookies.set(name, "", { maxAge: 0, path: "/" });
-    }
-    return response;
   }
 
-  // Extract query string from request URL
-  const requestUrl = new URL(request.url);
-  const queryString = requestUrl.search; // includes leading '?' if present
+  const session = deps.readSession(request);
+
+  // Resolve the bearer token to forward, refreshing inline when the session is
+  // within the access-token expiry margin. `refreshable` is the only state that
+  // produces rotated cookies for the proxied response.
+  let accessToken: string;
+  let rotatedCookies: CookieToSet[] = [];
+  switch (session.state) {
+    case "active":
+      accessToken = session.accessToken;
+      break;
+    case "refreshable": {
+      const refreshed = await refreshSession();
+      if (refreshed.status === "failed") {
+        return NextResponse.json(
+          {
+            error: {
+              code: "E_UNAUTHENTICATED",
+              message: "Authentication required",
+              request_id: requestId,
+            },
+          },
+          { status: 401, headers: { [REQUEST_ID_HEADER]: requestId } }
+        );
+      }
+      refreshed.status satisfies "refreshed";
+      // The rotated access token is inside the freshly written cookie; the
+      // boundary parser is the one interpreter of that cookie shape.
+      const rotated = readSupabaseSessionCookie(refreshed.cookiesToSet);
+      if (rotated.state !== "active") {
+        // justify-defect: a successful refresh must write a live access token;
+        // a rotated cookie that does not parse as `active` is internal
+        // corruption, not a recoverable auth outcome.
+        console.error("auth_refresh_rotated_cookie_not_active", {
+          state: rotated.state,
+        });
+        return NextResponse.json(
+          {
+            error: {
+              code: "E_INTERNAL",
+              message: "Session refresh failed",
+              request_id: requestId,
+            },
+          },
+          { status: 500, headers: { [REQUEST_ID_HEADER]: requestId } }
+        );
+      }
+      accessToken = rotated.accessToken;
+      rotatedCookies = refreshed.cookiesToSet;
+      break;
+    }
+    case "ended":
+    case "anonymous": {
+      const response = NextResponse.json(
+        {
+          error: {
+            code: "E_UNAUTHENTICATED",
+            message: "Authentication required",
+            request_id: requestId,
+          },
+        },
+        { status: 401, headers: { [REQUEST_ID_HEADER]: requestId } }
+      );
+      for (const name of session.cookieNames) {
+        response.cookies.set(name, "", { maxAge: 0, path: "/" });
+      }
+      return response;
+    }
+    default:
+      session satisfies never;
+      throw new Error(`Unhandled session state: ${JSON.stringify(session)}`);
+  }
 
   // Build the FastAPI URL with query string
   const url = `${deps.config.fastApiBaseUrl}${path}${queryString}`;
@@ -264,7 +346,7 @@ export async function proxyToFastAPIWithDeps(
   });
 
   // Always set/override these headers
-  headers.set("Authorization", `Bearer ${session.accessToken}`);
+  headers.set("Authorization", `Bearer ${accessToken}`);
   headers.set(REQUEST_ID_HEADER, requestId);
 
   // Add internal header if configured
@@ -313,29 +395,31 @@ export async function proxyToFastAPIWithDeps(
       isValidRequestId(backendRequestId) ? backendRequestId : requestId
     );
 
+    // A response carrying rotated auth cookies must never be cached: a cached
+    // Set-Cookie would hand one user another user's session.
+    if (rotatedCookies.length > 0) {
+      responseHeaders.set("cache-control", "no-store");
+    }
+
     // 204/205/304 and HEAD responses must not include a body.
     // Creating a Response with body bytes for these statuses throws.
+    let proxied: NextResponse;
     if (
       request.method === "HEAD" ||
       response.status === 204 ||
       response.status === 205 ||
       response.status === 304
     ) {
-      return new Response(null, {
+      proxied = new NextResponse(null, {
         status: response.status,
         statusText: response.statusText,
         headers: responseHeaders,
       });
-    }
-
-    // Handle response body based on content type
-    const contentType = response.headers.get("content-type");
-
-    if (isTextContentType(contentType)) {
+    } else if (isTextContentType(response.headers.get("content-type"))) {
       // Text/JSON response - use text() to preserve encoding
       const text = await response.text();
       setBodyContentLength(responseHeaders, text);
-      return new Response(text, {
+      proxied = new NextResponse(text, {
         status: response.status,
         statusText: response.statusText,
         headers: responseHeaders,
@@ -344,12 +428,17 @@ export async function proxyToFastAPIWithDeps(
       // Binary response - use arrayBuffer() to preserve bytes
       const buffer = await response.arrayBuffer();
       setBodyContentLength(responseHeaders, buffer);
-      return new Response(buffer, {
+      proxied = new NextResponse(buffer, {
         status: response.status,
         statusText: response.statusText,
         headers: responseHeaders,
       });
     }
+
+    for (const { name, value, options } of rotatedCookies) {
+      proxied.cookies.set(name, value, options);
+    }
+    return proxied;
   } catch (error) {
     if (isAbortLikeError(error)) {
       if (timedOut) {

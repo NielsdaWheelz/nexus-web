@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { requireAuthenticatedUser } from "@/lib/auth/protected";
+import { verifySession } from "@/lib/auth/dal";
 import OracleShell from "./OracleShell";
 
 export default async function OracleLayout({
@@ -7,6 +7,6 @@ export default async function OracleLayout({
 }: {
   children: ReactNode;
 }) {
-  await requireAuthenticatedUser();
+  await verifySession();
   return <OracleShell>{children}</OracleShell>;
 }

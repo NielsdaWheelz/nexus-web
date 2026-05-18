@@ -1,22 +1,26 @@
-export interface SessionCookie {
-  ok: true;
-  accessToken: string;
-  expiresAt: number;
-  cookieNames: string[];
-}
+// A token within this many seconds of expiry is classified `refreshable` so a
+// request never races its own access-token expiry.
+const REFRESH_MARGIN_SECONDS = 60;
 
-export interface InvalidSessionCookie {
-  ok: false;
-  reason: "bad_config" | "missing" | "malformed" | "expired" | "non_bearer";
-  cookieNames: string[];
-}
+export type SessionState =
+  | {
+      state: "anonymous";
+      reason: "bad_config" | "missing" | "malformed" | "non_bearer";
+      cookieNames: string[];
+    }
+  | {
+      state: "active";
+      accessToken: string;
+      expiresAt: number;
+      cookieNames: string[];
+    }
+  | { state: "refreshable"; cookieNames: string[] }
+  | { state: "ended"; reason: "no_refresh_token"; cookieNames: string[] };
 
 export interface CookieValue {
   name: string;
   value: string;
 }
-
-export type SessionCookieResult = SessionCookie | InvalidSessionCookie;
 
 function getSupabaseAuthCookieName(): string | null {
   try {
@@ -81,10 +85,10 @@ export function parseCookieHeader(header: string | null): CookieValue[] {
 export function readSupabaseSessionCookie(
   cookies: readonly CookieValue[],
   nowMs: number = Date.now()
-): SessionCookieResult {
+): SessionState {
   const cookieName = getSupabaseAuthCookieName();
   if (!cookieName) {
-    return { ok: false, reason: "bad_config", cookieNames: [] };
+    return { state: "anonymous", reason: "bad_config", cookieNames: [] };
   }
 
   const cookieNames = getSupabaseAuthCookieNames(cookies);
@@ -110,14 +114,14 @@ export function readSupabaseSessionCookie(
 
   if (!value) {
     return {
-      ok: false,
+      state: "anonymous",
       reason: cookieNames.length > 0 ? "malformed" : "missing",
       cookieNames,
     };
   }
 
   if (!value.startsWith("base64-")) {
-    return { ok: false, reason: "malformed", cookieNames };
+    return { state: "anonymous", reason: "malformed", cookieNames };
   }
 
   let parsed: unknown;
@@ -143,17 +147,18 @@ export function readSupabaseSessionCookie(
       throw error;
     }
     // justify-ignore-error: malformed browser cookie data is untrusted input and
-    // becomes an invalid auth cookie.
-    return { ok: false, reason: "malformed", cookieNames };
+    // becomes an unrecoverable auth cookie.
+    return { state: "anonymous", reason: "malformed", cookieNames };
   }
 
   if (!parsed || typeof parsed !== "object") {
-    return { ok: false, reason: "malformed", cookieNames };
+    return { state: "anonymous", reason: "malformed", cookieNames };
   }
 
   const accessToken = (parsed as { access_token?: unknown }).access_token;
   const expiresAt = (parsed as { expires_at?: unknown }).expires_at;
   const tokenType = (parsed as { token_type?: unknown }).token_type;
+  const refreshToken = (parsed as { refresh_token?: unknown }).refresh_token;
 
   if (
     typeof accessToken !== "string" ||
@@ -161,16 +166,20 @@ export function readSupabaseSessionCookie(
     typeof expiresAt !== "number" ||
     typeof tokenType !== "string"
   ) {
-    return { ok: false, reason: "malformed", cookieNames };
+    return { state: "anonymous", reason: "malformed", cookieNames };
   }
 
   if (tokenType.toLowerCase() !== "bearer") {
-    return { ok: false, reason: "non_bearer", cookieNames };
+    return { state: "anonymous", reason: "non_bearer", cookieNames };
   }
 
-  if (expiresAt * 1000 <= nowMs) {
-    return { ok: false, reason: "expired", cookieNames };
+  if (expiresAt * 1000 > nowMs + REFRESH_MARGIN_SECONDS * 1000) {
+    return { state: "active", accessToken, expiresAt, cookieNames };
   }
 
-  return { ok: true, accessToken, expiresAt, cookieNames };
+  if (typeof refreshToken === "string" && refreshToken.length > 0) {
+    return { state: "refreshable", cookieNames };
+  }
+
+  return { state: "ended", reason: "no_refresh_token", cookieNames };
 }

@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import {
   parseCookieHeader,
   readSupabaseSessionCookie,
-  type SessionCookieResult,
+  type SessionState,
 } from "@/lib/auth/session-cookie";
 import { proxyToFastAPI, proxyToFastAPIWithDeps } from "./proxy";
 
@@ -13,8 +13,56 @@ vi.mock("@/lib/supabase/server", () => ({
   }),
 }));
 
+// The refresh module reads the request cookies through next/headers; the proxy
+// itself never does. Mock only that true external boundary so the inline-refresh
+// tests exercise the real refresh.ts and the real boundary parser.
+const cookieStore = {
+  getAll: vi.fn((): { name: string; value: string }[] => []),
+  set: vi.fn(),
+};
+vi.mock("next/headers", () => ({
+  cookies: vi.fn(async () => cookieStore),
+}));
+
+// Mock only the Supabase SDK edge — the real external boundary refresh.ts calls.
+// One scripted refresh outcome is consumed per refreshSession() call.
+type RotatedCookie = { name: string; value: string; options?: object };
+type RefreshOutcome = {
+  cookiesToSet?: RotatedCookie[];
+  error?: { code: string | null; message: string };
+};
+const refreshOutcomes: RefreshOutcome[] = [];
+vi.mock("@supabase/ssr", () => ({
+  createServerClient: vi.fn(
+    (
+      _supabaseUrl: string,
+      _supabaseAnonKey: string,
+      options: {
+        cookies: { setAll: (cookies: RotatedCookie[]) => void };
+      }
+    ) => ({
+      auth: {
+        refreshSession: async () => {
+          const outcome = refreshOutcomes.shift() ?? {};
+          if (outcome.error) {
+            return { data: { user: null, session: null }, error: outcome.error };
+          }
+          if (outcome.cookiesToSet) {
+            options.cookies.setAll(outcome.cookiesToSet);
+          }
+          return {
+            data: { user: { id: "u1" }, session: { access_token: "rotated" } },
+            error: null,
+          };
+        },
+      },
+    })
+  ),
+}));
+
 const SUPABASE_URL = "https://project-ref.supabase.co";
 const COOKIE_NAME = "sb-project-ref-auth-token";
+const APP_ORIGIN = "http://localhost:3000";
 
 function encodeSessionCookie(session: Record<string, unknown>): string {
   return `base64-${Buffer.from(JSON.stringify(session), "utf8").toString(
@@ -22,17 +70,21 @@ function encodeSessionCookie(session: Record<string, unknown>): string {
   )}`;
 }
 
+function sessionCookieValue(overrides: Record<string, unknown> = {}): string {
+  return encodeSessionCookie({
+    access_token: "server-token",
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    token_type: "bearer",
+    refresh_token: "refresh-token",
+    ...overrides,
+  });
+}
+
 function sessionCookie(
   overrides: Record<string, unknown> = {},
   options: { chunked?: boolean } = {}
 ): string {
-  const value = encodeSessionCookie({
-    access_token: "server-token",
-    expires_at: Math.floor(Date.now() / 1000) + 60,
-    token_type: "bearer",
-    refresh_token: "refresh-token-not-used",
-    ...overrides,
-  });
+  const value = sessionCookieValue(overrides);
 
   if (!options.chunked) {
     return `${COOKIE_NAME}=${value}`;
@@ -42,7 +94,19 @@ function sessionCookie(
   return `${COOKIE_NAME}.0=${value.slice(0, splitAt)}; ${COOKIE_NAME}.1=${value.slice(splitAt)}`;
 }
 
-function readSessionFromCookie(request: Request): SessionCookieResult {
+// A rotated auth cookie carrying a live, parseable access token. refresh.ts
+// writes it; the proxy re-parses it to extract the new bearer token.
+function rotatedAuthCookie(accessToken: string): RotatedCookie[] {
+  return [
+    {
+      name: COOKIE_NAME,
+      value: sessionCookieValue({ access_token: accessToken }),
+      options: { path: "/", httpOnly: true, maxAge: 31_536_000 },
+    },
+  ];
+}
+
+function readSessionFromCookie(request: Request): SessionState {
   return readSupabaseSessionCookie(
     parseCookieHeader(request.headers.get("cookie"))
   );
@@ -56,7 +120,7 @@ function deps({
   internalSecret = "internal-secret",
   fastApiBaseUrl = "http://api.local",
 }: {
-  readSession?: (request: Request) => SessionCookieResult;
+  readSession?: (request: Request) => SessionState;
   backendFetch?: typeof fetch;
   internalSecret?: string;
   fastApiBaseUrl?: string;
@@ -86,6 +150,9 @@ async function expectUnauthenticated(
 describe("proxyToFastAPI", () => {
   beforeEach(() => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", SUPABASE_URL);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
+    cookieStore.getAll.mockReturnValue([]);
+    refreshOutcomes.length = 0;
   });
 
   afterEach(() => {
@@ -108,7 +175,7 @@ describe("proxyToFastAPI", () => {
     expect(backendFetch).not.toHaveBeenCalled();
   });
 
-  it("returns a JSON 401 for an expired Supabase auth cookie", async () => {
+  it("returns a JSON 401 and clears cookies for an ended session", async () => {
     const backendFetch = vi.fn();
 
     const response = await proxyToFastAPIWithDeps(
@@ -116,6 +183,7 @@ describe("proxyToFastAPI", () => {
         headers: {
           cookie: sessionCookie({
             expires_at: Math.floor(Date.now() / 1000) - 60,
+            refresh_token: "",
           }),
         },
       }),
@@ -200,6 +268,33 @@ describe("proxyToFastAPI", () => {
       },
     });
     expect(readSession).not.toHaveBeenCalled();
+  });
+
+  it("forwards an active session to FastAPI with the server-read bearer token", async () => {
+    const backendFetch = vi.fn(async () =>
+      Response.json({ data: [] }, { headers: { "x-request-id": "request-1" } })
+    );
+
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries?view=mine", {
+        headers: {
+          cookie: sessionCookie({ access_token: "cookie-token" }),
+        },
+      }),
+      "/libraries",
+      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+    );
+
+    expect(response.status).toBe(200);
+    expect(backendFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = backendFetch.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe("http://api.local/libraries?view=mine");
+    expect(new Headers(init.headers).get("authorization")).toBe(
+      "Bearer cookie-token"
+    );
   });
 
   it("forwards only server-owned auth headers to FastAPI", async () => {
@@ -348,6 +443,139 @@ describe("proxyToFastAPI", () => {
     ];
     expect(new Headers(init.headers).get("authorization")).toBe(
       "Bearer default-cookie-token"
+    );
+  });
+
+  it("refreshes a refreshable session inline and forwards the rotated bearer token", async () => {
+    const refreshableCookie = sessionCookie({
+      access_token: "stale-token",
+      expires_at: Math.floor(Date.now() / 1000) - 30,
+      refresh_token: "rotate-me",
+    });
+    cookieStore.getAll.mockReturnValue(parseCookieHeader(refreshableCookie));
+    refreshOutcomes.push({ cookiesToSet: rotatedAuthCookie("fresh-token") });
+
+    const backendFetch = vi.fn(async () =>
+      Response.json({ data: [] }, { headers: { "x-request-id": "request-1" } })
+    );
+
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        headers: { cookie: refreshableCookie },
+      }),
+      "/libraries",
+      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+    );
+
+    expect(response.status).toBe(200);
+    expect(backendFetch).toHaveBeenCalledTimes(1);
+    const [, init] = backendFetch.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    // The forwarded bearer token is the rotated one parsed from the new cookie.
+    expect(new Headers(init.headers).get("authorization")).toBe(
+      "Bearer fresh-token"
+    );
+    // The rotated cookie is carried back on the proxied response, uncacheable.
+    expect(response.headers.get("set-cookie")).toContain(`${COOKIE_NAME}=`);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("returns a JSON 401 when an inline refresh fails", async () => {
+    const refreshableCookie = sessionCookie({
+      expires_at: Math.floor(Date.now() / 1000) - 30,
+      refresh_token: "revoked-token",
+    });
+    cookieStore.getAll.mockReturnValue(parseCookieHeader(refreshableCookie));
+    refreshOutcomes.push({
+      error: { code: "refresh_token_not_found", message: "Not Found" },
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const backendFetch = vi.fn();
+
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        headers: { cookie: refreshableCookie },
+      }),
+      "/libraries",
+      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+    );
+
+    await expectUnauthenticated(response);
+    expect(backendFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a state-changing request from a disallowed Origin", async () => {
+    const backendFetch = vi.fn();
+
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        method: "POST",
+        headers: {
+          cookie: sessionCookie(),
+          origin: "https://evil.example.com",
+        },
+      }),
+      "/libraries",
+      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "E_FORBIDDEN",
+        message: "Cross-origin request rejected",
+        request_id: "generated-request",
+      },
+    });
+    expect(backendFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a state-changing request with no Origin header", async () => {
+    const backendFetch = vi.fn();
+
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        method: "POST",
+        headers: { cookie: sessionCookie() },
+      }),
+      "/libraries",
+      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+    );
+
+    expect(response.status).toBe(403);
+    expect(backendFetch).not.toHaveBeenCalled();
+  });
+
+  it("forwards a state-changing request from the app's own Origin", async () => {
+    const backendFetch = vi.fn(async () =>
+      Response.json({ ok: true }, { headers: { "x-request-id": "request-1" } })
+    );
+
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/libraries", {
+        method: "POST",
+        headers: {
+          cookie: sessionCookie({ access_token: "cookie-token" }),
+          origin: APP_ORIGIN,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ name: "lib" }),
+      }),
+      "/libraries",
+      deps({ backendFetch: backendFetch as unknown as typeof fetch })
+    );
+
+    expect(response.status).toBe(200);
+    expect(backendFetch).toHaveBeenCalledTimes(1);
+    const [, init] = backendFetch.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("authorization")).toBe(
+      "Bearer cookie-token"
     );
   });
 });

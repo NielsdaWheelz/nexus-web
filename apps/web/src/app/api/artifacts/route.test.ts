@@ -13,7 +13,7 @@ function encodeSessionCookie(session: Record<string, unknown>): string {
 function sessionCookie(): string {
   return `${COOKIE_NAME}=${encodeSessionCookie({
     access_token: "test-access-token",
-    expires_at: Math.floor(Date.now() / 1000) + 60,
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
     token_type: "bearer",
   })}`;
 }
@@ -21,6 +21,7 @@ function sessionCookie(): string {
 function authedRequest(input: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   headers.set("cookie", sessionCookie());
+  headers.set("origin", new URL(input).origin);
   return new Request(input, { ...init, headers });
 }
 

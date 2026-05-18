@@ -1,27 +1,16 @@
-"use client";
-
 import Link from "next/link";
-import { useState } from "react";
-import { shouldUseAndroidDebugAuthCallback } from "@/lib/androidShell";
 import Button from "@/components/ui/Button";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import {
-  buildAndroidDebugAuthCallbackUrl,
-  buildAuthCallbackUrl,
-} from "@/lib/auth/redirects";
-import { createClient } from "@/lib/supabase/client";
+import { type OAuthProvider } from "@/lib/auth/identities";
 import styles from "./page.module.css";
 
 interface LoginPageClientProps {
-  initialError?: string | null;
+  initialFeedback?: FeedbackContent | null;
   nextPath: string;
 }
-
-type OAuthProvider = "github" | "google";
 
 function GitHubMark() {
   return (
@@ -63,53 +52,35 @@ function GoogleMark() {
   );
 }
 
+// A GET form to the server route: OAuth is initiated server-side, so the
+// browser holds no Supabase client. Submitting navigates to /auth/oauth, which
+// asks Supabase for the provider URL and redirects there.
+function ProviderForm({
+  provider,
+  nextPath,
+  label,
+  mark,
+}: {
+  provider: OAuthProvider;
+  nextPath: string;
+  label: string;
+  mark: React.ReactNode;
+}) {
+  return (
+    <form className={styles.providerForm} action="/auth/oauth" method="get">
+      <input type="hidden" name="provider" value={provider} />
+      <input type="hidden" name="next" value={nextPath} />
+      <Button variant="secondary" size="lg" type="submit" leadingIcon={mark}>
+        {label}
+      </Button>
+    </form>
+  );
+}
+
 export default function LoginPageClient({
-  initialError = null,
+  initialFeedback = null,
   nextPath,
 }: LoginPageClientProps) {
-  const [activeProvider, setActiveProvider] = useState<OAuthProvider | null>(null);
-  const [error, setError] = useState<FeedbackContent | null>(
-    initialError ? { severity: "error", title: initialError } : null
-  );
-
-  const handleProviderSignIn = async (provider: OAuthProvider) => {
-    setError(null);
-    setActiveProvider(provider);
-
-    try {
-      const supabase = createClient();
-      const useAndroidDebugCallback = shouldUseAndroidDebugAuthCallback(
-        window.location.protocol,
-        window.location.hostname,
-        navigator.userAgent
-      );
-
-      const { error: oauthError } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: {
-          redirectTo: useAndroidDebugCallback
-            ? buildAndroidDebugAuthCallbackUrl(nextPath)
-            : buildAuthCallbackUrl(window.location.origin, nextPath),
-        },
-      });
-
-      if (oauthError) {
-        setError({
-          severity: "error",
-          title: "We couldn't start sign in. Please try again.",
-        });
-        setActiveProvider(null);
-      }
-    } catch (signInError) {
-      setError(
-        toFeedback(signInError, {
-          fallback: "We couldn't start sign in. Please try again.",
-        })
-      );
-      setActiveProvider(null);
-    }
-  };
-
   return (
     <div className={styles.container}>
       <div className={styles.split}>
@@ -130,34 +101,24 @@ export default function LoginPageClient({
         </section>
 
         <section className={styles.signin}>
-          <div className={styles.providers} aria-live="polite">
-            {error ? <FeedbackNotice feedback={error} /> : null}
+          <div className={styles.providers}>
+            {initialFeedback ? (
+              <FeedbackNotice feedback={initialFeedback} />
+            ) : null}
 
-            <Button
-              variant="secondary"
-              size="lg"
-              type="button"
-              leadingIcon={<GoogleMark />}
-              onClick={() => void handleProviderSignIn("google")}
-              disabled={activeProvider !== null}
-            >
-              {activeProvider === "google"
-                ? "Connecting to Google..."
-                : "Continue with Google"}
-            </Button>
+            <ProviderForm
+              provider="google"
+              nextPath={nextPath}
+              label="Continue with Google"
+              mark={<GoogleMark />}
+            />
 
-            <Button
-              variant="secondary"
-              size="lg"
-              type="button"
-              leadingIcon={<GitHubMark />}
-              onClick={() => void handleProviderSignIn("github")}
-              disabled={activeProvider !== null}
-            >
-              {activeProvider === "github"
-                ? "Connecting to GitHub..."
-                : "Continue with GitHub"}
-            </Button>
+            <ProviderForm
+              provider="github"
+              nextPath={nextPath}
+              label="Continue with GitHub"
+              mark={<GitHubMark />}
+            />
           </div>
 
           <p className={styles.legal}>

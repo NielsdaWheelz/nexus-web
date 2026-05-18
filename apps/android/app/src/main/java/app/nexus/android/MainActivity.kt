@@ -172,6 +172,19 @@ class MainActivity : AppCompatActivity() {
         loadUrlFromIntent(intent)
     }
 
+    override fun onPause() {
+        CookieManager.getInstance().flush()
+        webView.onPause()
+        webView.pauseTimers()
+        super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        webView.onResume()
+        webView.resumeTimers()
+    }
+
     override fun onDestroy() {
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null

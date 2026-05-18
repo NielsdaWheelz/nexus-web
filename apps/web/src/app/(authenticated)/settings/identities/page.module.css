@@ -10,6 +10,12 @@
   gap: var(--space-3);
 }
 
+/* The connect form is a GET-submit wrapper with no layout of its own; its pill
+   button is the real flex child of .linkButtons. */
+.linkForm {
+  display: contents;
+}
+
 .unlinkHint {
   color: var(--ink-muted);
   font-size: var(--text-xs);

@@ -29,6 +29,16 @@ export async function createRouteHandlerClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      // The auth cookie is server-only: no browser Supabase client reads it, so
+      // HttpOnly is safe. Secure is not in @supabase/ssr's defaults; set it
+      // explicitly. SameSite=Lax (the default, restated) is required so the
+      // cookie rides the top-level OAuth callback redirect.
+      cookieOptions: {
+        httpOnly: true,
+        secure: true,
+        sameSite: "lax",
+        path: "/",
+      },
       cookies: {
         getAll() {
           return cookieStore.getAll();

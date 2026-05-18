@@ -1,11 +1,15 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { type FeedbackContent } from "@/components/feedback/Feedback";
 import {
   DEFAULT_AUTH_REDIRECT,
   getFirstSearchParamValue,
   normalizeAuthRedirect,
 } from "@/lib/auth/redirects";
-import { toPublicAuthErrorMessage } from "@/lib/auth/messages";
+import {
+  SESSION_ENDED_MESSAGE,
+  toPublicAuthErrorMessage,
+} from "@/lib/auth/messages";
 import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
 import LoginPageClient from "./LoginPageClient";
 
@@ -17,20 +21,38 @@ interface LoginPageProps {
   }>;
 }
 
+// A forced sign-out is a calm, expected state, not an error; an OAuth failure
+// is an error. The message text is the discriminant.
+function toInitialFeedback(message: string | null): FeedbackContent | null {
+  if (!message) {
+    return null;
+  }
+  if (message === SESSION_ENDED_MESSAGE) {
+    return { severity: "info", title: "You were signed out.", message };
+  }
+  return { severity: "error", title: message };
+}
+
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const params = await searchParams;
   const nextPath = normalizeAuthRedirect(
     getFirstSearchParamValue(params.next),
     DEFAULT_AUTH_REDIRECT
   );
-  if (readSupabaseSessionCookie((await cookies()).getAll()).ok) {
+
+  const session = readSupabaseSessionCookie((await cookies()).getAll());
+  if (session.state === "active") {
     redirect(nextPath);
   }
 
-  const initialError = toPublicAuthErrorMessage(
-    getFirstSearchParamValue(params.error_description) ??
-      getFirstSearchParamValue(params.error)
+  const initialFeedback = toInitialFeedback(
+    toPublicAuthErrorMessage(
+      getFirstSearchParamValue(params.error_description) ??
+        getFirstSearchParamValue(params.error)
+    )
   );
 
-  return <LoginPageClient initialError={initialError} nextPath={nextPath} />;
+  return (
+    <LoginPageClient initialFeedback={initialFeedback} nextPath={nextPath} />
+  );
 }

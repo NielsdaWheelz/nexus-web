@@ -11,6 +11,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import SessionRefresher from "@/lib/auth/SessionRefresher";
 import styles from "./OracleShell.module.css";
 
 const HeadlineContext = createContext<{
@@ -53,6 +54,7 @@ export default function OracleShell({ children }: { children: ReactNode }) {
 
   return (
     <HeadlineContext.Provider value={contextValue}>
+      <SessionRefresher />
       <header className={styles.topBar} role="banner">
         <a href={href} className={styles.back}>
           {label}

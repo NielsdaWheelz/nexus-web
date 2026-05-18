@@ -1,7 +1,7 @@
-import { requireAuthenticatedUser } from "@/lib/auth/protected";
+import { verifySession } from "@/lib/auth/dal";
 import AuthenticatedShell from "./AuthenticatedShell";
 
 export default async function AuthenticatedLayout() {
-  await requireAuthenticatedUser();
+  await verifySession();
   return <AuthenticatedShell />;
 }

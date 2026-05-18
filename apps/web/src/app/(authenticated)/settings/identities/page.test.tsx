@@ -1,180 +1,128 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ANDROID_SHELL_USER_AGENT_TOKEN } from "@/lib/androidShell";
 
-const { mockGetUserIdentities, mockLinkIdentity, mockUnlinkIdentity } = vi.hoisted(
-  () => ({
-    mockGetUserIdentities: vi.fn(),
-    mockLinkIdentity: vi.fn(),
-    mockUnlinkIdentity: vi.fn(),
-  })
-);
+interface IdentityRecord {
+  identity_id: string;
+  provider: string;
+  identity_data: { email: string };
+  created_at: string;
+}
 
-vi.mock("@/lib/supabase/client", () => ({
-  createClient: () => ({
+const mockCookieStore = {
+  getAll: vi.fn(() => [] as { name: string; value: string }[]),
+  set: vi.fn(),
+};
+
+vi.mock("next/headers", () => ({
+  cookies: vi.fn(async () => mockCookieStore),
+}));
+
+// Scripted Supabase Auth outcomes — one getUserIdentities result per load
+// (mount, then post-unlink reload), so the test drives the server action
+// through the real @supabase/ssr boundary without mocking internal modules.
+type IdentitiesOutcome = {
+  identities?: IdentityRecord[];
+  error?: { message: string };
+};
+
+const getUserIdentitiesOutcomes: IdentitiesOutcome[] = [];
+let unlinkOutcome: { error?: { message: string } } = {};
+const unlinkIdentitySpy = vi.fn();
+
+vi.mock("@supabase/ssr", () => ({
+  createServerClient: vi.fn(() => ({
     auth: {
-      getUserIdentities: mockGetUserIdentities,
-      linkIdentity: mockLinkIdentity,
-      unlinkIdentity: mockUnlinkIdentity,
+      getUserIdentities: async () => {
+        const outcome = getUserIdentitiesOutcomes.shift() ?? { identities: [] };
+        if (outcome.error) {
+          return {
+            data: { identities: [] },
+            error: outcome.error,
+          };
+        }
+        return {
+          data: { identities: outcome.identities ?? [] },
+          error: null,
+        };
+      },
+      unlinkIdentity: async (identity: unknown) => {
+        unlinkIdentitySpy(identity);
+        return {
+          data: {},
+          error: unlinkOutcome.error ?? null,
+        };
+      },
     },
-  }),
+  })),
 }));
 
 import LinkedIdentitiesPage from "./page";
 
-const DEFAULT_USER_AGENT = navigator.userAgent;
-
-function setUserAgent(userAgent: string) {
-  Object.defineProperty(window.navigator, "userAgent", {
-    value: userAgent,
-    configurable: true,
-  });
+function identity(
+  provider: string,
+  overrides: Partial<IdentityRecord> = {}
+): IdentityRecord {
+  return {
+    identity_id: `${provider}-id`,
+    provider,
+    identity_data: { email: `owner+${provider}@example.com` },
+    created_at: "2026-03-21T00:00:00Z",
+    ...overrides,
+  };
 }
 
 describe("LinkedIdentitiesPage", () => {
   beforeEach(() => {
-    mockGetUserIdentities.mockReset();
-    mockLinkIdentity.mockReset().mockResolvedValue({ error: null });
-    mockUnlinkIdentity.mockReset().mockResolvedValue({ error: null });
-    setUserAgent(DEFAULT_USER_AGENT);
-    window.history.replaceState(null, "", "/settings/identities");
+    mockCookieStore.getAll.mockReset().mockReturnValue([]);
+    mockCookieStore.set.mockClear();
+    unlinkIdentitySpy.mockClear();
+    getUserIdentitiesOutcomes.length = 0;
+    unlinkOutcome = {};
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://local.supabase.co";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
   });
 
-  it("starts provider linking with an explicit callback return path", async () => {
-    const user = userEvent.setup();
-    mockGetUserIdentities.mockResolvedValue({
-      data: {
-        identities: [
-          {
-            identity_id: "github-id",
-            provider: "github",
-            identity_data: { email: "owner+github@example.com" },
-            created_at: "2026-03-21T00:00:00Z",
-          },
-        ],
-      },
-      error: null,
-    });
+  it("loads linked identities server-side and renders them", async () => {
+    getUserIdentitiesOutcomes.push({ identities: [identity("github")] });
 
     render(<LinkedIdentitiesPage />);
 
-    const connectGoogle = await screen.findByRole("button", {
-      name: /connect google/i,
-    });
-    await user.click(connectGoogle);
-
-    const expectedRedirect = `${window.location.origin}/auth/callback?next=%2Fsettings%2Fidentities`;
-    expect(mockLinkIdentity).toHaveBeenCalledWith({
-      provider: "google",
-      options: {
-        redirectTo: expectedRedirect,
-      },
-    });
+    expect(
+      await screen.findByText("owner+github@example.com")
+    ).toBeInTheDocument();
   });
 
-  it("uses the debug Android callback scheme for local shell identity linking", async () => {
-    const user = userEvent.setup();
-    setUserAgent(`${DEFAULT_USER_AGENT} ${ANDROID_SHELL_USER_AGENT_TOKEN}`);
-    mockGetUserIdentities.mockResolvedValue({
-      data: {
-        identities: [
-          {
-            identity_id: "github-id",
-            provider: "github",
-            identity_data: { email: "owner+github@example.com" },
-            created_at: "2026-03-21T00:00:00Z",
-          },
-        ],
-      },
-      error: null,
-    });
+  it("offers a connect control for each not-yet-linked provider", async () => {
+    getUserIdentitiesOutcomes.push({ identities: [identity("github")] });
 
     render(<LinkedIdentitiesPage />);
 
-    const connectGoogle = await screen.findByRole("button", {
-      name: /connect google/i,
-    });
-    await user.click(connectGoogle);
-
-    expect(mockLinkIdentity).toHaveBeenCalledWith({
-      provider: "google",
-      options: {
-        redirectTo:
-          "nexus-dev://auth/callback?next=%2Fsettings%2Fidentities",
-      },
-    });
+    // GitHub is linked; only Google remains connectable.
+    expect(
+      await screen.findByRole("button", { name: /connect google/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /connect github/i })
+    ).toBeNull();
   });
 
-  it("keeps generic local Android WebViews on the standard web callback", async () => {
-    const user = userEvent.setup();
-    setUserAgent(
-      "Mozilla/5.0 (Linux; Android 14; SM-S906W Build/UP1A.231005.007; wv) AppleWebKit/537.36"
-    );
-    mockGetUserIdentities.mockResolvedValue({
-      data: {
-        identities: [
-          {
-            identity_id: "github-id",
-            provider: "github",
-            identity_data: { email: "owner+github@example.com" },
-            created_at: "2026-03-21T00:00:00Z",
-          },
-        ],
-      },
-      error: null,
-    });
+  it("shows an error notice when identity loading fails", async () => {
+    getUserIdentitiesOutcomes.push({ error: { message: "boom" } });
 
     render(<LinkedIdentitiesPage />);
 
-    const connectGoogle = await screen.findByRole("button", {
-      name: /connect google/i,
-    });
-    await user.click(connectGoogle);
-
-    expect(mockLinkIdentity).toHaveBeenCalledWith({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=%2Fsettings%2Fidentities`,
-      },
-    });
+    expect(
+      await screen.findByText(/failed to load identities/i)
+    ).toBeInTheDocument();
   });
 
-  it("supports unlinking one provider identity while keeping another", async () => {
+  it("unlinks one provider identity while keeping another", async () => {
     const user = userEvent.setup();
-    mockGetUserIdentities
-      .mockResolvedValueOnce({
-        data: {
-          identities: [
-            {
-              identity_id: "github-id",
-              provider: "github",
-              identity_data: { email: "owner+github@example.com" },
-              created_at: "2026-03-21T00:00:00Z",
-            },
-            {
-              identity_id: "google-id",
-              provider: "google",
-              identity_data: { email: "owner+google@example.com" },
-              created_at: "2026-03-22T00:00:00Z",
-            },
-          ],
-        },
-        error: null,
-      })
-      .mockResolvedValueOnce({
-        data: {
-          identities: [
-            {
-              identity_id: "google-id",
-              provider: "google",
-              identity_data: { email: "owner+google@example.com" },
-              created_at: "2026-03-22T00:00:00Z",
-            },
-          ],
-        },
-        error: null,
-      });
+    getUserIdentitiesOutcomes.push({
+      identities: [identity("github"), identity("google")],
+    });
+    getUserIdentitiesOutcomes.push({ identities: [identity("google")] });
 
     render(<LinkedIdentitiesPage />);
 
@@ -184,14 +132,32 @@ describe("LinkedIdentitiesPage", () => {
     const unlinkButtons = screen.getAllByRole("button", { name: /unlink/i });
     await user.click(unlinkButtons[0]);
 
-    expect(mockUnlinkIdentity).toHaveBeenCalledWith({
-      identity_id: "github-id",
-      provider: "github",
-    });
-
+    expect(unlinkIdentitySpy).toHaveBeenCalledWith(
+      expect.objectContaining({ identity_id: "github-id" })
+    );
     await waitFor(() => {
       expect(
         screen.getByText("GitHub sign-in was removed.")
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("shows an error notice when unlinking fails", async () => {
+    const user = userEvent.setup();
+    getUserIdentitiesOutcomes.push({
+      identities: [identity("github"), identity("google")],
+    });
+    unlinkOutcome = { error: { message: "unlink failed" } };
+
+    render(<LinkedIdentitiesPage />);
+
+    await screen.findByText("owner+github@example.com");
+    const unlinkButtons = screen.getAllByRole("button", { name: /unlink/i });
+    await user.click(unlinkButtons[0]);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/we couldn't unlink this identity/i)
       ).toBeInTheDocument();
     });
   });

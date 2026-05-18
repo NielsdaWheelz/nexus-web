@@ -24,7 +24,7 @@ function authCookie(overrides: Record<string, unknown> = {}): CookieFixture {
     name: "sb-local-auth-token",
     value: encodeSessionCookie({
       access_token: "access-token",
-      expires_at: Math.floor(Date.now() / 1000) + 60,
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
       token_type: "bearer",
       ...overrides,
     }),

@@ -4,6 +4,7 @@ const fetchSpy = vi.spyOn(globalThis, "fetch");
 const SUPABASE_URL = "https://project-ref.supabase.co";
 const AUTH_COOKIE_NAME = "sb-project-ref-auth-token";
 const NOW_SECONDS = 1_900_000_000;
+const EXTENSION_SESSION_DEADLINE_MS = 5_000;
 const previousFastApiBaseUrl = process.env.FASTAPI_BASE_URL;
 const previousInternalSecret = process.env.NEXUS_INTERNAL_SECRET;
 const previousRedirectOrigins = process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS;
@@ -18,7 +19,7 @@ function encodeSessionCookie(session: Record<string, unknown>): string {
 function authCookie(overrides: Record<string, unknown> = {}): string {
   return `${AUTH_COOKIE_NAME}=${encodeSessionCookie({
     access_token: "web-session-token",
-    expires_at: NOW_SECONDS + 60,
+    expires_at: NOW_SECONDS + 3600,
     token_type: "bearer",
     ...overrides,
   })}`;
@@ -78,7 +79,7 @@ describe("GET /extension/connect/start", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("redirects users with an invalid session cookie through login", async () => {
+  it("redirects users with a malformed session cookie through login", async () => {
     const { GET } = await import("./route");
     const response = await GET(
       new Request(
@@ -89,6 +90,49 @@ describe("GET /extension/connect/start", () => {
 
     expect(response.status).toBe(307);
     expect(new URL(response.headers.get("location") || "").pathname).toBe("/login");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("redirects users whose access token has expired without a refresh token through login", async () => {
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request(
+        "http://localhost:3000/extension/connect/start?redirect_uri=https%3A%2F%2Fextension.chromiumapp.org%2F",
+        {
+          headers: {
+            cookie: authCookie({ expires_at: NOW_SECONDS - 10 }),
+          },
+        }
+      )
+    );
+
+    expect(response.status).toBe(307);
+    expect(new URL(response.headers.get("location") || "").pathname).toBe("/login");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("redirects a refreshable session through /auth/refresh and back to itself", async () => {
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request(
+        "http://localhost:3000/extension/connect/start?redirect_uri=https%3A%2F%2Fextension.chromiumapp.org%2Fcallback",
+        {
+          headers: {
+            cookie: authCookie({
+              expires_at: NOW_SECONDS - 10,
+              refresh_token: "web-refresh-token",
+            }),
+          },
+        }
+      )
+    );
+
+    expect(response.status).toBe(307);
+    const location = new URL(response.headers.get("location") || "");
+    expect(location.pathname).toBe("/auth/refresh");
+    expect(location.searchParams.get("next")).toBe(
+      "/extension/connect/start?redirect_uri=https%3A%2F%2Fextension.chromiumapp.org%2Fcallback"
+    );
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -116,12 +160,50 @@ describe("GET /extension/connect/start", () => {
     expect(new Headers(init?.headers).get("x-nexus-internal")).toBe(
       "test-internal-secret"
     );
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
 
     expect(response.status).toBe(307);
     const location = new URL(response.headers.get("location") || "");
     expect(location.origin).toBe("https://extension.chromiumapp.org");
     expect(location.pathname).toBe("/callback");
     expect(new URLSearchParams(location.hash.slice(1)).get("token")).toBe("nx_ext_session");
+  });
+
+  it("redirects to the extension with an error when the FastAPI request exceeds its deadline", async () => {
+    fetchSpy.mockImplementation((_input, init) => {
+      const signal = (init as RequestInit | undefined)?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        const abort = () => {
+          reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        };
+        if (signal?.aborted) {
+          abort();
+          return;
+        }
+        signal?.addEventListener("abort", abort, { once: true });
+      });
+    });
+
+    const { GET } = await import("./route");
+    const responsePromise = GET(
+      new Request(
+        "http://localhost:3000/extension/connect/start?redirect_uri=https%3A%2F%2Fextension.chromiumapp.org%2Fcallback",
+        { headers: { cookie: authCookie() } }
+      )
+    );
+
+    await vi.advanceTimersByTimeAsync(EXTENSION_SESSION_DEADLINE_MS);
+
+    const response = await responsePromise;
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(307);
+    const location = new URL(response.headers.get("location") || "");
+    expect(location.origin).toBe("https://extension.chromiumapp.org");
+    expect(location.pathname).toBe("/callback");
+    expect(new URLSearchParams(location.hash.slice(1)).get("error")).toBe(
+      "session_failed"
+    );
   });
 });
 

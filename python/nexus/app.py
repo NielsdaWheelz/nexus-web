@@ -179,12 +179,17 @@ def create_app(
     """
     settings = get_settings()
 
+    # Interactive API docs are exposed only in non-production environments.
+    # In staging/prod they are disabled so the schema is not served publicly.
+    docs_disabled = settings.nexus_env in (Environment.STAGING, Environment.PROD)
+
     app = FastAPI(
         title="Nexus API",
         description="Backend API for Nexus - a reading and notes platform",
         version="0.1.0",
-        docs_url="/docs",
-        redoc_url="/redoc",
+        docs_url=None if docs_disabled else "/docs",
+        redoc_url=None if docs_disabled else "/redoc",
+        openapi_url=None if docs_disabled else "/openapi.json",
         lifespan=lifespan,
     )
 

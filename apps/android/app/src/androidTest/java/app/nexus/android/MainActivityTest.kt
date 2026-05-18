@@ -12,6 +12,7 @@ import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
+import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.intent.Intents
@@ -267,6 +268,35 @@ class MainActivityTest {
                     currentUrl = activity.webView.url
                 }
                 currentUrl == firstUrl
+            }
+        }
+    }
+
+    @Test
+    fun backgroundingAndResumingKeepsTheWebViewLoaded() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val ownedUrl = "${BuildConfig.NEXUS_BASE_URL}/settings"
+
+            scenario.onActivity { activity ->
+                activity.routeUrl(Uri.parse(ownedUrl))
+            }
+            waitUntil("Expected WebView to load owned Nexus URL.") {
+                var currentUrl: String? = null
+                scenario.onActivity { activity ->
+                    currentUrl = activity.webView.url
+                }
+                currentUrl == ownedUrl
+            }
+
+            scenario.moveToState(Lifecycle.State.STARTED)
+            scenario.moveToState(Lifecycle.State.RESUMED)
+
+            waitUntil("Expected WebView to survive pause and resume.") {
+                var currentUrl: String? = null
+                scenario.onActivity { activity ->
+                    currentUrl = activity.webView.url
+                }
+                currentUrl == ownedUrl
             }
         }
     }

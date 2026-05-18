@@ -47,7 +47,7 @@ cp deploy/env/env-prod-worker.example deploy/env/env-prod-worker
 
 Fill in the real values:
 
-- Supabase Auth URL/JWKS/audience values, not Supabase DB or Storage secrets.
+- Supabase Auth issuer, JWKS, and audiences, not Supabase DB or Storage secrets.
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` for the VPS Postgres.
 - Cloudflare R2 bucket, endpoint, access keys, and browser upload CORS policy.
 

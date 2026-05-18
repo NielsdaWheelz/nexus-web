@@ -3,27 +3,29 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   FeedbackNotice,
-  toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import SectionCard from "@/components/ui/SectionCard";
 import Button from "@/components/ui/Button";
 import { AppList, AppListItem } from "@/components/ui/AppList";
-import { shouldUseAndroidDebugAuthCallback } from "@/lib/androidShell";
 import {
   formatIdentityProvider,
   getConnectableProviders,
   mayUnlinkIdentity,
-  normalizeLinkedIdentities,
   type LinkedIdentity,
   type OAuthProvider,
 } from "@/lib/auth/identities";
 import {
-  buildAndroidDebugAuthCallbackUrl,
-  buildAuthCallbackUrl,
-} from "@/lib/auth/redirects";
-import { createClient } from "@/lib/supabase/client";
+  loadLinkedIdentities,
+  unlinkLinkedIdentity,
+} from "./actions";
 import styles from "./page.module.css";
+
+const LOAD_FAILED_MESSAGE = "Failed to load identities";
+const UNLINK_FAILED_MESSAGE =
+  "We couldn't unlink this identity. Please try again.";
+const KEEP_ONE_IDENTITY_MESSAGE =
+  "Link at least one additional identity before unlinking.";
 
 function linkedDate(identity: LinkedIdentity): string {
   if (!identity.createdAt) {
@@ -36,28 +38,39 @@ function linkedDate(identity: LinkedIdentity): string {
   return `linked ${date.toLocaleDateString()}`;
 }
 
+// Identity linking is OAuth initiation: a GET form to the server /auth/oauth
+// route, which asks Supabase for the provider URL and redirects there. The
+// browser never holds a Supabase client.
+function ConnectProviderForm({ provider }: { provider: OAuthProvider }) {
+  return (
+    <form className={styles.linkForm} action="/auth/oauth" method="get">
+      <input type="hidden" name="mode" value="link" />
+      <input type="hidden" name="provider" value={provider} />
+      <Button variant="pill" type="submit">
+        {`Connect ${formatIdentityProvider(provider)}`}
+      </Button>
+    </form>
+  );
+}
+
 export default function SettingsIdentitiesPaneBody() {
   const [identities, setIdentities] = useState<LinkedIdentity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [notice, setNotice] = useState<FeedbackContent | null>(null);
-  const [linkingProvider, setLinkingProvider] = useState<OAuthProvider | null>(
-    null
-  );
   const [unlinkingIdentityId, setUnlinkingIdentityId] = useState<string | null>(
     null
   );
 
   const loadIdentities = useCallback(async () => {
-    const supabase = createClient();
-    const { data, error: identitiesError } = await supabase.auth.getUserIdentities();
-    if (identitiesError) {
-      setError(toFeedback(identitiesError, { fallback: "Failed to load identities" }));
+    const result = await loadLinkedIdentities();
+    if (!result.ok) {
+      setError({ severity: "error", title: LOAD_FAILED_MESSAGE });
       setIdentities([]);
       return;
     }
 
-    setIdentities(normalizeLinkedIdentities(data));
+    setIdentities(result.identities);
     setError(null);
   }, []);
 
@@ -74,49 +87,10 @@ export default function SettingsIdentitiesPaneBody() {
     [identities]
   );
 
-  const handleLinkProvider = useCallback(async (provider: OAuthProvider) => {
-    setError(null);
-    setNotice(null);
-    setLinkingProvider(provider);
-
-    try {
-      const supabase = createClient();
-      const useAndroidDebugCallback = shouldUseAndroidDebugAuthCallback(
-        window.location.protocol,
-        window.location.hostname,
-        navigator.userAgent
-      );
-      const { error: linkError } = await supabase.auth.linkIdentity({
-        provider,
-        options: {
-          redirectTo: useAndroidDebugCallback
-            ? buildAndroidDebugAuthCallbackUrl("/settings/identities")
-            : buildAuthCallbackUrl(window.location.origin, "/settings/identities"),
-        },
-      });
-
-      if (linkError) {
-        setError(
-          toFeedback(linkError, {
-            fallback: "We couldn't start identity linking. Please try again.",
-          })
-        );
-      }
-    } catch (linkError) {
-      setError(
-        toFeedback(linkError, {
-          fallback: "We couldn't start identity linking. Please try again.",
-        })
-      );
-    } finally {
-      setLinkingProvider(null);
-    }
-  }, []);
-
   const handleUnlinkIdentity = useCallback(
     async (identity: LinkedIdentity) => {
       if (!mayUnlinkIdentity(identities, identity.id)) {
-        setError({ severity: "error", title: "Link at least one additional identity before unlinking." });
+        setError({ severity: "error", title: KEEP_ONE_IDENTITY_MESSAGE });
         return;
       }
 
@@ -125,21 +99,12 @@ export default function SettingsIdentitiesPaneBody() {
       setUnlinkingIdentityId(identity.id);
 
       try {
-        const supabase = createClient();
-        const unlinkPayload = {
-          identity_id: identity.id,
-          provider: identity.provider,
-        } as Parameters<typeof supabase.auth.unlinkIdentity>[0];
-        const { error: unlinkError } = await supabase.auth.unlinkIdentity(
-          unlinkPayload
+        const result = await unlinkLinkedIdentity(
+          identity.id,
+          identity.provider
         );
-
-        if (unlinkError) {
-          setError(
-            toFeedback(unlinkError, {
-              fallback: "We couldn't unlink this identity. Please try again.",
-            })
-          );
+        if (!result.ok) {
+          setError({ severity: "error", title: UNLINK_FAILED_MESSAGE });
           return;
         }
 
@@ -148,12 +113,6 @@ export default function SettingsIdentitiesPaneBody() {
           title: `${formatIdentityProvider(identity.provider)} sign-in was removed.`,
         });
         await loadIdentities();
-      } catch (unlinkError) {
-        setError(
-          toFeedback(unlinkError, {
-            fallback: "We couldn't unlink this identity. Please try again.",
-          })
-        );
       } finally {
         setUnlinkingIdentityId(null);
       }
@@ -212,21 +171,9 @@ export default function SettingsIdentitiesPaneBody() {
           </FeedbackNotice>
         ) : (
           <div className={styles.linkButtons}>
-            {connectableProviders.map((provider) => {
-              const pending = linkingProvider === provider;
-              return (
-                <Button
-                  key={provider}
-                  variant="pill"
-                  disabled={linkingProvider !== null || unlinkingIdentityId !== null}
-                  onClick={() => void handleLinkProvider(provider)}
-                >
-                  {pending
-                    ? `Redirecting to ${formatIdentityProvider(provider)}...`
-                    : `Connect ${formatIdentityProvider(provider)}`}
-                </Button>
-              );
-            })}
+            {connectableProviders.map((provider) => (
+              <ConnectProviderForm key={provider} provider={provider} />
+            ))}
           </div>
         )}
       </div>

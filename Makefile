@@ -5,7 +5,7 @@
 	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
 	test-android test-migrations test-supabase test-real-media test-live-providers test-e2e test-e2e-ui \
-	verify verify-android verify-android-release verify-full \
+	smoke verify verify-android verify-android-release verify-full \
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw \
 	_test-supabase-raw _test-real-media-raw _test-real-media-backend-raw _test-live-providers-raw \
@@ -72,6 +72,7 @@ help:
 	@echo "  make test-live-providers  - Strict live-provider backend gate"
 	@echo "  make verify             - check + build + test"
 	@echo "  make verify-full        - verify + real-media + live-provider + default E2E gates"
+	@echo "  make smoke              - Post-deploy auth smoke check against production URLs"
 	@echo ""
 	@echo "Focused targets:"
 	@echo "  make type-back             - Backend type checking"
@@ -441,6 +442,9 @@ verify-full:
 	make test-live-providers
 	make test-e2e
 	@echo "=== full verification passed ==="
+
+smoke:
+	./deploy/smoke/auth-smoke.sh
 
 _ensure-node-ingest:
 	@if [ ! -d "node/ingest/node_modules" ]; then \

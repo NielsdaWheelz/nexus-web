@@ -1,17 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-const mockGetUser = vi.fn();
 const NOW_SECONDS = 1_900_000_000;
 const AUTH_COOKIE_NAME = "sb-project-ref-auth-token";
-
-vi.mock("@supabase/ssr", () => ({
-  createServerClient: vi.fn(() => ({
-    auth: {
-      getUser: mockGetUser,
-    },
-  })),
-}));
+const NONCE = "test-nonce";
 
 function encodeSessionCookie(session: Record<string, unknown>): string {
   return `base64-${Buffer.from(JSON.stringify(session), "utf8").toString(
@@ -19,21 +11,39 @@ function encodeSessionCookie(session: Record<string, unknown>): string {
   )}`;
 }
 
-function authCookie(overrides: Record<string, unknown> = {}): string {
+// An `active` cookie: unexpired well past the refresh margin.
+function activeCookie(overrides: Record<string, unknown> = {}): string {
   return `${AUTH_COOKIE_NAME}=${encodeSessionCookie({
     access_token: "access-token",
-    expires_at: NOW_SECONDS + 60,
+    expires_at: NOW_SECONDS + 3_600,
     token_type: "bearer",
+    refresh_token: "refresh-token",
     ...overrides,
   })}`;
 }
 
+// A `refreshable` cookie: expired access token, refresh token still present.
+function refreshableCookie(): string {
+  return activeCookie({ expires_at: NOW_SECONDS - 60 });
+}
+
+// An `ended` cookie: expired access token, no usable refresh token.
+function endedCookie(): string {
+  return activeCookie({ expires_at: NOW_SECONDS - 60, refresh_token: "" });
+}
+
 describe("updateSession", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     vi.useFakeTimers();
-    mockGetUser.mockReset();
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://project-ref.supabase.co";
+    delete process.env.AUTH_REFRESH_REDIRECT_ENABLED;
     vi.setSystemTime(NOW_SECONDS * 1000);
+    fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("middleware must not perform network I/O"));
+    vi.resetModules();
   });
 
   afterEach(() => {
@@ -41,132 +51,299 @@ describe("updateSession", () => {
     vi.restoreAllMocks();
   });
 
-  it("redirects protected requests without an auth cookie and preserves the destination", async () => {
+  it("passes an active protected request through with the request-path header", async () => {
     const { updateSession } = await import("./middleware");
-    const response = await updateSession(
-      new NextRequest("http://localhost:3000/conversations?view=compact")
+    const response = updateSession(
+      new NextRequest("http://localhost:3000/libraries", {
+        headers: { cookie: activeCookie() },
+      }),
+      NONCE
+    );
+
+    expect(response.headers.get("location")).toBeNull();
+    expect(
+      response.headers.get("x-middleware-request-x-nexus-request-path")
+    ).toBe("/libraries");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("redirects a refreshable protected navigation to /auth/refresh and keeps the cookie", async () => {
+    const { updateSession } = await import("./middleware");
+    const response = updateSession(
+      new NextRequest("http://localhost:3000/conversations?view=compact", {
+        headers: { cookie: refreshableCookie() },
+      }),
+      NONCE
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/auth/refresh?next=%2Fconversations%3Fview%3Dcompact"
+    );
+    // The refresh route needs the cookie's refresh token — it must not be cleared.
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not redirect a refreshable prefetch request to /auth/refresh", async () => {
+    const { updateSession } = await import("./middleware");
+    const response = updateSession(
+      new NextRequest("http://localhost:3000/libraries", {
+        headers: {
+          cookie: refreshableCookie(),
+          "Next-Router-Prefetch": "1",
+        },
+      }),
+      NONCE
+    );
+
+    expect(response.headers.get("location")).toBeNull();
+    expect(
+      response.headers.get("x-middleware-request-x-nexus-request-path")
+    ).toBe("/libraries");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("falls back to clearing the cookie and redirecting to /login when the kill-switch is off", async () => {
+    process.env.AUTH_REFRESH_REDIRECT_ENABLED = "0";
+
+    const { updateSession } = await import("./middleware");
+    const response = updateSession(
+      new NextRequest("http://localhost:3000/libraries", {
+        headers: { cookie: refreshableCookie() },
+      }),
+      NONCE
+    );
+
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/login?next=%2Flibraries"
+    );
+    expect(response.headers.get("set-cookie")).toContain(AUTH_COOKIE_NAME);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("clears the cookie and redirects an ended protected request to /login", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { updateSession } = await import("./middleware");
+    const response = updateSession(
+      new NextRequest("http://localhost:3000/libraries", {
+        headers: { cookie: endedCookie() },
+      }),
+      NONCE
+    );
+
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/login?next=%2Flibraries"
+    );
+    expect(response.headers.get("set-cookie")).toContain(AUTH_COOKIE_NAME);
+    expect(warn).toHaveBeenCalledWith(
+      "auth_involuntary_logout",
+      expect.objectContaining({ state: "ended" })
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("clears the cookie and redirects an anonymous protected request to /login", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { updateSession } = await import("./middleware");
+    const response = updateSession(
+      new NextRequest("http://localhost:3000/conversations?view=compact", {
+        headers: { cookie: `${AUTH_COOKIE_NAME}=base64-malformed` },
+      }),
+      NONCE
     );
 
     expect(response.headers.get("location")).toBe(
       "http://localhost:3000/login?next=%2Fconversations%3Fview%3Dcompact"
     );
-    expect(mockGetUser).not.toHaveBeenCalled();
+    expect(response.headers.get("set-cookie")).toContain(AUTH_COOKIE_NAME);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("emits a structured involuntary-logout log line for an anonymous protected request", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { updateSession } = await import("./middleware");
+    updateSession(
+      new NextRequest("http://localhost:3000/libraries"),
+      NONCE
+    );
+
+    expect(warn).toHaveBeenCalledWith("auth_involuntary_logout", {
+      state: "anonymous",
+      reason: "missing",
+      path: "/libraries",
+    });
+  });
+
+  it("passes /api and /api/* requests through unchanged", async () => {
+    const { updateSession } = await import("./middleware");
+    const responses = [
+      updateSession(new NextRequest("http://localhost:3000/api"), NONCE),
+      updateSession(
+        new NextRequest("http://localhost:3000/api/libraries"),
+        NONCE
+      ),
+    ];
+
+    for (const response of responses) {
+      expect(response.headers.get("location")).toBeNull();
+      // /api routes are not protected pages — no request-path header is added.
+      expect(
+        response.headers.get("x-middleware-request-x-nexus-request-path")
+      ).toBeNull();
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("allows public routes without redirecting unauthenticated users", async () => {
     const { updateSession } = await import("./middleware");
-    const responses = await Promise.all([
-      updateSession(
-        new NextRequest("http://localhost:3000/login?next=%2Flibraries")
-      ),
-      updateSession(new NextRequest("http://localhost:3000/android")),
-      updateSession(
-        new NextRequest("http://localhost:3000/.well-known/assetlinks.json")
-      ),
-      updateSession(new NextRequest("http://localhost:3000/terms")),
-      updateSession(new NextRequest("http://localhost:3000/privacy")),
-      updateSession(
-        new NextRequest("http://localhost:3000/extension/connect/start")
-      ),
-    ]);
+    const responses = [
+      "http://localhost:3000/login?next=%2Flibraries",
+      "http://localhost:3000/android",
+      "http://localhost:3000/.well-known/assetlinks.json",
+      "http://localhost:3000/terms",
+      "http://localhost:3000/privacy",
+      "http://localhost:3000/auth/callback",
+      "http://localhost:3000/auth/refresh",
+      "http://localhost:3000/auth/signout",
+      "http://localhost:3000/extension/connect/start",
+    ].map((url) => updateSession(new NextRequest(url), NONCE));
 
     expect(
       responses.every((response) => !response.headers.get("location"))
     ).toBe(true);
-    expect(mockGetUser).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("redirects authenticated login requests to the normalized next path", async () => {
+  it("redirects an authenticated login request to the normalized next path", async () => {
     const { updateSession } = await import("./middleware");
-    const response = await updateSession(
-      new NextRequest(
-        "http://localhost:3000/login?next=%2Fsearch%3Fq%3Doauth",
-        {
-          headers: {
-            cookie: authCookie(),
-          },
-        }
-      )
+    const response = updateSession(
+      new NextRequest("http://localhost:3000/login?next=%2Fsearch%3Fq%3Doauth", {
+        headers: { cookie: activeCookie() },
+      }),
+      NONCE
     );
 
     expect(response.headers.get("location")).toBe(
       "http://localhost:3000/search?q=oauth"
     );
-    expect(mockGetUser).not.toHaveBeenCalled();
   });
 
-  it("redirects authenticated login requests with unsafe next paths to the default", async () => {
+  it("redirects an authenticated login request with an unsafe next to the default", async () => {
     const { updateSession } = await import("./middleware");
-    const response = await updateSession(
+    const response = updateSession(
       new NextRequest("http://localhost:3000/login?next=https://evil.example", {
-        headers: {
-          cookie: authCookie(),
-        },
-      })
+        headers: { cookie: activeCookie() },
+      }),
+      NONCE
     );
 
     expect(response.headers.get("location")).toBe(
       "http://localhost:3000/libraries"
     );
-    expect(mockGetUser).not.toHaveBeenCalled();
   });
 
-  it("allows unauthenticated API routes through so route handlers can return JSON errors", async () => {
+  it("forwards the nonce on the request x-nonce header for a passed-through request", async () => {
     const { updateSession } = await import("./middleware");
-    const response = await updateSession(
-      new NextRequest("http://localhost:3000/api/libraries")
+    const response = updateSession(
+      new NextRequest("http://localhost:3000/libraries", {
+        headers: { cookie: activeCookie() },
+      }),
+      NONCE
     );
 
-    expect(response.headers.get("location")).toBeNull();
-    expect(mockGetUser).not.toHaveBeenCalled();
+    expect(response.headers.get("x-middleware-request-x-nonce")).toBe(NONCE);
+  });
+});
+
+describe("middleware CSP", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://project-ref.supabase.co";
+    delete process.env.E2E_DISABLE_CSP;
+    delete process.env.AUTH_REFRESH_REDIRECT_ENABLED;
+    vi.setSystemTime(NOW_SECONDS * 1000);
+    vi.resetModules();
   });
 
-  it("allows protected requests with a valid-shaped unexpired auth cookie without Supabase network", async () => {
-    const { updateSession } = await import("./middleware");
-    const response = await updateSession(
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("sets a nonce-based Content-Security-Policy and matches the request x-nonce", async () => {
+    const { middleware } = await import("@/middleware");
+    const response = middleware(
       new NextRequest("http://localhost:3000/libraries", {
-        headers: {
-          cookie: authCookie(),
-        },
+        headers: { cookie: activeCookie() },
       })
     );
 
-    expect(response.headers.get("location")).toBeNull();
-    expect(mockGetUser).not.toHaveBeenCalled();
-  });
+    const csp = response.headers.get("Content-Security-Policy");
+    expect(csp).toBeTruthy();
+    const scriptSrc = csp!
+      .split("; ")
+      .find((directive) => directive.startsWith("script-src "));
+    const nonceMatch = scriptSrc!.match(/^script-src 'self' 'nonce-([^']+)'/);
+    expect(nonceMatch).not.toBeNull();
+    expect(scriptSrc).toContain("'strict-dynamic'");
+    // 'unsafe-inline' must be gone from script-src — a present nonce would
+    // otherwise make the browser ignore it anyway.
+    expect(scriptSrc).not.toContain("'unsafe-inline'");
 
-  it("redirects protected requests with a stale or fake auth cookie", async () => {
-    const { updateSession } = await import("./middleware");
-    const request = new NextRequest("http://localhost:3000/libraries", {
-      headers: {
-        cookie: "sb-project-ref-auth-token=base64-session",
-      },
-    });
-    const response = await updateSession(request);
-
-    expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/login?next=%2Flibraries"
+    // The CSP nonce is the same fresh per-request nonce set on the request.
+    expect(response.headers.get("x-middleware-request-x-nonce")).toBe(
+      nonceMatch![1]
     );
-    expect(response.headers.get("set-cookie")).toContain(AUTH_COOKIE_NAME);
-    expect(mockGetUser).not.toHaveBeenCalled();
   });
 
-  it("redirects an expired valid-shaped auth cookie without Supabase network", async () => {
-    mockGetUser.mockReturnValue(new Promise(() => {}));
-
-    const { updateSession } = await import("./middleware");
-    const response = await updateSession(
+  it("restricts frame-src to an exact youtube allowlist with no wildcard", async () => {
+    const { middleware } = await import("@/middleware");
+    const response = middleware(
       new NextRequest("http://localhost:3000/libraries", {
-        headers: {
-          cookie: authCookie({ expires_at: NOW_SECONDS }),
-        },
+        headers: { cookie: activeCookie() },
       })
     );
 
-    expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/login?next=%2Flibraries"
+    const directives = new Map(
+      (response.headers.get("Content-Security-Policy") ?? "")
+        .split("; ")
+        .map((entry) => {
+          const [name, ...valueParts] = entry.split(" ");
+          return [name, valueParts.join(" ")] as const;
+        })
     );
-    expect(response.headers.get("set-cookie")).toContain(AUTH_COOKIE_NAME);
-    expect(mockGetUser).not.toHaveBeenCalled();
+    expect(directives.get("worker-src")).toBe("'self'");
+    expect(directives.get("frame-src")).toBe(
+      "https://www.youtube.com https://www.youtube-nocookie.com"
+    );
+  });
+
+  it("generates a fresh nonce per request", async () => {
+    const { middleware } = await import("@/middleware");
+    const cspOf = () =>
+      middleware(
+        new NextRequest("http://localhost:3000/libraries", {
+          headers: { cookie: activeCookie() },
+        })
+      ).headers.get("Content-Security-Policy");
+
+    expect(cspOf()).not.toBe(cspOf());
+  });
+
+  it("omits the Content-Security-Policy header when E2E_DISABLE_CSP is set", async () => {
+    process.env.E2E_DISABLE_CSP = "1";
+
+    const { middleware } = await import("@/middleware");
+    const response = middleware(
+      new NextRequest("http://localhost:3000/libraries", {
+        headers: { cookie: activeCookie() },
+      })
+    );
+
+    expect(response.headers.get("Content-Security-Policy")).toBeNull();
   });
 });

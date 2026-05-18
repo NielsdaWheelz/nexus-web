@@ -89,10 +89,6 @@ class Settings(BaseSettings):
     supabase_issuer: str | None = Field(default=None, alias="SUPABASE_ISSUER")
     supabase_audiences: str | None = Field(default=None, alias="SUPABASE_AUDIENCES")
 
-    # Test auth settings (optional, with defaults)
-    test_token_issuer: str = Field(default="test-issuer", alias="TEST_TOKEN_ISSUER")
-    test_token_audiences: str = Field(default="test-audience", alias="TEST_TOKEN_AUDIENCES")
-
     # Rejected Supabase Auth admin settings. Seed scripts must read service-role
     # keys from script-local env, not the application runtime Settings object.
     supabase_service_key_rejected: str | None = Field(

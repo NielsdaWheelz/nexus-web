@@ -6,7 +6,7 @@ This document covers the architectural layers and their responsibilities.
 
 ## Architecture
 
-- **Next.js middleware**: session refresh, auth gating, CSP headers.
+- **Next.js middleware**: network-free session-cookie classification, auth gating, CSP headers. Performs no network I/O and no token refresh; redirects `refreshable` navigations to `/auth/refresh`.
 - **Android shell**: host the configured Nexus web origin in `WebView`; route off-origin navigation to Custom Tabs.
 - **Next.js API routes (BFF)**: proxy requests to FastAPI with bearer tokens. No business logic.
 - **FastAPI middleware**: JWT verification, request ID, viewer injection.
@@ -22,6 +22,6 @@ This document covers the architectural layers and their responsibilities.
 - BFF proxy routes must not contain business logic. They forward requests and attach auth.
 - Client-side product data calls use `/api/*` routes only. They never call
   FastAPI directly except streaming SSE.
-- Supabase browser auth calls are allowed only in owned login, auth callback,
-  and linked-identity modules. They must not be used for product data access.
+- OAuth is initiated server-side via a server route or server action. There is no
+  browser Supabase client; the browser holds no tokens.
 - Android shell code does not call FastAPI, Supabase, or product APIs directly.

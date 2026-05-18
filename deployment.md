@@ -256,13 +256,40 @@ Before switching production traffic:
 7. Confirm `/health`, Supabase Auth login, object upload/download, and a worker
    job against Hetzner Postgres/R2.
 8. Switch frontend/API traffic and keep maintenance schedules at `0`.
+9. Run the auth smoke check (see Smoke Checks) against the live URLs.
 
 After cutover, treat Supabase Database and Supabase Storage as legacy data
 sources only. Do not write new production data to them and do not configure them
 as a fallback path.
 
+## Smoke Checks
+
+`deploy/smoke/auth-smoke.sh` is the post-deploy auth gate. Run it after every
+frontend/backend release once traffic is live; it exits nonzero on any failed
+check. It verifies the production cutover behavior end to end: anonymous
+protected pages redirect to `/login` with a preserved `next`, a valid-shaped
+expired cookie prompts a redirect with no `MIDDLEWARE_INVOCATION_TIMEOUT`,
+public pages return `200`, BFF routes return JSON `401 E_UNAUTHENTICATED`,
+`/docs` is not reachable, and the API health endpoint returns `200`.
+
+```bash
+NEXUS_SMOKE_APP_URL=https://nexus.nielseriknandal.com \
+NEXUS_SMOKE_API_URL=https://api.nexus.nielseriknandal.com \
+NEXUS_SMOKE_SUPABASE_URL=https://jiaozhsisiphjtomoamy.supabase.co \
+  make smoke
+```
+
+The same values can be passed as `--app-url`, `--api-url`, and `--supabase-url`
+flags. `--supabase-url` is the deployed `NEXT_PUBLIC_SUPABASE_URL`; its project
+ref names the auth cookie the boundary parser reads, so the crafted expired
+cookie is one the deployed app interprets. The script makes only safe `GET`
+requests and never prints cookie or token values.
+
 Keep legacy Supabase cleanup/export credentials in a separate local file that is
-never synced as runtime env:
+never synced as runtime env. These values feed the one-off Supabase-exit cleanup
+scripts only; none of them is a required production runtime variable (`SUPABASE_URL`
+in particular is not — FastAPI verifies tokens with `SUPABASE_ISSUER`,
+`SUPABASE_JWKS_URL`, and `SUPABASE_AUDIENCES`):
 
 ```bash
 SUPABASE_DATABASE_URL=<old-supabase-postgres-url>
@@ -330,6 +357,7 @@ restore its schedule to `0`, sync env again without
 - `deploy/hetzner/sync-env.sh`: uploads backend runtime env.
 - `deploy/hetzner/deploy.sh`: builds, migrates, and starts services.
 - `deploy/vercel/sync-env.sh`: pushes Vercel env.
+- `deploy/smoke/auth-smoke.sh`: post-deploy auth smoke check.
 - `.dockerignore`: keeps VPS Docker build contexts small.
 - `deploy/cloudflare/r2-cors.example.json`: production R2 browser upload CORS policy.
 - `deploy/cloudflare/r2-lifecycle.example.json`: production R2 lifecycle policy that expires `uploads/` staging objects.

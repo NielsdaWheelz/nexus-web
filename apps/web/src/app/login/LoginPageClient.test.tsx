@@ -1,100 +1,67 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { ANDROID_SHELL_USER_AGENT_TOKEN } from "@/lib/androidShell";
-
-const { mockSignInWithOAuth } = vi.hoisted(() => ({
-  mockSignInWithOAuth: vi.fn(),
-}));
-
-vi.mock("@/lib/supabase/client", () => ({
-  createClient: () => ({
-    auth: {
-      signInWithOAuth: mockSignInWithOAuth,
-    },
-  }),
-}));
-
 import LoginPageClient from "./LoginPageClient";
 
-const DEFAULT_USER_AGENT = navigator.userAgent;
-
-function setUserAgent(userAgent: string) {
-  Object.defineProperty(window.navigator, "userAgent", {
-    value: userAgent,
-    configurable: true,
-  });
-}
-
 describe("LoginPageClient", () => {
-  beforeEach(() => {
-    mockSignInWithOAuth.mockReset().mockResolvedValue({ error: null });
-    setUserAgent(DEFAULT_USER_AGENT);
-    window.history.replaceState(null, "", "/login?next=%2Flibraries");
+  it("offers a Google and a GitHub sign-in control", () => {
+    render(<LoginPageClient nextPath="/libraries" />);
+
+    expect(
+      screen.getByRole("button", { name: /continue with google/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /continue with github/i })
+    ).toBeInTheDocument();
   });
 
-  it("does not auto-process hash tokens on mount", async () => {
-    window.history.replaceState(
-      null,
-      "",
-      "/login?next=%2Flibraries#access_token=attacker-access&refresh_token=attacker-refresh"
+  it("renders no in-page password or token field — OAuth is the only path", () => {
+    render(<LoginPageClient nextPath="/libraries" />);
+
+    expect(screen.queryByLabelText(/password/i)).toBeNull();
+  });
+
+  it("renders a calm 'you were signed out' notice for forced-logout feedback", () => {
+    render(
+      <LoginPageClient
+        nextPath="/libraries"
+        initialFeedback={{
+          severity: "info",
+          title: "You were signed out.",
+          message: "Your session ended. Please sign in again.",
+        }}
+      />
     );
 
-    render(<LoginPageClient nextPath="/libraries" />);
-
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(mockSignInWithOAuth).not.toHaveBeenCalled();
+    expect(screen.getByText("You were signed out.")).toBeInTheDocument();
+    expect(screen.getByText(/your session ended/i)).toBeInTheDocument();
+    // A forced sign-out is informational, not an error: it is not an alert.
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("starts OAuth using an explicit callback URL with normalized next path", async () => {
-    const user = userEvent.setup();
-    render(<LoginPageClient nextPath="/libraries" />);
-
-    await user.click(screen.getByRole("button", { name: /continue with github/i }));
-
-    expect(mockSignInWithOAuth).toHaveBeenCalledWith({
-      provider: "github",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=%2Flibraries`,
-      },
-    });
-  });
-
-  it("uses the debug Android callback scheme for local shell OAuth", async () => {
-    const user = userEvent.setup();
-    setUserAgent(`${DEFAULT_USER_AGENT} ${ANDROID_SHELL_USER_AGENT_TOKEN}`);
-
-    render(<LoginPageClient nextPath="/libraries" />);
-
-    await user.click(screen.getByRole("button", { name: /continue with google/i }));
-
-    expect(mockSignInWithOAuth).toHaveBeenCalledWith({
-      provider: "google",
-      options: {
-        redirectTo: "nexus-dev://auth/callback?next=%2Flibraries",
-      },
-    });
-  });
-
-  it("keeps generic local WebViews on the standard web callback", async () => {
-    const user = userEvent.setup();
-    setUserAgent(
-      "Mozilla/5.0 (Linux; Android 14; SM-S906W Build/UP1A.231005.007; wv) AppleWebKit/537.36"
+  it("renders an OAuth failure as an error alert", () => {
+    render(
+      <LoginPageClient
+        nextPath="/libraries"
+        initialFeedback={{
+          severity: "error",
+          title: "We couldn't start sign in. Please try again.",
+        }}
+      />
     );
 
-    render(<LoginPageClient nextPath="/libraries" />);
-
-    await user.click(screen.getByRole("button", { name: /continue with google/i }));
-
-    expect(mockSignInWithOAuth).toHaveBeenCalledWith({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=%2Flibraries`,
-      },
-    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /couldn't start sign in/i
+    );
   });
 
-  it("shows public links for privacy policy and terms of service", () => {
+  it("renders no feedback when none is given", () => {
+    render(<LoginPageClient nextPath="/libraries" />);
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("shows public links for the privacy policy and terms of service", () => {
     render(<LoginPageClient nextPath="/libraries" />);
 
     expect(screen.getByRole("link", { name: /privacy policy/i })).toHaveAttribute(
