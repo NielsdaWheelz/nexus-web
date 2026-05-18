@@ -38,7 +38,6 @@ describe("updateSession", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://project-ref.supabase.co";
-    delete process.env.AUTH_REFRESH_REDIRECT_ENABLED;
     vi.setSystemTime(NOW_SECONDS * 1000);
     fetchSpy = vi
       .spyOn(globalThis, "fetch")
@@ -101,24 +100,6 @@ describe("updateSession", () => {
     expect(
       response.headers.get("x-middleware-request-x-nexus-request-path")
     ).toBe("/libraries");
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it("falls back to clearing the cookie and redirecting to /login when the kill-switch is off", async () => {
-    process.env.AUTH_REFRESH_REDIRECT_ENABLED = "0";
-
-    const { updateSession } = await import("./middleware");
-    const response = updateSession(
-      new NextRequest("http://localhost:3000/libraries", {
-        headers: { cookie: refreshableCookie() },
-      }),
-      NONCE
-    );
-
-    expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/login?next=%2Flibraries"
-    );
-    expect(response.headers.get("set-cookie")).toContain(AUTH_COOKIE_NAME);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -264,7 +245,6 @@ describe("middleware CSP", () => {
     vi.useFakeTimers();
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://project-ref.supabase.co";
     delete process.env.E2E_DISABLE_CSP;
-    delete process.env.AUTH_REFRESH_REDIRECT_ENABLED;
     vi.setSystemTime(NOW_SECONDS * 1000);
     vi.resetModules();
   });

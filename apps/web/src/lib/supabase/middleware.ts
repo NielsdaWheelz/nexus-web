@@ -11,13 +11,6 @@ const NONCE_HEADER = "x-nonce";
 const PREFETCH_HEADER = "Next-Router-Prefetch";
 const TEMPORARY_REDIRECT = 307;
 
-// Kill-switch for the `refreshable` → /auth/refresh redirect. When disabled,
-// middleware falls back to the pre-cutover behavior — clear the cookie and
-// redirect to /login — so a broken refresh path can be neutralized without a
-// redeploy. Default enabled; only the explicit string "0" turns it off.
-const REFRESH_REDIRECT_ENABLED =
-  process.env.AUTH_REFRESH_REDIRECT_ENABLED !== "0";
-
 /**
  * Routes that don't require authentication
  */
@@ -34,7 +27,7 @@ const PUBLIC_ROUTES = new Set([
 ]);
 
 // Clear the auth cookie chunks and redirect to /login — the involuntary-logout
-// path for `ended`/`anonymous` and for `refreshable` when the kill-switch is off.
+// path for `ended` and `anonymous`.
 function clearAndRedirectToLogin(
   request: NextRequest,
   cookieNames: string[]
@@ -97,9 +90,6 @@ export function updateSession(
       // prefetch pass and the page gate handles the real navigation.
       if (request.headers.has(PREFETCH_HEADER)) {
         return passThrough();
-      }
-      if (!REFRESH_REDIRECT_ENABLED) {
-        return clearAndRedirectToLogin(request, session.cookieNames);
       }
       // Silent refresh. Do not clear the cookie — the refresh route needs the
       // refresh token it carries.

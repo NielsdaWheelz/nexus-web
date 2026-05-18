@@ -226,10 +226,6 @@ Rules:
 - `ended` or `anonymous` protected page request: clear the auth cookie chunks and
   redirect to `/login?next=...`.
 - `/api` and `/api/*`: pass through unchanged.
-- The `refreshable` redirect is governed by an environment kill-switch. When the
-  switch is off, middleware falls back to clearing the cookie and redirecting to
-  `/login` — the pre-cutover behavior — so a broken refresh path can be
-  neutralized without a redeploy.
 - Emit the Content-Security-Policy header (see Content Security Policy).
 
 Middleware classification remains an optimistic latency optimization, not an
@@ -532,7 +528,7 @@ Recorded so it is not rediscovered. Not in this cutover:
 2. Extend the boundary parser with the four-state lifecycle classification,
    including `refreshable`.
 3. Add the `/auth/refresh` route handler: bounded, single-flight, terminal,
-   handling `GET` and `POST`, behind the redirect kill-switch flag.
+   handling `GET` and `POST`.
 4. Update middleware to redirect `refreshable` real-navigation page requests to
    `/auth/refresh` without clearing the cookie, leave prefetch requests alone, and
    keep clearing only `ended`/`anonymous` cookies.
@@ -626,8 +622,6 @@ Frontend unit tests:
 - Middleware redirects `refreshable` page requests to `/auth/refresh` and does not
   clear the cookie.
 - Middleware does not redirect a `refreshable` prefetch request to `/auth/refresh`.
-- Middleware falls back to the pre-cutover clear-and-redirect behavior when the
-  kill-switch is off.
 - Middleware still clears and redirects `ended`/`anonymous` requests, passes
   `/api/*` through, and makes no network call on any path.
 - `/auth/refresh` refreshes and redirects to `next` on success.
