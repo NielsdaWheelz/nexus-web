@@ -1405,7 +1405,10 @@ def run_podcast_transcription_now(
         except Exception as exc:
             # Transcript text remains usable even when semantic indexing fails.
             semantic_status = "failed"
-            semantic_error_code = ApiErrorCode.E_INTERNAL.value
+            error_code = (
+                exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INTERNAL.value
+            )
+            semantic_error_code = error_code
             logger.exception(
                 "podcast_transcript_semantic_index_failed",
                 media_id=str(media_id),
@@ -1415,7 +1418,7 @@ def run_podcast_transcription_now(
             mark_content_index_failed(
                 db,
                 media_id=media_id,
-                failure_code=ApiErrorCode.E_INTERNAL.value,
+                failure_code=error_code,
                 failure_message=str(exc),
             )
         db.execute(
@@ -1650,10 +1653,11 @@ def repair_podcast_transcript_semantic_index_now(
             transcript_version_id=str(transcript_version_id),
             error=str(exc),
         )
+        error_code = exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INTERNAL.value
         mark_content_index_failed(
             db,
             media_id=media_id,
-            failure_code=ApiErrorCode.E_INTERNAL.value,
+            failure_code=error_code,
             failure_message=str(exc),
         )
         _set_media_transcript_state(
@@ -1664,10 +1668,10 @@ def repair_podcast_transcript_semantic_index_now(
             semantic_status="failed",
             active_transcript_version_id=transcript_version_id,
             last_request_reason=normalized_reason,
-            last_error_code=ApiErrorCode.E_INTERNAL.value,
+            last_error_code=error_code,
             now=now,
         )
-        return {"status": "failed", "error_code": ApiErrorCode.E_INTERNAL.value}
+        return {"status": "failed", "error_code": error_code}
 
 
 def _insert_transcript_fragments(

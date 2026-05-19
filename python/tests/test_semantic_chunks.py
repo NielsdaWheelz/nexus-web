@@ -68,7 +68,7 @@ def test_openai_embedding_http_errors_raise_stable_codes(
     assert exc_info.value.code == expected_code
     assert exc_info.value.message == "Embedding provider request failed."
     assert "provider secret body" not in exc_info.value.message
-    assert route.call_count == (3 if status_code in {408, 429, 500} else 1)
+    assert route.call_count == (5 if status_code in {408, 429, 500} else 1)
 
 
 @respx.mock
@@ -89,6 +89,68 @@ def test_openai_embedding_retries_transient_provider_errors(
     assert model_name == "openai_text_embedding_3_small_256_v1"
     assert len(vectors) == 1
     assert route.call_count == 2
+
+
+@pytest.mark.unit
+@respx.mock
+def test_openai_embedding_429_insufficient_quota_raises_quota_exceeded_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _configure_openai_embeddings(monkeypatch)
+    monkeypatch.setattr("nexus.services.semantic_chunks.time.sleep", lambda _: None)
+    route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
+        429,
+        json={
+            "error": {
+                "type": "insufficient_quota",
+                "message": "You exceeded your current quota.",
+            }
+        },
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        build_text_embeddings(["NASA evidence"])
+
+    assert exc_info.value.code == ApiErrorCode.E_LLM_QUOTA_EXCEEDED, (
+        f"Expected E_LLM_QUOTA_EXCEEDED for an insufficient_quota 429, got {exc_info.value.code}"
+    )
+    assert exc_info.value.message == "Embedding provider request failed.", (
+        f"Expected the stable provider-failure message, got {exc_info.value.message!r}"
+    )
+    assert route.call_count == 1, (
+        f"Expected exactly 1 call (quota exhaustion is not retryable), got {route.call_count}"
+    )
+
+
+@pytest.mark.unit
+@respx.mock
+def test_openai_embedding_429_transient_error_type_retries_as_rate_limit(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _configure_openai_embeddings(monkeypatch)
+    monkeypatch.setattr("nexus.services.semantic_chunks.time.sleep", lambda _: None)
+    route = respx.post(OPENAI_EMBEDDINGS_URL).respond(
+        429,
+        json={
+            "error": {
+                "type": "requests",
+                "message": "Rate limit reached for requests.",
+            }
+        },
+    )
+
+    with pytest.raises(ApiError) as exc_info:
+        build_text_embeddings(["NASA evidence"])
+
+    assert exc_info.value.code == ApiErrorCode.E_LLM_RATE_LIMIT, (
+        f"Expected E_LLM_RATE_LIMIT for a non-quota 429 error type, got {exc_info.value.code}"
+    )
+    assert exc_info.value.message == "Embedding provider request failed.", (
+        f"Expected the stable provider-failure message, got {exc_info.value.message!r}"
+    )
+    assert route.call_count == 5, (
+        f"Expected 5 calls (a transient 429 retries to exhaustion), got {route.call_count}"
+    )
 
 
 @pytest.mark.parametrize(

@@ -1262,15 +1262,18 @@ def create_captured_web_article(
         media = db.get(Media, media_id)
         if media is not None:
             now = datetime.now(UTC)
+            error_code = (
+                exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INGEST_FAILED.value
+            )
             media.failure_stage = FailureStage.embed
-            media.last_error_code = ApiErrorCode.E_INGEST_FAILED.value
+            media.last_error_code = error_code
             media.last_error_message = f"Web article evidence index failed: {exc}"[:1000]
             media.failed_at = now
             media.updated_at = now
             mark_content_index_failed(
                 db,
                 media_id=media_id,
-                failure_code=ApiErrorCode.E_INGEST_FAILED.value,
+                failure_code=error_code,
                 failure_message=media.last_error_message,
             )
             db.commit()
@@ -1746,15 +1749,20 @@ def create_or_reuse_x_oembed_article(
             media = db.get(Media, media_id)
             if media is not None:
                 now = datetime.now(UTC)
+                error_code = (
+                    exc.code.value
+                    if isinstance(exc, ApiError)
+                    else ApiErrorCode.E_INGEST_FAILED.value
+                )
                 media.failure_stage = FailureStage.embed
-                media.last_error_code = ApiErrorCode.E_INGEST_FAILED.value
+                media.last_error_code = error_code
                 media.last_error_message = f"Web article evidence index failed: {exc}"[:1000]
                 media.failed_at = now
                 media.updated_at = now
                 mark_content_index_failed(
                     db,
                     media_id=media_id,
-                    failure_code=ApiErrorCode.E_INGEST_FAILED.value,
+                    failure_code=error_code,
                     failure_message=media.last_error_message,
                 )
                 db.commit()

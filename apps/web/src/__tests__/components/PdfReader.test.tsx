@@ -179,7 +179,7 @@ vi.mock("@/components/pdfReaderRuntime", () => {
   }
 
   return {
-    PDF_WORKER_SRC: "/api/pdfjs/worker",
+    PDF_WORKER_SRC: "/pdfjs/pdf.worker.min.mjs",
     getPdfSelection: () => window.getSelection(),
     loadPdfJs: async () => ({
       GlobalWorkerOptions: { workerSrc: "" },

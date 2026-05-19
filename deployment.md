@@ -246,6 +246,8 @@ Before switching production traffic:
 
 1. Provision Hetzner and DNS.
 2. Create the production R2 bucket, access keys, and browser CORS policy.
+   Apply the CORS policy as code with
+   `CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... R2_BUCKET=... ./deploy/cloudflare/apply-r2-cors.sh`.
 3. Stop or disable old backend writers and workers before starting the Hetzner
    worker.
 4. Use a fresh cutover by default: run migrations on empty Hetzner Postgres and
@@ -361,4 +363,5 @@ restore its schedule to `0`, sync env again without
 - `.dockerignore`: keeps VPS Docker build contexts small.
 - `deploy/cloudflare/r2-cors.example.json`: production R2 browser upload CORS policy.
 - `deploy/cloudflare/r2-lifecycle.example.json`: production R2 lifecycle policy that expires `uploads/` staging objects.
+- `deploy/cloudflare/apply-r2-cors.sh`: applies the R2 browser CORS policy through the Cloudflare API.
 - `deploy/cloudflare/apply-r2-lifecycle.sh`: applies the R2 lifecycle policy through the Cloudflare API.

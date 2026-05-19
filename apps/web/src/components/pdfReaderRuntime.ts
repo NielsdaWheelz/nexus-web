@@ -80,10 +80,10 @@ export interface PdfJsViewerLike {
   LinkTarget?: { BLANK?: number };
 }
 
-export const PDF_WORKER_SRC = "/api/pdfjs/worker";
+export const PDF_WORKER_SRC = "/pdfjs/pdf.worker.min.mjs";
 
-const PDF_VIEWER_MODULE_URL = "/api/pdfjs/viewer";
-const PDF_MODULE_URL = "/api/pdfjs/module";
+const PDF_VIEWER_MODULE_URL = "/pdfjs/pdf_viewer.mjs";
+const PDF_MODULE_URL = "/pdfjs/pdf.mjs";
 
 export async function loadPdfJs(): Promise<PdfJsLike> {
   const pdfJsModule = await import(

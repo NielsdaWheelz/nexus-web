@@ -17,8 +17,11 @@ from nexus.logging import get_logger
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
 _EMBEDDING_PROVIDER_RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504, 520}
-_EMBEDDING_PROVIDER_MAX_ATTEMPTS = 3
-_EMBEDDING_PROVIDER_BACKOFF_SECONDS = (0.25, 0.5, 1.0)
+# Embeddings are an external third-party API: retries.md gives these a budget
+# longer than infrastructure retries, kept well under the 300s worker lease.
+_EMBEDDING_PROVIDER_MAX_ATTEMPTS = 5
+_EMBEDDING_PROVIDER_BACKOFF_SECONDS = (2.0, 8.0, 20.0, 30.0)
+_EMBEDDING_PROVIDER_RETRY_AFTER_CAP_SECONDS = 30.0
 logger = get_logger(__name__)
 
 
@@ -104,7 +107,7 @@ def _embedding_provider_retry_delay_seconds(
             try:
                 retry_after_seconds = float(retry_after)
                 if retry_after_seconds > 0:
-                    return min(retry_after_seconds, 10.0)
+                    return min(retry_after_seconds, _EMBEDDING_PROVIDER_RETRY_AFTER_CAP_SECONDS)
             except ValueError:
                 pass
     return _EMBEDDING_PROVIDER_BACKOFF_SECONDS[
@@ -219,8 +222,22 @@ def _embed_with_openai(texts: list[str], *, dimensions: int) -> list[list[float]
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 error_code = _embedding_provider_error(response.status_code)
+                # OpenAI returns 429 both for transient rate limits and for a
+                # permanently exhausted billing quota; only the former is retryable.
+                quota_exhausted = False
+                if response.status_code == 429:
+                    try:
+                        error_kind = (response.json().get("error") or {}).get("type")
+                    except (ValueError, AttributeError):
+                        # justify-ignore-error: an unparseable 429 body only means we
+                        # cannot confirm quota exhaustion; fall through as a rate limit.
+                        error_kind = None
+                    if error_kind == "insufficient_quota":
+                        quota_exhausted = True
+                        error_code = ApiErrorCode.E_LLM_QUOTA_EXCEEDED
                 if (
                     response.status_code in _EMBEDDING_PROVIDER_RETRYABLE_STATUS_CODES
+                    and not quota_exhausted
                     and attempt_index < _EMBEDDING_PROVIDER_MAX_ATTEMPTS - 1
                 ):
                     delay_seconds = _embedding_provider_retry_delay_seconds(

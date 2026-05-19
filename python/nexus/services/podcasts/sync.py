@@ -1038,7 +1038,10 @@ def _sync_subscription_ingest(
             )
         except Exception as exc:
             semantic_status = "failed"
-            semantic_error_code = ApiErrorCode.E_INTERNAL.value
+            error_code = (
+                exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INTERNAL.value
+            )
+            semantic_error_code = error_code
             logger.exception(
                 "podcast_transcript_semantic_index_failed",
                 media_id=str(media_id),
@@ -1048,7 +1051,7 @@ def _sync_subscription_ingest(
             mark_content_index_failed(
                 db,
                 media_id=media_id,
-                failure_code=ApiErrorCode.E_INTERNAL.value,
+                failure_code=error_code,
                 failure_message=str(exc),
             )
 

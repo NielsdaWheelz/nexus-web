@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import FailureStage, Media, MediaKind, ProcessingStatus
 from nexus.db.session import get_session_factory
-from nexus.errors import ApiErrorCode
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.services.content_indexing import (
@@ -234,10 +234,15 @@ def _do_ingest(
                     request_id=request_id,
                     error=str(exc),
                 )
+                error_code = (
+                    exc.code.value
+                    if isinstance(exc, ApiError)
+                    else ApiErrorCode.E_INGEST_FAILED.value
+                )
                 mark_content_index_failed(
                     db,
                     media_id=media_id,
-                    failure_code=ApiErrorCode.E_INGEST_FAILED.value,
+                    failure_code=error_code,
                     failure_message=f"Transcript index failed: {exc}"[:1000],
                 )
                 _upsert_media_transcript_state(
@@ -248,7 +253,7 @@ def _do_ingest(
                     semantic_status="failed",
                     active_transcript_version_id=transcript_version_id,
                     last_request_reason="episode_open",
-                    last_error_code=ApiErrorCode.E_INGEST_FAILED.value,
+                    last_error_code=error_code,
                     now=datetime.now(UTC),
                 )
                 db.commit()

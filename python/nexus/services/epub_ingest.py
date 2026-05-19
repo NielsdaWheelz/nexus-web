@@ -36,7 +36,7 @@ from nexus.db.models import (
     Fragment,
     Media,
 )
-from nexus.errors import ApiErrorCode
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
@@ -691,8 +691,11 @@ def extract_epub_artifacts(
                     path,
                     cleanup_exc.message,
                 )
+        error_code = (
+            exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INGEST_FAILED.value
+        )
         return EpubExtractionError(
-            error_code=ApiErrorCode.E_INGEST_FAILED.value,
+            error_code=error_code,
             error_message=f"Extraction failed: {exc}",
         )
     finally:

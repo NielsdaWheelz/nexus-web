@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.db.session import get_session_factory
+from nexus.errors import ApiError
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.services.contributor_credits import replace_media_contributor_credits
@@ -381,6 +382,7 @@ def _index_pdf_evidence(
             error=str(exc),
             request_id=request_id,
         )
+        error_code = exc.code.value if isinstance(exc, ApiError) else "E_INGEST_FAILED"
         try:
             from nexus.services.content_indexing import mark_content_index_failed
 
@@ -388,14 +390,14 @@ def _index_pdf_evidence(
             if media:
                 now = datetime.now(UTC)
                 media.failure_stage = FailureStage.embed
-                media.last_error_code = "E_INGEST_FAILED"
+                media.last_error_code = error_code
                 media.last_error_message = f"PDF evidence index failed: {exc}"[:1000]
                 media.failed_at = now
                 media.updated_at = now
                 mark_content_index_failed(
                     db,
                     media_id=media_uuid,
-                    failure_code="E_INGEST_FAILED",
+                    failure_code=error_code,
                     failure_message=media.last_error_message,
                 )
                 db.commit()

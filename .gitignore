@@ -82,6 +82,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 !apps/web/src/css.d.ts
+# pdf.js runtime assets copied from node_modules at build time, not source
+/apps/web/public/pdfjs/
 
 # Android
 apps/android/.idea/

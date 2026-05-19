@@ -80,6 +80,9 @@ class ApiErrorCode(str, Enum):
     # LLM errors (PR-05)
     E_LLM_NO_KEY = "E_LLM_NO_KEY"  # 400 - No API key available for provider
     E_LLM_RATE_LIMIT = "E_LLM_RATE_LIMIT"  # 429 - Provider rate limit exceeded
+    E_LLM_QUOTA_EXCEEDED = (
+        "E_LLM_QUOTA_EXCEEDED"  # 429 - Provider quota/billing exhausted; not retryable
+    )
     E_LLM_INVALID_KEY = "E_LLM_INVALID_KEY"  # 400 - API key is invalid or revoked
     E_LLM_PROVIDER_DOWN = "E_LLM_PROVIDER_DOWN"  # 503 - Provider service unavailable
     E_LLM_BAD_REQUEST = "E_LLM_BAD_REQUEST"  # 400 - Provider rejected the request
@@ -217,6 +220,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     # LLM errors (PR-05)
     ApiErrorCode.E_LLM_NO_KEY: 400,
     ApiErrorCode.E_LLM_RATE_LIMIT: 429,
+    ApiErrorCode.E_LLM_QUOTA_EXCEEDED: 429,
     ApiErrorCode.E_LLM_INVALID_KEY: 400,
     ApiErrorCode.E_LLM_PROVIDER_DOWN: 503,
     ApiErrorCode.E_LLM_BAD_REQUEST: 400,

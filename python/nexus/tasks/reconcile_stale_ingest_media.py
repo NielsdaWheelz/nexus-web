@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import FailureStage, Media, MediaFile, ProcessingStatus
 from nexus.db.session import get_session_factory
-from nexus.errors import ApiErrorCode
+from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.services.content_indexing import (
@@ -274,10 +274,15 @@ def reconcile_stale_ingest_media_job(
                     )
                     content_index_failed += 1
             except Exception as exc:
+                error_code = (
+                    exc.code.value
+                    if isinstance(exc, ApiError)
+                    else ApiErrorCode.E_INGEST_FAILED.value
+                )
                 mark_content_index_failed(
                     db,
                     media_id=media_id,
-                    failure_code=ApiErrorCode.E_INGEST_FAILED.value,
+                    failure_code=error_code,
                     failure_message=f"Evidence index repair failed: {exc}"[:_MAX_ERROR_MSG_LEN],
                 )
                 _mark_content_index_state_failed(
