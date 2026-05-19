@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { getAskAiFallbackCommand } from "@/components/command-palette/commandProviders";
+import {
+  getAskAiFallbackCommand,
+  getSeeAllInSearchCommand,
+} from "@/components/command-palette/commandProviders";
 import type { PaletteCommand } from "@/components/palette/types";
 
 function localCommand(title: string) {
@@ -62,7 +65,31 @@ describe("getAskAiFallbackCommand", () => {
         surface: "conversation",
         text: "summarize library notes",
       },
+      pin: "last",
     });
     expect(command?.target).not.toMatchObject({ submit: true });
+  });
+});
+
+describe("getSeeAllInSearchCommand", () => {
+  it("returns no command for short trimmed queries", () => {
+    expect(getSeeAllInSearchCommand({ query: " a " })).toBeNull();
+  });
+
+  it("returns a pinned href command to Search at or above two characters", () => {
+    const command = getSeeAllInSearchCommand({ query: "  library notes & more  " });
+
+    expect(command).toMatchObject({
+      id: "see-all-search",
+      title: 'See all results for "library notes & more"',
+      sectionId: "search-results",
+      source: "search",
+      target: {
+        kind: "href",
+        href: "/search?q=library%20notes%20%26%20more",
+        externalShell: false,
+      },
+      pin: "last",
+    });
   });
 });

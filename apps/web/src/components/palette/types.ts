@@ -1,11 +1,5 @@
 import type { ComponentType } from "react";
 
-export interface PaletteSection {
-  id: string;
-  label: string;
-  order: number;
-}
-
 export type PaletteTarget =
   | { kind: "href"; href: string; externalShell: boolean }
   | { kind: "action"; actionId: string }
@@ -26,9 +20,19 @@ export interface PaletteCommand {
     recencyBoost?: number;
     scopeBoost?: number;
   };
-  shortcutActionId?: string;
   shortcutLabel?: string;
   disabled?: { reason: string };
   danger?: boolean;
   scopeAffinity?: string[];
+  pin?: "last";
 }
+
+export interface PaletteGroup {
+  sectionId: string;
+  label: string;
+  commands: PaletteCommand[];
+}
+
+export type PaletteView =
+  | { state: "resting"; groups: PaletteGroup[] }
+  | { state: "querying"; results: PaletteCommand[] };

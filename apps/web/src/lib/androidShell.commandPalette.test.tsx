@@ -69,6 +69,7 @@ function openPalette() {
 describe("CommandPalette android shell gating", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal("innerWidth", 1280);
     setUserAgent(`${DEFAULT_USER_AGENT} ${ANDROID_SHELL_USER_AGENT_TOKEN}`);
     apiFetchMock.mockImplementation(async (path: string) => {
       if (path.startsWith("/api/me/palette-history")) {
@@ -127,7 +128,7 @@ describe("CommandPalette android shell gating", () => {
     expect(await screen.findByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
     const scopeChip = screen.queryByTestId("palette-scope-chip");
     if (scopeChip) {
-      fireEvent.click(within(scopeChip).getByRole("button", { name: "Remove" }));
+      fireEvent.click(within(scopeChip).getByRole("button", { name: "Clear scope" }));
       await waitFor(() => {
         expect(screen.queryByTestId("palette-scope-chip")).not.toBeInTheDocument();
       });

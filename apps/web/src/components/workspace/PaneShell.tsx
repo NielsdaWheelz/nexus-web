@@ -460,7 +460,7 @@ export default function PaneShell({
                       new CustomEvent(OPEN_COMMAND_PALETTE_EVENT)
                     )
                   }
-                  aria-label="Search"
+                  aria-label="Open command palette"
                   aria-haspopup="dialog"
                 >
                   <Search size={16} aria-hidden="true" />

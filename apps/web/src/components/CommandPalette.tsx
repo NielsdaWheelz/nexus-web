@@ -15,14 +15,18 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import Palette from "@/components/palette/Palette";
+import PaletteDesktopShell from "@/components/palette/PaletteDesktopShell";
+import PaletteMobileShell from "@/components/palette/PaletteMobileShell";
 import type { PaletteCommand } from "@/components/palette/types";
-import { getAskAiFallbackCommand } from "@/components/command-palette/commandProviders";
-import { rankPaletteCommands, sectionFor } from "@/components/command-palette/commandRanking";
+import {
+  getAskAiFallbackCommand,
+  getSeeAllInSearchCommand,
+} from "@/components/command-palette/commandProviders";
+import { buildPaletteView } from "@/components/command-palette/commandRanking";
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
-import Chip from "@/components/ui/Chip";
+import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { apiFetch } from "@/lib/api/client";
 import { loadKeybindings, matchesKeyEvent, formatKeyCombo } from "@/lib/keybindings";
 import { createNotePage, todayLocalDate } from "@/lib/notes/api";
@@ -520,14 +524,17 @@ interface PaletteScope {
   paneRouteParams: Record<string, string>;
 }
 
+const PALETTE_HISTORY_DEBOUNCE_MS = 200;
+const PALETTE_SEARCH_DEBOUNCE_MS = 200;
+const PALETTE_ORACLE_TTL_MS = 5 * 60_000;
+
 export default function CommandPalette() {
   const androidShell = isAndroidShell();
   const feedback = useFeedback();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<PaletteScope | null>(null);
-  const [activeCommandId, setActiveCommandId] = useState<string | null>(null);
-  const [requestedCommandId, setRequestedCommandId] = useState<string | null>(null);
+  const [initialActiveCommandId, setInitialActiveCommandId] = useState<string | null>(null);
   const [keybindings, setKeybindings] = useState<Record<string, string>>({});
   const [historyRows, setHistoryRows] = useState<PaletteHistoryResponse["data"]["recent"]>([]);
   const [frecencyBoosts, setFrecencyBoosts] = useState<Map<string, number>>(new Map());
@@ -565,8 +572,7 @@ export default function CommandPalette() {
     if (!shouldOpen) return;
 
     setQuery(params.get("q") ?? "");
-    setRequestedCommandId(commandId);
-    setActiveCommandId(commandId);
+    setInitialActiveCommandId(commandId);
     setScope(captureScope());
     setOpen(true);
 
@@ -581,8 +587,7 @@ export default function CommandPalette() {
   useEffect(() => {
     const handler = () => {
       setQuery("");
-      setRequestedCommandId(null);
-      setActiveCommandId(null);
+      setInitialActiveCommandId(null);
       setScope(captureScope());
       setOpen(true);
     };
@@ -610,7 +615,7 @@ export default function CommandPalette() {
           setHistoryRows([]);
           setFrecencyBoosts(new Map());
         });
-    }, 200);
+    }, PALETTE_HISTORY_DEBOUNCE_MS);
 
     return () => {
       window.clearTimeout(timer);
@@ -620,7 +625,7 @@ export default function CommandPalette() {
 
   useEffect(() => {
     if (!open) return;
-    if (Date.now() - oracleFetchedAt.current < 5 * 60_000) return;
+    if (Date.now() - oracleFetchedAt.current < PALETTE_ORACLE_TTL_MS) return;
 
     void apiFetch<{ data: OracleReadingSummary[] } | OracleReadingSummary[]>("/api/oracle/readings")
       .then((response) => {
@@ -662,7 +667,7 @@ export default function CommandPalette() {
         .finally(() => {
           if (!cancelled) setSearchLoading(false);
         });
-    }, 200);
+    }, PALETTE_SEARCH_DEBOUNCE_MS);
 
     return () => {
       cancelled = true;
@@ -833,35 +838,48 @@ export default function CommandPalette() {
     localCommands: commandsBeforeAi.filter((command) => command.source !== "search"),
     canOpenConversation: true,
   });
+  const seeAllCommand = getSeeAllInSearchCommand({ query });
 
-  const ranked = rankPaletteCommands({
-    query,
-    commands: askAiCommand ? [...commandsBeforeAi, askAiCommand] : commandsBeforeAi,
-    frecencyBoosts,
-    currentWorkspaceHref:
-      workspaceState.panes.find((pane) => pane.id === workspaceState.activePaneId)?.href ?? null,
-    scopeFilter: scope?.paneRouteId ?? null,
-  });
+  const scopeLabel = scope
+    ? `In: ${PANE_TYPE_LABELS[scope.paneRouteId]} — ${scope.paneTitle}`
+    : null;
+  const inThisPaneLabel = scope
+    ? `In this ${PANE_TYPE_LABELS[scope.paneRouteId].toLowerCase()}`
+    : null;
 
-  const loadingSectionIds = searchLoading ? ["search-results"] : [];
+  const view = useMemo(
+    () =>
+      buildPaletteView({
+        query,
+        commands: [
+          ...commandsBeforeAi,
+          ...(askAiCommand ? [askAiCommand] : []),
+          ...(seeAllCommand ? [seeAllCommand] : []),
+        ],
+        frecencyBoosts,
+        currentWorkspaceHref:
+          workspaceState.panes.find((p) => p.id === workspaceState.activePaneId)?.href ?? null,
+        scopeFilter: scope?.paneRouteId ?? null,
+        inThisPaneLabel,
+      }),
+    [
+      askAiCommand,
+      commandsBeforeAi,
+      frecencyBoosts,
+      inThisPaneLabel,
+      query,
+      scope,
+      seeAllCommand,
+      workspaceState.activePaneId,
+      workspaceState.panes,
+    ],
+  );
 
-  useEffect(() => {
-    if (requestedCommandId === null) return;
-    if (ranked.displayCommands.some((command) => command.id === requestedCommandId)) {
-      setActiveCommandId(requestedCommandId);
-      setRequestedCommandId(null);
-      return;
-    }
-    setActiveCommandId(ranked.displayCommands[0]?.id ?? null);
-    setRequestedCommandId(null);
-  }, [ranked.displayCommands, requestedCommandId]);
-
-  useEffect(() => {
-    if (!open) return;
-    if (requestedCommandId !== null) return;
-    if (activeCommandId && ranked.displayCommands.some((command) => command.id === activeCommandId)) return;
-    setActiveCommandId(ranked.displayCommands[0]?.id ?? null);
-  }, [activeCommandId, open, ranked.displayCommands, requestedCommandId]);
+  const closePalette = useCallback(() => {
+    setOpen(false);
+    setScope(null);
+  }, []);
+  const clearScope = useCallback(() => setScope(null), []);
 
   const executeCommand = useCallback(
     async (command: PaletteCommand) => {
@@ -990,8 +1008,7 @@ export default function CommandPalette() {
       if (paletteCombo && matchesKeyEvent(paletteCombo, event)) {
         event.preventDefault();
         setQuery("");
-        setRequestedCommandId(null);
-        setActiveCommandId(null);
+        setInitialActiveCommandId(null);
         if (open) {
           setScope(null);
           setOpen(false);
@@ -1017,61 +1034,36 @@ export default function CommandPalette() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [captureScope, executeCommand, keybindings, open]);
 
+  const isMobile = useIsMobileViewport();
+
+  if (!open) return null;
+
+  if (isMobile) {
+    return (
+      <PaletteMobileShell
+        query={query}
+        view={view}
+        searchLoading={searchLoading}
+        scopeLabel={scopeLabel}
+        onQueryChange={setQuery}
+        onClearScope={clearScope}
+        onSelect={executeCommand}
+        onClose={closePalette}
+      />
+    );
+  }
+
   return (
-    <Palette
-      open={open}
+    <PaletteDesktopShell
       query={query}
-      sections={[
-        sectionFor("top-result"),
-        scope
-          ? {
-              id: "in-this-pane",
-              label: `In this ${PANE_TYPE_LABELS[scope.paneRouteId].toLowerCase()}`,
-              order: 5,
-            }
-          : sectionFor("in-this-pane"),
-        sectionFor("search-results"),
-        sectionFor("open-tabs"),
-        sectionFor("recent"),
-        sectionFor("recent-folios"),
-        sectionFor("create"),
-        sectionFor("navigate"),
-        sectionFor("settings"),
-        sectionFor("ask-ai"),
-      ]}
-      commands={ranked.displayCommands}
-      activeCommandId={activeCommandId}
-      loadingSectionIds={loadingSectionIds}
-      searchPrefix={
-        scope ? (
-          <Chip
-            removable
-            onRemove={() => setScope(null)}
-            data-testid="palette-scope-chip"
-          >
-            {`In: ${PANE_TYPE_LABELS[scope.paneRouteId]} — ${scope.paneTitle}`}
-          </Chip>
-        ) : null
-      }
-      onOpenChange={(nextOpen) => {
-        setOpen(nextOpen);
-        if (!nextOpen) setScope(null);
-      }}
-      onQueryChange={(nextQuery) => {
-        setQuery(nextQuery);
-        setRequestedCommandId(null);
-      }}
-      onActiveCommandChange={setActiveCommandId}
-      onSelect={(command) => {
-        void executeCommand(command);
-      }}
-      onEscape={() => {
-        if (scope) {
-          setScope(null);
-          return true;
-        }
-        return false;
-      }}
+      view={view}
+      searchLoading={searchLoading}
+      scopeLabel={scopeLabel}
+      initialActiveCommandId={initialActiveCommandId}
+      onQueryChange={setQuery}
+      onClearScope={clearScope}
+      onSelect={executeCommand}
+      onClose={closePalette}
     />
   );
 }

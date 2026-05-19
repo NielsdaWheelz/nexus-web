@@ -1,4 +1,4 @@
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, Search } from "lucide-react";
 import type { PaletteCommand } from "@/components/palette/types";
 
 export function getAskAiFallbackCommand({
@@ -26,5 +26,23 @@ export function getAskAiFallbackCommand({
     target: { kind: "prefill", surface: "conversation", text },
     source: "ai",
     rank: {},
+    pin: "last",
+  };
+}
+
+export function getSeeAllInSearchCommand({ query }: { query: string }): PaletteCommand | null {
+  const text = query.trim();
+  if (text.length < 2) return null;
+
+  return {
+    id: "see-all-search",
+    title: `See all results for "${text}"`,
+    keywords: [],
+    sectionId: "search-results",
+    icon: Search,
+    target: { kind: "href", href: `/search?q=${encodeURIComponent(text)}`, externalShell: false },
+    source: "search",
+    rank: {},
+    pin: "last",
   };
 }

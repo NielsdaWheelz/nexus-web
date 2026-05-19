@@ -1,59 +1,38 @@
-import type { PaletteCommand, PaletteSection } from "@/components/palette/types";
+import type { PaletteCommand, PaletteGroup, PaletteView } from "@/components/palette/types";
 
-const SECTION_ORDER: Record<string, number> = {
-  "top-result": 0,
-  "in-this-pane": 5,
-  "search-results": 10,
-  "open-tabs": 20,
-  recent: 30,
-  "recent-folios": 40,
-  create: 50,
-  navigate: 60,
-  settings: 70,
-  "ask-ai": 80,
-};
-
-const SECTION_LABELS: Record<string, string> = {
-  "top-result": "Top result",
-  "in-this-pane": "In this pane",
-  "search-results": "Search results",
-  "open-tabs": "Open tabs",
-  recent: "Recent",
-  "recent-folios": "Recent folios",
-  create: "Create",
-  navigate: "Navigate",
-  settings: "Settings",
-  "ask-ai": "Ask AI",
-};
-
-export function sectionFor(id: string): PaletteSection {
-  return { id, label: SECTION_LABELS[id] ?? id, order: SECTION_ORDER[id] ?? 1000 };
-}
+const RESTING_SECTIONS: { id: string; label: string }[] = [
+  { id: "in-this-pane", label: "In this pane" },
+  { id: "open-tabs", label: "Open tabs" },
+  { id: "recent", label: "Recent" },
+  { id: "recent-folios", label: "Recent folios" },
+  { id: "create", label: "Create" },
+  { id: "navigate", label: "Go to" },
+  { id: "settings", label: "Settings" },
+];
 
 const SCOPE_FILTER_AFFINITY_BOOST = 1500;
 
-export function rankPaletteCommands({
+export function buildPaletteView({
   query,
   commands,
   frecencyBoosts,
   currentWorkspaceHref,
   scopeFilter,
+  inThisPaneLabel,
 }: {
   query: string;
   commands: PaletteCommand[];
   frecencyBoosts: Map<string, number>;
   currentWorkspaceHref: string | null;
   scopeFilter: string | null;
-}): {
-  topResult: PaletteCommand | null;
-  displaySections: PaletteSection[];
-  displayCommands: PaletteCommand[];
-} {
+  inThisPaneLabel: string | null;
+}): PaletteView {
   const normalizedQuery = query.trim().toLowerCase();
   const filteredCommands =
     scopeFilter === null
       ? commands
       : commands.filter((command) => command.scopeAffinity?.includes(scopeFilter) ?? false);
+
   const scored = filteredCommands
     .map((command, index) => {
       const title = command.title.toLowerCase();
@@ -99,20 +78,26 @@ export function rankPaletteCommands({
     })
     .sort((a, b) => b.score - a.score || a.index - b.index);
 
-  const topResult = normalizedQuery ? (scored.find((item) => !item.command.disabled)?.command ?? null) : null;
-  const displayCommands = topResult
-    ? [
-        { ...topResult, sectionId: "top-result" },
-        ...filteredCommands.filter((command) => command.id !== topResult.id),
-      ]
-    : filteredCommands;
+  if (!normalizedQuery) {
+    const groups: PaletteGroup[] = [];
+    for (const section of RESTING_SECTIONS) {
+      const commandsInSection = scored
+        .filter((item) => item.command.sectionId === section.id)
+        .map((item) => item.command);
+      if (commandsInSection.length === 0) continue;
+      const label =
+        section.id === "in-this-pane" && inThisPaneLabel !== null ? inThisPaneLabel : section.label;
+      groups.push({ sectionId: section.id, label, commands: commandsInSection });
+    }
+    return { state: "resting", groups };
+  }
 
-  const usedSectionIds = new Set(displayCommands.map((command) => command.sectionId));
-  const displaySections = Array.from(usedSectionIds)
-    .map(sectionFor)
-    .sort((a, b) => a.order - b.order);
-
-  return { topResult, displaySections, displayCommands };
+  const ranked = scored.map((item) => item.command);
+  const results = [
+    ...ranked.filter((command) => command.pin !== "last"),
+    ...ranked.filter((command) => command.pin === "last"),
+  ];
+  return { state: "querying", results };
 }
 
 function isOrderedSubsequence(query: string, title: string): boolean {

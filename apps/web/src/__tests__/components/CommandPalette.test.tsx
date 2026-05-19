@@ -90,7 +90,7 @@ function openPane(href: string, titleHint?: string) {
 async function clearPaletteScope() {
   const chip = screen.queryByTestId("palette-scope-chip");
   if (!chip) return;
-  fireEvent.click(within(chip).getByRole("button", { name: "Remove" }));
+  fireEvent.click(within(chip).getByRole("button", { name: "Clear scope" }));
   await waitFor(() => {
     expect(screen.queryByTestId("palette-scope-chip")).not.toBeInTheDocument();
   });
@@ -100,6 +100,9 @@ describe("CommandPalette", () => {
   beforeEach(() => {
     localStorage.clear();
     window.history.replaceState({}, "", "/libraries");
+    // useIsMobileViewport reads window.innerWidth; pin a desktop width so the
+    // controller renders the desktop shell (keyboard nav, shortcut hints).
+    vi.stubGlobal("innerWidth", 1280);
     mockApi();
   });
 
@@ -125,7 +128,7 @@ describe("CommandPalette", () => {
 
     await clearPaletteScope();
 
-    expect(screen.getByRole("group", { name: "Navigate" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Go to" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Oracle/ })).toBeInTheDocument();
   });
 
@@ -209,9 +212,9 @@ describe("CommandPalette", () => {
       target: { value: "search" },
     });
 
-    expect(await screen.findByRole("group", { name: "Search results" })).toBeInTheDocument();
     expect(await screen.findByRole("option", { name: /Searchable note/ })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Top result" })).toBeInTheDocument();
+    expect(screen.queryByRole("group")).not.toBeInTheDocument();
+    expect(screen.queryByText("Top result")).not.toBeInTheDocument();
   });
 
   it("represents secondary pane operations as commands", async () => {
@@ -300,7 +303,7 @@ describe("CommandPalette", () => {
     const chip = await screen.findByTestId("palette-scope-chip");
     expect(screen.queryByRole("option", { name: /Oracle/ })).not.toBeInTheDocument();
 
-    fireEvent.click(within(chip).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(chip).getByRole("button", { name: "Clear scope" }));
 
     await waitFor(() => {
       expect(screen.queryByTestId("palette-scope-chip")).not.toBeInTheDocument();

@@ -456,7 +456,7 @@ describe("PaneShell", () => {
     expect(screen.getByRole("button", { name: "Options" })).toBeInTheDocument();
   });
 
-  it("renders an icon-only Search trigger on mobile and dispatches the open event", () => {
+  it("renders an icon-only command palette trigger on mobile and dispatches the open event", () => {
     const onOpen = vi.fn();
     window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen as EventListener);
 
@@ -476,7 +476,7 @@ describe("PaneShell", () => {
       </PaneShell>
     );
 
-    const trigger = screen.getByRole("button", { name: "Search" });
+    const trigger = screen.getByRole("button", { name: "Open command palette" });
     expect(trigger).not.toHaveTextContent(/\S/);
 
     fireEvent.click(trigger);
