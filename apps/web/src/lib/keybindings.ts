@@ -2,6 +2,8 @@ const STORAGE_KEY = "nexus.keybindings.v1";
 
 const DEFAULTS: Record<string, string> = {
   "open-palette": "Meta+k",
+  "pane-next": "Meta+Shift+arrowright",
+  "pane-previous": "Meta+Shift+arrowleft",
 };
 
 interface ParsedCombo {
@@ -89,7 +91,14 @@ export function formatKeyCombo(combo: string): string {
     }
   });
 
-  const displayKey = key.length === 1 ? key.toUpperCase() : key;
+  const displayKey =
+    key === "arrowright"
+      ? "→"
+      : key === "arrowleft"
+        ? "←"
+        : key.length === 1
+          ? key.toUpperCase()
+          : key;
   return isMac ? `${symbols.join("")}${displayKey}` : `${symbols.join("+")}+${displayKey}`;
 }
 

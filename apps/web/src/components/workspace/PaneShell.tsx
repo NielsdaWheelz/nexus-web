@@ -125,6 +125,7 @@ interface PaneShellProps {
   extraWidthPx: number;
   bodyMode: PaneBodyMode;
   onResizePane: (paneId: string, widthPx: number) => void;
+  onChromeMouseDown?: (event: React.MouseEvent<HTMLElement>) => void;
   isActive?: boolean;
   isMobile?: boolean;
   children: React.ReactNode;
@@ -145,6 +146,7 @@ export default function PaneShell({
   extraWidthPx,
   bodyMode,
   onResizePane,
+  onChromeMouseDown,
   isActive = false,
   isMobile = false,
   children,
@@ -440,6 +442,7 @@ export default function PaneShell({
         data-testid="pane-shell-chrome"
         data-pane-chrome-focus="true"
         tabIndex={-1}
+        onMouseDown={onChromeMouseDown}
       >
         <SurfaceHeader
           title={title}

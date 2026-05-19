@@ -57,7 +57,7 @@
   position: absolute;
   inset: 0;
   overflow: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior-y: contain;
 }
 
 .viewerHost {

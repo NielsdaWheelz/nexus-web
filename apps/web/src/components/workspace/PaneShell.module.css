@@ -21,6 +21,7 @@
   min-height: 0;
   background: var(--surface-canvas);
   border-bottom: 1px solid var(--edge-subtle);
+  cursor: grab;
 }
 
 .toolbar {

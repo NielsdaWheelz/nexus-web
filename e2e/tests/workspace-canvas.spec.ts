@@ -1,0 +1,145 @@
+import { test, expect, type Locator, type Page } from "@playwright/test";
+
+function encodeWorkspaceStateParam(value: unknown): string {
+  return btoa(JSON.stringify(value))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function workspacePaneStrip(page: Page): Locator {
+  return page.getByRole("toolbar", { name: "Workspace panes" });
+}
+
+function paneWrap(page: Page, paneId: string): Locator {
+  return page.locator(`[data-pane-id="${paneId}"]`);
+}
+
+function edgeFade(page: Page, side: "start" | "end"): Locator {
+  return page.locator(`[data-side="${side}"]`);
+}
+
+async function paneBoxX(pane: Locator): Promise<number> {
+  const box = await pane.boundingBox();
+  expect(box).not.toBeNull();
+  return box!.x;
+}
+
+// Three same-width panes side by side overflow the 1280px desktop viewport,
+// so the canvas is genuinely scrollable.
+const OVERFLOWING_WORKSPACE = encodeWorkspaceStateParam({
+  schemaVersion: 4,
+  activePaneId: "pane-libraries",
+  panes: [
+    { id: "pane-libraries", href: "/libraries", widthPx: 560, visibility: "visible" },
+    { id: "pane-search", href: "/search", widthPx: 560, visibility: "visible" },
+    { id: "pane-settings", href: "/settings", widthPx: 560, visibility: "visible" },
+  ],
+});
+
+test.describe("workspace canvas", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(`/libraries?wsv=4&ws=${OVERFLOWING_WORKSPACE}`);
+
+    // Wait for every pane wrap to mount before driving the canvas.
+    await expect(paneWrap(page, "pane-libraries")).toBeVisible();
+    await expect(paneWrap(page, "pane-search")).toBeVisible();
+    await expect(paneWrap(page, "pane-settings")).toBeVisible();
+    await expect(workspacePaneStrip(page)).toBeVisible();
+  });
+
+  test("a vertical wheel over a pane header pans the canvas horizontally", async ({
+    page,
+  }) => {
+    const firstPane = paneWrap(page, "pane-libraries");
+    const startX = await paneBoxX(firstPane);
+
+    // A vertical wheel over header chrome (no vertical scroll there) translates
+    // to a horizontal pan.
+    const header = paneWrap(page, "pane-libraries").getByTestId("pane-shell-chrome");
+    const headerBox = await header.boundingBox();
+    expect(headerBox).not.toBeNull();
+    await page.mouse.move(
+      headerBox!.x + headerBox!.width / 2,
+      headerBox!.y + headerBox!.height / 2,
+    );
+    await page.mouse.wheel(0, 400);
+
+    await expect
+      .poll(async () => paneBoxX(firstPane))
+      .toBeLessThan(startX);
+  });
+
+  test("dragging a pane header pans the canvas", async ({ page }) => {
+    const firstPane = paneWrap(page, "pane-libraries");
+    const startX = await paneBoxX(firstPane);
+
+    const header = paneWrap(page, "pane-libraries").getByTestId("pane-shell-chrome");
+    const headerBox = await header.boundingBox();
+    expect(headerBox).not.toBeNull();
+    const grabY = headerBox!.y + headerBox!.height / 2;
+    const grabX = headerBox!.x + headerBox!.width / 2;
+
+    // Press the header, move left past the drag threshold in steps, release.
+    await page.mouse.move(grabX, grabY);
+    await page.mouse.down();
+    await page.mouse.move(grabX - 300, grabY, { steps: 12 });
+    await page.mouse.up();
+
+    await expect
+      .poll(async () => paneBoxX(firstPane))
+      .toBeLessThan(startX);
+  });
+
+  test("pane-next and pane-previous step the active pane and bring it into view", async ({
+    page,
+  }) => {
+    const stepChord = `ControlOrMeta+Shift+ArrowRight`;
+    const backChord = `ControlOrMeta+Shift+ArrowLeft`;
+
+    await expect(paneWrap(page, "pane-libraries")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+
+    // pane-next moves the active pane forward and centres it.
+    await page.keyboard.press(stepChord);
+    await expect(paneWrap(page, "pane-search")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    await expect(paneWrap(page, "pane-libraries")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+    await expect(paneWrap(page, "pane-search")).toBeInViewport();
+
+    // pane-previous moves it back.
+    await page.keyboard.press(backChord);
+    await expect(paneWrap(page, "pane-libraries")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    await expect(paneWrap(page, "pane-libraries")).toBeInViewport();
+  });
+
+  test("edge fades signal off-screen panes and update as the canvas pans", async ({
+    page,
+  }) => {
+    // At the start of the canvas only the trailing fade shows.
+    await expect(edgeFade(page, "end")).toBeVisible();
+    await expect(edgeFade(page, "start")).toHaveCount(0);
+
+    // Pan right; the leading fade appears once panes sit off the start edge.
+    const header = paneWrap(page, "pane-libraries").getByTestId("pane-shell-chrome");
+    const headerBox = await header.boundingBox();
+    expect(headerBox).not.toBeNull();
+    await page.mouse.move(
+      headerBox!.x + headerBox!.width / 2,
+      headerBox!.y + headerBox!.height / 2,
+    );
+    await page.mouse.wheel(0, 600);
+
+    await expect(edgeFade(page, "start")).toBeVisible();
+  });
+});

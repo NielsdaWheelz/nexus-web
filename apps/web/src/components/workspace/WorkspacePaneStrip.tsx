@@ -9,6 +9,7 @@ interface WorkspacePaneStripItem {
   paneId: string;
   title: string;
   isActive: boolean;
+  isInView: boolean;
   visibility: "visible" | "minimized";
   canMinimize: boolean;
 }
@@ -180,6 +181,7 @@ export default function WorkspacePaneStrip({
               className={[
                 styles.item,
                 item.isActive ? styles.active : "",
+                item.isInView ? styles.inView : "",
                 isMinimized ? styles.minimized : "",
               ].join(" ")}
             >

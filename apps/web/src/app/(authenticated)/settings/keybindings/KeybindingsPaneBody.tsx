@@ -29,6 +29,8 @@ const BINDABLE_ACTIONS: BindableAction[] = [
   { id: "create-library", label: "New library" },
   { id: "create-upload", label: "Upload file" },
   { id: "create-url", label: "Add from URL" },
+  { id: "pane-next", label: "Next pane" },
+  { id: "pane-previous", label: "Previous pane" },
 ];
 
 export default function KeybindingsPaneBody() {

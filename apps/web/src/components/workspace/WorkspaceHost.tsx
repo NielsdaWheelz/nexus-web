@@ -10,6 +10,7 @@ import { PaneRuntimeProvider, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import PaneShell, { type PaneBodyMode } from "@/components/workspace/PaneShell";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { loadKeybindings, matchesKeyEvent } from "@/lib/keybindings";
 import type { SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import {
   MAX_STANDARD_PANE_WIDTH_PX,
@@ -23,6 +24,7 @@ import {
   useWorkspaceStore,
   type WorkspacePaneTitleDescriptor,
 } from "@/lib/workspace/store";
+import { usePaneCanvas } from "./usePaneCanvas";
 import styles from "./WorkspaceHost.module.css";
 
 // ---------------------------------------------------------------------------
@@ -433,6 +435,9 @@ export default function WorkspaceHost() {
     ]
   );
 
+  const { canvasRef, onWheel, edges, inViewPaneIds, handleChromeMouseDown, scrollPaneIntoView } =
+    usePaneCanvas({ enabled: !isMobile, paneIds: panes.map((pane) => pane.paneId) });
+
   useEffect(() => {
     if (isMobile) {
       return;
@@ -453,8 +458,9 @@ export default function WorkspaceHost() {
         isActive: pane.isActive,
         visibility: pane.visibility,
         canMinimize: pane.visibility === "visible" && visiblePaneCount > 1,
+        isInView: inViewPaneIds.has(pane.paneId),
       })),
-    [panes, visiblePaneCount]
+    [panes, visiblePaneCount, inViewPaneIds]
   );
 
   const activePane =
@@ -476,7 +482,6 @@ export default function WorkspaceHost() {
     if (!paneWrap) {
       return;
     }
-    paneWrap.scrollIntoView({ block: "nearest", inline: "nearest" });
     const chrome = paneWrap.querySelector<HTMLElement>(
       '[data-pane-chrome-focus="true"]'
     );
@@ -487,6 +492,10 @@ export default function WorkspaceHost() {
     pendingPaneChromeFocusPaneIdRef.current = null;
   }, [state.activePaneId, isMobile]);
 
+  useEffect(() => {
+    scrollPaneIntoView(state.activePaneId);
+  }, [state.activePaneId, scrollPaneIntoView]);
+
   const handleActivatePane = (
     paneId: string,
     options?: { focusPaneChrome?: boolean }
@@ -494,7 +503,6 @@ export default function WorkspaceHost() {
     const shouldFocusPaneChrome = options?.focusPaneChrome !== false;
     activatePane(paneId);
     const paneWrap = paneWrapRefById.current.get(paneId);
-    paneWrap?.scrollIntoView({ block: "nearest", inline: "nearest" });
     if (!shouldFocusPaneChrome) {
       return;
     }
@@ -512,6 +520,36 @@ export default function WorkspaceHost() {
     chrome.focus({ preventScroll: true });
     pendingPaneChromeFocusPaneIdRef.current = null;
   };
+
+  useEffect(() => {
+    const keybindings = loadKeybindings();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+      ) {
+        return;
+      }
+      const nextCombo = keybindings["pane-next"];
+      const prevCombo = keybindings["pane-previous"];
+      const isNext = Boolean(nextCombo) && matchesKeyEvent(nextCombo, event);
+      const isPrevious = Boolean(prevCombo) && matchesKeyEvent(prevCombo, event);
+      if (!isNext && !isPrevious) {
+        return;
+      }
+      event.preventDefault();
+      const visible = state.panes.filter((pane) => pane.visibility === "visible");
+      if (visible.length < 2) {
+        return;
+      }
+      const index = visible.findIndex((pane) => pane.id === state.activePaneId);
+      const targetIndex = (index + (isNext ? 1 : -1) + visible.length) % visible.length;
+      activatePane(visible[targetIndex].id);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [state.panes, state.activePaneId, activatePane]);
 
   // --- Close handler ---
   const handleClosePane = useCallback(
@@ -532,59 +570,53 @@ export default function WorkspaceHost() {
           onClosePane={handleClosePane}
         />
       )}
-      <div
-        style={{
-          width: "100%",
-          height: "100%",
-          minWidth: 0,
-          minHeight: 0,
-          display: "flex",
-          flexDirection: "row",
-          gap: 0,
-          overflowX: isMobile ? "hidden" : "auto",
-          overflowY: "hidden",
-        }}
-      >
-        {renderedPanes.map((pane) => (
-          <div
-            key={pane.paneId}
-            className={styles.paneWrap}
-            data-active={pane.isActive ? "true" : "false"}
-            data-mobile={isMobile ? "true" : "false"}
-            data-minimized={pane.visibility === "minimized" ? "true" : "false"}
-            hidden={pane.visibility === "minimized"}
-            inert={pane.visibility === "minimized" ? true : undefined}
-            ref={(element) => {
-              if (element) {
-                paneWrapRefById.current.set(pane.paneId, element);
-              } else {
-                paneWrapRefById.current.delete(pane.paneId);
-              }
-            }}
-            onMouseDown={() => handleActivatePane(pane.paneId, { focusPaneChrome: false })}
-          >
-            <PaneShell
-              paneId={pane.paneId}
-              href={pane.href}
-              title={pane.title}
-              subtitle={pane.subtitle}
-              toolbar={pane.toolbar}
-              actions={pane.actions}
-              options={pane.options}
-              onBack={pane.onBack}
-              widthPx={pane.widthPx}
-              minWidthPx={pane.minWidthPx}
-              maxWidthPx={pane.maxWidthPx}
-              extraWidthPx={pane.extraWidthPx}
-              bodyMode={pane.bodyMode}
-              onResizePane={resizePane}
-              isActive={pane.isActive}
-              isMobile={isMobile}
+      <div className={styles.canvasViewport}>
+        <div ref={canvasRef} className={styles.paneCanvas} onWheel={onWheel}>
+          {renderedPanes.map((pane) => (
+            <div
+              key={pane.paneId}
+              className={styles.paneWrap}
+              data-pane-id={pane.paneId}
+              data-active={pane.isActive ? "true" : "false"}
+              data-mobile={isMobile ? "true" : "false"}
+              data-minimized={pane.visibility === "minimized" ? "true" : "false"}
+              hidden={pane.visibility === "minimized"}
+              inert={pane.visibility === "minimized" ? true : undefined}
+              ref={(element) => {
+                if (element) {
+                  paneWrapRefById.current.set(pane.paneId, element);
+                } else {
+                  paneWrapRefById.current.delete(pane.paneId);
+                }
+              }}
+              onMouseDown={() => handleActivatePane(pane.paneId, { focusPaneChrome: false })}
             >
-              {pane.content}
-            </PaneShell>
-          </div>
-        ))}
+              <PaneShell
+                paneId={pane.paneId}
+                href={pane.href}
+                title={pane.title}
+                subtitle={pane.subtitle}
+                toolbar={pane.toolbar}
+                actions={pane.actions}
+                options={pane.options}
+                onBack={pane.onBack}
+                widthPx={pane.widthPx}
+                minWidthPx={pane.minWidthPx}
+                maxWidthPx={pane.maxWidthPx}
+                extraWidthPx={pane.extraWidthPx}
+                bodyMode={pane.bodyMode}
+                onResizePane={resizePane}
+                onChromeMouseDown={handleChromeMouseDown}
+                isActive={pane.isActive}
+                isMobile={isMobile}
+              >
+                {pane.content}
+              </PaneShell>
+            </div>
+          ))}
+        </div>
+        {edges.atStart && <div className={styles.edgeFade} data-side="start" />}
+        {edges.atEnd && <div className={styles.edgeFade} data-side="end" />}
       </div>
     </section>
   );
