@@ -24,6 +24,7 @@ const PUBLIC_ROUTES = new Set([
   "/auth/refresh",
   "/auth/signout",
   "/extension/connect/start",
+  "/share",
 ]);
 
 // Clear the auth cookie chunks and redirect to /login — the involuntary-logout

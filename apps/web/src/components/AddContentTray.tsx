@@ -25,6 +25,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { apiFetch, apiPostFormData } from "@/lib/api/client";
+import { extractUrls } from "@/lib/extractUrls";
 import { createNotePage, quickCaptureDailyNote } from "@/lib/notes/api";
 import {
   addMediaFromUrl,
@@ -74,26 +75,6 @@ type LibrarySummary = {
 };
 
 const MAX_ACTIVE_UPLOADS = 2;
-
-function extractUrls(text: string): string[] {
-  const found = text.match(/https?:\/\/[^\s<>"']+/g) ?? [];
-  const unique: string[] = [];
-  for (const raw of found) {
-    const cleaned = raw.replace(/[),.;!?]+$/g, "");
-    try {
-      const parsed = new URL(cleaned);
-      if (
-        (parsed.protocol === "http:" || parsed.protocol === "https:") &&
-        !unique.includes(cleaned)
-      ) {
-        unique.push(cleaned);
-      }
-    } catch {
-      // Ignore URL-looking text that the URL parser rejects.
-    }
-  }
-  return unique;
-}
 
 function eventTargetAcceptsText(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {

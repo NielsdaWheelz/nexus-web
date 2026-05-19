@@ -12,7 +12,6 @@ import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.OnBackPressedCallback
@@ -43,12 +42,8 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
-
         webView = WebView(this)
-        hardenWebView(webView)
-        val cookieManager = CookieManager.getInstance()
-        cookieManager.setAcceptCookie(true)
+        NexusWebView.configure(webView)
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(
@@ -67,7 +62,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
-                cookieManager.flush()
+                CookieManager.getInstance().flush()
             }
         }
 
@@ -83,7 +78,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
                 val popupWebView = WebView(this@MainActivity)
-                hardenWebView(popupWebView)
+                NexusWebView.configure(popupWebView)
 
                 var handled = false
                 popupWebView.webViewClient = object : WebViewClient() {
@@ -226,20 +221,6 @@ class MainActivity : AppCompatActivity() {
             return
         }
         webView.loadUrl(launchUrl)
-    }
-
-    private fun hardenWebView(view: WebView) {
-        val settings = view.settings
-        settings.javaScriptEnabled = true
-        settings.domStorageEnabled = true
-        settings.allowFileAccess = false
-        settings.allowContentAccess = false
-        settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-        settings.safeBrowsingEnabled = true
-        settings.javaScriptCanOpenWindowsAutomatically = false
-        settings.setSupportMultipleWindows(true)
-        settings.userAgentString = "${settings.userAgentString} NexusAndroidShell"
-        CookieManager.getInstance().setAcceptThirdPartyCookies(view, false)
     }
 
     private fun isOwnedUrl(uri: Uri): Boolean {

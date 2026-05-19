@@ -30,8 +30,13 @@ This document covers repository-wide code organization, imports, and module boun
 - Internal functionality is only for a module and its submodules.
 - Default to internal unless functionality is clearly external.
 - `apps/android/app/src/main/java/.../MainActivity.kt` owns Android shell
-  mechanics: WebView setup, owned-origin routing, external routing, file
-  chooser handoff, popup handoff, and app-link intent handling.
+  mechanics: owned-origin routing, external routing, file chooser handoff,
+  popup handoff, and app-link intent handling.
+- `apps/android/app/src/main/java/.../NexusWebView.kt` owns the WebView
+  configuration shared by MainActivity and ShareActivity.
+- `apps/android/app/src/main/java/.../ShareActivity.kt` owns the
+  system-share-sheet capture entry: the `ACTION_SEND` intent filter and the
+  `nexus-share://` scheme it intercepts to hand off to MainActivity.
 - Android manifests own Android framework entrypoints and deep-link filters.
 - Android Gradle files own Android build, signing, app-link, and release
   configuration.
