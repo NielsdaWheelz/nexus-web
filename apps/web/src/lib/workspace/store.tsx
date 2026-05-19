@@ -275,8 +275,6 @@ function buildPanesForOpen(href: string): WorkspacePaneStateV4[] {
   ];
 }
 
-export type WorkspacePaneTitleSource = "runtime_page" | "route";
-
 interface WorkspacePaneTitleInput {
   id: string;
   href: string;
@@ -286,7 +284,7 @@ export interface WorkspacePaneTitleDescriptor {
   chrome: PaneChromeDescriptor | undefined;
   route: ResolvedPaneRoute;
   title: string;
-  titleSource: WorkspacePaneTitleSource;
+  titleState: "resolved" | "pending";
 }
 
 export function resolveWorkspacePaneTitle(
@@ -300,13 +298,13 @@ export function resolveWorkspacePaneTitle(
   });
   const runtimeTitle = normalizePaneTitle(runtimeTitleByPaneId.get(pane.id));
   if (runtimeTitle) {
-    return { chrome, route, title: runtimeTitle, titleSource: "runtime_page" };
+    return { chrome, route, title: runtimeTitle, titleState: "resolved" };
   }
   return {
     chrome,
     route,
     title: normalizePaneTitle(chrome?.title) ?? normalizePaneTitle(route.staticTitle) ?? "Pane",
-    titleSource: "route",
+    titleState: route.titleMode === "dynamic" ? "pending" : "resolved",
   };
 }
 

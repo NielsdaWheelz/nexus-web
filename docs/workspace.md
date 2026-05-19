@@ -265,11 +265,11 @@ Mobile (`data-mobile="true"`) keeps no drag cursor and no handler.
 
 ### 5.4 `WorkspacePaneStrip` — in-view marker
 
-`WorkspacePaneStripItem` gains `isInView: boolean`. Each item renders
-`data-in-view={isInView}`; CSS adds a marker — a 2px accent bar on the item's
-inner edge — distinct from the active item's filled-surface treatment, so
-*active* and *in-view* compose visually on one item. The strip stays pure
-presentation: it neither observes the canvas nor imports the hook.
+`WorkspacePaneStripItem` carries `isInView: boolean`. The strip renders a marker
+on every in-view tab, distinct from and composable with the active tab's
+treatment. The strip stays pure presentation: it neither observes the canvas nor
+imports the hook. The marker's visual definition — and the rebuilt tab it sits
+on — is owned by `docs/workspace-tabs.md`.
 
 ### 5.5 Keybindings — `apps/web/src/lib/keybindings.ts`
 

@@ -78,7 +78,8 @@ export default function PagePaneBody({
   const focusedRootParentBlockIdRef = useRef<string | null>(null);
   const currentSaveScopeRef = useRef(saveScope);
 
-  useSetPaneTitle(page?.title ?? (focusBlockId ? "Note" : "Page"));
+  const fallbackTitle = focusBlockId ? "Note" : "Page";
+  useSetPaneTitle(page ? page.title || fallbackTitle : feedback ? fallbackTitle : null);
 
   useEffect(() => {
     currentSaveScopeRef.current = saveScope;

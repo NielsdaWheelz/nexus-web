@@ -94,6 +94,7 @@ interface PaneRouteDefinition {
   id: PaneRouteId;
   pattern: RoutePattern;
   staticTitle: string;
+  titleMode: "static" | "dynamic";
   icon: LucideIcon;
   resourceRef?: (params: RouteParams) => string | null;
   render: () => ReactNode;
@@ -109,6 +110,7 @@ export interface ResolvedPaneRoute {
   pathname: string;
   params: RouteParams;
   staticTitle: string;
+  titleMode: "static" | "dynamic";
   resourceRef: string | null;
   render: (() => ReactNode) | null;
   definition: PaneRouteDefinition | null;
@@ -123,6 +125,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "libraries",
     pattern: ["libraries"],
     staticTitle: "Libraries",
+    titleMode: "static",
     icon: Library,
     render: () => <LibrariesPaneBody />,
     bodyMode: "standard",
@@ -138,6 +141,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "library",
     pattern: ["libraries", ":id"],
     staticTitle: "Library",
+    titleMode: "dynamic",
     icon: Library,
     resourceRef: (params) => {
       const id = params.id;
@@ -154,6 +158,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "media",
     pattern: ["media", ":id"],
     staticTitle: "Media",
+    titleMode: "dynamic",
     icon: FileText,
     resourceRef: (params) => {
       const id = params.id;
@@ -170,6 +175,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "conversations",
     pattern: ["conversations"],
     staticTitle: "Chats",
+    titleMode: "static",
     icon: MessageSquare,
     render: () => <ConversationsPaneBody />,
     bodyMode: "standard",
@@ -185,6 +191,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "conversationNew",
     pattern: ["conversations", "new"],
     staticTitle: "New chat",
+    titleMode: "static",
     icon: MessageSquare,
     render: () => <ConversationNewPaneBody />,
     bodyMode: "contained",
@@ -197,6 +204,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "conversation",
     pattern: ["conversations", ":id"],
     staticTitle: "Chat",
+    titleMode: "dynamic",
     icon: MessageSquare,
     resourceRef: (params) => {
       const id = params.id;
@@ -216,6 +224,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "browse",
     pattern: ["browse"],
     staticTitle: "Browse",
+    titleMode: "static",
     icon: Compass,
     render: () => <BrowsePaneBody />,
     bodyMode: "standard",
@@ -231,6 +240,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "podcasts",
     pattern: ["podcasts"],
     staticTitle: "Podcasts",
+    titleMode: "static",
     icon: Mic,
     render: () => <PodcastsPaneBody />,
     bodyMode: "standard",
@@ -246,6 +256,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "podcastDetail",
     pattern: ["podcasts", ":podcastId"],
     staticTitle: "Podcast",
+    titleMode: "dynamic",
     icon: Mic,
     resourceRef: (params) => {
       const podcastId = params.podcastId;
@@ -262,6 +273,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "search",
     pattern: ["search"],
     staticTitle: "Search",
+    titleMode: "static",
     icon: Search,
     render: () => <SearchPaneBody />,
     bodyMode: "standard",
@@ -277,6 +289,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "author",
     pattern: ["authors", ":handle"],
     staticTitle: "Author",
+    titleMode: "dynamic",
     icon: UserRound,
     resourceRef: (params) => {
       const handle = params.handle;
@@ -293,6 +306,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "notes",
     pattern: ["notes"],
     staticTitle: "Notes",
+    titleMode: "static",
     icon: FileText,
     render: () => <NotesPaneBody />,
     bodyMode: "standard",
@@ -305,6 +319,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "page",
     pattern: ["pages", ":pageId"],
     staticTitle: "Page",
+    titleMode: "dynamic",
     icon: FileText,
     resourceRef: (params) => (params.pageId ? `page:${params.pageId}` : null),
     render: () => <PagePaneBody />,
@@ -318,6 +333,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "note",
     pattern: ["notes", ":blockId"],
     staticTitle: "Note",
+    titleMode: "dynamic",
     icon: FileText,
     resourceRef: (params) => (params.blockId ? `note_block:${params.blockId}` : null),
     render: () => <NotePaneBody />,
@@ -331,6 +347,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "daily",
     pattern: ["daily"],
     staticTitle: "Today",
+    titleMode: "static",
     icon: CalendarDays,
     render: () => <DailyNotePaneBody />,
     bodyMode: "document",
@@ -343,6 +360,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "dailyDate",
     pattern: ["daily", ":localDate"],
     staticTitle: "Daily note",
+    titleMode: "dynamic",
     icon: CalendarDays,
     resourceRef: (params) => (params.localDate ? `daily:${params.localDate}` : null),
     render: () => <DailyNotePaneBody />,
@@ -356,6 +374,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settings",
     pattern: ["settings"],
     staticTitle: "Settings",
+    titleMode: "static",
     icon: Settings,
     render: () => <SettingsPaneBody />,
     bodyMode: "standard",
@@ -371,6 +390,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settingsBilling",
     pattern: ["settings", "billing"],
     staticTitle: "Billing",
+    titleMode: "static",
     icon: CreditCard,
     render: () => <SettingsBillingPaneBody />,
     bodyMode: "standard",
@@ -386,6 +406,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settingsReader",
     pattern: ["settings", "reader"],
     staticTitle: "Reader settings",
+    titleMode: "static",
     icon: BookOpen,
     render: () => <SettingsReaderPaneBody />,
     bodyMode: "standard",
@@ -401,6 +422,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settingsAppearance",
     pattern: ["settings", "appearance"],
     staticTitle: "Appearance",
+    titleMode: "static",
     icon: Palette,
     render: () => <SettingsAppearancePaneBody />,
     bodyMode: "standard",
@@ -416,6 +438,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settingsKeys",
     pattern: ["settings", "keys"],
     staticTitle: "API Keys",
+    titleMode: "static",
     icon: KeyRound,
     render: () => <SettingsKeysPaneBody />,
     bodyMode: "standard",
@@ -431,6 +454,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settingsLocalVault",
     pattern: ["settings", "local-vault"],
     staticTitle: "Local vault",
+    titleMode: "static",
     icon: FolderOpen,
     render: () => <SettingsLocalVaultPaneBody />,
     bodyMode: "standard",
@@ -453,6 +477,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settingsIdentities",
     pattern: ["settings", "identities"],
     staticTitle: "Linked identities",
+    titleMode: "static",
     icon: Link2,
     render: () => <SettingsIdentitiesPaneBody />,
     bodyMode: "standard",
@@ -468,6 +493,7 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     id: "settingsKeybindings",
     pattern: ["settings", "keybindings"],
     staticTitle: "Keyboard shortcuts",
+    titleMode: "static",
     icon: Keyboard,
     render: () => <KeybindingsPaneBody />,
     bodyMode: "standard",
@@ -554,6 +580,7 @@ export function resolvePaneRoute(href: string): ResolvedPaneRoute {
       pathname,
       params,
       staticTitle: definition.staticTitle,
+      titleMode: definition.titleMode,
       resourceRef: definition.resourceRef?.(params) ?? null,
       render: definition.render,
       definition,
@@ -564,6 +591,7 @@ export function resolvePaneRoute(href: string): ResolvedPaneRoute {
     pathname,
     params: {},
     staticTitle: "Tab",
+    titleMode: "static",
     resourceRef: null,
     render: null,
     definition: null,

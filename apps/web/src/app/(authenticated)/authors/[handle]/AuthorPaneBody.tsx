@@ -86,7 +86,7 @@ export default function AuthorPaneBody() {
   const lastWorksRequestKeyRef = useRef<string | null>(null);
   const worksRequestIdRef = useRef(0);
 
-  useSetPaneTitle(data?.contributor.display_name ?? "Author");
+  useSetPaneTitle(loading ? null : (data?.contributor.display_name ?? "Author"));
 
   useEffect(() => {
     setData(null);

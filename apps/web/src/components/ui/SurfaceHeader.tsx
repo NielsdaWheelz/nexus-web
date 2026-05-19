@@ -10,6 +10,7 @@ export type SurfaceHeaderOption = ActionMenuOption;
 
 interface SurfaceHeaderProps {
   title: ReactNode;
+  titlePending?: boolean;
   subtitle?: ReactNode;
   meta?: ReactNode;
   actions?: ReactNode;
@@ -23,6 +24,7 @@ interface SurfaceHeaderProps {
 const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function SurfaceHeader(
   {
     title,
+    titlePending = false,
     subtitle,
     meta,
     actions,
@@ -63,7 +65,16 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
           </button>
         )}
         <div className={styles.titles}>
-          <HeadingTag className={styles.title}>{title}</HeadingTag>
+          <HeadingTag className={styles.title}>
+            {titlePending ? (
+              <>
+                <span className={styles.titleSkeleton} aria-hidden />
+                <span className="sr-only">{title}</span>
+              </>
+            ) : (
+              title
+            )}
+          </HeadingTag>
           {meta && <div className={styles.meta}>{meta}</div>}
           {subtitle && (
             <p id={subtitleId} className="sr-only">

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { fetchNoteBlock } from "@/lib/notes/api";
-import { usePaneParam } from "@/lib/panes/paneRuntime";
+import { usePaneParam, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import PagePaneBody from "../../pages/[pageId]/PagePaneBody";
 
 export default function NotePaneBody() {
@@ -26,6 +26,8 @@ export default function NotePaneBody() {
       cancelled = true;
     };
   }, [blockId]);
+
+  useSetPaneTitle(feedback ? "Note" : null);
 
   if (feedback) return <FeedbackNotice {...feedback} />;
   if (!pageId) return <FeedbackNotice severity="info" title="Loading note..." />;

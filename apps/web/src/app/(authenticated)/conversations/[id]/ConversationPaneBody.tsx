@@ -276,13 +276,15 @@ function ChatView({
   const [contextRailExpanded, setContextRailExpanded] = useState(true);
   const conversationScope = conversation?.scope ?? { type: "general" as const };
   useSetPaneTitle(
-    conversation
-      ? `Chat: ${
-          conversationScope.type !== "general"
-            ? formatConversationScopeLabel(conversationScope)
-            : conversation.title
-        }`
-      : "Chat",
+    loading
+      ? null
+      : conversation
+        ? `Chat: ${
+            conversationScope.type !== "general"
+              ? formatConversationScopeLabel(conversationScope)
+              : conversation.title
+          }`
+        : "Chat",
   );
 
   const scrollportRef = useRef<HTMLDivElement>(null);

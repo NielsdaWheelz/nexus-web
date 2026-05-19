@@ -10,10 +10,10 @@ export interface Media {
 
 export function buildCompactMediaPaneTitle(
   media: Pick<Media, "title" | "contributors"> | null | undefined
-): string {
+): string | null {
   const title = media?.title?.trim();
   if (!title) {
-    return "Media";
+    return null;
   }
 
   const authorSummary = formatContributorCreditSummary(media?.contributors, 1);

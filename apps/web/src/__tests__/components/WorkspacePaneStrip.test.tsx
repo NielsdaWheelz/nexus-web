@@ -6,7 +6,9 @@ import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 
 type PaneItem = {
   paneId: string;
+  href: string;
   title: string;
+  titleState: "resolved" | "pending";
   isActive: boolean;
   isInView: boolean;
   visibility: "visible" | "minimized";
@@ -21,7 +23,9 @@ function CloseHarness() {
   const [items, setItems] = useState<PaneItem[]>([
     {
       paneId: "pane-a",
+      href: "/libraries",
       title: "Libraries",
+      titleState: "resolved",
       isActive: false,
       isInView: false,
       visibility: "visible",
@@ -29,7 +33,9 @@ function CloseHarness() {
     },
     {
       paneId: "pane-b",
+      href: "/search",
       title: "Search",
+      titleState: "resolved",
       isActive: true,
       isInView: false,
       visibility: "visible",
@@ -37,7 +43,9 @@ function CloseHarness() {
     },
     {
       paneId: "pane-c",
+      href: "/media/m1",
       title: "Media",
+      titleState: "resolved",
       isActive: false,
       isInView: false,
       visibility: "visible",
@@ -74,7 +82,9 @@ function MinimizeHarness() {
   const [items, setItems] = useState<PaneItem[]>([
     {
       paneId: "pane-a",
+      href: "/libraries",
       title: "Libraries",
+      titleState: "resolved",
       isActive: false,
       isInView: false,
       visibility: "visible",
@@ -82,7 +92,9 @@ function MinimizeHarness() {
     },
     {
       paneId: "pane-b",
+      href: "/search",
       title: "Search",
+      titleState: "resolved",
       isActive: true,
       isInView: false,
       visibility: "visible",
@@ -90,7 +102,9 @@ function MinimizeHarness() {
     },
     {
       paneId: "pane-c",
+      href: "/media/m1",
       title: "Media",
+      titleState: "resolved",
       isActive: false,
       isInView: false,
       visibility: "visible",
@@ -125,7 +139,9 @@ describe("WorkspacePaneStrip", () => {
         items={[
           {
             paneId: "pane-a",
+            href: "/libraries",
             title: "Libraries",
+            titleState: "resolved",
             isActive: true,
             isInView: false,
             visibility: "visible",
@@ -133,7 +149,9 @@ describe("WorkspacePaneStrip", () => {
           },
           {
             paneId: "pane-b",
+            href: "/search",
             title: "Search",
+            titleState: "resolved",
             isActive: false,
             isInView: false,
             visibility: "minimized",
@@ -154,7 +172,7 @@ describe("WorkspacePaneStrip", () => {
       expect(button).not.toHaveAttribute("aria-selected");
       expect(button).not.toHaveAttribute("aria-controls");
     }
-    expect(primaryButton("Libraries")).toHaveAttribute("aria-current", "true");
+    expect(primaryButton("Libraries")).toHaveAttribute("aria-current", "page");
     expect(primaryButton("Search")).toHaveAccessibleName(/Minimized\. Restore\./);
   });
 
@@ -166,7 +184,9 @@ describe("WorkspacePaneStrip", () => {
         items={[
           {
             paneId: "pane-a",
+            href: "/libraries",
             title: "Libraries",
+            titleState: "resolved",
             isActive: false,
             isInView: false,
             visibility: "visible",
@@ -174,7 +194,9 @@ describe("WorkspacePaneStrip", () => {
           },
           {
             paneId: "pane-b",
+            href: "/search",
             title: "Search",
+            titleState: "resolved",
             isActive: true,
             isInView: false,
             visibility: "visible",
@@ -182,7 +204,9 @@ describe("WorkspacePaneStrip", () => {
           },
           {
             paneId: "pane-c",
+            href: "/media/m1",
             title: "Media",
+            titleState: "resolved",
             isActive: false,
             isInView: false,
             visibility: "visible",
@@ -220,7 +244,9 @@ describe("WorkspacePaneStrip", () => {
         items={[
           {
             paneId: "pane-a",
+            href: "/libraries",
             title: "Libraries",
+            titleState: "resolved",
             isActive: true,
             isInView: false,
             visibility: "visible",
@@ -228,7 +254,9 @@ describe("WorkspacePaneStrip", () => {
           },
           {
             paneId: "pane-b",
+            href: "/search",
             title: "Search",
+            titleState: "resolved",
             isActive: false,
             isInView: false,
             visibility: "minimized",
@@ -251,7 +279,7 @@ describe("WorkspacePaneStrip", () => {
     expect(onRestorePane).toHaveBeenNthCalledWith(2, "pane-b");
   });
 
-  it("renders minimize, restore, and close actions", async () => {
+  it("renders minimize, restore, and close actions outside the roving sequence", async () => {
     const user = userEvent.setup();
     const onMinimizePane = vi.fn();
     const onRestorePane = vi.fn();
@@ -261,7 +289,9 @@ describe("WorkspacePaneStrip", () => {
         items={[
           {
             paneId: "pane-a",
+            href: "/libraries",
             title: "Libraries",
+            titleState: "resolved",
             isActive: true,
             isInView: false,
             visibility: "visible",
@@ -269,7 +299,9 @@ describe("WorkspacePaneStrip", () => {
           },
           {
             paneId: "pane-b",
+            href: "/search",
             title: "Search",
+            titleState: "resolved",
             isActive: false,
             isInView: false,
             visibility: "minimized",
@@ -286,12 +318,58 @@ describe("WorkspacePaneStrip", () => {
     const minimizeLibraries = screen.getByRole("button", { name: "Minimize Libraries" });
     expect(minimizeLibraries).toBeDisabled();
 
+    for (const actionName of ["Minimize Libraries", "Close Libraries", "Restore Search", "Close Search"]) {
+      expect(screen.getByRole("button", { name: actionName })).toHaveAttribute("tabindex", "-1");
+    }
+
     await user.click(screen.getByRole("button", { name: "Restore Search" }));
     await user.click(screen.getByRole("button", { name: "Close Search" }));
 
     expect(onMinimizePane).not.toHaveBeenCalled();
     expect(onRestorePane).toHaveBeenCalledWith("pane-b");
     expect(onClosePane).toHaveBeenCalledWith("pane-b");
+  });
+
+  it("renders a skeleton for a pending pane and title text for a resolved pane", () => {
+    render(
+      <WorkspacePaneStrip
+        items={[
+          {
+            paneId: "pane-a",
+            href: "/libraries",
+            title: "Libraries",
+            titleState: "resolved",
+            isActive: true,
+            isInView: false,
+            visibility: "visible",
+            canMinimize: true,
+          },
+          {
+            paneId: "pane-b",
+            href: "/media/m1",
+            title: "Storm Front",
+            titleState: "pending",
+            isActive: false,
+            isInView: false,
+            visibility: "visible",
+            canMinimize: true,
+          },
+        ]}
+        onActivatePane={() => {}}
+        onMinimizePane={() => {}}
+        onRestorePane={() => {}}
+        onClosePane={() => {}}
+      />
+    );
+
+    const pending = primaryButton("Storm Front");
+    expect(pending).toHaveAttribute("aria-busy", "true");
+    expect(pending).toHaveAccessibleName("Storm Front");
+    expect(screen.queryByText("Storm Front")).not.toBeInTheDocument();
+
+    const resolved = primaryButton("Libraries");
+    expect(resolved).not.toHaveAttribute("aria-busy");
+    expect(screen.getByText("Libraries")).toBeInTheDocument();
   });
 
   it("closes the focused primary pane with Delete and focuses the next survivor", async () => {
@@ -305,7 +383,7 @@ describe("WorkspacePaneStrip", () => {
 
     expect(screen.queryByRole("button", { name: /^Search\b/ })).not.toBeInTheDocument();
     expect(primaryButton("Media")).toHaveFocus();
-    expect(primaryButton("Media")).toHaveAttribute("aria-current", "true");
+    expect(primaryButton("Media")).toHaveAttribute("aria-current", "page");
   });
 
   it("moves focus to the next visible primary button after minimizing the active pane", async () => {
@@ -316,6 +394,6 @@ describe("WorkspacePaneStrip", () => {
 
     expect(screen.getByRole("button", { name: "Restore Search" })).toBeInTheDocument();
     expect(primaryButton("Media")).toHaveFocus();
-    expect(primaryButton("Media")).toHaveAttribute("aria-current", "true");
+    expect(primaryButton("Media")).toHaveAttribute("aria-current", "page");
   });
 });

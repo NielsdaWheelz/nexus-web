@@ -114,6 +114,7 @@ interface PaneShellProps {
   paneId: string;
   href?: string;
   title: string;
+  titlePending?: boolean;
   subtitle?: React.ReactNode;
   toolbar?: React.ReactNode;
   actions?: React.ReactNode;
@@ -135,6 +136,7 @@ export default function PaneShell({
   paneId,
   href = "/",
   title,
+  titlePending,
   subtitle,
   toolbar,
   actions,
@@ -446,6 +448,7 @@ export default function PaneShell({
       >
         <SurfaceHeader
           title={title}
+          titlePending={titlePending}
           subtitle={subtitle}
           meta={chromeOverrides.meta}
           options={paneMenuOptions}

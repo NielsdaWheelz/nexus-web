@@ -445,7 +445,7 @@ export default function PodcastDetailPaneBody() {
   const transcriptionAllowed =
     (billingAccount?.transcription_usage.limit ?? 0) > 0;
 
-  useSetPaneTitle(detail?.podcast.title ?? "Podcast");
+  useSetPaneTitle(detail?.podcast.title ?? (loading ? null : "Podcast"));
 
   const loadAvailableLibraries = useCallback(async () => {
     if (availableLibrariesLoading || availableLibrariesLoaded) {

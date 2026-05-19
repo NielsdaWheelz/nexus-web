@@ -35,6 +35,7 @@ interface WorkspaceShellPane {
   paneId: string;
   href: string;
   title: string;
+  titleState: "resolved" | "pending";
   subtitle?: React.ReactNode;
   toolbar?: React.ReactNode;
   actions?: React.ReactNode;
@@ -260,7 +261,7 @@ function buildShellPane(input: {
   runtimeMinWidthPx: number | null;
   runtimeExtraWidthPx: number;
 }): WorkspaceShellPane {
-  const { chrome, route, title } = input.descriptor;
+  const { chrome, route, title, titleState } = input.descriptor;
   const parentHref = getParentHref(route);
   const onBack = parentHref
     ? () => input.onNavigatePane(input.pane.id, parentHref)
@@ -277,6 +278,7 @@ function buildShellPane(input: {
     paneId: input.pane.id,
     href: input.pane.href,
     title,
+    titleState,
     subtitle: chrome?.subtitle,
     toolbar: chrome?.toolbar,
     actions: chrome?.actions,
@@ -387,7 +389,7 @@ export default function WorkspaceHost() {
     for (const { pane, descriptor } of paneDescriptors) {
       const telemetryKey = [
         descriptor.title,
-        descriptor.titleSource,
+        descriptor.titleState,
         descriptor.route.id,
       ].join("|");
       nextTelemetryByPaneId.set(pane.id, telemetryKey);
@@ -398,7 +400,7 @@ export default function WorkspaceHost() {
         type: "title",
         status: "ok",
         errorCode: null,
-        titleSource: descriptor.titleSource,
+        titleState: descriptor.titleState,
         routeId: descriptor.route.id,
       });
     }
@@ -454,7 +456,9 @@ export default function WorkspaceHost() {
     () =>
       panes.map((pane) => ({
         paneId: pane.paneId,
+        href: pane.href,
         title: pane.title,
+        titleState: pane.titleState,
         isActive: pane.isActive,
         visibility: pane.visibility,
         canMinimize: pane.visibility === "visible" && visiblePaneCount > 1,
@@ -595,6 +599,7 @@ export default function WorkspaceHost() {
                 paneId={pane.paneId}
                 href={pane.href}
                 title={pane.title}
+                titlePending={pane.titleState === "pending"}
                 subtitle={pane.subtitle}
                 toolbar={pane.toolbar}
                 actions={pane.actions}

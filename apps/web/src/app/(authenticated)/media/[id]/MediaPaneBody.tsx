@@ -1028,7 +1028,7 @@ export default function MediaPaneBody() {
   const [media, setMedia] = useState<Media | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
-  useSetPaneTitle(buildCompactMediaPaneTitle(media));
+  useSetPaneTitle(loading ? null : buildCompactMediaPaneTitle(media) ?? "Media");
 
   // ---- Non-EPUB fragment state ----
   const [fragments, setFragments] = useState<Fragment[]>([]);

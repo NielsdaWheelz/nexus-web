@@ -12,7 +12,7 @@ export interface WorkspaceTitleTelemetryDetail {
   type: "title";
   status: "ok" | "fallback";
   errorCode: string | null;
-  titleSource: string;
+  titleState: "resolved" | "pending";
   routeId: string;
 }
 

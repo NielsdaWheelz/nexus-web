@@ -275,7 +275,7 @@ export default function LibraryPaneBody() {
   const [intelligenceRefreshing, setIntelligenceRefreshing] = useState(false);
   const [intelligenceError, setIntelligenceError] =
     useState<FeedbackContent | null>(null);
-  useSetPaneTitle(library?.name ?? "Library");
+  useSetPaneTitle(library?.name ?? (loading ? null : "Library"));
 
   const [editOpen, setEditOpen] = useState(false);
   const [editMembers, setEditMembers] = useState<LibraryMember[]>([]);

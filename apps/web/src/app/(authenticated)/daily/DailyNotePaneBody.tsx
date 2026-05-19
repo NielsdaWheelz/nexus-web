@@ -12,7 +12,7 @@ export default function DailyNotePaneBody() {
   const [page, setPage] = useState<NotePage | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
 
-  useSetPaneTitle(routeLocalDate ? "Daily note" : "Today");
+  useSetPaneTitle(routeLocalDate ? (feedback ? "Daily note" : null) : "Today");
 
   useEffect(() => {
     let cancelled = false;

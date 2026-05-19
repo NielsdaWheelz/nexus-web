@@ -6,7 +6,7 @@ import {
   createPaneId,
   type WorkspacePaneStateV4,
 } from "@/lib/workspace/schema";
-import { workspaceReducer } from "@/lib/workspace/store";
+import { resolveWorkspacePaneTitle, workspaceReducer } from "@/lib/workspace/store";
 
 function makePane(
   id: string,
@@ -380,5 +380,37 @@ describe("workspace reducer", () => {
     const resizedPane = next.panes.find((pane) => pane.id === secondId);
     expect(resizedPane?.widthPx).toBe(MAX_STANDARD_PANE_WIDTH_PX);
     expect(resizedPane?.visibility).toBe("minimized");
+  });
+});
+
+describe("resolveWorkspacePaneTitle", () => {
+  const empty = new Map<string, string>();
+
+  it("returns pending for a dynamic route with no runtime title", () => {
+    const pane = { id: "p1", href: "/media/m1" };
+    const result = resolveWorkspacePaneTitle(pane, empty);
+    expect(result.titleState).toBe("pending");
+    expect(result.title.length).toBeGreaterThan(0);
+  });
+
+  it("returns resolved with the runtime title when one is published", () => {
+    const pane = { id: "p1", href: "/media/m1" };
+    const result = resolveWorkspacePaneTitle(pane, new Map([["p1", "My Book"]]));
+    expect(result.titleState).toBe("resolved");
+    expect(result.title).toBe("My Book");
+  });
+
+  it("returns resolved for a static route with the route label", () => {
+    const pane = { id: "p2", href: "/libraries" };
+    const result = resolveWorkspacePaneTitle(pane, empty);
+    expect(result.titleState).toBe("resolved");
+    expect(result.title).toBe("Libraries");
+  });
+
+  it("title is always a non-empty string", () => {
+    for (const href of ["/media/m1", "/libraries"]) {
+      const result = resolveWorkspacePaneTitle({ id: "px", href }, empty);
+      expect(result.title.length).toBeGreaterThan(0);
+    }
   });
 });

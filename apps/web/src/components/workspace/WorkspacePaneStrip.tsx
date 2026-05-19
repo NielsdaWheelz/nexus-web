@@ -2,12 +2,14 @@
 
 import { Maximize2, Minus, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import Button from "@/components/ui/Button";
+import { getPaneRouteIcon } from "@/lib/panes/paneRouteRegistry";
 import styles from "./WorkspacePaneStrip.module.css";
 
 interface WorkspacePaneStripItem {
   paneId: string;
+  href: string;
   title: string;
+  titleState: "resolved" | "pending";
   isActive: boolean;
   isInView: boolean;
   visibility: "visible" | "minimized";
@@ -20,6 +22,94 @@ interface WorkspacePaneStripProps {
   onMinimizePane: (paneId: string) => void;
   onRestorePane: (paneId: string) => void;
   onClosePane: (paneId: string) => void;
+}
+
+function PaneTab({
+  item,
+  isFocusable,
+  activatorRef,
+  onActivate,
+  onMinimize,
+  onRestore,
+  onClose,
+  onActivatorKeyDown,
+  onActivatorFocus,
+}: {
+  item: WorkspacePaneStripItem;
+  isFocusable: boolean;
+  activatorRef: (el: HTMLButtonElement | null) => void;
+  onActivate: () => void;
+  onMinimize: () => void;
+  onRestore: () => void;
+  onClose: () => void;
+  onActivatorKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  onActivatorFocus: () => void;
+}) {
+  const title = item.title.trim() || "Pane";
+  const isMinimized = item.visibility === "minimized";
+  const isPending = item.titleState === "pending";
+  const RouteIcon = getPaneRouteIcon(item.href);
+
+  return (
+    <div
+      className={[
+        styles.tab,
+        item.isActive ? styles.active : "",
+        item.isInView ? styles.inView : "",
+        isMinimized ? styles.minimized : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <button
+        type="button"
+        ref={activatorRef}
+        className={styles.activator}
+        tabIndex={isFocusable ? 0 : -1}
+        aria-current={item.isActive ? "page" : undefined}
+        aria-label={isPending ? title : undefined}
+        aria-busy={isPending || undefined}
+        title={isPending ? undefined : title}
+        onClick={onActivate}
+        onFocus={onActivatorFocus}
+        onKeyDown={onActivatorKeyDown}
+      >
+        <RouteIcon aria-hidden size={14} strokeWidth={2} className={styles.icon} />
+        {isPending ? (
+          <span className={styles.titleSkeleton} aria-hidden />
+        ) : (
+          <span className={styles.title}>{title}</span>
+        )}
+        {item.isActive && <span className="sr-only"> Active pane.</span>}
+        {isMinimized && <span className="sr-only"> Minimized. Restore.</span>}
+      </button>
+      <div className={styles.actions}>
+        <button
+          type="button"
+          tabIndex={-1}
+          className={styles.action}
+          aria-label={`${isMinimized ? "Restore" : "Minimize"} ${title}`}
+          disabled={!isMinimized && !item.canMinimize}
+          onClick={isMinimized ? onRestore : onMinimize}
+        >
+          {isMinimized ? (
+            <Maximize2 aria-hidden size={16} strokeWidth={2} />
+          ) : (
+            <Minus aria-hidden size={16} strokeWidth={2} />
+          )}
+        </button>
+        <button
+          type="button"
+          tabIndex={-1}
+          className={styles.action}
+          aria-label={`Close ${title}`}
+          onClick={onClose}
+        >
+          <X aria-hidden size={16} strokeWidth={2} />
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export default function WorkspacePaneStrip({
@@ -149,7 +239,7 @@ export default function WorkspacePaneStrip({
       focusPrimaryButtonByIndex(items.length - 1);
       return;
     }
-    if (event.key === "Delete") {
+    if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       handleClosePane(item.paneId);
     }
@@ -172,76 +262,26 @@ export default function WorkspacePaneStrip({
   return (
     <div className={styles.root}>
       <div className={styles.switcher} role="toolbar" aria-label="Workspace panes">
-        {items.map((item) => {
-          const title = item.title.trim() || "Pane";
-          const isMinimized = item.visibility === "minimized";
-          return (
-            <div
-              key={item.paneId}
-              className={[
-                styles.item,
-                item.isActive ? styles.active : "",
-                item.isInView ? styles.inView : "",
-                isMinimized ? styles.minimized : "",
-              ].join(" ")}
-            >
-              <Button
-                ref={(element) => {
-                  if (element) {
-                    primaryButtonRefs.current.set(item.paneId, element);
-                  } else {
-                    primaryButtonRefs.current.delete(item.paneId);
-                  }
-                }}
-                variant="ghost"
-                tabIndex={item.paneId === focusablePaneId ? 0 : -1}
-                aria-current={item.isActive ? "true" : undefined}
-                className={styles.primary}
-                onClick={() => activatePrimaryButton(item)}
-                onFocus={() => setRovingPaneId(item.paneId)}
-                onKeyDown={(event) => handlePrimaryKeyDown(event, item)}
-              >
-                <span className={styles.title}>{title}</span>
-                {item.isActive && <span className={styles.sronly}> Active pane.</span>}
-                {isMinimized && <span className={styles.sronly}> Minimized. Restore.</span>}
-              </Button>
-              {isMinimized ? (
-                <Button
-                  variant="ghost"
-                  size="md"
-                  iconOnly
-                  className={styles.action}
-                  aria-label={`Restore ${title}`}
-                  onClick={() => handleRestorePane(item.paneId)}
-                >
-                  <Maximize2 aria-hidden="true" size={16} strokeWidth={2} />
-                </Button>
-              ) : (
-                <Button
-                  variant="ghost"
-                  size="md"
-                  iconOnly
-                  className={styles.action}
-                  aria-label={`Minimize ${title}`}
-                  disabled={!item.canMinimize}
-                  onClick={() => handleMinimizePane(item)}
-                >
-                  <Minus aria-hidden="true" size={16} strokeWidth={2} />
-                </Button>
-              )}
-              <Button
-                variant="ghost"
-                size="md"
-                iconOnly
-                className={styles.action}
-                aria-label={`Close ${title}`}
-                onClick={() => handleClosePane(item.paneId)}
-              >
-                <X aria-hidden="true" size={16} strokeWidth={2} />
-              </Button>
-            </div>
-          );
-        })}
+        {items.map((item) => (
+          <PaneTab
+            key={item.paneId}
+            item={item}
+            isFocusable={item.paneId === focusablePaneId}
+            activatorRef={(element) => {
+              if (element) {
+                primaryButtonRefs.current.set(item.paneId, element);
+              } else {
+                primaryButtonRefs.current.delete(item.paneId);
+              }
+            }}
+            onActivate={() => activatePrimaryButton(item)}
+            onMinimize={() => handleMinimizePane(item)}
+            onRestore={() => handleRestorePane(item.paneId)}
+            onClose={() => handleClosePane(item.paneId)}
+            onActivatorKeyDown={(event) => handlePrimaryKeyDown(event, item)}
+            onActivatorFocus={() => setRovingPaneId(item.paneId)}
+          />
+        ))}
       </div>
     </div>
   );

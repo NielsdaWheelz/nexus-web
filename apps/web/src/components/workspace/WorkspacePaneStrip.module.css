@@ -1,6 +1,5 @@
 .root {
   display: flex;
-  align-items: center;
   min-width: 0;
   min-height: var(--tabsbar-height);
   border-bottom: 1px solid var(--edge-subtle);
@@ -10,104 +9,173 @@
 .switcher {
   display: flex;
   align-items: stretch;
+  gap: var(--space-1);
   min-width: 0;
   flex: 1;
   overflow-x: auto;
+  padding-inline: var(--space-1);
 }
 
-.item {
+.tab {
+  position: relative;
   display: flex;
-  align-items: stretch;
+  align-items: center;
+  height: 100%;
   min-width: 0;
-  max-width: 260px;
-  border-right: 1px solid var(--edge-subtle);
+  max-width: 240px; /* the only width cap; no min-width floor */
+  flex: 0 1 auto;
   background: transparent;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  overflow: hidden;
+  transition:
+    background-color var(--duration-fast) var(--ease-glide),
+    box-shadow var(--duration-fast) var(--ease-glide);
+}
+
+.activator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  height: 100%;
+  padding-inline: var(--space-2);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.icon {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  transition: color var(--duration-fast) var(--ease-glide);
+}
+
+.title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-snug);
+  color: var(--ink-muted);
+  transition: color var(--duration-fast) var(--ease-glide);
+}
+
+/* --- states --- */
+.tab:hover:not(.active) {
+  background: var(--surface-1);
+}
+
+.tab:hover:not(.active) .title {
+  color: var(--ink);
 }
 
 .active {
   background: var(--surface-canvas);
+  box-shadow: inset 0 2px 0 0 var(--accent);
 }
 
-.inView {
-  box-shadow: inset 0 -2px 0 var(--accent-muted);
+.active .title {
+  color: var(--ink);
+}
+
+.active .icon {
+  color: var(--ink-muted);
+}
+
+.tab::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-glide);
+}
+
+.inView::after {
+  opacity: 1;
 }
 
 .minimized {
   background: var(--surface-1);
 }
 
-.primary {
-  display: flex;
-  align-items: center;
-  min-width: 96px;
-  max-width: 180px;
-  border: 0;
-  background: transparent;
-  color: var(--ink-muted);
-  padding: 0 var(--space-3);
-  font: inherit;
-  cursor: pointer;
-}
-
-.active .primary {
-  color: var(--ink);
-}
-
-.minimized .primary {
+.minimized .title {
   color: var(--ink-faint);
   font-style: italic;
 }
 
-.primary:hover,
-.primary:focus-visible,
-.action:hover,
-.action:focus-visible {
-  color: var(--ink);
-  background: var(--surface-2);
+.activator:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px; /* inset — the strip is overflow:auto */
 }
 
-.primary:focus-visible,
-.action:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: -2px;
+/* --- actions: revealed on hover / focus-within / active; width reserved --- */
+.actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding-right: 2px;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-glide);
 }
 
-.title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.tab:hover .actions,
+.tab:focus-within .actions,
+.active .actions {
+  opacity: 1;
 }
 
 .action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--size-md);
-  min-width: var(--size-md);
+  width: var(--size-xs);
+  height: var(--size-xs);
   border: 0;
-  border-left: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink-faint);
-  padding: 0;
-  font: inherit;
   cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-glide),
+    color var(--duration-fast) var(--ease-glide);
+}
+
+.action:hover {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink);
 }
 
 .action:disabled {
-  color: var(--ink-faint);
-  background: transparent;
+  opacity: 0.4;
   cursor: not-allowed;
-  opacity: 0.45;
 }
 
-.sronly {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  border: 0;
+/* --- pending skeleton --- */
+.titleSkeleton {
+  flex: 0 0 auto;
+  width: 84px;
+  height: 0.7em;
+  border-radius: var(--radius-xs);
+  background: var(--surface-3);
+  animation: pane-tab-skeleton-pulse 1800ms ease-in-out infinite;
+}
+
+@keyframes pane-tab-skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 0.7; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .titleSkeleton {
+    animation: none;
+  }
 }
