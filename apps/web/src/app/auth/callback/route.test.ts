@@ -8,6 +8,9 @@ const mockCookieStore = {
 
 const mockExchangeCodeForSession = vi.fn();
 
+const HANDOFF_MINT_DEADLINE_MS = 5_000;
+const previousFastApiBaseUrl = process.env.FASTAPI_BASE_URL;
+
 function setNodeEnv(value: string | undefined) {
   const env = process.env as Record<string, string | undefined>;
   if (value === undefined) {
@@ -60,7 +63,7 @@ vi.mock("@supabase/ssr", () => ({
           if (result.throwError) {
             throw result.throwError;
           }
-          return result.returnValue ?? { error: null };
+          return result.returnValue ?? { data: { session: null }, error: null };
         },
       },
     })
@@ -73,6 +76,7 @@ describe("GET /auth/callback", () => {
     mockCookieStore.getAll.mockClear();
     mockCookieStore.set.mockClear();
     mockExchangeCodeForSession.mockReset();
+    process.env.FASTAPI_BASE_URL = "http://api.local";
   });
 
   afterEach(() => {
@@ -89,7 +93,7 @@ describe("GET /auth/callback", () => {
           options: { path: "/", httpOnly: true },
         },
       ],
-      returnValue: { error: null },
+      returnValue: { data: { session: null }, error: null },
     });
 
     const { GET } = await import("./route");
@@ -113,7 +117,7 @@ describe("GET /auth/callback", () => {
           options: { path: "/", httpOnly: true },
         },
       ],
-      returnValue: { error: null },
+      returnValue: { data: { session: null }, error: null },
     });
 
     const { GET } = await import("./route");
@@ -136,7 +140,7 @@ describe("GET /auth/callback", () => {
 
     try {
       mockExchangeCodeForSession.mockResolvedValue({
-        returnValue: { error: null },
+        returnValue: { data: { session: null }, error: null },
       });
 
       const { GET } = await import("./route");
@@ -186,7 +190,7 @@ describe("GET /auth/callback", () => {
 
     mockExchangeCodeForSession.mockResolvedValue({
       fetchCount: 2,
-      returnValue: { error: null },
+      returnValue: { data: { session: null }, error: null },
     });
 
     const { GET } = await import("./route");
@@ -223,4 +227,168 @@ describe("GET /auth/callback", () => {
       AUTH_CALLBACK_FAILURE_MESSAGE
     );
   });
+
+  describe("flow=handoff", () => {
+    it("posts the session tokens to FastAPI and redirects to the nexus:// success deep link", async () => {
+      mockExchangeCodeForSession.mockResolvedValue({
+        returnValue: {
+          data: {
+            session: {
+              access_token: "ax-token",
+              refresh_token: "rx-token",
+            },
+          },
+          error: null,
+        },
+      });
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(
+          new Response(JSON.stringify({ data: { code: "h-code-1" } }), {
+            status: 201,
+            headers: { "content-type": "application/json" },
+          })
+        );
+
+      const { GET } = await import("./route");
+      const response = await GET(
+        new Request(
+          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flibraries"
+        )
+      );
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchSpy.mock.calls[0] as [RequestInfo, RequestInit];
+      expect(String(url)).toBe("http://api.local/auth/handoff-codes");
+      expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer ax-token"
+      );
+      expect(new Headers(init?.headers).get("content-type")).toBe(
+        "application/json"
+      );
+      expect(JSON.parse(String(init?.body))).toEqual({
+        access_token: "ax-token",
+        refresh_token: "rx-token",
+        challenge: "challenge-abc",
+      });
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe(
+        "nexus://auth/handoff?code=h-code-1&next=%2Flibraries"
+      );
+      expect(response.headers.get("set-cookie")).toBeNull();
+    });
+
+    it("redirects to the handoff error deep link when FastAPI responds non-2xx", async () => {
+      mockExchangeCodeForSession.mockResolvedValue({
+        returnValue: {
+          data: {
+            session: {
+              access_token: "ax-token",
+              refresh_token: "rx-token",
+            },
+          },
+          error: null,
+        },
+      });
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response("internal error", { status: 500 })
+      );
+
+      const { GET } = await import("./route");
+      const response = await GET(
+        new Request(
+          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flibraries"
+        )
+      );
+
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe(
+        "nexus://auth/handoff?error=handoff_mint_failed&next=%2Flibraries"
+      );
+    });
+
+    it("redirects to the handoff error deep link when the FastAPI mint exceeds its deadline", async () => {
+      vi.useFakeTimers();
+      mockExchangeCodeForSession.mockResolvedValue({
+        returnValue: {
+          data: {
+            session: {
+              access_token: "ax-token",
+              refresh_token: "rx-token",
+            },
+          },
+          error: null,
+        },
+      });
+      vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+        const signal = (init as RequestInit | undefined)?.signal;
+        return new Promise<Response>((_resolve, reject) => {
+          const abort = () => {
+            reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+          };
+          if (signal?.aborted) {
+            abort();
+            return;
+          }
+          signal?.addEventListener("abort", abort, { once: true });
+        });
+      });
+
+      const { GET } = await import("./route");
+      const responsePromise = GET(
+        new Request(
+          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flibraries"
+        )
+      );
+
+      await vi.advanceTimersByTimeAsync(HANDOFF_MINT_DEADLINE_MS);
+
+      const response = await responsePromise;
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe(
+        "nexus://auth/handoff?error=handoff_mint_failed&next=%2Flibraries"
+      );
+    });
+
+    it("redirects to the handoff error deep link on an OAuth provider error", async () => {
+      const { GET } = await import("./route");
+      const response = await GET(
+        new Request(
+          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&error=server_error&next=%2Flibraries"
+        )
+      );
+
+      expect(mockExchangeCodeForSession).not.toHaveBeenCalled();
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe(
+        "nexus://auth/handoff?error=oauth_provider_error&next=%2Flibraries"
+      );
+    });
+
+    it("redirects to the handoff error deep link when the code is missing", async () => {
+      const { GET } = await import("./route");
+      const response = await GET(
+        new Request(
+          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&next=%2Flibraries"
+        )
+      );
+
+      expect(mockExchangeCodeForSession).not.toHaveBeenCalled();
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).toBe(
+        "nexus://auth/handoff?error=oauth_callback_missing_code&next=%2Flibraries"
+      );
+    });
+  });
+});
+
+afterEach(() => {
+  if (previousFastApiBaseUrl === undefined) {
+    delete process.env.FASTAPI_BASE_URL;
+  } else {
+    process.env.FASTAPI_BASE_URL = previousFastApiBaseUrl;
+  }
 });

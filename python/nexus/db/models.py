@@ -6496,6 +6496,48 @@ class ExtensionSession(Base):
     user: Mapped["User"] = relationship("User")
 
 
+class AuthHandoffCode(Base):
+    """AuthHandoffCode model - single-use code that hands a Supabase session into the Android WebView."""
+
+    __tablename__ = "auth_handoff_codes"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    code_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    challenge: Mapped[str] = mapped_column(Text, nullable=False)
+    access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(code_hash) = 64", name="ck_auth_handoff_codes_code_hash_len"
+        ),
+        CheckConstraint(
+            "char_length(challenge) = 64", name="ck_auth_handoff_codes_challenge_len"
+        ),
+        CheckConstraint(
+            "expires_at > created_at", name="ck_auth_handoff_codes_expires_after_created"
+        ),
+        UniqueConstraint("code_hash", name="uix_auth_handoff_codes_code_hash"),
+    )
+
+    user: Mapped["User"] = relationship("User")
+
+
 class MessageContextItem(Base):
     """Universal context object attached to one message."""
 

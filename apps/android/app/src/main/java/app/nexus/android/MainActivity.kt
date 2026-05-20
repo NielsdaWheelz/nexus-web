@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.os.Message
+import android.util.Base64
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.ValueCallback
@@ -18,12 +19,16 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabsIntent
+import java.security.MessageDigest
+import java.security.SecureRandom
 
 class MainActivity : AppCompatActivity() {
     internal lateinit var webView: WebView
     internal lateinit var shellChromeClient: WebChromeClient
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private val nexusBaseUri = Uri.parse(BuildConfig.NEXUS_BASE_URL)
+    internal var pendingHandoffVerifier: String? = null
+    private val googleSignInController by lazy { GoogleSignInController(this) }
 
     private val fileChooserLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -53,6 +58,12 @@ class MainActivity : AppCompatActivity() {
                 val uri = request?.url ?: return false
                 if (!request.isForMainFrame) {
                     return false
+                }
+                if (uri.scheme == "nexus" && uri.host == "auth") {
+                    when (uri.path) {
+                        "/start" -> { startAuthFlow(uri); return true }
+                        "/native" -> { googleSignInController.signIn(uri); return true }
+                    }
                 }
                 if (isOwnedUrl(uri)) {
                     return false
@@ -199,19 +210,51 @@ class MainActivity : AppCompatActivity() {
         openExternalUrl(uri)
     }
 
+    internal fun startAuthFlow(triggerUri: Uri) {
+        val provider = triggerUri.getQueryParameter("provider")
+        val mode = triggerUri.getQueryParameter("mode") ?: "signin"
+        val next = triggerUri.getQueryParameter("next") ?: "/"
+        if (provider !in setOf("google", "github") || mode !in setOf("signin", "link")) {
+            return
+        }
+        val verifierBytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val verifier = Base64.encodeToString(verifierBytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+        val challenge = MessageDigest.getInstance("SHA-256")
+            .digest(verifier.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        pendingHandoffVerifier = verifier
+        val uri = nexusBaseUri.buildUpon()
+            .appendEncodedPath("auth/oauth")
+            .appendQueryParameter("provider", provider)
+            .appendQueryParameter("mode", mode)
+            .appendQueryParameter("flow", "handoff")
+            .appendQueryParameter("hc", challenge)
+            .appendQueryParameter("next", next)
+            .build()
+        try {
+            CustomTabsIntent.Builder()
+                .setShowTitle(true)
+                .build()
+                .launchUrl(this, uri)
+        } catch (_: ActivityNotFoundException) {
+            // justify-ignore-error: fall back to the platform URL handler below.
+        }
+    }
+
     internal fun loadUrlFromIntent(intent: Intent?) {
         val launchUrl =
             intent?.data?.let { uri ->
                 if (
-                    BuildConfig.DEBUG &&
-                    uri.scheme == "nexus-dev" &&
+                    uri.scheme == "nexus" &&
                     uri.host == "auth" &&
-                    uri.path == "/callback"
+                    uri.path == "/handoff"
                 ) {
                     val callbackUri = nexusBaseUri.buildUpon()
-                        .path("/auth/callback")
+                        .path("/auth/handoff")
                         .encodedQuery(uri.encodedQuery)
+                        .appendQueryParameter("hv", pendingHandoffVerifier ?: "")
                         .build()
+                    pendingHandoffVerifier = null
                     if (isOwnedUrl(callbackUri)) callbackUri.toString() else null
                 } else {
                     uri.takeIf(::isOwnedUrl)?.toString()

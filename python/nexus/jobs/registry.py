@@ -194,6 +194,14 @@ def _build_default_registry() -> dict[str, JobDefinition]:
                 else None
             ),
         ),
+        "purge_expired_auth_handoff_codes": JobDefinition(
+            kind="purge_expired_auth_handoff_codes",
+            handler=_run_purge_expired_auth_handoff_codes,
+            max_attempts=1,
+            retry_delays_seconds=(0,),
+            lease_seconds=300,
+            periodic_interval_seconds=3600,
+        ),
         "backfill_default_library_closure_job": JobDefinition(
             kind="backfill_default_library_closure_job",
             handler=_run_backfill_default_library_closure,
@@ -334,6 +342,16 @@ def _run_prune_background_jobs(*, payload: Mapping[str, Any]) -> Mapping[str, An
     from nexus.tasks.prune_background_jobs import prune_background_jobs_job
 
     return prune_background_jobs_job(request_id=_optional_str(payload.get("request_id")))
+
+
+def _run_purge_expired_auth_handoff_codes(
+    *, payload: Mapping[str, Any]
+) -> Mapping[str, Any] | None:
+    from nexus.tasks.purge_expired_auth_handoff_codes import purge_expired_auth_handoff_codes_job
+
+    return purge_expired_auth_handoff_codes_job(
+        request_id=_optional_str(payload.get("request_id")),
+    )
 
 
 def _run_backfill_default_library_closure(

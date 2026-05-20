@@ -32,6 +32,8 @@ val versionCodeProperty = providers.gradleProperty("nexusAndroidVersionCode").or
     ?: System.getenv("NEXUS_ANDROID_VERSION_CODE")?.trim()
 val versionNameProperty = providers.gradleProperty("nexusAndroidVersionName").orNull?.trim()
     ?: System.getenv("NEXUS_ANDROID_VERSION_NAME")?.trim()
+val nexusGoogleWebClientId = (providers.gradleProperty("nexusGoogleWebClientId").orNull
+    ?: System.getenv("NEXUS_GOOGLE_WEB_CLIENT_ID"))?.trim()
 val releaseBaseUrl = releaseBaseUrlProperty ?: "https://release-host-required.invalid"
 val releaseOwnedHost = releaseOwnedHostProperty ?: "release-host-required.invalid"
 val debugUri = URI(debugBaseUrl)
@@ -52,6 +54,9 @@ require(
         debugUri.rawFragment == null
 ) {
     "nexusAndroidDebugBaseUrl must be an origin without path, query, fragment, or credentials."
+}
+require(!nexusGoogleWebClientId.isNullOrBlank()) {
+    "Set nexusGoogleWebClientId in gradle.properties or NEXUS_GOOGLE_WEB_CLIENT_ID env var; required by the native Google sign-in flow."
 }
 if (requestedReleaseBuild) {
     require(!releaseBaseUrlProperty.isNullOrBlank()) {
@@ -145,6 +150,7 @@ android {
             versionNameSuffix = "-debug"
             buildConfigField("String", "NEXUS_BASE_URL", "\"$debugBaseUrl\"")
             buildConfigField("String", "NEXUS_OWNED_HOST", "\"$debugOwnedHost\"")
+            buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$nexusGoogleWebClientId\"")
             manifestPlaceholders["appLinkHost"] = debugOwnedHost
             manifestPlaceholders["appLinksAutoVerify"] = "false"
             manifestPlaceholders["usesCleartextTraffic"] = "true"
@@ -155,6 +161,7 @@ android {
             signingConfig = signingConfigs.getByName("release")
             buildConfigField("String", "NEXUS_BASE_URL", "\"$releaseBaseUrl\"")
             buildConfigField("String", "NEXUS_OWNED_HOST", "\"$releaseOwnedHost\"")
+            buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$nexusGoogleWebClientId\"")
             manifestPlaceholders["appLinkHost"] = releaseOwnedHost
             manifestPlaceholders["appLinksAutoVerify"] = "true"
             manifestPlaceholders["usesCleartextTraffic"] = "false"
@@ -181,6 +188,9 @@ dependencies {
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.browser:browser:1.8.0")
+    implementation("androidx.credentials:credentials:1.6.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
 
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:core-ktx:1.6.1")

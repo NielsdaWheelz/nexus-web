@@ -20,7 +20,10 @@ import androidx.test.espresso.intent.matcher.IntentMatchers.hasAction
 import androidx.test.espresso.intent.matcher.IntentMatchers.hasData
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import org.hamcrest.Description
+import org.hamcrest.Matcher
 import org.hamcrest.Matchers.allOf
+import org.hamcrest.TypeSafeMatcher
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -159,53 +162,86 @@ class MainActivityTest {
     }
 
     @Test
-    fun debugDevCallbackIntentWhileRunningLoadsTheWebCallbackUrl() {
+    fun nexusAuthStartLaunchesCustomTabAtAuthOauthUrl() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            val expectedUrl =
-                "${BuildConfig.NEXUS_BASE_URL}/auth/callback?code=test-code&next=%2Flibraries"
+            val oauthPrefix = "${BuildConfig.NEXUS_BASE_URL}/auth/oauth"
+
+            Intents.init()
+            Intents.intending(
+                allOf(hasAction(Intent.ACTION_VIEW), hasData(hasUriStringStartingWith(oauthPrefix)))
+            ).respondWith(ActivityResult(Activity.RESULT_OK, null))
 
             scenario.onActivity { activity ->
+                activity.startAuthFlow(
+                    Uri.parse("nexus://auth/start?provider=github&mode=signin&next=%2Flibraries")
+                )
+            }
+
+            Intents.intended(
+                allOf(
+                    hasAction(Intent.ACTION_VIEW),
+                    hasData(
+                        hasOauthHandoffUriParts(
+                            prefix = oauthPrefix,
+                            requiredParams = mapOf(
+                                "provider" to "github",
+                                "mode" to "signin",
+                                "flow" to "handoff",
+                                "next" to "/libraries"
+                            ),
+                            hexParam = "hc"
+                        )
+                    )
+                )
+            )
+        }
+    }
+
+    @Test
+    fun nexusAuthHandoffIntentLoadsWebHandoffUrlWithVerifier() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val expectedUrl =
+                "${BuildConfig.NEXUS_BASE_URL}/auth/handoff" +
+                    "?code=test-code-xyz&next=%2Flibraries&hv=test-verifier-abc123"
+
+            scenario.onActivity { activity ->
+                activity.pendingHandoffVerifier = "test-verifier-abc123"
                 activity.loadUrlFromIntent(
                     Intent(
                         Intent.ACTION_VIEW,
-                        Uri.parse("nexus-dev://auth/callback?code=test-code&next=%2Flibraries")
+                        Uri.parse("nexus://auth/handoff?code=test-code-xyz&next=%2Flibraries")
                     ).apply {
                         setClass(activity, MainActivity::class.java)
                     }
                 )
             }
 
-            waitUntil("Expected debug dev callback new intent to load in the WebView.") {
+            waitUntil("Expected nexus://auth/handoff intent to load /auth/handoff with hv in the WebView.") {
                 var currentUrl: String? = null
                 scenario.onActivity { activity ->
                     currentUrl = activity.webView.url
                 }
                 currentUrl == expectedUrl
             }
+
+            scenario.onActivity { activity ->
+                assertNull(
+                    "Expected pendingHandoffVerifier to be consumed (cleared) after the handoff load.",
+                    activity.pendingHandoffVerifier
+                )
+            }
         }
     }
 
     @Test
-    fun debugDevCallbackIntentLoadsTheWebCallbackUrl() {
-        val intent = Intent(
-            Intent.ACTION_VIEW,
-            Uri.parse("nexus-dev://auth/callback?code=test-code&next=%2Flibraries")
-        ).apply {
-            setClass(
-                ApplicationProvider.getApplicationContext(),
-                MainActivity::class.java
-            )
-        }
-        val expectedUrl =
-            "${BuildConfig.NEXUS_BASE_URL}/auth/callback?code=test-code&next=%2Flibraries"
-
-        ActivityScenario.launch<MainActivity>(intent).use { scenario ->
-            waitUntil("Expected debug dev callback URL to load in the WebView.") {
-                var currentUrl: String? = null
-                scenario.onActivity { activity ->
-                    currentUrl = activity.webView.url
-                }
-                currentUrl == expectedUrl
+    fun startAuthFlowRejectsUnknownProviderSilently() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.startAuthFlow(Uri.parse("nexus://auth/start?provider=facebook&next=/"))
+                assertNull(
+                    "Expected unknown provider to be rejected without persisting a verifier.",
+                    activity.pendingHandoffVerifier
+                )
             }
         }
     }
@@ -435,6 +471,38 @@ class MainActivityTest {
             Thread.sleep(50)
         }
         throw AssertionError(message)
+    }
+
+    private fun hasUriStringStartingWith(prefix: String): Matcher<Uri> =
+        object : TypeSafeMatcher<Uri>() {
+            override fun matchesSafely(item: Uri): Boolean = item.toString().startsWith(prefix)
+            override fun describeTo(description: Description) {
+                description.appendText("Uri whose string starts with ").appendValue(prefix)
+            }
+        }
+
+    private fun hasOauthHandoffUriParts(
+        prefix: String,
+        requiredParams: Map<String, String>,
+        hexParam: String
+    ): Matcher<Uri> = object : TypeSafeMatcher<Uri>() {
+        private val hexPattern = Regex("^[0-9a-f]{64}$")
+
+        override fun matchesSafely(item: Uri): Boolean {
+            if (!item.toString().startsWith(prefix)) return false
+            for ((name, value) in requiredParams) {
+                if (item.getQueryParameter(name) != value) return false
+            }
+            val hex = item.getQueryParameter(hexParam) ?: return false
+            return hexPattern.matches(hex)
+        }
+
+        override fun describeTo(description: Description) {
+            description
+                .appendText("Uri starting with ").appendValue(prefix)
+                .appendText(", params ").appendValue(requiredParams)
+                .appendText(", and ").appendText(hexParam).appendText(" matching 64-char hex")
+        }
     }
 
     private class RecordingValueCallback : ValueCallback<Array<Uri>> {

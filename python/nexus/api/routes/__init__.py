@@ -13,6 +13,7 @@ from nexus.api.routes.chat_runs import router as chat_runs_router
 from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.conversations import router as conversations_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
+from nexus.api.routes.auth_handoff_codes import router as auth_handoff_codes_router
 from nexus.api.routes.health import router as health_router
 from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.internal_ingest import router as internal_ingest_router
@@ -50,6 +51,7 @@ def create_api_router(include_test_routes: bool = False) -> APIRouter:
     api_router.include_router(health_router, tags=["health"])
     api_router.include_router(me_router, tags=["user"])
     api_router.include_router(extension_sessions_router, tags=["auth"])
+    api_router.include_router(auth_handoff_codes_router, tags=["auth"])
     api_router.include_router(libraries_router, tags=["libraries"])
     api_router.include_router(library_intelligence_router, tags=["library-intelligence"])
     api_router.include_router(media_router, tags=["media"])

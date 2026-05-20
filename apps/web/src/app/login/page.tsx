@@ -1,6 +1,7 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { type FeedbackContent } from "@/components/feedback/Feedback";
+import { isAndroidShellUserAgent } from "@/lib/androidShell";
 import {
   DEFAULT_AUTH_REDIRECT,
   getFirstSearchParamValue,
@@ -52,7 +53,15 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     )
   );
 
+  const isShell = isAndroidShellUserAgent(
+    (await headers()).get("user-agent") ?? ""
+  );
+
   return (
-    <LoginPageClient initialFeedback={initialFeedback} nextPath={nextPath} />
+    <LoginPageClient
+      initialFeedback={initialFeedback}
+      nextPath={nextPath}
+      isShell={isShell}
+    />
   );
 }

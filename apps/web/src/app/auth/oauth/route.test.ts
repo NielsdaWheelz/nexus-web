@@ -74,10 +74,8 @@ vi.mock("@supabase/ssr", () => ({
   ),
 }));
 
-function request(path: string, userAgent?: string): Request {
-  return new Request(`http://localhost:3000${path}`, {
-    headers: userAgent ? { "user-agent": userAgent } : {},
-  });
+function request(path: string): Request {
+  return new Request(`http://localhost:3000${path}`);
 }
 
 describe("GET /auth/oauth", () => {
@@ -183,18 +181,37 @@ describe("GET /auth/oauth", () => {
     });
   });
 
-  it("uses the debug Android callback scheme for a local shell user agent", async () => {
+  it("appends flow=handoff and hc to redirectTo when flow=handoff is requested", async () => {
+    const challenge = "a".repeat(64);
     const { GET } = await import("./route");
     await GET(
       request(
-        "/auth/oauth?provider=google&next=%2Flibraries",
-        "Mozilla/5.0 NexusAndroidShell"
+        `/auth/oauth?provider=github&flow=handoff&hc=${challenge}&next=%2Flibraries`
       )
     );
 
-    expect(signInWithOAuthSpy).toHaveBeenCalledWith({
-      provider: "google",
-      options: { redirectTo: "nexus-dev://auth/callback?next=%2Flibraries" },
-    });
+    expect(signInWithOAuthSpy).toHaveBeenCalledTimes(1);
+    const redirectTo = new URL(
+      signInWithOAuthSpy.mock.calls[0][0].options.redirectTo
+    );
+    expect(redirectTo.origin).toBe("http://localhost:3000");
+    expect(redirectTo.pathname).toBe("/auth/callback");
+    expect(redirectTo.searchParams.get("next")).toBe("/libraries");
+    expect(redirectTo.searchParams.get("flow")).toBe("handoff");
+    expect(redirectTo.searchParams.get("hc")).toBe(challenge);
+  });
+
+  it("uses the plain web callback when flow is not handoff", async () => {
+    const { GET } = await import("./route");
+    await GET(request("/auth/oauth?provider=github&next=%2Flibraries"));
+
+    expect(signInWithOAuthSpy).toHaveBeenCalledTimes(1);
+    const redirectTo = new URL(
+      signInWithOAuthSpy.mock.calls[0][0].options.redirectTo
+    );
+    expect(redirectTo.pathname).toBe("/auth/callback");
+    expect(redirectTo.searchParams.get("next")).toBe("/libraries");
+    expect(redirectTo.searchParams.has("flow")).toBe(false);
+    expect(redirectTo.searchParams.has("hc")).toBe(false);
   });
 });

@@ -1,9 +1,7 @@
-import { shouldUseAndroidDebugAuthCallback } from "@/lib/androidShell";
 import { OAUTH_START_FAILURE_MESSAGE } from "@/lib/auth/messages";
 import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
 import { type OAuthProvider } from "@/lib/auth/identities";
 import {
-  buildAndroidDebugAuthCallbackUrl,
   buildAuthCallbackUrl,
   buildLoginUrlWithError,
   normalizeAuthRedirect,
@@ -32,6 +30,8 @@ export async function GET(request: Request): Promise<NextResponse> {
   const requestUrl = new URL(request.url);
   const provider = requestUrl.searchParams.get("provider");
   const mode = requestUrl.searchParams.get("mode") === "link" ? "link" : "signin";
+  const isHandoff = requestUrl.searchParams.get("flow") === "handoff";
+  const hc = requestUrl.searchParams.get("hc");
   const nextPath =
     mode === "link"
       ? IDENTITY_LINK_RETURN_PATH
@@ -50,13 +50,11 @@ export async function GET(request: Request): Promise<NextResponse> {
     );
   }
 
-  const useAndroidDebugCallback = shouldUseAndroidDebugAuthCallback(
-    requestUrl.protocol,
-    requestUrl.hostname,
-    request.headers.get("user-agent") ?? ""
-  );
-  const redirectTo = useAndroidDebugCallback
-    ? buildAndroidDebugAuthCallbackUrl(nextPath)
+  const redirectTo = isHandoff
+    ? buildAuthCallbackUrl(redirectOrigin, nextPath, {
+        flow: "handoff",
+        challenge: hc ?? "",
+      })
     : buildAuthCallbackUrl(redirectOrigin, nextPath);
 
   const { supabase, applyCookies } = await createRouteHandlerClient();

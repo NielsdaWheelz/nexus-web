@@ -5,11 +5,16 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { type OAuthProvider } from "@/lib/auth/identities";
+import {
+  buildAuthNativeGoogleDeepLink,
+  buildAuthStartDeepLink,
+} from "@/lib/auth/redirects";
 import styles from "./page.module.css";
 
 interface LoginPageClientProps {
   initialFeedback?: FeedbackContent | null;
   nextPath: string;
+  isShell: boolean;
 }
 
 function GitHubMark() {
@@ -52,20 +57,38 @@ function GoogleMark() {
   );
 }
 
-// A GET form to the server route: OAuth is initiated server-side, so the
-// browser holds no Supabase client. Submitting navigates to /auth/oauth, which
-// asks Supabase for the provider URL and redirects there.
+// In a browser, OAuth is initiated server-side via a GET form to `/auth/oauth`.
+// In the Android shell, the WebView is never the OAuth user-agent (RFC 8252):
+// the button is an `<a href="nexus://…">` that native intercepts to launch a
+// Custom Tab (GitHub) or the Credential Manager (Google). The `<a>` is required
+// — `form-action 'self'` in the CSP would block a `<form action="nexus://…">`.
 function ProviderForm({
   provider,
   nextPath,
   label,
   mark,
+  isShell,
 }: {
   provider: OAuthProvider;
   nextPath: string;
   label: string;
   mark: React.ReactNode;
+  isShell: boolean;
 }) {
+  if (isShell) {
+    const href =
+      provider === "google"
+        ? buildAuthNativeGoogleDeepLink(nextPath)
+        : buildAuthStartDeepLink(provider, "signin", nextPath);
+    return (
+      <Button asChild variant="secondary" size="lg">
+        <a href={href}>
+          {mark}
+          {label}
+        </a>
+      </Button>
+    );
+  }
   return (
     <form className={styles.providerForm} action="/auth/oauth" method="get">
       <input type="hidden" name="provider" value={provider} />
@@ -80,6 +103,7 @@ function ProviderForm({
 export default function LoginPageClient({
   initialFeedback = null,
   nextPath,
+  isShell,
 }: LoginPageClientProps) {
   return (
     <div className={styles.container}>
@@ -111,6 +135,7 @@ export default function LoginPageClient({
               nextPath={nextPath}
               label="Continue with Google"
               mark={<GoogleMark />}
+              isShell={isShell}
             />
 
             <ProviderForm
@@ -118,6 +143,7 @@ export default function LoginPageClient({
               nextPath={nextPath}
               label="Continue with GitHub"
               mark={<GitHubMark />}
+              isShell={isShell}
             />
           </div>
 

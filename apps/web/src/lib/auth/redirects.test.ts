@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_AUTH_REDIRECT,
-  buildAndroidDebugAuthCallbackUrl,
   buildAuthCallbackUrl,
+  buildAuthHandoffErrorDeepLink,
+  buildAuthHandoffSuccessDeepLink,
+  buildAuthNativeGoogleDeepLink,
+  buildAuthStartDeepLink,
   buildLoginRedirectUrl,
   buildLoginUrlWithError,
   normalizeAuthRedirect,
@@ -43,10 +46,6 @@ describe("auth redirect helpers", () => {
       "http://localhost:3000/auth/callback?next=%2Fsearch%3Fq%3D1"
     );
 
-    expect(buildAndroidDebugAuthCallbackUrl("https://evil.example.com")).toBe(
-      "nexus-dev://auth/callback?next=%2Flibraries"
-    );
-
     expect(
       buildLoginUrlWithError(
         "https://app.example.com",
@@ -55,6 +54,51 @@ describe("auth redirect helpers", () => {
       ).toString()
     ).toBe(
       "https://app.example.com/login?next=%2Flibraries&error_description=Denied"
+    );
+  });
+
+  it("builds callback URLs with the handoff flow flag", () => {
+    expect(
+      buildAuthCallbackUrl("http://localhost:3000", "/search?q=1", {
+        flow: "handoff",
+      })
+    ).toBe(
+      "http://localhost:3000/auth/callback?next=%2Fsearch%3Fq%3D1&flow=handoff"
+    );
+  });
+
+  it("builds callback URLs with handoff flow and challenge", () => {
+    expect(
+      buildAuthCallbackUrl("http://localhost:3000", "/search?q=1", {
+        flow: "handoff",
+        challenge: "abc123",
+      })
+    ).toBe(
+      "http://localhost:3000/auth/callback?next=%2Fsearch%3Fq%3D1&flow=handoff&hc=abc123"
+    );
+  });
+
+  it("builds the auth handoff success deep link", () => {
+    expect(
+      buildAuthHandoffSuccessDeepLink("code-xyz", "/conversations")
+    ).toBe("nexus://auth/handoff?code=code-xyz&next=%2Fconversations");
+  });
+
+  it("builds the auth handoff error deep link", () => {
+    expect(
+      buildAuthHandoffErrorDeepLink("oauth_failed", "/conversations")
+    ).toBe("nexus://auth/handoff?error=oauth_failed&next=%2Fconversations");
+  });
+
+  it("builds the auth start deep link", () => {
+    expect(buildAuthStartDeepLink("github", "signin", "/libraries")).toBe(
+      "nexus://auth/start?provider=github&mode=signin&next=%2Flibraries"
+    );
+  });
+
+  it("builds the native google deep link", () => {
+    expect(buildAuthNativeGoogleDeepLink("/libraries")).toBe(
+      "nexus://auth/native?provider=google&next=%2Flibraries"
     );
   });
 });

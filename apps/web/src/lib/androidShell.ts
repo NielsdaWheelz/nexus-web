@@ -30,17 +30,3 @@ export function isAndroidShellRestrictedHref(href: string): boolean {
 export function isAndroidShellRestrictedRouteId(routeId: string): boolean {
   return routeId === "settingsLocalVault";
 }
-
-export function shouldUseAndroidDebugAuthCallback(
-  protocol: string,
-  hostname: string,
-  userAgent: string
-): boolean {
-  return (
-    protocol === "http:" &&
-    (hostname === "localhost" ||
-      hostname === "127.0.0.1" ||
-      hostname === "10.0.2.2") &&
-    isAndroidShellUserAgent(userAgent)
-  );
-}
