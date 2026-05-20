@@ -341,7 +341,7 @@ class Settings(BaseSettings):
         default="claude-3-5-haiku-20241022", alias="METADATA_ENRICHMENT_MODEL_ANTHROPIC"
     )
     metadata_enrichment_model_gemini: str = Field(
-        default="gemini-2.0-flash", alias="METADATA_ENRICHMENT_MODEL_GEMINI"
+        default="gemini-3.5-flash", alias="METADATA_ENRICHMENT_MODEL_GEMINI"
     )
     metadata_enrichment_max_content_chars: int = Field(
         default=2000, alias="METADATA_ENRICHMENT_MAX_CONTENT_CHARS"
