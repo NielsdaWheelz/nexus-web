@@ -82,8 +82,12 @@ export async function GET(request: Request): Promise<NextResponse> {
     const fastApiBaseUrl =
       process.env.FASTAPI_BASE_URL ||
       (process.env.NODE_ENV === "production" ? "" : "http://localhost:8000");
+    const internalSecret = process.env.NEXUS_INTERNAL_SECRET || "";
 
-    if (!fastApiBaseUrl) {
+    if (
+      !fastApiBaseUrl ||
+      (process.env.NODE_ENV === "production" && !internalSecret)
+    ) {
       return noStore(
         NextResponse.redirect(
           buildLoginUrlWithError(
@@ -96,6 +100,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       );
     }
 
+    const requestId = crypto.randomUUID();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
       controller.abort(
@@ -109,7 +114,11 @@ export async function GET(request: Request): Promise<NextResponse> {
         `${fastApiBaseUrl}/auth/handoff-codes/consume`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-Request-ID": requestId,
+            ...(internalSecret ? { "X-Nexus-Internal": internalSecret } : {}),
+          },
           body: JSON.stringify({ code, verifier: hv }),
           signal: controller.signal,
         }

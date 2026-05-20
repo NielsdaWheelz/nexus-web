@@ -219,6 +219,35 @@ class TestInternalHeaderEnforcement:
 
         assert response.status_code == 200
 
+    def test_internal_only_path_demands_internal_header(self, staging_client):
+        """Internal-only paths (e.g. handoff consume) still 403 without the
+        X-Nexus-Internal trust signal, even though they skip Bearer auth."""
+        response = staging_client.post(
+            "/auth/handoff-codes/consume",
+            json={"code": "nx_hand_anything", "verifier": "verifier"},
+        )
+
+        assert response.status_code == 403
+        data = response.json()
+        assert data["error"]["code"] == "E_INTERNAL_ONLY"
+
+    def test_internal_only_path_skips_bearer_with_internal_header(
+        self, staging_client
+    ):
+        """With X-Nexus-Internal present, internal-only paths reach the
+        route handler without requiring a Bearer token (the user has no
+        Supabase session yet at this point in the flow). An unknown code
+        surfaces as E_UNAUTHENTICATED from the handler — not E_INTERNAL_ONLY
+        from the middleware."""
+        response = staging_client.post(
+            "/auth/handoff-codes/consume",
+            headers={"X-Nexus-Internal": "test-internal-secret"},
+            json={"code": "nx_hand_unknown", "verifier": "v"},
+        )
+
+        assert response.status_code != 403
+        assert response.json()["error"]["code"] != "E_INTERNAL_ONLY"
+
 
 class TestBootstrap:
     """Tests for user and default library bootstrap."""

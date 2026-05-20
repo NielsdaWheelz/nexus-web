@@ -35,6 +35,13 @@ EXTENSION_AUTH_PATHS = {
     "/media/capture/file",
     "/media/capture/url",
 }
+# Paths that require the X-Nexus-Internal trust signal but no Bearer token,
+# because the route authenticates the caller via a credential in the request
+# body (e.g. single-use handoff code + verifier). The user has no Supabase
+# session yet at this point in the flow — that's what consume produces.
+INTERNAL_ONLY_PATHS = {
+    "/auth/handoff-codes/consume",
+}
 
 
 @dataclass
@@ -151,6 +158,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return error_response_obj
 
         if request.url.path in EXTENSION_AUTH_PATHS:
+            return await call_next(request)
+
+        if request.url.path in INTERNAL_ONLY_PATHS:
             return await call_next(request)
 
         # Step 2: Extract bearer token
