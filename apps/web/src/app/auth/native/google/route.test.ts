@@ -1,5 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+function setNodeEnv(value: string | undefined) {
+  const env = process.env as Record<string, string | undefined>;
+  if (value === undefined) {
+    delete env.NODE_ENV;
+    return;
+  }
+  env.NODE_ENV = value;
+}
+
 interface CookieFixture {
   name: string;
   value: string;
@@ -70,6 +79,7 @@ describe("POST /auth/native/google", () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://local.supabase.co";
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
     process.env.FASTAPI_BASE_URL = "http://api.local";
+    process.env.NEXUS_INTERNAL_SECRET = "test-internal-secret";
   });
 
   it("exchanges the Google ID token, mints a handoff code, and returns it", async () => {
@@ -97,6 +107,10 @@ describe("POST /auth/native/google", () => {
     expect(init?.method).toBe("POST");
     const headers = new Headers(init?.headers);
     expect(headers.get("authorization")).toBe("Bearer supabase-access-token");
+    expect(headers.get("x-nexus-internal")).toBe("test-internal-secret");
+    expect(headers.get("x-request-id")).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+    );
     expect(JSON.parse(String(init?.body))).toEqual({
       access_token: "supabase-access-token",
       refresh_token: "supabase-refresh-token",
@@ -130,6 +144,35 @@ describe("POST /auth/native/google", () => {
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "google_signin_failed" });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns 500 not_configured when NEXUS_INTERNAL_SECRET is unset in production", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousInternalSecret = process.env.NEXUS_INTERNAL_SECRET;
+    setNodeEnv("production");
+    delete process.env.NEXUS_INTERNAL_SECRET;
+    try {
+      const { POST } = await import("./route");
+      const response = await POST(
+        postRequest({
+          idToken: "google-id-token",
+          nonce: "raw-nonce",
+          hc: "challenge-hex",
+        })
+      );
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "not_configured" });
+      expect(signInWithIdTokenSpy).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      setNodeEnv(previousNodeEnv);
+      if (previousInternalSecret === undefined) {
+        delete process.env.NEXUS_INTERNAL_SECRET;
+      } else {
+        process.env.NEXUS_INTERNAL_SECRET = previousInternalSecret;
+      }
+    }
   });
 
   it("returns 502 handoff_mint_failed when the FastAPI mint endpoint returns 500", async () => {

@@ -34,10 +34,15 @@ export async function GET(request: Request) {
         const fastApiBaseUrl =
           process.env.FASTAPI_BASE_URL ||
           (process.env.NODE_ENV === "production" ? "" : "http://localhost:8000");
-        if (!fastApiBaseUrl) {
+        const internalSecret = process.env.NEXUS_INTERNAL_SECRET || "";
+        if (
+          !fastApiBaseUrl ||
+          (process.env.NODE_ENV === "production" && !internalSecret)
+        ) {
           return { error: "not_configured" };
         }
 
+        const requestId = crypto.randomUUID();
         const controller = new AbortController();
         const timeoutId = setTimeout(() => {
           controller.abort(
@@ -52,6 +57,8 @@ export async function GET(request: Request) {
             headers: {
               Authorization: `Bearer ${accessToken}`,
               "Content-Type": "application/json",
+              "X-Request-ID": requestId,
+              ...(internalSecret ? { "X-Nexus-Internal": internalSecret } : {}),
             },
             body: JSON.stringify({
               access_token: accessToken,

@@ -10,6 +10,7 @@ const mockExchangeCodeForSession = vi.fn();
 
 const HANDOFF_MINT_DEADLINE_MS = 5_000;
 const previousFastApiBaseUrl = process.env.FASTAPI_BASE_URL;
+const previousInternalSecret = process.env.NEXUS_INTERNAL_SECRET;
 
 function setNodeEnv(value: string | undefined) {
   const env = process.env as Record<string, string | undefined>;
@@ -77,6 +78,7 @@ describe("GET /auth/callback", () => {
     mockCookieStore.set.mockClear();
     mockExchangeCodeForSession.mockReset();
     process.env.FASTAPI_BASE_URL = "http://api.local";
+    process.env.NEXUS_INTERNAL_SECRET = "test-internal-secret";
   });
 
   afterEach(() => {
@@ -261,11 +263,12 @@ describe("GET /auth/callback", () => {
       const [url, init] = fetchSpy.mock.calls[0] as [RequestInfo, RequestInit];
       expect(String(url)).toBe("http://api.local/auth/handoff-codes");
       expect(init?.method).toBe("POST");
-      expect(new Headers(init?.headers).get("authorization")).toBe(
-        "Bearer ax-token"
-      );
-      expect(new Headers(init?.headers).get("content-type")).toBe(
-        "application/json"
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe("Bearer ax-token");
+      expect(headers.get("content-type")).toBe("application/json");
+      expect(headers.get("x-nexus-internal")).toBe("test-internal-secret");
+      expect(headers.get("x-request-id")).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
       );
       expect(JSON.parse(String(init?.body))).toEqual({
         access_token: "ax-token",
@@ -279,6 +282,49 @@ describe("GET /auth/callback", () => {
         "nexus://auth/handoff?code=h-code-1&next=%2Flibraries"
       );
       expect(response.headers.get("set-cookie")).toBeNull();
+    });
+
+    it("redirects to the handoff error deep link when NEXUS_INTERNAL_SECRET is unset in production", async () => {
+      const previousNodeEnv = process.env.NODE_ENV;
+      const previousAllowedOrigins = process.env.AUTH_ALLOWED_REDIRECT_ORIGINS;
+      setNodeEnv("production");
+      process.env.AUTH_ALLOWED_REDIRECT_ORIGINS = "https://app.example.com";
+      delete process.env.NEXUS_INTERNAL_SECRET;
+
+      try {
+        mockExchangeCodeForSession.mockResolvedValue({
+          returnValue: {
+            data: {
+              session: {
+                access_token: "ax-token",
+                refresh_token: "rx-token",
+              },
+            },
+            error: null,
+          },
+        });
+        const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+        const { GET } = await import("./route");
+        const response = await GET(
+          new Request(
+            "https://app.example.com/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flibraries"
+          )
+        );
+
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(response.status).toBe(307);
+        expect(response.headers.get("location")).toBe(
+          "nexus://auth/handoff?error=handoff_mint_failed&next=%2Flibraries"
+        );
+      } finally {
+        setNodeEnv(previousNodeEnv);
+        if (previousAllowedOrigins === undefined) {
+          delete process.env.AUTH_ALLOWED_REDIRECT_ORIGINS;
+        } else {
+          process.env.AUTH_ALLOWED_REDIRECT_ORIGINS = previousAllowedOrigins;
+        }
+      }
     });
 
     it("redirects to the handoff error deep link when FastAPI responds non-2xx", async () => {
@@ -390,5 +436,10 @@ afterEach(() => {
     delete process.env.FASTAPI_BASE_URL;
   } else {
     process.env.FASTAPI_BASE_URL = previousFastApiBaseUrl;
+  }
+  if (previousInternalSecret === undefined) {
+    delete process.env.NEXUS_INTERNAL_SECRET;
+  } else {
+    process.env.NEXUS_INTERNAL_SECRET = previousInternalSecret;
   }
 });

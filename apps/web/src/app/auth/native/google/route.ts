@@ -25,6 +25,18 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: "invalid_request" }, { status: 400 });
     }
 
+    const fastApiBaseUrl =
+      process.env.FASTAPI_BASE_URL ||
+      (process.env.NODE_ENV === "production" ? "" : "http://localhost:8000");
+    const internalSecret = process.env.NEXUS_INTERNAL_SECRET || "";
+
+    if (
+      !fastApiBaseUrl ||
+      (process.env.NODE_ENV === "production" && !internalSecret)
+    ) {
+      return NextResponse.json({ error: "not_configured" }, { status: 500 });
+    }
+
     const { supabase } = await createRouteHandlerClient();
     const { data, error } = await supabase.auth.signInWithIdToken({
       provider: "google",
@@ -39,10 +51,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const fastApiBaseUrl =
-      process.env.FASTAPI_BASE_URL ||
-      (process.env.NODE_ENV === "production" ? "" : "http://localhost:8000");
-
+    const requestId = crypto.randomUUID();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
       controller.abort(
@@ -57,6 +66,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         headers: {
           Authorization: `Bearer ${data.session.access_token}`,
           "Content-Type": "application/json",
+          "X-Request-ID": requestId,
+          ...(internalSecret ? { "X-Nexus-Internal": internalSecret } : {}),
         },
         body: JSON.stringify({
           access_token: data.session.access_token,
