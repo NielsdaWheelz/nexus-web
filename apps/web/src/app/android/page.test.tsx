@@ -3,33 +3,31 @@ import { describe, expect, it } from "vitest";
 import AndroidPage from "./page";
 
 describe("AndroidPage", () => {
-  it("renders the public Android install links and sideload guidance", () => {
+  it("renders the wordmark, the Android subhead, the APK download, the trust links, and the sign-in escape", () => {
     render(<AndroidPage />);
 
     expect(
-      screen.getByRole("heading", { name: /install nexus on android/i })
+      screen.getByRole("heading", { level: 1, name: "Nexus" })
     ).toBeVisible();
-    expect(screen.getByRole("link", { name: /download apk/i })).toHaveAttribute(
+    expect(screen.getByText("Android")).toBeVisible();
+
+    expect(
+      screen.getByRole("link", { name: /download apk/i })
+    ).toHaveAttribute(
       "href",
       "https://github.com/NielsdaWheelz/nexus-web/releases/latest/download/nexus-android.apk"
     );
-    expect(
-      screen.getByRole("link", { name: /view sha-256 checksum/i })
-    ).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /checksum/i })).toHaveAttribute(
       "href",
       "https://github.com/NielsdaWheelz/nexus-web/releases/latest/download/nexus-android.apk.sha256"
     );
-    expect(
-      screen.getByRole("link", { name: /latest github release/i })
-    ).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /releases/i })).toHaveAttribute(
       "href",
       "https://github.com/NielsdaWheelz/nexus-web/releases/latest"
     );
-    expect(
-      screen.getByText(/allow installs from your browser or file manager/i)
-    ).toBeVisible();
-    expect(
-      screen.getByText(/ordinary web updates are delivered from the server/i)
-    ).toBeVisible();
+    expect(screen.getByRole("link", { name: /sign in/i })).toHaveAttribute(
+      "href",
+      "/login"
+    );
   });
 });
