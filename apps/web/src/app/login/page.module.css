@@ -1,87 +1,38 @@
+/* /login is one centered column for both sign-in and create-account. The
+   mode lives in client state; the layout does not branch on it. */
+
 .container {
   min-height: 100vh;
   background: var(--surface-canvas);
-}
-
-.split {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-12);
-  min-height: 100vh;
-  max-width: 1280px;
-  margin: 0 auto;
-}
-
-.editorial {
-  padding: var(--space-16) var(--space-10);
-}
-
-.signin {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: var(--space-16) var(--space-10);
-}
-
-.title {
-  margin: 0;
-  color: var(--ink);
-  font-size: clamp(2rem, 4vw, 3rem);
-  font-weight: var(--weight-bold);
-  line-height: var(--leading-tight);
-  letter-spacing: var(--tracking-tight);
-}
-
-.deck {
-  margin: var(--space-4) 0 0;
-  color: var(--ink-muted);
-  font-size: var(--text-lg);
-  line-height: var(--leading-snug);
-}
-
-.body {
-  margin: var(--space-6) 0 0;
-  color: var(--ink-muted);
-  font-family: var(--font-sans);
-  font-size: var(--text-base);
-  line-height: var(--leading-relaxed);
-}
-
-.providers {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  max-width: 24rem;
-}
-
-/* The provider form is a GET-submit wrapper with no layout of its own; its
-   button is the real flex child of .providers and stretches to full width. */
-.providerForm {
-  display: contents;
-}
-
-.divider {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  justify-content: center;
+  padding: var(--space-10) var(--space-6);
+}
+
+.frame {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  width: 100%;
   max-width: 24rem;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
 }
 
-.divider::before,
-.divider::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--edge);
+.wordmark {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+  text-align: center;
 }
 
-.passwordForm {
+.form {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  max-width: 24rem;
 }
 
 .field {
@@ -97,16 +48,17 @@
 }
 
 .fieldInput {
-  font-family: inherit;
-  color: var(--ink);
   width: 100%;
   height: var(--size-xl);
+  padding: 0 var(--space-3);
+  font-family: inherit;
   font-size: var(--text-base);
+  color: var(--ink);
   background: var(--surface-sunken);
   border: 1px solid var(--edge);
   border-radius: var(--radius-md);
-  padding: 0 var(--space-3);
-  transition: border-color var(--duration-fast) var(--ease-glide),
+  transition:
+    border-color var(--duration-fast) var(--ease-glide),
     box-shadow var(--duration-fast) var(--ease-glide);
 }
 
@@ -122,33 +74,80 @@
   cursor: not-allowed;
 }
 
-.legal {
-  margin: var(--space-6) 0 0;
+.divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   color: var(--ink-muted);
   font-size: var(--text-sm);
-  line-height: var(--leading-relaxed);
-  text-align: left;
-  max-width: 24rem;
 }
 
-.legalLink {
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--edge);
+}
+
+.providers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* The provider form is a GET-submit wrapper with no layout of its own; its
+   button is the real flex child of .providers and stretches to full width. */
+.providerForm {
+  display: contents;
+}
+
+.toggle {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.toggleLink {
+  appearance: none;
+  background: none;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  font: inherit;
   color: var(--accent);
   text-decoration: underline;
   text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-glide);
 }
 
-@media (max-width: 900px) {
-  .split {
-    grid-template-columns: 1fr;
-    gap: var(--space-8);
-    min-height: auto;
-  }
+.toggleLink:hover {
+  color: var(--accent-hover);
+}
 
-  .editorial {
-    padding: var(--space-10) var(--space-6) 0;
-  }
+.toggleLink:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
 
-  .signin {
-    padding: var(--space-6) var(--space-6) var(--space-10);
-  }
+.legal {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  text-align: center;
+}
+
+.legalLink {
+  color: var(--ink-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color var(--duration-fast) var(--ease-glide);
+}
+
+.legalLink:hover {
+  color: var(--ink);
 }

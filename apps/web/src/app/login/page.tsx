@@ -18,6 +18,7 @@ interface LoginPageProps {
   searchParams: Promise<{
     error?: string | string[];
     error_description?: string | string[];
+    mode?: string | string[];
     next?: string | string[];
   }>;
 }
@@ -57,9 +58,16 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     (await headers()).get("user-agent") ?? ""
   );
 
+  // `?mode=create` opens the page in create-account mode. /sign-up redirects
+  // here with that param. Any other value (or omission) falls through to
+  // sign-in, which is the page's default.
+  const initialMode =
+    getFirstSearchParamValue(params.mode) === "create" ? "create" : "signin";
+
   return (
     <LoginPageClient
       initialFeedback={initialFeedback}
+      initialMode={initialMode}
       nextPath={nextPath}
       isShell={isShell}
     />

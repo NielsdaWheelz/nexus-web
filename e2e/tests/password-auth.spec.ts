@@ -72,7 +72,7 @@ test.describe("password auth", () => {
       // Sign back in with the same credentials.
       await page.getByLabel(/email/i).fill(email);
       await page.getByLabel(/password/i).fill(PASSWORD);
-      await page.getByRole("button", { name: /^sign in$/i }).click();
+      await page.getByRole("button", { name: /^continue$/i }).click();
       await expect(page).toHaveURL(/\/libraries/);
     } finally {
       await context.close();
@@ -118,7 +118,7 @@ test.describe("password auth", () => {
       // Old password is rejected with the whitelisted message.
       await page.getByLabel(/email/i).fill(email);
       await page.getByLabel(/password/i).fill(PASSWORD);
-      await page.getByRole("button", { name: /^sign in$/i }).click();
+      await page.getByRole("button", { name: /^continue$/i }).click();
       await expect(
         page.getByText("Email or password is incorrect.")
       ).toBeVisible();
@@ -127,7 +127,7 @@ test.describe("password auth", () => {
       // New password is accepted.
       await page.getByLabel(/email/i).fill(email);
       await page.getByLabel(/password/i).fill(newPassword);
-      await page.getByRole("button", { name: /^sign in$/i }).click();
+      await page.getByRole("button", { name: /^continue$/i }).click();
       await expect(page).toHaveURL(/\/libraries/);
     } finally {
       await context.close();
@@ -166,7 +166,7 @@ test.describe("password auth", () => {
       // Old email is rejected.
       await page.getByLabel(/email/i).fill(oldEmail);
       await page.getByLabel(/password/i).fill(PASSWORD);
-      await page.getByRole("button", { name: /^sign in$/i }).click();
+      await page.getByRole("button", { name: /^continue$/i }).click();
       await expect(
         page.getByText("Email or password is incorrect.")
       ).toBeVisible();
@@ -175,7 +175,7 @@ test.describe("password auth", () => {
       // New email is accepted.
       await page.getByLabel(/email/i).fill(newEmail);
       await page.getByLabel(/password/i).fill(PASSWORD);
-      await page.getByRole("button", { name: /^sign in$/i }).click();
+      await page.getByRole("button", { name: /^continue$/i }).click();
       await expect(page).toHaveURL(/\/libraries/);
     } finally {
       await context.close();
@@ -243,7 +243,7 @@ test.describe("password auth", () => {
       // Wrong password is rejected with the exact whitelisted constant.
       await page.getByLabel(/email/i).fill(email);
       await page.getByLabel(/password/i).fill("WrongPassword12345");
-      await page.getByRole("button", { name: /^sign in$/i }).click();
+      await page.getByRole("button", { name: /^continue$/i }).click();
       await expect(
         page.getByText("Email or password is incorrect.")
       ).toBeVisible();

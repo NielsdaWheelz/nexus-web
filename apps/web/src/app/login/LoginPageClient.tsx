@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useState, useTransition, type FormEvent } from "react";
 import Button from "@/components/ui/Button";
 import {
   FeedbackNotice,
@@ -9,11 +12,17 @@ import {
   buildAuthNativeGoogleDeepLink,
   buildAuthStartDeepLink,
 } from "@/lib/auth/redirects";
-import EmailPasswordSignIn from "./EmailPasswordSignIn";
+import {
+  signInWithPasswordAction,
+  signUpWithPasswordAction,
+} from "@/lib/auth/password-actions";
 import styles from "./page.module.css";
+
+export type AuthMode = "signin" | "create";
 
 interface LoginPageClientProps {
   initialFeedback?: FeedbackContent | null;
+  initialMode?: AuthMode;
   nextPath: string;
   isShell: boolean;
 }
@@ -33,11 +42,7 @@ function GitHubMark() {
 
 function GoogleMark() {
   return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      focusable="false"
-    >
+    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
       <path
         d="M21.81 12.23c0-.72-.06-1.4-.2-2.04H12v3.87h5.5a4.7 4.7 0 0 1-2.04 3.09v2.56h3.29c1.93-1.78 3.06-4.4 3.06-7.48Z"
         fill="#4285F4"
@@ -103,70 +108,161 @@ function ProviderForm({
 
 export default function LoginPageClient({
   initialFeedback = null,
+  initialMode = "signin",
   nextPath,
   isShell,
 }: LoginPageClientProps) {
+  const [mode, setMode] = useState<AuthMode>(initialMode);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const isCreate = mode === "create";
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError(null);
+    startTransition(async () => {
+      const result = isCreate
+        ? await signUpWithPasswordAction({ email, password, displayName })
+        : await signInWithPasswordAction({ email, password, nextPath });
+      if (!result.ok) {
+        setFormError(result.error);
+      }
+    });
+  }
+
+  function toggleMode() {
+    setMode((current) => (current === "signin" ? "create" : "signin"));
+    setFormError(null);
+  }
+
   return (
     <div className={styles.container}>
-      <div className={styles.split}>
-        <section className={styles.editorial}>
-          <h1 className={styles.title}>Read like it matters.</h1>
-          <p className={styles.deck}>
-            A reading workspace for serious readers — annotate, ask, write back.
-          </p>
-          <p className={styles.body}>
-            Bring articles, PDFs, EPUBs, and podcasts into one library. Highlight
-            without breaking the page. Ask questions of any source and get answers
-            grounded in the text.
-          </p>
-          <p className={styles.body}>
-            Your notes link the things you read. Your reading shapes what you
-            remember.
-          </p>
-        </section>
+      <main className={styles.frame}>
+        <h1 className={styles.wordmark}>Nexus</h1>
 
-        <section className={styles.signin}>
-          <div className={styles.providers}>
-            {initialFeedback ? (
-              <FeedbackNotice feedback={initialFeedback} />
-            ) : null}
+        {initialFeedback ? <FeedbackNotice feedback={initialFeedback} /> : null}
+        {formError ? (
+          <FeedbackNotice severity="error" title={formError} />
+        ) : null}
 
-            <ProviderForm
-              provider="google"
-              nextPath={nextPath}
-              label="Continue with Google"
-              mark={<GoogleMark />}
-              isShell={isShell}
+        <form className={styles.form} onSubmit={handleSubmit}>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Email</span>
+            <input
+              className={styles.fieldInput}
+              name="email"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              disabled={pending}
             />
+          </label>
 
-            <ProviderForm
-              provider="github"
-              nextPath={nextPath}
-              label="Continue with GitHub"
-              mark={<GitHubMark />}
-              isShell={isShell}
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Password</span>
+            <input
+              className={styles.fieldInput}
+              name="password"
+              type="password"
+              autoComplete={isCreate ? "new-password" : "current-password"}
+              required
+              minLength={12}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              disabled={pending}
             />
+          </label>
 
-            <div className={styles.divider}>
-              <span>or</span>
-            </div>
+          {isCreate ? (
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Display name</span>
+              <input
+                className={styles.fieldInput}
+                name="display_name"
+                type="text"
+                autoComplete="name"
+                required
+                minLength={1}
+                maxLength={80}
+                value={displayName}
+                onChange={(event) => setDisplayName(event.target.value)}
+                disabled={pending}
+              />
+            </label>
+          ) : null}
 
-            <EmailPasswordSignIn nextPath={nextPath} />
-          </div>
+          <Button variant="primary" size="lg" type="submit" loading={pending}>
+            {isCreate ? "Create account" : "Continue"}
+          </Button>
+        </form>
 
-          <p className={styles.legal}>
-            By continuing, you agree to the{" "}
-            <Link className={styles.legalLink} href="/terms">
-              Terms of Service
-            </Link>{" "}
-            and acknowledge the{" "}
-            <Link className={styles.legalLink} href="/privacy">
-              Privacy Policy
-            </Link>
-            .
-          </p>
-        </section>
-      </div>
+        <div className={styles.divider}>
+          <span>or</span>
+        </div>
+
+        <div className={styles.providers}>
+          <ProviderForm
+            provider="google"
+            nextPath={nextPath}
+            label="Continue with Google"
+            mark={<GoogleMark />}
+            isShell={isShell}
+          />
+          <ProviderForm
+            provider="github"
+            nextPath={nextPath}
+            label="Continue with GitHub"
+            mark={<GitHubMark />}
+            isShell={isShell}
+          />
+        </div>
+
+        <p className={styles.toggle}>
+          {isCreate ? (
+            <>
+              Already have an account?{" "}
+              <button
+                type="button"
+                className={styles.toggleLink}
+                onClick={toggleMode}
+                disabled={pending}
+              >
+                Sign in
+              </button>
+            </>
+          ) : (
+            <>
+              New to Nexus?{" "}
+              <button
+                type="button"
+                className={styles.toggleLink}
+                onClick={toggleMode}
+                disabled={pending}
+              >
+                Create an account
+              </button>
+            </>
+          )}
+        </p>
+
+        <p className={styles.legal}>
+          By continuing, you agree to the{" "}
+          <Link className={styles.legalLink} href="/terms">
+            Terms of Service
+          </Link>{" "}
+          and{" "}
+          <Link className={styles.legalLink} href="/privacy">
+            Privacy Policy
+          </Link>
+          .
+        </p>
+      </main>
     </div>
   );
 }
