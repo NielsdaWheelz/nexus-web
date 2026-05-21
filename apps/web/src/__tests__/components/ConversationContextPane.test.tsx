@@ -1,7 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import ConversationContextPane from "@/components/ConversationContextPane";
-import type { BranchGraph, ForkOption } from "@/lib/conversations/types";
+import type {
+  BranchGraph,
+  ConversationMessage,
+  ForkOption,
+} from "@/lib/conversations/types";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -89,6 +93,135 @@ const branchGraph: BranchGraph = {
     },
   ],
 };
+
+const provenanceMessage = {
+  id: "assistant-10",
+  seq: 4,
+  role: "assistant",
+  status: "complete",
+  error_code: null,
+  can_retry_response: false,
+  created_at: "2026-01-03T00:00:00Z",
+  updated_at: "2026-01-03T00:00:00Z",
+  message_document: {
+    type: "message_document",
+    version: 1,
+    blocks: [
+      {
+        type: "text",
+        format: "markdown",
+        text: "Deep work needs deliberate recovery.",
+      },
+      {
+        type: "retrieval_result",
+        id: "retrieval-1",
+        ordinal: 0,
+        result_type: "content_chunk",
+        source_id: "chunk-1",
+        media_id: "media-1",
+        evidence_span_id: "span-1",
+        context_ref: {
+          type: "content_chunk",
+          id: "chunk-1",
+        },
+        result_ref: {
+          type: "content_chunk",
+          title: "Deep Work",
+          snippet: "Recovery keeps attention sustainable.",
+          deep_link: "/media/media-1",
+        },
+        deep_link: "/media/media-1",
+        locator: {
+          type: "web_text_offsets",
+          media_id: "media-1",
+          fragment_id: "fragment-1",
+          start_offset: 0,
+          end_offset: 38,
+        },
+        score: 0.92,
+        selected: true,
+        source_title: "Deep Work",
+        exact_snippet: "Recovery keeps attention sustainable.",
+        retrieval_status: "included_in_prompt",
+        included_in_prompt: true,
+        source_version: "source-v1",
+      },
+      {
+        type: "claim",
+        claim_id: "claim-1",
+        ordinal: 0,
+        claim_text: "Recovery keeps attention sustainable.",
+        support_status: "not_enough_evidence",
+        verifier_status: "llm_verified",
+      },
+      {
+        type: "claim_evidence",
+        id: "evidence-1",
+        claim_id: "claim-1",
+        ordinal: 0,
+        evidence_role: "supports",
+        source_ref: {
+          type: "message_retrieval",
+          id: "retrieval-1",
+          label: "Deep Work",
+          media_id: "media-1",
+          deep_link: "/media/media-1",
+        },
+        exact_snippet: "Recovery keeps attention sustainable.",
+        locator: {
+          type: "web_text_offsets",
+          media_id: "media-1",
+          fragment_id: "fragment-1",
+          start_offset: 0,
+          end_offset: 38,
+        },
+        deep_link: "/media/media-1",
+        citation_label: "Deep Work",
+        score: 0.92,
+        retrieval_status: "included_in_prompt",
+        selected: true,
+        included_in_prompt: true,
+        source_version: "source-v1",
+        created_at: "2026-01-03T00:00:00Z",
+      },
+      {
+        type: "artifact_preview",
+        durable_artifact_id: "artifact-1",
+        artifact_key: "focus-study-guide",
+        artifact_version: 1,
+        artifact_kind: "study_guide",
+        title: "Focus Study Guide",
+        status: "complete",
+        parts: [
+          {
+            id: "artifact-part-1",
+            artifact_id: "artifact-1",
+            ordinal: 0,
+            part_key: "Practice loop",
+            part_type: "section",
+            text: "Use recovery blocks between focus sessions.",
+            source_version: "source-v1",
+            locator: {
+              type: "web_text_offsets",
+              media_id: "media-1",
+              fragment_id: "fragment-1",
+              start_offset: 0,
+              end_offset: 38,
+            },
+            source_ref: {
+              type: "message_retrieval",
+              id: "retrieval-1",
+              label: "Deep Work",
+              media_id: "media-1",
+              deep_link: "/media/media-1",
+            },
+            evidence_span_id: "span-1",
+          },
+        ],
+      },
+    ],
+  },
+} as ConversationMessage;
 
 describe("ConversationContextPane", () => {
   it("toggles to forks and supports search, rename, delete, and path selection", async () => {
@@ -219,5 +352,53 @@ describe("ConversationContextPane", () => {
 
     expect(onSelectGraphLeaf).toHaveBeenCalledWith("assistant-3");
     expect(screen.getByText("2 forks found")).toBeInTheDocument();
+  });
+
+  it("summarizes conversation provenance across claims, sources, and artifacts", () => {
+    render(
+      <ConversationContextPane
+        conversationId="conversation-1"
+        contexts={[]}
+        messages={[provenanceMessage]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: /provenance/i }));
+
+    expect(screen.getByTestId("conversation-provenance-panel")).toBeVisible();
+    expect(screen.getByText("Evidence map")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Copy brief" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Copy packet" })).toBeVisible();
+    expect(screen.getByLabelText("Audit verdict")).toBeVisible();
+    expect(screen.getByText("Needs evidence work")).toBeVisible();
+    expect(screen.getByText(/^pv_[0-9a-f]{8}$/)).toBeVisible();
+    expect(screen.getByText("Packet verified")).toBeVisible();
+    expect(
+      screen.getByText("Re-run retrieval or rewrite the answer around evidence-backed claims."),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Evidence lineage graph")).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Focus source Deep Work in lineage",
+      }),
+    );
+    expect(screen.getAllByText("Focus Study Guide").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Needs evidence").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText("Recovery keeps attention sustainable.").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText("1/1 cited artifact parts")).toBeVisible();
+    expect(screen.getAllByText("1/1 retrieved").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Deep Work").length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: "Open source" })).toHaveAttribute(
+      "href",
+      "/media/media-1",
+    );
+    expect(screen.getByText("Claim trail")).toBeVisible();
+    expect(screen.getByText("Derived artifacts")).toBeVisible();
+    expect(screen.getByText("Practice loop - section")).toBeVisible();
+    expect(
+      screen.getAllByText("Use recovery blocks between focus sessions.").length,
+    ).toBeGreaterThan(0);
   });
 });

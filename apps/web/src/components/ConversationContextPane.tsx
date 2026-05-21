@@ -8,6 +8,8 @@ import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ConversationMemoryPanel from "@/components/chat/ConversationMemoryPanel";
 import ConversationScopeChip from "@/components/chat/ConversationScopeChip";
 import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
+import ConversationProvenancePanel from "@/components/chat/ConversationProvenancePanel";
+import { countProvenanceSignals } from "@/lib/conversations/provenance";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import type { ContextItem, ContextItemColor, ContextItemType } from "@/lib/api/sse";
 import {
@@ -19,6 +21,7 @@ import type {
   ConversationScope,
   BranchGraph,
   ForkOption,
+  ConversationMessage,
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
 import type { ReactNode } from "react";
@@ -53,6 +56,7 @@ interface ConversationContextPaneProps {
   conversationId?: string;
   scope?: ConversationScope;
   memory?: ConversationMemoryInspection | null;
+  messages?: ConversationMessage[];
   contexts: ContextItem[];
   persistedRows?: PersistedContextRow[];
   forkOptionsByParentId?: Record<string, ForkOption[]>;
@@ -71,6 +75,7 @@ export default function ConversationContextPane({
   conversationId,
   scope,
   memory,
+  messages = [],
   contexts,
   persistedRows = [],
   forkOptionsByParentId = {},
@@ -84,9 +89,12 @@ export default function ConversationContextPane({
   onRemoveContext,
   testId = "conversation-context-pane",
 }: ConversationContextPaneProps) {
-  const [mode, setMode] = useState<"context" | "forks">("context");
+  const [mode, setMode] = useState<"context" | "provenance" | "forks">(
+    "context",
+  );
   const hasMemory =
     Boolean(memory?.state_snapshot) || (memory?.memory_items?.length ?? 0) > 0;
+  const provenanceCount = countProvenanceSignals(messages, memory);
   const forkCount = Object.values(forkOptionsByParentId).reduce(
     (count, forks) => count + forks.length,
     0,
@@ -102,6 +110,14 @@ export default function ConversationContextPane({
           onClick={() => setMode("context")}
         >
           Context
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "provenance"}
+          onClick={() => setMode("provenance")}
+        >
+          Provenance{provenanceCount > 0 ? ` ${provenanceCount}` : ""}
         </button>
         <button
           type="button"
@@ -130,6 +146,12 @@ export default function ConversationContextPane({
           ) : (
             <FeedbackNotice severity="neutral" title="No forks yet." />
           )
+        ) : mode === "provenance" ? (
+          <ConversationProvenancePanel
+            conversationId={conversationId}
+            messages={messages}
+            memory={memory}
+          />
         ) : (
           <ContextContent
             scope={scope}

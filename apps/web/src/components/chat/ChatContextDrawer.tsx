@@ -10,6 +10,7 @@ import type {
   ConversationScope,
   BranchGraph,
   ForkOption,
+  ConversationMessage,
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
 import styles from "./ChatContextDrawer.module.css";
@@ -19,6 +20,7 @@ export default function ChatContextDrawer({
   contexts,
   scope,
   memory,
+  messages,
   persistedRows,
   forkOptionsByParentId,
   branchGraph,
@@ -34,6 +36,7 @@ export default function ChatContextDrawer({
   contexts: ContextItem[];
   scope?: ConversationScope;
   memory?: ConversationMemoryInspection | null;
+  messages?: ConversationMessage[];
   persistedRows?: Array<{
     context: MessageContextSnapshot;
     messageId: string;
@@ -126,6 +129,7 @@ export default function ChatContextDrawer({
                 conversationId={conversationId}
                 scope={scope}
                 memory={memory}
+                messages={messages}
                 contexts={contexts}
                 persistedRows={persistedRows}
                 forkOptionsByParentId={forkOptionsByParentId}

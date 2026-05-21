@@ -977,6 +977,7 @@ function ChatView({
               conversationId={id}
               scope={conversationScope}
               memory={conversation?.memory}
+              messages={messages}
               contexts={attachedContexts}
               persistedRows={persistedRows}
               forkOptionsByParentId={forkOptionsByParentId}
@@ -1004,6 +1005,7 @@ function ChatView({
           conversationId={id}
           scope={conversationScope}
           memory={conversation?.memory}
+          messages={messages}
           contexts={attachedContexts}
           persistedRows={persistedRows}
           forkOptionsByParentId={forkOptionsByParentId}

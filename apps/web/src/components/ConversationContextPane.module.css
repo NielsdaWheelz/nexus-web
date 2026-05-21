@@ -7,7 +7,7 @@
 
 .toggle {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-1);
   padding: var(--space-3) var(--space-4) 0;
 }
