@@ -51,3 +51,7 @@ This document covers repository-wide code organization, imports, and module boun
   updating this rule first. The single auth-bootstrap `POST /auth/native/google`
   from `GoogleSignInController` is authorized; the OAuth/PKCE exchange itself
   stays server-side.
+- Password identities are managed via Supabase Auth's `auth.identities` table;
+  the application stores no password material. Password-auth Server Actions
+  live in `apps/web/src/lib/auth/password-actions.ts`. See
+  `docs/password-auth.md`.

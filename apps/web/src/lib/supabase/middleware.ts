@@ -19,6 +19,7 @@ const PUBLIC_ROUTES = new Set([
   "/android",
   "/.well-known/assetlinks.json",
   "/privacy",
+  "/sign-up",
   "/terms",
   "/auth/callback",
   "/auth/handoff",

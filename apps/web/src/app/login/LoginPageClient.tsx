@@ -9,6 +9,7 @@ import {
   buildAuthNativeGoogleDeepLink,
   buildAuthStartDeepLink,
 } from "@/lib/auth/redirects";
+import EmailPasswordSignIn from "./EmailPasswordSignIn";
 import styles from "./page.module.css";
 
 interface LoginPageClientProps {
@@ -145,6 +146,12 @@ export default function LoginPageClient({
               mark={<GitHubMark />}
               isShell={isShell}
             />
+
+            <div className={styles.divider}>
+              <span>or</span>
+            </div>
+
+            <EmailPasswordSignIn nextPath={nextPath} />
           </div>
 
           <p className={styles.legal}>

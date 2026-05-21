@@ -14,10 +14,13 @@ describe("LoginPageClient", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders no in-page password or token field — OAuth is the only path", () => {
+  it("offers an in-page email + password sign-in form alongside OAuth", () => {
     render(<LoginPageClient nextPath="/libraries" isShell={false} />);
 
-    expect(screen.queryByLabelText(/password/i)).toBeNull();
+    expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^sign in$/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /create account/i })).toHaveAttribute("href", "/sign-up");
   });
 
   it("renders a calm 'you were signed out' notice for forced-logout feedback", () => {

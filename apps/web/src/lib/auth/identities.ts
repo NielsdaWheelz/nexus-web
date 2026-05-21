@@ -103,6 +103,21 @@ export function mayUnlinkIdentity(
   return identities.some((identity) => identity.id === identityId);
 }
 
+export function findEmailIdentity(
+  identities: readonly LinkedIdentity[]
+): LinkedIdentity | null {
+  return identities.find((identity) => identity.provider === "email") ?? null;
+}
+
+export function mayRemovePassword(
+  identities: readonly LinkedIdentity[]
+): boolean {
+  if (identities.length < 2) {
+    return false;
+  }
+  return identities.some((identity) => identity.provider === "email");
+}
+
 export function formatIdentityProvider(provider: string): string {
   if (provider === "google") {
     return "Google";

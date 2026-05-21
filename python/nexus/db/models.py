@@ -6523,12 +6523,8 @@ class AuthHandoffCode(Base):
     expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
     __table_args__ = (
-        CheckConstraint(
-            "char_length(code_hash) = 64", name="ck_auth_handoff_codes_code_hash_len"
-        ),
-        CheckConstraint(
-            "char_length(challenge) = 64", name="ck_auth_handoff_codes_challenge_len"
-        ),
+        CheckConstraint("char_length(code_hash) = 64", name="ck_auth_handoff_codes_code_hash_len"),
+        CheckConstraint("char_length(challenge) = 64", name="ck_auth_handoff_codes_challenge_len"),
         CheckConstraint(
             "expires_at > created_at", name="ck_auth_handoff_codes_expires_after_created"
         ),

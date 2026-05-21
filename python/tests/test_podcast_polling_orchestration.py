@@ -36,8 +36,10 @@ def test_registry_disables_periodic_jobs_by_default(monkeypatch: pytest.MonkeyPa
         for kind, definition in registry.items()
         if definition.periodic_interval_seconds is not None
     }
-    assert periodic_jobs == {}, (
-        "Expected production-safe defaults to disable periodic jobs. "
+    # purge_expired_auth_handoff_codes is unconditionally periodic — it is a
+    # security-critical cleanup for single-use auth codes, not an opt-in poller.
+    assert set(periodic_jobs.keys()) == {"purge_expired_auth_handoff_codes"}, (
+        "Expected production-safe defaults to disable opt-in periodic jobs. "
         f"Periodic jobs={sorted(periodic_jobs)}"
     )
 
@@ -64,6 +66,7 @@ def test_registry_enables_periodic_jobs_from_positive_schedule_env(
         "reconcile_stale_ingest_media_job",
         "sync_gutenberg_catalog_job",
         "prune_background_jobs_job",
+        "purge_expired_auth_handoff_codes",
     }, f"Unexpected periodic job set: {sorted(periodic_jobs.keys())}"
     assert periodic_jobs["podcast_active_subscription_poll_job"] == 3600
     assert periodic_jobs["reconcile_stale_ingest_media_job"] == 7200

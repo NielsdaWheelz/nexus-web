@@ -19,6 +19,7 @@ import {
   loadLinkedIdentities,
   unlinkLinkedIdentity,
 } from "./actions";
+import { PasswordRow } from "./PasswordRow";
 import styles from "./page.module.css";
 
 const LOAD_FAILED_MESSAGE = "Failed to load identities";
@@ -164,6 +165,8 @@ export default function SettingsIdentitiesPaneBody() {
             })}
           </AppList>
         )}
+
+        <PasswordRow identities={identities} onChanged={loadIdentities} />
 
         {connectableProviders.length === 0 ? (
           <FeedbackNotice severity="success">

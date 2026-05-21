@@ -291,6 +291,8 @@ New invariants introduced:
 - **I2.** A handoff code is redeemable exactly once, only with its verifier, only within 90 s.
 - **I3.** Debug and release builds run the identical auth code path. No `BuildConfig.DEBUG` branch exists in the auth flow.
 
+Password sign-in is web-and-WebView. It POSTs to same-origin Server Actions and writes the session via the standard `applyCookies` path; it does not load any Supabase or OAuth-provider URL in the WebView and adds no new `nexus://` deep links. Invariants I1, I2, I3 are preserved unchanged. See `docs/password-auth.md` for the full spec.
+
 ---
 
 ## 14. Key Decisions

@@ -144,13 +144,9 @@ class TestAuthHandoffCodeService:
         assert first == (ACCESS_TOKEN, REFRESH_TOKEN)
 
         replay = consume_auth_handoff_code(db_session, code, VERIFIER)
-        assert replay is None, (
-            f"Expected single-use replay to return None, got {replay!r}"
-        )
+        assert replay is None, f"Expected single-use replay to return None, got {replay!r}"
 
-    def test_consume_after_expiry_returns_none(
-        self, db_session: Session, bootstrapped_user: UUID
-    ):
+    def test_consume_after_expiry_returns_none(self, db_session: Session, bootstrapped_user: UUID):
         code = "nx_hand_expired-fixture-code"
         now = datetime.now(UTC)
         db_session.add(
@@ -210,11 +206,15 @@ class TestAuthHandoffCodeService:
         deleted = purge_expired_auth_handoff_codes(db_session)
 
         assert deleted == 1, f"Expected purge to delete exactly the expired row, got {deleted}"
-        remaining = db_session.execute(
-            select(AuthHandoffCode.code_hash).where(
-                AuthHandoffCode.user_id == bootstrapped_user
+        remaining = (
+            db_session.execute(
+                select(AuthHandoffCode.code_hash).where(
+                    AuthHandoffCode.user_id == bootstrapped_user
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert remaining == [_sha256(live_code)], (
             f"Expected only the live row to survive purge, got {remaining!r}"
         )

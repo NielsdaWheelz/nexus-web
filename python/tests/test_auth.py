@@ -231,9 +231,7 @@ class TestInternalHeaderEnforcement:
         data = response.json()
         assert data["error"]["code"] == "E_INTERNAL_ONLY"
 
-    def test_internal_only_path_skips_bearer_with_internal_header(
-        self, staging_client
-    ):
+    def test_internal_only_path_skips_bearer_with_internal_header(self, staging_client):
         """With X-Nexus-Internal present, internal-only paths reach the
         route handler without requiring a Bearer token (the user has no
         Supabase session yet at this point in the flow). An unknown code
