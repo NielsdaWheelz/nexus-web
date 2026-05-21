@@ -203,6 +203,33 @@
   opacity: 0.6;
 }
 
+/* A small, quiet doorway from the Aleph (the index) to the Atlas (the sky). */
+.atlasLink {
+  align-self: center;
+  font-family: var(--font-oracle-display);
+  font-style: italic;
+  font-size: 0.9rem;
+  color: var(--oracle-marginalia-fg);
+  text-decoration: none;
+  letter-spacing: 0.06em;
+  padding: 0.5rem 1rem;
+  transition: color 200ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .atlasLink:hover {
+    color: var(--oracle-gold);
+  }
+}
+
+@media (any-pointer: coarse) {
+  .atlasLink {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+}
+
 /* ---- reading ------------------------------------------------------------- */
 
 .reading {

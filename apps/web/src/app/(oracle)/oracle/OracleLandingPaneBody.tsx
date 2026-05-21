@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import {
@@ -104,6 +105,10 @@ export default function OracleLandingPaneBody() {
         </form>
 
         <OracleAlephGrid />
+
+        <Link className={styles.atlasLink} href="/oracle/atlas">
+          ✦ View as a sky
+        </Link>
       </div>
     </div>
   );
