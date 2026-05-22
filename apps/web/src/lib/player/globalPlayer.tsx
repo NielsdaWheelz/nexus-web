@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { clamp } from "@/lib/clamp";
 import {
   PLAYBACK_QUEUE_UPDATED_EVENT,
   addPlaybackQueueItems,
@@ -154,14 +155,14 @@ function normalizePlaybackRate(value: number | null | undefined): number {
   if (!Number.isFinite(value) || value == null) {
     return DEFAULT_PLAYBACK_RATE;
   }
-  return Math.min(SPEED_MAX, Math.max(SPEED_MIN, value));
+  return clamp(value, SPEED_MIN, SPEED_MAX);
 }
 
 function normalizeVolume(value: number | null | undefined): number {
   if (!Number.isFinite(value) || value == null) {
     return DEFAULT_VOLUME;
   }
-  return Math.min(1, Math.max(0, value));
+  return clamp(value, 0, 1);
 }
 
 function normalizeTrackText(value: string | null | undefined): string | undefined {
