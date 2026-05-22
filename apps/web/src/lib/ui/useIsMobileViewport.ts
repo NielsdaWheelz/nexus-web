@@ -4,15 +4,15 @@ import { useEffect, useState } from "react";
 
 export const MOBILE_MAX_WIDTH_PX = 768;
 
-function readIsMobile(maxWidth: number): boolean {
+function readIsMobile(): boolean {
   if (typeof window === "undefined") {
     return false;
   }
-  return window.innerWidth <= maxWidth;
+  return window.innerWidth <= MOBILE_MAX_WIDTH_PX;
 }
 
-export function useIsMobileViewport(maxWidth: number = MOBILE_MAX_WIDTH_PX): boolean {
-  const [isMobile, setIsMobile] = useState<boolean>(() => readIsMobile(maxWidth));
+export function useIsMobileViewport(): boolean {
+  const [isMobile, setIsMobile] = useState<boolean>(readIsMobile);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -20,7 +20,7 @@ export function useIsMobileViewport(maxWidth: number = MOBILE_MAX_WIDTH_PX): boo
     }
 
     const onResize = () => {
-      setIsMobile(readIsMobile(maxWidth));
+      setIsMobile(readIsMobile());
     };
 
     onResize();
@@ -28,8 +28,7 @@ export function useIsMobileViewport(maxWidth: number = MOBILE_MAX_WIDTH_PX): boo
     return () => {
       window.removeEventListener("resize", onResize);
     };
-  }, [maxWidth]);
+  }, []);
 
   return isMobile;
 }
-
