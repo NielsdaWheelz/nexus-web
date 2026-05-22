@@ -39,6 +39,7 @@ import {
   type PaneRouteId,
 } from "@/lib/panes/paneRouteRegistry";
 import { pinObjectToNavbar } from "@/lib/pinnedObjects";
+import { toRoman } from "@/lib/toRoman";
 import { fetchSearchResultPage } from "@/lib/search/resultRowAdapter";
 import {
   ALL_SEARCH_TYPES,
@@ -471,34 +472,6 @@ interface OracleReadingSummary {
   folio_motto: string | null;
   folio_theme: string | null;
   status: string;
-}
-
-const ROMAN_VALUES: [number, string][] = [
-  [1000, "M"],
-  [900, "CM"],
-  [500, "D"],
-  [400, "CD"],
-  [100, "C"],
-  [90, "XC"],
-  [50, "L"],
-  [40, "XL"],
-  [10, "X"],
-  [9, "IX"],
-  [5, "V"],
-  [4, "IV"],
-  [1, "I"],
-];
-
-function toRoman(value: number): string {
-  let remaining = value;
-  let result = "";
-  for (const [amount, numeral] of ROMAN_VALUES) {
-    while (remaining >= amount) {
-      result += numeral;
-      remaining -= amount;
-    }
-  }
-  return result;
 }
 
 function matchesCommand(command: PaletteCommand, query: string): boolean {
