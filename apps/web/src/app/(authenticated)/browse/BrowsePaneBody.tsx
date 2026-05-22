@@ -16,7 +16,6 @@ import SectionCard from "@/components/ui/SectionCard";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { apiFetch } from "@/lib/api/client";
-import type { ContributorCredit } from "@/lib/contributors/types";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
@@ -24,90 +23,35 @@ import {
   subscribeToPodcast,
   toPodcastContributorInputs,
 } from "../podcasts/podcastSubscriptions";
+import {
+  BROWSE_TYPES,
+  TYPE_LABELS,
+  buildBrowseHref,
+  emptySections,
+  formatEpisodeMeta,
+  getDocumentActionLabel,
+  getDocumentFallbackDescription,
+  getDocumentLibraryActionLabel,
+  getDocumentSourceLabel,
+  isDocumentResult,
+  isPodcastEpisodeResult,
+  isPodcastResult,
+  isVideoResult,
+  mergeSectionResults,
+  normalizeBrowseQuery,
+  normalizeSections,
+  parseVisibleTypes,
+  updateSection,
+  updateSectionResults,
+  type BrowseDocumentResult,
+  type BrowseEpisodeResult,
+  type BrowsePodcastResult,
+  type BrowseResponse,
+  type BrowseSectionData,
+  type BrowseSectionType,
+  type BrowseVideoResult,
+} from "./browseState";
 import styles from "./page.module.css";
-
-type BrowseSectionType =
-  | "documents"
-  | "videos"
-  | "podcasts"
-  | "podcast_episodes";
-
-type BrowsePageInfo = {
-  has_more: boolean;
-  next_cursor: string | null;
-};
-
-type BrowseDocumentResult = {
-  type: "documents";
-  title: string;
-  description: string | null;
-  url: string;
-  document_kind: "pdf" | "epub" | "web_article";
-  site_name: string | null;
-  source_label?: string | null;
-  source_type?: string | null;
-  media_id?: string | null;
-  contributors?: ContributorCredit[];
-};
-
-type BrowseVideoResult = {
-  type: "videos";
-  provider_video_id: string;
-  title: string;
-  description: string | null;
-  watch_url: string;
-  published_at: string | null;
-  thumbnail_url: string | null;
-  media_id?: string | null;
-  contributors: ContributorCredit[];
-};
-
-type BrowsePodcastResult = {
-  type: "podcasts";
-  podcast_id: string | null;
-  provider_podcast_id: string;
-  title: string;
-  contributors: ContributorCredit[];
-  feed_url: string;
-  website_url: string | null;
-  image_url: string | null;
-  description: string | null;
-};
-
-type BrowseEpisodeResult = {
-  type: "podcast_episodes";
-  podcast_id: string | null;
-  provider_podcast_id: string;
-  provider_episode_id: string;
-  podcast_title: string;
-  podcast_contributors: ContributorCredit[];
-  podcast_image_url: string | null;
-  title: string;
-  audio_url: string;
-  published_at: string | null;
-  duration_seconds: number | null;
-  feed_url: string;
-  website_url: string | null;
-  description: string | null;
-};
-
-type BrowseResult =
-  | BrowseDocumentResult
-  | BrowseVideoResult
-  | BrowsePodcastResult
-  | BrowseEpisodeResult;
-
-type BrowseSectionData = {
-  results: BrowseResult[];
-  page: BrowsePageInfo;
-};
-
-type BrowseResponse = {
-  data: {
-    query?: string;
-    sections: Partial<Record<BrowseSectionType, BrowseSectionData>>;
-  };
-};
 
 type LibrarySummary = {
   id: string;
@@ -115,240 +59,6 @@ type LibrarySummary = {
   is_default: boolean;
   color?: string | null;
 };
-
-const BROWSE_TYPES: BrowseSectionType[] = [
-  "documents",
-  "videos",
-  "podcasts",
-  "podcast_episodes",
-];
-
-const TYPE_LABELS: Record<BrowseSectionType, string> = {
-  documents: "Documents",
-  videos: "Videos",
-  podcasts: "Podcasts",
-  podcast_episodes: "Episodes",
-};
-
-function emptySections(): Record<BrowseSectionType, BrowseSectionData> {
-  return {
-    documents: { results: [], page: { has_more: false, next_cursor: null } },
-    videos: { results: [], page: { has_more: false, next_cursor: null } },
-    podcasts: { results: [], page: { has_more: false, next_cursor: null } },
-    podcast_episodes: {
-      results: [],
-      page: { has_more: false, next_cursor: null },
-    },
-  };
-}
-
-function normalizeBrowseQuery(value: string | null): string {
-  return value ? value.trim() : "";
-}
-
-function isBrowseSectionType(value: string): value is BrowseSectionType {
-  return (
-    value === "documents" ||
-    value === "videos" ||
-    value === "podcasts" ||
-    value === "podcast_episodes"
-  );
-}
-
-function parseVisibleTypes(searchParams: URLSearchParams): BrowseSectionType[] {
-  if (!searchParams.has("types")) {
-    return [...BROWSE_TYPES];
-  }
-  const raw = searchParams.getAll("types").join(",");
-  if (raw === "") {
-    return [];
-  }
-  const seen = new Set<BrowseSectionType>();
-  for (const part of raw.split(",")) {
-    if (isBrowseSectionType(part) && !seen.has(part)) {
-      seen.add(part);
-    }
-  }
-  return seen.size > 0 ? BROWSE_TYPES.filter((type) => seen.has(type)) : [];
-}
-
-function buildBrowseHref(
-  query: string,
-  visibleTypes: BrowseSectionType[],
-): string {
-  const params = new URLSearchParams();
-  const trimmedQuery = query.trim();
-  if (trimmedQuery) {
-    params.set("q", trimmedQuery);
-  }
-  if (visibleTypes.length === 0) {
-    params.set("types", "");
-  } else if (visibleTypes.length < BROWSE_TYPES.length) {
-    params.set("types", visibleTypes.join(","));
-  }
-  const search = params.toString();
-  return search ? `/browse?${search}` : "/browse";
-}
-
-function formatEpisodeMeta(result: BrowseEpisodeResult): string {
-  const bits: string[] = [];
-  if (result.published_at) {
-    bits.push(
-      `Published ${new Date(result.published_at).toLocaleDateString()}`,
-    );
-  }
-  if (result.duration_seconds) {
-    bits.push(`${Math.round(result.duration_seconds / 60)} min`);
-  }
-  return bits.length > 0 ? bits.join(" · ") : "Recent episode preview";
-}
-
-function getDocumentSourceLabel(result: BrowseDocumentResult): string | null {
-  if (typeof result.source_label === "string" && result.source_label.trim()) {
-    return result.source_label.trim();
-  }
-  if (result.source_type === "nexus") {
-    return "Nexus";
-  }
-  if (result.source_type === "project_gutenberg") {
-    return "Project Gutenberg";
-  }
-  if (result.site_name && result.site_name.trim()) {
-    return result.site_name.trim();
-  }
-  return null;
-}
-
-function isProjectGutenbergDocument(result: BrowseDocumentResult): boolean {
-  if (result.source_type === "project_gutenberg") {
-    return true;
-  }
-  const sourceLabel = getDocumentSourceLabel(result);
-  return sourceLabel === "Project Gutenberg";
-}
-
-function getDocumentActionLabel(
-  result: BrowseDocumentResult,
-  busy: boolean,
-): string {
-  if (result.media_id) {
-    return busy ? "Opening..." : "Open";
-  }
-  if (isProjectGutenbergDocument(result)) {
-    return busy ? "Importing..." : "Import";
-  }
-  return busy ? "Adding..." : "Add";
-}
-
-function getDocumentLibraryActionLabel(result: BrowseDocumentResult): string {
-  return isProjectGutenbergDocument(result)
-    ? "Import + library"
-    : "Add + library";
-}
-
-function getDocumentFallbackDescription(result: BrowseDocumentResult): string {
-  if (result.media_id) {
-    return "Open this document in the reader.";
-  }
-  if (isProjectGutenbergDocument(result)) {
-    return "Import this Project Gutenberg document into the reader.";
-  }
-  return "Add this document to open it in the reader.";
-}
-
-function normalizeSections(
-  data: BrowseResponse["data"],
-): Record<BrowseSectionType, BrowseSectionData> {
-  const nextSections = emptySections();
-  for (const type of BROWSE_TYPES) {
-    const section = data.sections[type];
-    if (section) {
-      nextSections[type] = section;
-    }
-  }
-  return nextSections;
-}
-
-function replaceSection(
-  current: Record<BrowseSectionType, BrowseSectionData>,
-  sectionType: BrowseSectionType,
-  nextSection: BrowseSectionData,
-): Record<BrowseSectionType, BrowseSectionData> {
-  return {
-    ...current,
-    [sectionType]: nextSection,
-  };
-}
-
-function updateSectionResults<T extends BrowseResult>(
-  results: BrowseResult[],
-  match: (row: BrowseResult) => row is T,
-  update: (row: T) => T,
-): BrowseResult[] {
-  return results.map((row) => (match(row) ? update(row) : row));
-}
-
-function isPodcastResult(row: BrowseResult): row is BrowsePodcastResult {
-  return row.type === "podcasts";
-}
-
-function isPodcastEpisodeResult(row: BrowseResult): row is BrowseEpisodeResult {
-  return row.type === "podcast_episodes";
-}
-
-function isDocumentResult(row: BrowseResult): row is BrowseDocumentResult {
-  return row.type === "documents";
-}
-
-function isVideoResult(row: BrowseResult): row is BrowseVideoResult {
-  return row.type === "videos";
-}
-
-function getSection(
-  sections: Record<BrowseSectionType, BrowseSectionData>,
-  sectionType: BrowseSectionType,
-): BrowseSectionData {
-  return sections[sectionType];
-}
-
-function getSectionResults(
-  sections: Record<BrowseSectionType, BrowseSectionData>,
-  sectionType: BrowseSectionType,
-): BrowseResult[] {
-  return getSection(sections, sectionType).results;
-}
-
-function getSectionPage(
-  sections: Record<BrowseSectionType, BrowseSectionData>,
-  sectionType: BrowseSectionType,
-): BrowsePageInfo {
-  return getSection(sections, sectionType).page;
-}
-
-function mergeSectionResults(
-  current: Record<BrowseSectionType, BrowseSectionData>,
-  sectionType: BrowseSectionType,
-  nextSection: BrowseSectionData,
-): Record<BrowseSectionType, BrowseSectionData> {
-  return replaceSection(current, sectionType, {
-    results: [
-      ...getSectionResults(current, sectionType),
-      ...nextSection.results,
-    ],
-    page: nextSection.page,
-  });
-}
-
-function updateSection(
-  current: Record<BrowseSectionType, BrowseSectionData>,
-  sectionType: BrowseSectionType,
-  updateResults: (results: BrowseResult[]) => BrowseResult[],
-): Record<BrowseSectionType, BrowseSectionData> {
-  return replaceSection(current, sectionType, {
-    ...getSection(current, sectionType),
-    results: updateResults(getSectionResults(current, sectionType)),
-  });
-}
 
 export default function BrowsePaneBody() {
   const paneRouter = usePaneRouter();
@@ -607,7 +317,7 @@ export default function BrowsePaneBody() {
   }
 
   async function loadMore(sectionType: BrowseSectionType) {
-    const nextCursor = getSectionPage(sections, sectionType).next_cursor;
+    const nextCursor = sections[sectionType].page.next_cursor;
     if (!appliedQuery || !nextCursor) {
       return;
     }
@@ -627,7 +337,7 @@ export default function BrowsePaneBody() {
         mergeSectionResults(
           current,
           sectionType,
-          getSection(normalizeSections(response.data), sectionType),
+          normalizeSections(response.data)[sectionType],
         ),
       );
     } catch (loadMoreError) {
@@ -644,7 +354,7 @@ export default function BrowsePaneBody() {
   }
 
   const visibleSections = visibleTypes.filter(
-    (type) => getSectionResults(sections, type).length > 0,
+    (type) => sections[type].results.length > 0,
   );
   const selectedTypeSet = new Set(visibleTypes);
 
@@ -742,7 +452,7 @@ export default function BrowsePaneBody() {
             </div>
 
             <div className={styles.resultRows}>
-              {getSectionResults(sections, sectionType).map((result) => {
+              {sections[sectionType].results.map((result) => {
                 if (result.type === "documents") {
                   const busy = busyKeys.has(`document:${result.url}`);
                   const sourceLabel = getDocumentSourceLabel(result);
@@ -1093,7 +803,7 @@ export default function BrowsePaneBody() {
               })}
             </div>
 
-            {getSectionPage(sections, sectionType).next_cursor ? (
+            {sections[sectionType].page.next_cursor ? (
               <Button
                 variant="secondary"
                 size="md"
