@@ -17,9 +17,8 @@ import {
   areAudioEffectsActive,
   type AudioEffectsVolumeBoost,
 } from "@/lib/player/audioEffects";
-import { type PlaybackQueueItem } from "@/lib/player/playbackQueueClient";
 import Image from "next/image";
-import SortableList from "@/components/sortable/SortableList";
+import GlobalPlayerQueuePanel from "@/components/GlobalPlayerQueuePanel";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import styles from "./GlobalPlayerFooter.module.css";
@@ -137,15 +136,9 @@ export default function GlobalPlayerFooter() {
     skipBySeconds,
     setPlaybackRate,
     setVolume,
-    queueItems,
     refreshQueue,
-    removeFromQueue,
-    reorderQueue,
-    clearQueue,
-    playQueueItem,
     playNextInQueue,
     playPreviousInQueue,
-    currentQueueItemId,
     upcomingQueueCount,
     hasNextInQueue,
   } = useGlobalPlayer();
@@ -216,15 +209,6 @@ export default function GlobalPlayerFooter() {
   };
 
   const hasActiveAudioEffects = areAudioEffectsActive(audioEffects);
-
-  const handleQueueItemPlay = (item: (typeof queueItems)[number]) => {
-    playQueueItem(item);
-    setQueueOpen(false);
-  };
-
-  const handleQueueReorder = (nextItems: PlaybackQueueItem[]) => {
-    void reorderQueue(nextItems.map((item) => item.item_id));
-  };
 
   const closeMobileExpanded = () => {
     setMobileExpanded(false);
@@ -747,89 +731,7 @@ export default function GlobalPlayerFooter() {
         aria-label="Global podcast player"
       />
 
-      {queueOpen && (
-        <div className={styles.queueOverlay}>
-          <section className={styles.queuePanel} role="dialog" aria-label="Playback queue panel">
-            <header className={styles.queueHeader}>
-              <h2 className={styles.queueTitle}>Playback queue</h2>
-              <Button
-                variant="secondary"
-                size="sm"
-                className={styles.queueCloseButton}
-                onClick={() => setQueueOpen(false)}
-                aria-label="Close playback queue"
-              >
-                Close
-              </Button>
-            </header>
-
-            {queueItems.length === 0 ? (
-              <p className={styles.queueEmpty}>Queue is empty.</p>
-            ) : (
-              <SortableList
-                className={styles.queueList}
-                itemClassName={styles.queueListItem}
-                items={queueItems}
-                getItemId={(item) => item.item_id}
-                onReorder={handleQueueReorder}
-                renderItem={({ item, handleProps }) => {
-                  const isCurrent = item.item_id === currentQueueItemId;
-                  return (
-                    <div className={styles.queueListItemInner} data-current={isCurrent ? "true" : "false"}>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className={styles.queueDragHandle}
-                        aria-label={`Reorder ${item.title}`}
-                        {...handleProps.attributes}
-                        {...handleProps.listeners}
-                      >
-                        ⋮⋮
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        className={styles.queueItemMain}
-                        onClick={() => handleQueueItemPlay(item)}
-                        aria-label={`Play ${item.title} from queue`}
-                      >
-                        <span className={styles.queueItemTitle}>{item.title}</span>
-                        <span className={styles.queueItemMeta}>
-                          {item.podcast_title ?? "Unknown podcast"}
-                        </span>
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className={styles.queueItemRemoveButton}
-                        aria-label={`Remove ${item.title} from queue`}
-                        onClick={() => {
-                          void removeFromQueue(item.item_id);
-                        }}
-                      >
-                        Remove
-                      </Button>
-                    </div>
-                  );
-                }}
-              />
-            )}
-
-            <footer className={styles.queueFooter}>
-              <Button
-                variant="secondary"
-                size="sm"
-                className={styles.queueClearButton}
-                aria-label="Clear queue"
-                onClick={() => {
-                  void clearQueue();
-                }}
-              >
-                Clear queue
-              </Button>
-            </footer>
-          </section>
-        </div>
-      )}
+      {queueOpen && <GlobalPlayerQueuePanel onClose={() => setQueueOpen(false)} />}
     </footer>
   );
 }
