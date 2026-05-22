@@ -4,7 +4,7 @@
     "target": {
       "namespace": "android_app",
       "package_name": "app.nexus.android",
-      "sha256_cert_fingerprints": ["A2:68:92:B4:F1:23:8F:C9:F4:88:E0:84:6F:4F:9B:A2:DF:79:C0:53:66:EE:B0:28:29:21:E3:B8:7C:F5:39:20"]
+      "sha256_cert_fingerprints": ["40:E5:66:DC:0C:DE:3B:63:EA:8B:F8:F0:77:98:02:93:8C:0B:A1:9D:5C:32:D4:81:0F:28:FD:C5:46:FD:8B:17"]
     }
   }
 ]
