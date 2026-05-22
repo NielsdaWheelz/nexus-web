@@ -1,4 +1,4 @@
-"""PDF extraction domain service (S6 PR-03).
+"""PDF extraction domain service.
 
 Owns deterministic PDF artifact production: page_count, normalized plain_text,
 and pdf_page_text_spans. Parser-specific behavior (PyMuPDF) is isolated here
@@ -77,12 +77,12 @@ class PdfExtractionError:
 
 
 # ---------------------------------------------------------------------------
-# S6 plain_text normalization (spec Section 2.1)
+# Plain-text normalization
 # ---------------------------------------------------------------------------
 
 
 def normalize_pdf_text(raw_text: str) -> str:
-    """Apply S6 normalization contract to raw PDF text.
+    """Apply the PDF text normalization contract to raw PDF text.
 
     1. \\r\\n and \\r -> \\n
     2. form-feed (\\f) -> \\n\\n (page separator)
@@ -553,7 +553,7 @@ def extract_pdf_artifacts(
 
 
 # ---------------------------------------------------------------------------
-# Invalidation helpers (S6 Section 2.4 lifecycle step 6)
+# Invalidation helpers
 # ---------------------------------------------------------------------------
 
 

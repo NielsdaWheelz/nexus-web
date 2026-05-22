@@ -1,13 +1,13 @@
-"""PDF highlight create/list/update transactional orchestration (S6 PR-04).
+"""PDF highlight create/list/update transactional orchestration.
 
 Owns:
-- Media/kind/ready guards (reuses visibility and PR-03 readiness semantics)
-- S6 payload guardrails and page_number validation
+- Media/kind/readiness guards
+- PDF payload guardrails and page_number validation
 - Transactional write-time coherence across highlights + highlight_pdf_anchors + highlight_pdf_quads
-- D02 advisory-lock duplicate race safety
-- D06 write-time PDF match metadata + prefix/suffix storage
-- D09 lock ordering (media coordination -> duplicate)
-- D17/D18/D19/D20 effective-state comparison and no-op detection
+- Advisory-lock duplicate race safety
+- Write-time PDF match metadata + prefix/suffix storage
+- Lock ordering from media coordination to duplicate detection
+- Effective-state comparison and no-op detection
 """
 
 from dataclasses import dataclass
@@ -276,7 +276,7 @@ def _compute_write_time_match(
 
 
 # ---------------------------------------------------------------------------
-# D20: Canonical effective-state comparison
+# Canonical effective-state comparison
 # ---------------------------------------------------------------------------
 
 
@@ -294,7 +294,7 @@ def compare_effective_state(
     new_exact: str,
     new_color: str | None,
 ) -> EffectiveStateComparison:
-    """D20: Canonical side-effect-free effective-state comparison.
+    """Canonical side-effect-free effective-state comparison.
 
     Returns is_noop=True only when all effective mutable fields are unchanged.
     Returns requires_full_path=True when safe equality cannot be proven.
@@ -498,7 +498,7 @@ def update_pdf_highlight_bounds(
     except GeometryValidationError as e:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, e.message) from e
 
-    # D19/D20: pre-lock no-op short circuit with row lock
+    # Pre-lock no-op short circuit with row lock.
     db.execute(
         text("SELECT id FROM highlights WHERE id = :hid FOR UPDATE"),
         {"hid": highlight.id},
@@ -509,7 +509,7 @@ def update_pdf_highlight_bounds(
         return _highlight_to_typed_out(highlight, viewer_id)
 
     if comparison.requires_full_path:
-        pass  # fall through to normal D09 path
+        pass  # fall through to the normal locked write path.
 
     match_fields = _compute_write_time_match(
         db,
@@ -529,7 +529,7 @@ def update_pdf_highlight_bounds(
     )
     acquire_ordered_locks(db, coord_key, dup_key)
 
-    # D17: duplicate check excludes self
+    # Duplicate check excludes the highlight being updated.
     dup = (
         db.query(HighlightPdfAnchor)
         .join(Highlight, Highlight.id == HighlightPdfAnchor.highlight_id)
@@ -546,7 +546,7 @@ def update_pdf_highlight_bounds(
     if dup is not None:
         raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Duplicate PDF highlight")
 
-    # Post-lock D18 no-op recheck using same comparison helper
+    # Post-lock no-op recheck using the same comparison helper.
     post_comparison = compare_effective_state(highlight, canonical, bounds.exact, new_color)
     if post_comparison.is_noop:
         return _highlight_to_typed_out(highlight, viewer_id)

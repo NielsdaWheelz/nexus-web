@@ -113,7 +113,7 @@ def _create_shared_library(session, owner_id: UUID) -> UUID:
     session.execute(
         text("""
             INSERT INTO libraries (id, name, owner_user_id, is_default)
-            VALUES (:id, 'S6 Shared PDF Library', :owner, false)
+            VALUES (:id, 'Shared PDF Library', :owner, false)
         """),
         {"id": library_id, "owner": owner_id},
     )
@@ -544,8 +544,8 @@ class TestListPdfHighlights:
         ]
 
 
-class TestPdfHighlightVisibilityRegression:
-    """S6 PR-08 visibility regression coverage for PDF highlight surfaces."""
+class TestPdfHighlightSharedVisibility:
+    """Shared-library visibility coverage for PDF highlight surfaces."""
 
     def test_shared_reader_can_list_and_get_pdf_highlights_with_mine_only_split(
         self, auth_client, direct_db: DirectSessionManager
@@ -747,7 +747,7 @@ class TestUpdatePdfHighlight:
         assert update_resp.status_code == 200
         assert update_resp.json()["data"]["color"] == "green"
 
-    def test_d16_pdf_anchor_on_fragment_rejected(
+    def test_pdf_anchor_update_on_fragment_highlight_rejected(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """PDF anchor updates on fragment highlights are rejected."""
@@ -803,7 +803,7 @@ class TestUpdatePdfHighlight:
         )
         assert update_resp.status_code == 400
 
-    def test_d16_fragment_offsets_on_pdf_rejected(
+    def test_fragment_anchor_update_on_pdf_highlight_rejected(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """Fragment anchor updates on PDF highlights are rejected."""
@@ -830,7 +830,9 @@ class TestUpdatePdfHighlight:
         )
         assert update_resp.status_code == 400
 
-    def test_d17_update_duplicate_excludes_self(self, auth_client, direct_db: DirectSessionManager):
+    def test_update_duplicate_geometry_excludes_same_highlight(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
         """Updating to same geometry as self → no conflict (no-op or success)."""
         user_id = create_test_user_id()
         media_id = _setup_pdf_media(auth_client, direct_db, user_id)
@@ -856,7 +858,7 @@ class TestUpdatePdfHighlight:
         )
         assert update_resp.status_code == 200
 
-    def test_d17_update_duplicate_conflicts_with_other(
+    def test_update_duplicate_geometry_conflicts_with_other_highlight(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """Updating to another highlight's geometry → 409."""

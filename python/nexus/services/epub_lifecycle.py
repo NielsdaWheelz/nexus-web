@@ -1,8 +1,8 @@
-"""EPUB ingest + retry lifecycle orchestration (S5 PR-03).
+"""EPUB ingest + retry lifecycle orchestration.
 
-Owns C4 lifecycle policy: dispatch, state transitions, retry guards, and
+Owns lifecycle policy: dispatch, state transitions, retry guards, and
 artifact cleanup for EPUB media.  Routes call exactly one function here.
-Non-EPUB kinds fall through to existing upload-confirm behavior.
+Non-EPUB kinds delegate to upload-confirm behavior.
 """
 
 import logging
@@ -59,7 +59,7 @@ def confirm_ingest_for_viewer(
     For EPUB: validates, hashes, deduplicates via base confirm_ingest, then
     runs preflight archive safety and dispatches extraction.
     For PDF: delegates to the PDF lifecycle module.
-    For non-EPUB/non-PDF: delegates to base confirm_ingest (S1 behavior).
+    For non-EPUB/non-PDF: delegates to base confirm_ingest.
     """
     media = db.execute(select(Media).where(Media.id == media_id)).scalar()
 

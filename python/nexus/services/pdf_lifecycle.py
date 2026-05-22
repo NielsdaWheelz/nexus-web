@@ -1,6 +1,6 @@
-"""PDF ingest + retry lifecycle orchestration (S6 PR-03).
+"""PDF ingest + retry lifecycle orchestration.
 
-Owns C3 lifecycle policy: dispatch, state transitions, retry guards, and
+Owns lifecycle policy: dispatch, state transitions, retry guards, and
 artifact cleanup/invalidation for PDF media. Routes call exactly one
 function here. Mirrors the EPUB lifecycle split.
 """
@@ -174,7 +174,7 @@ def retry_pdf_ingest_for_viewer(
 ) -> dict:
     """Retry endpoint orchestration for failed PDF media.
 
-    Implements S6-PR03-D11 precedence-ordered retry inference matrix:
+    Implements the precedence-ordered PDF retry inference matrix:
     1. non-failed -> E_RETRY_INVALID_STATE
     2. E_PDF_PASSWORD_REQUIRED -> terminal E_RETRY_NOT_ALLOWED
     3. failure_stage='embed' -> embedding-only retry (no text rewrite)

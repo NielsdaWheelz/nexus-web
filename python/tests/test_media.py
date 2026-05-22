@@ -1087,12 +1087,7 @@ class TestTimestampSerialization:
 
 
 # =============================================================================
-# S5 PR-02: EPUB Asset Endpoint Tests
-# =============================================================================
-
-
-# =============================================================================
-# S5 PR-07: Hardening / Freeze Tests
+# EPUB Read/Retry Hardening Tests
 # =============================================================================
 
 
@@ -1442,6 +1437,11 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
             assert media_row is not None
             assert media_row.processing_status == ProcessingStatus.failed
             assert media_row.processing_attempts == 1
+
+
+# =============================================================================
+# EPUB Asset Endpoint Tests
+# =============================================================================
 
 
 class TestGetEpubAssetSuccessAndMasking:
@@ -2004,7 +2004,7 @@ class TestGetEpubAssetKindAndReadyGuards:
 
 
 # =============================================================================
-# S5 PR-03: EPUB Retry Endpoint Tests
+# EPUB Retry Endpoint Tests
 # =============================================================================
 
 
@@ -2031,7 +2031,7 @@ def _create_failed_epub(
 
 
 class TestRetryEpubEndpoint:
-    """S5 PR-03: POST /media/{id}/retry tests."""
+    """POST /media/{id}/retry endpoint tests for EPUB media."""
 
     def test_retry_epub_failed_resets_and_dispatches(
         self,
@@ -2556,7 +2556,7 @@ class TestRetryWebArticleEndpoint:
 
 
 # =============================================================================
-# S5 PR-04: EPUB Chapter + TOC Read API Tests
+# EPUB Navigation and Section Read API Tests
 # =============================================================================
 
 
@@ -2902,12 +2902,12 @@ class TestGetEpubReadEndpointsKindAndReadinessGuards:
 
 
 # =============================================================================
-# S5 PR-06: /media/{id}/fragments compatibility on EPUB
+# EPUB Fragment Endpoint Tests
 # =============================================================================
 
 
 class TestGetFragmentsEpubReady:
-    """PR-06: existing /media/{id}/fragments returns all EPUB chapters ordered by idx."""
+    """GET /media/{id}/fragments returns all EPUB chapters ordered by idx."""
 
     def test_get_fragments_epub_ready_returns_all_chapters_ordered_by_idx(
         self, auth_client, direct_db: DirectSessionManager
@@ -2940,7 +2940,7 @@ class TestGetFragmentsEpubReady:
 
 
 # =============================================================================
-# S6 PR-03: PDF capabilities and retry tests
+# PDF Capabilities and Retry Tests
 # =============================================================================
 
 
@@ -3010,9 +3010,9 @@ def _create_pdf_media_with_state(
 
 
 class TestPdfCapabilityDerivation:
-    """S6 PR-03: PDF capability derivation with real readiness predicate."""
+    """PDF capability derivation with real readiness predicate."""
 
-    def test_pr03_get_media_pdf_can_read_before_can_quote_when_plain_text_not_ready(
+    def test_get_media_pdf_can_read_before_can_quote_when_plain_text_not_ready(
         self, auth_client, direct_db: DirectSessionManager
     ):
         with direct_db.session() as session:
@@ -3037,7 +3037,7 @@ class TestPdfCapabilityDerivation:
         assert caps["can_quote"] is False
         assert caps["can_search"] is False
 
-    def test_pr03_get_media_pdf_quote_search_capabilities_require_full_text_readiness(
+    def test_get_media_pdf_quote_search_capabilities_require_full_text_readiness(
         self, auth_client, direct_db: DirectSessionManager
     ):
         with direct_db.session() as session:
@@ -3062,7 +3062,7 @@ class TestPdfCapabilityDerivation:
         assert caps["can_quote"] is True
         assert caps["can_search"] is False
 
-    def test_pr03_get_media_pdf_capabilities_do_not_flip_quote_search_on_plain_text_without_full_page_span_readiness(
+    def test_get_media_pdf_capabilities_do_not_enable_quote_search_without_full_page_span_readiness(
         self, auth_client, direct_db: DirectSessionManager
     ):
         with direct_db.session() as session:
@@ -3088,7 +3088,7 @@ class TestPdfCapabilityDerivation:
         assert caps["can_quote"] is False
         assert caps["can_search"] is False
 
-    def test_pr03_get_media_pdf_scanned_visual_read_only_capabilities(
+    def test_get_media_pdf_scanned_visual_read_only_capabilities(
         self, auth_client, direct_db: DirectSessionManager
     ):
         with direct_db.session() as session:
@@ -3114,7 +3114,7 @@ class TestPdfCapabilityDerivation:
         assert caps["can_quote"] is False
         assert caps["can_search"] is False
 
-    def test_pr03_get_media_pdf_capabilities_use_real_quote_text_readiness_predicate(
+    def test_get_media_pdf_capabilities_use_real_quote_text_readiness_predicate(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """Caller computes real DB-backed PDF quote-readiness boolean, not a hardcoded placeholder."""
@@ -3161,9 +3161,9 @@ class TestPdfCapabilityDerivation:
 
 
 class TestPdfRetry:
-    """S6 PR-03: PDF retry tests."""
+    """PDF retry tests."""
 
-    def test_pr03_retry_pdf_password_protected_returns_retry_not_allowed_without_dispatch(
+    def test_retry_pdf_password_protected_returns_retry_not_allowed_without_dispatch(
         self, auth_client, direct_db: DirectSessionManager
     ):
         with direct_db.session() as session:
@@ -3185,7 +3185,7 @@ class TestPdfRetry:
         assert resp.status_code == 409
         assert resp.json()["error"]["code"] == "E_RETRY_NOT_ALLOWED"
 
-    def test_pr03_retry_pdf_password_protected_terminal_behavior_matches_policy(
+    def test_retry_pdf_password_protected_terminal_behavior_matches_policy(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """Password-protected terminal: no dispatch, no state change."""
@@ -3216,7 +3216,7 @@ class TestPdfRetry:
             ).fetchone()
             assert row[0] == "failed"
 
-    def test_pr03_retry_pdf_failed_resets_and_dispatches_text_rebuild_path(
+    def test_retry_pdf_failed_resets_and_dispatches_text_rebuild_path(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """Text-rebuild retry: state resets to extracting, dispatch occurs."""
@@ -3267,7 +3267,7 @@ class TestPdfRetry:
             assert job_row[1] == "ingest_pdf"
             assert job_row[2] == "false"
 
-    def test_pr03_retry_pdf_embed_failure_uses_embedding_only_retry_inference_path(
+    def test_retry_pdf_embed_failure_uses_embedding_only_retry_inference_path(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """failure_stage='embed' -> embedding-only retry (no text rewrite)."""
@@ -3325,7 +3325,7 @@ class TestPdfRetry:
             ).fetchone()
             assert row[0] == "Existing text"
 
-    def test_pr03_retry_pdf_transcribe_failure_stage_fails_closed_as_internal_integrity_error(
+    def test_retry_pdf_transcribe_failure_stage_fails_closed_as_internal_integrity_error(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """Impossible failure_stage='transcribe' for PDF -> fail closed."""
@@ -3347,7 +3347,7 @@ class TestPdfRetry:
         resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
         assert resp.status_code == 500
 
-    def test_pr03_retry_pdf_embedding_only_path_does_not_rewrite_plain_text_or_page_spans(
+    def test_retry_pdf_embedding_only_path_does_not_rewrite_plain_text_or_page_spans(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """Embedding-only retry preserves text artifacts unchanged."""
@@ -3387,7 +3387,7 @@ class TestPdfRetry:
             ).scalar()
             assert spans == 1
 
-    def test_pr03_retry_pdf_text_rebuild_path_invalidates_before_rewrite(self, db_session: Session):
+    def test_retry_pdf_text_rebuild_path_invalidates_before_rewrite(self, db_session: Session):
         """Text-rebuild path invalidates quote-match metadata before new artifacts."""
         from uuid import uuid4
 
@@ -3423,7 +3423,7 @@ class TestPdfRetry:
         assert refreshed[0] is None
         assert refreshed[1] is None
 
-    def test_pr03_pdf_text_rebuild_invalidates_pdf_quote_match_metadata_and_prefix_suffix(
+    def test_pdf_text_rebuild_invalidates_pdf_quote_match_metadata_and_prefix_suffix(
         self, db_session: Session
     ):
         """Invalidation resets match_status to pending, clears offsets/version, clears prefix/suffix."""
@@ -3449,7 +3449,7 @@ class TestPdfRetry:
         count = invalidate_pdf_quote_match_metadata(db_session, media_id)
         assert count >= 0
 
-    def test_pr03_pdf_invalidation_preserves_geometry_and_exact_text(self, db_session: Session):
+    def test_pdf_invalidation_preserves_geometry_and_exact_text(self, db_session: Session):
         """Invalidation mutates only quote-match metadata + prefix/suffix; geometry and exact preserved."""
         from uuid import uuid4
 

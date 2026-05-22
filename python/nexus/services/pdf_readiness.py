@@ -1,10 +1,10 @@
-"""Shared DB-backed PDF quote-readiness predicate (S6 PR-03).
+"""Shared DB-backed PDF quote-readiness predicate.
 
 Provides single-media and batch helpers used by media.py and libraries.py
 to determine whether a PDF has full pdf_quote_text_ready(media) semantics.
 
-Does NOT perform heavy contiguity revalidation on reads — relies on write-time
-enforcement in pdf_ingest/pdf_lifecycle per S6-PR03-D07.
+Does NOT perform heavy contiguity revalidation on reads; relies on write-time
+enforcement in pdf_ingest and pdf_lifecycle.
 """
 
 from uuid import UUID

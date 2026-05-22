@@ -2,7 +2,7 @@
 
 Deterministic extraction of chapter fragments, TOC snapshots, title, and
 internal assets from EPUB archives.  No route bindings; invoked by task
-wrappers (PR-02) and orchestrated by lifecycle endpoints (PR-03).
+wrappers and orchestrated by lifecycle endpoints.
 
 Reuses existing sanitization/canonicalization/fragment-block primitives.
 """
@@ -76,7 +76,7 @@ class EpubExtractionError:
 
 
 # ---------------------------------------------------------------------------
-# Internal spec types
+# Internal parsing types
 # ---------------------------------------------------------------------------
 
 _READABLE_MEDIA_TYPES = frozenset(
@@ -400,7 +400,7 @@ def extract_epub_artifacts(
 ) -> EpubExtractionResult | EpubExtractionError:
     """Deterministic EPUB extraction.  Single-transaction artifact write.
 
-    Does NOT mutate media.processing_status (owned by PR-03).
+    Does NOT mutate media.processing_status; callers own lifecycle state changes.
     """
     if now is None:
         now = datetime.now(UTC)
