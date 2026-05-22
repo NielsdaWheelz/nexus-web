@@ -30,7 +30,8 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { apiFetch } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
 import { loadKeybindings, matchesKeyEvent, formatKeyCombo } from "@/lib/keybindings";
-import { createNotePage, formatLocalDate, todayLocalDate } from "@/lib/notes/api";
+import { formatLocalDate, todayLocalDate } from "@/lib/localDate";
+import { createNotePage } from "@/lib/notes/api";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import {
   getPaneRouteIcon,
