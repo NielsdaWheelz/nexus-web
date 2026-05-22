@@ -9,6 +9,7 @@ import type {
   MessageRetrieval,
   MessageRetrievalResultRef,
 } from "@/lib/conversations/types";
+import { getStringField } from "@/lib/validation";
 import { statusSeverity } from "./audit";
 import type {
   ProvenanceArtifact,
@@ -317,12 +318,12 @@ function sourceIdentityFromResultRef(
   if (!resultRef) return null;
   const href = resultRefHref(resultRef);
   const title = resultRefTitle(resultRef);
-  const sourceId = textField(resultRef, "source_id") ?? textField(resultRef, "id");
+  const sourceId = getStringField(resultRef, "source_id") ?? getStringField(resultRef, "id");
   if (!href && !title && !sourceId) return null;
   return {
     key: href ? `href:${href}` : `result:${sourceId ?? title}`,
     label: title ?? href ?? sourceId ?? "Source",
-    type: textField(resultRef, "result_type") ?? textField(resultRef, "type") ?? "source",
+    type: getStringField(resultRef, "result_type") ?? getStringField(resultRef, "type") ?? "source",
     href,
   };
 }
@@ -476,8 +477,8 @@ function retrievalTitle(retrieval: MessageRetrieval): string {
 function retrievalSnippet(retrieval: MessageRetrieval): string | null {
   return (
     retrieval.exact_snippet ||
-    textField(retrieval.result_ref, "snippet") ||
-    textField(retrieval.result_ref, "excerpt") ||
+    getStringField(retrieval.result_ref, "snippet") ||
+    getStringField(retrieval.result_ref, "excerpt") ||
     null
   );
 }
@@ -486,10 +487,10 @@ function resultRefTitle(
   ref?: MessageRetrievalResultRef | Record<string, unknown> | null,
 ): string | null {
   return (
-    textField(ref, "title") ||
-    textField(ref, "source_label") ||
-    textField(ref, "source_name") ||
-    textField(ref, "display_url") ||
+    getStringField(ref, "title") ||
+    getStringField(ref, "source_label") ||
+    getStringField(ref, "source_name") ||
+    getStringField(ref, "display_url") ||
     null
   );
 }
@@ -498,20 +499,13 @@ function resultRefHref(
   ref?: MessageRetrievalResultRef | Record<string, unknown> | null,
 ): string | undefined {
   return (
-    textField(ref, "deep_link") ||
-    textField(ref, "url") ||
-    textField(ref, "href") ||
+    getStringField(ref, "deep_link") ||
+    getStringField(ref, "url") ||
+    getStringField(ref, "href") ||
     undefined
   );
 }
 
-function textField(
-  record: Record<string, unknown> | null | undefined,
-  key: string,
-): string | undefined {
-  const value = record?.[key];
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
 
 function shortId(id: string): string {
   return id.length > 10 ? `${id.slice(0, 8)}...` : id;
