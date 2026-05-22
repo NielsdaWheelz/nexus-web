@@ -88,6 +88,7 @@ import {
   usePaneMobileChromeController,
 } from "@/components/workspace/PaneShell";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
+import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import {
   isPdfReaderResumeState,
   isReflowableReaderResumeState,
@@ -313,10 +314,6 @@ function buildSelectionSnapshotKey(selection: SelectionState): string {
     width.toFixed(1),
     height.toFixed(1),
   ].join("::");
-}
-
-function canonicalCpLength(text: string): number {
-  return [...text].length;
 }
 
 function findFirstVisibleCanonicalOffset(
@@ -2561,7 +2558,7 @@ export default function MediaPaneBody() {
         return {
           id: `evidence-${resolvedEvidence.evidence_span_id}`,
           start_offset: matchedOffset,
-          end_offset: matchedOffset + [...exact].length,
+          end_offset: matchedOffset + canonicalCpLength(exact),
           color: "blue",
           created_at: "1970-01-01T00:00:00.000Z",
         };
@@ -2646,7 +2643,7 @@ export default function MediaPaneBody() {
     return {
       id: `reader-source-${readerSourceTarget.source}-${readerSourceTarget.context_id ?? readerSourceTarget.evidence_id ?? "target"}`,
       start_offset: matchedOffset,
-      end_offset: matchedOffset + [...exact].length,
+      end_offset: matchedOffset + canonicalCpLength(exact),
       color: "blue",
       created_at: "1970-01-01T00:00:00.000Z",
     };
@@ -2853,7 +2850,7 @@ export default function MediaPaneBody() {
       console.error("highlight_canonical_mismatch_defect", {
         fragmentId: activeContent.fragmentId,
         emittedLength: cursor.length,
-        expectedLength: [...activeContent.canonicalText].length,
+        expectedLength: canonicalCpLength(activeContent.canonicalText),
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: rebuild when rendered content changes

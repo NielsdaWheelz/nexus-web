@@ -1,10 +1,10 @@
-"""Worker job handler for PDF extraction (S6 PR-03).
+"""Worker job handler for PDF extraction.
 
 Owns async completion-state transitions for PDF extraction:
 extracting -> ready_for_reading (success) or extracting -> failed (error).
 
-On successful extraction, performs explicit handoff to the existing
-embedding pipeline so downstream failures surface as failure_stage='embed'.
+On successful extraction, performs explicit PDF evidence indexing so downstream
+indexing failures surface as failure_stage='embed'.
 """
 
 import hashlib

@@ -1,7 +1,7 @@
-"""Shared PDF advisory-lock helpers for cross-PR coordination.
+"""Shared PDF advisory-lock helpers.
 
 Owns media-scoped coordination lock key derivation and ordered lock helpers
-for the S6-PR04-D09/D10 lock-ordering contract:
+for the PDF write lock-ordering contract:
   media-scoped coordination lock -> duplicate-identity advisory lock
 
 Import boundary: stdlib + SQLAlchemy only. No imports from pdf_highlights,
@@ -42,7 +42,7 @@ def acquire_ordered_locks(
     media_coordination_key: int,
     duplicate_lock_key: int,
 ) -> None:
-    """Acquire media coordination + duplicate advisory locks in D09 order.
+    """Acquire media coordination + duplicate advisory locks in canonical order.
 
     Always: coordination lock first, then duplicate lock.
     """

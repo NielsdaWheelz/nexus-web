@@ -1,9 +1,9 @@
 """Shared non-pure policy/helper for PDF matcher anomaly logging and path-specific mapping.
 
-Owns the canonical pdf_quote_match_anomaly event schema (D14), centralized
-logging/mapping helpers, and the no-content redaction contract (D15).
+Owns the canonical pdf_quote_match_anomaly event schema, centralized
+logging/mapping helpers, and the no-content redaction contract.
 
-Two-layer boundary (D13): pdf_quote_match.py provides typed recoverable anomaly
+Two-layer boundary: pdf_quote_match.py provides typed recoverable anomaly
 classifications; this module owns structured logging + path-specific mapping.
 """
 
@@ -37,7 +37,7 @@ class PdfQuoteMatchInternalError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class PendingWriteOutcome:
-    """Approved D12 degrade-to-pending write-path outcome.
+    """Approved degrade-to-pending write-path outcome.
 
     All fields suitable for direct persistence on highlight_pdf_anchors.
     """
@@ -82,7 +82,7 @@ def handle_recoverable_anomaly(
     """Handle a classified recoverable matcher anomaly.
 
     Emits one canonical pdf_quote_match_anomaly event and returns the
-    approved D12 degrade-to-pending outcome. Caller must NOT re-log.
+    approved degrade-to-pending outcome. Caller must NOT re-log.
     """
     logger.warning(
         _EVENT_NAME,
@@ -112,7 +112,7 @@ def handle_unclassified_exception(
     Caller must NOT re-log the same anomaly.
     """
     exc_type = type(exc).__name__
-    # D15: sanitize exception message — only type name, no content
+    # Sanitize exception message: only type name, no content.
     logger.error(
         _EVENT_NAME,
         anomaly_kind="unclassified",

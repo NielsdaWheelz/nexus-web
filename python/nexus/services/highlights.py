@@ -41,8 +41,8 @@ logger = get_logger(__name__)
 # Constants
 # =============================================================================
 
-# Processing statuses where media is ready for highlight mutations
-READY_STATUSES: set[str] = {"ready_for_reading", "embedding", "ready"}
+# Processing statuses where media is ready for highlight mutations.
+_HIGHLIGHT_MUTATION_READY_STATUSES: set[str] = {"ready_for_reading", "embedding", "ready"}
 
 
 # =============================================================================
@@ -76,7 +76,7 @@ def _lock_fragment_row_for_highlight_write_or_404(db: Session, fragment_id: UUID
 
 def require_media_ready_or_409(processing_status: str) -> None:
     """Raise 409 if media is not in a ready state for highlight mutations."""
-    if processing_status not in READY_STATUSES:
+    if processing_status not in _HIGHLIGHT_MUTATION_READY_STATUSES:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media not ready")
 
 

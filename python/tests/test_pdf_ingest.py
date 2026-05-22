@@ -1,4 +1,4 @@
-"""Integration tests for PDF extraction domain logic (S6 PR-03).
+"""Tests for PDF text extraction, page spans, and ingest error handling.
 
 Covers normalization, page-span construction, scanned/image-only,
 password-protected, and parser exception mapping.
@@ -129,7 +129,7 @@ class TestPdfTextNormalization:
     def test_whitespace_only(self):
         assert normalize_pdf_text("   \n\n  ") == ""
 
-    def test_pr03_s6_contract_mixed_input(self):
+    def test_normalizes_mixed_pdf_text_control_chars_and_spacing(self):
         raw = "Hello\r\nWorld\fPage  Two\n\n\n\nEnd"
         expected = "Hello\nWorld\n\nPage Two\n\nEnd"
         assert normalize_pdf_text(raw) == expected
@@ -174,7 +174,7 @@ class TestValidatePageSpans:
 
 @pytest.mark.integration
 class TestPdfExtractionArtifacts:
-    def test_pr03_pdf_ingest_extracts_page_count_plain_text_and_page_spans(
+    def test_extract_pdf_artifacts_persists_page_count_plain_text_and_page_spans(
         self, db_session: Session
     ):
         storage = FakeStorageClient()
@@ -210,7 +210,7 @@ class TestPdfExtractionArtifacts:
         for i, span in enumerate(spans):
             assert span[0] == i + 1
 
-    def test_pr03_pdf_plain_text_normalization_matches_s6_contract(self, db_session: Session):
+    def test_extract_pdf_artifacts_normalizes_plain_text(self, db_session: Session):
         storage = FakeStorageClient()
         pdf_bytes = _make_simple_pdf("Test  Content")
         media = _create_pdf_media(db_session, storage, pdf_bytes)
@@ -223,7 +223,7 @@ class TestPdfExtractionArtifacts:
         assert "\u00a0" not in result.plain_text
         assert "  " not in result.plain_text
 
-    def test_pr03_pdf_ingest_scanned_or_image_only_marks_readable_without_quote_text(
+    def test_extract_pdf_artifacts_handles_image_only_pdf_without_quote_text_artifacts(
         self, db_session: Session
     ):
         storage = FakeStorageClient()
@@ -248,7 +248,7 @@ class TestPdfExtractionArtifacts:
             == 0
         )
 
-    def test_pr03_pdf_ingest_password_protected_fails_with_deterministic_error_code(
+    def test_extract_pdf_artifacts_password_protected_pdf_returns_terminal_error(
         self, db_session: Session
     ):
         storage = FakeStorageClient()
@@ -261,7 +261,7 @@ class TestPdfExtractionArtifacts:
         assert result.error_code == ApiErrorCode.E_PDF_PASSWORD_REQUIRED.value
         assert result.terminal is True
 
-    def test_pr03_pdf_ingest_maps_pymupdf_parser_exceptions_to_parser_agnostic_outcomes(
+    def test_extract_pdf_artifacts_invalid_pdf_returns_parser_agnostic_error(
         self, db_session: Session
     ):
         storage = FakeStorageClient()
@@ -275,7 +275,7 @@ class TestPdfExtractionArtifacts:
             ApiErrorCode.E_PDF_PASSWORD_REQUIRED.value,
         )
 
-    def test_pr03_pdf_ingest_text_bearing_invariant_failure_rolls_back_partial_text_artifacts(
+    def test_extract_pdf_artifacts_page_span_invariant_failure_returns_error(
         self, db_session: Session
     ):
         """If page-span invariants fail on a text-bearing PDF, no partial
@@ -293,9 +293,7 @@ class TestPdfExtractionArtifacts:
         assert isinstance(result, PdfExtractionError)
         assert "invariant" in result.error_message.lower()
 
-    def test_pr03_pdf_ingest_fails_extract_when_page_spans_not_contiguous_after_text_extraction(
-        self, db_session: Session
-    ):
+    def test_extract_pdf_artifacts_rejects_noncontiguous_page_spans(self, db_session: Session):
         """Non-contiguous page spans -> deterministic extract failure (fail closed)."""
         storage = FakeStorageClient()
         pdf_bytes = _make_simple_pdf("Contiguity test", num_pages=2)
@@ -313,9 +311,7 @@ class TestPdfExtractionArtifacts:
             or "invariant" in result.error_message.lower()
         )
 
-    def test_pr03_pdf_ingest_fails_extract_when_page_span_set_incomplete_after_text_extraction(
-        self, db_session: Session
-    ):
+    def test_extract_pdf_artifacts_rejects_incomplete_page_spans(self, db_session: Session):
         """Missing page-span rows for multi-page PDF -> deterministic extract failure."""
         storage = FakeStorageClient()
         pdf_bytes = _make_simple_pdf("Incomplete test", num_pages=3)
@@ -329,7 +325,7 @@ class TestPdfExtractionArtifacts:
 
         assert isinstance(result, PdfExtractionError)
 
-    def test_pr03_embedding_retry_does_not_rewrite_pdf_text_artifacts_or_invalidate_matches(
+    def test_extract_pdf_artifacts_persists_text_artifacts_and_page_spans(
         self, db_session: Session
     ):
         """Embedding-only retry path preserves text artifacts and quote-match metadata."""
@@ -368,7 +364,7 @@ class TestPdfExtractionArtifacts:
         ).fetchall()
         assert after_spans == list(original_spans)
 
-    def test_pr03_sync_runner_matches_extract(self, db_session: Session):
+    def test_run_pdf_ingest_sync_returns_pdf_extraction_result(self, db_session: Session):
         storage = FakeStorageClient()
         pdf_bytes = _make_simple_pdf("Sync test")
         media = _create_pdf_media(db_session, storage, pdf_bytes)

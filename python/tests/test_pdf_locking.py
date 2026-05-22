@@ -10,7 +10,7 @@ pytestmark = pytest.mark.unit
 
 
 class TestMediaCoordinationLockKey:
-    """test_pr04_pdf_locking_media_coordination_key_is_stable_and_namespaced"""
+    """Media coordination lock keys are stable and namespaced."""
 
     def test_deterministic(self):
         mid = uuid4()

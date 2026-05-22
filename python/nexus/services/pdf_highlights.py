@@ -38,6 +38,7 @@ from nexus.schemas.highlights import (
     PdfQuadOut,
     TypedHighlightOut,
 )
+from nexus.services.highlights import require_media_ready_or_409
 from nexus.services.notes import linked_note_blocks_for_highlights
 from nexus.services.pdf_highlight_geometry import (
     CanonicalGeometry,
@@ -59,8 +60,6 @@ from nexus.services.pdf_quote_match_policy import (
 
 logger = get_logger(__name__)
 
-READY_STATUSES: set[str] = {"ready_for_reading", "embedding", "ready"}
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,12 +76,6 @@ def _get_pdf_media_for_viewer_or_404(db: Session, viewer_id: UUID, media_id: UUI
     if media.kind != "pdf":
         raise ApiError(ApiErrorCode.E_INVALID_KIND, "Operation requires PDF media")
     return media
-
-
-def _require_pdf_ready(media: Media) -> None:
-    """Require media in mutation-ready state for PDF highlight writes."""
-    if media.processing_status.value not in READY_STATUSES:
-        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media not ready")
 
 
 def _validate_page_number(page_number: int, page_count: int | None) -> None:
@@ -332,7 +325,7 @@ def create_pdf_highlight(
 ) -> TypedHighlightOut:
     """Create a PDF geometry highlight."""
     media = _get_pdf_media_for_viewer_or_404(db, viewer_id, media_id)
-    _require_pdf_ready(media)
+    require_media_ready_or_409(media.processing_status.value)
     _validate_page_number(req.page_number, media.page_count)
 
     try:
@@ -484,7 +477,7 @@ def update_pdf_highlight_bounds(
     if media is None or media.kind != "pdf":
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
-    _require_pdf_ready(media)
+    require_media_ready_or_409(media.processing_status.value)
     _validate_page_number(bounds.page_number, media.page_count)
 
     try:
