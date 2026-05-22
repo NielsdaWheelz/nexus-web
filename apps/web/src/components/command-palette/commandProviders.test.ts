@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  getAskAiFallbackCommand,
+  getAskAiPinnedCommand,
   getSeeAllInSearchCommand,
 } from "@/components/command-palette/commandProviders";
 import type { PaletteCommand } from "@/components/palette/types";
@@ -18,10 +18,10 @@ function localCommand(title: string) {
   } as PaletteCommand;
 }
 
-describe("getAskAiFallbackCommand", () => {
+describe("getAskAiPinnedCommand", () => {
   it("returns no command for short trimmed queries", () => {
     expect(
-      getAskAiFallbackCommand({
+      getAskAiPinnedCommand({
         query: " a ",
         localCommands: [],
         canOpenConversation: true,
@@ -31,7 +31,7 @@ describe("getAskAiFallbackCommand", () => {
 
   it("returns no command when the query exactly matches a local command label", () => {
     expect(
-      getAskAiFallbackCommand({
+      getAskAiPinnedCommand({
         query: "  library  ",
         localCommands: [localCommand("Library")],
         canOpenConversation: true,
@@ -41,7 +41,7 @@ describe("getAskAiFallbackCommand", () => {
 
   it("returns no command when the user cannot create or open conversations", () => {
     expect(
-      getAskAiFallbackCommand({
+      getAskAiPinnedCommand({
         query: "summarize library notes",
         localCommands: [],
         canOpenConversation: false,
@@ -50,7 +50,7 @@ describe("getAskAiFallbackCommand", () => {
   });
 
   it("returns an explicit prefill command without auto-submit behavior", () => {
-    const command = getAskAiFallbackCommand({
+    const command = getAskAiPinnedCommand({
       query: "  summarize library notes  ",
       localCommands: [localCommand("Library")],
       canOpenConversation: true,

@@ -19,7 +19,7 @@ import PaletteDesktopShell from "@/components/palette/PaletteDesktopShell";
 import PaletteMobileShell from "@/components/palette/PaletteMobileShell";
 import type { PaletteCommand } from "@/components/palette/types";
 import {
-  getAskAiFallbackCommand,
+  getAskAiPinnedCommand,
   getSeeAllInSearchCommand,
 } from "@/components/command-palette/commandProviders";
 import { buildPaletteView } from "@/components/command-palette/commandRanking";
@@ -833,7 +833,7 @@ export default function CommandPalette() {
     workspaceState.panes,
   ]);
 
-  const askAiCommand = getAskAiFallbackCommand({
+  const askAiCommand = getAskAiPinnedCommand({
     query,
     localCommands: commandsBeforeAi.filter((command) => command.source !== "search"),
     canOpenConversation: true,

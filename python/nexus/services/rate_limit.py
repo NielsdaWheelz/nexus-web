@@ -23,6 +23,7 @@ DEFAULT_CONCURRENT_LIMIT = 3
 
 RPM_WINDOW_SECONDS = 60
 REQUEST_LOG_RETENTION_SECONDS = 3600
+RATE_LIMITER_UNAVAILABLE_MESSAGE = "Rate limiting service unavailable"
 
 
 class RateLimiter:
@@ -47,50 +48,54 @@ class RateLimiter:
         """Check-and-record one request against per-minute quota."""
         if not self.backend_available:
             logger.warning("rate_limit_backend_unavailable", check="rpm")
-            return
+            raise ApiError(
+                ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
+                RATE_LIMITER_UNAVAILABLE_MESSAGE,
+            )
 
         now = datetime.now(UTC)
         window_start = now - timedelta(seconds=RPM_WINDOW_SECONDS)
         retention_start = now - timedelta(seconds=REQUEST_LOG_RETENTION_SECONDS)
 
-        try:
-            with self._session() as db:
-                self._lock_scope(db, scope="rpm", user_id=user_id)
+        with self._db_strict(
+            "rate_limit_check_failed",
+            raise_code=ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
+            raise_msg=RATE_LIMITER_UNAVAILABLE_MESSAGE,
+            check="rpm",
+        ) as db:
+            self._lock_scope(db, scope="rpm", user_id=user_id)
+            db.execute(
+                text(
+                    """
+                    DELETE FROM rate_limit_request_log
+                    WHERE requested_at < :retention_start
+                    """
+                ),
+                {"retention_start": retention_start},
+            )
+            db.execute(
+                text(
+                    """
+                    INSERT INTO rate_limit_request_log (user_id, requested_at)
+                    VALUES (:user_id, :now)
+                    """
+                ),
+                {"user_id": user_id, "now": now},
+            )
+            count = int(
                 db.execute(
                     text(
                         """
-                        DELETE FROM rate_limit_request_log
-                        WHERE requested_at < :retention_start
+                        SELECT COUNT(*)
+                        FROM rate_limit_request_log
+                        WHERE user_id = :user_id
+                          AND requested_at >= :window_start
                         """
                     ),
-                    {"retention_start": retention_start},
-                )
-                db.execute(
-                    text(
-                        """
-                        INSERT INTO rate_limit_request_log (user_id, requested_at)
-                        VALUES (:user_id, :now)
-                        """
-                    ),
-                    {"user_id": user_id, "now": now},
-                )
-                count = int(
-                    db.execute(
-                        text(
-                            """
-                            SELECT COUNT(*)
-                            FROM rate_limit_request_log
-                            WHERE user_id = :user_id
-                              AND requested_at >= :window_start
-                            """
-                        ),
-                        {"user_id": user_id, "window_start": window_start},
-                    ).scalar_one()
-                )
-                db.commit()
-        except Exception as exc:
-            logger.warning("rate_limit_check_failed", check="rpm", error=str(exc))
-            return
+                    {"user_id": user_id, "window_start": window_start},
+                ).scalar_one()
+            )
+            db.commit()
 
         if count > self._rpm_limit:
             logger.warning("rate_limit.blocked", **safe_kv(limit_type="rpm"))
@@ -103,25 +108,29 @@ class RateLimiter:
         """Check the current in-flight count without mutating it."""
         if not self.backend_available:
             logger.warning("rate_limit_backend_unavailable", check="concurrent")
-            return
+            raise ApiError(
+                ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
+                RATE_LIMITER_UNAVAILABLE_MESSAGE,
+            )
 
-        try:
-            with self._session() as db:
-                self._lock_scope(db, scope="inflight", user_id=user_id)
-                row = db.execute(
-                    text(
-                        """
-                        SELECT inflight_count
-                        FROM rate_limit_inflight
-                        WHERE user_id = :user_id
-                        """
-                    ),
-                    {"user_id": user_id},
-                ).first()
-                db.commit()
-        except Exception as exc:
-            logger.warning("rate_limit_check_failed", check="concurrent", error=str(exc))
-            return
+        with self._db_strict(
+            "rate_limit_check_failed",
+            raise_code=ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
+            raise_msg=RATE_LIMITER_UNAVAILABLE_MESSAGE,
+            check="concurrent",
+        ) as db:
+            self._lock_scope(db, scope="inflight", user_id=user_id)
+            row = db.execute(
+                text(
+                    """
+                    SELECT inflight_count
+                    FROM rate_limit_inflight
+                    WHERE user_id = :user_id
+                    """
+                ),
+                {"user_id": user_id},
+            ).first()
+            db.commit()
 
         current = int(row[0]) if row is not None else 0
         if current >= self._concurrent_limit:
@@ -134,61 +143,65 @@ class RateLimiter:
     def acquire_inflight_slot(self, user_id: UUID) -> None:
         """Atomically check and increment one in-flight slot."""
         if not self.backend_available:
-            return
+            logger.warning("rate_limit_backend_unavailable", check="inflight_acquire")
+            raise ApiError(
+                ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
+                RATE_LIMITER_UNAVAILABLE_MESSAGE,
+            )
 
         now = datetime.now(UTC)
-        try:
-            with self._session() as db:
-                self._lock_scope(db, scope="inflight", user_id=user_id)
+        with self._db_strict(
+            "inflight_acquire_failed",
+            raise_code=ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
+            raise_msg=RATE_LIMITER_UNAVAILABLE_MESSAGE,
+            user_id=str(user_id),
+        ) as db:
+            self._lock_scope(db, scope="inflight", user_id=user_id)
+            db.execute(
+                text(
+                    """
+                    INSERT INTO rate_limit_inflight (user_id, inflight_count, updated_at)
+                    VALUES (:user_id, 0, :now)
+                    ON CONFLICT (user_id) DO NOTHING
+                    """
+                ),
+                {"user_id": user_id, "now": now},
+            )
+            current = int(
                 db.execute(
                     text(
                         """
-                        INSERT INTO rate_limit_inflight (user_id, inflight_count, updated_at)
-                        VALUES (:user_id, 0, :now)
-                        ON CONFLICT (user_id) DO NOTHING
-                        """
-                    ),
-                    {"user_id": user_id, "now": now},
-                )
-                current = int(
-                    db.execute(
-                        text(
-                            """
-                            SELECT inflight_count
-                            FROM rate_limit_inflight
-                            WHERE user_id = :user_id
-                            FOR UPDATE
-                            """
-                        ),
-                        {"user_id": user_id},
-                    ).scalar_one()
-                )
-                if current >= self._concurrent_limit:
-                    db.rollback()
-                    logger.warning("rate_limit.blocked", **safe_kv(limit_type="concurrent"))
-                    raise ApiError(
-                        ApiErrorCode.E_RATE_LIMITED,
-                        f"Too many concurrent requests: {self._concurrent_limit} maximum",
-                    )
-                db.execute(
-                    text(
-                        """
-                        UPDATE rate_limit_inflight
-                        SET inflight_count = :next_count, updated_at = :now
+                        SELECT inflight_count
+                        FROM rate_limit_inflight
                         WHERE user_id = :user_id
+                        FOR UPDATE
                         """
                     ),
-                    {
-                        "user_id": user_id,
-                        "next_count": current + 1,
-                        "now": now,
-                    },
+                    {"user_id": user_id},
+                ).scalar_one()
+            )
+            if current >= self._concurrent_limit:
+                db.rollback()
+                logger.warning("rate_limit.blocked", **safe_kv(limit_type="concurrent"))
+                raise ApiError(
+                    ApiErrorCode.E_RATE_LIMITED,
+                    f"Too many concurrent requests: {self._concurrent_limit} maximum",
                 )
-                db.commit()
-        except ApiError:
-            raise
-        except Exception as exc:
-            logger.warning("inflight_acquire_failed", user_id=str(user_id), error=str(exc))
+            db.execute(
+                text(
+                    """
+                    UPDATE rate_limit_inflight
+                    SET inflight_count = :next_count, updated_at = :now
+                    WHERE user_id = :user_id
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "next_count": current + 1,
+                    "now": now,
+                },
+            )
+            db.commit()
 
     def release_inflight_slot(self, user_id: UUID) -> None:
         """Decrement one in-flight slot (clamped at zero)."""
@@ -217,14 +230,14 @@ class RateLimiter:
             logger.warning("token_budget_backend_unavailable")
             raise ApiError(
                 ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED,
-                "Rate limiting service unavailable",
+                RATE_LIMITER_UNAVAILABLE_MESSAGE,
             )
 
         usage_date = self._today_utc()
         with self._db_strict(
             "token_budget_check_failed",
             raise_code=ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED,
-            raise_msg="Rate limiting service unavailable",
+            raise_msg=RATE_LIMITER_UNAVAILABLE_MESSAGE,
         ) as db:
             self._load_budget_totals_for_update(
                 db=db,
@@ -332,7 +345,7 @@ class RateLimiter:
             logger.warning("token_budget_reserve_backend_unavailable")
             raise ApiError(
                 ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
-                "Rate limiting service unavailable",
+                RATE_LIMITER_UNAVAILABLE_MESSAGE,
             )
         if est_tokens <= 0:
             return
@@ -344,7 +357,7 @@ class RateLimiter:
         with self._db_strict(
             "token_budget_reserve_failed",
             raise_code=ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE,
-            raise_msg="Rate limiting service unavailable",
+            raise_msg=RATE_LIMITER_UNAVAILABLE_MESSAGE,
         ) as db:
             self._load_budget_totals_for_update(
                 db=db,
@@ -668,7 +681,7 @@ class RateLimiter:
 
     @contextmanager
     def _db_strict(
-        self, warn_msg: str, raise_code: str, raise_msg: str, **warn_kw: object
+        self, warn_msg: str, raise_code: ApiErrorCode, raise_msg: str, **warn_kw: object
     ) -> Generator[Session, None, None]:
         """Open a session; re-raise ApiError, wrap other exceptions into a new ApiError."""
         try:

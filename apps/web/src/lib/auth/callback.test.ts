@@ -10,16 +10,6 @@ const AUTH_TRUSTED_PROXY_ORIGINS = "AUTH_TRUSTED_PROXY_ORIGINS";
 const originalAllowedRedirectOrigins =
   process.env[AUTH_ALLOWED_REDIRECT_ORIGINS];
 const originalTrustedProxyOrigins = process.env[AUTH_TRUSTED_PROXY_ORIGINS];
-const originalNodeEnv = process.env.NODE_ENV;
-
-function setNodeEnv(value: string | undefined) {
-  const env = process.env as Record<string, string | undefined>;
-  if (value === undefined) {
-    delete env.NODE_ENV;
-    return;
-  }
-  env.NODE_ENV = value;
-}
 
 function noMintHandoffCode() {
   return vi
@@ -56,7 +46,6 @@ function expectLoginRedirectWithError(
 
 describe("handleAuthCallback", () => {
   afterEach(() => {
-    setNodeEnv(originalNodeEnv);
     if (originalAllowedRedirectOrigins === undefined) {
       delete process.env[AUTH_ALLOWED_REDIRECT_ORIGINS];
     } else {
@@ -146,33 +135,7 @@ describe("handleAuthCallback", () => {
     expect(exchangeCodeForSession).not.toHaveBeenCalled();
   });
 
-  it("falls back to request origin in test mode when no allowlist is configured", async () => {
-    delete process.env[AUTH_ALLOWED_REDIRECT_ORIGINS];
-    const exchangeCodeForSession = vi
-      .fn()
-      .mockResolvedValue(sessionExchangeResult());
-    const request = new Request(
-      "http://internal.local/auth/callback?code=test-code&next=%2Flibraries",
-      {
-        headers: {
-          "x-forwarded-host": "app.example.com",
-          "x-forwarded-proto": "https",
-        },
-      }
-    );
-
-    const response = await handleAuthCallback(request, {
-      exchangeCodeForSession,
-      mintHandoffCode: noMintHandoffCode(),
-    });
-
-    expect(response.headers.get("location")).toBe(
-      "http://internal.local/libraries"
-    );
-  });
-
-  it("fails closed in production when callback allowlist is missing", async () => {
-    setNodeEnv("production");
+  it("rejects non-local callback origins when the allowlist is missing", async () => {
     delete process.env[AUTH_ALLOWED_REDIRECT_ORIGINS];
     const exchangeCodeForSession = vi.fn();
     const request = new Request(
@@ -189,7 +152,7 @@ describe("handleAuthCallback", () => {
   });
 
   it("falls back to the default app route when next is unsafe", async () => {
-    delete process.env[AUTH_ALLOWED_REDIRECT_ORIGINS];
+    process.env[AUTH_ALLOWED_REDIRECT_ORIGINS] = "https://app.example.com";
     const exchangeCodeForSession = vi
       .fn()
       .mockResolvedValue(sessionExchangeResult());

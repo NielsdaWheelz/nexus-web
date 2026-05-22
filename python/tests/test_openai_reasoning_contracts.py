@@ -1,4 +1,4 @@
-"""Backend contract tests for the OpenAI reasoning cutover."""
+"""Backend contract tests for OpenAI reasoning behavior."""
 
 from uuid import UUID, uuid4
 

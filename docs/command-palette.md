@@ -194,7 +194,7 @@ desktop shell flattens a view inline for keyboard navigation. No shared
 
 ### 5.3 Providers — `command-palette/commandProviders.ts`
 
-`getAskAiFallbackCommand` is unchanged except its returned command gets
+`getAskAiPinnedCommand` returns the Ask AI command with
 `pin: "last"`. New `getSeeAllInSearchCommand({ query }): PaletteCommand | null` —
 returns a `pin: "last"` href command to `/search?q=<query>` when `query.trim()`
 is ≥ 2 chars, else `null`.
