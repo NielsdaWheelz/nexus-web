@@ -1,5 +1,7 @@
 "use client";
 
+import { isRecord } from "@/lib/validation";
+
 export const WORKSPACE_SCHEMA_VERSION = 4;
 export const WORKSPACE_VERSION_PARAM = "wsv";
 export const WORKSPACE_STATE_PARAM = "ws";
@@ -24,10 +26,6 @@ export interface WorkspaceStateV4 {
   schemaVersion: typeof WORKSPACE_SCHEMA_VERSION;
   activePaneId: string;
   panes: WorkspacePaneStateV4[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 export function createPaneId(): string {

@@ -12,6 +12,7 @@ import { ApiError, apiFetch } from "@/lib/api/client";
 import { parseSSEJsonStream, type SSEJsonEvent } from "@/lib/api/sse-stream";
 import { fetchStreamToken } from "@/lib/api/streamToken";
 import { isAbortError } from "@/lib/errors";
+import { isRecord } from "@/lib/validation";
 import { useStickyHeadline } from "../../OracleShell";
 import BorderFrame from "../BorderFrame";
 import IlluminatedCapital from "../IlluminatedCapital";
@@ -230,10 +231,6 @@ class OracleStreamParseError extends Error {
     super("Oracle stream data could not be parsed");
     this.name = "OracleStreamParseError";
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 function toOracleStreamEvent(event: SSEJsonEvent): OracleStreamEvent | null {

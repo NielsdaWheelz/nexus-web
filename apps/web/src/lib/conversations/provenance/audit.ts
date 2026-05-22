@@ -1,3 +1,4 @@
+import { clamp } from "@/lib/clamp";
 import { truncateText } from "@/lib/conversations/display";
 import type { MessageClaimSupportStatus } from "@/lib/conversations/types";
 import type {
@@ -156,10 +157,6 @@ function severityPenalty(claims: ProvenanceClaim[]): number {
       return total;
     }, 0),
   );
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }
 
 function auditLevel(
