@@ -1191,7 +1191,7 @@ def update_library_member_role(
 ) -> LibraryMemberOut:
     """Update a library member's role.
 
-    Auth: viewer must be admin member. Cannot change owner's role. Cannot demote last admin.
+    Auth: viewer must be admin member. Cannot change owner's role.
     Default library forbidden. Idempotent when role unchanged.
     """
     with transaction(db):
@@ -1240,21 +1240,6 @@ def update_library_member_role(
                 created_at=target[2],
             )
 
-        # Demoting an admin: check last-admin constraint
-        if current_role == "admin" and role == "member":
-            admin_count = db.execute(
-                text("""
-                    SELECT COUNT(*) FROM memberships
-                    WHERE library_id = :lid AND role = 'admin'
-                """),
-                {"lid": library_id},
-            ).scalar()
-            if admin_count <= 1:
-                raise ForbiddenError(
-                    ApiErrorCode.E_LAST_ADMIN_FORBIDDEN,
-                    "Cannot demote last admin",
-                )
-
         db.execute(
             text("""
                 UPDATE memberships SET role = :role
@@ -1279,7 +1264,7 @@ def remove_library_member(
 ) -> None:
     """Remove a member from a library.
 
-    Auth: viewer must be admin member. Cannot remove owner. Cannot remove last admin.
+    Auth: viewer must be admin member. Cannot remove owner.
     Default library forbidden. Idempotent: absent target -> silent 204.
 
     On successful delete, run closure cleanup + gc for removed user and
@@ -1312,7 +1297,7 @@ def remove_library_member(
         # Check target exists
         result = db.execute(
             text("""
-                SELECT role FROM memberships
+                SELECT 1 FROM memberships
                 WHERE library_id = :lid AND user_id = :uid
             """),
             {"lid": library_id, "uid": target_user_id},
@@ -1322,23 +1307,6 @@ def remove_library_member(
         # Idempotent: absent target is no-op
         if target is None:
             return
-
-        target_role = target[0]
-
-        # Last-admin check
-        if target_role == "admin":
-            admin_count = db.execute(
-                text("""
-                    SELECT COUNT(*) FROM memberships
-                    WHERE library_id = :lid AND role = 'admin'
-                """),
-                {"lid": library_id},
-            ).scalar()
-            if admin_count <= 1:
-                raise ForbiddenError(
-                    ApiErrorCode.E_LAST_ADMIN_FORBIDDEN,
-                    "Cannot remove last admin",
-                )
 
         db.execute(
             text("""

@@ -2291,13 +2291,12 @@ class TestUpdateMemberRole:
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "E_OWNER_EXIT_FORBIDDEN"
 
-    def test_patch_member_role_last_admin_forbidden(
+    def test_patch_member_role_demotes_non_owner_admin(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Cannot demote last admin (non-owner) when owner is the only other admin."""
+        """Owner can demote a non-owner admin because the owner remains admin."""
         owner_id = create_test_user_id()
         admin_id = create_test_user_id()
-        member_id = create_test_user_id()
 
         create_resp = auth_client.post(
             "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
@@ -2305,79 +2304,26 @@ class TestUpdateMemberRole:
         library_id = create_resp.json()["data"]["id"]
 
         auth_client.get("/me", headers=auth_headers(admin_id))
-        auth_client.get("/me", headers=auth_headers(member_id))
         with direct_db.session() as session:
             session.execute(
                 text("""
                     INSERT INTO memberships (library_id, user_id, role)
-                    VALUES (:lid, :aid, 'admin'), (:lid, :mid, 'member')
+                    VALUES (:lid, :aid, 'admin')
                     ON CONFLICT DO NOTHING
                 """),
-                {"lid": library_id, "aid": admin_id, "mid": member_id},
+                {"lid": library_id, "aid": admin_id},
             )
             session.commit()
 
-        # Demote admin_id — owner + admin_id are both admins, so this should succeed
         response = auth_client.patch(
             f"/libraries/{library_id}/members/{admin_id}",
             json={"role": "member"},
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 200
-
-        # Now try to demote yourself? Can't — owner exit forbidden
-        # But we can test another scenario: only owner is admin now
-        # Add a third admin, then try to be the last admin demoted
-        # Actually the simpler test: library with exactly 1 admin (the owner) + 1 member
-        # Demoting the owner is E_OWNER_EXIT_FORBIDDEN, not E_LAST_ADMIN_FORBIDDEN
-        # So we need: 2 non-owner admins, remove one, then try to remove the other
-        # Let's rebuild for clarity
-        owner_id2 = create_test_user_id()
-        admin_a = create_test_user_id()
-
-        create_resp2 = auth_client.post(
-            "/libraries", json={"name": "Team2"}, headers=auth_headers(owner_id2)
-        )
-        lib2 = create_resp2.json()["data"]["id"]
-
-        auth_client.get("/me", headers=auth_headers(admin_a))
-        with direct_db.session() as session:
-            session.execute(
-                text("""
-                    INSERT INTO memberships (library_id, user_id, role)
-                    VALUES (:lid, :uid, 'admin') ON CONFLICT DO NOTHING
-                """),
-                {"lid": lib2, "uid": admin_a},
-            )
-            session.commit()
-
-        # Demote admin_a so only owner_id2 is admin
-        auth_client.patch(
-            f"/libraries/{lib2}/members/{admin_a}",
-            json={"role": "member"},
-            headers=auth_headers(owner_id2),
-        )
-
-        # Now owner is the only admin. Owner can't self-demote (owner exit).
-        # That's not last-admin-forbidden, it's owner-exit-forbidden.
-        # The last-admin check is actually for: removing/demoting the LAST admin
-        # when the last admin is NOT the owner. But if the owner is always admin,
-        # removing the last non-owner admin is fine as long as the owner stays admin.
-        # So the true test: owner + 1 admin. Remove the admin. Now only owner admin.
-        # That should succeed because owner is still admin.
-        # The last-admin-forbidden triggers when you try to remove the ONLY admin including owner.
-        # Since owner can't be removed (owner_exit), the scenario is: owner membership is dirty
-        # Actually let's test: remove the last non-owner admin when no other admins exist except
-        # that one (and the owner). That should succeed.
-        # The real scenario for E_LAST_ADMIN_FORBIDDEN: owner + admin_a both admin. Transfer
-        # ownership to admin_a. Now admin_a is owner. Now try to remove owner_id2 (who is still
-        # admin). That should succeed because admin_a (new owner) is still admin.
-        # Actually the simplest scenario: library with only 1 member (the owner).
-        # Demoting the owner -> E_OWNER_EXIT_FORBIDDEN (not last_admin).
-        # The last-admin-forbidden fires when: library has admins and you try to remove/demote
-        # the LAST one. Since owner is always admin and can't be touched via this endpoint,
-        # this can only fire if somehow a non-owner is the only admin (which shouldn't happen
-        # if invariants hold). But the test still matters for race safety.
+        data = response.json()["data"]
+        assert data["role"] == "member"
+        assert data["user_id"] == str(admin_id)
 
     def test_patch_member_role_default_library_forbidden(self, auth_client):
         """Cannot change roles in default library."""
@@ -2547,23 +2493,44 @@ class TestRemoveMember:
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "E_OWNER_EXIT_FORBIDDEN"
 
-    def test_delete_member_last_admin_forbidden(self, auth_client, direct_db: DirectSessionManager):
-        """Cannot remove last non-owner admin if they're the only admin besides owner.
+    def test_delete_member_removes_non_owner_admin(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Owner can remove a non-owner admin because the owner remains admin."""
+        owner_id = create_test_user_id()
+        admin_id = create_test_user_id()
 
-        Note: Because owner is always admin and protected by E_OWNER_EXIT_FORBIDDEN,
-        the E_LAST_ADMIN_FORBIDDEN fires in edge cases where owner membership is
-        somehow the target. Since owner removal is blocked by E_OWNER_EXIT_FORBIDDEN first,
-        we test the admin count check by having exactly owner + one admin, and the admin tries
-        to demote themselves (which is not through this path). Instead we test the scenario
-        where a direct DB corruption means only one admin membership and we try to remove it.
-        """
-        # This is covered by owner-exit: owner can't remove themselves.
-        # The last_admin check protects against the case where somehow the admin being
-        # removed is the last one. In practice with invariants, owner is always admin,
-        # so the only admin we could try to remove via this endpoint is a non-owner admin
-        # when there are still other admins (the owner). So the last-admin check fires
-        # only if the owner's admin status is somehow missing (invariant repair handles this).
-        pass
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        auth_client.get("/me", headers=auth_headers(admin_id))
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:lid, :uid, 'admin') ON CONFLICT DO NOTHING
+                """),
+                {"lid": library_id, "uid": admin_id},
+            )
+            session.commit()
+
+        response = auth_client.delete(
+            f"/libraries/{library_id}/members/{admin_id}",
+            headers=auth_headers(owner_id),
+        )
+        assert response.status_code == 204
+
+        with direct_db.session() as session:
+            result = session.execute(
+                text("""
+                    SELECT 1 FROM memberships
+                    WHERE library_id = :lid AND user_id = :uid
+                """),
+                {"lid": library_id, "uid": admin_id},
+            )
+            assert result.fetchone() is None
 
     def test_delete_member_default_library_forbidden(self, auth_client):
         """Cannot remove members from default library."""

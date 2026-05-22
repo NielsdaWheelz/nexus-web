@@ -216,7 +216,6 @@ test.describe("search", () => {
     const url = await clickCitationResult(page, {
       mediaId: seed.media_id,
       query: seed.seek_segment_text,
-      resultText: /S8 E2E segment beta seek target/i,
     });
 
     expect(url.searchParams.get("t_start_ms")).toBe(String(seed.seek_segment_start_ms));

@@ -525,7 +525,7 @@ class TestReaderState:
                         "position": 1,
                     },
                     "text": {"quote": "q", "quote_prefix": None, "quote_suffix": None},
-                    "legacy_field": "legacy",
+                    "unexpected_field": "unexpected",
                 },
                 "unknown fields are rejected",
             ),

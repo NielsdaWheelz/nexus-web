@@ -1,14 +1,14 @@
-"""Pure deterministic PDF quote-match helper (S6 plain_text_match_version=1).
+"""Pure deterministic PDF quote-match helper.
 
-Shared by pr-04 write paths and pr-05 quote/enrichment paths.
+Shared by PDF highlight write paths and quote/enrichment paths.
 No DB I/O, logging, or route/service error mapping.
 
-Algorithm (s6_spec Section 2.4):
+Algorithm:
 1. empty exact -> empty_exact
 2. literal codepoint substring match against page-local span
 3. exactly one match -> unique with offsets
 4. multiple matches -> ambiguous, null offsets
-5. zero matches -> no_match (with optional global fallback when page span unavailable)
+5. zero page-local matches -> no_match unless no page span is available
 """
 
 from dataclasses import dataclass
@@ -143,7 +143,7 @@ def compute_match(
                 suffix="",
             )
     else:
-        # Page span unavailable: global fallback per S6 rules
+        # No page-local boundary is available, so search the full normalized text.
         matches = _find_all_occurrences(plain_text, exact)
 
         if len(matches) == 1:

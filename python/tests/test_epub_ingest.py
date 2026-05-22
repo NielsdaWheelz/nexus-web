@@ -1,4 +1,4 @@
-"""Integration tests for EPUB extraction artifacts (S5 PR-02).
+"""Integration tests for EPUB extraction artifacts.
 
 All fixtures are built in-memory (no external network/process dependencies).
 Covers both EPUB2 NCX and EPUB3 nav TOC variants.

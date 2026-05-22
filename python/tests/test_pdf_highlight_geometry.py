@@ -1,4 +1,4 @@
-"""Pure unit tests for S6 PDF geometry canonicalization/fingerprinting/sort-key derivation."""
+"""Pure unit tests for PDF geometry canonicalization, fingerprints, and sort keys."""
 
 from decimal import Decimal
 from uuid import uuid4
@@ -21,7 +21,7 @@ def _quad(x1, y1, x2, y2, x3, y3, x4, y4):
 
 
 class TestCanonicalizeGeometry:
-    """test_pr04_geometry_v1_normalizes_quantizes_and_fingerprints_equivalent_inputs_deterministically"""
+    """Geometry canonicalization fingerprints equivalent inputs deterministically."""
 
     def test_equivalent_inputs_produce_same_fingerprint(self):
         q1 = [_quad(10.0001, 20.0001, 30.0001, 20.0001, 30.0001, 32.0001, 10.0001, 32.0001)]
@@ -35,7 +35,7 @@ class TestCanonicalizeGeometry:
         assert r1.quads == r2.quads
 
     def test_different_quad_order_same_fingerprint(self):
-        """test_pr04_geometry_v1_is_order_invariant_for_equivalent_quad_inputs"""
+        """Equivalent quad inputs are order-invariant."""
         q_top = _quad(10, 10, 30, 10, 30, 20, 10, 20)
         q_bot = _quad(10, 50, 30, 50, 30, 60, 10, 60)
 
@@ -63,7 +63,7 @@ class TestCanonicalizeGeometry:
         assert cq.y1 == Decimal("20.000")
 
     def test_material_geometry_change_produces_different_fingerprint(self):
-        """test_pr04_geometry_v1_fingerprint_changes_for_material_geometry_changes"""
+        """Material geometry changes produce different fingerprints."""
         q1 = [_quad(10, 20, 30, 20, 30, 40, 10, 40)]
         q2 = [_quad(10, 20, 50, 20, 50, 40, 10, 40)]
 
@@ -74,7 +74,7 @@ class TestCanonicalizeGeometry:
 
 
 class TestDeterministicSortKeys:
-    """test_pr04_geometry_v1_derives_deterministic_sort_keys"""
+    """Canonical geometry derives deterministic sort keys."""
 
     def test_sort_keys_from_first_canonical_quad(self):
         q_top = _quad(10, 10, 30, 10, 30, 20, 10, 20)
@@ -97,7 +97,7 @@ class TestDeterministicSortKeys:
 
 
 class TestDegeneracyRejection:
-    """test_pr04_geometry_v1_rejects_degenerate_quads"""
+    """Geometry validation rejects degenerate quads."""
 
     def test_zero_width(self):
         with pytest.raises(GeometryValidationError, match="zero or negative area"):
@@ -125,7 +125,7 @@ class TestDegeneracyRejection:
 
 
 class TestFingerprintStability:
-    """test_pr04_geometry_v1_fingerprint_uses_stable_sha256_hex_over_canonical_identity_bytes"""
+    """Geometry fingerprints are stable SHA-256 hex values."""
 
     def test_fingerprint_is_64_char_hex(self):
         r = canonicalize_geometry(1, [_quad(10, 20, 30, 20, 30, 40, 10, 40)])
@@ -140,7 +140,7 @@ class TestFingerprintStability:
 
 
 class TestDuplicateLockKey:
-    """test_pr04_pdf_duplicate_advisory_lock_key_derivation_is_stable_and_namespaced"""
+    """Duplicate advisory lock key derivation is stable and namespaced."""
 
     def test_deterministic(self):
         uid, mid = uuid4(), uuid4()

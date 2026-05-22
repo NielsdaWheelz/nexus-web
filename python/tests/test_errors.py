@@ -88,7 +88,6 @@ class TestErrorCodeToStatus:
             (ApiErrorCode.E_FORBIDDEN, 403),
             (ApiErrorCode.E_INTERNAL_ONLY, 403),
             (ApiErrorCode.E_DEFAULT_LIBRARY_FORBIDDEN, 403),
-            (ApiErrorCode.E_LAST_ADMIN_FORBIDDEN, 403),
             (ApiErrorCode.E_NOT_FOUND, 404),
             (ApiErrorCode.E_LIBRARY_NOT_FOUND, 404),
             (ApiErrorCode.E_MEDIA_NOT_FOUND, 404),

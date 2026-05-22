@@ -75,13 +75,13 @@ YOUTUBE_PLAYBACK_ONLY_WATCH_URL = (
 YOUTUBE_EMBED_URL = f"https://www.youtube.com/embed/{YOUTUBE_VIDEO_ID}"
 YOUTUBE_TRANSCRIPT_SEGMENTS = [
     {
-        "canonical_text": "S8 E2E segment alpha intro line.",
+        "canonical_text": "E2E YouTube transcript segment alpha intro line.",
         "speaker_label": "Host",
         "t_start_ms": 4_000,
         "t_end_ms": 8_000,
     },
     {
-        "canonical_text": "S8 E2E segment beta seek target.",
+        "canonical_text": "E2E YouTube transcript segment beta seek target.",
         "speaker_label": "Guest",
         "t_start_ms": 12_000,
         "t_end_ms": 17_000,

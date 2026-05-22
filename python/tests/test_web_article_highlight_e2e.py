@@ -1,7 +1,7 @@
-"""End-to-end integration tests for Slice 2 (Web Articles + Highlights).
+"""Integration tests for web article ingestion and highlight behavior.
 
-PR-11 spec: Prove the full read → highlight → linked-note → reload loop works
-end-to-end and lock regressions with stable integration tests.
+Tests cover the full read → highlight → linked-note → reload loop, shared
+visibility, sanitization, canonical text stability, and processing regressions.
 
 Tests cover:
 1. Backend E2E ingestion + highlight flow
@@ -11,8 +11,6 @@ Tests cover:
 5. Ownership isolation (different user cannot see highlights)
 6. canonical_text immutability
 7. processing_attempts behavior
-
-@see docs/v1/s2/s2_prs/s2_pr11.md
 """
 
 from uuid import UUID, uuid4
@@ -84,7 +82,7 @@ def httpserver_listen_address():
 class TestWebArticleHighlightE2E:
     """End-to-end test for the full read → highlight → linked-note → reload loop.
 
-    Per PR-11 spec section 3.
+    Covers web article ingestion, highlight, linked-note, and reload behavior.
     """
 
     def test_full_ingest_highlight_note_reload_loop(
@@ -93,7 +91,7 @@ class TestWebArticleHighlightE2E:
         direct_db: DirectSessionManager,
         httpserver,
     ):
-        """Test the complete S2 flow from URL ingestion to highlight reload.
+        """Test the complete web article ingestion/highlight flow.
 
         Flow:
         1. Create media via POST /media/from_url
@@ -171,13 +169,11 @@ class TestWebArticleHighlightE2E:
         assert media_response.status_code == 200
         media_data = media_response.json()["data"]
 
-        # Verify capabilities per PR-11 spec
+        # Verify read/highlight/quote capabilities.
         caps = media_data["capabilities"]
         assert caps["can_read"] is True
         assert caps["can_highlight"] is True
         assert caps["can_quote"] is True
-        # TODO(S6): Enable when search capability is properly gated per PR-11 spec
-        # assert caps["can_search"] is False  # Search UI not shipped in S2
 
         # Verify processing status
         assert media_data["processing_status"] == "ready_for_reading"
@@ -309,9 +305,9 @@ class TestWebArticleHighlightE2E:
 
 
 class TestSharedHighlightVisibility:
-    """S4 PR-07: Test shared highlight read visibility and author-only mutation.
+    """Shared highlight read visibility and author-only mutation.
 
-    Replaces original PR-11 ownership isolation tests with s4-compatible contract:
+    Covers the shared-library highlight visibility contract:
     - Shared reader CAN list/get highlights from shared library members.
     - Shared reader CANNOT patch/delete another user's highlights.
     - Shared reader CAN attach their own note to a readable highlight.
@@ -545,7 +541,7 @@ class TestSharedHighlightVisibility:
 class TestUnicodeEmojiStability:
     """Tests for Unicode codepoint handling to prevent UTF-16 vs codepoint regressions.
 
-    Per PR-11 spec section 4.
+    Highlight offsets are Python codepoint indices.
     """
 
     def test_emoji_highlight_offsets_are_codepoint_indices(
@@ -715,12 +711,11 @@ class TestUnicodeEmojiStability:
 class TestSanitizationSecurityRegression:
     """Property-based security assertions for HTML sanitization.
 
-    Per PR-11 spec section 5.
+    Sanitized fragments reject script execution and unsafe URL surfaces.
     """
 
     def test_no_script_tags_in_sanitized_html(
         self,
-        e2e_client: TestClient,
         db_session: Session,
         bootstrapped_user: UUID,
         httpserver,
@@ -763,7 +758,6 @@ class TestSanitizationSecurityRegression:
 
     def test_no_event_handlers_in_sanitized_html(
         self,
-        e2e_client: TestClient,
         db_session: Session,
         bootstrapped_user: UUID,
         httpserver,
@@ -806,7 +800,6 @@ class TestSanitizationSecurityRegression:
 
     def test_no_style_class_id_attributes(
         self,
-        e2e_client: TestClient,
         db_session: Session,
         bootstrapped_user: UUID,
         httpserver,
@@ -847,7 +840,6 @@ class TestSanitizationSecurityRegression:
 
     def test_no_javascript_or_data_urls(
         self,
-        e2e_client: TestClient,
         db_session: Session,
         bootstrapped_user: UUID,
         httpserver,
@@ -888,7 +880,6 @@ class TestSanitizationSecurityRegression:
 
     def test_svg_images_rejected(
         self,
-        e2e_client: TestClient,
         db_session: Session,
         bootstrapped_user: UUID,
         httpserver,
@@ -929,7 +920,6 @@ class TestSanitizationSecurityRegression:
 
     def test_img_src_rewritten_to_proxy(
         self,
-        e2e_client: TestClient,
         db_session: Session,
         bootstrapped_user: UUID,
         httpserver,
@@ -969,7 +959,6 @@ class TestSanitizationSecurityRegression:
 
     def test_external_links_have_security_attrs(
         self,
-        e2e_client: TestClient,
         db_session: Session,
         bootstrapped_user: UUID,
         httpserver,
@@ -1018,7 +1007,7 @@ class TestSanitizationSecurityRegression:
 class TestProcessingStateRegression:
     """Tests for processing state machine and processing_attempts behavior.
 
-    Per PR-11 spec sections 9 and 12.
+    Processing attempts and unreadable media responses stay stable.
     """
 
     def test_processing_attempts_incremented_on_run(
@@ -1201,7 +1190,7 @@ class TestProcessingStateRegression:
 class TestRedirectDedup:
     """Tests for redirect resolution and deduplication.
 
-    Per PR-11 spec section 6.
+    URL ingestion stores the final canonical URL after redirects.
     """
 
     def test_redirect_sets_canonical_url_to_final(

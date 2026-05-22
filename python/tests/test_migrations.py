@@ -4953,12 +4953,12 @@ class TestS3SchemaConstraints:
 
 
 # =============================================================================
-# Slice 6 PR-01: Typed-Highlight Data Foundation (migration 0009)
+# Typed-Highlight Data Foundation (migration 0009)
 # =============================================================================
 
 
 class TestS6PR01Migration0009:
-    """Tests for S6 PR-01 migration 0009 — typed-highlight data foundation.
+    """Tests for migration 0009 typed-highlight data foundation.
 
     Each test self-manages migration state (reset schema -> upgrade target).
     """
@@ -4973,7 +4973,7 @@ class TestS6PR01Migration0009:
 
     @pytest.fixture
     def s6_engine(self):
-        """Provide a dedicated engine for S6 tests."""
+        """Provide a dedicated engine for migration 0009 tests."""
         database_url = get_test_database_url()
         engine = create_engine(database_url)
         yield engine
@@ -5008,9 +5008,6 @@ class TestS6PR01Migration0009:
         session.commit()
         return user_id, media_id, fragment_id
 
-    # ------------------------------------------------------------------
-    # test_pr01_adds_s6_typed_highlight_foundation_tables_and_columns
-    # ------------------------------------------------------------------
     def test_pr01_adds_s6_typed_highlight_foundation_tables_and_columns(self, s6_engine):
         self._upgrade_to_0009()
         with Session(s6_engine) as session:
@@ -5085,9 +5082,6 @@ class TestS6PR01Migration0009:
             assert "ix_hpa_media_page_sort" in inames
             assert "ix_hpa_geometry_lookup" in inames
 
-    # ------------------------------------------------------------------
-    # test_pr01_media_page_count_domain_check
-    # ------------------------------------------------------------------
     def test_pr01_media_page_count_domain_check(self, s6_engine):
         self._upgrade_to_0009()
         with Session(s6_engine) as session:
@@ -5147,9 +5141,6 @@ class TestS6PR01Migration0009:
             session.rollback()
             assert "ck_media_page_count_positive" in str(exc.value)
 
-    # ------------------------------------------------------------------
-    # test_pr01_preserves_legacy_fragment_highlight_constraints_after_migration
-    # ------------------------------------------------------------------
     def test_pr01_preserves_legacy_fragment_highlight_constraints_after_migration(self, s6_engine):
         self._upgrade_to_0009()
         with Session(s6_engine) as session:
@@ -5209,9 +5200,6 @@ class TestS6PR01Migration0009:
             session.rollback()
             assert "uix_highlights_user_fragment_offsets" in str(exc.value)
 
-    # ------------------------------------------------------------------
-    # test_pr01_new_anchor_subtype_cascade_and_uniqueness_constraints
-    # ------------------------------------------------------------------
     def test_pr01_new_anchor_subtype_cascade_and_uniqueness_constraints(self, s6_engine):
         self._upgrade_to_0009()
         with Session(s6_engine) as session:
@@ -5274,9 +5262,6 @@ class TestS6PR01Migration0009:
             ).fetchone()
             assert row is None, "cascade must delete subtype row"
 
-    # ------------------------------------------------------------------
-    # test_pr01_greenfield_defaults_allow_dormant_schema_without_backfill
-    # ------------------------------------------------------------------
     def test_pr01_greenfield_defaults_allow_dormant_schema_without_backfill(self, s6_engine):
         self._upgrade_to_0009()
         with Session(s6_engine) as session:
@@ -5309,9 +5294,6 @@ class TestS6PR01Migration0009:
             ).fetchone()
             assert sub is None
 
-    # ------------------------------------------------------------------
-    # test_pr01_rejects_partial_dormant_logical_anchor_fields_on_highlights
-    # ------------------------------------------------------------------
     def test_pr01_rejects_partial_dormant_logical_anchor_fields_on_highlights(self, s6_engine):
         self._upgrade_to_0009()
         with Session(s6_engine) as session:
@@ -5364,9 +5346,6 @@ class TestS6PR01Migration0009:
             session.rollback()
             assert "ck_highlights_anchor_kind_valid" in str(exc.value)
 
-    # ------------------------------------------------------------------
-    # test_pr01_does_not_require_fragment_subtype_dual_write_during_dormant_window
-    # ------------------------------------------------------------------
     def test_pr01_does_not_require_fragment_subtype_dual_write_during_dormant_window(
         self, s6_engine
     ):
@@ -5391,9 +5370,6 @@ class TestS6PR01Migration0009:
             ).fetchone()
             assert row is None, "Legacy insert must succeed without fragment subtype row"
 
-    # ------------------------------------------------------------------
-    # test_pr01_allows_future_non_fragment_logical_rows_to_leave_legacy_fragment_columns_null
-    # ------------------------------------------------------------------
     def test_pr01_allows_future_non_fragment_logical_rows_to_leave_legacy_fragment_columns_null(
         self, s6_engine
     ):
@@ -5424,9 +5400,6 @@ class TestS6PR01Migration0009:
             assert row[1] is None
             assert row[2] is None
 
-    # ------------------------------------------------------------------
-    # test_pr01_retained_fragment_unique_index_preserves_duplicate_semantics_under_nullable_bridge
-    # ------------------------------------------------------------------
     def test_pr01_retained_fragment_unique_index_preserves_duplicate_semantics_under_nullable_bridge(
         self, s6_engine
     ):
@@ -5475,9 +5448,6 @@ class TestS6PR01Migration0009:
                 )
             session.commit()
 
-    # ------------------------------------------------------------------
-    # test_pr01_pdf_anchor_supporting_indexes_exist_without_exact_duplicate_uniqueness
-    # ------------------------------------------------------------------
     def test_pr01_pdf_anchor_supporting_indexes_exist_without_exact_duplicate_uniqueness(
         self, s6_engine
     ):
@@ -5496,9 +5466,6 @@ class TestS6PR01Migration0009:
             for name in ("ix_hpa_media_page_sort", "ix_hpa_geometry_lookup"):
                 assert "UNIQUE" not in idx_map[name].upper(), f"{name} must not be unique in pr-01"
 
-    # ------------------------------------------------------------------
-    # test_pr01_pdf_page_text_spans_enforces_row_local_validity_but_not_contiguity_lifecycle_rules
-    # ------------------------------------------------------------------
     def test_pr01_pdf_page_text_spans_enforces_row_local_validity_but_not_contiguity_lifecycle_rules(
         self, s6_engine
     ):
@@ -5594,9 +5561,6 @@ class TestS6PR01Migration0009:
             )
             session.commit()
 
-    # ------------------------------------------------------------------
-    # test_pr01_highlight_pdf_quads_enforces_row_shape_without_canonicalization_semantics
-    # ------------------------------------------------------------------
     def test_pr01_highlight_pdf_quads_enforces_row_shape_without_canonicalization_semantics(
         self, s6_engine
     ):
@@ -5672,9 +5636,6 @@ class TestS6PR01Migration0009:
             )
             session.commit()
 
-    # ------------------------------------------------------------------
-    # test_pr01_highlight_pdf_anchors_enforces_row_local_shape_domains_without_semantic_coherence_rules
-    # ------------------------------------------------------------------
     def test_pr01_highlight_pdf_anchors_enforces_row_local_shape_domains_without_semantic_coherence_rules(
         self, s6_engine
     ):

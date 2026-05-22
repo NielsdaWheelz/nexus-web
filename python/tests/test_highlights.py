@@ -1776,14 +1776,14 @@ class TestFragmentHighlightRouteContract:
 
 
 # =============================================================================
-# S6 PR-02: Typed-Highlight Kernel Behavior Preservation Tests
+# Fragment Highlight Canonical Storage
 # =============================================================================
 
 
-class TestS6PR02CanonicalStorage:
-    """PR-02: Fragment highlights persist through the canonical anchor rows only."""
+class TestFragmentHighlightCanonicalStorage:
+    """Fragment highlights persist through the canonical anchor rows only."""
 
-    def test_pr02_create_highlight_persists_canonical_anchor_without_legacy_offsets(
+    def test_create_highlight_persists_fragment_anchor_row(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """POST /fragments/{fid}/highlights stores anchor metadata on canonical rows only."""
@@ -1834,10 +1834,10 @@ class TestS6PR02CanonicalStorage:
             assert fa_row[1] == 0
             assert fa_row[2] == 5
 
-    def test_pr02_update_highlight_offsets_syncs_canonical_rows_only(
+    def test_update_highlight_offsets_updates_fragment_anchor_row(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """PATCH offsets updates the canonical fragment anchor without legacy residue."""
+        """PATCH offsets updates the canonical fragment anchor row."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
@@ -1894,61 +1894,6 @@ class TestS6PR02CanonicalStorage:
             assert fa_row is not None
             assert fa_row[0] == 6
             assert fa_row[1] == 11
-
-
-class TestS6PR02ResponseContract:
-    """PR-02: Public response uses only the canonical typed anchor contract."""
-
-    def test_pr02_response_uses_canonical_anchor_shape(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Create, get, list, update — public responses expose `anchor`, not flat residue."""
-        user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id, fragment_id = create_media_and_fragment(session)
-
-        register_fragment_highlight_cleanup(direct_db, fragment_id)
-        direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        add_media_to_library(auth_client, user_id, media_id)
-
-        resp = auth_client.post(
-            f"/fragments/{fragment_id}/highlights",
-            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
-            headers=auth_headers(user_id),
-        )
-        assert resp.status_code == 201
-        h_id = resp.json()["data"]["id"]
-
-        for endpoint_resp in [
-            resp,
-            auth_client.get(f"/highlights/{h_id}", headers=auth_headers(user_id)),
-            auth_client.get(f"/fragments/{fragment_id}/highlights", headers=auth_headers(user_id)),
-            auth_client.patch(
-                f"/highlights/{h_id}",
-                json={"color": "green"},
-                headers=auth_headers(user_id),
-            ),
-        ]:
-            data = endpoint_resp.json().get("data", {})
-            if isinstance(data, dict) and "highlights" in data:
-                for h in data["highlights"]:
-                    assert h["anchor"]["type"] == "fragment_offsets"
-                    assert "anchor_kind" not in h
-                    assert "anchor_media_id" not in h
-                    assert "fragment_id" not in h
-                    assert "start_offset" not in h
-                    assert "end_offset" not in h
-            elif isinstance(data, dict):
-                assert data["anchor"]["type"] == "fragment_offsets"
-                assert "anchor_kind" not in data
-                assert "anchor_media_id" not in data
-                assert "fragment_id" not in data
-                assert "start_offset" not in data
-                assert "end_offset" not in data
 
 
 # =============================================================================

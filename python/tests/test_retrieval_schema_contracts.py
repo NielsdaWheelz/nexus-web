@@ -86,7 +86,7 @@ def test_media_evidence_response_rejects_extra_response_keys():
                     "citation_label": "Source",
                     "span_text": "Exact evidence",
                     "source_version": "test-source:v1",
-                    "legacy_resolver": {},
+                    "unexpected_response_key": {},
                     "resolver": {
                         "kind": "web",
                         "route": f"/media/{media_id}",
@@ -557,7 +557,7 @@ def test_retrieval_ref_json_requires_media_context_for_episode_and_video_results
         )
 
 
-def test_retrieval_ref_json_rejects_legacy_resolver_payloads():
+def test_retrieval_ref_json_rejects_resolver_payload_field():
     media_id = str(uuid4())
     chunk_id = str(uuid4())
 
@@ -620,7 +620,7 @@ def test_message_retrieval_out_rejects_extra_keys_and_ref_drift():
 
     assert MessageRetrievalOut.model_validate(payload).source_version == "message:v1"
     with pytest.raises(ValidationError):
-        MessageRetrievalOut.model_validate({**payload, "legacy_resolver": {}})
+        MessageRetrievalOut.model_validate({**payload, "unexpected_field": {}})
     with pytest.raises(ValidationError):
         MessageRetrievalOut.model_validate({**payload, "source_version": "other:v1"})
     with pytest.raises(ValidationError):
@@ -645,7 +645,7 @@ def test_message_output_schemas_reject_extra_keys():
                 "source_version": "artifact_part:v1",
                 "locator": _artifact_part_locator(str(uuid4()), str(uuid4())),
                 "created_at": "2026-01-01T00:00:00Z",
-                "legacy": True,
+                "unexpected_field": True,
             }
         )
 

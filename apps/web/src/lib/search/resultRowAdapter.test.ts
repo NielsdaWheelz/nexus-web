@@ -45,7 +45,7 @@ describe("fetchSearchResultPage", () => {
     expect(url.searchParams.has("semantic")).toBe(false);
   });
 
-  it("serializes all content evidence types without legacy semantic flags", async () => {
+  it("serializes all search types without overriding backend semantic defaults", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(
@@ -138,11 +138,11 @@ describe("fetchSearchResultPage", () => {
           },
           {
             type: "fragment",
-            id: "legacy-frag",
+            id: "invalid-frag",
             score: 0.5,
-            snippet: "legacy row",
+            snippet: "invalid row",
             idx: 3,
-            media_id: "media-legacy",
+            media_id: "media-invalid",
           },
         ],
         page: { next_cursor: "cursor-next" },
