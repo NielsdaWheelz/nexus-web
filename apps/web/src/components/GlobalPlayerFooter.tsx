@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { formatClock } from "@/lib/formatClock";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   PLAYER_SKIP_BACK_SECONDS,
@@ -28,22 +29,6 @@ const VOLUME_BOOST_OPTIONS: Array<{ value: AudioEffectsVolumeBoost; label: strin
   { value: "medium", label: "Medium (+6dB)" },
   { value: "high", label: "High (+9dB)" },
 ];
-
-function formatClock(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) {
-    return "00:00";
-  }
-  const rounded = Math.floor(seconds);
-  const hours = Math.floor(rounded / 3600);
-  const minutes = Math.floor((rounded % 3600) / 60);
-  const remaining = rounded % 60;
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, "0")}:${remaining
-      .toString()
-      .padStart(2, "0")}`;
-  }
-  return `${minutes.toString().padStart(2, "0")}:${remaining.toString().padStart(2, "0")}`;
-}
 
 function EffectsPanel({
   audioEffects,
