@@ -546,8 +546,7 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
         # javascript: protocol stripped from href
         assert "javascript:" not in html.lower()
 
-    def test_epub_asset_storage_paths_use_test_prefix(self, db_session: Session, monkeypatch):
-        monkeypatch.setenv("STORAGE_TEST_PREFIX", "test_runs/epub-assets")
+    def test_epub_asset_storage_paths_are_canonical(self, db_session: Session):
         storage = FakeStorageClient()
         img_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
         epub = _make_epub(
@@ -569,10 +568,10 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
         result = run_epub_ingest_sync(db_session, mid, storage)
         db_session.flush()
 
-        prefixed_path = build_epub_asset_storage_path(mid, "OEBPS/images/fig1.png")
+        asset_path = build_epub_asset_storage_path(mid, "OEBPS/images/fig1.png")
         assert isinstance(result, EpubExtractionResult)
-        assert storage.get_object(prefixed_path) == img_bytes
-        assert storage.get_object(f"media/{mid}/assets/OEBPS/images/fig1.png") is None
+        assert asset_path == f"media/{mid}/assets/OEBPS/images/fig1.png"
+        assert storage.get_object(asset_path) == img_bytes
         stored_path = db_session.execute(
             text(
                 """
@@ -584,7 +583,7 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
             ),
             {"media_id": mid},
         ).scalar_one()
-        assert stored_path == prefixed_path
+        assert stored_path == asset_path
 
     def test_unsupported_manifest_resources_are_not_stored(self, db_session: Session):
         storage = FakeStorageClient()

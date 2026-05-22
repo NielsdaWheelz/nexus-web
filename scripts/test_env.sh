@@ -234,10 +234,3 @@ test_env_export_supabase_env() {
     export SUPABASE_ISSUER="${SUPABASE_URL}/auth/v1"
     export SUPABASE_AUDIENCES="${SUPABASE_AUDIENCES:-authenticated}"
 }
-
-test_env_export_storage_prefix() {
-    if [ -z "${STORAGE_TEST_PREFIX:-}" ]; then
-        STORAGE_TEST_PREFIX="test_runs/${TEST_RUN_ID:-$(date +%s)-$$}/"
-        export STORAGE_TEST_PREFIX
-    fi
-}

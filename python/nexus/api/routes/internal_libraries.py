@@ -15,10 +15,7 @@ from nexus.schemas.library import (
     DefaultLibraryBackfillJobOut,
     RequeueDefaultLibraryBackfillJobRequest,
 )
-from nexus.services.default_library_closure import (
-    enqueue_backfill_task,
-    requeue_backfill_job,
-)
+from nexus.services.default_library_closure import requeue_backfill_job
 
 router = APIRouter()
 
@@ -33,22 +30,11 @@ def requeue_backfill_job_endpoint(
     Internal-only: no public BFF proxy route.
     Auth: existing internal-header middleware policy.
     """
-    data = requeue_backfill_job(
+    result = requeue_backfill_job(
         db,
         body.default_library_id,
         body.source_library_id,
         body.user_id,
     )
-    db.commit()
-
-    # Attempt enqueue after commit
-    if not data.get("idempotent", False):
-        dispatched = enqueue_backfill_task(
-            body.default_library_id,
-            body.source_library_id,
-            body.user_id,
-        )
-        data["enqueue_dispatched"] = dispatched
-
-    out = DefaultLibraryBackfillJobOut(**data)
+    out = DefaultLibraryBackfillJobOut.model_validate(result)
     return success_response(out.model_dump(mode="json"))

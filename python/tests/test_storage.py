@@ -112,34 +112,13 @@ class TestPathBuilding:
         with pytest.raises(ValueError, match="not a file-backed media type"):
             get_file_extension("web_article")
 
-    def test_build_storage_path_production(self, monkeypatch):
-        monkeypatch.delenv("STORAGE_TEST_PREFIX", raising=False)
-
+    def test_build_storage_path(self):
         media_id = uuid4()
         path = build_storage_path(media_id, "pdf")
 
         assert path == f"media/{media_id}/original.pdf"
-        assert not path.startswith("test_runs/")
 
-    def test_build_storage_path_test_prefix(self, monkeypatch):
-        monkeypatch.setenv("STORAGE_TEST_PREFIX", "test_runs/test-run-123/")
-
-        media_id = uuid4()
-        path = build_storage_path(media_id, "epub")
-
-        assert path == f"test_runs/test-run-123/media/{media_id}/original.epub"
-
-    def test_build_storage_path_test_prefix_no_trailing_slash(self, monkeypatch):
-        monkeypatch.setenv("STORAGE_TEST_PREFIX", "test_runs/test-run-456")
-
-        media_id = uuid4()
-        path = build_storage_path(media_id, "pdf")
-
-        assert path == f"test_runs/test-run-456/media/{media_id}/original.pdf"
-
-    def test_build_upload_staging_storage_path(self, monkeypatch):
-        monkeypatch.delenv("STORAGE_TEST_PREFIX", raising=False)
-
+    def test_build_upload_staging_storage_path(self):
         media_id = uuid4()
 
         assert (
@@ -147,42 +126,12 @@ class TestPathBuilding:
             == f"uploads/media/{media_id}/original.pdf"
         )
 
-    @pytest.mark.parametrize(
-        "prefix",
-        [
-            "/test_runs/test-run",
-            "test_runs",
-            "test_runs/",
-            "other/test-run",
-            "test_runs/test-run/extra",
-            "test_runs/../test-run",
-            "test_runs/test run",
-        ],
-    )
-    def test_build_storage_path_rejects_invalid_test_prefix(self, monkeypatch, prefix: str):
-        monkeypatch.setenv("STORAGE_TEST_PREFIX", prefix)
-
-        with pytest.raises(ValueError, match="STORAGE_TEST_PREFIX"):
-            build_storage_path(uuid4(), "pdf")
-
-    def test_build_epub_asset_storage_path_production(self, monkeypatch):
-        monkeypatch.delenv("STORAGE_TEST_PREFIX", raising=False)
-
+    def test_build_epub_asset_storage_path(self):
         media_id = uuid4()
 
         assert (
             build_epub_asset_storage_path(media_id, "OEBPS/images/cover.png")
             == f"media/{media_id}/assets/OEBPS/images/cover.png"
-        )
-
-    def test_build_epub_asset_storage_path_test_prefix(self, monkeypatch):
-        monkeypatch.setenv("STORAGE_TEST_PREFIX", "test_runs/test-run-789")
-
-        media_id = uuid4()
-
-        assert (
-            build_epub_asset_storage_path(media_id, "OEBPS/images/cover.png")
-            == f"test_runs/test-run-789/media/{media_id}/assets/OEBPS/images/cover.png"
         )
 
     @pytest.mark.parametrize(

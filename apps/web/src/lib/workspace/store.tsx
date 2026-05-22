@@ -633,5 +633,3 @@ export function useWorkspaceStore(): WorkspaceStoreValue {
   }
   return value;
 }
-
-export { workspaceReducer };
