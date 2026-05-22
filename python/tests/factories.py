@@ -73,7 +73,7 @@ def create_test_model(session: Session) -> UUID:
 
 
 def seed_test_models(session: Session) -> None:
-    """Seed the hard-cutover test model catalog."""
+    """Seed the curated test model catalog."""
     catalog = [
         ("openai", "gpt-5.5", 400000),
         ("openai", "gpt-5.4-mini", 400000),

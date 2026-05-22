@@ -142,7 +142,7 @@ def validate_memory_candidate(
     source_required: bool,
     source_refs: Sequence[Mapping[str, object]],
 ) -> None:
-    """Validate a memory candidate before it can be persisted by the parent cutover."""
+    """Validate a memory candidate before the refresh workflow persists it."""
 
     if kind not in MEMORY_KINDS:
         raise MemoryValidationError("memory kind is invalid")

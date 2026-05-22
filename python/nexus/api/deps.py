@@ -14,7 +14,7 @@ __all__ = ["get_db", "get_llm_router", "get_session_factory"]
 def get_llm_router(request: Request) -> LLMRouter:
     """Get the shared LLM router from app state.
 
-    Per PR-04 spec Section 8:
+    App lifecycle contract:
     - LLMRouter is initialized at app startup with shared httpx.AsyncClient
     - Provides connection pooling and proper cleanup
 

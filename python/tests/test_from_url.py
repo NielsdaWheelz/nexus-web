@@ -325,7 +325,7 @@ class TestFromUrlSuccess:
             assert row[0] == "web_article"  # kind
             assert row[1] == url  # title (placeholder)
             assert row[2] == url  # requested_url (exact)
-            assert row[3] is None  # canonical_url (NULL until PR-04)
+            assert row[3] is None  # canonical_url (set after ingestion resolves redirects)
             assert row[4] == "https://example.com/article"  # canonical_source_url (normalized)
             assert row[5] == "pending"  # processing_status
             assert row[6] == user_id  # created_by_user_id
@@ -1800,12 +1800,12 @@ class TestFromUrlAuth:
 
 
 # =============================================================================
-# S4 PR-05: Provenance assertions
+# From-url provenance assertions
 # =============================================================================
 
 
 class TestFromUrlProvenance:
-    """Tests for S4 PR-05: intrinsic provenance on from_url creation."""
+    """Tests intrinsic provenance on from_url creation."""
 
     def test_from_url_creates_default_library_intrinsic_row(
         self, auth_client, direct_db: DirectSessionManager

@@ -1,8 +1,8 @@
-"""Prepared backend coverage for the library intelligence hard cutover.
+"""Integration coverage for the library intelligence read model.
 
-These tests are intentionally narrow and skip until the expected schema/routes
-exist. Once the cutover lands, they exercise the durable artifact contracts
-without requiring app-code edits from this test-only worker.
+These tests exercise the installed durable artifact schema, member-gated
+read endpoint, refresh idempotency, stale-artifact freshness reporting, and
+build publication contract.
 """
 
 from datetime import UTC, datetime
@@ -39,7 +39,9 @@ def _require_library_intelligence_schema(engine: Engine) -> None:
     tables = set(inspect(engine).get_table_names())
     missing = sorted(_INTELLIGENCE_TABLES - tables)
     if missing:
-        pytest.skip(f"library intelligence schema is not installed yet: missing {missing}")
+        pytest.fail(
+            f"test database is not migrated to the library-intelligence schema: missing {missing}"
+        )
 
 
 def _require_route(client, path: str, method: str) -> None:
@@ -49,7 +51,9 @@ def _require_route(client, path: str, method: str) -> None:
         for method_name in getattr(route, "methods", set())
     }
     if (path, method.upper()) not in routes:
-        pytest.skip(f"library intelligence route is not installed yet: {method.upper()} {path}")
+        pytest.fail(
+            f"FastAPI app is missing required library-intelligence route: {method.upper()} {path}"
+        )
 
 
 def _bootstrap_user(auth_client, user_id: UUID) -> UUID:

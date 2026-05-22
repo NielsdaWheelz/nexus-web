@@ -1,7 +1,7 @@
 """Tests for authorization predicates module.
 
 Tests cover:
-- can_read_media: s4 provenance semantics (non-default membership, intrinsic, closure edge)
+- can_read_media: provenance semantics (non-default membership, intrinsic, closure edge)
 - can_read_conversation: owner / public / library-shared visibility
 - can_read_highlight: media visibility + library intersection
 - is_library_member: role-based checks
@@ -147,12 +147,12 @@ def _get_default_library_id(db: Session, user_id) -> "UUID":
 
 
 # =============================================================================
-# can_read_media - S4 Provenance
+# can_read_media - Provenance
 # =============================================================================
 
 
 class TestCanReadMedia:
-    """Tests for can_read_media predicate with s4 provenance semantics."""
+    """Tests for can_read_media predicate with provenance semantics."""
 
     def test_can_read_media_true_for_member(self, db_session: Session):
         """Member can read media in a non-default library they belong to."""
@@ -209,7 +209,7 @@ class TestCanReadMedia:
     def test_can_read_media_false_for_default_library_entries_without_intrinsic_or_closure(
         self, db_session: Session
     ):
-        """Default library_entries row alone is NOT sufficient for s4 visibility."""
+        """Default library_entries row alone is NOT sufficient for visibility."""
         user_id = uuid4()
         default_lib = ensure_user_and_default_library(db_session, user_id)
         media_id = _create_media(db_session)
@@ -279,7 +279,9 @@ class TestCanReadMedia:
         # Immediately not readable
         assert can_read_media(db_session, user_id, media_id) is False
 
-    def test_can_read_media_false_for_tombstoned_media_across_s4_paths(self, db_session: Session):
+    def test_can_read_media_false_for_tombstoned_media_across_visibility_paths(
+        self, db_session: Session
+    ):
         user_id = uuid4()
         default_lib = ensure_user_and_default_library(db_session, user_id)
 
@@ -338,7 +340,7 @@ class TestIsLibraryMember:
 
 
 # =============================================================================
-# S6 PR-02: can_read_highlight — anchor-kind-aware visibility
+# can_read_highlight - anchor-kind-aware visibility
 # =============================================================================
 
 

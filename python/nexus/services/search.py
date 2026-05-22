@@ -3,8 +3,8 @@
 Implements keyword search across all user-visible content using PostgreSQL
 full-text search.
 
-Search enforces strict s4 visibility guarantees:
-- Media/content chunks: visible via s4 provenance (non-default membership, default
+Search enforces strict canonical visibility guarantees:
+- Media/content chunks: visible via canonical provenance (non-default membership, default
   intrinsic, or active closure edge with source membership)
 - Note blocks: visible if owned by the viewer
 - Messages: visible if conversation is visible (owner, public, or library-shared
@@ -3178,7 +3178,7 @@ def _search_messages(
 ) -> list[InternalSearchResult]:
     """Search message content with visibility filtering.
 
-    Message visibility follows conversation visibility (canonical s4 CTE).
+    Message visibility follows the canonical conversation visibility CTE.
     Pending messages are never searchable.
 
     Library scope includes only messages from conversations actively shared

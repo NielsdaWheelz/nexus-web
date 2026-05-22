@@ -1,4 +1,4 @@
-"""Integration tests for S7 PR-01 podcast backend foundation."""
+"""Integration tests for podcast backend behavior."""
 
 import os
 import threading
@@ -502,9 +502,9 @@ def _mock_podcast_index(
 
     # EXTERNAL SEAM EXCEPTION:
     # Podcast transcription is an external provider boundary. This default
-    # test seam mirrors legacy transcript_segments payload behavior so existing
-    # lifecycle tests can focus on ingest contracts, while allowing specific
-    # tests to override transcription outcomes explicitly.
+    # test seam maps episode transcript_segments fixtures into the provider
+    # transcription result so lifecycle tests can focus on ingest contracts,
+    # while allowing specific tests to override transcription outcomes explicitly.
     def fake_transcribe(audio_url: str) -> dict[str, object]:
         normalized_audio_url = str(audio_url or "").strip()
         for episode_rows in episodes_by_podcast.values():
@@ -877,11 +877,11 @@ class TestPodcastDiscovery:
 
 
 class TestPodcastEnsure:
-    def test_ensure_rejects_legacy_author_scalar(self, auth_client):
+    def test_ensure_rejects_author_scalar(self, auth_client):
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
-        payload = _podcast_payload(f"ensure-legacy-author-{uuid4()}", "Legacy Author Podcast")
-        payload["author"] = "Legacy Author"
+        payload = _podcast_payload(f"ensure-author-scalar-{uuid4()}", "Author Scalar Podcast")
+        payload["author"] = "Author Scalar"
 
         response = auth_client.post(
             "/podcasts/ensure",
@@ -1633,11 +1633,11 @@ class TestPodcastSubscriptionSyncLifecycle:
 
 
 class TestPodcastSubscribeIngest:
-    def test_subscribe_rejects_legacy_author_scalar(self, auth_client):
+    def test_subscribe_rejects_author_scalar(self, auth_client):
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
-        payload = _podcast_payload(f"subscribe-legacy-author-{uuid4()}", "Legacy Author Podcast")
-        payload["author"] = "Legacy Author"
+        payload = _podcast_payload(f"subscribe-author-scalar-{uuid4()}", "Author Scalar Podcast")
+        payload["author"] = "Author Scalar"
 
         response = auth_client.post(
             "/podcasts/subscriptions",
@@ -5694,7 +5694,7 @@ class TestPodcastApiSurface:
             json={"category_id": str(uuid4())},
         )
         assert removed_field.status_code == 400, (
-            "hard cutover should reject the removed category_id field instead of silently accepting it, "
+            "settings endpoint must reject the removed category_id field instead of silently accepting it, "
             f"got {removed_field.status_code}: {removed_field.text}"
         )
         assert removed_field.json()["error"]["code"] == "E_INVALID_REQUEST"

@@ -11,20 +11,20 @@ All functions:
 Query Semantics:
 - Membership role values: 'admin', 'member' (lowercase strings, not enums)
 - LibraryEntry rows with non-null media_id connect libraries and media
-- Media readability is via s4 provenance: non-default membership, intrinsic, or active closure edge
+- Media readability is via provenance: non-default membership, intrinsic, or active closure edge
 
-S4 Provenance Rules (can_read_media):
+Media Provenance Rules (can_read_media):
 - Non-default path: exists non-default library L with viewer membership and library_entries(L, media)
 - Default intrinsic path: viewer owns default library D, row in default_library_intrinsics(D, media)
 - Default closure path: viewer owns default library D, closure edge (D, media, source_L), viewer member of source_L
 - Raw (default_library_id, media_id) in library_entries is NOT sufficient without provenance
 
-S4 Conversation Visibility (can_read_conversation):
+Conversation Visibility (can_read_conversation):
 - Viewer is owner, OR
 - Conversation is public, OR
 - Conversation is library-shared and both viewer+owner are members of a share-target library
 
-S4 Highlight Visibility (can_read_highlight):
+Highlight Visibility (can_read_highlight):
 - Viewer can read anchor media (via can_read_media), AND
 - Exists a library containing that media where both viewer and highlight author are members
 """
@@ -48,7 +48,7 @@ from nexus.db.models import (
 
 
 def can_read_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bool:
-    """Check if viewer can read a media item under s4 provenance rules.
+    """Check if viewer can read a media item under provenance rules.
 
     True iff any of:
     1. Non-default path: exists non-default library L where viewer is member and media is in L
@@ -135,7 +135,7 @@ def visible_media_ids_cte_sql() -> str:
 
 
 def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_id: UUID) -> bool:
-    """Check if viewer can read a conversation under s4 visibility rules.
+    """Check if viewer can read a conversation under visibility rules.
 
     True iff:
     - Viewer is the conversation owner, OR
@@ -269,7 +269,7 @@ def highlight_visibility_filter(viewer_user_id: UUID, media_id: UUID):
 
 
 def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUID) -> bool:
-    """Check if viewer can read a highlight under s4 visibility rules.
+    """Check if viewer can read a highlight under visibility rules.
 
     True iff:
     - Viewer can read the anchor media (via can_read_media), AND

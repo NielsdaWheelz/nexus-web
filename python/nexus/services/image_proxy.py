@@ -9,7 +9,7 @@ Provides SSRF-protected image proxying with:
 - In-memory LRU cache with byte budget
 - ETag/conditional GET support
 
-Per PR-05 spec:
+Current endpoint contract:
 - Endpoint is authenticated-only
 - Images are cached by normalized URL
 - Max 10MB per image, 4096x4096 max dimensions

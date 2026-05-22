@@ -1493,7 +1493,7 @@ class TestBatchInsert:
 
 
 # =============================================================================
-# S6 PR-02: Kernel-Based Context Resolution Tests
+# Typed Anchor Context Resolution Tests
 # =============================================================================
 
 
@@ -1524,8 +1524,8 @@ class TestTypedAnchorMediaResolution:
         )
         assert resolved == media_id
 
-    def test_resolve_media_direct_unchanged(self, db_session: Session, media_with_highlight: tuple):
-        """Direct media resolution path is unaffected by typed-anchor changes."""
+    def test_resolve_media_direct_reference(self, db_session: Session, media_with_highlight: tuple):
+        """Direct media context resolves to media_id."""
         media_id, fragment_id, highlight_id, note_block_id = media_with_highlight
 
         resolved = contexts_service.resolve_media_id_for_context(

@@ -1,4 +1,4 @@
-"""Document deletion hard-cutover tests."""
+"""Document deletion behavior tests."""
 
 from uuid import UUID
 

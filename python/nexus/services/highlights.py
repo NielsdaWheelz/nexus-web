@@ -170,7 +170,7 @@ def _require_typed_highlight_or_404(highlight: Highlight) -> None:
 def get_highlight_for_visible_read_or_404(
     db: Session, viewer_id: UUID, highlight_id: UUID
 ) -> Highlight:
-    """Load highlight with relationships, enforce s4 read visibility.
+    """Load highlight with relationships and enforce shared-reader visibility.
 
     Visible iff viewer can read anchor media AND exists a library containing
     that media where both viewer and highlight author are members.
@@ -402,8 +402,8 @@ def create_highlight_for_fragment(
     # 2. Require media ready
     require_media_ready_or_409(fragment.media.processing_status.value)
 
-    # Serialize duplicate-span checks on the fragment row now that runtime
-    # storage no longer relies on the legacy highlight residue columns.
+    # Serialize duplicate-span checks on the fragment row before canonical
+    # anchor writes.
     _lock_fragment_row_for_highlight_write_or_404(db, fragment_id)
 
     # 3. Validate offsets
@@ -468,7 +468,7 @@ def list_highlights_for_fragment(
         viewer_id: The ID of the viewer.
         fragment_id: The ID of the fragment.
         mine_only: If True (default), return only viewer-authored highlights.
-            If False, return all highlights visible under s4 canonical predicate.
+            If False, return all highlights visible under the shared-reader predicate.
 
     Returns:
         List of canonical typed highlights ordered by start_offset ASC, created_at ASC, id ASC.
@@ -526,7 +526,7 @@ def list_highlights_for_media(
         viewer_id: The ID of the viewer.
         media_id: The ID of the media.
         mine_only: If True (default), return only viewer-authored highlights.
-            If False, return all highlights visible under s4 canonical predicate.
+            If False, return all highlights visible under the shared-reader predicate.
 
     Returns:
         List of canonical typed highlights ordered by anchor position then
@@ -597,7 +597,7 @@ def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHigh
     """Get a single highlight by ID (anchor-discriminated typed output).
 
     NO ready check - read-only operation.
-    Visible to shared readers under s4 canonical predicate.
+    Visible to shared readers under the shared-reader predicate.
 
     Returns:
         TypedHighlightOut with anchor discriminator for both fragment and PDF highlights.

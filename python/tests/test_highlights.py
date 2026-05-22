@@ -577,11 +577,11 @@ class TestDeleteHighlight:
         assert link_count == 0
 
 
-class TestLegacyAnnotationRouteRemoved:
-    """Legacy annotation routes are not part of the hard cutover."""
+class TestRemovedAnnotationRoutes:
+    """Removed annotation routes return not-found responses."""
 
-    def test_annotation_routes_are_gone(self, auth_client, direct_db: DirectSessionManager):
-        """Test #10: Removed annotation routes return normal not-found responses."""
+    def test_annotation_routes_return_not_found(self, auth_client, direct_db: DirectSessionManager):
+        """Removed annotation routes return normal not-found responses."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
@@ -604,7 +604,7 @@ class TestLegacyAnnotationRouteRemoved:
 
         put_resp = auth_client.put(
             f"/highlights/{highlight_id}/annotation",
-            json={"body": "No legacy route"},
+            json={"body": "No annotation route"},
             headers=auth_headers(user_id),
         )
         delete_resp = auth_client.delete(

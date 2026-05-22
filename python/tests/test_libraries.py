@@ -1719,7 +1719,7 @@ class TestDefaultLibraryClosure:
     def test_remove_from_non_default_gcs_default_when_no_intrinsic(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """S4: Removing media from non-default library GCs default row when no intrinsic."""
+        """Removing media from non-default library GCs default row when no intrinsic."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
@@ -1751,7 +1751,7 @@ class TestDefaultLibraryClosure:
             headers=auth_headers(user_id),
         )
 
-        # S4: default row is GC'd because no intrinsic and no remaining closure edge
+        # Default row is GC'd because no intrinsic and no remaining closure edge.
         with direct_db.session() as session:
             result = session.execute(
                 text("""
@@ -1851,7 +1851,7 @@ class TestDefaultLibraryClosure:
 
 
 # =============================================================================
-# S4 PR-03: GET /libraries/{id} Parity Route
+# GET /libraries/{id} Route
 # =============================================================================
 
 
@@ -1894,12 +1894,12 @@ class TestGetLibrary:
 
 
 # =============================================================================
-# S4 PR-03: Library Delete (owner-only)
+# Library Delete (owner-only)
 # =============================================================================
 
 
 class TestDeleteLibraryGovernance:
-    """Tests for S4 owner-only delete semantics."""
+    """Tests owner-only delete semantics."""
 
     def test_delete_library_owner_can_delete_multi_member_non_default(
         self, auth_client, direct_db: DirectSessionManager
@@ -1977,7 +1977,7 @@ class TestDeleteLibraryGovernance:
 
 
 # =============================================================================
-# S4 PR-03: Member Endpoints
+# Member Endpoints
 # =============================================================================
 
 
@@ -2580,7 +2580,7 @@ class TestRemoveMember:
 
 
 # =============================================================================
-# S4 PR-03: Ownership Transfer
+# Ownership Transfer
 # =============================================================================
 
 
@@ -2834,7 +2834,7 @@ class TestTransferOwnership:
 
 
 # =============================================================================
-# S4 PR-03: Invariant Repair
+# Invariant Repair
 # =============================================================================
 
 
@@ -2956,7 +2956,7 @@ class TestVisibility:
 
 
 # =============================================================================
-# S4 PR-04: Invitation Lifecycle Tests
+# Invitation Lifecycle Tests
 # =============================================================================
 
 
@@ -3882,7 +3882,7 @@ class TestLibraryInviteRevoke:
 
 
 class TestRemoveMemberClosureCleanup:
-    """Tests for S4 PR-05: member removal closure cleanup."""
+    """Tests member removal closure cleanup."""
 
     def test_remove_library_member_deletes_member_closure_edges_and_gcs_rows(
         self, auth_client, direct_db: DirectSessionManager
@@ -4119,7 +4119,7 @@ class TestVisibilityClosureScenarios:
     def test_v4_remove_from_default_keeps_closure_backed_row(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """S4: Remove from default removes intrinsic but closure edge keeps media materialized."""
+        """Remove from default removes intrinsic but closure edge keeps media materialized."""
         user_a = create_test_user_id()
 
         with direct_db.session() as session:
@@ -4162,7 +4162,7 @@ class TestVisibilityClosureScenarios:
             headers=auth_headers(user_a),
         )
 
-        # S4: media STAYS in default because closure edge from other_library justifies it.
+        # Media stays in default because closure edge from other_library justifies it.
         # Media also stays in other_library (not affected by default removal).
         with direct_db.session() as session:
             result = session.execute(
@@ -4250,7 +4250,7 @@ class TestVisibilityClosureScenarios:
 
 
 # ---------------------------------------------------------------------------
-# S6 PR-03: Library list PDF capabilities
+# Library list PDF capabilities
 # ---------------------------------------------------------------------------
 
 
@@ -4305,9 +4305,9 @@ def _create_pdf_media_for_library(
 
 
 class TestLibraryListPdfCapabilities:
-    """S6 PR-03: Library list PDF capabilities use same readiness predicate as detail."""
+    """Library list PDF capabilities use the same readiness predicate as detail."""
 
-    def test_pr03_library_list_pdf_capabilities_use_same_quote_text_readiness_predicate_as_detail(
+    def test_library_list_pdf_capabilities_use_same_quote_text_readiness_predicate_as_detail(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -4361,7 +4361,7 @@ class TestLibraryListPdfCapabilities:
         assert not_ready_caps["can_quote"] is False
         assert not_ready_caps["can_search"] is False
 
-    def test_pr03_library_list_pdf_capabilities_match_detail_readiness_split(
+    def test_library_list_pdf_capabilities_match_detail_readiness_split(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()

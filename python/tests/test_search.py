@@ -2,7 +2,7 @@
 
 Tests cover:
 - Basic search functionality across all types
-- Visibility enforcement (s4 provenance for media, note ownership,
+- Visibility enforcement (canonical media provenance, note ownership,
   canonical conversation visibility for messages)
 - Scope filtering (all, media, library, conversation)
 - Type filtering
@@ -12,9 +12,9 @@ Tests cover:
 - Invalid cursor handling
 - No visibility leakage
 - Note-block ownership and library revocation behavior
-- S4 library-scope message search
-- S4 conversation scope with shared-read visibility
-- S4 media provenance (stale default-library rows)
+- Library-scope message search
+- Conversation scope with shared-read visibility
+- Canonical media provenance (stale default-library rows)
 - Response shape preservation
 """
 
@@ -1937,7 +1937,7 @@ class TestSearchResultFormat:
     def test_note_block_results_use_note_contract(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Note-block search returns the hard-cutover note result contract."""
+        """Note-block search returns the note result contract."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         note_body = "Unique metadata-rich note lookup term harmonica"
@@ -2117,12 +2117,12 @@ class TestSearchResultFormat:
 
 
 # =============================================================================
-# S4 Search Alignment Tests
+# Search Visibility Alignment Tests
 # =============================================================================
 
 
-class TestSearchS4ConversationScope:
-    """Tests for s4 conversation scope using shared-read visibility."""
+class TestSearchConversationScope:
+    """Tests for conversation scope using shared-read visibility."""
 
     def test_scope_conversation_shared_reader_allowed_by_read_visibility(
         self, auth_client, direct_db: DirectSessionManager
@@ -2351,7 +2351,7 @@ class TestSearchS4ConversationScope:
 
 
 class TestSearchNoteBlockOwnership:
-    """Tests for note-block search ownership after the hard cutover."""
+    """Tests for note-block search under user-owned note visibility."""
 
     def test_search_note_blocks_exclude_other_users_shared_media_notes(
         self, auth_client, direct_db: DirectSessionManager
@@ -2448,8 +2448,8 @@ class TestSearchNoteBlockOwnership:
         assert str(note_block_id) not in after_ids
 
 
-class TestSearchS4LibraryScopeMessages:
-    """Tests for s4 library-scope message search."""
+class TestSearchLibraryScopeMessages:
+    """Tests for library-scope message search."""
 
     def test_scope_library_message_search_includes_only_target_shared_conversations(
         self, auth_client, direct_db: DirectSessionManager
@@ -2586,13 +2586,13 @@ class TestSearchS4LibraryScopeMessages:
         assert str(msg_id) not in msg_ids
 
 
-class TestSearchS4ResponseShape:
+class TestSearchResponseShape:
     """Tests for response shape preservation."""
 
     def test_search_response_shape_remains_results_page(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Response has top-level 'results' and 'page', no envelope migration."""
+        """Response has top-level 'results' and 'page', no data envelope."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -2618,8 +2618,8 @@ class TestSearchS4ResponseShape:
         assert "error" not in data
 
 
-class TestSearchS4Provenance:
-    """Tests for s4 media provenance in search visibility."""
+class TestSearchProvenance:
+    """Tests for media provenance in search visibility."""
 
     def test_search_does_not_return_stale_default_library_rows_without_intrinsic_or_closure(
         self, auth_client, direct_db: DirectSessionManager
@@ -2680,7 +2680,7 @@ class TestSearchS4Provenance:
         assert str(fragment_id) not in fragment_ids
 
 
-class TestSearchS4ScopeMasking:
+class TestSearchScopeMasking:
     """Tests for scope authorization masking with typed 404s."""
 
     def test_scope_media_unauthorized_returns_not_found(self, auth_client):
