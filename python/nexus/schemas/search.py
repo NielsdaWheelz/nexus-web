@@ -18,6 +18,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from nexus.schemas.contributors import ContributorCreditOut, ContributorOut
+from nexus.schemas.conversation import MessageArtifactPartProvenance
 from nexus.schemas.retrieval import RetrievalLocator, validate_locator_for_result_type
 
 # Valid search result types
@@ -61,22 +62,18 @@ class SearchResultSourceOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class SearchResultQuoteHighlightOut(BaseModel):
-    """Quote-context snippet for highlight-backed search results."""
-
-    exact: str
-    prefix: str = ""
-    suffix: str = ""
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class SearchResultContextRefOut(BaseModel):
     """Backend-owned context reference for model retrieval and citations."""
 
     type: SEARCH_RESULT_TYPES
     id: UUID | str
     evidence_span_ids: list[UUID] = Field(default_factory=list)
+    artifact_id: UUID | None = None
+    artifact_key: str | None = None
+    artifact_version: int | None = Field(default=None, ge=1)
+    source_version: str | None = Field(default=None, min_length=1)
+    locator: RetrievalLocator | None = None
+    artifact_part_provenance: MessageArtifactPartProvenance | None = None
 
     @model_serializer
     def serialize(self) -> dict[str, Any]:
@@ -85,20 +82,39 @@ class SearchResultContextRefOut(BaseModel):
             payload["evidence_span_ids"] = [
                 str(evidence_span_id) for evidence_span_id in self.evidence_span_ids
             ]
+        if self.artifact_id is not None:
+            payload["artifact_id"] = str(self.artifact_id)
+        if self.artifact_key is not None:
+            payload["artifact_key"] = self.artifact_key
+        if self.artifact_version is not None:
+            payload["artifact_version"] = self.artifact_version
+        if self.source_version is not None:
+            payload["source_version"] = self.source_version
+        if self.locator is not None:
+            payload["locator"] = self.locator.model_dump(mode="json", exclude_none=True)
+        if self.artifact_part_provenance is not None:
+            payload["artifact_part_provenance"] = self.artifact_part_provenance.model_dump(
+                mode="json",
+                exclude_none=True,
+                exclude_defaults=True,
+            )
         return payload
 
-    model_config = ConfigDict(extra="forbid")
-
-
-class SearchResultModelFields(BaseModel):
-    """Common model-facing fields shared by every typed search row."""
-
-    title: str
-    source_label: str | None = None
-    media_id: UUID | None = None
-    media_kind: str | None = None
-    deep_link: str
-    context_ref: SearchResultContextRefOut
+    @model_validator(mode="after")
+    def validate_artifact_part_context(self) -> "SearchResultContextRefOut":
+        if self.type != "artifact_part":
+            return self
+        if (
+            self.artifact_id is None
+            or self.source_version is None
+            or self.locator is None
+            or self.artifact_part_provenance is None
+        ):
+            raise ValueError(
+                "artifact_part context_ref requires artifact_id, source_version, "
+                "locator, and artifact_part_provenance"
+            )
+        return self
 
     model_config = ConfigDict(extra="forbid")
 
@@ -526,21 +542,5 @@ class SearchResponse(BaseModel):
 
     results: list[SearchResultOut] = Field(default_factory=list)
     page: SearchPageInfo = Field(default_factory=SearchPageInfo)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class SearchResolveRequest(BaseModel):
-    """Request body for resolving a durable search result ref."""
-
-    result_ref: SearchResultContextRefOut
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class SearchResolveResponse(BaseModel):
-    """Single typed search result resolution response."""
-
-    result: SearchResultOut
 
     model_config = ConfigDict(extra="forbid")

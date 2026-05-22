@@ -3,7 +3,8 @@
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
 
 from nexus.db.models import (
     ChatRun,
@@ -13,6 +14,7 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.conversation_branches import load_leaf_message_path, load_message_path
+from nexus.services.message_context_snapshots import object_ref_context_snapshot
 from tests.factories import create_test_conversation, create_test_message, create_test_model
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -611,6 +613,7 @@ def test_delete_branch_removes_subtree_and_dependent_rows(
                     id,
                     message_id,
                     user_id,
+                    context_kind,
                     object_type,
                     object_id,
                     ordinal,
@@ -620,18 +623,26 @@ def test_delete_branch_removes_subtree_and_dependent_rows(
                     :id,
                     :message_id,
                     :user_id,
+                    'object_ref',
                     'message',
                     :object_id,
                     0,
-                    '{}'::jsonb
+                    :context_snapshot
                 )
                 """
-            ),
+            ).bindparams(bindparam("context_snapshot", type_=JSONB)),
             {
                 "id": context_item_id,
                 "message_id": delete_user_id,
                 "user_id": owner_id,
                 "object_id": root_user_id,
+                "context_snapshot": object_ref_context_snapshot(
+                    object_type="message",
+                    object_id=root_user_id,
+                    title="Message #1",
+                    preview="Root",
+                    route=f"/conversations/{conversation_id}",
+                ),
             },
         )
         session.execute(

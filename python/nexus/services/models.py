@@ -184,7 +184,7 @@ def list_available_models(db: Session, user_id: UUID) -> list[ModelOut]:
     stmt = (
         select(Model)
         .where(
-            Model.is_available == True,  # noqa: E712
+            Model.is_available.is_(True),
             Model.provider.in_(available_providers),
         )
         .order_by(Model.provider, Model.model_name)

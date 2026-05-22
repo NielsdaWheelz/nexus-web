@@ -5,9 +5,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from nexus.schemas.conversation import (
     MessageArtifactPartOut,
-    MessageClaimEvidenceOut,
     MessageRetrievalOut,
-    MessageToolCallOut,
 )
 from nexus.schemas.media import MediaEvidenceResponse
 from nexus.schemas.retrieval import (
@@ -638,27 +636,6 @@ def test_message_retrieval_out_rejects_extra_keys_and_ref_drift():
 
 
 def test_message_output_schemas_reject_extra_keys():
-    locator = _message_locator()
-    source_ref = {"type": "message_retrieval", "id": "retrieval-1"}
-
-    with pytest.raises(ValidationError):
-        MessageClaimEvidenceOut.model_validate(
-            {
-                "id": str(uuid4()),
-                "claim_id": str(uuid4()),
-                "ordinal": 0,
-                "evidence_role": "supports",
-                "source_ref": source_ref,
-                "exact_snippet": "Exact evidence",
-                "locator": locator,
-                "retrieval_status": "included_in_prompt",
-                "selected": True,
-                "included_in_prompt": True,
-                "source_version": "message:v1",
-                "created_at": "2026-01-01T00:00:00Z",
-                "legacy": True,
-            }
-        )
     with pytest.raises(ValidationError):
         MessageArtifactPartOut.model_validate(
             {
@@ -668,23 +645,6 @@ def test_message_output_schemas_reject_extra_keys():
                 "source_version": "artifact_part:v1",
                 "locator": _artifact_part_locator(str(uuid4()), str(uuid4())),
                 "created_at": "2026-01-01T00:00:00Z",
-                "legacy": True,
-            }
-        )
-    with pytest.raises(ValidationError):
-        MessageToolCallOut.model_validate(
-            {
-                "id": str(uuid4()),
-                "conversation_id": str(uuid4()),
-                "user_message_id": str(uuid4()),
-                "assistant_message_id": str(uuid4()),
-                "tool_name": "app_search",
-                "tool_call_index": 0,
-                "scope": "all",
-                "semantic": True,
-                "status": "complete",
-                "created_at": "2026-01-01T00:00:00Z",
-                "updated_at": "2026-01-01T00:00:00Z",
                 "legacy": True,
             }
         )
@@ -841,18 +801,35 @@ def test_search_result_out_requires_page_source_version():
 def test_search_result_out_requires_artifact_part_source_version_and_locator():
     artifact_id = str(uuid4())
     artifact_part_id = str(uuid4())
+    source_version = "artifact-part:v1"
+    locator = _artifact_part_locator(artifact_id, artifact_part_id)
     payload = {
         **_search_base("artifact_part"),
         "id": artifact_part_id,
         "artifact_id": artifact_id,
-        "message_id": str(uuid4()),
-        "conversation_id": str(uuid4()),
+        "message_id": locator["message_id"],
+        "conversation_id": locator["conversation_id"],
         "artifact_kind": "timeline",
         "evidence_span_ids": [str(uuid4())],
-        "source_version": "artifact-part:v1",
-        "locator": _artifact_part_locator(artifact_id, artifact_part_id),
+        "source_version": source_version,
+        "locator": locator,
     }
-    payload["context_ref"] = {"type": "artifact_part", "id": artifact_part_id}
+    payload["context_ref"] = {
+        "type": "artifact_part",
+        "id": artifact_part_id,
+        "artifact_id": artifact_id,
+        "source_version": source_version,
+        "locator": locator,
+        "artifact_part_provenance": {
+            "type": "artifact_part",
+            "artifact_id": artifact_id,
+            "artifact_part_id": artifact_part_id,
+            "message_id": locator["message_id"],
+            "conversation_id": locator["conversation_id"],
+            "source_version": source_version,
+            "locator": locator,
+        },
+    }
 
     assert SEARCH_RESULT_ADAPTER.validate_python(payload).type == "artifact_part"
     with pytest.raises(ValidationError):

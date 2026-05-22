@@ -127,10 +127,3 @@ export const verifySession = cache(async (): Promise<Viewer> => {
 
   session satisfies never;
 });
-
-/**
- * Returns the verified viewer for the current request. A read alias over
- * `verifySession()` for call sites that consume the identity rather than gate
- * on it; both share the one per-request memoized verification.
- */
-export const getCurrentUser = cache(verifySession);

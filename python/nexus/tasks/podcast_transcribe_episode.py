@@ -4,9 +4,7 @@ from uuid import UUID
 
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
-from nexus.services.podcasts.transcripts import (
-    run_podcast_transcription_now as run_podcast_transcription_now_service,
-)
+from nexus.services.podcasts.transcripts import run_podcast_transcription_now
 
 logger = get_logger(__name__)
 
@@ -53,7 +51,7 @@ def podcast_transcribe_episode_job(
     session_factory = get_session_factory()
     db = session_factory()
     try:
-        result = run_podcast_transcription_now_service(
+        result = run_podcast_transcription_now(
             db,
             media_id=media_uuid,
             requested_by_user_id=requested_by_uuid,
@@ -70,19 +68,3 @@ def podcast_transcribe_episode_job(
         return result
     finally:
         db.close()
-
-
-def run_podcast_transcribe_now(
-    db,
-    *,
-    media_id: UUID,
-    requested_by_user_id: UUID | None,
-    request_id: str | None = None,
-) -> dict:
-    """Synchronous helper used by integration tests."""
-    return run_podcast_transcription_now_service(
-        db,
-        media_id=media_id,
-        requested_by_user_id=requested_by_user_id,
-        request_id=request_id,
-    )

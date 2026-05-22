@@ -1,4 +1,4 @@
-"""Schemas for conversation memory, state snapshots, and prompt assembly ledgers."""
+"""Schemas for conversation memory and state snapshots."""
 
 from datetime import datetime
 from typing import Any, Literal
@@ -166,47 +166,6 @@ class ConversationStateSnapshotOut(BaseModel):
             return self
         if self.invalid_reason is not None:
             raise ValueError("invalid_reason is only allowed for invalid snapshots")
-        return self
-
-
-class ChatPromptAssemblyOut(BaseModel):
-    """Persisted prompt assembly ledger row."""
-
-    id: UUID
-    chat_run_id: UUID
-    conversation_id: UUID
-    assistant_message_id: UUID
-    model_id: UUID
-    prompt_version: str = Field(min_length=1, max_length=128)
-    prompt_plan_version: str = Field(min_length=1, max_length=128)
-    assembler_version: str = Field(min_length=1, max_length=128)
-    stable_prefix_hash: str = Field(min_length=1, max_length=128)
-    cacheable_input_tokens_estimate: int = Field(ge=0)
-    prompt_block_manifest: dict[str, Any] = Field(default_factory=dict)
-    provider_request_hash: str = Field(min_length=1, max_length=128)
-    snapshot_id: UUID | None = None
-    max_context_tokens: int = Field(gt=0)
-    reserved_output_tokens: int = Field(ge=0)
-    reserved_reasoning_tokens: int = Field(ge=0)
-    input_budget_tokens: int = Field(ge=0)
-    estimated_input_tokens: int = Field(ge=0)
-    included_message_ids: list[UUID] = Field(default_factory=list)
-    included_memory_item_ids: list[UUID] = Field(default_factory=list)
-    included_retrieval_ids: list[UUID] = Field(default_factory=list)
-    included_context_refs: list[dict[str, Any]] = Field(default_factory=list)
-    dropped_items: list[dict[str, Any]] = Field(default_factory=list)
-    budget_breakdown: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
-
-    model_config = ConfigDict(from_attributes=True, extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_budget(self) -> "ChatPromptAssemblyOut":
-        reserved_tokens = self.reserved_output_tokens + self.reserved_reasoning_tokens
-        if self.input_budget_tokens + reserved_tokens > self.max_context_tokens:
-            raise ValueError("input and reserved token budgets exceed max_context_tokens")
-        if self.estimated_input_tokens > self.input_budget_tokens:
-            raise ValueError("estimated_input_tokens exceeds input_budget_tokens")
         return self
 
 

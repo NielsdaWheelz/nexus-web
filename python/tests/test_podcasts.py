@@ -572,8 +572,8 @@ def _run_subscription_sync(
     stub_enqueue: bool = True,
 ) -> dict:
     from nexus.services.podcasts import transcripts as podcast_transcript_service
+    from nexus.services.podcasts.transcripts import run_podcast_transcription_now
     from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
-    from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
 
     original_enqueue = podcast_transcript_service._enqueue_podcast_transcription_job
 
@@ -635,7 +635,7 @@ def _run_subscription_sync(
                     {"podcast_id": podcast_id},
                 ).fetchall()
                 for row in pending_jobs:
-                    run_podcast_transcribe_now(
+                    run_podcast_transcription_now(
                         session,
                         media_id=row[0],
                         requested_by_user_id=row[1],
@@ -3207,10 +3207,10 @@ class TestPodcastTranscriptRequestAdmission:
                 ],
             },
         )
-        from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
 
         with direct_db.session() as session:
-            result = run_podcast_transcribe_now(
+            result = run_podcast_transcription_now(
                 session,
                 media_id=media_id,
                 requested_by_user_id=user_id,
@@ -3266,10 +3266,10 @@ class TestPodcastTranscriptRequestAdmission:
                 "error_message": "Transcript unavailable",
             },
         )
-        from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
 
         with direct_db.session() as session:
-            result = run_podcast_transcribe_now(
+            result = run_podcast_transcription_now(
                 session,
                 media_id=media_id,
                 requested_by_user_id=user_id,
@@ -3743,10 +3743,10 @@ class TestPodcastTranscriptRequestAdmission:
                 "error_message": "simulated provider failure",
             },
         )
-        from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
 
         with direct_db.session() as session:
-            result = run_podcast_transcribe_now(
+            result = run_podcast_transcription_now(
                 session,
                 media_id=media_id,
                 requested_by_user_id=user_id,
@@ -5815,7 +5815,7 @@ class TestPodcastApiSurface:
 <v Host>hello rss
 """
 
-        def fake_http_get(url: str, **kwargs):  # noqa: ANN003
+        def fake_http_get(url: str, **kwargs: object) -> httpx.Response:
             _ = kwargs
             if url == payload["feed_url"]:
                 return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
@@ -5999,7 +5999,7 @@ upgrade now
 """
         state = {"rss_enabled": False}
 
-        def fake_http_get(url: str, **kwargs):  # noqa: ANN003
+        def fake_http_get(url: str, **kwargs: object) -> httpx.Response:
             _ = kwargs
             if url == payload["feed_url"]:
                 return httpx.Response(
@@ -6171,7 +6171,7 @@ upgrade now
 </rss>
 """
 
-        def fake_http_get(url: str, **kwargs):  # noqa: ANN003
+        def fake_http_get(url: str, **kwargs: object) -> httpx.Response:
             _ = kwargs
             if url == payload["feed_url"]:
                 return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
@@ -6309,7 +6309,7 @@ upgrade now
 </rss>
 """
 
-        def fake_http_get(url: str, **kwargs):  # noqa: ANN003
+        def fake_http_get(url: str, **kwargs: object) -> httpx.Response:
             _ = kwargs
             if url == payload["feed_url"]:
                 return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
@@ -6873,7 +6873,7 @@ upgrade now
                     ]
                 }
 
-        def flaky_get(*args, **kwargs):  # noqa: ANN002, ANN003
+        def flaky_get(*args: object, **kwargs: object) -> _FakeResponse:
             _ = args, kwargs
             call_count["value"] += 1
             if call_count["value"] < 3:
@@ -7469,10 +7469,10 @@ class TestPodcastTranscriptionAsyncLifecycle:
             },
         )
 
-        from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
 
         with direct_db.session() as session:
-            result = run_podcast_transcribe_now(
+            result = run_podcast_transcription_now(
                 session,
                 media_id=media_id,
                 requested_by_user_id=user_id,
@@ -7573,10 +7573,10 @@ class TestPodcastTranscriptionAsyncLifecycle:
             },
         )
 
-        from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
 
         with direct_db.session() as session:
-            result = run_podcast_transcribe_now(
+            result = run_podcast_transcription_now(
                 session,
                 media_id=media_id,
                 requested_by_user_id=user_id,
@@ -7640,12 +7640,12 @@ class TestPodcastTranscriptionAsyncLifecycle:
         monkeypatch.setattr(
             "nexus.services.podcasts.transcripts._transcribe_podcast_audio", slow_transcribe
         )
-        from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
 
         def run_first_worker() -> None:
             try:
                 with direct_db.session() as session:
-                    result = run_podcast_transcribe_now(
+                    result = run_podcast_transcription_now(
                         session,
                         media_id=media_id,
                         requested_by_user_id=user_id,
@@ -7666,7 +7666,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
             # Sleep beyond stale cutoff. Without heartbeat, second worker would reclaim this job.
             time.sleep(2.2)
             with direct_db.session() as session:
-                second_result = run_podcast_transcribe_now(
+                second_result = run_podcast_transcription_now(
                     session,
                     media_id=media_id,
                     requested_by_user_id=user_id,
@@ -7719,15 +7719,15 @@ class TestPodcastTranscriptionAsyncLifecycle:
             },
         )
 
-        from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
 
         with direct_db.session() as session:
-            first = run_podcast_transcribe_now(
+            first = run_podcast_transcription_now(
                 session,
                 media_id=media_id,
                 requested_by_user_id=user_id,
             )
-            second = run_podcast_transcribe_now(
+            second = run_podcast_transcription_now(
                 session,
                 media_id=media_id,
                 requested_by_user_id=user_id,
@@ -7773,10 +7773,10 @@ class TestPodcastTranscriptionAsyncLifecycle:
             },
         )
 
-        from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
 
         with direct_db.session() as session:
-            failed_result = run_podcast_transcribe_now(
+            failed_result = run_podcast_transcription_now(
                 session,
                 media_id=media_id,
                 requested_by_user_id=user_id,
@@ -7933,7 +7933,7 @@ class TestPodcastShowNotesAndBatchCutover:
             },
         )
 
-        def fake_http_get(url: str, **kwargs):  # noqa: ANN003
+        def fake_http_get(url: str, **kwargs: object) -> httpx.Response:
             _ = kwargs
             if url == payload["feed_url"]:
                 return httpx.Response(200, text=feed_xml, request=httpx.Request("GET", url))
@@ -8411,10 +8411,10 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             },
         )
 
-        from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+        from nexus.services.podcasts.transcripts import run_podcast_transcription_now
 
         with direct_db.session() as session:
-            result = run_podcast_transcribe_now(
+            result = run_podcast_transcription_now(
                 session,
                 media_id=media_id,
                 requested_by_user_id=user_id,
@@ -8674,11 +8674,21 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             assert original_fragment_row is not None
             assert original_fragment_row[1] == first_version_id
 
-            from nexus.services.context_rendering import _render_highlight_context
+            from nexus.schemas.conversation import MessageContextRef
+            from nexus.services.context_rendering import render_context_blocks
 
-            rendered_context = _render_highlight_context(session, highlight_id)
+            rendered_context, _ = render_context_blocks(
+                session,
+                [
+                    MessageContextRef(
+                        type="highlight",
+                        id=highlight_id,
+                        source_version="captured-transcript-source:v1",
+                    )
+                ],
+            )
 
-        assert rendered_context is not None
+        assert rendered_context
         assert "<timestamp>00:00:00</timestamp>" in rendered_context
         assert "<speaker>SpeakerA</speaker>" in rendered_context
 

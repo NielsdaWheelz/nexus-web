@@ -6609,6 +6609,30 @@ class MessageContextItem(Base):
             "jsonb_typeof(context_snapshot) = 'object'",
             name="ck_message_context_items_snapshot",
         ),
+        CheckConstraint(
+            "context_kind != 'object_ref' OR ("
+            "COALESCE(context_snapshot->>'kind', '') = 'object_ref' "
+            "AND context_snapshot->>'type' = object_type "
+            "AND context_snapshot->>'id' = object_id::text "
+            "AND char_length(btrim(COALESCE(context_snapshot->>'title', ''))) > 0)",
+            name="ck_message_context_items_object_ref_snapshot",
+        ),
+        CheckConstraint(
+            "context_kind != 'reader_selection' OR ("
+            "COALESCE(context_snapshot->>'kind', '') = 'reader_selection' "
+            "AND char_length(btrim(COALESCE(context_snapshot->>'client_context_id', ''))) > 0 "
+            "AND char_length(btrim(COALESCE(context_snapshot->>'media_id', ''))) > 0 "
+            "AND context_snapshot->>'media_id' = source_media_id::text "
+            "AND char_length(btrim(COALESCE(context_snapshot->>'source_media_id', ''))) > 0 "
+            "AND context_snapshot->>'source_media_id' = source_media_id::text "
+            "AND char_length(btrim(COALESCE(context_snapshot->>'media_kind', ''))) > 0 "
+            "AND char_length(btrim(COALESCE(context_snapshot->>'media_title', ''))) > 0 "
+            "AND char_length(btrim(COALESCE(context_snapshot->>'exact', ''))) > 0 "
+            "AND char_length(btrim(COALESCE(context_snapshot->>'source_version', ''))) > 0 "
+            "AND context_snapshot ? 'locator' "
+            "AND jsonb_typeof(context_snapshot->'locator') = 'object')",
+            name="ck_message_context_items_reader_selection_snapshot",
+        ),
         UniqueConstraint(
             "message_id",
             "ordinal",

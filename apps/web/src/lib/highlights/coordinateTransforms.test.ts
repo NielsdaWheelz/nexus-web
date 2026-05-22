@@ -3,7 +3,6 @@ import {
   normalizeQuarterTurnRotation,
   pagePointToViewportPoint,
   projectPdfQuadToViewportRect,
-  viewportPointToPagePoint,
   type PdfPageViewportTransform,
 } from "./coordinateTransforms";
 
@@ -57,20 +56,24 @@ describe("coordinateTransforms", () => {
     expectClose(rectA.height, rectB.height);
   });
 
-  it("round-trips page points through viewport transforms for all rotations", () => {
-    const rotations: Array<0 | 90 | 180 | 270> = [0, 90, 180, 270];
+  it("projects page points for all rotations", () => {
+    const cases: Array<[0 | 90 | 180 | 270, number, number]> = [
+      [0, 225, 487.5],
+      [90, 997.5, 225],
+      [180, 922.5, 997.5],
+      [270, 487.5, 922.5],
+    ];
     const transformBase = {
       scale: 1.5,
       dpiScale: 1.25,
       pageWidthPoints: 612,
       pageHeightPoints: 792,
     };
-    for (const rotation of rotations) {
+    for (const [rotation, expectedX, expectedY] of cases) {
       const transform: PdfPageViewportTransform = { ...transformBase, rotation };
       const point = pagePointToViewportPoint(120 as never, 260 as never, transform);
-      const recovered = viewportPointToPagePoint(point, transform);
-      expectClose(recovered.x as number, 120);
-      expectClose(recovered.y as number, 260);
+      expectClose(point.x, expectedX);
+      expectClose(point.y, expectedY);
     }
   });
 });

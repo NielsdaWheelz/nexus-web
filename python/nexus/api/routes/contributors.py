@@ -12,7 +12,6 @@ from nexus.responses import success_response
 from nexus.schemas.contributors import (
     ContributorAliasCreateRequest,
     ContributorExternalIdCreateRequest,
-    ContributorMergeRequest,
     ContributorSplitRequest,
 )
 from nexus.services import contributors as contributors_service
@@ -138,21 +137,6 @@ def delete_contributor_external_id(
         actor_roles=viewer.roles,
         contributor_handle=contributor_handle,
         external_id_id=external_id_id,
-    )
-    return success_response(contributor.model_dump(mode="json"))
-
-
-@router.post("/merge")
-def merge_contributors(
-    request: ContributorMergeRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    contributor = contributors_service.merge_contributors(
-        db,
-        actor_user_id=viewer.user_id,
-        actor_roles=viewer.roles,
-        request=request,
     )
     return success_response(contributor.model_dump(mode="json"))
 

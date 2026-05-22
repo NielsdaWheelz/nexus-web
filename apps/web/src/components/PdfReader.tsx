@@ -2497,7 +2497,7 @@ export default function PdfReader({
       });
     }
     return projected;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- pageRenderEpoch is an intentional invalidation trigger
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: pageRenderEpoch is an intentional invalidation trigger
   }, [
     pageHighlights,
     pageNumber,

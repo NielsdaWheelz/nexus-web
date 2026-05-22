@@ -78,23 +78,6 @@ export type SearchCitationResultType =
   | "artifact"
   | "artifact_part";
 
-export type AppCitationResultType =
-  | "media"
-  | "podcast"
-  | "episode"
-  | "video"
-  | "content_chunk"
-  | "fragment"
-  | "page"
-  | "note_block"
-  | "highlight"
-  | "message"
-  | "contributor"
-  | "evidence_span"
-  | "conversation"
-  | "artifact"
-  | "artifact_part";
-
 export type RetrievalContextRef =
   | {
       type: SearchCitationResultType;
@@ -850,6 +833,7 @@ export function toWireContextItem(item: ContextItem): ChatRunContext {
 }
 
 export interface ChatRunCreateRequest {
+  conversation_id?: string;
   content: string;
   model_id: string;
   reasoning: "default" | "none" | "minimal" | "low" | "medium" | "high" | "max";

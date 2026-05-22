@@ -22,7 +22,7 @@ import html
 import io
 import json
 import textwrap
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
@@ -32,9 +32,6 @@ from sqlalchemy.orm import Session, joinedload
 
 from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
 from nexus.db.models import (
-    AssistantMessageCitationAudit,
-    AssistantMessageClaim,
-    AssistantMessageEvidenceSummary,
     AssistantMessageVerifierRun,
     ChatRun,
     Conversation,
@@ -50,8 +47,6 @@ from nexus.db.models import (
     MessageRetrieval,
     MessageRetrievalCandidateLedger,
     MessageToolCall,
-    ObjectLink,
-    SourceManifest,
 )
 from nexus.errors import (
     CHAT_RESPONSE_RETRYABLE_ERROR_CODES,
@@ -59,49 +54,52 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
+from nexus.evidence_span_ids import trusted_evidence_span_ids
 from nexus.logging import get_logger
 from nexus.schemas.conversation import (
     BRANCH_ANCHOR_KINDS,
-    HIGHLIGHT_COLORS,
     MESSAGE_ARTIFACT_KINDS,
-    MESSAGE_CONTEXT_TYPES,
     ArtifactIntentOptions,
+    AssistantMessageBranchAnchorRequest,
     AssistantVerifierRunOut,
+    ChatRunCreateRequest,
     ConversationOut,
     ConversationScopeOut,
     ConversationScopeRequest,
-    MessageArtifactChatRunContext,
-    MessageArtifactChatRunPayload,
+    MessageArtifactAskRequest,
     MessageArtifactCitationEntryOut,
     MessageArtifactCitationManifestOut,
+    MessageArtifactContextSnapshot,
     MessageArtifactCreateRequest,
     MessageArtifactExportLedgerOut,
     MessageArtifactExportOut,
-    MessageArtifactFollowUpBranchAnchor,
-    MessageArtifactFollowUpContextItemOut,
-    MessageArtifactFollowUpOut,
-    MessageArtifactFollowUpRequest,
     MessageArtifactOut,
+    MessageArtifactPartContextSnapshot,
     MessageArtifactPartCreateRequest,
     MessageArtifactPartOut,
     MessageArtifactPartProvenance,
-    MessageCitationAuditOut,
-    MessageClaimEvidenceOut,
-    MessageClaimOut,
+    MessageContextRef,
     MessageContextSnapshot,
+    MessageContextSnapshotOut,
     MessageDocument,
-    MessageEvidenceSummaryOut,
     MessageOut,
     MessageRerankLedgerOut,
     MessageRetrievalCandidateLedgerOut,
-    MessageToolCallOut,
     PageInfo,
-    SourceManifestOut,
 )
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.context_lookup import hydrate_context_ref, hydrate_source_ref
+from nexus.services.contexts import reader_selection_message_snapshot_from_row
 from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.conversation_memory import conversation_memory_inspection
+from nexus.services.message_context_snapshots import (
+    artifact_context_snapshot_fields,
+    artifact_part_context_ref,
+    artifact_part_context_snapshot_fields,
+    trusted_content_chunk_context_snapshot_fields,
+    trusted_context_snapshot,
+    trusted_object_ref_context_snapshot_payload,
+)
 
 logger = get_logger(__name__)
 
@@ -116,14 +114,6 @@ MIN_LIMIT = 1
 MAX_LIMIT = 100
 DEFAULT_CONVERSATION_TITLE = "Chat"
 MAX_CONVERSATION_TITLE_LENGTH = 120
-
-
-class _ArtifactPartMessageContextSnapshot(MessageContextSnapshot):
-    artifact_id: UUID | None = None
-    artifact_key: str | None = None
-    artifact_version: int | None = None
-    source_version: str | None = None
-    artifact_part_provenance: MessageArtifactPartProvenance | None = None
 
 
 # =============================================================================
@@ -293,11 +283,7 @@ def _artifact_part_to_out(part: MessageArtifactPart) -> MessageArtifactPartOut:
         context_ref=cast(Any, part.context_ref),
         result_ref=cast(Any, part.result_ref),
         evidence_span_id=part.evidence_span_id,
-        evidence_span_ids=[
-            evidence_span_id
-            for value in part.evidence_span_ids
-            if (evidence_span_id := _optional_uuid(value)) is not None
-        ],
+        evidence_span_ids=trusted_evidence_span_ids(part.evidence_span_ids),
         source_refs=cast(Any, part.source_refs),
         metadata=part.metadata_json,
         created_at=part.created_at,
@@ -537,7 +523,7 @@ def resolve_conversation_for_scope(
 
 def message_to_out(
     message: Message,
-    contexts: list[MessageContextSnapshot] | None = None,
+    contexts: list[MessageContextSnapshotOut] | None = None,
     artifacts: list[MessageArtifactOut] | None = None,
     can_retry_response: bool = False,
 ) -> MessageOut:
@@ -696,13 +682,13 @@ def retryable_assistant_message_ids(
 def load_message_context_snapshots_for_message_ids(
     db: Session,
     message_ids: list[UUID],
-) -> dict[UUID, list[MessageContextSnapshot]]:
+) -> dict[UUID, list[MessageContextSnapshotOut]]:
     """Load typed context snapshots for the given messages."""
 
     if not message_ids:
         return {}
 
-    snapshots_by_message_id: dict[UUID, list[MessageContextSnapshot]] = {
+    snapshots_by_message_id: dict[UUID, list[MessageContextSnapshotOut]] = {
         message_id: [] for message_id in message_ids
     }
     context_rows = db.scalars(
@@ -711,61 +697,36 @@ def load_message_context_snapshots_for_message_ids(
         .order_by(MessageContextItem.message_id.asc(), MessageContextItem.ordinal.asc())
     ).all()
     for row in context_rows:
-        stored = row.context_snapshot_json if isinstance(row.context_snapshot_json, Mapping) else {}
         if row.context_kind == "reader_selection":
             snapshots_by_message_id.setdefault(row.message_id, []).append(
-                MessageContextSnapshot.model_validate(
-                    {
-                        "kind": "reader_selection",
-                        "client_context_id": _optional_uuid(
-                            stored.get("client_context_id") or stored.get("clientContextId")
-                        ),
-                        "exact": _optional_string(stored.get("exact")),
-                        "prefix": _optional_string(stored.get("prefix")),
-                        "suffix": _optional_string(stored.get("suffix")),
-                        "media_id": _optional_uuid(stored.get("media_id") or stored.get("mediaId"))
-                        or row.source_media_id,
-                        "source_media_id": _optional_uuid(
-                            stored.get("source_media_id") or stored.get("sourceMediaId")
-                        )
-                        or row.source_media_id,
-                        "media_title": _optional_string(
-                            stored.get("media_title") or stored.get("mediaTitle")
-                        ),
-                        "media_kind": _optional_string(
-                            stored.get("media_kind") or stored.get("mediaKind")
-                        ),
-                        "locator": _optional_mapping(stored.get("locator")) or row.locator_json,
-                        "source_version": _optional_string(stored.get("source_version")),
-                        "title": _optional_string(stored.get("title")),
-                        "route": _optional_string(stored.get("route")),
-                    }
-                )
+                reader_selection_message_snapshot_from_row(row)
             )
             continue
 
-        payload: dict[str, object] = {
-            "kind": "object_ref",
-            "type": cast(MESSAGE_CONTEXT_TYPES, row.object_type),
-            "id": row.object_id,
-            "evidence_span_ids": _snapshot_evidence_span_ids(stored),
-            "color": _optional_highlight_color(stored.get("color")),
-            "preview": _optional_string(stored.get("preview") or stored.get("snippet")),
-            "exact": _optional_string(stored.get("exact")),
-            "prefix": _optional_string(stored.get("prefix")),
-            "suffix": _optional_string(stored.get("suffix")),
-            "media_id": _optional_uuid(stored.get("media_id") or stored.get("mediaId")),
-            "media_title": _optional_string(stored.get("media_title") or stored.get("mediaTitle")),
-            "media_kind": _optional_string(stored.get("media_kind") or stored.get("mediaKind")),
-            "locator": _optional_mapping(stored.get("locator")),
-            "source_version": _optional_string(stored.get("source_version")),
-            "title": _optional_string(stored.get("title") or stored.get("label")),
-            "route": _optional_string(stored.get("route")),
-        }
-        if row.object_type == "artifact_part":
-            payload.update(_artifact_part_context_snapshot_fields(stored))
+        stored = trusted_context_snapshot(row.context_snapshot_json)
+        payload = trusted_object_ref_context_snapshot_payload(
+            object_type=row.object_type,
+            object_id=row.object_id,
+            payload=stored,
+        )
+        if row.object_type == "content_chunk":
+            payload.update(
+                trusted_content_chunk_context_snapshot_fields(
+                    object_type=row.object_type,
+                    object_id=row.object_id,
+                    payload=stored,
+                )
+            )
+        if row.object_type == "artifact":
+            payload.update(artifact_context_snapshot_fields(stored))
             snapshots_by_message_id.setdefault(row.message_id, []).append(
-                _ArtifactPartMessageContextSnapshot.model_validate(payload)
+                MessageArtifactContextSnapshot.model_validate(payload)
+            )
+            continue
+        if row.object_type == "artifact_part":
+            payload.update(artifact_part_context_snapshot_fields(stored))
+            snapshots_by_message_id.setdefault(row.message_id, []).append(
+                MessageArtifactPartContextSnapshot.model_validate(payload)
             )
             continue
         snapshots_by_message_id.setdefault(row.message_id, []).append(
@@ -773,21 +734,6 @@ def load_message_context_snapshots_for_message_ids(
         )
 
     return snapshots_by_message_id
-
-
-def _artifact_part_context_snapshot_fields(stored: Mapping[str, object]) -> dict[str, object]:
-    provenance = stored.get("artifact_part_provenance")
-    provenance_map = provenance if isinstance(provenance, Mapping) else {}
-    fields: dict[str, object] = {}
-    for key in ("artifact_id", "artifact_key", "artifact_version", "source_version", "locator"):
-        value = stored.get(key)
-        if value is None:
-            value = provenance_map.get(key)
-        if value is not None:
-            fields[key] = value
-    if provenance is not None:
-        fields["artifact_part_provenance"] = provenance
-    return fields
 
 
 def load_message_artifacts_for_message_ids(
@@ -815,159 +761,6 @@ def load_message_artifacts_for_message_ids(
             _artifact_to_out(artifact)
         )
     return artifacts_by_message_id
-
-
-def _optional_string(value: object) -> str | None:
-    return value if isinstance(value, str) and value else None
-
-
-def _optional_uuid(value: object) -> UUID | None:
-    try:
-        return UUID(str(value))
-    except (TypeError, ValueError):
-        return None
-
-
-def _optional_mapping(value: object) -> dict[str, object] | None:
-    if isinstance(value, Mapping):
-        return dict(value)
-    return None
-
-
-def _optional_highlight_color(value: object) -> HIGHLIGHT_COLORS | None:
-    if value in {"yellow", "green", "blue", "pink", "purple"}:
-        return cast(HIGHLIGHT_COLORS, value)
-    return None
-
-
-def _snapshot_evidence_span_ids(snapshot: Mapping[str, object]) -> list[UUID]:
-    raw_values = snapshot.get("evidence_span_ids")
-    if raw_values is None:
-        raw_values = snapshot.get("evidenceSpanIds")
-    if raw_values is None:
-        raw_values = snapshot.get("evidence_span_id")
-    if raw_values is None:
-        raw_values = snapshot.get("evidenceSpanId")
-    if isinstance(raw_values, str):
-        values = [raw_values]
-    elif isinstance(raw_values, Sequence) and not isinstance(raw_values, (str, bytes)):
-        values = list(raw_values)
-    else:
-        values = []
-
-    evidence_span_ids: list[UUID] = []
-    seen: set[UUID] = set()
-    for value in values:
-        evidence_span_id = _optional_uuid(value)
-        if evidence_span_id is None or evidence_span_id in seen:
-            continue
-        seen.add(evidence_span_id)
-        evidence_span_ids.append(evidence_span_id)
-    return evidence_span_ids
-
-
-def load_message_tool_calls_for_message_ids(
-    db: Session,
-    message_ids: list[UUID],
-) -> dict[UUID, list[MessageToolCallOut]]:
-    """Load persisted assistant tool calls for the given messages."""
-
-    if not message_ids:
-        return {}
-
-    rows = (
-        db.scalars(
-            select(MessageToolCall)
-            .options(joinedload(MessageToolCall.retrievals))
-            .where(MessageToolCall.assistant_message_id.in_(message_ids))
-            .order_by(
-                MessageToolCall.assistant_message_id.asc(),
-                MessageToolCall.tool_call_index.asc(),
-            )
-        )
-        .unique()
-        .all()
-    )
-
-    tool_calls_by_message_id: dict[UUID, list[MessageToolCallOut]] = {
-        message_id: [] for message_id in message_ids
-    }
-    for row in rows:
-        tool_calls_by_message_id.setdefault(row.assistant_message_id, []).append(
-            MessageToolCallOut.model_validate(row, from_attributes=True)
-        )
-    return tool_calls_by_message_id
-
-
-def load_message_evidence_for_message_ids(
-    db: Session,
-    message_ids: list[UUID],
-) -> tuple[
-    dict[UUID, MessageEvidenceSummaryOut],
-    dict[UUID, list[MessageClaimOut]],
-    dict[UUID, list[MessageClaimEvidenceOut]],
-]:
-    """Load persisted claim/evidence citation rows for messages."""
-
-    if not message_ids:
-        return {}, {}, {}
-
-    summary_rows = db.scalars(
-        select(AssistantMessageEvidenceSummary).where(
-            AssistantMessageEvidenceSummary.message_id.in_(message_ids)
-        )
-    ).all()
-    summaries = {
-        row.message_id: MessageEvidenceSummaryOut.model_validate(row, from_attributes=True)
-        for row in summary_rows
-    }
-    claim_rows = (
-        db.scalars(
-            select(AssistantMessageClaim)
-            .options(joinedload(AssistantMessageClaim.evidence))
-            .where(AssistantMessageClaim.message_id.in_(message_ids))
-            .order_by(AssistantMessageClaim.message_id.asc(), AssistantMessageClaim.ordinal.asc())
-        )
-        .unique()
-        .all()
-    )
-    claims: dict[UUID, list[MessageClaimOut]] = {message_id: [] for message_id in message_ids}
-    evidence: dict[UUID, list[MessageClaimEvidenceOut]] = {
-        message_id: [] for message_id in message_ids
-    }
-    for claim in claim_rows:
-        claims.setdefault(claim.message_id, []).append(
-            MessageClaimOut.model_validate(claim, from_attributes=True)
-        )
-        evidence.setdefault(claim.message_id, []).extend(
-            MessageClaimEvidenceOut.model_validate(row, from_attributes=True)
-            for row in claim.evidence
-        )
-    return summaries, claims, evidence
-
-
-def load_message_citation_audits_for_message_ids(
-    db: Session,
-    message_ids: Sequence[UUID],
-) -> dict[UUID, MessageCitationAuditOut]:
-    """Load the latest citation audit ledger row for finalized assistant messages."""
-
-    if not message_ids:
-        return {}
-
-    rows = db.scalars(
-        select(AssistantMessageCitationAudit)
-        .where(AssistantMessageCitationAudit.message_id.in_(message_ids))
-        .order_by(
-            AssistantMessageCitationAudit.message_id.asc(),
-            AssistantMessageCitationAudit.created_at.asc(),
-            AssistantMessageCitationAudit.id.asc(),
-        )
-    ).all()
-    return {
-        row.message_id: MessageCitationAuditOut.model_validate(row, from_attributes=True)
-        for row in rows
-    }
 
 
 # =============================================================================
@@ -1409,10 +1202,7 @@ def _assert_artifact_part_refs_readable(
                     "Artifact result_ref context is not readable",
                 )
 
-    evidence_span_ids = list(part.evidence_span_ids)
-    if part.evidence_span_id is not None and part.evidence_span_id not in evidence_span_ids:
-        evidence_span_ids.append(part.evidence_span_id)
-    for evidence_span_id in evidence_span_ids:
+    for evidence_span_id in _artifact_part_evidence_span_ids(part):
         media_id = db.scalar(
             select(EvidenceSpan.media_id).where(EvidenceSpan.id == evidence_span_id)
         )
@@ -1471,12 +1261,7 @@ def create_artifact(
     db.flush()
     for ordinal, part in enumerate(request.parts):
         _assert_artifact_part_refs_readable(db, viewer_id=viewer_id, part=part)
-        evidence_span_ids = [str(value) for value in part.evidence_span_ids]
-        if (
-            part.evidence_span_id is not None
-            and str(part.evidence_span_id) not in evidence_span_ids
-        ):
-            evidence_span_ids.append(str(part.evidence_span_id))
+        evidence_span_ids = _artifact_part_evidence_span_ids(part)
         part_id = uuid4()
         locator = retrieval_locator_json(
             {
@@ -1507,7 +1292,7 @@ def create_artifact(
                 context_ref=part.context_ref.model_dump(mode="json") if part.context_ref else None,
                 result_ref=part.result_ref.model_dump(mode="json") if part.result_ref else None,
                 evidence_span_id=part.evidence_span_id,
-                evidence_span_ids=evidence_span_ids,
+                evidence_span_ids=[str(value) for value in evidence_span_ids],
                 source_refs=[ref.model_dump(mode="json") for ref in part.source_refs],
                 metadata_json=part.metadata,
             )
@@ -1515,6 +1300,13 @@ def create_artifact(
     db.commit()
     db.refresh(artifact)
     return get_artifact(db, viewer_id=viewer_id, artifact_id=artifact.id)
+
+
+def _artifact_part_evidence_span_ids(part: MessageArtifactPartCreateRequest) -> list[UUID]:
+    evidence_span_ids = list(part.evidence_span_ids)
+    if part.evidence_span_id is not None:
+        evidence_span_ids.append(part.evidence_span_id)
+    return evidence_span_ids
 
 
 def get_message_artifact(
@@ -1682,93 +1474,71 @@ def list_artifact_exports(
     ]
 
 
-def create_message_artifact_follow_up(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    message_id: UUID,
-    artifact_id: UUID,
-    request: MessageArtifactFollowUpRequest,
-) -> MessageArtifactFollowUpOut:
-    artifact = get_message_artifact(
-        db,
-        viewer_id=viewer_id,
-        message_id=message_id,
-        artifact_id=artifact_id,
-    )
-    part = _artifact_part_for_follow_up(artifact, request.artifact_part_id)
-    provenance = _artifact_part_provenance(artifact, part)
-    context_id = part.id if part is not None else artifact.id
-
-    if request.mode == "chat_run_payload":
-        if request.model_id is None:
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "model_id is required")
-        if part is not None:
-            context = MessageArtifactChatRunContext(
-                type="artifact_part",
-                id=context_id,
-                artifact_id=artifact.id,
-                artifact_key=artifact.artifact_key,
-                artifact_version=artifact.artifact_version,
-                source_version=part.source_version,
-                locator=part.locator,
-                artifact_part_provenance=provenance,
-            )
-        else:
-            context = MessageArtifactChatRunContext(type="artifact", id=context_id)
-        payload = MessageArtifactChatRunPayload(
-            conversation_id=artifact.conversation_id,
-            parent_message_id=artifact.message_id,
-            branch_anchor=MessageArtifactFollowUpBranchAnchor(
-                kind="assistant_message",
-                message_id=artifact.message_id,
-            ),
-            content=request.content,
-            model_id=request.model_id,
-            reasoning=request.reasoning,
-            key_mode=request.key_mode,
-            contexts=[context],
-            web_search=request.web_search,
-            artifact_intent=ArtifactIntentOptions(kind="off"),
-        )
-        return MessageArtifactFollowUpOut(
-            mode="chat_run_payload",
-            artifact_part_provenance=provenance,
-            chat_run_payload=payload,
-        )
-
-    if request.target_message_id is None:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "target_message_id is required")
-    context_item = _create_artifact_follow_up_context_item(
-        db,
-        viewer_id=viewer_id,
-        target_message_id=request.target_message_id,
-        artifact=artifact,
-        part=part,
-        provenance=provenance,
-    )
-    return MessageArtifactFollowUpOut(
-        mode="context_item",
-        artifact_part_provenance=provenance,
-        context_item=context_item,
-    )
-
-
-def create_artifact_follow_up(
+def create_artifact_ask(
     db: Session,
     *,
     viewer_id: UUID,
     artifact_id: UUID,
-    request: MessageArtifactFollowUpRequest,
-) -> MessageArtifactFollowUpOut:
+    request: MessageArtifactAskRequest,
+) -> ChatRunCreateRequest:
     artifact = get_artifact(db, viewer_id=viewer_id, artifact_id=artifact_id)
-    return create_message_artifact_follow_up(
-        db,
-        viewer_id=viewer_id,
-        message_id=artifact.message_id,
-        artifact_id=artifact_id,
-        request=request,
+    part = None
+    if request.artifact_part_id is not None:
+        part = next(
+            (candidate for candidate in artifact.parts if candidate.id == request.artifact_part_id),
+            None,
+        )
+        if part is None:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Artifact part not found")
+    if part is not None:
+        context = artifact_part_context_ref(
+            artifact_part_id=part.id,
+            artifact_id=artifact.id,
+            source_version=part.source_version,
+            locator=part.locator,
+            evidence_span_id=part.evidence_span_id,
+            evidence_span_ids=part.evidence_span_ids,
+            artifact_kind=artifact.artifact_kind,
+            message_id=artifact.message_id,
+            conversation_id=artifact.conversation_id,
+            artifact_key=artifact.artifact_key,
+            artifact_version=artifact.artifact_version,
+            artifact_title=artifact.title,
+            ordinal=part.ordinal,
+            part_key=part.part_key,
+            part_type=part.part_type,
+            text=part.text,
+            source_ref=part.source_ref,
+            context_ref=part.context_ref,
+            result_ref=part.result_ref,
+            source_refs=part.source_refs,
+            metadata=part.metadata,
+        )
+    else:
+        context = MessageContextRef(
+            type="artifact",
+            id=artifact.id,
+            artifact_id=artifact.id,
+            artifact_key=artifact.artifact_key,
+            artifact_version=artifact.artifact_version,
+            artifact_part_provenance=_artifact_provenance(artifact),
+        )
+    payload = ChatRunCreateRequest(
+        conversation_id=artifact.conversation_id,
+        parent_message_id=artifact.message_id,
+        branch_anchor=AssistantMessageBranchAnchorRequest(
+            kind="assistant_message",
+            message_id=artifact.message_id,
+        ),
+        content=request.content,
+        model_id=request.model_id,
+        reasoning=request.reasoning,
+        key_mode=request.key_mode,
+        contexts=[context],
+        web_search=request.web_search,
+        artifact_intent=ArtifactIntentOptions(kind="off"),
     )
+    return payload
 
 
 def _artifact_citation_manifest(
@@ -2023,203 +1793,17 @@ def _artifact_pdf(artifact: MessageArtifactOut) -> str:
     return body.decode("latin-1")
 
 
-def _artifact_part_for_follow_up(
-    artifact: MessageArtifactOut,
-    artifact_part_id: UUID | None,
-) -> MessageArtifactPartOut | None:
-    if artifact_part_id is None:
-        return None
-    for part in artifact.parts:
-        if part.id == artifact_part_id:
-            return part
-    raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Artifact part not found")
-
-
-def _artifact_part_provenance(
-    artifact: MessageArtifactOut,
-    part: MessageArtifactPartOut | None,
-) -> MessageArtifactPartProvenance:
-    if part is None:
-        return MessageArtifactPartProvenance(
-            type="artifact",
-            artifact_id=artifact.id,
-            artifact_kind=artifact.artifact_kind,
-            message_id=artifact.message_id,
-            conversation_id=artifact.conversation_id,
-            artifact_key=artifact.artifact_key,
-            artifact_title=artifact.title,
-        )
+def _artifact_provenance(artifact: MessageArtifactOut) -> MessageArtifactPartProvenance:
     return MessageArtifactPartProvenance(
-        type="artifact_part",
+        type="artifact",
         artifact_id=artifact.id,
         artifact_kind=artifact.artifact_kind,
         message_id=artifact.message_id,
         conversation_id=artifact.conversation_id,
         artifact_key=artifact.artifact_key,
+        artifact_version=artifact.artifact_version,
         artifact_title=artifact.title,
-        artifact_part_id=part.id,
-        ordinal=part.ordinal,
-        part_key=part.part_key,
-        part_type=part.part_type,
-        text=part.text,
-        source_version=part.source_version,
-        locator=part.locator,
-        source_ref=part.source_ref,
-        context_ref=part.context_ref,
-        result_ref=part.result_ref,
-        evidence_span_id=part.evidence_span_id,
-        evidence_span_ids=part.evidence_span_ids,
-        source_refs=part.source_refs,
-        metadata=part.metadata,
     )
-
-
-def _create_artifact_follow_up_context_item(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    target_message_id: UUID,
-    artifact: MessageArtifactOut,
-    part: MessageArtifactPartOut | None,
-    provenance: MessageArtifactPartProvenance,
-) -> MessageArtifactFollowUpContextItemOut:
-    target_message = db.get(Message, target_message_id)
-    if (
-        target_message is None
-        or target_message.conversation is None
-        or target_message.conversation.owner_user_id != viewer_id
-    ):
-        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-    if target_message.conversation_id != artifact.conversation_id or target_message.role != "user":
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Artifact follow-up context must attach to a user message in the same conversation",
-        )
-
-    ordinal = db.scalar(
-        select(MessageContextItem.ordinal)
-        .where(MessageContextItem.message_id == target_message.id)
-        .order_by(MessageContextItem.ordinal.desc())
-        .limit(1)
-    )
-    ordinal = 0 if ordinal is None else ordinal + 1
-    context_type = "artifact_part" if part is not None else "artifact"
-    context_id = part.id if part is not None else artifact.id
-    provenance_json = provenance.model_dump(mode="json", exclude_none=True)
-    snapshot: dict[str, object] = {
-        "kind": "object_ref",
-        "type": context_type,
-        "id": str(context_id),
-        "title": ((part.part_key or part.part_type) if part is not None else artifact.title)
-        or artifact.artifact_kind,
-        "preview": (part.text if part is not None else None) or artifact.preview_text,
-        "route": (
-            f"/conversations/{artifact.conversation_id}"
-            f"?artifact={artifact.id}" + (f"&artifactPart={part.id}" if part is not None else "")
-        ),
-        "artifact_part_provenance": provenance_json,
-    }
-    snapshot = {key: value for key, value in snapshot.items() if value is not None}
-    row = MessageContextItem(
-        message_id=target_message.id,
-        user_id=viewer_id,
-        context_kind="object_ref",
-        object_type=context_type,
-        object_id=context_id,
-        source_media_id=None,
-        locator_json=None,
-        ordinal=ordinal,
-        context_snapshot_json=snapshot,
-    )
-    db.add(row)
-    db.flush()
-    db.add(
-        ObjectLink(
-            user_id=viewer_id,
-            relation_type="used_as_context",
-            a_type="message",
-            a_id=target_message.id,
-            b_type=context_type,
-            b_id=context_id,
-            a_order_key=f"{ordinal + 1:010d}",
-            b_order_key=None,
-            a_locator_json=None,
-            b_locator_json=None,
-            metadata_json={"artifact_part_provenance": provenance_json},
-        )
-    )
-    db.commit()
-    db.refresh(row)
-    return MessageArtifactFollowUpContextItemOut.model_validate(
-        {
-            "id": str(row.id),
-            "message_id": str(row.message_id),
-            "object_ref": {
-                "objectType": context_type,
-                "objectId": str(context_id),
-            },
-            "ordinal": row.ordinal,
-            "context_snapshot": row.context_snapshot_json,
-            "created_at": row.created_at.isoformat(),
-        }
-    )
-
-
-def list_source_manifests(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    conversation_id: UUID,
-) -> list[SourceManifestOut]:
-    get_conversation_for_visible_read_or_404(db, viewer_id, conversation_id)
-    rows = (
-        db.execute(
-            select(SourceManifest)
-            .where(SourceManifest.conversation_id == conversation_id)
-            .order_by(
-                SourceManifest.created_at.asc(),
-                SourceManifest.tool_call_index.asc(),
-                SourceManifest.id.asc(),
-            )
-        )
-        .scalars()
-        .all()
-    )
-    latest_rows: dict[tuple[UUID, str, int], SourceManifest] = {}
-    for row in rows:
-        latest_rows[(row.assistant_message_id, row.tool_name, row.tool_call_index)] = row
-
-    return [
-        SourceManifestOut(
-            id=row.id,
-            conversation_id=row.conversation_id,
-            assistant_message_id=row.assistant_message_id,
-            chat_run_id=row.chat_run_id,
-            tool_call_id=row.tool_call_id,
-            tool_name=row.tool_name,
-            tool_call_index=row.tool_call_index,
-            query_hash=row.query_hash,
-            scope=row.scope,
-            filters=row.filters,
-            requested_types=row.requested_types,
-            candidate_count=row.candidate_count,
-            result_count=row.result_count,
-            selected_count=row.selected_count,
-            included_in_prompt_count=row.included_in_prompt_count,
-            excluded_by_budget_count=row.excluded_by_budget_count,
-            excluded_by_scope_count=row.excluded_by_scope_count,
-            stale_count=row.stale_count,
-            unreadable_count=row.unreadable_count,
-            web_search_mode=cast(Any, row.web_search_mode),
-            index_versions=row.index_versions,
-            metadata=row.metadata_json,
-            latency_ms=row.latency_ms,
-            status=row.status,
-            created_at=row.created_at,
-            updated_at=row.updated_at,
-        )
-        for row in latest_rows.values()
-    ]
 
 
 def _get_message_for_visible_read_or_404(
@@ -2227,12 +1811,9 @@ def _get_message_for_visible_read_or_404(
     *,
     viewer_id: UUID,
     message_id: UUID,
-    conversation_id: UUID | None = None,
 ) -> Message:
     message = db.get(Message, message_id)
-    if message is None or (
-        conversation_id is not None and message.conversation_id != conversation_id
-    ):
+    if message is None:
         raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
     try:
         get_conversation_for_visible_read_or_404(db, viewer_id, message.conversation_id)
@@ -2246,13 +1827,11 @@ def list_message_verifier_runs(
     *,
     viewer_id: UUID,
     message_id: UUID,
-    conversation_id: UUID | None = None,
 ) -> list[AssistantVerifierRunOut]:
     _get_message_for_visible_read_or_404(
         db,
         viewer_id=viewer_id,
         message_id=message_id,
-        conversation_id=conversation_id,
     )
     rows = db.scalars(
         select(AssistantMessageVerifierRun)
@@ -2283,43 +1862,17 @@ def list_message_verifier_runs(
     ]
 
 
-def list_message_citation_audits(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    message_id: UUID,
-    conversation_id: UUID | None = None,
-) -> list[MessageCitationAuditOut]:
-    _get_message_for_visible_read_or_404(
-        db,
-        viewer_id=viewer_id,
-        message_id=message_id,
-        conversation_id=conversation_id,
-    )
-    rows = db.scalars(
-        select(AssistantMessageCitationAudit)
-        .where(AssistantMessageCitationAudit.message_id == message_id)
-        .order_by(
-            AssistantMessageCitationAudit.created_at.asc(),
-            AssistantMessageCitationAudit.id.asc(),
-        )
-    ).all()
-    return [MessageCitationAuditOut.model_validate(row, from_attributes=True) for row in rows]
-
-
 def list_message_retrieval_candidate_ledgers(
     db: Session,
     *,
     viewer_id: UUID,
     message_id: UUID,
-    conversation_id: UUID | None = None,
     tool_call_id: UUID | None = None,
 ) -> list[MessageRetrievalCandidateLedgerOut]:
     _get_message_for_visible_read_or_404(
         db,
         viewer_id=viewer_id,
         message_id=message_id,
-        conversation_id=conversation_id,
     )
     stmt = (
         select(
@@ -2394,14 +1947,12 @@ def list_message_rerank_ledgers(
     *,
     viewer_id: UUID,
     message_id: UUID,
-    conversation_id: UUID | None = None,
     tool_call_id: UUID | None = None,
 ) -> list[MessageRerankLedgerOut]:
     _get_message_for_visible_read_or_404(
         db,
         viewer_id=viewer_id,
         message_id=message_id,
-        conversation_id=conversation_id,
     )
     stmt = (
         select(MessageRerankLedger)

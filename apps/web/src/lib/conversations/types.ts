@@ -1,5 +1,4 @@
 import type {
-  ArtifactIntentOptions,
   ContextItemColor,
   ContextItemType,
   ChatToolStatus,
@@ -115,9 +114,6 @@ export type MessageRetrievalResultRef =
   | WebCitationEventData;
 
 export type MessageRetrievalLocator = RetrievalLocator;
-
-export type AppRetrievalResultRef = SearchCitationEventData;
-export type WebRetrievalResultRef = WebCitationEventData;
 
 export type ConversationSourceRefType =
   | "message"
@@ -516,42 +512,6 @@ export interface MessageArtifactExportLedger {
   manifest_sha256: string;
   metadata?: Record<string, unknown>;
   created_at: string;
-}
-
-export interface MessageArtifactChatRunPayload {
-  conversation_id: string;
-  parent_message_id: string;
-  branch_anchor: BranchAnchor;
-  content: string;
-  model_id: string;
-  reasoning: string;
-  key_mode: string;
-  contexts: Array<{
-    kind: "object_ref";
-    type: ContextItemType;
-    id: string;
-    evidence_span_ids?: string[];
-    artifact_id?: string;
-    artifact_key?: string | null;
-    artifact_version?: number | null;
-    source_version?: string;
-    locator?: RetrievalLocator;
-    artifact_part_provenance?: Record<string, unknown>;
-  }>;
-  web_search: {
-    mode: "off" | "auto" | "required";
-    freshness_days?: number | null;
-    allowed_domains?: string[];
-    blocked_domains?: string[];
-  };
-  artifact_intent: ArtifactIntentOptions;
-}
-
-export interface MessageArtifactFollowUp {
-  mode: "context_item" | "chat_run_payload";
-  artifact_part_provenance: Record<string, unknown>;
-  context_item?: Record<string, unknown> | null;
-  chat_run_payload?: MessageArtifactChatRunPayload | null;
 }
 
 export interface MessageDocument {

@@ -44,6 +44,12 @@ interface SearchBaseResult {
     type: SearchType;
     id: string;
     evidence_span_ids?: string[];
+    artifact_id?: string | null;
+    artifact_key?: string | null;
+    artifact_version?: number | null;
+    source_version?: string | null;
+    locator?: RetrievalLocator | null;
+    artifact_part_provenance?: Record<string, unknown> | null;
   };
 }
 
@@ -201,6 +207,12 @@ export interface SearchResultRowViewModel {
     type: SearchType;
     id: string;
     evidenceSpanIds: string[];
+    artifactId?: string;
+    artifactKey?: string | null;
+    artifactVersion?: number | null;
+    sourceVersion?: string;
+    locator?: RetrievalLocator;
+    artifactPartProvenance?: Record<string, unknown>;
   } | null;
   typeLabel: string;
   primaryText: string;
@@ -417,6 +429,40 @@ function normalizeSearchResult(result: unknown): SearchApiResult | null {
     }
     evidenceSpanIds = contextRef.evidence_span_ids;
   }
+  const artifactContextFields =
+    contextRef.type === "artifact_part"
+      ? {
+          artifact_id:
+            typeof contextRef.artifact_id === "string" ? contextRef.artifact_id : null,
+          artifact_key:
+            typeof contextRef.artifact_key === "string" || contextRef.artifact_key === null
+              ? contextRef.artifact_key
+              : undefined,
+          artifact_version:
+            typeof contextRef.artifact_version === "number"
+              ? contextRef.artifact_version
+              : contextRef.artifact_version === null
+                ? null
+                : undefined,
+          source_version:
+            typeof contextRef.source_version === "string" ? contextRef.source_version : null,
+          locator: isRetrievalLocator(contextRef.locator) ? contextRef.locator : null,
+          artifact_part_provenance: isPlainRecord(contextRef.artifact_part_provenance)
+            ? contextRef.artifact_part_provenance
+            : null,
+        }
+      : null;
+  if (
+    artifactContextFields &&
+    (!artifactContextFields.artifact_id ||
+      artifactContextFields.artifact_key === undefined ||
+      artifactContextFields.artifact_version === undefined ||
+      !artifactContextFields.source_version ||
+      !artifactContextFields.locator ||
+      !artifactContextFields.artifact_part_provenance)
+  ) {
+    return null;
+  }
 
   const base = {
     id: row.id,
@@ -432,6 +478,16 @@ function normalizeSearchResult(result: unknown): SearchApiResult | null {
       type: contextRef.type as SearchType,
       id: contextRef.id,
       ...(evidenceSpanIds ? { evidence_span_ids: evidenceSpanIds } : {}),
+      ...(artifactContextFields
+        ? {
+            artifact_id: artifactContextFields.artifact_id,
+            artifact_key: artifactContextFields.artifact_key,
+            artifact_version: artifactContextFields.artifact_version,
+            source_version: artifactContextFields.source_version,
+            locator: artifactContextFields.locator,
+            artifact_part_provenance: artifactContextFields.artifact_part_provenance,
+          }
+        : {}),
     },
   };
 
@@ -723,7 +779,9 @@ function normalizeSearchResult(result: unknown): SearchApiResult | null {
         typeof row.source_version !== "string" ||
         !isRetrievalLocator(row.locator) ||
         !locatorMatchesSearchType("artifact_part", row.locator) ||
-        base.context_ref.type !== "artifact_part"
+        base.context_ref.type !== "artifact_part" ||
+        base.context_ref.artifact_id !== row.artifact_id ||
+        base.context_ref.source_version !== row.source_version
       ) {
         return null;
       }
@@ -1013,6 +1071,12 @@ function adaptSearchResultRow(
       type: result.context_ref.type,
       id: result.context_ref.id,
       evidenceSpanIds: result.context_ref.evidence_span_ids ?? [],
+      artifactId: result.context_ref.artifact_id ?? undefined,
+      artifactKey: result.context_ref.artifact_key,
+      artifactVersion: result.context_ref.artifact_version,
+      sourceVersion: result.context_ref.source_version ?? undefined,
+      locator: result.context_ref.locator ?? undefined,
+      artifactPartProvenance: result.context_ref.artifact_part_provenance ?? undefined,
     },
     typeLabel:
       result.type === "content_chunk"

@@ -3,16 +3,123 @@
 from uuid import UUID
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment
+from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.message_context_snapshots import object_ref_context_snapshot
 from tests.factories import create_test_conversation_with_message, create_test_media
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+
+def _content_chunk_context_snapshot(
+    session: Session,
+    content_chunk_id: UUID,
+) -> dict[str, object]:
+    row = (
+        session.execute(
+            text("""
+                SELECT
+                    cc.id AS content_chunk_id,
+                    cc.media_id,
+                    cc.chunk_text,
+                    m.kind AS media_kind,
+                    m.title AS media_title,
+                    es.id AS evidence_span_id,
+                    es.resolver_kind,
+                    es.selector,
+                    es.span_text,
+                    ss.source_version
+                FROM content_chunks cc
+                JOIN media m ON m.id = cc.media_id
+                JOIN evidence_spans es ON es.id = cc.primary_evidence_span_id
+                JOIN source_snapshots ss ON ss.id = es.source_snapshot_id
+                WHERE cc.id = :content_chunk_id
+            """),
+            {"content_chunk_id": content_chunk_id},
+        )
+        .mappings()
+        .one()
+    )
+    selector = row["selector"]
+    if not isinstance(selector, dict):
+        raise AssertionError("content chunk evidence selector must be an object")
+
+    fragment_id = selector.get("fragment_id")
+    start_offset = selector.get("start_offset")
+    end_offset = selector.get("end_offset")
+    if (
+        not isinstance(fragment_id, str)
+        or not isinstance(start_offset, int)
+        or not isinstance(end_offset, int)
+    ):
+        raise AssertionError("content chunk evidence selector must include fragment offsets")
+
+    quote = selector.get("text_quote")
+    quote = quote if isinstance(quote, dict) else {}
+    exact = str(quote.get("exact") or row["span_text"] or "")
+    prefix = quote.get("prefix") if isinstance(quote.get("prefix"), str) else None
+    suffix = quote.get("suffix") if isinstance(quote.get("suffix"), str) else None
+
+    media_kind = row["media_kind"]
+    if not isinstance(media_kind, str) or not media_kind:
+        raise AssertionError("content chunk media kind is required")
+
+    resolver_kind = row["resolver_kind"]
+    if resolver_kind == "web":
+        raw_locator = {
+            "type": "web_text_offsets",
+            "media_id": str(row["media_id"]),
+            "fragment_id": fragment_id,
+            "start_offset": start_offset,
+            "end_offset": end_offset,
+            "media_kind": media_kind,
+            "text_quote_selector": {"exact": exact, "prefix": prefix, "suffix": suffix},
+        }
+    elif resolver_kind == "epub":
+        raw_locator = {
+            "type": "epub_fragment_offsets",
+            "media_id": str(row["media_id"]),
+            "section_id": selector.get("section_id")
+            if isinstance(selector.get("section_id"), str)
+            else None,
+            "fragment_id": fragment_id,
+            "start_offset": start_offset,
+            "end_offset": end_offset,
+            "media_kind": media_kind,
+            "text_quote_selector": {"exact": exact, "prefix": prefix, "suffix": suffix},
+        }
+    else:
+        raise AssertionError("content chunk fixture only supports web/epub evidence spans")
+
+    locator = retrieval_locator_json(raw_locator)
+    if locator is None:
+        raise AssertionError("content chunk locator is required")
+    source_version = row["source_version"]
+    if not isinstance(source_version, str) or not source_version:
+        raise AssertionError("content chunk source_version is required")
+
+    media_title = str(row["media_title"] or "Untitled")
+    return object_ref_context_snapshot(
+        object_type="content_chunk",
+        object_id=content_chunk_id,
+        title=media_title,
+        preview=str(row["chunk_text"] or "")[:300],
+        route=f"/media/{row['media_id']}",
+        evidence_span_ids=[row["evidence_span_id"]],
+        media_id=row["media_id"],
+        media_kind=media_kind,
+        media_title=media_title,
+        locator=locator,
+        source_version=source_version,
+    )
 
 
 def test_delete_document_hides_shared_member_copy(auth_client, direct_db: DirectSessionManager):
@@ -76,16 +183,32 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
         session.execute(
             text("""
                 INSERT INTO message_context_items (
-                    message_id, user_id, object_type, object_id, ordinal, context_snapshot
+                    message_id,
+                    user_id,
+                    context_kind,
+                    object_type,
+                    object_id,
+                    source_media_id,
+                    ordinal,
+                    context_snapshot
                 )
                 VALUES (
-                    :message_id, :user_id, 'content_chunk', :content_chunk_id, 0, '{}'::jsonb
+                    :message_id,
+                    :user_id,
+                    'object_ref',
+                    'content_chunk',
+                    :content_chunk_id,
+                    :media_id,
+                    0,
+                    :context_snapshot
                 )
-            """),
+            """).bindparams(bindparam("context_snapshot", type_=JSONB)),
             {
                 "message_id": message_id,
                 "user_id": member_id,
                 "content_chunk_id": content_chunk_id,
+                "media_id": media_id,
+                "context_snapshot": _content_chunk_context_snapshot(session, content_chunk_id),
             },
         )
         session.execute(
@@ -122,15 +245,30 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
                             :user_id,
                             'reader_selection',
                             :media_id,
-                            '{"kind":"fragment_offsets"}'::jsonb,
+                            jsonb_build_object(
+                                'type', 'web_text_offsets',
+                                'media_id', CAST(:media_id_text AS text),
+                                'fragment_id', CAST(:fragment_id_text AS text),
+                                'start_offset', 0,
+                                'end_offset', 4
+                            ),
                             1,
                             jsonb_build_object(
                                 'kind', 'reader_selection',
+                                'client_context_id', gen_random_uuid()::text,
                                 'media_id', CAST(:media_id_text AS text),
+                                'source_media_id', CAST(:media_id_text AS text),
                                 'media_title', 'Shared chunk',
                                 'media_kind', 'web_article',
                                 'exact', 'Shared chunk text',
-                                'locator', '{"kind":"fragment_offsets"}'::jsonb
+                                'locator', jsonb_build_object(
+                                    'type', 'web_text_offsets',
+                                    'media_id', CAST(:media_id_text AS text),
+                                    'fragment_id', CAST(:fragment_id_text AS text),
+                                    'start_offset', 0,
+                                    'end_offset', 4
+                                ),
+                                'source_version', 'fragments_v1'
                             )
                         )
                         RETURNING id
@@ -140,6 +278,7 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
                         "user_id": member_id,
                         "media_id": media_id,
                         "media_id_text": str(media_id),
+                        "fragment_id_text": str(fragment_id),
                     },
                 ).scalar_one()
             )
@@ -371,17 +510,33 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
             text(
                 """
                 INSERT INTO message_context_items (
-                    message_id, user_id, object_type, object_id, ordinal, context_snapshot
+                    message_id,
+                    user_id,
+                    context_kind,
+                    object_type,
+                    object_id,
+                    source_media_id,
+                    ordinal,
+                    context_snapshot
                 )
                 VALUES (
-                    :message_id, :user_id, 'content_chunk', :content_chunk_id, 0, '{}'::jsonb
+                    :message_id,
+                    :user_id,
+                    'object_ref',
+                    'content_chunk',
+                    :content_chunk_id,
+                    :media_id,
+                    0,
+                    :context_snapshot
                 )
                 """
-            ),
+            ).bindparams(bindparam("context_snapshot", type_=JSONB)),
             {
                 "message_id": message_id,
                 "user_id": user_id,
                 "content_chunk_id": content_chunk_id,
+                "media_id": media_id,
+                "context_snapshot": _content_chunk_context_snapshot(session, content_chunk_id),
             },
         )
         session.execute(
@@ -426,15 +581,30 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
                             :user_id,
                             'reader_selection',
                             :media_id,
-                            '{"kind":"fragment_offsets"}'::jsonb,
+                            jsonb_build_object(
+                                'type', 'web_text_offsets',
+                                'media_id', CAST(:media_id_text AS text),
+                                'fragment_id', CAST(:fragment_id_text AS text),
+                                'start_offset', 0,
+                                'end_offset', 5
+                            ),
                             1,
                             jsonb_build_object(
                                 'kind', 'reader_selection',
+                                'client_context_id', gen_random_uuid()::text,
                                 'media_id', CAST(:media_id_text AS text),
+                                'source_media_id', CAST(:media_id_text AS text),
                                 'media_title', 'Hello',
                                 'media_kind', 'web_article',
                                 'exact', 'Hello world',
-                                'locator', '{"kind":"fragment_offsets"}'::jsonb
+                                'locator', jsonb_build_object(
+                                    'type', 'web_text_offsets',
+                                    'media_id', CAST(:media_id_text AS text),
+                                    'fragment_id', CAST(:fragment_id_text AS text),
+                                    'start_offset', 0,
+                                    'end_offset', 5
+                                ),
+                                'source_version', 'fragments_v1'
                             )
                         )
                         RETURNING id
@@ -444,6 +614,7 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
                         "user_id": user_id,
                         "media_id": media_id,
                         "media_id_text": str(media_id),
+                        "fragment_id_text": str(fragment_id),
                     },
                 ).scalar_one()
             )

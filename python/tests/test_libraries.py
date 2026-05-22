@@ -14,9 +14,9 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import text
 
-from nexus.storage.client import FakeStorageClient
 from tests.factories import create_test_media
 from tests.helpers import auth_headers, create_test_user_id
+from tests.support.storage import FakeStorageClient
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration

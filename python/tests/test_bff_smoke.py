@@ -1,9 +1,8 @@
 """BFF Smoke Tests.
 
 These tests verify the BFF security boundary:
-1. Bearer token forwarded correctly to FastAPI
-2. X-Nexus-Internal header attached by proxy
-3. Direct FastAPI call without internal header → 403 (when NEXUS_ENV=staging)
+1. Bearer tokens are validated correctly by FastAPI
+2. Direct FastAPI calls without the internal header are rejected in staging/prod mode
 
 Note: These tests hit FastAPI directly to verify header behavior.
 The actual Next.js → FastAPI integration is verified via end-to-end tests.
@@ -18,80 +17,6 @@ from tests.helpers import auth_headers
 from tests.support.mock_verifier import MockJwtVerifier
 
 pytestmark = pytest.mark.integration
-
-
-class TestEchoHeadersEndpoint:
-    """Test the /__test/echo_headers endpoint.
-
-    This endpoint is only available when NEXUS_ENV=test.
-    """
-
-    @pytest.fixture
-    def test_app(self, engine):
-        """Create app with test routes enabled."""
-        from uuid import UUID
-
-        from nexus.db.session import create_session_factory
-        from nexus.services.bootstrap import ensure_user_and_default_library
-
-        session_factory = create_session_factory(engine)
-
-        def bootstrap_callback(user_id: UUID, email: str | None = None) -> UUID:
-            db = session_factory()
-            try:
-                return ensure_user_and_default_library(db, user_id, email=email)
-            finally:
-                db.close()
-
-        verifier = MockJwtVerifier()
-        app = create_app(skip_auth_middleware=True)
-
-        app.add_middleware(
-            AuthMiddleware,
-            verifier=verifier,
-            requires_internal_header=False,
-            internal_secret=None,
-            bootstrap_callback=bootstrap_callback,
-        )
-
-        return app
-
-    @pytest.fixture
-    def test_client(self, test_app, db_session):
-        """Create test client with test routes."""
-        with TestClient(test_app) as client:
-            yield client
-
-    def test_echo_headers_returns_request_headers(self, test_client, test_user_id):
-        """Test that echo_headers returns all request headers."""
-        headers = auth_headers(test_user_id)
-        headers["X-Custom-Header"] = "custom-value"
-
-        response = test_client.get("/__test/echo_headers", headers=headers)
-
-        # Should return 200 with headers
-        assert response.status_code == 200
-        data = response.json()
-        assert "data" in data
-        assert "headers" in data["data"]
-
-        # Check that our custom header was received
-        headers_dict = data["data"]["headers"]
-        assert headers_dict.get("x-custom-header") == "custom-value"
-
-    def test_echo_headers_receives_authorization(self, test_client, test_user_id):
-        """Test that Authorization header is received correctly."""
-        headers = auth_headers(test_user_id)
-
-        response = test_client.get("/__test/echo_headers", headers=headers)
-
-        assert response.status_code == 200
-        data = response.json()
-        headers_dict = data["data"]["headers"]
-
-        # Authorization header should be present
-        assert "authorization" in headers_dict
-        assert headers_dict["authorization"].startswith("Bearer ")
 
 
 class TestInternalHeaderEnforcement:

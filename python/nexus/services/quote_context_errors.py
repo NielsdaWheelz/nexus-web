@@ -21,15 +21,3 @@ class QuoteContextBlockingError(Exception):
         self.error_code = error_code
         self.message = message or _DEFAULT_MESSAGES.get(error_code, "Quote context unavailable.")
         super().__init__(self.message)
-
-
-def get_quote_context_error_message(error_code: str | ApiErrorCode) -> str:
-    """Resolve a user-safe message for a quote-context error code."""
-    if isinstance(error_code, ApiErrorCode):
-        code = error_code
-    else:
-        try:
-            code = ApiErrorCode(error_code)
-        except ValueError:
-            return "Quote context unavailable."
-    return _DEFAULT_MESSAGES.get(code, "Quote context unavailable.")

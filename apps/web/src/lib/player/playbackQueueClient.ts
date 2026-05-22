@@ -30,13 +30,6 @@ interface ApiEnvelope<T> {
 
 export const PLAYBACK_QUEUE_UPDATED_EVENT = "nexus:playback-queue-updated";
 
-export function emitPlaybackQueueUpdated(): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.dispatchEvent(new CustomEvent(PLAYBACK_QUEUE_UPDATED_EVENT));
-}
-
 export async function fetchPlaybackQueue(): Promise<PlaybackQueueItem[]> {
   const response = await apiFetch<ApiEnvelope<PlaybackQueueItem[]>>("/api/playback/queue");
   return Array.isArray(response.data) ? response.data : [];

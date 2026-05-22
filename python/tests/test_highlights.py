@@ -27,6 +27,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.schemas.conversation import MessageContextRef
+from nexus.services import contexts as contexts_service
 from tests.factories import (
     add_media_to_library as add_media_entry_to_library,
 )
@@ -34,6 +36,7 @@ from tests.factories import (
     create_epub_chapter_fragment,
     create_epub_media_in_library,
     create_pdf_media_with_text,
+    create_searchable_media,
     get_user_default_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
@@ -2133,9 +2136,14 @@ class TestListMediaHighlights:
     ):
         """linked_note_blocks and linked_conversations are populated per highlight."""
         user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
-            media_id, fragment_id = create_media_and_fragment(session)
+            media_id = create_searchable_media(session, user_id, title="Test Article")
+            fragment_id = session.execute(
+                text("SELECT id FROM fragments WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar_one()
 
         direct_db.register_cleanup("pages", "user_id", user_id)
         direct_db.register_cleanup("note_blocks", "user_id", user_id)
@@ -2144,8 +2152,6 @@ class TestListMediaHighlights:
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-
-        add_media_to_library(auth_client, user_id, media_id)
 
         create_resp = auth_client.post(
             f"/fragments/{fragment_id}/highlights",
@@ -2175,19 +2181,18 @@ class TestListMediaHighlights:
                 """),
                 {"id": message_id, "conversation_id": conversation_id},
             )
+            context = contexts_service.insert_context(
+                db=session,
+                message_id=message_id,
+                ordinal=0,
+                context=MessageContextRef(
+                    kind="object_ref",
+                    type="highlight",
+                    id=UUID(highlight_id),
+                ),
+            )
             session.commit()
-        context_resp = auth_client.post(
-            "/message-context-items",
-            json={
-                "message_id": str(message_id),
-                "object_type": "highlight",
-                "object_id": highlight_id,
-                "ordinal": 0,
-            },
-            headers=auth_headers(user_id),
-        )
-        assert context_resp.status_code == 201, context_resp.text
-        context_id = context_resp.json()["data"]["id"]
+            context_id = context.id
         direct_db.register_cleanup("message_context_items", "id", context_id)
         direct_db.register_cleanup("messages", "id", message_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)

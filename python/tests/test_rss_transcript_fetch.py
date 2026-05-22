@@ -180,7 +180,7 @@ class TestRssTranscriptFetchBoundary:
         ]
         called_urls: list[str] = []
 
-        def fake_http_get(url: str, **kwargs):  # noqa: ANN003
+        def fake_http_get(url: str, **kwargs: object) -> httpx.Response:
             _ = kwargs
             called_urls.append(url)
             if url.endswith("episode-es.vtt"):
@@ -221,7 +221,7 @@ class TestRssTranscriptFetchBoundary:
     def test_fetch_rejects_payloads_over_size_limit(self, monkeypatch):
         refs = [{"url": "https://cdn.example.com/transcripts/huge.vtt", "type": "text/vtt"}]
 
-        def fake_http_get(url: str, **kwargs):  # noqa: ANN003
+        def fake_http_get(url: str, **kwargs: object) -> httpx.Response:
             _ = kwargs
             return httpx.Response(
                 200,

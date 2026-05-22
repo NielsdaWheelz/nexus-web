@@ -2482,7 +2482,7 @@ export default function MediaPaneBody() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-fetch when active fragment changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: only re-fetch when active fragment changes
   }, [activeContent?.fragmentId]);
 
   // Media-wide highlights for the overview ruler: loaded once per media open.
@@ -2856,7 +2856,7 @@ export default function MediaPaneBody() {
         expectedLength: [...activeContent.canonicalText].length,
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuild when rendered content changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: rebuild when rendered content changes
   }, [activeContent?.fragmentId, activeContent?.canonicalText, renderedHtml]);
 
   useEffect(() => {

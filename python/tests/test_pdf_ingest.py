@@ -22,8 +22,8 @@ from nexus.services.pdf_ingest import (
     normalize_pdf_text,
     validate_page_spans,
 )
-from nexus.storage.client import FakeStorageClient
 from nexus.tasks.ingest_pdf import run_pdf_ingest_sync
+from tests.support.storage import FakeStorageClient
 
 
 def _make_simple_pdf(text_content: str = "Hello World", num_pages: int = 1) -> bytes:

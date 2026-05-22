@@ -8,7 +8,12 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, Message, MessageRetrieval, MessageToolCall, Model
-from nexus.services.context_assembler import assemble_chat_context
+from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.services.context_assembler import (
+    assemble_chat_context,
+    load_message_context_refs,
+    message_context_ref_payloads,
+)
 from nexus.services.context_rendering import PROMPT_VERSION
 from tests.factories import (
     create_test_conversation,
@@ -45,6 +50,125 @@ def _create_run(
     db_session.add(run)
     db_session.commit()
     return run
+
+
+def _insert_reader_selection_context_row(
+    db_session: Session,
+    *,
+    message_id: UUID,
+    user_id: UUID,
+    source_media_id: UUID,
+    locator: dict[str, object],
+    snapshot: dict[str, object],
+    ordinal: int = 0,
+) -> None:
+    db_session.execute(
+        text(
+            """
+            INSERT INTO message_context_items (
+                message_id,
+                user_id,
+                context_kind,
+                source_media_id,
+                locator_json,
+                ordinal,
+                context_snapshot
+            )
+            VALUES (
+                :message_id,
+                :user_id,
+                'reader_selection',
+                :source_media_id,
+                :locator_json,
+                :ordinal,
+                :context_snapshot
+            )
+            """
+        ).bindparams(
+            bindparam("locator_json", type_=JSONB),
+            bindparam("context_snapshot", type_=JSONB),
+        ),
+        {
+            "message_id": message_id,
+            "user_id": user_id,
+            "source_media_id": source_media_id,
+            "locator_json": locator,
+            "ordinal": ordinal,
+            "context_snapshot": snapshot,
+        },
+    )
+
+
+def _insert_object_ref_context_row(
+    db_session: Session,
+    *,
+    message_id: UUID,
+    user_id: UUID,
+    object_type: str,
+    object_id: UUID,
+    snapshot: dict[str, object],
+    ordinal: int = 0,
+) -> None:
+    db_session.execute(
+        text(
+            """
+            INSERT INTO message_context_items (
+                message_id,
+                user_id,
+                context_kind,
+                object_type,
+                object_id,
+                ordinal,
+                context_snapshot
+            )
+            VALUES (
+                :message_id,
+                :user_id,
+                'object_ref',
+                :object_type,
+                :object_id,
+                :ordinal,
+                :context_snapshot
+            )
+            """
+        ).bindparams(bindparam("context_snapshot", type_=JSONB)),
+        {
+            "message_id": message_id,
+            "user_id": user_id,
+            "object_type": object_type,
+            "object_id": object_id,
+            "ordinal": ordinal,
+            "context_snapshot": snapshot,
+        },
+    )
+
+
+def _artifact_context_snapshot(
+    artifact_id: UUID,
+    *,
+    artifact_key: str = "artifact-1",
+    artifact_version: int = 3,
+    title: str = "Attached Artifact",
+) -> tuple[dict[str, object], dict[str, object]]:
+    provenance = {
+        "type": "artifact",
+        "artifact_id": str(artifact_id),
+        "artifact_key": artifact_key,
+        "artifact_version": artifact_version,
+    }
+    return (
+        {
+            "kind": "object_ref",
+            "type": "artifact",
+            "id": str(artifact_id),
+            "title": title,
+            "artifact_id": str(artifact_id),
+            "artifact_key": artifact_key,
+            "artifact_version": artifact_version,
+            "artifact_part_provenance": provenance,
+        },
+        provenance,
+    )
 
 
 def test_assemble_chat_context_selects_recent_history_as_pairs(
@@ -151,51 +275,32 @@ def test_assemble_chat_context_exposes_reader_selection_locator_and_source_versi
         "start_offset": 4,
         "end_offset": 17,
     }
+    stale_row_locator = {
+        "type": "web_text_offsets",
+        "media_id": str(media_id),
+        "fragment_id": str(fragment_id),
+        "start_offset": 0,
+        "end_offset": 1,
+    }
     source_version = f"fragment:{fragment_id}"
-    db_session.execute(
-        text(
-            """
-            INSERT INTO message_context_items (
-                message_id,
-                user_id,
-                context_kind,
-                source_media_id,
-                locator_json,
-                ordinal,
-                context_snapshot
-            )
-            VALUES (
-                :message_id,
-                :user_id,
-                'reader_selection',
-                :source_media_id,
-                :locator_json,
-                0,
-                :context_snapshot
-            )
-            """
-        ).bindparams(
-            bindparam("locator_json", type_=JSONB),
-            bindparam("context_snapshot", type_=JSONB),
-        ),
-        {
-            "message_id": user_message_id,
-            "user_id": bootstrapped_user,
-            "source_media_id": media_id,
-            "locator_json": locator,
-            "context_snapshot": {
-                "kind": "reader_selection",
-                "client_context_id": str(client_context_id),
-                "media_id": str(media_id),
-                "source_media_id": str(media_id),
-                "media_kind": "web_article",
-                "media_title": "Stable Reader Source",
-                "exact": "attached quote",
-                "prefix": "Use ",
-                "suffix": " here.",
-                "locator": locator,
-                "source_version": source_version,
-            },
+    _insert_reader_selection_context_row(
+        db_session,
+        message_id=user_message_id,
+        user_id=bootstrapped_user,
+        source_media_id=media_id,
+        locator=stale_row_locator,
+        snapshot={
+            "kind": "reader_selection",
+            "client_context_id": str(client_context_id),
+            "media_id": str(media_id),
+            "source_media_id": str(media_id),
+            "media_kind": "web_article",
+            "media_title": "Stable Reader Source",
+            "exact": "attached quote",
+            "prefix": "Use ",
+            "suffix": " here.",
+            "locator": locator,
+            "source_version": source_version,
         },
     )
     db_session.commit()
@@ -234,6 +339,358 @@ def test_assemble_chat_context_exposes_reader_selection_locator_and_source_versi
         ref.get("source_version") == source_version and ref.get("locator") == locator
         for ref in assembly.ledger.included_context_refs
     )
+
+
+def test_assemble_chat_context_preserves_whole_artifact_context_metadata(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    model_id = create_test_model(db_session)
+    model = db_session.get(Model, model_id)
+    assert model is not None
+    model.max_context_tokens = 5000
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    root_user_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=1,
+        role="user",
+        content="Create an artifact.",
+    )
+    source_assistant_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=2,
+        role="assistant",
+        content="Artifact ready.",
+        parent_message_id=root_user_id,
+    )
+    current_user_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=3,
+        role="user",
+        content="Use the attached artifact.",
+        parent_message_id=source_assistant_id,
+    )
+    assistant_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=4,
+        role="assistant",
+        content="",
+        status="pending",
+        model_id=model_id,
+        parent_message_id=current_user_id,
+    )
+    artifact_id = uuid4()
+    artifact_version = 3
+    snapshot, provenance = _artifact_context_snapshot(
+        artifact_id,
+        artifact_key="artifact-1",
+        artifact_version=artifact_version,
+        title="Timeline",
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO message_artifacts (
+                id, conversation_id, message_id, artifact_key,
+                artifact_version, artifact_kind, title, status, preview_text
+            )
+            VALUES (
+                :artifact_id, :conversation_id, :message_id, 'artifact-1',
+                :artifact_version, 'timeline', 'Timeline', 'complete', 'Timeline preview'
+            )
+            """
+        ),
+        {
+            "artifact_id": artifact_id,
+            "conversation_id": conversation_id,
+            "message_id": source_assistant_id,
+            "artifact_version": artifact_version,
+        },
+    )
+    _insert_object_ref_context_row(
+        db_session,
+        message_id=current_user_id,
+        user_id=bootstrapped_user,
+        object_type="artifact",
+        object_id=artifact_id,
+        snapshot=snapshot,
+    )
+    db_session.commit()
+    run = _create_run(
+        db_session,
+        user_id=bootstrapped_user,
+        model_id=model_id,
+        conversation_id=conversation_id,
+        user_message_id=current_user_id,
+        assistant_message_id=assistant_id,
+    )
+
+    assembly = assemble_chat_context(
+        db_session,
+        run=run,
+        model=model,
+        environment="test",
+        key_mode_used="platform",
+        provider_account_boundary="platform",
+        max_output_tokens=128,
+    )
+
+    attached_ref = next(
+        dict(block.source_refs[0])
+        for block in assembly.prompt_plan.blocks()
+        if block.lane == "attached_context" and dict(block.source_refs[0]).get("type") == "artifact"
+    )
+    assert attached_ref["id"] == str(artifact_id)
+    assert attached_ref["artifact_id"] == str(artifact_id)
+    assert attached_ref["artifact_key"] == "artifact-1"
+    assert attached_ref["artifact_version"] == artifact_version
+    assert attached_ref["artifact_part_provenance"]["type"] == "artifact"
+    assert attached_ref["artifact_part_provenance"]["artifact_id"] == str(artifact_id)
+    assert attached_ref["artifact_part_provenance"]["artifact_key"] == "artifact-1"
+    assert attached_ref["artifact_part_provenance"]["artifact_version"] == artifact_version
+    assert assembly.lookup_results[0].context_ref == attached_ref
+    assert any(
+        ref.get("type") == "artifact"
+        and ref.get("artifact_part_provenance", {}).get("artifact_id") == provenance["artifact_id"]
+        for ref in assembly.ledger.included_context_refs
+    )
+
+
+def test_load_message_context_refs_rejects_reader_selection_with_invalid_locator(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    media_id = create_test_media(db_session, title="Incomplete Reader Source")
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=1,
+        role="user",
+        content="Use the attached quote.",
+    )
+    client_context_id = uuid4()
+    fragment_id = uuid4()
+    stored_locator = {
+        "type": "web_text_offsets",
+        "media_id": str(media_id),
+        "fragment_id": str(fragment_id),
+        "start_offset": 4,
+        "end_offset": 17,
+    }
+    invalid_locator = {
+        "type": "web_text_offsets",
+    }
+    _insert_reader_selection_context_row(
+        db_session,
+        message_id=user_message_id,
+        user_id=bootstrapped_user,
+        source_media_id=media_id,
+        locator=stored_locator,
+        snapshot={
+            "kind": "reader_selection",
+            "client_context_id": str(client_context_id),
+            "media_id": str(media_id),
+            "source_media_id": str(media_id),
+            "media_kind": "web_article",
+            "media_title": "Incomplete Reader Source",
+            "exact": "attached quote",
+            "prefix": "Use ",
+            "suffix": " here.",
+            "locator": invalid_locator,
+            "source_version": f"fragment:{fragment_id}",
+        },
+    )
+    db_session.commit()
+
+    with pytest.raises(NotFoundError) as exc_info:
+        load_message_context_refs(db_session, user_message_id)
+
+    assert exc_info.value.code == ApiErrorCode.E_NOT_FOUND
+
+
+def test_load_message_context_refs_rejects_object_ref_with_invalid_evidence_span_ids(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=1,
+        role="user",
+        content="Use the attached chunk.",
+    )
+    chunk_id = uuid4()
+    media_id = uuid4()
+    fragment_id = uuid4()
+    _insert_object_ref_context_row(
+        db_session,
+        message_id=user_message_id,
+        user_id=bootstrapped_user,
+        object_type="content_chunk",
+        object_id=chunk_id,
+        snapshot={
+            "kind": "object_ref",
+            "type": "content_chunk",
+            "id": str(chunk_id),
+            "title": "Attached Chunk",
+            "source_version": "content-index:test:v1",
+            "locator": {
+                "type": "web_text_offsets",
+                "media_id": str(media_id),
+                "fragment_id": str(fragment_id),
+                "start_offset": 0,
+                "end_offset": 14,
+                "media_kind": "web_article",
+                "text_quote_selector": {
+                    "exact": "Attached Chunk",
+                    "prefix": "",
+                    "suffix": "",
+                },
+            },
+            "evidence_span_ids": ["not-a-uuid"],
+        },
+    )
+    db_session.commit()
+
+    with pytest.raises(NotFoundError) as exc_info:
+        load_message_context_refs(db_session, user_message_id)
+
+    assert exc_info.value.code == ApiErrorCode.E_NOT_FOUND
+
+
+@pytest.mark.parametrize(
+    "snapshot_patch",
+    [
+        {"source_version": 42},
+        {"locator": "not-an-object"},
+    ],
+)
+def test_load_message_context_refs_rejects_invalid_object_ref_snapshot_fields(
+    db_session: Session,
+    bootstrapped_user: UUID,
+    snapshot_patch: dict[str, object],
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=1,
+        role="user",
+        content="Use the attached media.",
+    )
+    media_id = uuid4()
+    snapshot = {
+        "kind": "object_ref",
+        "type": "media",
+        "id": str(media_id),
+        "title": "Attached Media",
+        **snapshot_patch,
+    }
+    _insert_object_ref_context_row(
+        db_session,
+        message_id=user_message_id,
+        user_id=bootstrapped_user,
+        object_type="media",
+        object_id=media_id,
+        snapshot=snapshot,
+    )
+    db_session.commit()
+
+    with pytest.raises(NotFoundError) as exc_info:
+        load_message_context_refs(db_session, user_message_id)
+
+    assert exc_info.value.code == ApiErrorCode.E_NOT_FOUND
+
+
+def test_load_message_context_refs_preserves_whole_artifact_snapshot_fields(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=1,
+        role="user",
+        content="Use the attached artifact.",
+    )
+    artifact_id = uuid4()
+    snapshot, _provenance = _artifact_context_snapshot(
+        artifact_id,
+        artifact_key="summary",
+        artifact_version=3,
+        title="Summary",
+    )
+    _insert_object_ref_context_row(
+        db_session,
+        message_id=user_message_id,
+        user_id=bootstrapped_user,
+        object_type="artifact",
+        object_id=artifact_id,
+        snapshot=snapshot,
+    )
+    db_session.commit()
+
+    refs = load_message_context_refs(db_session, user_message_id)
+    ref = refs[0]
+    assert ref.type == "artifact"
+    assert ref.id == artifact_id
+    assert ref.artifact_id == artifact_id
+    assert ref.artifact_key == "summary"
+    assert ref.artifact_version == 3
+    assert ref.artifact_part_provenance is not None
+    assert ref.artifact_part_provenance.type == "artifact"
+    assert ref.artifact_part_provenance.artifact_id == artifact_id
+    assert ref.artifact_part_provenance.artifact_key == "summary"
+    assert ref.artifact_part_provenance.artifact_version == 3
+
+    payload = message_context_ref_payloads(db_session, refs)[0]
+    assert payload["artifact_id"] == str(artifact_id)
+    assert payload["artifact_key"] == "summary"
+    assert payload["artifact_version"] == 3
+    assert payload["artifact_part_provenance"]["type"] == "artifact"
+    assert payload["artifact_part_provenance"]["artifact_id"] == str(artifact_id)
+    assert payload["artifact_part_provenance"]["artifact_key"] == "summary"
+    assert payload["artifact_part_provenance"]["artifact_version"] == 3
+
+
+def test_load_message_context_refs_rejects_content_chunk_missing_canonical_snapshot(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=1,
+        role="user",
+        content="Use the attached chunk.",
+    )
+    _insert_object_ref_context_row(
+        db_session,
+        message_id=user_message_id,
+        user_id=bootstrapped_user,
+        object_type="content_chunk",
+        object_id=(chunk_id := uuid4()),
+        snapshot={
+            "kind": "object_ref",
+            "type": "content_chunk",
+            "id": str(chunk_id),
+            "title": "Stale chunk context",
+        },
+    )
+    db_session.commit()
+
+    with pytest.raises(NotFoundError) as exc_info:
+        load_message_context_refs(db_session, user_message_id)
+
+    assert exc_info.value.code == ApiErrorCode.E_NOT_FOUND
 
 
 def test_assemble_chat_context_uses_only_ancestor_path_for_branch(

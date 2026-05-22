@@ -99,7 +99,7 @@ def _get_default_library_id(db: Session, user_id: UUID) -> UUID:
     result = db.execute(
         select(Library.id).where(
             Library.owner_user_id == user_id,
-            Library.is_default == True,  # noqa: E712
+            Library.is_default.is_(True),
         )
     )
     library_id = result.scalar()

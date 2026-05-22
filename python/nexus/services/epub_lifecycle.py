@@ -6,7 +6,6 @@ Non-EPUB kinds fall through to existing upload-confirm behavior.
 """
 
 import logging
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -47,21 +46,6 @@ from nexus.storage import get_storage_client
 from nexus.storage.client import StorageError
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class EpubIngestConfirmOut:
-    media_id: str
-    duplicate: bool
-    processing_status: str
-    ingest_enqueued: bool
-
-
-@dataclass(frozen=True)
-class EpubRetryOut:
-    media_id: str
-    processing_status: str
-    retry_enqueued: bool
 
 
 def confirm_ingest_for_viewer(

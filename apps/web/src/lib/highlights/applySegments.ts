@@ -56,7 +56,7 @@ export type HighlightInput = {
 /**
  * Result of applying highlights to HTML.
  */
-export type ApplyHighlightsResult = {
+type ApplyHighlightsResult = {
   /** The transformed HTML with highlight spans */
   html: string;
   /** IDs of highlights that failed to render */

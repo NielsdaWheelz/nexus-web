@@ -13,7 +13,6 @@ from nexus.services.pdf_quote_match import (
 )
 from nexus.services.pdf_quote_match_policy import (
     CoherenceAnomalyKind,
-    CoherenceFallbackAction,
     PdfQuoteMatchInternalError,
     PendingWriteOutcome,
     handle_coherence_unclassified_exception,
@@ -140,32 +139,6 @@ class TestExceptionSanitization:
             all_values = str(call_kwargs)
             assert "user document text" not in all_values
             assert call_kwargs["exception_type"] == "RuntimeError"
-
-
-class TestRecoverableCoherenceAnomaly:
-    def test_retry_as_pending_action_for_offset_anomaly(self):
-        action = handle_recoverable_coherence_anomaly(
-            CoherenceAnomalyKind.offsets_out_of_range,
-            highlight_id=uuid4(),
-            media_id=uuid4(),
-            page_number=2,
-            match_status="unique",
-            match_version=1,
-            path="test_context_render",
-        )
-        assert action == CoherenceFallbackAction.retry_as_pending
-
-    def test_unknown_match_status_maps_to_omit_action(self):
-        action = handle_recoverable_coherence_anomaly(
-            CoherenceAnomalyKind.unknown_match_status,
-            highlight_id=uuid4(),
-            media_id=uuid4(),
-            page_number=2,
-            match_status="legacy_status",
-            match_version=1,
-            path="test_context_render",
-        )
-        assert action == CoherenceFallbackAction.omit_nearby_context
 
 
 class TestCoherenceCanonicalEventSchema:

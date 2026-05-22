@@ -1251,7 +1251,7 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
-        from nexus.storage.client import FakeStorageClient
+        from tests.support.storage import FakeStorageClient
 
         fake_storage = FakeStorageClient()
         epub_bytes = b"PK\x03\x04" + b"\x00" * 200
@@ -1371,7 +1371,7 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
-        from nexus.storage.client import FakeStorageClient
+        from tests.support.storage import FakeStorageClient
 
         fake_storage = FakeStorageClient()
         epub_bytes = b"PK\x03\x04" + b"\x00" * 200
@@ -1523,7 +1523,7 @@ class TestGetEpubAssetSuccessAndMasking:
             assert resource_row == (f"media/{media_id}/assets/images/fig1.png",)
 
         # Put asset into fake storage
-        from nexus.storage.client import FakeStorageClient
+        from tests.support.storage import FakeStorageClient
 
         fake = FakeStorageClient()
         fake.put_object(f"media/{media_id}/assets/images/fig1.png", asset_content, "image/png")
@@ -1625,7 +1625,7 @@ class TestGetEpubAssetSuccessAndMasking:
 
         _add_media_to_user_library(auth_client, user_id, media_id)
 
-        from nexus.storage.client import FakeStorageClient
+        from tests.support.storage import FakeStorageClient
 
         fake = FakeStorageClient()
         fake.put_object(f"media/{media_id}/assets/images/fig1.png", stored_content, "image/png")
@@ -1673,7 +1673,7 @@ class TestGetEpubAssetSuccessAndMasking:
 
         from unittest.mock import patch
 
-        from nexus.storage.client import FakeStorageClient
+        from tests.support.storage import FakeStorageClient
 
         fake = FakeStorageClient()
 
@@ -1771,7 +1771,7 @@ class TestGetEpubAssetSuccessAndMasking:
 
         _add_media_to_user_library(auth_client, user_id, media_id)
 
-        from nexus.storage.client import FakeStorageClient
+        from tests.support.storage import FakeStorageClient
 
         fake = FakeStorageClient()
 
@@ -1907,7 +1907,7 @@ class TestGetEpubAssetSuccessAndMasking:
 
         _add_media_to_user_library(auth_client, user_id, media_id)
 
-        from nexus.storage.client import FakeStorageClient
+        from tests.support.storage import FakeStorageClient
 
         fake = FakeStorageClient()
         fake.put_object(f"media/{media_id}/assets/images/fig.svg", asset_content, "image/svg+xml")
@@ -2042,7 +2042,7 @@ class TestRetryEpubEndpoint:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
-        from nexus.storage.client import FakeStorageClient
+        from tests.support.storage import FakeStorageClient
 
         fake_storage = FakeStorageClient()
         epub_bytes = b"PK\x03\x04" + b"\x00" * 200
@@ -2267,7 +2267,7 @@ class TestRetryEpubEndpoint:
             headers=auth_headers(user_id),
         )
 
-        from nexus.storage.client import FakeStorageClient
+        from tests.support.storage import FakeStorageClient
 
         fake_storage = FakeStorageClient()
 
@@ -2305,7 +2305,7 @@ class TestRetryEpubEndpoint:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
-        from nexus.storage.client import FakeStorageClient
+        from tests.support.storage import FakeStorageClient
 
         fake_storage = FakeStorageClient()
         epub_bytes = b"PK\x03\x04" + b"\x00" * 200
@@ -2363,7 +2363,7 @@ class TestRetryEpubEndpoint:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
-        from nexus.storage.client import FakeStorageClient
+        from tests.support.storage import FakeStorageClient
 
         fake_storage = FakeStorageClient()
         epub_bytes = b"PK\x03\x04" + b"\x00" * 200

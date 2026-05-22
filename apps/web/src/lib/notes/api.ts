@@ -307,10 +307,6 @@ export async function saveNotePageDocument(
   };
 }
 
-export async function deleteNotePage(pageId: string): Promise<void> {
-  await apiFetch(`/api/notes/pages/${pageId}`, { method: "DELETE" });
-}
-
 export async function fetchNoteBlock(blockId: string): Promise<NoteBlock> {
   const response = await apiFetch<NoteBlockResponse>(`/api/notes/blocks/${blockId}`, {
     cache: "no-store",
@@ -380,35 +376,4 @@ export async function deleteNoteBlock(
     method: "DELETE",
     body: JSON.stringify({ base_revision: input.baseRevision }),
   });
-}
-
-export async function splitNoteBlock(blockId: string, input: { offset: number }) {
-  const response = await apiFetch<NoteBlockResponse>(`/api/notes/blocks/${blockId}/split`, {
-    method: "POST",
-    body: JSON.stringify({ offset: input.offset }),
-  });
-  return normalizeBlock(response.data as unknown as Record<string, unknown>);
-}
-
-export async function mergeNoteBlock(blockId: string) {
-  const response = await apiFetch<NoteBlockResponse>(`/api/notes/blocks/${blockId}/merge`, {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
-  return normalizeBlock(response.data as unknown as Record<string, unknown>);
-}
-
-export async function moveNoteBlock(
-  blockId: string,
-  input: { parentBlockId?: string | null; beforeBlockId?: string | null; afterBlockId?: string | null }
-) {
-  const response = await apiFetch<NoteBlockResponse>(`/api/notes/blocks/${blockId}/move`, {
-    method: "POST",
-    body: JSON.stringify({
-      parent_block_id: input.parentBlockId ?? null,
-      before_block_id: input.beforeBlockId ?? null,
-      after_block_id: input.afterBlockId ?? null,
-    }),
-  });
-  return normalizeBlock(response.data as unknown as Record<string, unknown>);
 }

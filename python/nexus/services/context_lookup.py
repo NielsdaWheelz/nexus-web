@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
@@ -25,6 +25,14 @@ from nexus.schemas.retrieval import (
 from nexus.services.context_rendering import render_context_blocks
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 from nexus.services.contributors import get_contributor_by_handle, get_contributor_by_id
+from nexus.services.message_context_snapshots import (
+    artifact_context_snapshot_fields,
+    artifact_part_context_snapshot_fields,
+    context_evidence_span_ids,
+    trusted_content_chunk_context_snapshot_fields,
+    trusted_context_snapshot,
+    trusted_object_ref_context_snapshot_payload,
+)
 from nexus.services.object_refs import render_object_context
 from nexus.services.prompt_budget import estimate_tokens
 from nexus.services.quote_context_errors import QuoteContextBlockingError
@@ -126,9 +134,31 @@ def hydrate_context_ref(
         assert context_id is not None
         if not _can_read_highlight(db, viewer_id, context_id):
             return _failed(source_ref, context_ref, "forbidden", "Context not readable")
+        source_version = context_ref.get("source_version")
+        if not isinstance(source_version, str) or not source_version.strip():
+            return _failed(
+                source_ref,
+                context_ref,
+                "invalid",
+                "highlight context_ref requires source_version",
+            )
+        highlight_ref: dict[str, object] = {
+            "type": "highlight",
+            "id": context_id,
+            "source_version": source_version,
+        }
+        if "locator" in context_ref:
+            locator = context_ref["locator"]
+            if not isinstance(locator, Mapping):
+                return _failed(source_ref, context_ref, "invalid", "context_ref is invalid")
+            highlight_ref["locator"] = dict(locator)
+        try:
+            message_context_ref = MessageContextRef.model_validate(highlight_ref)
+        except ValidationError:
+            return _failed(source_ref, context_ref, "invalid", "context_ref is invalid")
         text_block = _render_message_context_ref(
             db,
-            MessageContextRef(type="highlight", id=context_id),
+            message_context_ref,
         )
         return _resolve_text_result(source_ref, context_ref, text_block, max_chars=max_chars)
 
@@ -161,7 +191,7 @@ def hydrate_context_ref(
     if context_type == "content_chunk":
         assert context_id is not None
         try:
-            evidence_span_ids = _evidence_span_ids_from_context_ref(context_ref)
+            evidence_span_ids = context_evidence_span_ids(context_ref)
         except ValueError:
             return _failed(source_ref, context_ref, "invalid", "evidence_span_ids are invalid")
         return _resolve_text_result(
@@ -271,6 +301,15 @@ def hydrate_context_ref(
 
     if context_type == "artifact":
         assert context_id is not None
+        try:
+            message_context_ref = MessageContextRef.model_validate(dict(context_ref))
+        except ValidationError:
+            return _failed(
+                source_ref,
+                context_ref,
+                "invalid",
+                "artifact context_ref is invalid",
+            )
         row = db.execute(
             text("SELECT conversation_id FROM message_artifacts WHERE id = :artifact_id"),
             {"artifact_id": context_id},
@@ -281,7 +320,7 @@ def hydrate_context_ref(
             return _failed(source_ref, context_ref, "forbidden", "Context not readable")
         text_block = _render_message_context_ref(
             db,
-            MessageContextRef(type="artifact", id=context_id),
+            message_context_ref,
         )
         return _resolve_text_result(source_ref, context_ref, text_block, max_chars=max_chars)
 
@@ -402,19 +441,6 @@ def hydrate_source_ref(
     return _failed(source_ref, None, "unsupported", "Unsupported source_ref type")
 
 
-def hydrate_source_refs(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    source_refs: Sequence[Mapping[str, object]],
-    max_chars: int = 12000,
-) -> list[ContextLookupResult]:
-    return [
-        hydrate_source_ref(db, viewer_id=viewer_id, source_ref=source_ref, max_chars=max_chars)
-        for source_ref in source_refs
-    ]
-
-
 def _hydrate_message_retrieval(
     db: Session,
     *,
@@ -509,32 +535,49 @@ def _context_ref_from_message_context(
             "id": contributor_handle,
             "contributor_handle": contributor_handle,
         }
+    try:
+        snapshot = trusted_context_snapshot(row.context_snapshot_json)
+        object_payload = trusted_object_ref_context_snapshot_payload(
+            object_type=row.object_type,
+            object_id=row.object_id,
+            payload=snapshot,
+        )
+    except ValueError:
+        return None
+
     context_ref: dict[str, object] = {"type": row.object_type, "id": str(row.object_id)}
     if row.object_type == "content_chunk":
         try:
-            evidence_span_ids = _evidence_span_ids_from_context_ref(row.context_snapshot_json)
+            fields = trusted_content_chunk_context_snapshot_fields(
+                object_type=row.object_type,
+                object_id=row.object_id,
+                payload=snapshot,
+            )
         except ValueError:
             return None
+        evidence_span_ids = cast(list[UUID], fields["evidence_span_ids"])
         if evidence_span_ids:
             context_ref["evidence_span_ids"] = [
                 str(evidence_span_id) for evidence_span_id in evidence_span_ids
             ]
-    if row.object_type == "artifact_part":
-        snapshot = row.context_snapshot_json if isinstance(row.context_snapshot_json, dict) else {}
-        for key in (
-            "artifact_id",
-            "artifact_key",
-            "artifact_version",
-            "source_version",
-            "locator",
-            "artifact_part_provenance",
-        ):
-            value = snapshot.get(key)
-            if value is not None:
-                context_ref[key] = value
+    else:
+        source_version = object_payload["source_version"]
+        if source_version is not None:
+            context_ref["source_version"] = source_version
+        locator = object_payload["locator"]
+        if locator is not None:
+            context_ref["locator"] = locator
+    if row.object_type == "artifact":
         try:
+            context_ref.update(artifact_context_snapshot_fields(snapshot))
             MessageContextRef.model_validate(context_ref)
-        except ValidationError:
+        except (ValueError, ValidationError):
+            return None
+    if row.object_type == "artifact_part":
+        try:
+            context_ref.update(artifact_part_context_snapshot_fields(snapshot))
+            MessageContextRef.model_validate(context_ref)
+        except (ValueError, ValidationError):
             return None
     return context_ref
 
@@ -622,7 +665,7 @@ def _context_ref_with_evidence_span_id(
     evidence_span_id: UUID,
 ) -> dict[str, object]:
     next_ref = dict(context_ref)
-    evidence_span_ids = _evidence_span_ids_from_context_ref(next_ref)
+    evidence_span_ids = context_evidence_span_ids(next_ref)
     if evidence_span_id not in evidence_span_ids:
         evidence_span_ids.append(evidence_span_id)
     next_ref["evidence_span_ids"] = [str(span_id) for span_id in evidence_span_ids]
@@ -723,8 +766,9 @@ def _render_content_chunk_evidence_spans(
         if row is None:
             continue
         if media_id is None:
-            media_id = row[0]
-            if not can_read_media(db, viewer_id, media_id):
+            row_media_id = cast(UUID, row[0])
+            media_id = row_media_id
+            if not can_read_media(db, viewer_id, row_media_id):
                 return ContextLookupFailure(code="forbidden", message="Content chunk not readable")
             lines.extend(
                 [
@@ -964,30 +1008,6 @@ def _format_timestamp_ms(timestamp_ms: int | None) -> str | None:
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-
-def _evidence_span_ids_from_context_ref(context_ref: Mapping[str, object]) -> list[UUID]:
-    raw_values = context_ref.get("evidence_span_ids")
-    if raw_values is None:
-        raw_values = context_ref.get("evidence_span_id")
-    if isinstance(raw_values, str):
-        values = [raw_values]
-    elif isinstance(raw_values, Sequence) and not isinstance(raw_values, (str, bytes)):
-        values = list(raw_values)
-    else:
-        values = []
-
-    evidence_span_ids: list[UUID] = []
-    seen: set[UUID] = set()
-    for value in values:
-        evidence_span_id = _parse_uuid(value)
-        if evidence_span_id is None:
-            raise ValueError("evidence_span_ids must be UUIDs")
-        if evidence_span_id in seen:
-            continue
-        seen.add(evidence_span_id)
-        evidence_span_ids.append(evidence_span_id)
-    return evidence_span_ids
 
 
 def _parse_uuid(value: Any) -> UUID | None:

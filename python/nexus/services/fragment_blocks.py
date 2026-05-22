@@ -162,24 +162,3 @@ def insert_fragment_blocks(
     )
 
     return created_blocks
-
-
-def get_fragment_blocks(db: Session, fragment_id: UUID) -> list[FragmentBlock]:
-    """Retrieve all fragment blocks for a fragment, ordered by block_idx.
-
-    Args:
-        db: Database session.
-        fragment_id: The UUID of the fragment.
-
-    Returns:
-        List of FragmentBlock objects ordered by block_idx.
-    """
-    from sqlalchemy import select
-
-    stmt = (
-        select(FragmentBlock)
-        .where(FragmentBlock.fragment_id == fragment_id)
-        .order_by(FragmentBlock.block_idx)
-    )
-    result = db.execute(stmt)
-    return list(result.scalars().all())

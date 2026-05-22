@@ -308,7 +308,7 @@ function newBlockId(): string {
   return crypto.randomUUID();
 }
 
-export function highlightNoteBodyHasContent(block: {
+function highlightNoteBodyHasContent(block: {
   bodyText: string;
   bodyPmJson: Record<string, unknown>;
 }) {

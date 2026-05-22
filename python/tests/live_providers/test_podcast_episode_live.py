@@ -169,10 +169,10 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
     )
     assert transcript_request.status_code in {200, 202}, transcript_request.text
 
-    from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+    from nexus.services.podcasts.transcripts import run_podcast_transcription_now
 
     with direct_db.session() as session:
-        transcription_result = run_podcast_transcribe_now(
+        transcription_result = run_podcast_transcription_now(
             session,
             media_id=media_id,
             requested_by_user_id=user_id,

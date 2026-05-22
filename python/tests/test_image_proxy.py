@@ -18,10 +18,10 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.image_proxy import (
     ImageCache,
     check_hostname_denylist,
-    clear_cache,
     compute_etag,
     etags_match,
     fetch_image,
+    get_cache,
     is_private_ip,
     normalize_image_url,
     sniff_magic_bytes,
@@ -589,9 +589,9 @@ class TestFetchImageIntegration:
     @pytest.fixture(autouse=True)
     def clear_image_cache(self):
         """Clear the global cache before each test."""
-        clear_cache()
+        get_cache().clear()
         yield
-        clear_cache()
+        get_cache().clear()
 
     @respx.mock
     def test_fetch_valid_png(self, monkeypatch):
@@ -881,7 +881,7 @@ class TestImageProxyEndpoint:
 
     def test_ssrf_blocked_returns_403(self, authenticated_client, test_user_id):
         """Test that SSRF attempts return 403."""
-        clear_cache()
+        get_cache().clear()
 
         response = authenticated_client.get(
             "/media/image",
@@ -936,9 +936,9 @@ class TestImageProxyE2E:
     @pytest.fixture(autouse=True)
     def clear_image_cache_e2e(self):
         """Clear the global cache before each test."""
-        clear_cache()
+        get_cache().clear()
         yield
-        clear_cache()
+        get_cache().clear()
 
     @respx.mock
     def test_e2e_proxied_image_has_required_headers(

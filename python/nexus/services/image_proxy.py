@@ -199,11 +199,6 @@ def get_cache() -> ImageCache:
     return _cache
 
 
-def clear_cache() -> None:
-    """Clear the global image cache. Useful for testing."""
-    _cache.clear()
-
-
 # =============================================================================
 # URL Validation
 # =============================================================================
@@ -674,19 +669,6 @@ def etags_match(if_none_match: str, cached_etag: str) -> bool:
 
 
 # =============================================================================
-# Rate Limiting Hook (No-op in v1)
-# =============================================================================
-
-
-def check_image_proxy_quota(viewer_id: str | None, bytes_fetched: int) -> None:
-    """Hook for rate limiting. No-op in v1.
-
-    Future: implement per-user quotas.
-    """
-    pass
-
-
-# =============================================================================
 # Main Entrypoint
 # =============================================================================
 
@@ -755,10 +737,7 @@ def fetch_image(url: str, if_none_match: str | None = None) -> ImageResponse:
     # Step 10: Store in cache
     cache.put(normalized_url, CacheEntry(data=data, content_type=content_type, etag=etag))
 
-    # Step 11: Rate limiting hook (no-op in v1)
-    check_image_proxy_quota(None, len(data))
-
-    # Step 12: Check conditional GET against new ETag
+    # Step 11: Check conditional GET against new ETag
     if if_none_match and etags_match(if_none_match, etag):
         return ImageResponse(
             data=b"",

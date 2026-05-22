@@ -4,6 +4,7 @@ import ContextRow from "@/components/ui/ContextRow";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import type { SearchResultRowViewModel } from "@/lib/search/resultRowAdapter";
 import { isObjectType } from "@/lib/objectRefs";
+import { setPendingContextParam } from "@/lib/conversations/attachedContext";
 import styles from "./SearchResultRow.module.css";
 
 const UUID_RE =
@@ -46,6 +47,16 @@ function buildAskHref(row: SearchResultRowViewModel): string | null {
   ) {
     return null;
   }
+  if (
+    row.contextRef.type === "artifact_part" &&
+    (!row.contextRef.artifactId ||
+      !UUID_RE.test(row.contextRef.artifactId) ||
+      !row.contextRef.sourceVersion ||
+      !row.contextRef.locator ||
+      !row.contextRef.artifactPartProvenance)
+  ) {
+    return null;
+  }
 
   const params = new URLSearchParams();
   if (
@@ -56,17 +67,20 @@ function buildAskHref(row: SearchResultRowViewModel): string | null {
   ) {
     params.set("scope", `media:${row.mediaId}`);
   }
-  params.set(
-    "attach_context",
-    row.contextRef.evidenceSpanIds.length > 0
-      ? [
-          row.contextRef.type,
-          row.contextRef.id,
-          row.contextRef.evidenceSpanIds.join(","),
-        ].join(":")
-      : [row.contextRef.type, row.contextRef.id].join(":")
-  );
-  return `/conversations/new?${params.toString()}`;
+  const next = setPendingContextParam(params, {
+    type: row.contextRef.type,
+    id: row.contextRef.id,
+    ...(row.contextRef.evidenceSpanIds.length > 0
+      ? { evidence_span_ids: row.contextRef.evidenceSpanIds }
+      : {}),
+    artifact_id: row.contextRef.artifactId,
+    artifact_key: row.contextRef.artifactKey,
+    artifact_version: row.contextRef.artifactVersion,
+    source_version: row.contextRef.sourceVersion,
+    locator: row.contextRef.locator,
+    artifact_part_provenance: row.contextRef.artifactPartProvenance,
+  });
+  return `/conversations/new?${next.toString()}`;
 }
 
 export default function SearchResultRow({ row }: SearchResultRowProps) {

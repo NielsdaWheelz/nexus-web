@@ -96,10 +96,14 @@ def create_token_verifier():
         SupabaseJwksVerifier configured with settings from environment.
     """
     settings = get_settings()
+    jwks_url = settings.supabase_jwks_url
+    issuer = settings.normalized_issuer
+    if not jwks_url or not issuer:
+        raise RuntimeError("Supabase auth settings are not configured")
 
     return SupabaseJwksVerifier(
-        jwks_url=settings.supabase_jwks_url,  # type: ignore
-        issuer=settings.normalized_issuer,  # type: ignore
+        jwks_url=jwks_url,
+        issuer=issuer,
         audiences=settings.audience_list,
     )
 
@@ -164,15 +168,11 @@ async def lifespan(app: FastAPI):
     logger.info("httpx_client_closed")
 
 
-def create_app(
-    skip_auth_middleware: bool = False,
-    token_verifier=None,
-) -> FastAPI:
+def create_app(skip_auth_middleware: bool = False) -> FastAPI:
     """Create and configure the FastAPI application.
 
     Args:
         skip_auth_middleware: If True, skip adding auth middleware (for testing).
-        token_verifier: Optional custom token verifier (for testing).
 
     Returns:
         Configured FastAPI application instance.
@@ -231,7 +231,7 @@ def create_app(
 
     # Include API routes (must be before middleware for correct ordering)
     # Use router factory to avoid import-time settings loading
-    api_router = create_api_router(include_test_routes=settings.nexus_env == Environment.TEST)
+    api_router = create_api_router()
     app.include_router(api_router)
 
     # PR-08: Include browser-callable stream-token routes
@@ -242,7 +242,7 @@ def create_app(
 
     # Add auth middleware (runs on all requests except public paths)
     if not skip_auth_middleware:
-        verifier = token_verifier or create_token_verifier()
+        verifier = create_token_verifier()
         bootstrap_callback = create_bootstrap_callback()
 
         app.add_middleware(

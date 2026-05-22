@@ -174,14 +174,6 @@ def compute_key_fingerprint(api_key: str) -> str:
     return api_key[-4:]
 
 
-def clear_master_key_cache() -> None:
-    """Clear the cached master key.
-
-    Useful for testing or key rotation scenarios.
-    """
-    _get_master_key.cache_clear()
-
-
 # =============================================================================
 # High-Level API Key Encryption Functions (per PR-03 spec)
 # =============================================================================

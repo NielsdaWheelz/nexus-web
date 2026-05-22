@@ -29,10 +29,11 @@ from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.upload import confirm_ingest as confirm_upload_ingest
 from nexus.services.upload import validate_source_integrity
 from nexus.storage import build_storage_path, build_upload_staging_storage_path, get_file_extension
-from nexus.storage.client import FakeStorageClient, StorageError
+from nexus.storage.client import StorageError
 from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.mock_verifier import MockJwtVerifier
+from tests.support.storage import FakeStorageClient
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration

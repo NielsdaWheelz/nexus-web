@@ -50,6 +50,12 @@ from nexus.errors import (
     ApiErrorCode,
     NotFoundError,
 )
+from nexus.evidence_span_ids import (
+    EvidenceSpanIdError,
+    EvidenceSpanIdsDuplicateError,
+    canonical_evidence_span_ids,
+    trusted_evidence_span_ids,
+)
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.context_memory import SourceRef
@@ -99,7 +105,10 @@ from nexus.services.context_lookup import (
     hydrate_source_ref,
 )
 from nexus.services.context_rendering import PROMPT_VERSION
-from nexus.services.contexts import insert_contexts_batch
+from nexus.services.contexts import (
+    insert_contexts_batch,
+    validate_content_chunk_evidence_span_ids,
+)
 from nexus.services.conversation_branches import (
     active_leaf_for_viewer,
     branch_anchor_for_message,
@@ -127,6 +136,10 @@ from nexus.services.conversations import (
     retryable_assistant_message_ids,
 )
 from nexus.services.locator_resolver import resolve_evidence_span
+from nexus.services.message_context_snapshots import (
+    context_evidence_span_ids,
+    trusted_context_snapshot,
+)
 from nexus.services.models import get_model_catalog_metadata
 from nexus.services.object_refs import hydrate_object_ref
 from nexus.services.prompt_budget import ContextBudgetError
@@ -1807,8 +1820,11 @@ def _durable_artifact_part_preview_for_document(part: MessageArtifactPart) -> di
         preview["result_ref"] = part.result_ref
     if part.evidence_span_id is not None:
         preview["evidence_span_id"] = str(part.evidence_span_id)
-    if part.evidence_span_ids:
-        preview["evidence_span_ids"] = list(part.evidence_span_ids)
+    evidence_span_ids = trusted_evidence_span_ids(part.evidence_span_ids)
+    if evidence_span_ids:
+        preview["evidence_span_ids"] = [
+            str(evidence_span_id) for evidence_span_id in evidence_span_ids
+        ]
     if part.source_refs:
         preview["source_refs"] = list(part.source_refs)
     if part.metadata_json:
@@ -2091,7 +2107,10 @@ def _artifact_delta_from_model_response(
                 if evidence_rows[ordinal].get("evidence_span_id") is not None
             ]
             if evidence_span_ids:
-                event_part["evidence_span_ids"] = sorted(set(evidence_span_ids))
+                event_part["evidence_span_ids"] = [
+                    str(evidence_span_id)
+                    for evidence_span_id in canonical_evidence_span_ids(evidence_span_ids)
+                ]
             event_parts.append(event_part)
             continue
 
@@ -2197,7 +2216,6 @@ def _validate_artifact_part_refs_readable(
     source_ref: dict[str, Any] | None,
     context_ref: dict[str, Any] | None,
     result_ref: dict[str, Any] | None,
-    evidence_span_id: UUID | None,
     evidence_span_ids: list[str],
     source_refs: list[dict[str, Any]],
 ) -> None:
@@ -2218,16 +2236,40 @@ def _validate_artifact_part_refs_readable(
             if not result.resolved:
                 raise ValueError("artifact_delta result_ref context is not readable")
 
-    ids = list(evidence_span_ids)
-    if evidence_span_id is not None and str(evidence_span_id) not in ids:
-        ids.append(str(evidence_span_id))
-    for raw_id in ids:
+    for raw_id in evidence_span_ids:
         parsed = _payload_uuid(raw_id)
         if parsed is None:
             raise ValueError("artifact_delta evidence_span_ids must be UUID strings")
         media_id = db.scalar(select(EvidenceSpan.media_id).where(EvidenceSpan.id == parsed))
         if media_id is None or not can_read_media(db, viewer_id, media_id):
             raise ValueError("artifact_delta evidence_span_id is not readable")
+
+
+def _artifact_delta_evidence_span_ids(
+    *,
+    evidence_span_id: UUID | None,
+    raw_evidence_span_ids: object,
+) -> list[str]:
+    if raw_evidence_span_ids is None:
+        raw_evidence_span_ids = []
+    if not isinstance(raw_evidence_span_ids, list):
+        raise ValueError("artifact_delta evidence_span_ids must be an array")
+    values: list[UUID | str] = []
+    for value in raw_evidence_span_ids:
+        if not isinstance(value, str) or not value:
+            raise ValueError("artifact_delta evidence_span_ids must be UUID strings")
+        values.append(value)
+    try:
+        evidence_span_ids = trusted_evidence_span_ids(values)
+    except EvidenceSpanIdsDuplicateError as exc:
+        raise ValueError("artifact_delta evidence_span_ids must not contain duplicates") from exc
+    except EvidenceSpanIdError as exc:
+        raise ValueError("artifact_delta evidence_span_ids must be UUID strings") from exc
+    if evidence_span_id is not None:
+        if evidence_span_id in evidence_span_ids:
+            raise ValueError("artifact_delta evidence_span_id must not duplicate evidence_span_ids")
+        evidence_span_ids.append(evidence_span_id)
+    return [str(evidence_span_id) for evidence_span_id in evidence_span_ids]
 
 
 def _persist_artifact_deltas_for_message(
@@ -2442,20 +2484,10 @@ def _persist_artifact_deltas_for_message(
             if not isinstance(part, dict):
                 raise ValueError("artifact_delta part must be an object")
             evidence_span_id = _payload_uuid(part.get("evidence_span_id"))
-            evidence_span_ids: list[str] = []
-            raw_evidence_span_ids = part.get("evidence_span_ids")
-            if raw_evidence_span_ids is None:
-                raw_evidence_span_ids = []
-            if isinstance(raw_evidence_span_ids, list):
-                for value in raw_evidence_span_ids:
-                    parsed = _payload_uuid(value)
-                    if parsed is None:
-                        raise ValueError("artifact_delta evidence_span_ids must be UUID strings")
-                    evidence_span_ids.append(str(parsed))
-            else:
-                raise ValueError("artifact_delta evidence_span_ids must be an array")
-            if evidence_span_id is not None and str(evidence_span_id) not in evidence_span_ids:
-                evidence_span_ids.append(str(evidence_span_id))
+            evidence_span_ids = _artifact_delta_evidence_span_ids(
+                evidence_span_id=evidence_span_id,
+                raw_evidence_span_ids=part.get("evidence_span_ids"),
+            )
 
             raw_source_refs = part.get("source_refs")
             if raw_source_refs is None:
@@ -2502,7 +2534,6 @@ def _persist_artifact_deltas_for_message(
                 source_ref=source_ref,
                 context_ref=context_ref,
                 result_ref=result_ref,
-                evidence_span_id=evidence_span_id,
                 evidence_span_ids=evidence_span_ids,
                 source_refs=source_refs,
             )
@@ -4704,7 +4735,10 @@ def _message_prompt_evidence_rows(
         {"user_message_id": run.user_message_id},
     ).fetchall()
     for row in context_rows:
-        snapshot = row[6] if isinstance(row[6], dict) else {}
+        try:
+            snapshot = trusted_context_snapshot(row[6])
+        except ValueError:
+            continue
         locator = row[5] if isinstance(row[5], dict) else snapshot.get("locator")
         if not isinstance(locator, dict):
             continue
@@ -4717,16 +4751,7 @@ def _message_prompt_evidence_rows(
         source_version = snapshot.get("source_version")
         if not isinstance(source_version, str) or not source_version.strip():
             continue
-        evidence_span_ids: list[UUID] = []
-        raw_evidence_span_ids = snapshot.get("evidence_span_ids")
-        if isinstance(raw_evidence_span_ids, str):
-            raw_evidence_span_ids = [raw_evidence_span_ids]
-        if isinstance(raw_evidence_span_ids, list):
-            for value in raw_evidence_span_ids:
-                try:
-                    evidence_span_ids.append(UUID(str(value)))
-                except (TypeError, ValueError):
-                    continue
+        evidence_span_ids = context_evidence_span_ids(snapshot)
         context_ref: dict[str, object]
         if row[1] == "reader_selection":
             if snapshot.get("evidence_verification") != "source_text_exact_match_v1":
@@ -5849,35 +5874,7 @@ def _validate_context_visibility(db: Session, viewer_id: UUID, ctx: ContextItem)
 
     hydrate_object_ref(db, viewer_id, ObjectRef(object_type=ctx.type, object_id=ctx.id))
     if ctx.type == "content_chunk" and ctx.evidence_span_ids:
-        _validate_context_chunk_evidence_spans(db, ctx.id, ctx.evidence_span_ids)
-
-
-def _validate_context_chunk_evidence_spans(
-    db: Session,
-    chunk_id: UUID,
-    evidence_span_ids: Sequence[UUID],
-) -> None:
-    if not evidence_span_ids:
-        return
-    matched_ids = set(
-        db.execute(
-            text(
-                """
-                SELECT es.id
-                FROM content_chunks cc
-                JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
-                    AND mcis.active_run_id = cc.index_run_id
-                JOIN evidence_spans es ON es.media_id = cc.media_id
-                    AND es.index_run_id = cc.index_run_id
-                WHERE cc.id = :chunk_id
-                  AND es.id = ANY(:evidence_span_ids)
-                """
-            ),
-            {"chunk_id": chunk_id, "evidence_span_ids": list(evidence_span_ids)},
-        ).scalars()
-    )
-    if matched_ids != set(evidence_span_ids):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Evidence span is not valid for context")
+        validate_content_chunk_evidence_span_ids(db, ctx.id, ctx.evidence_span_ids)
 
 
 def _validate_parent_anchor_for_existing_conversation(

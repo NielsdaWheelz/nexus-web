@@ -1,4 +1,8 @@
-import type { ContextItem, ObjectRefContextItem } from "@/lib/api/sse";
+import {
+  isRetrievalLocator,
+  type ContextItem,
+  type ObjectRefContextItem,
+} from "@/lib/api/sse";
 import type { ConversationScope } from "@/lib/conversations/types";
 import { isObjectType } from "@/lib/objectRefs";
 
@@ -6,7 +10,22 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const PENDING_CONTEXT_PARAM = "attach_context";
+const PENDING_CONTEXT_JSON_PARAM = "attach_context_json";
 const PENDING_SCOPE_PARAM = "scope";
+
+type PendingObjectContext = Pick<ObjectRefContextItem, "type" | "id" | "evidence_span_ids"> &
+  Partial<
+    Pick<
+      ObjectRefContextItem,
+      | "kind"
+      | "artifact_id"
+      | "artifact_key"
+      | "artifact_version"
+      | "source_version"
+      | "locator"
+      | "artifact_part_provenance"
+    >
+  >;
 
 function parseEvidenceSpanIds(value: string | undefined): string[] | null {
   if (value === undefined) {
@@ -41,11 +60,112 @@ function parseTypedId(value: string): ObjectRefContextItem | null {
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optionalString(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) {
+    return value;
+  }
+  return typeof value === "string" ? value : undefined;
+}
+
+function optionalPositiveInteger(value: unknown): number | null | undefined {
+  if (value === undefined || value === null) {
+    return value;
+  }
+  return Number.isInteger(value) && Number(value) > 0 ? Number(value) : undefined;
+}
+
+function parseJsonContext(value: string): ObjectRefContextItem | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) {
+    return null;
+  }
+  if (parsed.kind !== undefined && parsed.kind !== "object_ref") {
+    return null;
+  }
+  if (
+    typeof parsed.type !== "string" ||
+    !isObjectType(parsed.type) ||
+    typeof parsed.id !== "string" ||
+    !UUID_RE.test(parsed.id)
+  ) {
+    return null;
+  }
+  const evidenceSpanIds = Array.isArray(parsed.evidence_span_ids)
+    ? parsed.evidence_span_ids
+    : undefined;
+  if (
+    evidenceSpanIds !== undefined &&
+    !evidenceSpanIds.every((id) => typeof id === "string" && UUID_RE.test(id))
+  ) {
+    return null;
+  }
+  const sourceVersion = optionalString(parsed.source_version);
+  const artifactKey = optionalString(parsed.artifact_key);
+  const artifactVersion = optionalPositiveInteger(parsed.artifact_version);
+  if (
+    sourceVersion === undefined ||
+    artifactKey === undefined ||
+    artifactVersion === undefined
+  ) {
+    return null;
+  }
+
+  const context: ObjectRefContextItem = {
+    kind: "object_ref",
+    type: parsed.type,
+    id: parsed.id,
+    ...(evidenceSpanIds?.length ? { evidence_span_ids: Array.from(new Set(evidenceSpanIds)) } : {}),
+    ...(sourceVersion ? { source_version: sourceVersion } : {}),
+  };
+  if (artifactKey !== null && artifactKey !== undefined) {
+    context.artifact_key = artifactKey;
+  }
+  if (artifactVersion !== null && artifactVersion !== undefined) {
+    context.artifact_version = artifactVersion;
+  }
+
+  if (parsed.type !== "artifact_part") {
+    return context;
+  }
+  if (
+    typeof parsed.artifact_id !== "string" ||
+    !UUID_RE.test(parsed.artifact_id) ||
+    typeof sourceVersion !== "string" ||
+    !sourceVersion ||
+    !isRetrievalLocator(parsed.locator) ||
+    parsed.locator.type !== "artifact_part_ref" ||
+    !isRecord(parsed.artifact_part_provenance)
+  ) {
+    return null;
+  }
+  return {
+    ...context,
+    artifact_id: parsed.artifact_id,
+    locator: parsed.locator,
+    artifact_part_provenance: parsed.artifact_part_provenance,
+  };
+}
+
 export function parsePendingContexts(searchParams: URLSearchParams): ObjectRefContextItem[] {
   const contexts: ObjectRefContextItem[] = [];
+  for (const rawValue of searchParams.getAll(PENDING_CONTEXT_JSON_PARAM)) {
+    const parsed = parseJsonContext(rawValue);
+    if (parsed) {
+      contexts.push(parsed);
+    }
+  }
   for (const rawValue of searchParams.getAll(PENDING_CONTEXT_PARAM)) {
     const parsed = parseTypedId(rawValue);
-    if (parsed) {
+    if (parsed && parsed.type !== "artifact_part") {
       contexts.push(parsed);
     }
   }
@@ -122,16 +242,47 @@ export function stripPendingContextParams(
 ): URLSearchParams {
   const cleaned = new URLSearchParams(searchParams);
   cleaned.delete(PENDING_CONTEXT_PARAM);
+  cleaned.delete(PENDING_CONTEXT_JSON_PARAM);
   cleaned.delete(PENDING_SCOPE_PARAM);
   return cleaned;
 }
 
 export function setPendingContextParam(
   searchParams: URLSearchParams,
-  context: Pick<ObjectRefContextItem, "type" | "id" | "evidence_span_ids">,
+  context: PendingObjectContext,
 ): URLSearchParams {
   const next = new URLSearchParams(searchParams);
   next.delete(PENDING_CONTEXT_PARAM);
+  next.delete(PENDING_CONTEXT_JSON_PARAM);
+  if (context.type === "artifact_part") {
+    if (
+      !context.artifact_id ||
+      !context.source_version ||
+      !context.locator ||
+      context.locator.type !== "artifact_part_ref" ||
+      !context.artifact_part_provenance
+    ) {
+      return next;
+    }
+    next.append(
+      PENDING_CONTEXT_JSON_PARAM,
+      JSON.stringify({
+        kind: "object_ref",
+        type: context.type,
+        id: context.id,
+        ...(context.evidence_span_ids?.length
+          ? { evidence_span_ids: context.evidence_span_ids }
+          : {}),
+        artifact_id: context.artifact_id,
+        artifact_key: context.artifact_key,
+        artifact_version: context.artifact_version,
+        source_version: context.source_version,
+        locator: context.locator,
+        artifact_part_provenance: context.artifact_part_provenance,
+      }),
+    );
+    return next;
+  }
   next.append(
     PENDING_CONTEXT_PARAM,
     context.evidence_span_ids?.length

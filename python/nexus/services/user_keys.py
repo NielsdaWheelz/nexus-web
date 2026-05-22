@@ -415,9 +415,9 @@ def revoke_user_key(db: Session, user_id: UUID, key_id: UUID) -> None:
         return
 
     # Wipe ciphertext and mark as revoked
-    key.encrypted_key = None  # type: ignore[assignment]
-    key.key_nonce = None  # type: ignore[assignment]
-    key.master_key_version = None  # type: ignore[assignment]
+    key.encrypted_key = None
+    key.key_nonce = None
+    key.master_key_version = None
     key.status = "revoked"
     key.revoked_at = datetime.now(UTC)
     # key_fingerprint is retained for audit trail

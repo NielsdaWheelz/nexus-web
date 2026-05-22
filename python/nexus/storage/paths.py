@@ -115,37 +115,3 @@ def build_epub_asset_storage_path(media_id: UUID | str, asset_key: str) -> str:
         raise ValueError("EPUB asset key must not contain empty, dot, or dot-dot path parts.")
     prefix = _get_test_prefix()
     return f"{prefix}media/{media_id}/assets/{asset_key}"
-
-
-def parse_storage_path(path: str) -> tuple[str | None, str]:
-    """Parse a storage path to extract media_id and extension.
-
-    Args:
-        path: Full storage path.
-
-    Returns:
-        Tuple of (media_id_str, extension).
-        media_id_str may be None if path doesn't match expected pattern.
-    """
-    # Remove any test prefix
-    path = path.lstrip("/")
-    if path.startswith("test_runs/"):
-        # Skip test_runs/{run_id}/ prefix
-        parts = path.split("/", 2)
-        if len(parts) > 2:
-            path = parts[2]
-
-    # Now path should be "media/{media_id}/original.{ext}"
-    if path.startswith("media/"):
-        path = path[6:]  # Remove "media/"
-
-    # Extract media_id and filename
-    parts = path.split("/")
-    if len(parts) >= 2:
-        media_id_str = parts[0]
-        filename = parts[1]
-        if filename.startswith("original."):
-            ext = filename[9:]  # Remove "original."
-            return media_id_str, ext
-
-    return None, ""

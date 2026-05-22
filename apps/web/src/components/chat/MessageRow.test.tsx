@@ -4,13 +4,11 @@ import { MessageRow } from "./MessageRow";
 import type {
   ConversationMessage,
   MessageArtifact,
-  MessageArtifactDelta,
   MessageCitationAudit,
   MessageClaim,
   MessageClaimEvidence,
   MessageEvidenceSummary,
   MessageRetrievalResultRef,
-  MessageSourceManifestDelta,
 } from "@/lib/conversations/types";
 
 const apiFetchMock = vi.hoisted(() => vi.fn());
@@ -27,8 +25,6 @@ beforeEach(() => {
 
 type MessageFixture = ConversationMessage & {
   content?: string;
-  source_manifest_deltas?: MessageSourceManifestDelta[];
-  artifact_deltas?: MessageArtifactDelta[];
   artifacts?: MessageArtifact[];
   evidence_summary?: MessageEvidenceSummary | null;
   citation_audit?: MessageCitationAudit | null;
@@ -978,268 +974,6 @@ describe("MessageRow", () => {
     expect(retrieved).toHaveTextContent("highlight:v1");
   });
 
-  it("prefers message-document retrieval blocks over tool-call fallback retrievals", () => {
-    const documentRetrieval = {
-      type: "retrieval_result" as const,
-      id: "retrieval-document",
-      tool_call_id: "tool-1",
-      ordinal: 0,
-      result_type: "highlight" as const,
-      source_id: "highlight-document",
-      media_id: "media-1",
-      evidence_span_id: null,
-      context_ref: { type: "highlight" as const, id: "highlight-document" },
-      result_ref: {
-        type: "highlight" as const,
-        id: "highlight-document",
-        result_type: "highlight" as const,
-        source_id: "highlight-document",
-        color: "yellow",
-        exact: "Document quote text.",
-        title: "Document Quote",
-        source_label: "Reader Source",
-        snippet: "Document quote text.",
-        deep_link: "/media/media-1?highlight=highlight-document",
-        context_ref: { type: "highlight" as const, id: "highlight-document" },
-        media_id: "media-1",
-        media_kind: "pdf",
-        score: 0.92,
-        selected: true,
-        source_version: "document:v1",
-        locator: {
-          type: "pdf_page_geometry" as const,
-          media_id: "media-1",
-          page_number: 1,
-          quads: [],
-          exact: "Document quote text.",
-        },
-      },
-      deep_link: "/media/media-1?highlight=highlight-document",
-      score: 0.92,
-      selected: true,
-      source_title: "Document Quote",
-      section_label: "Reader Source",
-      exact_snippet: "Document quote text.",
-      snippet_prefix: null,
-      snippet_suffix: null,
-      locator: null,
-      retrieval_status: "included_in_prompt" as const,
-      included_in_prompt: true,
-      source_version: "document:v1",
-      created_at: "2026-01-01T00:00:00Z",
-    };
-    const { type: _blockType, ...fallbackRetrieval } = documentRetrieval;
-    const message: MessageFixture = {
-      ...baseMessage,
-      message_document: {
-        type: "message_document",
-        version: 1,
-        blocks: [
-          {
-            type: "text",
-            format: "markdown",
-            text: "Here is the synthesis.",
-          },
-          documentRetrieval,
-        ],
-      },
-      tool_calls: [
-        {
-          id: "tool-1",
-          assistant_message_id: "assistant-1",
-          tool_name: "app_search",
-          tool_call_index: 0,
-          status: "complete",
-          retrievals: [
-            {
-              ...fallbackRetrieval,
-              id: "retrieval-fallback",
-              source_id: "highlight-fallback",
-              source_title: "Fallback Quote",
-              exact_snippet: "Fallback quote text.",
-              source_version: "fallback:v1",
-            },
-          ],
-        },
-      ],
-    };
-
-    render(<MessageRow message={message} />);
-
-    const retrieved = screen.getByRole("region", { name: "Retrieved sources" });
-    expect(retrieved).toHaveTextContent("Document Quote");
-    expect(retrieved).not.toHaveTextContent("Fallback Quote");
-  });
-
-  it("prefers message-document source manifests over legacy manifest fallbacks", () => {
-    const message: MessageFixture = {
-      ...baseMessage,
-      message_document: {
-        type: "message_document",
-        version: 1,
-        blocks: [
-          {
-            type: "text",
-            format: "markdown",
-            text: "Here is the synthesis.",
-          },
-          {
-            type: "source_manifest",
-            assistant_message_id: "assistant-1",
-            tool_call_id: "tool-document",
-            tool_name: "app_search",
-            tool_call_index: 0,
-            scope: "document-scope",
-            filters: {},
-            requested_types: ["document_type"],
-            candidate_count: 2,
-            result_count: 2,
-            selected_count: 1,
-            included_in_prompt_count: 1,
-            excluded_by_budget_count: 0,
-            excluded_by_scope_count: 0,
-            stale_count: 0,
-            unreadable_count: 0,
-            index_versions: [],
-            status: "complete",
-          },
-        ],
-      },
-      source_manifest_deltas: [
-        {
-          assistant_message_id: "assistant-1",
-          tool_call_id: "tool-legacy",
-          tool_name: "app_search",
-          tool_call_index: 0,
-          scope: "legacy-scope",
-          filters: {},
-          requested_types: ["legacy_type"],
-          candidate_count: 9,
-          result_count: 9,
-          selected_count: 9,
-          included_in_prompt_count: 9,
-          excluded_by_budget_count: 0,
-          excluded_by_scope_count: 0,
-          stale_count: 0,
-          unreadable_count: 0,
-          index_versions: [],
-          status: "complete",
-        },
-      ],
-      tool_calls: [
-        {
-          id: "tool-legacy",
-          assistant_message_id: "assistant-1",
-          tool_name: "app_search",
-          tool_call_index: 0,
-          status: "complete",
-          requested_types: ["tool_fallback_type"],
-          retrievals: [],
-        },
-      ],
-    };
-
-    render(<MessageRow message={message} />);
-
-    const manifest = screen.getByRole("region", { name: "Source manifest" });
-    expect(manifest).toHaveTextContent("document_type");
-    expect(manifest).toHaveTextContent("1/2 selected");
-    expect(manifest).not.toHaveTextContent("legacy_type");
-    expect(manifest).not.toHaveTextContent("tool_fallback_type");
-  });
-
-  it("prefers message-document artifact previews over legacy artifact deltas", () => {
-    const message: MessageFixture = {
-      ...baseMessage,
-      message_document: {
-        type: "message_document",
-        version: 1,
-        blocks: [
-          {
-            type: "text",
-            format: "markdown",
-            text: "Here is the synthesis.",
-          },
-          {
-            type: "artifact_preview",
-            artifact_id: "artifact-document",
-            artifact_kind: "timeline",
-            title: "Document artifact",
-            status: "streaming",
-            delta: "Document preview.",
-            parts: [],
-          },
-        ],
-      },
-      artifact_deltas: [
-        {
-          artifact_id: "artifact-legacy",
-          artifact_kind: "timeline",
-          title: "Legacy artifact",
-          status: "streaming",
-          delta: "Legacy preview.",
-          parts: [],
-        },
-      ],
-    };
-
-    render(<MessageRow message={message} />);
-
-    const artifacts = screen.getByRole("region", {
-      name: "Generated artifacts",
-    });
-    expect(artifacts).toHaveTextContent("Document artifact");
-    expect(artifacts).toHaveTextContent("Document preview.");
-    expect(artifacts).not.toHaveTextContent("Legacy artifact");
-  });
-
-  it("prefers message-document claim blocks over legacy claims", () => {
-    const message: MessageFixture = {
-      ...baseMessage,
-      message_document: {
-        type: "message_document",
-        version: 1,
-        blocks: [
-          {
-            type: "text",
-            format: "markdown",
-            text: "Here is the synthesis.",
-          },
-          {
-            type: "claim",
-            claim_id: "claim-document",
-            message_id: "assistant-1",
-            ordinal: 0,
-            claim_text: "Document claim.",
-            claim_kind: "answer",
-            support_status: "not_enough_evidence",
-            verifier_status: "failed",
-            created_at: "2026-01-01T00:00:00Z",
-          },
-        ],
-      },
-      claims: [
-        {
-          id: "claim-legacy",
-          message_id: "assistant-1",
-          ordinal: 0,
-          claim_text: "Legacy claim.",
-          answer_start_offset: null,
-          answer_end_offset: null,
-          claim_kind: "answer",
-          support_status: "not_enough_evidence",
-          verifier_status: "failed",
-          created_at: "2026-01-01T00:00:00Z",
-        },
-      ],
-    };
-
-    render(<MessageRow message={message} />);
-
-    expect(screen.getByText("Document claim.")).toBeVisible();
-    expect(screen.queryByText("Legacy claim.")).not.toBeInTheDocument();
-  });
-
   it("does not count uncited artifact parts as cited", () => {
     const message: MessageFixture = {
       ...baseMessage,
@@ -1699,6 +1433,52 @@ describe("MessageRow", () => {
   );
 
   it("asks about a selected artifact part through the artifact ask API", async () => {
+    const artifactAskRunPayload = {
+      conversation_id: "conversation-1",
+      parent_message_id: "assistant-1",
+      branch_anchor: {
+        kind: "assistant_message",
+        message_id: "assistant-1",
+      },
+      content: "Explain this event",
+      model_id: "model-1",
+      reasoning: "default",
+      key_mode: "auto",
+      contexts: [
+        {
+          kind: "object_ref",
+          type: "artifact_part",
+          id: "part-1",
+          evidence_span_ids: ["backend-span-1"],
+          artifact_id: "durable-artifact-1",
+          artifact_key: "artifact-1",
+          artifact_version: 1,
+          source_version: "artifact_part:part-1:v1",
+          locator: {
+            type: "artifact_part_ref",
+            artifact_id: "durable-artifact-1",
+            artifact_part_id: "part-1",
+            message_id: "assistant-1",
+            conversation_id: "conversation-1",
+          },
+          artifact_part_provenance: {
+            type: "artifact_part",
+            artifact_id: "durable-artifact-1",
+            artifact_part_id: "part-1",
+            artifact_key: "artifact-1",
+            artifact_version: 1,
+            source_version: "artifact_part:part-1:v1",
+            evidence_span_ids: ["backend-span-1"],
+          },
+        },
+      ],
+      web_search: {
+        mode: "off",
+        allowed_domains: [],
+        blocked_domains: [],
+      },
+      artifact_intent: { kind: "off" },
+    };
     apiFetchMock.mockImplementation(
       async (path: string, init?: RequestInit) => {
         if (path === "/api/artifacts/durable-artifact-1/exports") {
@@ -1730,7 +1510,7 @@ describe("MessageRow", () => {
                     id: "retrieval-1",
                   },
                   source_refs: [],
-                  evidence_span_ids: [],
+                  evidence_span_ids: ["client-stale-span"],
                   metadata: {},
                   created_at: "2026-01-01T00:00:00Z",
                 },
@@ -1776,44 +1556,7 @@ describe("MessageRow", () => {
         }
         if (path === "/api/chat-runs") {
           expect(init?.method).toBe("POST");
-          expect(JSON.parse(String(init?.body))).toEqual({
-            conversation_id: "conversation-1",
-            parent_message_id: "assistant-1",
-            branch_anchor: {
-              kind: "assistant_message",
-              message_id: "assistant-1",
-            },
-            content: "Explain this event",
-            model_id: "model-1",
-            reasoning: "default",
-            key_mode: "auto",
-            contexts: [
-              expect.objectContaining({
-                kind: "object_ref",
-                type: "artifact_part",
-                id: "part-1",
-                artifact_id: "durable-artifact-1",
-                artifact_key: "artifact-1",
-                artifact_version: 1,
-                source_version: "artifact_part:part-1:v1",
-                locator: expect.objectContaining({
-                  type: "artifact_part_ref",
-                  artifact_id: "durable-artifact-1",
-                  artifact_part_id: "part-1",
-                }),
-                artifact_part_provenance: {
-                  artifact_part_id: "part-1",
-                },
-              }),
-            ],
-            web_search: {
-              mode: "off",
-              freshness_days: null,
-              allowed_domains: [],
-              blocked_domains: [],
-            },
-            artifact_intent: { kind: "off" },
-          });
+          expect(JSON.parse(String(init?.body))).toEqual(artifactAskRunPayload);
           return {
             data: {
               run: {
@@ -1850,44 +1593,12 @@ describe("MessageRow", () => {
         if (path === "/api/artifacts/durable-artifact-1/ask") {
           expect(init?.method).toBe("POST");
           expect(JSON.parse(String(init?.body))).toEqual({
-            mode: "chat_run_payload",
             content: "Explain this event",
             artifact_part_id: "part-1",
             model_id: "model-1",
           });
           return {
-            data: {
-              mode: "chat_run_payload",
-              artifact_part_provenance: {
-                artifact_part_id: "part-1",
-              },
-              chat_run_payload: {
-                conversation_id: "conversation-1",
-                parent_message_id: "assistant-1",
-                branch_anchor: {
-                  kind: "assistant_message",
-                  message_id: "assistant-1",
-                },
-                content: "Explain this event",
-                model_id: "model-1",
-                reasoning: "default",
-                key_mode: "auto",
-                contexts: [
-                  {
-                    kind: "object_ref",
-                    type: "artifact_part",
-                    id: "part-1",
-                  },
-                ],
-                web_search: {
-                  mode: "off",
-                  freshness_days: null,
-                  allowed_domains: [],
-                  blocked_domains: [],
-                },
-                artifact_intent: { kind: "off" },
-              },
-            },
+            data: artifactAskRunPayload,
           };
         }
         throw new Error(`Unexpected API call: ${path}`);
@@ -1948,7 +1659,7 @@ describe("MessageRow", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Started follow-up chat run.")).toBeVisible();
+      expect(screen.getByText("Started artifact ask.")).toBeVisible();
     });
     expect(onAttachContext).not.toHaveBeenCalled();
     expect(onChatRunCreated).toHaveBeenCalledWith(
@@ -2797,74 +2508,6 @@ describe("MessageRow", () => {
     expect(screen.queryByRole("link", { name: "1" })).toBeNull();
   });
 
-  it("does not render legacy citation chips or tool-call retrievals", () => {
-    const message = {
-      ...baseMessage,
-      citations: [
-        {
-          title: "Legacy web result",
-          url: "https://example.com/legacy",
-          display_url: "example.com",
-          snippet: "Legacy snippet.",
-        },
-      ],
-      tool_calls: [
-        {
-          assistant_message_id: "assistant-1",
-          tool_name: "app_search",
-          tool_call_index: 0,
-          status: "complete",
-          retrievals: [
-            {
-              result_type: "media",
-              source_id: "media-1",
-              media_id: "media-1",
-              context_ref: { type: "media", id: "media-1" },
-              result_ref: {
-                type: "media",
-                id: "media-1",
-                result_type: "media",
-                source_id: "media-1",
-                title: "Legacy app source",
-                source_label: "Legacy app source",
-                snippet: "Legacy app snippet.",
-                deep_link: "/media/media-1",
-                context_ref: { type: "media", id: "media-1" },
-                media_id: "media-1",
-                media_kind: "web_article",
-                score: 0.5,
-                selected: true,
-              },
-              deep_link: "/media/media-1",
-              score: 0.5,
-              selected: true,
-            },
-          ],
-        },
-      ],
-    } as ConversationMessage & {
-      citations: Array<{
-        title: string;
-        url: string;
-        display_url: string;
-        snippet: string;
-      }>;
-    };
-
-    render(<MessageRow message={message} />);
-
-    expect(
-      screen.queryByRole("link", { name: /legacy web result/i }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("link", { name: /legacy app source/i }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("region", { name: "Retrieved sources" }),
-    ).toBeNull();
-    expect(screen.queryByText("Legacy app snippet.")).not.toBeInTheDocument();
-  });
-
   it("renders short user messages as compact prompt blocks", () => {
     const message: MessageFixture = {
       ...baseMessage,
@@ -3169,30 +2812,29 @@ describe("MessageRow", () => {
   });
 
   it("renders retrieved sources and source manifest before the answer", () => {
+    const sourceManifest = {
+      type: "source_manifest" as const,
+      assistant_message_id: "assistant-1",
+      tool_call_id: "tool-1",
+      tool_name: "app_search" as const,
+      tool_call_index: 0,
+      scope: "all",
+      filters: {},
+      requested_types: ["highlight", "page"],
+      candidate_count: 4,
+      result_count: 4,
+      selected_count: 2,
+      included_in_prompt_count: 2,
+      excluded_by_budget_count: 0,
+      excluded_by_scope_count: 0,
+      stale_count: 0,
+      unreadable_count: 0,
+      index_versions: [],
+      latency_ms: 24,
+      status: "complete" as const,
+    };
     const message: MessageFixture = {
       ...baseMessage,
-      source_manifest_deltas: [
-        {
-          assistant_message_id: "assistant-1",
-          tool_call_id: "tool-1",
-          tool_name: "app_search",
-          tool_call_index: 0,
-          scope: "all",
-          filters: {},
-          requested_types: ["highlight", "page"],
-          candidate_count: 4,
-          result_count: 4,
-          selected_count: 2,
-          included_in_prompt_count: 2,
-          excluded_by_budget_count: 0,
-          excluded_by_scope_count: 0,
-          stale_count: 0,
-          unreadable_count: 0,
-          index_versions: [],
-          latency_ms: 24,
-          status: "complete",
-        },
-      ],
       tool_calls: [
         {
           id: "tool-1",
@@ -3260,10 +2902,7 @@ describe("MessageRow", () => {
 
     message.message_document = messageDocument([
       textBlock(message.content ?? ""),
-      ...message.source_manifest_deltas!.map((manifest) => ({
-        type: "source_manifest" as const,
-        ...manifest,
-      })),
+      sourceManifest,
       ...message.tool_calls!.flatMap((toolCall) =>
         (toolCall.retrievals ?? []).map((retrieval) => ({
           type: "retrieval_result" as const,

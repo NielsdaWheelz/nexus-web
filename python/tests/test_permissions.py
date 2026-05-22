@@ -2,16 +2,13 @@
 
 Tests cover:
 - can_read_media: s4 provenance semantics (non-default membership, intrinsic, closure edge)
-- can_read_media_bulk: batch checking with mixed s4 paths
 - can_read_conversation: owner / public / library-shared visibility
 - can_read_highlight: media visibility + library intersection
-- is_library_admin: role-based checks
-- is_admin_of_any_containing_library: admin check across libraries
+- is_library_member: role-based checks
 
 Key invariants tested:
 - No existence leak (non-existent resources return False, not raise)
 - All functions accept explicit Session
-- Bulk function uses exactly one query
 - Default library_entries alone is NOT sufficient without intrinsic/closure
 - Strict revocation: membership/share removal flips outcome immediately
 """
@@ -24,9 +21,6 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
     can_read_media,
-    can_read_media_bulk,
-    is_admin_of_any_containing_library,
-    is_library_admin,
     is_library_member,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
@@ -310,142 +304,6 @@ class TestCanReadMedia:
             assert can_read_media(db_session, user_id, media_id) is True
             _add_tombstone(db_session, user_id, media_id)
             assert can_read_media(db_session, user_id, media_id) is False
-
-
-# =============================================================================
-# can_read_media_bulk - S4 Provenance
-# =============================================================================
-
-
-class TestCanReadMediaBulk:
-    """Tests for can_read_media_bulk with s4 provenance semantics."""
-
-    def test_can_read_media_bulk_mixed_s4_paths(self, db_session: Session):
-        """Bulk check returns correct results across all s4 paths."""
-        user_id = uuid4()
-        default_lib = ensure_user_and_default_library(db_session, user_id)
-
-        # Non-default path
-        nd_lib = _create_non_default_library(db_session, user_id)
-        media_nd = _create_media(db_session, "non-default")
-        _add_media_to_library(db_session, nd_lib, media_nd)
-
-        # Intrinsic path
-        media_intr = _create_media(db_session, "intrinsic")
-        _add_media_to_library(db_session, default_lib, media_intr)
-        _add_intrinsic(db_session, default_lib, media_intr)
-
-        # Closure path, then hidden by viewer tombstone.
-        other_id = uuid4()
-        ensure_user_and_default_library(db_session, other_id)
-        source_lib = _create_non_default_library(db_session, other_id)
-        _add_membership(db_session, source_lib, user_id)
-        media_closure = _create_media(db_session, "closure")
-        _add_media_to_library(db_session, source_lib, media_closure)
-        _add_media_to_library(db_session, default_lib, media_closure)
-        _add_closure_edge(db_session, default_lib, media_closure, source_lib)
-        _add_tombstone(db_session, user_id, media_closure)
-
-        # Unreadable (default library_entries only, no provenance)
-        media_unreadable = _create_media(db_session, "no provenance")
-        _add_media_to_library(db_session, default_lib, media_unreadable)
-
-        # Non-existent
-        media_nonexist = uuid4()
-
-        result = can_read_media_bulk(
-            db_session,
-            user_id,
-            [media_nd, media_intr, media_closure, media_unreadable, media_nonexist],
-        )
-
-        assert len(result) == 5
-        assert result[media_nd] is True
-        assert result[media_intr] is True
-        assert result[media_closure] is False
-        assert result[media_unreadable] is False
-        assert result[media_nonexist] is False
-
-    def test_can_read_media_bulk_empty_list(self, db_session: Session):
-        """Empty list returns empty dict without query."""
-        user_id = uuid4()
-        ensure_user_and_default_library(db_session, user_id)
-        result = can_read_media_bulk(db_session, user_id, [])
-        assert result == {}
-
-
-# =============================================================================
-# is_library_admin
-# =============================================================================
-
-
-class TestIsLibraryAdmin:
-    """Tests for is_library_admin predicate."""
-
-    def test_is_library_admin_true(self, db_session: Session):
-        user_id = uuid4()
-        library_id = ensure_user_and_default_library(db_session, user_id)
-        assert is_library_admin(db_session, user_id, library_id) is True
-
-    def test_is_library_admin_false_for_member_role(self, db_session: Session):
-        user_id = uuid4()
-        library_id = ensure_user_and_default_library(db_session, user_id)
-        db_session.execute(
-            text("UPDATE memberships SET role = 'member' WHERE library_id = :l AND user_id = :u"),
-            {"l": library_id, "u": user_id},
-        )
-        db_session.flush()
-        assert is_library_admin(db_session, user_id, library_id) is False
-
-    def test_is_library_admin_false_for_nonexistent_library(self, db_session: Session):
-        user_id = uuid4()
-        ensure_user_and_default_library(db_session, user_id)
-        assert is_library_admin(db_session, user_id, uuid4()) is False
-
-
-# =============================================================================
-# is_admin_of_any_containing_library
-# =============================================================================
-
-
-class TestIsAdminOfAnyContainingLibrary:
-    """Tests for is_admin_of_any_containing_library predicate."""
-
-    def test_is_admin_of_any_containing_library_true(self, db_session: Session):
-        user_id = uuid4()
-        lib_id = ensure_user_and_default_library(db_session, user_id)
-        media_id = _create_media(db_session)
-        _add_media_to_library(db_session, lib_id, media_id)
-        assert is_admin_of_any_containing_library(db_session, user_id, media_id) is True
-
-    def test_is_admin_of_any_containing_library_false_admin_other_library(
-        self, db_session: Session
-    ):
-        owner_id = uuid4()
-        owner_lib = ensure_user_and_default_library(db_session, owner_id)
-        admin_id = uuid4()
-        ensure_user_and_default_library(db_session, admin_id)
-
-        media_id = _create_media(db_session)
-        _add_media_to_library(db_session, owner_lib, media_id)
-        assert is_admin_of_any_containing_library(db_session, admin_id, media_id) is False
-
-    def test_is_admin_of_any_containing_library_false_nonexistent_media(self, db_session: Session):
-        user_id = uuid4()
-        ensure_user_and_default_library(db_session, user_id)
-        assert is_admin_of_any_containing_library(db_session, user_id, uuid4()) is False
-
-    def test_is_admin_of_any_containing_library_false_member_not_admin(self, db_session: Session):
-        user_id = uuid4()
-        lib_id = ensure_user_and_default_library(db_session, user_id)
-        media_id = _create_media(db_session)
-        _add_media_to_library(db_session, lib_id, media_id)
-        db_session.execute(
-            text("UPDATE memberships SET role = 'member' WHERE library_id = :l AND user_id = :u"),
-            {"l": lib_id, "u": user_id},
-        )
-        db_session.flush()
-        assert is_admin_of_any_containing_library(db_session, user_id, media_id) is False
 
 
 # =============================================================================

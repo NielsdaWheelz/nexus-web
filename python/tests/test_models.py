@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import text
 
 from nexus.config import clear_settings_cache
-from nexus.services.crypto import MASTER_KEY_SIZE, clear_master_key_cache
+from nexus.services.crypto import MASTER_KEY_SIZE, _get_master_key
 from tests.factories import seed_test_models
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.integration
 @pytest.fixture(autouse=True)
 def setup_test_master_key(monkeypatch):
     """Set up a deterministic test master key for all tests."""
-    clear_master_key_cache()
+    _get_master_key.cache_clear()
 
     test_key = b"test_master_key_for_encryption!!"
     assert len(test_key) == MASTER_KEY_SIZE
@@ -53,7 +53,7 @@ def setup_test_master_key(monkeypatch):
     yield
 
     clear_settings_cache()
-    clear_master_key_cache()
+    _get_master_key.cache_clear()
 
 
 # =============================================================================

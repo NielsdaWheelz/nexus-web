@@ -2,21 +2,21 @@ import threading
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
 
 from nexus.errors import ApiError, ApiErrorCode, ForbiddenError, NotFoundError
 from nexus.schemas.contributors import (
     ContributorAliasCreateRequest,
     ContributorExternalIdCreateRequest,
-    ContributorMergeRequest,
     ContributorSplitRequest,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.contributor_credits import (
-    contributor_credit_previews_for_names,
     replace_gutenberg_contributor_credits,
     replace_media_contributor_credits,
     replace_podcast_contributor_credits,
+    upstream_contributor_credit_previews_for_names,
 )
 from nexus.services.contributors import (
     add_contributor_alias,
@@ -26,11 +26,11 @@ from nexus.services.contributors import (
     get_contributor_by_handle,
     hydrate_contributor_object_ref,
     list_contributor_works,
-    merge_contributors,
     search_contributors,
     split_contributor,
     tombstone_contributor,
 )
+from nexus.services.message_context_snapshots import object_ref_context_snapshot
 from nexus.services.object_refs import search_object_refs
 from tests.factories import (
     add_media_to_library,
@@ -385,7 +385,7 @@ def test_duplicate_confirmed_aliases_do_not_auto_resolve(db_session):
 
 
 @pytest.mark.integration
-def test_name_only_previews_do_not_attach_display_name_matches(db_session):
+def test_upstream_previews_leave_unconfirmed_names_unverified(db_session):
     media_id = create_test_media(db_session, title=f"Preview Display Name {uuid4()}")
     credited_name = f"Unconfirmed Preview Name {uuid4()}"
     replace_media_contributor_credits(
@@ -394,18 +394,21 @@ def test_name_only_previews_do_not_attach_display_name_matches(db_session):
         credits=[{"name": credited_name, "role": "author", "source": "rss"}],
     )
 
-    previews = contributor_credit_previews_for_names(
+    previews = upstream_contributor_credit_previews_for_names(
         db_session,
         [credited_name],
         role="author",
         source="podcast_index",
     )
 
-    assert previews == []
+    assert len(previews) == 1
+    assert previews[0].credited_name == credited_name
+    assert previews[0].resolution_status == "unverified"
+    assert previews[0].source == "podcast_index"
 
 
 @pytest.mark.integration
-def test_name_only_previews_can_attach_confirmed_alias(db_session):
+def test_upstream_previews_can_attach_confirmed_alias(db_session):
     media_id = create_test_media(db_session, title=f"Preview Confirmed Alias {uuid4()}")
     credited_name = f"Confirmed Preview Name {uuid4()}"
     replace_media_contributor_credits(
@@ -415,7 +418,7 @@ def test_name_only_previews_can_attach_confirmed_alias(db_session):
     )
     _contributor_id, handle, _credit_id = _credit_contributor(db_session, media_id)
 
-    previews = contributor_credit_previews_for_names(
+    previews = upstream_contributor_credit_previews_for_names(
         db_session,
         [credited_name],
         role="author",
@@ -807,28 +810,11 @@ def test_contributor_pane_opens_from_message_context_with_no_visible_works(db_se
     conversation_id = create_test_conversation(db_session, viewer_id)
     message_id = create_test_message(db_session, conversation_id, seq=1)
 
-    db_session.execute(
-        text(
-            """
-            INSERT INTO message_context_items (
-                message_id, user_id, object_type, object_id, ordinal, context_snapshot
-            )
-            VALUES (
-                :message_id,
-                :user_id,
-                'contributor',
-                :contributor_id,
-                0,
-                CAST(:snapshot AS jsonb)
-            )
-            """
-        ),
-        {
-            "message_id": message_id,
-            "user_id": viewer_id,
-            "contributor_id": contributor_id,
-            "snapshot": '{"objectType":"contributor","label":"Context Empty Author"}',
-        },
+    _insert_contributor_context_item(
+        db_session,
+        message_id=message_id,
+        user_id=viewer_id,
+        contributor_id=contributor_id,
     )
 
     assert get_contributor_by_handle(db_session, handle, viewer_id).handle == handle
@@ -1154,222 +1140,62 @@ def _credit_contributor(db_session, media_id):
     ).one()
 
 
-@pytest.mark.integration
-def test_merge_contributors_moves_references_and_writes_event(db_session):
-    actor_user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-    source_media_id = create_test_media(db_session, title=f"Merge Source {uuid4()}")
-    target_media_id = create_test_media(db_session, title=f"Merge Target {uuid4()}")
-    external_key = f"viaf-{uuid4()}"
-
-    replace_media_contributor_credits(
-        db_session,
-        media_id=source_media_id,
-        credits=[
-            {
-                "name": "Merge Source",
-                "role": "author",
-                "source": "test_provider",
-                "external_id": {"authority": "viaf", "external_key": external_key},
-            }
-        ],
-    )
-    replace_media_contributor_credits(
-        db_session,
-        media_id=target_media_id,
-        credits=[{"name": "Merge Target", "role": "author", "source": "manual"}],
-    )
-    source_id, source_handle, _source_credit_id = _credit_contributor(
-        db_session,
-        source_media_id,
-    )
-    target_id, target_handle, _target_credit_id = _credit_contributor(
-        db_session,
-        target_media_id,
-    )
-    conversation_id = create_test_conversation(db_session, actor_user_id)
-    message_id = create_test_message(db_session, conversation_id, seq=1)
-    db_session.execute(
+def _insert_contributor_context_item(
+    db_session,
+    *,
+    message_id: UUID,
+    user_id: UUID,
+    contributor_id: UUID,
+    ordinal: int = 0,
+) -> UUID:
+    contributor = db_session.execute(
         text(
             """
-            INSERT INTO object_links (
-                user_id, relation_type, a_type, a_id, b_type, b_id, metadata
-            )
-            VALUES (
-                :user_id, 'related', 'contributor', :source_id, 'media', :media_id, '{}'::jsonb
-            )
+            SELECT display_name, sort_name, disambiguation, handle
+            FROM contributors
+            WHERE id = :contributor_id
             """
         ),
-        {"user_id": actor_user_id, "source_id": source_id, "media_id": target_media_id},
-    )
-    db_session.execute(
-        text(
-            """
-            INSERT INTO object_links (
-                user_id, relation_type, a_type, a_id, b_type, b_id, metadata
-            )
-            VALUES (
-                :user_id, 'related', 'contributor', :target_id, 'media', :media_id, '{}'::jsonb
-            )
-            """
-        ),
-        {"user_id": actor_user_id, "target_id": target_id, "media_id": target_media_id},
-    )
-    db_session.execute(
+        {"contributor_id": contributor_id},
+    ).one()
+    return db_session.execute(
         text(
             """
             INSERT INTO message_context_items (
-                message_id, user_id, object_type, object_id, ordinal, context_snapshot
+                message_id,
+                user_id,
+                context_kind,
+                object_type,
+                object_id,
+                ordinal,
+                context_snapshot
             )
             VALUES (
                 :message_id,
                 :user_id,
+                'object_ref',
                 'contributor',
-                :source_id,
-                0,
-                CAST(:snapshot AS jsonb)
+                :contributor_id,
+                :ordinal,
+                :context_snapshot
             )
+            RETURNING id
             """
-        ),
+        ).bindparams(bindparam("context_snapshot", type_=JSONB)),
         {
             "message_id": message_id,
-            "user_id": actor_user_id,
-            "source_id": source_id,
-            "snapshot": '{"objectType":"contributor","label":"Merge Source"}',
-        },
-    )
-
-    merged = merge_contributors(
-        db_session,
-        actor_user_id=actor_user_id,
-        actor_roles=CURATOR_ROLES,
-        request=ContributorMergeRequest(
-            source_handle=source_handle,
-            target_handle=target_handle,
-        ),
-    )
-
-    rows = db_session.execute(
-        text(
-            """
-            SELECT
-                (SELECT status FROM contributors WHERE id = :source_id) AS source_status,
-                (SELECT merged_into_contributor_id FROM contributors WHERE id = :source_id)
-                    AS merged_into,
-                (SELECT contributor_id FROM contributor_credits WHERE media_id = :source_media_id)
-                    AS moved_credit,
-                (SELECT contributor_id FROM contributor_external_ids WHERE external_key = :external_key)
-                    AS moved_external_id,
-                (SELECT count(*) FROM object_links WHERE a_type = 'contributor' AND b_id = :target_media_id)
-                    AS link_count,
-                (SELECT a_id FROM object_links WHERE a_type = 'contributor' AND b_id = :target_media_id)
-                    AS moved_link,
-                (SELECT object_id FROM message_context_items WHERE id IS NOT NULL AND message_id = :message_id)
-                    AS moved_context,
-                (
-                    SELECT count(*)
-                    FROM contributor_identity_events
-                    WHERE event_type = 'merge'
-                      AND source_contributor_id = :source_id
-                      AND target_contributor_id = :target_id
-                )
-                    AS merge_events
-            """
-        ),
-        {
-            "source_id": source_id,
-            "target_id": target_id,
-            "source_media_id": source_media_id,
-            "external_key": external_key,
-            "target_media_id": target_media_id,
-            "message_id": message_id,
-        },
-    ).one()
-
-    assert merged.handle == target_handle
-    assert rows.source_status == "merged"
-    assert rows.merged_into == target_id
-    assert rows.moved_credit == target_id
-    assert rows.moved_external_id == target_id
-    assert rows.link_count == 1
-    assert rows.moved_link == target_id
-    assert rows.moved_context == target_id
-    assert rows.merge_events == 1
-
-
-@pytest.mark.integration
-def test_merge_contributors_requires_curator_role_and_leaves_other_user_refs(db_session):
-    actor_user_id = uuid4()
-    other_user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": actor_user_id})
-    db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": other_user_id})
-    source_media_id = create_test_media(db_session, title=f"Blocked Merge Source {uuid4()}")
-    target_media_id = create_test_media(db_session, title=f"Blocked Merge Target {uuid4()}")
-
-    replace_media_contributor_credits(
-        db_session,
-        media_id=source_media_id,
-        credits=[{"name": "Blocked Source", "role": "author", "source": "test_provider"}],
-    )
-    replace_media_contributor_credits(
-        db_session,
-        media_id=target_media_id,
-        credits=[{"name": "Blocked Target", "role": "author", "source": "manual"}],
-    )
-    source_id, source_handle, _source_credit_id = _credit_contributor(
-        db_session,
-        source_media_id,
-    )
-    target_id, target_handle, _target_credit_id = _credit_contributor(
-        db_session,
-        target_media_id,
-    )
-    db_session.execute(
-        text(
-            """
-            INSERT INTO object_links (
-                user_id, relation_type, a_type, a_id, b_type, b_id, metadata
-            )
-            VALUES (
-                :user_id, 'related', 'contributor', :source_id, 'media', :media_id, '{}'::jsonb
-            )
-            """
-        ),
-        {"user_id": other_user_id, "source_id": source_id, "media_id": target_media_id},
-    )
-
-    with pytest.raises(ForbiddenError) as error:
-        merge_contributors(
-            db_session,
-            actor_user_id=actor_user_id,
-            request=ContributorMergeRequest(
-                source_handle=source_handle,
-                target_handle=target_handle,
+            "user_id": user_id,
+            "contributor_id": contributor_id,
+            "ordinal": ordinal,
+            "context_snapshot": object_ref_context_snapshot(
+                object_type="contributor",
+                object_id=contributor_id,
+                title=contributor.display_name,
+                preview=contributor.disambiguation or contributor.sort_name,
+                route=f"/authors/{contributor.handle}",
             ),
-        )
-
-    rows = db_session.execute(
-        text(
-            """
-            SELECT
-                (SELECT status FROM contributors WHERE id = :source_id) AS source_status,
-                (SELECT contributor_id FROM contributor_credits WHERE media_id = :source_media_id)
-                    AS source_credit,
-                (SELECT a_id FROM object_links WHERE user_id = :other_user_id) AS other_link
-            """
-        ),
-        {
-            "source_id": source_id,
-            "target_id": target_id,
-            "source_media_id": source_media_id,
-            "other_user_id": other_user_id,
         },
-    ).one()
-
-    assert error.value.code == ApiErrorCode.E_FORBIDDEN
-    assert rows.source_status == "unverified"
-    assert rows.source_credit == source_id
-    assert rows.other_link == source_id
+    ).scalar_one()
 
 
 @pytest.mark.integration
@@ -1411,30 +1237,12 @@ def test_split_contributor_moves_selected_records_only(db_session):
         ),
         {"user_id": actor_user_id, "source_id": source_id, "media_id": media_a},
     ).scalar_one()
-    context_item_id = db_session.execute(
-        text(
-            """
-            INSERT INTO message_context_items (
-                message_id, user_id, object_type, object_id, ordinal, context_snapshot
-            )
-            VALUES (
-                :message_id,
-                :user_id,
-                'contributor',
-                :source_id,
-                0,
-                CAST(:snapshot AS jsonb)
-            )
-            RETURNING id
-            """
-        ),
-        {
-            "message_id": message_id,
-            "user_id": actor_user_id,
-            "source_id": source_id,
-            "snapshot": '{"objectType":"contributor","label":"Combined Author"}',
-        },
-    ).scalar_one()
+    context_item_id = _insert_contributor_context_item(
+        db_session,
+        message_id=message_id,
+        user_id=actor_user_id,
+        contributor_id=source_id,
+    )
 
     split = split_contributor(
         db_session,
@@ -1567,30 +1375,12 @@ def test_split_contributor_rejects_other_users_context_items_before_mutation(db_
     source_id, source_handle, credit_id = _credit_contributor(db_session, media_id)
     conversation_id = create_test_conversation(db_session, other_user_id)
     message_id = create_test_message(db_session, conversation_id, seq=1)
-    other_context_item_id = db_session.execute(
-        text(
-            """
-            INSERT INTO message_context_items (
-                message_id, user_id, object_type, object_id, ordinal, context_snapshot
-            )
-            VALUES (
-                :message_id,
-                :user_id,
-                'contributor',
-                :source_id,
-                0,
-                CAST(:snapshot AS jsonb)
-            )
-            RETURNING id
-            """
-        ),
-        {
-            "message_id": message_id,
-            "user_id": other_user_id,
-            "source_id": source_id,
-            "snapshot": '{"objectType":"contributor","label":"Shared Context Author"}',
-        },
-    ).scalar_one()
+    other_context_item_id = _insert_contributor_context_item(
+        db_session,
+        message_id=message_id,
+        user_id=other_user_id,
+        contributor_id=source_id,
+    )
 
     with pytest.raises(ApiError) as error:
         split_contributor(
@@ -1735,28 +1525,11 @@ def test_tombstone_rejects_message_context_references(db_session):
     )
     conversation_id = create_test_conversation(db_session, actor_user_id)
     message_id = create_test_message(db_session, conversation_id, seq=1)
-    db_session.execute(
-        text(
-            """
-            INSERT INTO message_context_items (
-                message_id, user_id, object_type, object_id, ordinal, context_snapshot
-            )
-            VALUES (
-                :message_id,
-                :user_id,
-                'contributor',
-                :contributor_id,
-                0,
-                CAST(:snapshot AS jsonb)
-            )
-            """
-        ),
-        {
-            "message_id": message_id,
-            "user_id": actor_user_id,
-            "contributor_id": contributor_id,
-            "snapshot": '{"objectType":"contributor","label":"Context Tombstone Author"}',
-        },
+    _insert_contributor_context_item(
+        db_session,
+        message_id=message_id,
+        user_id=actor_user_id,
+        contributor_id=contributor_id,
     )
 
     with pytest.raises(ApiError) as error:

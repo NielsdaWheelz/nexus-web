@@ -1,8 +1,8 @@
 """Tests for PR-09 observability instrumentation.
 
 Covers:
-- Redaction utilities (hash_text, redact_text, safe_kv)
-- Logging ContextVars (path, method, route_template, flow_id, stream_jti)
+- Redaction guard utilities (safe_kv)
+- Logging ContextVars (path, method, flow_id, stream_jti)
 - Nexus LLM event field safety
 - Event taxonomy correctness
 - No sensitive data in logs (prompt, api_key, content)
@@ -16,64 +16,11 @@ from nexus.logging import (
     clear_request_context,
     set_flow_id,
     set_request_context,
-    set_route_template,
     set_stream_jti,
 )
-from nexus.services.redact import FORBIDDEN_KEYS, hash_text, redact_text, safe_kv
+from nexus.services.redact import FORBIDDEN_KEYS, safe_kv
 
 pytestmark = pytest.mark.unit
-
-# ─── Redaction Unit Tests ────────────────────────────────────────────────
-
-
-class TestHashText:
-    """Tests for hash_text function."""
-
-    def test_stable_output(self):
-        """Same input always produces same hash."""
-        assert hash_text("hello") == hash_text("hello")
-
-    def test_different_inputs_differ(self):
-        """Different inputs produce different hashes."""
-        assert hash_text("hello") != hash_text("world")
-
-    def test_returns_hex_string(self):
-        """Output is a 64-char hex string (SHA-256)."""
-        result = hash_text("test")
-        assert len(result) == 64
-        assert all(c in "0123456789abcdef" for c in result)
-
-    def test_empty_string(self):
-        """Empty string has a valid hash."""
-        result = hash_text("")
-        assert len(result) == 64
-
-
-class TestRedactText:
-    """Tests for redact_text function."""
-
-    def test_full_redact(self):
-        """With keep=0, returns '***'."""
-        assert redact_text("sk-abc123", keep=0) == "***"
-
-    def test_partial_redact(self):
-        """With keep=4, returns prefix + '***'."""
-        assert redact_text("sk-abc123", keep=4) == "sk-a***"
-
-    def test_empty_string(self):
-        """Empty string returns '***'."""
-        assert redact_text("", keep=0) == "***"
-
-    def test_keep_exceeds_length(self):
-        """If keep >= length, returns '***'."""
-        assert redact_text("ab", keep=5) == "***"
-
-    def test_never_returns_full_input(self):
-        """For any input longer than keep, result never contains full input."""
-        value = "sensitive-api-key-value"
-        result = redact_text(value, keep=3)
-        assert value not in result
-        assert result == "sen***"
 
 
 class TestSafeKv:
@@ -92,28 +39,28 @@ class TestSafeKv:
     def test_blocks_forbidden_key_in_dev(self):
         """Forbidden keys raise ValueError in dev/test."""
         with pytest.raises(ValueError, match="Forbidden log keys"):
-            safe_kv(prompt="hello world", _env="test")
+            safe_kv(prompt="hello world")
 
     def test_blocks_content_key(self):
         """'content' is forbidden."""
         with pytest.raises(ValueError):
-            safe_kv(content="user message text", _env="test")
+            safe_kv(content="user message text")
 
     def test_blocks_api_key_key(self):
         """'api_key' is forbidden."""
         with pytest.raises(ValueError):
-            safe_kv(api_key="sk-abc123", _env="test")
+            safe_kv(api_key="sk-abc123")
 
     def test_blocks_token_key(self):
         """'token' is forbidden."""
         with pytest.raises(ValueError):
-            safe_kv(token="eyJhbGciOiJIUzI1NiJ9", _env="test")
+            safe_kv(token="eyJhbGciOiJIUzI1NiJ9")
 
     def test_all_forbidden_keys_blocked(self):
         """Every key in FORBIDDEN_KEYS is blocked when used raw."""
         for key in FORBIDDEN_KEYS:
             with pytest.raises(ValueError):
-                safe_kv(**{key: "some value"}, _env="test")
+                safe_kv(**{key: "some value"})
 
 
 # ─── ContextVar Tests ────────────────────────────────────────────────
@@ -136,13 +83,6 @@ class TestContextVars:
         assert event_dict["method"] == "POST"
         assert event_dict["request_id"] == "req-1"
 
-    def test_route_template_injected(self):
-        """route_template appears when set separately."""
-        set_request_context("req-1")
-        set_route_template("/conversations/{conversation_id}/messages")
-        event_dict = add_request_context(None, "info", {})
-        assert event_dict["route_template"] == "/conversations/{conversation_id}/messages"
-
     def test_flow_id_injected(self):
         """flow_id appears when set."""
         set_request_context("req-1")
@@ -160,7 +100,6 @@ class TestContextVars:
     def test_clear_clears_all(self):
         """clear_request_context clears all vars."""
         set_request_context("req-1", path="/test", method="GET")
-        set_route_template("/test")
         set_flow_id("flow-1")
         set_stream_jti("jti-1")
         clear_request_context()
@@ -168,7 +107,6 @@ class TestContextVars:
         assert "request_id" not in event_dict
         assert "path" not in event_dict
         assert "method" not in event_dict
-        assert "route_template" not in event_dict
         assert "flow_id" not in event_dict
         assert "stream_jti" not in event_dict
 
@@ -177,7 +115,6 @@ class TestContextVars:
         set_request_context("req-1")
         event_dict = add_request_context(None, "info", {})
         assert "path" not in event_dict
-        assert "route_template" not in event_dict
         assert "flow_id" not in event_dict
 
 

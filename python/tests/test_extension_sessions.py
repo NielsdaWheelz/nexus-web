@@ -7,8 +7,8 @@ from sqlalchemy import func, select, text
 
 from nexus.db.models import ExtensionSession, Fragment, Media
 from nexus.services.url_normalize import normalize_url_for_display
-from nexus.storage.client import FakeStorageClient
 from tests.helpers import auth_headers, create_test_user_id
+from tests.support.storage import FakeStorageClient
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration

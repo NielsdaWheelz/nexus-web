@@ -2,10 +2,11 @@
 
 import hashlib
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment
@@ -69,6 +70,33 @@ def test_highlight_contexts_use_highlight_visibility_not_media_visibility(
     assert result.failure.code == "forbidden"
 
 
+def test_hydrate_highlight_context_ref_requires_source_version(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    library_id = create_test_library(db_session, bootstrapped_user, "Highlight Context Library")
+    media_id = create_test_media(db_session, title="Readable Highlight Source")
+    add_media_to_library(db_session, library_id, media_id)
+    fragment_id = create_test_fragment(db_session, media_id, content="private highlight text")
+    highlight_id = create_test_highlight(
+        db_session,
+        bootstrapped_user,
+        fragment_id,
+        exact="private highlight text",
+    )
+
+    result = hydrate_context_ref(
+        db_session,
+        viewer_id=bootstrapped_user,
+        context_ref={"type": "highlight", "id": str(highlight_id)},
+    )
+
+    assert result.resolved is False
+    assert result.failure is not None
+    assert result.failure.code == "invalid"
+    assert result.failure.message == "highlight context_ref requires source_version"
+
+
 def test_hydrate_content_chunk_context_ref_checks_media_permission(
     db_session: Session,
     bootstrapped_user: UUID,
@@ -88,6 +116,204 @@ def test_hydrate_content_chunk_context_ref_checks_media_permission(
     assert result.resolved is True
     assert "Readable Source" in result.evidence_text
     assert "canonical text" in result.evidence_text
+
+
+def test_hydrate_message_context_source_ref_rejects_content_chunk_missing_canonical_snapshot(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    chunk_id = UUID("11111111-1111-4111-8111-111111111111")
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    message_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=1,
+        role="user",
+        content="Use the attached chunk.",
+    )
+    context_id = db_session.execute(
+        text(
+            """
+            INSERT INTO message_context_items (
+                message_id,
+                user_id,
+                context_kind,
+                object_type,
+                object_id,
+                ordinal,
+                context_snapshot
+            )
+            VALUES (
+                :message_id,
+                :user_id,
+                'object_ref',
+                'content_chunk',
+                :object_id,
+                0,
+                :context_snapshot
+            )
+            RETURNING id
+            """
+        ).bindparams(bindparam("context_snapshot", type_=JSONB)),
+        {
+            "message_id": message_id,
+            "user_id": bootstrapped_user,
+            "object_id": chunk_id,
+            "context_snapshot": {
+                "kind": "object_ref",
+                "type": "content_chunk",
+                "id": str(chunk_id),
+                "title": "Stale chunk context",
+            },
+        },
+    ).scalar_one()
+    db_session.commit()
+
+    result = hydrate_source_ref(
+        db_session,
+        viewer_id=bootstrapped_user,
+        source_ref={"type": "message_context", "id": str(context_id)},
+    )
+
+    assert result.resolved is False
+    assert result.failure is not None
+    assert result.failure.code == "not_found"
+
+
+def test_hydrate_message_context_source_ref_preserves_artifact_snapshot_provenance(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=1,
+        role="user",
+        content="Create the artifact.",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=2,
+        role="assistant",
+        content="Artifact ready.",
+        parent_message_id=user_message_id,
+    )
+    follow_up_message_id = create_test_message(
+        db_session,
+        conversation_id=conversation_id,
+        seq=3,
+        role="user",
+        content="Use the attached artifact.",
+        parent_message_id=assistant_message_id,
+    )
+    artifact_id = uuid4()
+    artifact_version = 4
+    provenance = {
+        "type": "artifact",
+        "artifact_id": str(artifact_id),
+        "artifact_key": "artifact-1",
+        "artifact_version": artifact_version,
+    }
+    snapshot = {
+        "kind": "object_ref",
+        "type": "artifact",
+        "id": str(artifact_id),
+        "title": "Timeline",
+        "artifact_id": str(artifact_id),
+        "artifact_key": "artifact-1",
+        "artifact_version": artifact_version,
+        "artifact_part_provenance": provenance,
+    }
+    db_session.execute(
+        text(
+            """
+            INSERT INTO message_artifacts (
+                id, conversation_id, message_id, artifact_key,
+                artifact_version, artifact_kind, title, status, preview_text
+            )
+            VALUES (
+                :artifact_id, :conversation_id, :message_id, 'artifact-1',
+                :artifact_version, 'timeline', 'Timeline', 'complete', 'Timeline preview'
+            )
+            """
+        ),
+        {
+            "artifact_id": artifact_id,
+            "conversation_id": conversation_id,
+            "message_id": assistant_message_id,
+            "artifact_version": artifact_version,
+        },
+    )
+    context_id = db_session.execute(
+        text(
+            """
+            INSERT INTO message_context_items (
+                message_id,
+                user_id,
+                context_kind,
+                object_type,
+                object_id,
+                ordinal,
+                context_snapshot
+            )
+            VALUES (
+                :message_id,
+                :user_id,
+                'object_ref',
+                'artifact',
+                :artifact_id,
+                0,
+                :context_snapshot
+            )
+            RETURNING id
+            """
+        ).bindparams(bindparam("context_snapshot", type_=JSONB)),
+        {
+            "message_id": follow_up_message_id,
+            "user_id": bootstrapped_user,
+            "artifact_id": artifact_id,
+            "context_snapshot": snapshot,
+        },
+    ).scalar_one()
+    db_session.commit()
+
+    result = hydrate_source_ref(
+        db_session,
+        viewer_id=bootstrapped_user,
+        source_ref={"type": "message_context", "id": str(context_id)},
+    )
+
+    assert result.resolved is True
+    assert result.context_ref is not None
+    assert result.context_ref["id"] == str(artifact_id)
+    assert result.context_ref["artifact_id"] == str(artifact_id)
+    assert result.context_ref["artifact_key"] == "artifact-1"
+    assert result.context_ref["artifact_version"] == artifact_version
+    assert result.context_ref["artifact_part_provenance"] == provenance
+    assert f"<artifact_id>{artifact_id}</artifact_id>" in result.evidence_text
+
+
+def test_hydrate_artifact_context_ref_rejects_provenance_identity_drift(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    artifact_id = uuid4()
+
+    result = hydrate_context_ref(
+        db_session,
+        viewer_id=bootstrapped_user,
+        context_ref={
+            "type": "artifact",
+            "id": str(artifact_id),
+            "artifact_id": str(uuid4()),
+        },
+    )
+
+    assert result.resolved is False
+    assert result.failure is not None
+    assert result.failure.code == "invalid"
 
 
 def test_hydrate_media_backed_context_refs_include_episode_video_and_fragment(
@@ -242,6 +468,20 @@ def test_hydrate_content_chunk_context_ref_rejects_malformed_evidence_span_ids(
     assert result.resolved is False
     assert result.failure is not None
     assert result.failure.code == "invalid"
+
+    scalar_result = hydrate_context_ref(
+        db_session,
+        viewer_id=bootstrapped_user,
+        context_ref={
+            "type": "content_chunk",
+            "id": str(chunk_id),
+            "evidence_span_ids": "not-an-array",
+        },
+    )
+
+    assert scalar_result.resolved is False
+    assert scalar_result.failure is not None
+    assert scalar_result.failure.code == "invalid"
 
 
 def test_hydrate_message_retrieval_preserves_citation_and_evidence_span_id(

@@ -210,7 +210,7 @@ describe("citation guards", () => {
 
   it("keeps result refs strict at type level", () => {
     const invalidStatusRef: MessageRetrievalResultRef = {
-      // @ts-expect-error Status refs are not citable retrieval result refs.
+      // @ts-expect-error justify-ts-override: status refs are not citable result refs.
       type: "status",
       id: "no_results",
       status: "no_results",
@@ -219,7 +219,7 @@ describe("citation guards", () => {
     expect((invalidStatusRef as { type: string }).type).toBe("status");
 
     const invalidCitation: SearchCitationEventData = {
-      // @ts-expect-error Search citations do not use the status result-ref variant.
+      // @ts-expect-error justify-ts-override: search citations reject status refs.
       result_type: "status",
       source_id: "no_results",
       title: "No results",
@@ -227,7 +227,7 @@ describe("citation guards", () => {
       snippet: "",
       source_version: "app_search_status:v1",
       deep_link: "",
-      // @ts-expect-error Search citation contexts cannot use the status variant.
+      // @ts-expect-error justify-ts-override: citation contexts reject status refs.
       context_ref: { type: "status", id: "no_results" },
       locator: {
         type: "web_text_offsets",
@@ -244,7 +244,7 @@ describe("citation guards", () => {
     expect(invalidCitation.result_type).toBe("status");
 
     const invalidResultRef: MessageRetrievalResultRef = {
-      // @ts-expect-error Unknown result-ref variants are not part of the retrieval contract.
+      // @ts-expect-error justify-ts-override: unknown result-ref variants stay rejected.
       type: "totally_unknown",
       id: "x",
     };

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import FailureStage, Media, MediaFile, ProcessingStatus, User
 from nexus.storage import build_storage_path, build_upload_staging_storage_path
-from nexus.storage.client import FakeStorageClient
+from tests.support.storage import FakeStorageClient
 from tests.utils.db import task_session_factory
 
 pytestmark = pytest.mark.integration

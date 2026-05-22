@@ -7,6 +7,7 @@ Run with: make test-migrations
 Do NOT run with: make test (these are excluded)
 """
 
+import json
 import os
 import subprocess
 from uuid import UUID, uuid4
@@ -411,6 +412,30 @@ def migrated_engine():
     engine.dispose()
 
 
+def _insert_message_context_parent_rows(
+    session: Session,
+    *,
+    user_id: UUID,
+    conversation_id: UUID,
+    message_id: UUID,
+) -> None:
+    session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+    session.execute(
+        text("""
+            INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+            VALUES (:id, :user_id, 'private', 2)
+        """),
+        {"id": conversation_id, "user_id": user_id},
+    )
+    session.execute(
+        text("""
+            INSERT INTO messages (id, conversation_id, seq, role, content, status)
+            VALUES (:id, :conversation_id, 1, 'user', 'test', 'complete')
+        """),
+        {"id": message_id, "conversation_id": conversation_id},
+    )
+
+
 class TestMigrationUpgradeDowngrade:
     """Tests that migrations apply and rollback cleanly."""
 
@@ -432,6 +457,244 @@ class TestMigrationUpgradeDowngrade:
         assert result.returncode != 0
         assert "hard cutover migration and has no downgrade path" in result.stderr
         reset_test_schema()
+
+    def test_0107_canonicalizes_reader_selection_context_snapshots(self):
+        """Reader-selection context snapshots are upgraded from legacy camelCase keys."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0106")
+            assert result.returncode == 0, f"upgrade to 0106 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            message_id = uuid4()
+            media_id = uuid4()
+            client_context_id = uuid4()
+            fragment_id = uuid4()
+            locator = {
+                "type": "web_text_offsets",
+                "media_id": str(media_id),
+                "fragment_id": str(fragment_id),
+                "start_offset": 0,
+                "end_offset": 12,
+            }
+            with Session(engine) as session:
+                _insert_message_context_parent_rows(
+                    session,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    message_id=message_id,
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO message_context_items (
+                            message_id,
+                            user_id,
+                            context_kind,
+                            source_media_id,
+                            locator_json,
+                            ordinal,
+                            context_snapshot
+                        )
+                        VALUES (
+                            :message_id,
+                            :user_id,
+                            'reader_selection',
+                            :media_id,
+                            CAST(:locator AS jsonb),
+                            0,
+                            CAST(:context_snapshot AS jsonb)
+                        )
+                    """),
+                    {
+                        "message_id": message_id,
+                        "user_id": user_id,
+                        "media_id": media_id,
+                        "locator": json.dumps(locator),
+                        "context_snapshot": json.dumps(
+                            {
+                                "kind": "reader_selection",
+                                "clientContextId": str(client_context_id),
+                                "mediaId": str(media_id),
+                                "sourceMediaId": str(media_id),
+                                "mediaKind": "web_article",
+                                "mediaTitle": "Legacy Reader Source",
+                                "exact": "quoted text",
+                                "prefix": "before ",
+                                "suffix": " after",
+                                "locator": locator,
+                                "sourceVersion": f"fragment:{fragment_id}",
+                            }
+                        ),
+                    },
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0107")
+            assert result.returncode == 0, f"upgrade to 0107 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                snapshot = session.execute(
+                    text("""
+                        SELECT context_snapshot
+                        FROM message_context_items
+                        WHERE message_id = :message_id
+                    """),
+                    {"message_id": message_id},
+                ).scalar_one()
+
+            assert snapshot == {
+                "kind": "reader_selection",
+                "client_context_id": str(client_context_id),
+                "media_id": str(media_id),
+                "source_media_id": str(media_id),
+                "media_kind": "web_article",
+                "media_title": "Legacy Reader Source",
+                "exact": "quoted text",
+                "prefix": "before ",
+                "suffix": " after",
+                "locator": locator,
+                "source_version": f"fragment:{fragment_id}",
+            }
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_0108_canonicalizes_object_ref_context_snapshots(self):
+        """Object-ref context snapshots are upgraded from hydrated legacy keys."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0107")
+            assert result.returncode == 0, f"upgrade to 0107 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            message_id = uuid4()
+            chunk_id = uuid4()
+            media_id = uuid4()
+            span_id = uuid4()
+            second_span_id = uuid4()
+            with Session(engine) as session:
+                _insert_message_context_parent_rows(
+                    session,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    message_id=message_id,
+                )
+                session.execute(
+                    text("""
+                        INSERT INTO message_context_items (
+                            message_id,
+                            user_id,
+                            context_kind,
+                            object_type,
+                            object_id,
+                            ordinal,
+                            context_snapshot
+                        )
+                        VALUES (
+                            :message_id,
+                            :user_id,
+                            'object_ref',
+                            'content_chunk',
+                            :chunk_id,
+                            0,
+                            CAST(:context_snapshot AS jsonb)
+                        )
+                    """),
+                    {
+                        "message_id": message_id,
+                        "user_id": user_id,
+                        "chunk_id": chunk_id,
+                        "context_snapshot": json.dumps(
+                            {
+                                "objectType": "content_chunk",
+                                "objectId": str(chunk_id),
+                                "label": "Legacy title",
+                                "snippet": "Legacy preview",
+                                "mediaId": str(media_id),
+                                "mediaTitle": "Legacy Source",
+                                "mediaKind": "web_article",
+                                "evidenceSpanIds": [
+                                    str(span_id),
+                                    str(second_span_id),
+                                    str(span_id),
+                                ],
+                            }
+                        ),
+                    },
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                snapshot = session.execute(
+                    text("""
+                        SELECT context_snapshot
+                        FROM message_context_items
+                        WHERE message_id = :message_id
+                    """),
+                    {"message_id": message_id},
+                ).scalar_one()
+
+            assert snapshot == {
+                "kind": "object_ref",
+                "type": "content_chunk",
+                "id": str(chunk_id),
+                "title": "Legacy title",
+                "preview": "Legacy preview",
+                "media_id": str(media_id),
+                "media_title": "Legacy Source",
+                "media_kind": "web_article",
+                "evidence_span_ids": [str(span_id), str(second_span_id)],
+            }
+
+            with Session(engine) as session:
+                with pytest.raises(IntegrityError) as exc_info:
+                    session.execute(
+                        text("""
+                            INSERT INTO message_context_items (
+                                message_id,
+                                user_id,
+                                context_kind,
+                                object_type,
+                                object_id,
+                                ordinal,
+                                context_snapshot
+                            )
+                            VALUES (
+                                :message_id,
+                                :user_id,
+                                'object_ref',
+                                'content_chunk',
+                                :chunk_id,
+                                1,
+                                CAST(:context_snapshot AS jsonb)
+                            )
+                        """),
+                        {
+                            "message_id": message_id,
+                            "user_id": user_id,
+                            "chunk_id": chunk_id,
+                            "context_snapshot": json.dumps(
+                                {
+                                    "kind": "object_ref",
+                                    "type": "content_chunk",
+                                    "id": str(chunk_id),
+                                }
+                            ),
+                        },
+                    )
+                    session.commit()
+
+                assert "ck_message_context_items_object_ref_snapshot" in str(exc_info.value)
+        finally:
+            engine.dispose()
+            reset_test_schema()
 
     def test_0084_rewrites_tool_result_events_without_dropping_replay_data(self):
         """Chat event cutover preserves replay payloads while renaming tool_result."""
@@ -3925,19 +4188,34 @@ class TestS3SchemaConstraints:
             session.commit()
 
             # Context items store typed object refs directly and reject unknown types.
+            snapshot = {
+                "kind": "object_ref",
+                "type": "unknown",
+                "id": str(media_id),
+                "title": "Unknown context",
+            }
             with pytest.raises(IntegrityError) as exc_info:
                 session.execute(
                     text("""
                         INSERT INTO message_context_items (
                             id, message_id, user_id, object_type, object_id, ordinal, context_snapshot
                         )
-                        VALUES (:id, :msg_id, :user_id, 'unknown', :media_id, 0, '{}'::jsonb)
+                        VALUES (
+                            :id,
+                            :msg_id,
+                            :user_id,
+                            'unknown',
+                            :media_id,
+                            0,
+                            CAST(:context_snapshot AS jsonb)
+                        )
                     """),
                     {
                         "id": uuid4(),
                         "msg_id": message_id,
                         "user_id": user_id,
                         "media_id": media_id,
+                        "context_snapshot": json.dumps(snapshot),
                     },
                 )
                 session.commit()
@@ -3952,6 +4230,26 @@ class TestS3SchemaConstraints:
             conversation_id = uuid4()
             message_id = uuid4()
             media_id = uuid4()
+            client_context_id = uuid4()
+            fragment_id = uuid4()
+            locator = {
+                "type": "web_text_offsets",
+                "media_id": str(media_id),
+                "fragment_id": str(fragment_id),
+                "start_offset": 0,
+                "end_offset": 4,
+            }
+            snapshot = {
+                "kind": "reader_selection",
+                "client_context_id": str(client_context_id),
+                "media_id": str(media_id),
+                "source_media_id": str(media_id),
+                "media_kind": "web_article",
+                "media_title": "Reader Source",
+                "exact": "text",
+                "locator": locator,
+                "source_version": "fragments_v1",
+            }
 
             session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
             session.execute(
@@ -3986,9 +4284,9 @@ class TestS3SchemaConstraints:
                         :user_id,
                         'reader_selection',
                         :media_id,
-                        '{"kind":"fragment_offsets"}'::jsonb,
+                        CAST(:locator AS jsonb),
                         0,
-                        '{"kind":"reader_selection"}'::jsonb
+                        CAST(:context_snapshot AS jsonb)
                     )
                 """),
                 {
@@ -3996,6 +4294,8 @@ class TestS3SchemaConstraints:
                     "message_id": message_id,
                     "user_id": user_id,
                     "media_id": media_id,
+                    "locator": json.dumps(locator),
+                    "context_snapshot": json.dumps(snapshot),
                 },
             )
             session.commit()
@@ -4038,6 +4338,134 @@ class TestS3SchemaConstraints:
 
             session.rollback()
             assert "ck_message_context_items_kind_shape" in str(exc_info.value)
+
+            missing_source_version = dict(snapshot)
+            missing_source_version.pop("source_version")
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO message_context_items (
+                            id,
+                            message_id,
+                            user_id,
+                            context_kind,
+                            source_media_id,
+                            locator_json,
+                            ordinal,
+                            context_snapshot
+                        )
+                        VALUES (
+                            :id,
+                            :message_id,
+                            :user_id,
+                            'reader_selection',
+                            :media_id,
+                            CAST(:locator AS jsonb),
+                            2,
+                            CAST(:context_snapshot AS jsonb)
+                        )
+                    """),
+                    {
+                        "id": uuid4(),
+                        "message_id": message_id,
+                        "user_id": user_id,
+                        "media_id": media_id,
+                        "locator": json.dumps(locator),
+                        "context_snapshot": json.dumps(missing_source_version),
+                    },
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_message_context_items_reader_selection_snapshot" in str(exc_info.value)
+
+    def test_message_context_item_object_ref_snapshot_constraint(self, migrated_engine):
+        """Object-ref snapshots must carry canonical row identity and a title."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            conversation_id = uuid4()
+            message_id = uuid4()
+            media_id = uuid4()
+
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text("""
+                    INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+                    VALUES (:id, :user_id, 'private', 2)
+                """),
+                {"id": conversation_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO messages (id, conversation_id, seq, role, content, status)
+                    VALUES (:id, :conv_id, 1, 'user', 'test', 'complete')
+                """),
+                {"id": message_id, "conv_id": conversation_id},
+            )
+            valid_snapshot = {
+                "kind": "object_ref",
+                "type": "media",
+                "id": str(media_id),
+                "title": "Attached Media",
+            }
+            session.execute(
+                text("""
+                    INSERT INTO message_context_items (
+                        id, message_id, user_id, object_type, object_id, ordinal, context_snapshot
+                    )
+                    VALUES (
+                        :id,
+                        :msg_id,
+                        :user_id,
+                        'media',
+                        :media_id,
+                        0,
+                        CAST(:context_snapshot AS jsonb)
+                    )
+                """),
+                {
+                    "id": uuid4(),
+                    "msg_id": message_id,
+                    "user_id": user_id,
+                    "media_id": media_id,
+                    "context_snapshot": json.dumps(valid_snapshot),
+                },
+            )
+            session.commit()
+
+            invalid_snapshot = {
+                "kind": "object_ref",
+                "type": "media",
+                "id": str(media_id),
+            }
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text("""
+                        INSERT INTO message_context_items (
+                            id, message_id, user_id, object_type, object_id, ordinal, context_snapshot
+                        )
+                        VALUES (
+                            :id,
+                            :msg_id,
+                            :user_id,
+                            'media',
+                            :media_id,
+                            1,
+                            CAST(:context_snapshot AS jsonb)
+                        )
+                    """),
+                    {
+                        "id": uuid4(),
+                        "msg_id": message_id,
+                        "user_id": user_id,
+                        "media_id": media_id,
+                        "context_snapshot": json.dumps(invalid_snapshot),
+                    },
+                )
+                session.commit()
+
+            session.rollback()
+            assert "ck_message_context_items_object_ref_snapshot" in str(exc_info.value)
 
     def test_user_api_key_nonce_length_constraint(self, migrated_engine):
         """CHECK constraint: nonce must be exactly 24 bytes."""

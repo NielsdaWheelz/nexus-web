@@ -49,12 +49,6 @@ def get_task_contract_version() -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def clear_registry_cache() -> None:
-    """Clear cached registry data after environment changes in tests."""
-    _build_default_registry.cache_clear()
-    get_task_contract_version.cache_clear()
-
-
 def periodic_slot_start(*, now: datetime, interval_seconds: int) -> datetime:
     """Return UTC schedule bucket start for a periodic interval."""
     if interval_seconds <= 0:

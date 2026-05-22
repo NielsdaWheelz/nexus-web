@@ -558,49 +558,6 @@ def fail_job(
     return new_status
 
 
-def requeue_job(
-    db: Session,
-    *,
-    job_id: UUID,
-    delay_seconds: int = 0,
-) -> bool:
-    """Move failed/dead row back to pending for operator-initiated replay."""
-    updated = (
-        db.execute(
-            text(
-                """
-                    UPDATE background_jobs
-                    SET
-                        status = 'pending',
-                        available_at = now() + (CAST(:delay_seconds AS integer) * interval '1 second'),
-                        lease_expires_at = NULL,
-                        claimed_by = NULL,
-                        error_code = NULL,
-                        last_error = NULL,
-                        finished_at = NULL,
-                        updated_at = now()
-                    WHERE id = :job_id
-                      AND status IN ('failed', 'dead')
-                    RETURNING kind
-                    """
-            ),
-            {
-                "job_id": job_id,
-                "delay_seconds": max(int(delay_seconds), 0),
-            },
-        )
-        .mappings()
-        .first()
-    )
-    if updated is None:
-        return False
-    db.execute(
-        text("SELECT pg_notify('nexus_background_jobs', :kind)"),
-        {"kind": str(updated["kind"])},
-    )
-    return True
-
-
 def prune_terminal_jobs(
     db: Session,
     *,

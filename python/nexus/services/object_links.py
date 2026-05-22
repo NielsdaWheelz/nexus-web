@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import case, delete, or_, select
+from sqlalchemy import case, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -164,17 +164,6 @@ def delete_object_link(db: Session, viewer_id: UUID, link_id: UUID) -> None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object link not found")
     db.delete(link)
     db.commit()
-
-
-def delete_links_for_object(db: Session, *, object_type: str, object_id: UUID) -> None:
-    db.execute(
-        delete(ObjectLink).where(
-            or_(
-                (ObjectLink.a_type == object_type) & (ObjectLink.a_id == object_id),
-                (ObjectLink.b_type == object_type) & (ObjectLink.b_id == object_id),
-            )
-        )
-    )
 
 
 def _duplicate_unlocated_link_id(

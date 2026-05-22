@@ -37,7 +37,7 @@ function installIntervalHarness() {
 }
 
 function getListeningStateCalls(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- justify-eslint-override: Vitest fetch mock calls are intentionally untyped test data.
   fetchSpy: { mock: { calls: any[][] } }
 ): Array<[input: string, init?: RequestInit]> {
   return fetchSpy.mock.calls.filter(

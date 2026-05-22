@@ -69,25 +69,6 @@ class CoherenceAnomalyKind(str, Enum):
     offsets_outside_page_span = "offsets_outside_page_span"
     offset_substring_mismatch_exact = "offset_substring_mismatch_exact"
     exact_status_inconsistent = "exact_status_inconsistent"
-    unknown_match_status = "unknown_match_status"
-
-
-class CoherenceFallbackAction(str, Enum):
-    """Deterministic recoverable fallback actions for coherence anomalies."""
-
-    retry_as_pending = "retry_as_pending"
-    omit_nearby_context = "omit_nearby_context"
-
-
-_COHERENCE_RECOVERABLE_ACTIONS: dict[CoherenceAnomalyKind, CoherenceFallbackAction] = {
-    CoherenceAnomalyKind.unsupported_match_version: CoherenceFallbackAction.retry_as_pending,
-    CoherenceAnomalyKind.status_offsets_inconsistent: CoherenceFallbackAction.retry_as_pending,
-    CoherenceAnomalyKind.offsets_out_of_range: CoherenceFallbackAction.retry_as_pending,
-    CoherenceAnomalyKind.offsets_outside_page_span: CoherenceFallbackAction.retry_as_pending,
-    CoherenceAnomalyKind.offset_substring_mismatch_exact: CoherenceFallbackAction.retry_as_pending,
-    CoherenceAnomalyKind.exact_status_inconsistent: CoherenceFallbackAction.retry_as_pending,
-    CoherenceAnomalyKind.unknown_match_status: CoherenceFallbackAction.omit_nearby_context,
-}
 
 
 def handle_recoverable_anomaly(
@@ -161,19 +142,17 @@ def handle_recoverable_coherence_anomaly(
     match_status: str | None,
     match_version: int | None,
     path: str,
-) -> CoherenceFallbackAction:
+) -> None:
     """Handle a classified recoverable coherence anomaly.
 
-    Emits one canonical pdf_quote_context_coherence_anomaly event and returns
-    the deterministic fallback action for quote-context rendering.
+    Emits one canonical pdf_quote_context_coherence_anomaly event.
     Caller must NOT re-log the same anomaly.
     """
-    fallback_action = _COHERENCE_RECOVERABLE_ACTIONS[anomaly_kind]
     logger.warning(
         _COHERENCE_EVENT_NAME,
         anomaly_kind=anomaly_kind.value,
         classification="recoverable",
-        fallback_action=fallback_action.value,
+        fallback_action="retry_as_pending",
         path=path,
         highlight_id=str(highlight_id) if highlight_id else None,
         media_id=str(media_id) if media_id else None,
@@ -181,7 +160,6 @@ def handle_recoverable_coherence_anomaly(
         match_status=match_status,
         match_version=match_version,
     )
-    return fallback_action
 
 
 def handle_coherence_unclassified_exception(

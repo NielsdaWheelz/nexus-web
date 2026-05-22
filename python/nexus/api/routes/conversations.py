@@ -27,19 +27,17 @@ from nexus.responses import success_response
 from nexus.schemas.conversation import (
     AssistantVerifierRunListResponse,
     ConversationScopeRequest,
+    MessageArtifactAskRequest,
+    MessageArtifactAskResponse,
     MessageArtifactCreateRequest,
     MessageArtifactExportLedgerListResponse,
-    MessageArtifactFollowUpRequest,
-    MessageArtifactFollowUpResponse,
     MessageArtifactListResponse,
     MessageArtifactResponse,
-    MessageCitationAuditListResponse,
     MessageRerankLedgerListResponse,
     MessageRetrievalCandidateLedgerListResponse,
     RenameBranchRequest,
     SetActivePathRequest,
     SetConversationSharesRequest,
-    SourceManifestListResponse,
 )
 from nexus.services import chat_runs as chat_runs_service
 from nexus.services import conversation_branches as conversation_branches_service
@@ -163,23 +161,6 @@ def get_conversation_tree(
     return success_response(result.model_dump(mode="json"))
 
 
-@router.get(
-    "/conversations/{conversation_id}/source-manifests",
-    response_model=SourceManifestListResponse,
-)
-def list_source_manifests(
-    conversation_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    result = conversations_service.list_source_manifests(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
-    )
-    return success_response([item.model_dump(mode="json") for item in result])
-
-
 @router.post("/conversations/{conversation_id}/active-path")
 def set_conversation_active_path(
     conversation_id: UUID,
@@ -254,7 +235,7 @@ def delete_conversation(
 ) -> Response:
     """Delete a conversation.
 
-    Cascades to messages, message_context, conversation_media, conversation_shares, and chat runs.
+    Cascades to messages, message_context_items, conversation_media, conversation_shares, and chat runs.
 
     Errors:
         E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.
@@ -370,60 +351,6 @@ def list_message_verifier_runs(
 
 
 @router.get(
-    "/conversations/{conversation_id}/messages/{message_id}/verifier-runs",
-    response_model=AssistantVerifierRunListResponse,
-)
-def list_conversation_message_verifier_runs(
-    conversation_id: UUID,
-    message_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    result = conversations_service.list_message_verifier_runs(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
-        message_id=message_id,
-    )
-    return success_response([item.model_dump(mode="json") for item in result])
-
-
-@router.get(
-    "/messages/{message_id}/citation-audits", response_model=MessageCitationAuditListResponse
-)
-def list_message_citation_audits(
-    message_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    result = conversations_service.list_message_citation_audits(
-        db=db,
-        viewer_id=viewer.user_id,
-        message_id=message_id,
-    )
-    return success_response([item.model_dump(mode="json") for item in result])
-
-
-@router.get(
-    "/conversations/{conversation_id}/messages/{message_id}/citation-audits",
-    response_model=MessageCitationAuditListResponse,
-)
-def list_conversation_message_citation_audits(
-    conversation_id: UUID,
-    message_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    result = conversations_service.list_message_citation_audits(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
-        message_id=message_id,
-    )
-    return success_response([item.model_dump(mode="json") for item in result])
-
-
-@router.get(
     "/messages/{message_id}/retrieval-candidate-ledgers",
     response_model=MessageRetrievalCandidateLedgerListResponse,
 )
@@ -445,30 +372,6 @@ def list_message_retrieval_candidate_ledgers(
     return success_response([item.model_dump(mode="json") for item in result])
 
 
-@router.get(
-    "/conversations/{conversation_id}/messages/{message_id}/retrieval-candidate-ledgers",
-    response_model=MessageRetrievalCandidateLedgerListResponse,
-)
-def list_conversation_message_retrieval_candidate_ledgers(
-    conversation_id: UUID,
-    message_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    tool_call_id: Annotated[
-        UUID | None,
-        Query(description="Optional retrieval tool-call filter"),
-    ] = None,
-) -> dict:
-    result = conversations_service.list_message_retrieval_candidate_ledgers(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
-        message_id=message_id,
-        tool_call_id=tool_call_id,
-    )
-    return success_response([item.model_dump(mode="json") for item in result])
-
-
 @router.get("/messages/{message_id}/rerank-ledgers", response_model=MessageRerankLedgerListResponse)
 def list_message_rerank_ledgers(
     message_id: UUID,
@@ -482,30 +385,6 @@ def list_message_rerank_ledgers(
     result = conversations_service.list_message_rerank_ledgers(
         db=db,
         viewer_id=viewer.user_id,
-        message_id=message_id,
-        tool_call_id=tool_call_id,
-    )
-    return success_response([item.model_dump(mode="json") for item in result])
-
-
-@router.get(
-    "/conversations/{conversation_id}/messages/{message_id}/rerank-ledgers",
-    response_model=MessageRerankLedgerListResponse,
-)
-def list_conversation_message_rerank_ledgers(
-    conversation_id: UUID,
-    message_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    tool_call_id: Annotated[
-        UUID | None,
-        Query(description="Optional retrieval tool-call filter"),
-    ] = None,
-) -> dict:
-    result = conversations_service.list_message_rerank_ledgers(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
         message_id=message_id,
         tool_call_id=tool_call_id,
     )
@@ -624,20 +503,24 @@ def _artifact_export_response(export) -> Response:
     )
 
 
-@router.post("/artifacts/{artifact_id}/ask", response_model=MessageArtifactFollowUpResponse)
-def create_artifact_follow_up(
+@router.post(
+    "/artifacts/{artifact_id}/ask",
+    response_model=MessageArtifactAskResponse,
+    response_model_exclude_none=True,
+)
+def create_artifact_ask(
     artifact_id: UUID,
-    body: MessageArtifactFollowUpRequest,
+    body: MessageArtifactAskRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    result = conversations_service.create_artifact_follow_up(
+    result = conversations_service.create_artifact_ask(
         db=db,
         viewer_id=viewer.user_id,
         artifact_id=artifact_id,
         request=body,
     )
-    return success_response(result.model_dump(mode="json"))
+    return success_response(result.model_dump(mode="json", exclude_none=True))
 
 
 @router.post("/messages/{assistant_message_id}/retry", status_code=200)
@@ -665,7 +548,7 @@ def delete_message(
     """Delete a single message.
 
     If this is the last message in the conversation, deletes the conversation too.
-    Cascades to message_context.
+    Cascades to message_context_items.
 
     Errors:
         E_MESSAGE_NOT_FOUND (404): Message doesn't exist or viewer is not conversation owner.

@@ -565,32 +565,3 @@ class UpdatePinnedObjectRefRequest(BaseModel):
     )
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class CreateMessageContextItemRequest(BaseModel):
-    message_id: UUID = Field(validation_alias=AliasChoices("message_id", "messageId"))
-    object_type: OBJECT_TYPES = Field(validation_alias=AliasChoices("object_type", "objectType"))
-    object_id: UUID = Field(validation_alias=AliasChoices("object_id", "objectId"))
-    ordinal: int | None = Field(None, ge=0)
-    evidence_span_ids: list[UUID] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("evidence_span_ids", "evidenceSpanIds"),
-        serialization_alias="evidenceSpanIds",
-    )
-    context_snapshot: dict[str, Any] | None = Field(
-        None,
-        validation_alias=AliasChoices("context_snapshot", "contextSnapshot"),
-    )
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class MessageContextItemOut(BaseModel):
-    id: UUID
-    message_id: UUID = Field(serialization_alias="messageId")
-    object_ref: ObjectRef = Field(serialization_alias="objectRef")
-    ordinal: int
-    context_snapshot: dict[str, Any] = Field(serialization_alias="contextSnapshot")
-    created_at: datetime = Field(serialization_alias="createdAt")
-
-    model_config = ConfigDict(populate_by_name=True)

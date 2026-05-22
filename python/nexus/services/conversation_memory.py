@@ -33,21 +33,28 @@ MemoryKind = Literal[
 MemoryStatus = Literal["active", "superseded", "invalid"]
 EvidenceRole = Literal["supports", "contradicts", "supersedes", "context"]
 
-MEMORY_KINDS: frozenset[str] = frozenset(
-    {
-        "goal",
-        "constraint",
-        "decision",
-        "correction",
-        "open_question",
-        "task",
-        "assistant_commitment",
-        "user_preference",
-        "source_claim",
-    }
+MEMORY_KIND_VALUES: tuple[MemoryKind, ...] = (
+    "goal",
+    "constraint",
+    "decision",
+    "correction",
+    "open_question",
+    "task",
+    "assistant_commitment",
+    "user_preference",
+    "source_claim",
 )
+MEMORY_KINDS: frozenset[str] = frozenset(MEMORY_KIND_VALUES)
+MEMORY_KIND_BY_VALUE: dict[str, MemoryKind] = {kind: kind for kind in MEMORY_KIND_VALUES}
 MEMORY_STATUSES: frozenset[str] = frozenset({"active", "superseded", "invalid"})
-EVIDENCE_ROLES: frozenset[str] = frozenset({"supports", "contradicts", "supersedes", "context"})
+EVIDENCE_ROLE_VALUES: tuple[EvidenceRole, ...] = (
+    "supports",
+    "contradicts",
+    "supersedes",
+    "context",
+)
+EVIDENCE_ROLES: frozenset[str] = frozenset(EVIDENCE_ROLE_VALUES)
+EVIDENCE_ROLE_BY_VALUE: dict[str, EvidenceRole] = {role: role for role in EVIDENCE_ROLE_VALUES}
 SOURCE_REF_TYPES: frozenset[str] = frozenset(
     {"message", "message_context", "message_retrieval", "app_context_ref", "web_result"}
 )
@@ -161,44 +168,6 @@ def validate_memory_sources(sources: Sequence[MemorySource]) -> None:
         validate_source_ref(source.source_ref)
 
 
-def load_active_state_snapshot(
-    db: Session,
-    *,
-    conversation_id: UUID,
-    prompt_version: str | None = None,
-) -> ConversationStateSnapshot | None:
-    """Load the active state snapshot."""
-
-    filters = ["conversation_id = :conversation_id", "status = 'active'"]
-    params: dict[str, object] = {"conversation_id": conversation_id}
-    if prompt_version is not None:
-        filters.append("prompt_version = :prompt_version")
-        params["prompt_version"] = prompt_version
-    row = db.execute(
-        text(
-            f"""
-            SELECT id, conversation_id, covered_through_seq, state_text, source_refs,
-                   memory_item_ids
-            FROM conversation_state_snapshots
-            WHERE {" AND ".join(filters)}
-            ORDER BY created_at DESC, id DESC
-            LIMIT 1
-            """
-        ),
-        params,
-    ).first()
-    if row is None:
-        return None
-    return ConversationStateSnapshot(
-        id=row[0],
-        conversation_id=row[1],
-        covered_through_seq=int(row[2]),
-        state_text=str(row[3] or ""),
-        source_refs=tuple(row[4] or []),
-        memory_item_ids=tuple(UUID(str(item_id)) for item_id in (row[5] or [])),
-    )
-
-
 def load_active_memory_items(
     db: Session,
     *,
@@ -236,8 +205,8 @@ def load_active_memory_items(
     sources_by_item_id = _load_memory_sources(db, [row[0] for row in rows])
     items: list[ConversationMemoryItem] = []
     for row in rows:
-        kind = str(row[2])
-        if kind not in MEMORY_KINDS:
+        kind = MEMORY_KIND_BY_VALUE.get(str(row[2]))
+        if kind is None:
             continue
         sources = tuple(sources_by_item_id.get(row[0], []))
         if allowed_message_ids is not None and not _memory_item_sources_are_on_path(
@@ -256,7 +225,7 @@ def load_active_memory_items(
             ConversationMemoryItem(
                 id=row[0],
                 conversation_id=row[1],
-                kind=kind,  # type: ignore[arg-type]
+                kind=kind,
                 body=str(row[3]),
                 source_required=bool(row[4]),
                 valid_from_seq=row[5],
@@ -675,10 +644,10 @@ def _load_memory_sources(
     ).fetchall()
     sources_by_item_id: dict[UUID, list[MemorySource]] = {item_id: [] for item_id in item_ids}
     for row in rows:
-        role = str(row[2])
-        if role not in EVIDENCE_ROLES:
+        role = EVIDENCE_ROLE_BY_VALUE.get(str(row[2]))
+        if role is None:
             continue
-        source = MemorySource(source_ref=row[1], evidence_role=role)  # type: ignore[arg-type]
+        source = MemorySource(source_ref=row[1], evidence_role=role)
         validate_memory_sources([source])
         sources_by_item_id.setdefault(row[0], []).append(source)
     return sources_by_item_id

@@ -34,6 +34,7 @@ from nexus.schemas.notes import (
 from nexus.services import notes, object_links, object_refs, vault
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.message_context_snapshots import object_ref_context_snapshot_from_hydrated
 from nexus.services.notes import markdown_from_pm_json, text_from_pm_json
 from tests.factories import (
     add_library_member,
@@ -48,6 +49,16 @@ from tests.factories import (
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
+
+
+def _note_block_context_snapshot(db_session, user_id, block_id) -> dict[str, object]:
+    return object_ref_context_snapshot_from_hydrated(
+        object_refs.hydrate_object_ref(
+            db_session,
+            user_id,
+            ObjectRef(object_type="note_block", object_id=block_id),
+        )
+    )
 
 
 def _paragraph_with_page_ref(page_id, label: str) -> dict:
@@ -1473,7 +1484,7 @@ def test_split_note_block_copies_note_about_without_copying_context(db_session, 
         object_type="note_block",
         object_id=block.id,
         ordinal=0,
-        context_snapshot_json={"label": "Original split source"},
+        context_snapshot_json=_note_block_context_snapshot(db_session, bootstrapped_user, block.id),
     )
     db_session.add(context_item)
     db_session.commit()
@@ -1537,7 +1548,9 @@ def test_merge_note_block_transfers_durable_links_and_context_rows(db_session, b
         object_type="note_block",
         object_id=second.id,
         ordinal=0,
-        context_snapshot_json={"label": "Merged source"},
+        context_snapshot_json=_note_block_context_snapshot(
+            db_session, bootstrapped_user, second.id
+        ),
     )
     db_session.add_all(
         [
@@ -1580,10 +1593,14 @@ def test_merge_note_block_transfers_durable_links_and_context_rows(db_session, b
         )
     )
     assert refreshed_snapshot is not None
-    assert refreshed_snapshot["objectType"] == "note_block"
-    assert refreshed_snapshot["objectId"] == str(first.id)
-    assert refreshed_snapshot["label"] == "Alpha"
-    assert refreshed_snapshot["snippet"] == "Alpha\nBeta"
+    assert refreshed_snapshot == {
+        "kind": "object_ref",
+        "type": "note_block",
+        "id": str(first.id),
+        "title": "Alpha",
+        "preview": "Alpha\nBeta",
+        "route": f"/notes/{first.id}",
+    }
     remaining_source_links = db_session.scalars(
         select(ObjectLink).where(
             ((ObjectLink.a_type == "note_block") & (ObjectLink.a_id == second.id))
@@ -1636,7 +1653,7 @@ def test_vault_page_sync_updates_single_block_without_replacing_links(
         object_type="note_block",
         object_id=block.id,
         ordinal=0,
-        context_snapshot_json={"label": "Original body"},
+        context_snapshot_json=_note_block_context_snapshot(db_session, bootstrapped_user, block.id),
     )
     db_session.add_all(
         [
@@ -1752,7 +1769,9 @@ def test_vault_page_sync_updates_multiple_marked_blocks_without_replacing_ids(
         object_type="note_block",
         object_id=second.id,
         ordinal=0,
-        context_snapshot_json={"label": "Second block"},
+        context_snapshot_json=_note_block_context_snapshot(
+            db_session, bootstrapped_user, second.id
+        ),
     )
     db_session.add(context_item)
     db_session.commit()

@@ -5,10 +5,8 @@ Provides JSON-formatted logs with consistent context including:
 - user_id: Authenticated user (when available)
 - path: Raw request path (never includes query string)
 - method: HTTP method
-- route_template: FastAPI route template (when available after routing)
 - flow_id: Correlation ID for multi-phase chat-run flows
 - stream_jti: JWT ID from stream token (streaming only)
-- task_name / task_id: background job context
 - timestamp: ISO8601 formatted timestamp
 
 Usage:
@@ -21,13 +19,6 @@ Usage:
     logger = get_logger(__name__)
     logger.info("something_happened", extra_field="value")
 
-Background Job Logging:
-    from nexus.logging import configure_task_logging, get_logger
-
-    def my_job(job_id: str, request_id: str | None = None):
-        configure_task_logging(request_id=request_id, task_name="my_job", task_id=job_id)
-        logger = get_logger(__name__)
-        logger.info("job_started")
 """
 
 import logging
@@ -39,13 +30,10 @@ import structlog
 # Context variables for request-scoped logging
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 user_id_var: ContextVar[str | None] = ContextVar("user_id", default=None)
-task_name_var: ContextVar[str | None] = ContextVar("task_name", default=None)
-task_id_var: ContextVar[str | None] = ContextVar("task_id", default=None)
 
 # PR-09: Additional context variables for observability
 path_var: ContextVar[str | None] = ContextVar("path", default=None)
 method_var: ContextVar[str | None] = ContextVar("method", default=None)
-route_template_var: ContextVar[str | None] = ContextVar("route_template", default=None)
 flow_id_var: ContextVar[str | None] = ContextVar("flow_id", default=None)
 stream_jti_var: ContextVar[str | None] = ContextVar("stream_jti", default=None)
 
@@ -57,11 +45,8 @@ def add_request_context(logger: logging.Logger, method_name: str, event_dict: di
     """
     request_id = request_id_var.get()
     user_id = user_id_var.get()
-    task_name = task_name_var.get()
-    task_id = task_id_var.get()
     path = path_var.get()
     method = method_var.get()
-    route_template = route_template_var.get()
     flow_id = flow_id_var.get()
     stream_jti = stream_jti_var.get()
 
@@ -69,16 +54,10 @@ def add_request_context(logger: logging.Logger, method_name: str, event_dict: di
         event_dict["request_id"] = request_id
     if user_id:
         event_dict["user_id"] = user_id
-    if task_name:
-        event_dict["task_name"] = task_name
-    if task_id:
-        event_dict["task_id"] = task_id
     if path:
         event_dict["path"] = path
     if method:
         event_dict["method"] = method
-    if route_template:
-        event_dict["route_template"] = route_template
     if flow_id:
         event_dict["flow_id"] = flow_id
     if stream_jti:
@@ -180,18 +159,6 @@ def set_request_context(
         method_var.set(method)
 
 
-def set_route_template(template: str | None) -> None:
-    """Set route template after routing has matched.
-
-    Called downstream (in route handlers or dependencies) once
-    the FastAPI route path template is known.
-
-    Args:
-        template: The route path template (e.g., "/conversations/{id}/messages").
-    """
-    route_template_var.set(template)
-
-
 def set_flow_id(flow_id: str | None) -> None:
     """Set flow_id for multi-phase chat-run correlation.
 
@@ -216,7 +183,6 @@ def clear_request_context() -> None:
     user_id_var.set(None)
     path_var.set(None)
     method_var.set(None)
-    route_template_var.set(None)
     flow_id_var.set(None)
     stream_jti_var.set(None)
 
@@ -224,40 +190,3 @@ def clear_request_context() -> None:
 def get_request_id() -> str | None:
     """Get the current request ID from context."""
     return request_id_var.get()
-
-
-def configure_task_logging(
-    request_id: str | None = None,
-    task_name: str | None = None,
-    task_id: str | None = None,
-) -> None:
-    """Configure logging context for one background job execution.
-
-    Call this at the start of each job handler invocation. All subsequent log
-    entries in that execution context include these fields.
-
-    Args:
-        request_id: Request correlation ID propagated from enqueue time.
-        task_name: Job kind or handler name.
-        task_id: Claimed background job ID.
-
-    Example:
-        def my_job(job_id: str, request_id: str | None = None):
-            configure_task_logging(
-                request_id=request_id,
-                task_name="my_job",
-                task_id=job_id
-            )
-            logger.info("job_started")
-    """
-    request_id_var.set(request_id)
-    task_name_var.set(task_name)
-    task_id_var.set(task_id)
-
-
-def clear_task_context() -> None:
-    """Clear task context at the end of a task."""
-    request_id_var.set(None)
-    task_name_var.set(None)
-    task_id_var.set(None)
-    user_id_var.set(None)

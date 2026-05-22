@@ -1,13 +1,14 @@
-"""Message context item service."""
+"""Message context persistence and snapshot service."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import delete, or_, select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
@@ -22,9 +23,23 @@ from nexus.db.models import (
     ObjectLink,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.schemas.conversation import ContextItem, MessageContextRef, ReaderSelectionContext
+from nexus.evidence_span_ids import (
+    EvidenceSpanIdError,
+    trusted_evidence_span_ids,
+)
+from nexus.schemas.conversation import (
+    ContextItem,
+    MessageArtifactPartProvenance,
+    MessageContextRef,
+    MessageContextSnapshot,
+    ReaderSelectionContext,
+)
 from nexus.schemas.notes import ObjectRef
 from nexus.schemas.retrieval import retrieval_locator_json
+from nexus.services.message_context_snapshots import (
+    artifact_part_context_ref,
+    object_ref_context_snapshot_from_hydrated,
+)
 from nexus.services.object_refs import hydrate_object_ref
 from nexus.services.pdf_quote_match import MatchStatus, compute_match
 from nexus.services.pdf_readiness import is_pdf_quote_text_ready
@@ -40,6 +55,115 @@ CITABLE_OBJECT_CONTEXT_TYPES = {
     "message",
     "evidence_span",
 }
+
+
+def reader_selection_context_from_row(row: MessageContextItem) -> ReaderSelectionContext:
+    """Return the canonical ReaderSelectionContext for a persisted row."""
+    return ReaderSelectionContext.model_validate(_reader_selection_context_payload_from_row(row))
+
+
+def reader_selection_message_snapshot_from_row(
+    row: MessageContextItem,
+) -> MessageContextSnapshot:
+    """Return the canonical message-list snapshot for a persisted row."""
+    return MessageContextSnapshot.model_validate(
+        _reader_selection_message_snapshot_payload_from_row(row)
+    )
+
+
+def _reader_selection_context_payload_from_row(row: MessageContextItem) -> dict[str, object]:
+    snapshot = _reader_selection_snapshot_mapping(row)
+    source_media_id = _reader_selection_source_media_id(row)
+    media_id = _reader_selection_snapshot_required_uuid(snapshot, "media_id")
+    snapshot_source_media_id = _reader_selection_snapshot_required_uuid(
+        snapshot,
+        "source_media_id",
+    )
+    if media_id != source_media_id or snapshot_source_media_id != source_media_id:
+        raise ValueError("reader_selection persisted media ids are inconsistent")
+
+    locator = _reader_selection_snapshot_locator(snapshot)
+    payload: dict[str, object] = {
+        "kind": "reader_selection",
+        "client_context_id": _reader_selection_snapshot_required_uuid(
+            snapshot,
+            "client_context_id",
+        ),
+        "media_id": source_media_id,
+        "media_kind": _reader_selection_snapshot_required_string(snapshot, "media_kind"),
+        "media_title": _reader_selection_snapshot_required_string(snapshot, "media_title"),
+        "exact": _reader_selection_snapshot_required_string(snapshot, "exact"),
+        "locator": locator,
+        "source_version": _reader_selection_snapshot_required_string(snapshot, "source_version"),
+    }
+    for key in ("prefix", "suffix"):
+        value = snapshot.get(key)
+        if value is not None:
+            payload[key] = _reader_selection_snapshot_optional_string(value)
+    return payload
+
+
+def _reader_selection_message_snapshot_payload_from_row(
+    row: MessageContextItem,
+) -> dict[str, object]:
+    snapshot = _reader_selection_snapshot_mapping(row)
+    payload = _reader_selection_context_payload_from_row(row)
+    media_id = payload["media_id"]
+    payload["source_media_id"] = media_id
+    for key in ("title", "route"):
+        value = snapshot.get(key)
+        if value is not None:
+            payload[key] = _reader_selection_snapshot_optional_string(value)
+    return payload
+
+
+def _reader_selection_snapshot_mapping(row: MessageContextItem) -> Mapping[str, object]:
+    snapshot = row.context_snapshot_json
+    if not isinstance(snapshot, Mapping):
+        raise ValueError("reader_selection snapshot is missing")
+    return snapshot
+
+
+def _reader_selection_source_media_id(row: MessageContextItem) -> UUID:
+    if row.source_media_id is None:
+        raise ValueError("reader_selection source media is missing")
+    return row.source_media_id
+
+
+def _reader_selection_snapshot_locator(snapshot: Mapping[str, object]) -> dict[str, Any]:
+    raw = snapshot["locator"]
+    if not isinstance(raw, dict) or not raw:
+        raise ValueError("reader_selection locator is missing")
+    locator = retrieval_locator_json(raw)
+    if locator is None:
+        raise ValueError("reader_selection locator is missing")
+    return locator
+
+
+def _reader_selection_snapshot_required_uuid(
+    snapshot: Mapping[str, object],
+    key: str,
+) -> UUID:
+    return UUID(_reader_selection_snapshot_required_string(snapshot, key))
+
+
+def _reader_selection_snapshot_required_string(
+    snapshot: Mapping[str, object],
+    key: str,
+) -> str:
+    return _reader_selection_snapshot_string(snapshot[key])
+
+
+def _reader_selection_snapshot_string(value: object) -> str:
+    if isinstance(value, str) and value.strip():
+        return value
+    raise ValueError("reader_selection snapshot field is missing")
+
+
+def _reader_selection_snapshot_optional_string(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    raise ValueError("reader_selection snapshot field is invalid")
 
 
 def _highlight_media_id(highlight: Highlight) -> UUID | None:
@@ -176,6 +300,463 @@ def insert_context(
     )
 
 
+def validate_content_chunk_evidence_span_ids(
+    db: Session,
+    chunk_id: UUID,
+    evidence_span_ids: Sequence[UUID | str],
+) -> list[UUID]:
+    try:
+        trusted_ids = trusted_evidence_span_ids(list(evidence_span_ids))
+    except EvidenceSpanIdError as exc:
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Evidence span is not valid for context",
+        ) from exc
+    if not trusted_ids:
+        return []
+    matched_ids = set(
+        db.execute(
+            text(
+                """
+                SELECT es.id
+                FROM content_chunks cc
+                JOIN media_content_index_states mcis ON mcis.media_id = cc.media_id
+                    AND mcis.active_run_id = cc.index_run_id
+                JOIN content_index_runs active_run ON active_run.id = cc.index_run_id
+                    AND active_run.state = 'ready'
+                    AND active_run.deactivated_at IS NULL
+                JOIN evidence_spans es ON es.media_id = cc.media_id
+                    AND es.index_run_id = cc.index_run_id
+                WHERE cc.id = :chunk_id
+                  AND es.id = ANY(:evidence_span_ids)
+                """
+            ),
+            {"chunk_id": chunk_id, "evidence_span_ids": trusted_ids},
+        ).scalars()
+    )
+    if matched_ids != set(trusted_ids):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Evidence span is not valid for context")
+    return trusted_ids
+
+
+def load_artifact_part_context_ref(db: Session, artifact_part_id: UUID) -> MessageContextRef:
+    row = (
+        db.execute(
+            text(
+                """
+                SELECT
+                    part.artifact_id,
+                    part.ordinal,
+                    part.part_key,
+                    part.part_type,
+                    part.text AS part_text,
+                    part.source_version,
+                    part.locator,
+                    part.source_ref,
+                    part.context_ref,
+                    part.result_ref,
+                    part.evidence_span_id,
+                    part.evidence_span_ids,
+                    part.source_refs,
+                    part.metadata AS part_metadata,
+                    artifact.message_id AS artifact_message_id,
+                    artifact.conversation_id,
+                    artifact.artifact_key,
+                    artifact.artifact_version,
+                    artifact.artifact_kind,
+                    artifact.title AS artifact_title
+                FROM message_artifact_parts part
+                JOIN message_artifacts artifact ON artifact.id = part.artifact_id
+                WHERE part.id = :artifact_part_id
+                """
+            ),
+            {"artifact_part_id": artifact_part_id},
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Artifact part not found")
+    locator = _stored_json_object(
+        row["locator"],
+        "Artifact part context provenance cannot be verified",
+    )
+    if locator is None:
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Artifact part context provenance cannot be verified",
+        )
+    evidence_span_ids = trusted_evidence_span_ids(row["evidence_span_ids"])
+    source_refs = _stored_json_array(
+        row["source_refs"],
+        "Artifact part context provenance cannot be verified",
+    )
+    metadata = _stored_json_object(
+        row["part_metadata"],
+        "Artifact part context provenance cannot be verified",
+    )
+    return artifact_part_context_ref(
+        artifact_part_id=artifact_part_id,
+        artifact_id=row["artifact_id"],
+        source_version=row["source_version"],
+        locator=locator,
+        evidence_span_id=row["evidence_span_id"],
+        evidence_span_ids=evidence_span_ids,
+        artifact_kind=row["artifact_kind"],
+        message_id=row["artifact_message_id"],
+        conversation_id=row["conversation_id"],
+        artifact_key=row["artifact_key"],
+        artifact_version=row["artifact_version"],
+        artifact_title=row["artifact_title"],
+        ordinal=row["ordinal"],
+        part_key=row["part_key"],
+        part_type=row["part_type"],
+        text=row["part_text"],
+        source_ref=_stored_json_object(
+            row["source_ref"],
+            "Artifact part context provenance cannot be verified",
+        ),
+        context_ref=_stored_json_object(
+            row["context_ref"],
+            "Artifact part context provenance cannot be verified",
+        ),
+        result_ref=_stored_json_object(
+            row["result_ref"],
+            "Artifact part context provenance cannot be verified",
+        ),
+        source_refs=[item for item in source_refs if isinstance(item, Mapping)],
+        metadata=metadata,
+    )
+
+
+def _stored_json_object(value: object, error_message: str) -> dict[str, object] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, error_message)
+    return dict(value)
+
+
+def _stored_json_array(value: object, error_message: str) -> list[object]:
+    if not isinstance(value, list):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, error_message)
+    return value
+
+
+def _artifact_context_provenance_matches_row(
+    provenance: MessageArtifactPartProvenance,
+    row: Mapping[Any, Any],
+) -> bool:
+    return (
+        provenance.type == "artifact"
+        and provenance.artifact_id == row["id"]
+        and (provenance.artifact_kind is None or provenance.artifact_kind == row["artifact_kind"])
+        and (provenance.message_id is None or provenance.message_id == row["message_id"])
+        and (
+            provenance.conversation_id is None
+            or provenance.conversation_id == row["conversation_id"]
+        )
+        and (provenance.artifact_key is None or provenance.artifact_key == row["artifact_key"])
+        and (
+            provenance.artifact_version is None
+            or provenance.artifact_version == row["artifact_version"]
+        )
+        and (
+            provenance.artifact_title is None or provenance.artifact_title == row["artifact_title"]
+        )
+    )
+
+
+def _reject_artifact_context_drift(
+    *,
+    context: MessageContextRef,
+    row: Mapping[Any, Any],
+) -> None:
+    if (
+        context.artifact_id is not None
+        and context.artifact_id != row["id"]
+        or context.artifact_key is not None
+        and context.artifact_key != row["artifact_key"]
+        or context.artifact_version is not None
+        and context.artifact_version != row["artifact_version"]
+        or context.artifact_part_provenance is not None
+        and not _artifact_context_provenance_matches_row(
+            context.artifact_part_provenance,
+            row,
+        )
+    ):
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Artifact context provenance does not match the stored artifact",
+        )
+
+
+def _artifact_part_context_provenance_matches_row(
+    provenance: MessageArtifactPartProvenance,
+    row: Mapping[Any, Any],
+    *,
+    artifact_part_id: UUID,
+    stored_locator: Mapping[str, object],
+    evidence_span_ids: Sequence[UUID],
+) -> bool:
+    provenance_locator = (
+        retrieval_locator_json(provenance.locator.model_dump(mode="json"))
+        if provenance.locator is not None
+        else None
+    )
+    return (
+        provenance.type == "artifact_part"
+        and provenance.artifact_id == row["artifact_id"]
+        and provenance.artifact_part_id == artifact_part_id
+        and (provenance.artifact_kind is None or provenance.artifact_kind == row["artifact_kind"])
+        and (provenance.message_id is None or provenance.message_id == row["artifact_message_id"])
+        and (
+            provenance.conversation_id is None
+            or provenance.conversation_id == row["conversation_id"]
+        )
+        and (provenance.artifact_key is None or provenance.artifact_key == row["artifact_key"])
+        and (
+            provenance.artifact_version is None
+            or provenance.artifact_version == row["artifact_version"]
+        )
+        and (
+            provenance.artifact_title is None or provenance.artifact_title == row["artifact_title"]
+        )
+        and (provenance.ordinal is None or provenance.ordinal == row["ordinal"])
+        and (provenance.part_key is None or provenance.part_key == row["part_key"])
+        and (provenance.part_type is None or provenance.part_type == row["part_type"])
+        and (provenance.text is None or provenance.text == row["part_text"])
+        and (
+            provenance.source_version is None or provenance.source_version == row["source_version"]
+        )
+        and (provenance_locator is None or provenance_locator == stored_locator)
+        and (
+            provenance.evidence_span_id is None
+            or provenance.evidence_span_id == row["evidence_span_id"]
+        )
+        and (not provenance.evidence_span_ids or provenance.evidence_span_ids == evidence_span_ids)
+    )
+
+
+def _reject_artifact_part_context_drift(
+    *,
+    context: MessageContextRef,
+    row: Mapping[Any, Any],
+    stored_locator: Mapping[str, object],
+    evidence_span_ids: Sequence[UUID],
+) -> None:
+    if (
+        context.artifact_key is not None
+        and context.artifact_key != row["artifact_key"]
+        or context.artifact_version is not None
+        and context.artifact_version != row["artifact_version"]
+        or context.artifact_part_provenance is not None
+        and not _artifact_part_context_provenance_matches_row(
+            context.artifact_part_provenance,
+            row,
+            artifact_part_id=context.id,
+            stored_locator=stored_locator,
+            evidence_span_ids=evidence_span_ids,
+        )
+    ):
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Artifact part context provenance does not match the stored part",
+        )
+
+
+def _stored_artifact_snapshot_fields(
+    db: Session,
+    *,
+    conversation_id: UUID,
+    context: MessageContextRef,
+) -> dict[str, object]:
+    row = (
+        db.execute(
+            text(
+                """
+                SELECT
+                    id,
+                    message_id,
+                    conversation_id,
+                    artifact_key,
+                    artifact_version,
+                    artifact_kind,
+                    title AS artifact_title
+                FROM message_artifacts
+                WHERE id = :artifact_id
+                  AND conversation_id = :conversation_id
+                """
+            ),
+            {
+                "artifact_id": context.id,
+                "conversation_id": conversation_id,
+            },
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
+    _reject_artifact_context_drift(context=context, row=row)
+
+    provenance = MessageArtifactPartProvenance(
+        type="artifact",
+        artifact_id=row["id"],
+        artifact_kind=row["artifact_kind"],
+        message_id=row["message_id"],
+        conversation_id=row["conversation_id"],
+        artifact_key=row["artifact_key"],
+        artifact_version=row["artifact_version"],
+        artifact_title=row["artifact_title"],
+    )
+    return {
+        "artifact_id": str(row["id"]),
+        "artifact_key": row["artifact_key"],
+        "artifact_version": row["artifact_version"],
+        "artifact_part_provenance": provenance.model_dump(mode="json", exclude_none=True),
+    }
+
+
+def _stored_artifact_part_snapshot_fields(
+    db: Session,
+    *,
+    conversation_id: UUID,
+    context: MessageContextRef,
+) -> dict[str, object]:
+    row = (
+        db.execute(
+            text(
+                """
+                SELECT
+                    part.artifact_id,
+                    part.ordinal,
+                    part.part_key,
+                    part.part_type,
+                    part.text AS part_text,
+                    part.source_version,
+                    part.locator,
+                    part.source_ref,
+                    part.context_ref,
+                    part.result_ref,
+                    part.evidence_span_id,
+                    part.evidence_span_ids,
+                    part.source_refs,
+                    part.metadata AS part_metadata,
+                    artifact.message_id AS artifact_message_id,
+                    artifact.conversation_id,
+                    artifact.artifact_key,
+                    artifact.artifact_version,
+                    artifact.artifact_kind,
+                    artifact.title AS artifact_title
+                FROM message_artifact_parts part
+                JOIN message_artifacts artifact ON artifact.id = part.artifact_id
+                WHERE part.id = :artifact_part_id
+                  AND artifact.conversation_id = :conversation_id
+                """
+            ),
+            {
+                "artifact_part_id": context.id,
+                "conversation_id": conversation_id,
+            },
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
+
+    stored_locator = retrieval_locator_json(
+        _stored_json_object(
+            row["locator"],
+            "Artifact part context provenance cannot be verified",
+        )
+    )
+    context_locator = (
+        retrieval_locator_json(context.locator.model_dump(mode="json"))
+        if context.locator is not None
+        else None
+    )
+    if (
+        stored_locator is None
+        or context.artifact_id != row["artifact_id"]
+        or context.source_version != row["source_version"]
+        or context_locator != stored_locator
+    ):
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Artifact part context provenance does not match the stored part",
+        )
+
+    try:
+        evidence_span_ids = trusted_evidence_span_ids(row["evidence_span_ids"])
+    except EvidenceSpanIdError as exc:
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Artifact part context provenance cannot be verified",
+        ) from exc
+    _reject_artifact_part_context_drift(
+        context=context,
+        row=row,
+        stored_locator=stored_locator,
+        evidence_span_ids=evidence_span_ids,
+    )
+    source_refs = _stored_json_array(
+        row["source_refs"],
+        "Artifact part context provenance cannot be verified",
+    )
+    metadata = _stored_json_object(
+        row["part_metadata"],
+        "Artifact part context provenance cannot be verified",
+    )
+    provenance = MessageArtifactPartProvenance.model_validate(
+        {
+            "type": "artifact_part",
+            "artifact_id": row["artifact_id"],
+            "artifact_kind": row["artifact_kind"],
+            "message_id": row["artifact_message_id"],
+            "conversation_id": row["conversation_id"],
+            "artifact_key": row["artifact_key"],
+            "artifact_version": row["artifact_version"],
+            "artifact_title": row["artifact_title"],
+            "artifact_part_id": context.id,
+            "ordinal": row["ordinal"],
+            "part_key": row["part_key"],
+            "part_type": row["part_type"],
+            "text": row["part_text"],
+            "source_version": row["source_version"],
+            "locator": stored_locator,
+            "source_ref": _stored_json_object(
+                row["source_ref"],
+                "Artifact part context provenance cannot be verified",
+            ),
+            "context_ref": _stored_json_object(
+                row["context_ref"],
+                "Artifact part context provenance cannot be verified",
+            ),
+            "result_ref": _stored_json_object(
+                row["result_ref"],
+                "Artifact part context provenance cannot be verified",
+            ),
+            "evidence_span_id": row["evidence_span_id"],
+            "evidence_span_ids": evidence_span_ids,
+            "source_refs": source_refs,
+            "metadata": metadata or {},
+        }
+    )
+    fields: dict[str, object] = {
+        "artifact_id": str(row["artifact_id"]),
+        "artifact_key": row["artifact_key"],
+        "artifact_version": row["artifact_version"],
+        "source_version": row["source_version"],
+        "locator": stored_locator,
+        "artifact_part_provenance": provenance.model_dump(mode="json", exclude_none=True),
+    }
+    if evidence_span_ids:
+        fields["evidence_span_ids"] = [str(span_id) for span_id in evidence_span_ids]
+    return fields
+
+
 def _insert_object_ref_context(
     db: Session,
     *,
@@ -194,62 +775,39 @@ def _insert_object_ref_context(
         db, message.conversation.owner_user_id, media_id
     ):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Context not found")
+    artifact_snapshot_fields: dict[str, object] | None = None
+    if context.type == "artifact":
+        artifact_snapshot_fields = _stored_artifact_snapshot_fields(
+            db,
+            conversation_id=message.conversation_id,
+            context=context,
+        )
     if context.type == "artifact_part":
-        row = (
-            db.execute(
-                text(
-                    """
-                SELECT
-                    part.artifact_id,
-                    part.source_version,
-                    part.locator
-                FROM message_artifact_parts part
-                JOIN message_artifacts artifact ON artifact.id = part.artifact_id
-                WHERE part.id = :artifact_part_id
-                  AND artifact.conversation_id = :conversation_id
-                """
-                ),
-                {
-                    "artifact_part_id": context.id,
-                    "conversation_id": message.conversation_id,
-                },
-            )
-            .mappings()
-            .first()
+        artifact_snapshot_fields = _stored_artifact_part_snapshot_fields(
+            db,
+            conversation_id=message.conversation_id,
+            context=context,
         )
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        locator = (
-            retrieval_locator_json(context.locator.model_dump(mode="json"))
-            if context.locator is not None
-            else None
-        )
-        stored_locator = retrieval_locator_json(
-            row["locator"] if isinstance(row["locator"], dict) else None
-        )
-        if (
-            context.artifact_id != row["artifact_id"]
-            or context.source_version != row["source_version"]
-            or locator != stored_locator
-        ):
-            raise ApiError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Artifact part context provenance does not match the stored part",
-            )
 
-    context_snapshot = hydrated.model_dump(mode="json", by_alias=True)
-    context_snapshot["kind"] = "object_ref"
-    if context.type == "content_chunk" and context.evidence_span_ids:
-        context_snapshot["evidence_span_ids"] = [
-            str(span_id) for span_id in context.evidence_span_ids
-        ]
+    evidence_span_ids: list[UUID] = []
+    if context.type == "content_chunk":
+        evidence_span_ids = validate_content_chunk_evidence_span_ids(
+            db,
+            context.id,
+            context.evidence_span_ids,
+        )
+    source_version: str | None = None
+    locator_json: dict[str, object] | None = None
+    result_media_id: UUID | str | None = None
+    result_media_kind: str | None = None
+    result_media_title: str | None = None
     if context.type in CITABLE_OBJECT_CONTEXT_TYPES:
         result = get_search_result(
             db,
             message.conversation.owner_user_id,
             context.type,
             str(context.id),
-            context.evidence_span_ids if context.type == "content_chunk" else None,
+            evidence_span_ids if context.type == "content_chunk" else None,
         )
         source_version = getattr(result, "source_version", None)
         locator = getattr(result, "locator", None)
@@ -266,39 +824,37 @@ def _insert_object_ref_context(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "Context provenance cannot be verified",
             )
-        context_snapshot["source_version"] = source_version
-        context_snapshot["locator"] = locator_json
         result_evidence_span_ids = getattr(result, "evidence_span_ids", None)
         if isinstance(result_evidence_span_ids, list) and result_evidence_span_ids:
-            context_snapshot["evidence_span_ids"] = [
-                str(span_id) for span_id in result_evidence_span_ids
-            ]
+            try:
+                evidence_span_ids = trusted_evidence_span_ids(result_evidence_span_ids)
+            except EvidenceSpanIdError as exc:
+                raise ApiError(
+                    ApiErrorCode.E_INVALID_REQUEST,
+                    "Context provenance cannot be verified",
+                ) from exc
         result_evidence_span_id = getattr(result, "evidence_span_id", None)
-        if result_evidence_span_id is not None and not context_snapshot.get("evidence_span_ids"):
-            context_snapshot["evidence_span_ids"] = [str(result_evidence_span_id)]
+        if result_evidence_span_id is not None and not evidence_span_ids:
+            evidence_span_ids = [result_evidence_span_id]
         result_media_id = getattr(result, "media_id", None)
-        if result_media_id is not None:
-            context_snapshot["media_id"] = str(result_media_id)
         result_media_kind = getattr(result, "media_kind", None)
-        if isinstance(result_media_kind, str) and result_media_kind:
-            context_snapshot["media_kind"] = result_media_kind
-    if context.type == "artifact_part":
-        context_snapshot["artifact_id"] = str(context.artifact_id)
-        context_snapshot["source_version"] = context.source_version
-        context_snapshot["locator"] = (
-            context.locator.model_dump(mode="json") if context.locator else None
-        )
-        context_snapshot["evidence_span_ids"] = [
-            str(span_id) for span_id in context.evidence_span_ids
-        ]
-        if context.artifact_key is not None:
-            context_snapshot["artifact_key"] = context.artifact_key
-        if context.artifact_version is not None:
-            context_snapshot["artifact_version"] = context.artifact_version
-        if context.artifact_part_provenance:
-            context_snapshot["artifact_part_provenance"] = (
-                context.artifact_part_provenance.model_dump(mode="json")
-            )
+        if not isinstance(result_media_kind, str) or not result_media_kind:
+            result_media_kind = None
+        result_title = getattr(result, "title", None)
+        if isinstance(result_title, str) and result_title:
+            result_media_title = result_title
+
+    context_snapshot = object_ref_context_snapshot_from_hydrated(
+        hydrated,
+        evidence_span_ids=evidence_span_ids,
+        media_id=result_media_id,
+        media_kind=result_media_kind,
+        media_title=result_media_title,
+        locator=locator_json,
+        source_version=source_version,
+    )
+    if artifact_snapshot_fields is not None:
+        context_snapshot.update(artifact_snapshot_fields)
 
     row = MessageContextItem(
         message_id=message_id,
@@ -755,65 +1311,3 @@ def upsert_conversation_media(
     db.add(row)
     db.flush()
     return row
-
-
-def recompute_conversation_media(db: Session, conversation_id: UUID) -> None:
-    current_media_ids = {
-        row[0]
-        for row in db.execute(
-            select(ConversationMedia.media_id).where(
-                ConversationMedia.conversation_id == conversation_id
-            )
-        ).fetchall()
-    }
-
-    context_rows = (
-        db.execute(
-            select(MessageContextItem)
-            .join(Message, Message.id == MessageContextItem.message_id)
-            .where(Message.conversation_id == conversation_id)
-        )
-        .scalars()
-        .all()
-    )
-
-    expected_media_ids: set[UUID] = set()
-    for row in context_rows:
-        if row.context_kind == "reader_selection":
-            media_id = row.source_media_id
-        else:
-            media_id = resolve_media_id_for_context(
-                db,
-                MessageContextRef.model_validate(
-                    {"kind": "object_ref", "type": row.object_type, "id": row.object_id}
-                ),
-            )
-        if media_id is not None:
-            expected_media_ids.add(media_id)
-
-    to_remove = current_media_ids - expected_media_ids
-    if to_remove:
-        db.execute(
-            delete(ConversationMedia).where(
-                ConversationMedia.conversation_id == conversation_id,
-                ConversationMedia.media_id.in_(to_remove),
-            )
-        )
-
-    for media_id in expected_media_ids - current_media_ids:
-        db.add(
-            ConversationMedia(
-                conversation_id=conversation_id,
-                media_id=media_id,
-                last_message_at=datetime.now(UTC),
-            )
-        )
-    db.flush()
-
-
-def get_conversation_media(db: Session, conversation_id: UUID) -> list[ConversationMedia]:
-    return list(
-        db.scalars(
-            select(ConversationMedia).where(ConversationMedia.conversation_id == conversation_id)
-        )
-    )

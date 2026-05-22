@@ -54,8 +54,10 @@ def error_response(
     return {"error": error}
 
 
-async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
+async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle ApiError exceptions and return proper JSON response."""
+    if not isinstance(exc, ApiError):
+        raise exc
     return JSONResponse(
         status_code=exc.status_code,
         content=error_response(exc.code, exc.message),

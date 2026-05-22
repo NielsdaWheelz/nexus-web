@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.errors import ApiErrorCode
-from nexus.storage.client import FakeStorageClient
+from tests.support.storage import FakeStorageClient
 from tests.utils.db import task_session_factory
 
 pytestmark = pytest.mark.integration

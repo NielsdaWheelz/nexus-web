@@ -6,7 +6,7 @@ import hashlib
 from typing import Any, Literal
 from uuid import UUID
 
-from sqlalchemy import and_, delete, func, or_, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -18,8 +18,6 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.semantic_chunks import (
-    build_text_embeddings,
-    current_transcript_embedding_model,
     to_pgvector_literal,
     transcript_embedding_dimensions,
 )
@@ -98,86 +96,6 @@ def project_note_block(db: Session, viewer_id: UUID, block: NoteBlock) -> None:
         ),
         route_path=f"/notes/{block.id}",
     )
-
-
-def rebuild_missing_embeddings(db: Session, viewer_id: UUID, *, limit: int = 100) -> int:
-    dimensions = transcript_embedding_dimensions()
-    expected_model = current_transcript_embedding_model()
-    rows = db.execute(
-        select(
-            ObjectSearchDocument.id,
-            ObjectSearchDocument.object_type,
-            ObjectSearchDocument.object_id,
-            ObjectSearchDocument.search_text,
-            ObjectSearchDocument.content_hash,
-            ObjectSearchDocument.index_version,
-        )
-        .outerjoin(
-            ObjectSearchEmbedding,
-            and_(
-                ObjectSearchEmbedding.search_document_id == ObjectSearchDocument.id,
-                ObjectSearchEmbedding.embedding_model == expected_model,
-                ObjectSearchEmbedding.index_version == ObjectSearchDocument.index_version,
-                ObjectSearchEmbedding.deleted_at.is_(None),
-            ),
-        )
-        .where(
-            ObjectSearchDocument.user_id == viewer_id,
-            ObjectSearchDocument.deleted_at.is_(None),
-            ObjectSearchDocument.index_version == OBJECT_SEARCH_INDEX_VERSION,
-            or_(
-                ObjectSearchEmbedding.id.is_(None),
-                ObjectSearchEmbedding.content_hash != ObjectSearchDocument.content_hash,
-                ObjectSearchEmbedding.embedding_dimensions != dimensions,
-                ObjectSearchDocument.index_status != "ready",
-            ),
-        )
-        .order_by(ObjectSearchDocument.updated_at.asc(), ObjectSearchDocument.id.asc())
-        .limit(limit)
-    ).all()
-    if not rows:
-        return 0
-
-    embedding_model, vectors = build_text_embeddings([row[3] for row in rows])
-    for row, vector in zip(rows, vectors, strict=True):
-        document = db.get(ObjectSearchDocument, row[0])
-        if document is None or document.deleted_at is not None:
-            continue
-        embedding = db.scalar(
-            select(ObjectSearchEmbedding).where(
-                ObjectSearchEmbedding.search_document_id == document.id,
-                ObjectSearchEmbedding.embedding_model == embedding_model,
-                ObjectSearchEmbedding.index_version == document.index_version,
-            )
-        )
-        if embedding is None:
-            db.add(
-                ObjectSearchEmbedding(
-                    user_id=viewer_id,
-                    search_document_id=document.id,
-                    object_type=document.object_type,
-                    object_id=document.object_id,
-                    embedding_model=embedding_model,
-                    embedding_dimensions=len(vector),
-                    content_hash=document.content_hash,
-                    index_version=document.index_version,
-                    embedding=vector,
-                    deleted_at=None,
-                )
-            )
-        else:
-            embedding.user_id = viewer_id
-            embedding.object_type = document.object_type
-            embedding.object_id = document.object_id
-            embedding.embedding_dimensions = len(vector)
-            embedding.content_hash = document.content_hash
-            embedding.embedding = vector
-            embedding.deleted_at = None
-            embedding.updated_at = func.now()
-        document.index_status = "ready"
-        document.updated_at = func.now()
-    db.commit()
-    return len(rows)
 
 
 def search_objects(

@@ -27,7 +27,7 @@ from nexus.services.crypto import (
     CURRENT_MASTER_KEY_VERSION,
     MASTER_KEY_SIZE,
     CryptoError,
-    clear_master_key_cache,
+    _get_master_key,
     decrypt_api_key,
     encrypt_api_key,
 )
@@ -68,7 +68,7 @@ def _provider_state(data: list[dict], provider: str) -> dict:
 @pytest.fixture(autouse=True)
 def setup_test_master_key(monkeypatch):
     """Set up a deterministic test master key for all tests."""
-    clear_master_key_cache()
+    _get_master_key.cache_clear()
 
     test_key = b"test_master_key_for_encryption!!"
     assert len(test_key) == MASTER_KEY_SIZE
@@ -78,7 +78,7 @@ def setup_test_master_key(monkeypatch):
 
     yield
 
-    clear_master_key_cache()
+    _get_master_key.cache_clear()
 
 
 # =============================================================================

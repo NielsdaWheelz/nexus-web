@@ -44,6 +44,7 @@ from nexus.schemas.notes import (
     UpdatePageRequest,
 )
 from nexus.services import object_search
+from nexus.services.message_context_snapshots import object_ref_context_snapshot_from_hydrated
 from nexus.services.object_refs import hydrate_object_ref
 
 _OBJECT_REF_MARKDOWN_RE = re.compile(
@@ -799,23 +800,6 @@ def _update_note_block_once(
     db.commit()
     db.refresh(block)
     return _block_out(block, _child_tree(db, page_id, block.id))
-
-
-def set_note_block_plain_text_body_without_commit(
-    db: Session,
-    viewer_id: UUID,
-    block: NoteBlock,
-    body: str,
-) -> None:
-    if block.user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
-    body_pm_json = pm_doc_from_text(body)
-    if body_pm_json != block.body_pm_json:
-        _set_block_body_pm_json(block, body_pm_json)
-        _bump_block_revision(block)
-        block.updated_at = func.now()
-        _sync_inline_reference_links(db, viewer_id, block)
-        object_search.project_note_block(db, viewer_id, block)
 
 
 def set_note_block_markdown_body_without_commit(
@@ -1673,11 +1657,13 @@ def _transfer_note_block_relationships(
     )
     for item in context_items:
         item.object_id = target_block_id
-        item.context_snapshot_json = hydrate_object_ref(
-            db,
-            viewer_id,
-            ObjectRef(object_type="note_block", object_id=target_block_id),
-        ).model_dump(mode="json", by_alias=True)
+        item.context_snapshot_json = object_ref_context_snapshot_from_hydrated(
+            hydrate_object_ref(
+                db,
+                viewer_id,
+                ObjectRef(object_type="note_block", object_id=target_block_id),
+            )
+        )
 
 
 def _replacement_link_endpoints(
