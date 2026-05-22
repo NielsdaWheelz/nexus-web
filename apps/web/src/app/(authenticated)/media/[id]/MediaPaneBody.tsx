@@ -69,6 +69,7 @@ import {
   reconcileFocusAfterRefetch,
 } from "@/lib/highlights/useHighlightInteraction";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Pill from "@/components/ui/Pill";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
@@ -3283,15 +3284,8 @@ export default function MediaPaneBody() {
   // Suppress when typing in form fields or contenteditable surfaces.
   useEffect(() => {
     function handleKeydown(event: KeyboardEvent) {
-      const target = event.target;
-      if (target instanceof HTMLElement) {
-        if (
-          target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable
-        ) {
-          return;
-        }
+      if (isEditableTarget(event.target)) {
+        return;
       }
       const isCycle =
         event.shiftKey &&
@@ -4081,13 +4075,7 @@ export default function MediaPaneBody() {
       if (event.key.toLowerCase() !== "g") {
         return;
       }
-      const target = event.target;
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement ||
-        (target instanceof HTMLElement && target.isContentEditable)
-      ) {
+      if (isEditableTarget(event.target)) {
         return;
       }
 

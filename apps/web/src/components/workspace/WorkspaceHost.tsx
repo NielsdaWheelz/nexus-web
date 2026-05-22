@@ -12,6 +12,7 @@ import PaneShell from "@/components/workspace/PaneShell";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { loadKeybindings, matchesKeyEvent } from "@/lib/keybindings";
+import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import type { SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import {
   MAX_STANDARD_PANE_WIDTH_PX,
@@ -529,11 +530,7 @@ export default function WorkspaceHost() {
   useEffect(() => {
     const keybindings = loadKeybindings();
     const handleKeyDown = (event: KeyboardEvent) => {
-      const target = event.target;
-      if (
-        target instanceof HTMLElement &&
-        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
-      ) {
+      if (isEditableTarget(event.target)) {
         return;
       }
       const nextCombo = keybindings["pane-next"];

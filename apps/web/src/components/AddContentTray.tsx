@@ -34,6 +34,7 @@ import {
 } from "@/lib/media/ingestionClient";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { getFocusableElements } from "@/lib/ui/getFocusableElements";
+import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Button from "@/components/ui/Button";
@@ -75,13 +76,6 @@ type LibrarySummary = {
 };
 
 const MAX_ACTIVE_UPLOADS = 2;
-
-function eventTargetAcceptsText(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-  return Boolean(target.closest("input, textarea, select, [contenteditable]"));
-}
 
 function dragHasSupportedData(event: DragEvent): boolean {
   const types = Array.from(event.dataTransfer?.types ?? []);
@@ -389,7 +383,7 @@ export default function AddContentTray() {
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
-      if (eventTargetAcceptsText(event.target)) {
+      if (isEditableTarget(event.target)) {
         return;
       }
       const urls = extractUrls(event.clipboardData?.getData("text/plain") ?? "");

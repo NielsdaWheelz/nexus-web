@@ -30,7 +30,7 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { apiFetch } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
 import { loadKeybindings, matchesKeyEvent, formatKeyCombo } from "@/lib/keybindings";
-import { createNotePage, todayLocalDate } from "@/lib/notes/api";
+import { createNotePage, formatLocalDate, todayLocalDate } from "@/lib/notes/api";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import {
   getPaneRouteIcon,
@@ -297,15 +297,6 @@ const PANE_TYPE_LABELS = {
   settingsKeybindings: "Keybindings",
 } as const satisfies Record<PaneRouteId, string>;
 
-function yesterdayLocalDate(): string {
-  const now = new Date();
-  now.setDate(now.getDate() - 1);
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 function commandsForPaneType(
   paneRouteId: PaneRouteId,
   paneRouteParams: Record<string, string>,
@@ -360,6 +351,8 @@ function commandsForPaneType(
     }
     case "daily":
     case "dailyDate": {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
       return [
         {
           id: "pane-daily-open-today",
@@ -380,7 +373,7 @@ function commandsForPaneType(
           icon: CalendarDays,
           target: {
             kind: "href",
-            href: `/daily/${yesterdayLocalDate()}`,
+            href: `/daily/${formatLocalDate(yesterday)}`,
             externalShell: false,
           },
           source: "static",

@@ -47,6 +47,7 @@ import {
   normalizeTrackChapters,
   type GlobalPlayerChapter,
 } from "@/lib/player/chapters";
+import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 
 const LISTENING_STATE_SYNC_INTERVAL_MS = 15_000;
 const PREVIOUS_RESTART_THRESHOLD_SECONDS = 3;
@@ -215,20 +216,6 @@ function mapPlaybackErrorMessage(code: number): string {
     return "Audio URL unavailable.";
   }
   return "Playback failed. Please retry.";
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) {
-    return false;
-  }
-  const tagName = target.tagName.toLowerCase();
-  if (tagName === "input" || tagName === "textarea" || tagName === "select") {
-    return true;
-  }
-  if (target instanceof HTMLElement && target.isContentEditable) {
-    return true;
-  }
-  return Boolean(target.closest("[contenteditable]:not([contenteditable='false'])"));
 }
 
 export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
