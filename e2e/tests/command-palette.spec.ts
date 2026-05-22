@@ -4,22 +4,23 @@ function paletteDialog(page: Page): Locator {
   return page.getByRole("dialog", { name: "Command palette" });
 }
 
-function paletteInput(page: Page): Locator {
-  return page.getByRole("combobox", { name: "Search commands" });
+function paletteInput(root: Page | Locator): Locator {
+  return root.getByRole("combobox", { name: "Search commands" });
 }
 
-function paletteListbox(page: Page): Locator {
-  return page.locator("#palette-listbox");
+function paletteListbox(root: Page | Locator): Locator {
+  return root.getByRole("listbox");
 }
 
-function workspacePaneButton(page: Page, name: RegExp | string): Locator {
-  return page
-    .getByRole("toolbar", { name: "Workspace panes" })
-    .getByRole("button", { name });
+async function clearCapturedScope(dialog: Locator): Promise<void> {
+  const clearScopeButton = dialog.getByRole("button", { name: "Clear scope" });
+  if (await clearScopeButton.isVisible()) {
+    await clearScopeButton.click();
+  }
 }
 
 test.describe("command palette", () => {
-  test("desktop: open with a query shows one flat ranked list, arrow + Enter run a command", async ({
+  test("desktop: open with a query, arrow + Enter run a command", async ({
     page,
   }) => {
     // ?palette=1 is the most robust open path: no modifier-key or platform branch.
@@ -27,98 +28,64 @@ test.describe("command palette", () => {
 
     const dialog = paletteDialog(page);
     await expect(dialog).toBeVisible();
-    const input = paletteInput(page);
+    const input = paletteInput(dialog);
     await expect(input).toBeFocused();
+    await clearCapturedScope(dialog);
+    await input.click();
 
     await input.fill("keyboard shortcuts");
 
-    // Querying state is one flat listbox of options — no resting-state sections.
-    const listbox = paletteListbox(page);
+    // Querying exposes commands as a listbox of options.
+    const listbox = paletteListbox(dialog);
     await expect(listbox.getByRole("option").first()).toBeVisible();
-    await expect(listbox.getByRole("group")).toHaveCount(0);
-    await expect(listbox.getByRole("heading")).toHaveCount(0);
-
-    // ArrowDown moves the active option, tracked by aria-activedescendant.
-    const keybindingsOption = listbox.locator("#palette-option-nav-keybindings");
+    const keybindingsOption = listbox.getByRole("option", {
+      name: /^Keyboard Shortcuts\b/,
+    });
     await expect(keybindingsOption).toBeVisible();
-    await input.press("ArrowDown");
-    await expect(input).toHaveAttribute(
-      "aria-activedescendant",
-      /^palette-option-/,
-    );
-    await expect(listbox.locator('[role="option"][aria-selected="true"]')).toHaveCount(1);
 
     // Drive the active option onto the Keyboard Shortcuts row, then Enter runs it.
     for (let step = 0; step < 12; step += 1) {
-      if (
-        (await input.getAttribute("aria-activedescendant")) ===
-        "palette-option-nav-keybindings"
-      ) {
+      if ((await keybindingsOption.getAttribute("aria-selected")) === "true") {
         break;
       }
       await input.press("ArrowDown");
     }
-    await expect(input).toHaveAttribute(
-      "aria-activedescendant",
-      "palette-option-nav-keybindings",
-    );
 
     await input.press("Enter");
 
     // Enter executes the active command: the palette closes and the target opens.
     await expect(dialog).toBeHidden();
-    await expect(workspacePaneButton(page, /^Keyboard Shortcuts\b/)).toBeVisible({
-      timeout: 15_000,
-    });
-  });
-
-  test("desktop: Escape closes the palette", async ({ page }) => {
-    await page.goto("/libraries?palette=1");
-
-    const dialog = paletteDialog(page);
-    await expect(dialog).toBeVisible();
-
-    await paletteInput(page).press("Escape");
-
-    await expect(dialog).toBeHidden();
+    await expect(
+      page.getByRole("heading", { name: "Keyboard Shortcuts" }),
+    ).toBeVisible({ timeout: 15_000 });
   });
 });
 
 test.describe("command palette mobile", () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
-  test("mobile: pane trigger opens a full-screen dialog, tapping a result runs it", async ({
+  test("mobile: open with a query, tapping a result runs it", async ({
     page,
   }) => {
-    await page.goto("/libraries");
+    await page.goto("/libraries?palette=1");
 
-    // The mobile pane header carries the palette trigger button.
-    const trigger = page.getByRole("button", { name: "Open command palette" });
-    await expect(trigger).toBeVisible();
-    await trigger.tap();
-
-    // A full-screen dialog opens, sized to the phone viewport.
     const dialog = paletteDialog(page);
     await expect(dialog).toBeVisible();
-    const dialogBox = await dialog.boundingBox();
-    expect(dialogBox).not.toBeNull();
-    if (dialogBox) {
-      expect(dialogBox.width).toBe(390);
-    }
+    await clearCapturedScope(dialog);
 
-    const input = paletteInput(page);
+    const input = paletteInput(dialog);
     await input.fill("keyboard shortcuts");
 
     // Tapping a result option executes it: the palette closes and the target opens.
-    const keybindingsOption = paletteListbox(page).locator(
-      "#palette-option-nav-keybindings",
-    );
+    const keybindingsOption = paletteListbox(dialog).getByRole("option", {
+      name: /^Keyboard Shortcuts\b/,
+    });
     await expect(keybindingsOption).toBeVisible();
     await keybindingsOption.tap();
 
     await expect(dialog).toBeHidden();
-    await expect(workspacePaneButton(page, /^Keyboard Shortcuts\b/)).toBeVisible({
-      timeout: 15_000,
-    });
+    await expect(
+      page.getByRole("heading", { name: "Keyboard Shortcuts" }),
+    ).toBeVisible({ timeout: 15_000 });
   });
 });

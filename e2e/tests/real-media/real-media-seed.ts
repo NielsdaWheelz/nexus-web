@@ -10,8 +10,6 @@ import {
 } from "@playwright/test";
 import { selectFreshVisibleTextSnippet } from "../selection";
 
-export { selectFreshVisibleTextSnippet };
-
 const CONTENT_KIND_LABELS = {
   epub: "EPUBs",
   pdf: "PDFs",

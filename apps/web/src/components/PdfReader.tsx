@@ -42,8 +42,6 @@ import {
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./PdfReader.module.css";
 
-export type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
-
 interface PdfFileAccessResponse {
   data: {
     url: string;
