@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { formatClock } from "@/lib/formatClock";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { isPositiveFinite } from "@/lib/validation";
 import {
   PLAYER_SKIP_BACK_SECONDS,
   PLAYER_SKIP_FORWARD_SECONDS,
@@ -97,7 +98,7 @@ function EffectsPanel({
         <span>Mono audio</span>
       </label>
 
-      <p className={styles.effectsMeta}>Time saved: {Number.isFinite(silenceTimeSavedSeconds) && silenceTimeSavedSeconds > 0 ? silenceTimeSavedSeconds.toFixed(1) : "0.0"}s</p>
+      <p className={styles.effectsMeta}>Time saved: {isPositiveFinite(silenceTimeSavedSeconds) ? silenceTimeSavedSeconds.toFixed(1) : "0.0"}s</p>
       {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
     </section>
   );
@@ -194,7 +195,7 @@ export default function GlobalPlayerFooter() {
     return null;
   }
 
-  const durationSafe = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 0;
+  const durationSafe = isPositiveFinite(durationSeconds) ? durationSeconds : 0;
   const currentSafe = Math.max(0, currentTimeSeconds);
   const bufferedSafe = Math.max(0, bufferedSeconds);
   const progressPercent = durationSafe > 0 ? Math.min(100, (currentSafe / durationSafe) * 100) : 0;

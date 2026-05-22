@@ -12,3 +12,7 @@ const UUID_RE =
 export function isUuid(value: string): boolean {
   return UUID_RE.test(value);
 }
+
+export function isPositiveFinite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}

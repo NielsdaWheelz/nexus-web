@@ -40,6 +40,7 @@ import {
   type PdfPageViewportTransform,
 } from "@/lib/highlights/coordinateTransforms";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { isPositiveFinite } from "@/lib/validation";
 import styles from "./PdfReader.module.css";
 
 interface PdfFileAccessResponse {
@@ -558,7 +559,7 @@ function deriveScaleFromPageView(
     });
     if (baseViewport.width > 0) {
       const scale = viewport.width / baseViewport.width;
-      if (Number.isFinite(scale) && scale > 0) {
+      if (isPositiveFinite(scale)) {
         return scale;
       }
     }
@@ -1372,10 +1373,9 @@ export default function PdfReader({
           return;
         }
         const event = rawEvent as { pagesCount?: number };
-        const pagesCount =
-          Number.isFinite(event.pagesCount) && (event.pagesCount as number) > 0
-            ? Math.floor(event.pagesCount as number)
-            : (documentRef.current?.numPages ?? 0);
+        const pagesCount = isPositiveFinite(event.pagesCount)
+          ? Math.floor(event.pagesCount)
+          : (documentRef.current?.numPages ?? 0);
         setNumPages(pagesCount);
         const viewer = pdfViewerRef.current;
         const pendingScale = pendingViewerScaleRef.current;
@@ -1435,10 +1435,9 @@ export default function PdfReader({
           source?: PdfPageViewLike;
           error?: unknown;
         };
-        const renderedPage =
-          Number.isFinite(event.pageNumber) && (event.pageNumber as number) > 0
-            ? Math.floor(event.pageNumber as number)
-            : pageNumberRef.current;
+        const renderedPage = isPositiveFinite(event.pageNumber)
+          ? Math.floor(event.pageNumber)
+          : pageNumberRef.current;
 
         markPageSurfaceForTesting(renderedPage, event.source);
         rememberPageScale(renderedPage, event.source);
@@ -1488,10 +1487,9 @@ export default function PdfReader({
           return;
         }
         const event = rawEvent as { pageNumber?: number };
-        const renderedPage =
-          Number.isFinite(event.pageNumber) && (event.pageNumber as number) > 0
-            ? Math.floor(event.pageNumber as number)
-            : pageNumberRef.current;
+        const renderedPage = isPositiveFinite(event.pageNumber)
+          ? Math.floor(event.pageNumber)
+          : pageNumberRef.current;
         if (renderedPage === pageNumberRef.current) {
           scheduleTextLayerStateRefresh(renderedPage, runId);
         }
@@ -1505,10 +1503,9 @@ export default function PdfReader({
         if (!event.error) {
           return;
         }
-        const renderedPage =
-          Number.isFinite(event.pageNumber) && (event.pageNumber as number) > 0
-            ? Math.floor(event.pageNumber as number)
-            : pageNumberRef.current;
+        const renderedPage = isPositiveFinite(event.pageNumber)
+          ? Math.floor(event.pageNumber)
+          : pageNumberRef.current;
         const expiryError = isLikelySignedUrlExpiryError(event.error);
         if (expiryError && !recoveringFromRenderErrorRef.current) {
           recoveringFromRenderErrorRef.current = true;

@@ -9,6 +9,7 @@
 import { type CanonicalCursorResult } from "@/lib/highlights/canonicalCursor";
 import { canonicalCpToRawCp } from "@/lib/highlights/canonicalText";
 import { codepointToUtf16 } from "@/lib/highlights/codepoints";
+import { isPositiveFinite } from "@/lib/validation";
 
 const TEXT_ANCHOR_TOP_PADDING_PX = 56;
 
@@ -40,7 +41,7 @@ function getPaneScrollTopPaddingPx(container: HTMLElement): number {
   const parsed = Number.parseFloat(
     window.getComputedStyle(container).scrollPaddingTop,
   );
-  if (Number.isFinite(parsed) && parsed > 0) {
+  if (isPositiveFinite(parsed)) {
     return parsed;
   }
   return TEXT_ANCHOR_TOP_PADDING_PX;

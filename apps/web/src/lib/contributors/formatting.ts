@@ -1,4 +1,5 @@
 import type { ContributorCredit } from "@/lib/contributors/types";
+import { isPositiveFinite } from "@/lib/validation";
 
 function getContributorCreditLabel(credit: ContributorCredit): string | null {
   const creditedName = credit.credited_name?.trim();
@@ -40,10 +41,9 @@ export function formatContributorCreditSummary(
     return null;
   }
 
-  const visibleCount =
-    Number.isFinite(maxNames) && maxNames > 0
-      ? Math.max(1, Math.floor(maxNames))
-      : names.length;
+  const visibleCount = isPositiveFinite(maxNames)
+    ? Math.max(1, Math.floor(maxNames))
+    : names.length;
   if (names.length <= visibleCount) {
     return names.join(", ");
   }
