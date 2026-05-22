@@ -318,7 +318,7 @@ def put_reader_state(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    body: Annotated[ReaderResumeState | None, Body()] = None,
+    body: Annotated[ReaderResumeState | None, Body()],
 ) -> dict:
     """Replace per-media reader state."""
     result = reader_service.put_reader_media_state(db, viewer.user_id, media_id, body)

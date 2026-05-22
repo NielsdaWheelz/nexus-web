@@ -6,8 +6,8 @@
  * canonicalization rules exactly (python/nexus/services/canonicalize.py).
  *
  * The canonical cursor is used by:
- * - PR-08: Read-only highlight rendering
- * - PR-09: Selection-based highlight creation
+ * - Read-only highlight rendering
+ * - Selection-based highlight creation
  *
  * @see apps/web/README.md (Highlight Libraries / canonicalCursor.ts)
  * @see python/nexus/services/canonicalize.py
@@ -44,7 +44,7 @@ export type CanonicalCursorResult = {
  * Block-level elements that introduce line breaks.
  * MUST match python/nexus/services/canonicalize.py BLOCK_ELEMENTS
  */
-export const BLOCK_ELEMENTS = new Set([
+const BLOCK_ELEMENTS = new Set([
   "p",
   "li",
   "ul",

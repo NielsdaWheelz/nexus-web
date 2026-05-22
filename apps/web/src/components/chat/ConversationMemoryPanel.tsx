@@ -13,13 +13,9 @@ import styles from "./ConversationMemoryPanel.module.css";
 
 interface ConversationMemoryPanelProps {
   memory?: ConversationMemoryInspection | null;
-  testId?: string;
 }
 
-export default function ConversationMemoryPanel({
-  memory,
-  testId = "conversation-memory-panel",
-}: ConversationMemoryPanelProps) {
+export default function ConversationMemoryPanel({ memory }: ConversationMemoryPanelProps) {
   const activeSnapshot =
     memory?.state_snapshot?.status === "active" ? memory.state_snapshot : null;
   const activeItems = (memory?.memory_items ?? []).filter(
@@ -31,11 +27,7 @@ export default function ConversationMemoryPanel({
   }
 
   return (
-    <section
-      className={styles.panel}
-      aria-label="Conversation memory"
-      data-testid={testId}
-    >
+    <section className={styles.panel} aria-label="Conversation memory">
       <h3 className={styles.title}>Memory</h3>
 
       {activeSnapshot ? <StateSnapshot snapshot={activeSnapshot} /> : null}

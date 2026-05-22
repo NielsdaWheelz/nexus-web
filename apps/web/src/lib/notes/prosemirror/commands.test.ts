@@ -5,8 +5,6 @@ import {
   createObjectRefSyntaxPlugin,
   mergeOutlineBlockBackward,
   mergeOutlineBlockForward,
-  outlineJsonFromTexts,
-  outlineTexts,
   pasteMarkdownList,
   splitOutlineBlock,
 } from "@/lib/notes/prosemirror/commands";
@@ -179,4 +177,25 @@ function topLevelBlockIds(doc: ProseMirrorNode) {
     }
   });
   return ids;
+}
+
+function outlineTexts(doc: ProseMirrorNode): string[] {
+  const texts: string[] = [];
+  doc.descendants((node) => {
+    if (node.type === outlineSchema.nodes.outline_block) {
+      texts.push(node.child(0).textContent);
+    }
+    return true;
+  });
+  return texts;
+}
+
+function outlineJsonFromTexts(texts: string[]): Record<string, unknown> {
+  const blocks = texts.map((text, index) =>
+    outlineSchema.nodes.outline_block!.create(
+      { id: `block-${index + 1}`, kind: "bullet", collapsed: false },
+      [outlineSchema.nodes.paragraph!.create(null, text ? outlineSchema.text(text) : null)]
+    )
+  );
+  return outlineSchema.nodes.outline_doc!.create(null, blocks).toJSON();
 }

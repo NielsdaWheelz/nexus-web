@@ -1,14 +1,15 @@
 # Command Palette — Two-State Redesign
 
-Status: Approved — in implementation. Hard cutover: no legacy code, no fallbacks, no flags.
+Status: Implemented. Hard cutover complete: no legacy code, no fallbacks, no flags.
 Scope owner: command palette surface (`apps/web`).
 Date: 2026-05-18.
 
 ## 1. Problem
 
-The command palette is one keyboard-first desktop component (`palette/Palette.tsx`)
-with a 17-line `@media (pointer: coarse)` block (`palette/Palette.module.css:183-200`)
-bolted on for touch. The JS has no touch path. Consequences on a phone:
+Before this redesign, the command palette was one keyboard-first desktop
+component (`palette/Palette.tsx`) with a 17-line `@media (pointer: coarse)`
+block (`palette/Palette.module.css:183-200`) bolted on for touch. The JS had no
+touch path. Consequences on a phone:
 
 - The input autofocuses on open, so the soft keyboard covers ~half the surface
   before the user decides whether to type.
@@ -17,14 +18,15 @@ bolted on for touch. The JS has no touch path. Consequences on a phone:
 - A single rigid layout serves both "I just opened it" and "I typed a query".
 - When querying, sections render in a fixed order, so a high-relevance match in a
   low-priority section sits far below a weak match in a high-priority one.
-- `rankPaletteCommands` clones the best match into a synthetic `top-result`
-  section, producing a duplicate row — dead weight without a keyboard.
+- The querying view duplicates the best match as a separate row — dead weight
+  without a keyboard.
 - Hover-to-activate, the roving `aria-activedescendant` highlight, arrow keys, and
   per-row shortcut hints are inert or misleading on touch.
 - Android hardware-back navigates the page instead of closing the palette
   (the palette pushes no history entry; the shell binds back to `WebView.goBack()`).
-- Mobile vs desktop is decided by `@media (pointer: coarse)`, while the rest of the
-  app decides it with `useIsMobileViewport()` (≤768px) — two disagreeing definitions.
+- Mobile vs desktop was decided by `@media (pointer: coarse)`, while the rest of
+  the app decided it with `useIsMobileViewport()` (≤768px) — two disagreeing
+  definitions.
 
 ## 2. Target behaviour
 
@@ -49,8 +51,8 @@ create/navigate rows have no score and fall back to declaration order.
 
 ### Querying state (non-empty query)
 
-A single flat list, ranked by score descending — no sections, no clone. The
-best-scoring command is row 1. Each row carries a short type tag ("Tab", "Recent",
+A single flat list, ranked by score descending — no sections, no duplicate
+best-match row. The best-scoring command is row 1. Each row carries a short type tag ("Tab", "Recent",
 "Action", "Go to", "Folio", or the search result's type). Two affordances are
 pinned last, in order: "See all results in Search" (query ≥ 2 chars) and
 "Ask AI about '<query>'" (query ≥ 2 chars, no exact title match). Empty query
@@ -159,13 +161,11 @@ export type PaletteView =
   | { state: "querying"; results: PaletteCommand[] };
 ```
 
-`PaletteSection` becomes unused and is deleted. The old `Palette` prop types
-(`sections`, `loadingSectionIds`, `activeCommandId` plumbing) are deleted.
+`PaletteView` is the only view shape exposed from the ranking layer.
 
 ### 5.2 View builder — `command-palette/commandRanking.ts`
 
-`rankPaletteCommands` is replaced by `buildPaletteView` — a pure function, the
-only export of the module.
+`buildPaletteView` is a pure function and the only export of the module.
 
 ```ts
 export function buildPaletteView(input: {
@@ -185,12 +185,12 @@ export function buildPaletteView(input: {
   descending (stable). The `in-this-pane` group uses `inThisPaneLabel`.
 - Non-empty query ⇒ `state: "querying"`: one flat list sorted by score
   descending (stable by source index), then `pin: "last"` commands
-  stable-partitioned to the bottom. No `top-result` clone.
+  stable-partitioned to the bottom. Each command appears at most once.
 
 Section order and labels are module-private constants (`navigate` is labelled
-"Go to"; there is no `top-result` entry). The querying-row type tag is a local
-function in `PaletteRow`; the desktop shell flattens a view inline for keyboard
-navigation. No shared `sectionFor` / `tagFor` / `flattenView` helpers.
+"Go to"). The querying-row type tag is a local function in `PaletteRow`; the
+desktop shell flattens a view inline for keyboard navigation. No shared
+`sectionFor` / `tagFor` / `flattenView` helpers.
 
 ### 5.3 Providers — `command-palette/commandProviders.ts`
 
@@ -228,9 +228,9 @@ keyboard-nav highlight).
   if set, otherwise closes; backdrop click closes.
 - **Mobile** (`PaletteMobileShell`): a native `<dialog>` opened with
   `showModal()`, full-screen, not autofocused. One effect tracks
-  `window.visualViewport.height` (on `resize`/`scroll`) and writes it to a
-  `--palette-vh` custom property (`100dvh` when `visualViewport` is absent — a
-  guard for SSR/tests, not a behavior fallback). One effect pushes a
+  `window.visualViewport.height` (on `resize`/`scroll`) and applies it as the
+  dialog's inline height (`100dvh` when `visualViewport` is absent — a guard for
+  SSR/tests, not a behavior fallback). One effect pushes a
   `history.pushState` marker on mount and closes on `popstate` (Android/browser
   back), popping the marker on a non-back close. One effect runs swipe-down
   dismissal. A close button is always present.
@@ -257,8 +257,8 @@ filterable, paginated). They are not redundant.
 
 - **Hard cutover.** `palette/Palette.tsx`, `palette/Palette.module.css`, and
   `palette/Palette.test.tsx` are deleted. No feature flag, no compatibility
-  shim, no dual code path. `buildPaletteView` returns only `PaletteView`; the
-  old `{ topResult, displaySections, displayCommands }` shape is gone entirely.
+  shim, no dual code path. `buildPaletteView` returns only `PaletteView`; no
+  parallel legacy view shape remains.
 - **No `@media (pointer: coarse)`** for layout anywhere in palette CSS. The
   platform decision is `useIsMobileViewport()`, made once.
 - **No platform conditional** inside `PaletteBody`, the lists, or `PaletteRow`.
@@ -266,8 +266,8 @@ filterable, paginated). They are not redundant.
 - **One owner.** Ranking and sectioning live only in `commandRanking.ts`. The
   controller no longer builds a `sections` array.
 - **Touch targets ≥ 44×44px** for every interactive element, both platforms
-  (`--size-xl`). The close button and the scope-chip remove button must comply
-  (today: 28px and 14px).
+  (`--size-xl`). The mobile close button and scope-chip remove button both
+  expose a 44px square target.
 - **Input font-size ≥ 16px** on both platforms (prevents iOS Safari
   zoom-on-focus; the `--text-base` token is 15px, so the body CSS sets 16px).
 - **Mobile input attributes:** `enterKeyHint="search"`, `autoCapitalize="off"`,
@@ -297,103 +297,101 @@ After the cutover:
   `types.ts`. No file named `Palette` remains.
 - The desktop palette is a centered card with the same dimensions, keyboard
   navigation intact, but: querying shows one ranked list (not fixed sections)
-  and there is no duplicated top-result row.
+  and each command appears at most once.
 - The mobile palette is a full-screen `<dialog>` that opens with the keyboard
   down, resizes to `visualViewport` when the keyboard appears, has ≥44px touch
   targets, a 16px input, an entrance animation, swipe-down and close-button
   dismissal, and closes on Android hardware-back.
 - `PaneShell`'s mobile trigger is labelled accurately ("Open command palette").
 
-## 9. Acceptance criteria
+## 9. Implemented behavior checklist
 
 Resting state:
-- [ ] Opening with no query shows sections in order: In this pane (if scoped),
+- Opening with no query shows sections in order: In this pane (if scoped),
       Open tabs, Recent, Recent folios, Create, Go to, Settings.
-- [ ] Empty sections are omitted; no section renders with zero rows.
-- [ ] Rows within a section are ordered by frecency/recency descending.
-- [ ] No "Top result" section exists in any state.
+- Empty sections are omitted; no section renders with zero rows.
+- Rows within a section are ordered by frecency/recency descending.
 
 Querying state:
-- [ ] Typing replaces sections with one flat list ranked by score descending.
-- [ ] The highest-scoring command is row 1; no command appears twice.
-- [ ] Each row shows a type tag.
-- [ ] "See all results in Search" and "Ask AI about '<q>'" are the last two rows
+- Typing replaces sections with one flat list ranked by score descending.
+- The highest-scoring command is row 1; no command appears twice.
+- Each row shows a type tag.
+- "See all results in Search" and "Ask AI about '<q>'" are the last two rows
       (query ≥ 2 chars; Ask AI suppressed on exact title match).
-- [ ] Clearing the query restores the resting state.
-- [ ] No matches → a "No matches" row plus the pinned rows.
+- Clearing the query restores the resting state.
+- No matches → a "No matches" row plus the pinned rows.
 
 Mobile shell:
-- [ ] `useIsMobileViewport()` (≤768px) selects it; it is full-screen.
-- [ ] The input is not focused on open; the soft keyboard does not appear until tap.
-- [ ] With the keyboard open, the input stays visible and the list stays
+- `useIsMobileViewport()` (≤768px) selects it; it is full-screen.
+- The input is not focused on open; the soft keyboard does not appear until tap.
+- With the keyboard open, the input stays visible and the list stays
       scrollable above it (height tracks `visualViewport`).
-- [ ] Every interactive target is ≥44×44px; the input font-size is ≥16px.
-- [ ] Entrance animates (slide + fade); instant under `prefers-reduced-motion`.
-- [ ] Android hardware-back closes the palette and does not navigate the page.
-- [ ] Close button and swipe-down both dismiss; no shortcut hints render.
+- Every interactive target is ≥44×44px; the input font-size is ≥16px.
+- Entrance animates (slide + fade); instant under `prefers-reduced-motion`.
+- Android hardware-back closes the palette and does not navigate the page.
+- Close button and swipe-down both dismiss; no shortcut hints render.
 
 Desktop shell:
-- [ ] Centered card, unchanged dimensions and position.
-- [ ] Arrow/Home/End move the highlight; Enter runs it; `aria-activedescendant`
+- Centered card, unchanged dimensions and position.
+- Arrow/Home/End move the highlight; Enter runs it; `aria-activedescendant`
       tracks it; the active row scrolls into view.
-- [ ] Esc clears the scope if set, otherwise closes; backdrop click closes.
-- [ ] Shortcut hints render on rows that have a keybinding.
+- Esc clears the scope if set, otherwise closes; backdrop click closes.
+- Shortcut hints render on rows that have a keybinding.
 
 Cross-cutting:
-- [ ] Selecting any command posts `/api/me/palette-selections`, performs the
+- Selecting any command posts `/api/me/palette-selections`, performs the
       target, and closes the palette.
-- [ ] Local Vault stays filtered/blocked under the Android shell.
-- [ ] `OPEN_COMMAND_PALETTE_EVENT`, `?palette=1`, `?cmd=`, `?q=` still open it.
-- [ ] No file named `Palette.tsx`/`Palette.module.css` exists; no
+- Local Vault stays filtered/blocked under the Android shell.
+- `OPEN_COMMAND_PALETTE_EVENT`, `?palette=1`, `?cmd=`, `?q=` still open it.
+- No file named `Palette.tsx`/`Palette.module.css` exists; no
       `@media (pointer: coarse)` remains in palette CSS.
 
-## 10. Test plan
+## 10. Test coverage
 
-- `commandRanking.test.ts` — rewritten for `buildPaletteView`: resting grouping
-  and order; querying flat ranking; `pin: "last"` ordering; no clone; scope
-  filtering; the `in-this-pane` label.
-- `commandProviders.test.ts` — updated for `pin: "last"`; new
-  `getSeeAllInSearchCommand` cases.
-- `PaletteBody.test.tsx` (new) — resting vs querying rendering; combobox/listbox
+- `commandRanking.test.ts` — `buildPaletteView`: resting grouping
+  and order; querying flat ranking; `pin: "last"` ordering; one result per
+  command; scope filtering; the `in-this-pane` label.
+- `commandProviders.test.ts` — `pin: "last"` and `getSeeAllInSearchCommand`
+  cases.
+- `PaletteBody.test.tsx` — resting vs querying rendering; combobox/listbox
   roles; Enter selects active-or-first; scope chip; empty state.
-- `PaletteDesktopShell.test.tsx` (new) — keyboard nav, Enter select, Esc
+- `PaletteDesktopShell.test.tsx` — keyboard nav, Enter select, Esc
   scope-then-close, autofocus, shortcut hints.
-- `PaletteMobileShell.test.tsx` (new) — no autofocus, no shortcut hints, the
+- `PaletteMobileShell.test.tsx` — no autofocus, no shortcut hints, the
   `popstate` close, the close button.
-- `CommandPalette.test.tsx` — updated: querying shows a flat list (no "Top
-  result"/"Search results" group headings); resting shows sections.
-- `androidShell.commandPalette.test.tsx` — verified; scope-chip selector updated
-  if its location changed.
-- `e2e/tests/command-palette.spec.ts` (new) — desktop: open → arrow → Enter;
-  mobile viewport: open → keyboard down → type → tap → execute.
+- `CommandPalette.test.tsx` — querying shows a flat list; resting shows sections.
+- `androidShell.commandPalette.test.tsx` — Android shell restrictions and
+  command-palette entry behavior.
+- `e2e/tests/command-palette.spec.ts` — desktop: open → arrow → Enter;
+  mobile viewport: open → type → tap → execute.
 
 `visualViewport` resizing and the swipe gesture are not unit-testable under
-jsdom; they are covered by the e2e spec and manual device verification.
+jsdom; they require manual device verification.
 
-## 11. Implementation phases
+## 11. Implementation record
 
-Each phase compiles and leaves the suite green. All phases land together on one
-branch — no phase ships dead code to `main`.
+The cutover landed as one cohesive change; this records the implemented
+ownership.
 
-1. **Model.** `palette/types.ts` (`PaletteView`, `PaletteGroup`, `pin`, drop
-   `PaletteSection`/`shortcutActionId`); `commandRanking.ts` → `buildPaletteView`;
-   `commandProviders.ts` → `getSeeAllInSearchCommand`, `pin` on Ask AI; rewrite
-   `commandRanking.test.ts`, `commandProviders.test.ts`. Pure, no UI.
-2. **Shared body.** `PaletteBody` (resting groups and querying list rendered
-   inline), `PaletteRow`, `PaletteBody.module.css`; `PaletteBody.test.tsx`.
-3. **Desktop shell + cutover.** `PaletteDesktopShell` (+ inline keyboard-nav
-   state), CSS; rewire `CommandPalette.tsx` to render shells via
-   `useIsMobileViewport()`; **delete `Palette.tsx`/`.module.css`/`.test.tsx`**;
-   update `CommandPalette.test.tsx`.
-4. **Mobile shell.** `PaletteMobileShell` (+ inline `visualViewport` sizing,
-   history entry, swipe-down), CSS; `PaletteMobileShell.test.tsx`.
-5. **Integration.** `PaneShell` trigger `aria-label`; named timing constants;
-   `e2e/tests/command-palette.spec.ts`; full suite + manual device pass.
+1. **Model.** `palette/types.ts` owns `PaletteView`, `PaletteGroup`, and `pin`.
+   `commandRanking.ts` owns `buildPaletteView`. `commandProviders.ts` owns
+   `getSeeAllInSearchCommand` and the Ask AI pinned row. Pure, no UI.
+2. **Shared body.** `PaletteBody`, `PaletteRow`, and `PaletteBody.module.css`
+   render resting groups and the querying list inline.
+3. **Desktop shell + cutover.** `PaletteDesktopShell` owns desktop keyboard-nav
+   state and card presentation. `CommandPalette.tsx` chooses shells through
+   `useIsMobileViewport()`. `Palette.tsx`, `Palette.module.css`, and
+   `Palette.test.tsx` are absent.
+4. **Mobile shell.** `PaletteMobileShell` owns `visualViewport` sizing, the
+   mobile history entry, close-button dismissal, and swipe-down dismissal.
+5. **Integration.** `PaneShell` exposes the command-palette trigger label,
+   timing constants are named, and the e2e command-palette spec covers desktop
+   and mobile flows.
 
 ## 12. Scope
 
 **In scope:** the two-state model; the shared body + two shells; `buildPaletteView`;
-flat ranked querying; clone removal; full-screen mobile shell with
+flat ranked querying; duplicate-row removal; full-screen mobile shell with
 keyboard-avoidance, ≥44px targets, 16px input, entrance animation, swipe-down +
 Android-back dismissal; the `PaneShell` trigger label; deletion of `Palette.tsx`.
 
@@ -408,16 +406,16 @@ an exit animation (the house pattern animates entrance only).
 
 | Risk | Mitigation |
 |---|---|
-| `visualViewport` behaves differently across iOS Safari / Android WebView | Feature-detect; `--palette-vh` falls back to `100dvh`; e2e + device pass. |
+| `visualViewport` behaves differently across iOS Safari / Android WebView | Feature-detect; inline height falls back to `100dvh`; device pass. |
 | Android back history dance double-pops or strands an entry | One inlined effect with a guard flag; covered by `PaletteMobileShell.test.tsx`. |
 | Swipe-down conflicts with list scroll | Drag-dismiss starts only when the list is scrolled to top; distance threshold; disabled under reduced-motion. |
 | Desktop querying changes grouped → flat | Intended and agreed; desktop card and keyboard nav are otherwise unchanged. |
-| Test rewrite drops coverage | §10 enumerates every behavior to preserve before deleting `Palette.test.tsx`. |
+| Regression coverage drifts from the implemented contract | §10 enumerates the current coverage owners. |
 
 ## 14. Confirmed decisions
 
-1. **Swipe-down-to-dismiss is in scope** — the only net-new gesture; the first
-   candidate to cut, since the close button and Android back cover dismissal.
+1. **Swipe-down-to-dismiss is part of the mobile shell** — close button and
+   Android back remain the primary dismissal affordances.
 2. **Both shells are native `<dialog>` + `showModal()`** — focus trap, top layer,
    and background `inert` for free; they differ only in CSS and inlined effects.
 3. **"See all results in Search"** is added as a pinned querying row — a small

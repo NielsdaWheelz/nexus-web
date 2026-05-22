@@ -54,7 +54,7 @@ beforeEach(() => {
 });
 
 describe("PaletteMobileShell", () => {
-  // visualViewport resizing and the swipe gesture are covered by e2e and manual device verification.
+  // visualViewport resizing and swipe dismissal require device-level verification.
 
   it("renders an open full-screen dialog", () => {
     renderShell();

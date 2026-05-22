@@ -41,7 +41,8 @@ export default function PaletteMobileShell({
     dialogRef.current?.showModal();
   }, []);
 
-  // visualViewport resizing is covered by e2e and manual device verification, not unit tests.
+  // visualViewport resizing is browser/device behavior; component tests cover the
+  // shell contract, while device verification covers keyboard resizing.
   useEffect(() => {
     const viewport = window.visualViewport;
     if (!viewport) return;
@@ -117,9 +118,8 @@ export default function PaletteMobileShell({
           <Button
             iconOnly
             variant="ghost"
-            size="md"
+            size="lg"
             type="button"
-            className={styles.closeButton}
             aria-label="Close command palette"
             onClick={onClose}
           >

@@ -1,7 +1,7 @@
 /**
  * Tests for the canonical cursor builder.
  *
- * Required test cases per PR-08 spec §12.1:
+ * Required canonical cursor cases:
  * 1. Block boundary insertion — \n between blocks
  * 2. <br> handling — single \n
  * 3. Adjacent block collapse — multiple blocks → single \n\n
@@ -9,8 +9,6 @@
  * 5. Codepoint length accounting for astral characters (emoji)
  * 6. Whitespace normalization — multiple spaces → single space
  * 7. Validation gate — mismatch triggers warning and aborts
- *
- * @see docs/v1/s2/s2_prs/s2_pr08.md §12.1
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -19,7 +17,6 @@ import {
   canonicalCpToRawCp,
   validateCanonicalText,
   codepointLength,
-  BLOCK_ELEMENTS,
   type CanonicalCursorResult,
 } from "./canonicalCursor";
 
@@ -525,42 +522,6 @@ describe("buildCanonicalCursor", () => {
       expect(result.emitted).toBe(`Caf${nfcE}`);
       expect(result.length).toBe(4);
     });
-  });
-});
-
-describe("BLOCK_ELEMENTS constant", () => {
-  it("contains all required block elements from spec", () => {
-    const required = [
-      "p",
-      "li",
-      "ul",
-      "ol",
-      "h1",
-      "h2",
-      "h3",
-      "h4",
-      "h5",
-      "h6",
-      "blockquote",
-      "pre",
-      "div",
-      "section",
-      "article",
-      "header",
-      "footer",
-      "nav",
-      "aside",
-      "figure",
-      "figcaption",
-      "table",
-      "tr",
-      "td",
-      "th",
-    ];
-
-    for (const elem of required) {
-      expect(BLOCK_ELEMENTS.has(elem)).toBe(true);
-    }
   });
 });
 

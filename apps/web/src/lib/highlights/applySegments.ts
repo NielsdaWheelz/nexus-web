@@ -15,8 +15,8 @@
  *
  * All DOM work happens on a detached DOM tree, never mutating the live DOM.
  *
- * PR-10: Changed data-highlight-ids (comma-delimited) to data-active-highlight-ids
- * (space-delimited) for efficient CSS ~= selector matching.
+ * Active highlight ids are stored in data-active-highlight-ids as
+ * space-delimited tokens for efficient CSS ~= selector matching.
  *
  * @see apps/web/README.md (Highlight Libraries / applySegments.ts)
  * @see python/nexus/services/canonicalize.py
@@ -150,15 +150,14 @@ function codepointToUtf16Offset(text: string, codepointOffset: number): number {
 /**
  * Create a highlight span element.
  *
- * PR-10 requirement: Use space-delimited IDs in data-active-highlight-ids
- * for efficient CSS `~=` selector matching in hover interactions.
+ * Use space-delimited IDs in data-active-highlight-ids for efficient CSS `~=`
+ * selector matching in hover interactions.
  */
 function createHighlightSpan(
   doc: Document,
   segment: Segment
 ): HTMLSpanElement {
   const span = doc.createElement("span");
-  // Space-delimited for efficient ~= selector (PR-10)
   span.setAttribute("data-active-highlight-ids", segment.activeIds.join(" "));
   span.setAttribute("data-highlight-top", segment.topmostId);
   span.className = segment.activeIds.some((id) => id.startsWith("evidence-"))

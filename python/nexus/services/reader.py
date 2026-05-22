@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import Media, MediaKind, ReaderMediaState, ReaderProfile
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.reader import ReaderProfileOut, ReaderProfilePatch, ReaderResumeState
 
 DEFAULT_THEME = "light"
@@ -58,19 +58,26 @@ def _deserialize_reader_state(
     *,
     media_kind: str,
 ) -> ReaderResumeState | None:
-    """Validate stored reader state and suppress legacy or mismatched rows."""
+    """Validate stored reader state."""
 
     if locator_payload is None:
         return None
 
     try:
         locator = READER_RESUME_STATE_ADAPTER.validate_python(locator_payload)
-    except ValidationError:
-        return None
+    except ValidationError as exc:
+        raise ApiError(
+            ApiErrorCode.E_INTERNAL,
+            "Stored reader state is invalid",
+        ) from exc
 
-    expected_kind = _expected_reader_state_kind(media_kind)
-    if expected_kind is None or locator.kind != expected_kind:
-        return None
+    try:
+        _validate_reader_state_for_media(media_kind, locator)
+    except InvalidRequestError as exc:
+        raise ApiError(
+            ApiErrorCode.E_INTERNAL,
+            "Stored reader state is invalid",
+        ) from exc
     return locator
 
 

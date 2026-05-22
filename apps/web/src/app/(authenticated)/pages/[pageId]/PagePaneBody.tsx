@@ -7,7 +7,6 @@ import NoteBacklinks from "@/components/notes/NoteBacklinks";
 import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
 import Button from "@/components/ui/Button";
 import { usePaneParam, usePaneRuntime, useSetPaneTitle } from "@/lib/panes/paneRuntime";
-import { hrefForObject } from "@/lib/objectLinks";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
 import {
   createEmptyOutlineDoc,
@@ -386,15 +385,13 @@ export default function PagePaneBody({
   const openObject = useCallback(
     async (objectType: string, objectId: string, openInNewPane: boolean) => {
       if (!isObjectType(objectType)) return;
-      let href = hrefForObject({ objectType, objectId });
-      if (!href) {
-        try {
-          const [resolved] = await resolveObjectRefs([{ objectType, objectId }]);
-          href = resolved ? hrefForObject(resolved) : null;
-        } catch (error: unknown) {
-          setFeedback(toFeedback(error, { fallback: "Linked object could not be opened." }));
-          return;
-        }
+      let href: string | null = null;
+      try {
+        const [resolved] = await resolveObjectRefs([{ objectType, objectId }]);
+        href = resolved?.route ?? null;
+      } catch (error: unknown) {
+        setFeedback(toFeedback(error, { fallback: "Linked object could not be opened." }));
+        return;
       }
       if (!href) return;
       if (openInNewPane) paneRuntime?.openInNewPane(href);

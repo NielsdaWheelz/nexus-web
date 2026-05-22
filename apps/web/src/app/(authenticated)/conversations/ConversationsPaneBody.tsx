@@ -83,7 +83,7 @@ export default function ConversationsPaneBody() {
   );
 
   return (
-    <div className={styles.body} data-testid="conversations-pane-body">
+    <div className={styles.body}>
       {loading && <FeedbackNotice severity="info">Loading...</FeedbackNotice>}
       {error ? <FeedbackNotice feedback={error} /> : null}
 

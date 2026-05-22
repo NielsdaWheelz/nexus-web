@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import { hrefForObject } from "@/lib/objectLinks";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { fetchNoteBlock } from "@/lib/notes/api";
@@ -244,15 +243,13 @@ export default function HighlightNoteEditor({
   const openObject = useCallback(
     async (objectType: string, objectId: string, openInNewPane: boolean) => {
       if (!isObjectType(objectType)) return;
-      let href = hrefForObject({ objectType, objectId });
-      if (!href) {
-        try {
-          const [resolved] = await resolveObjectRefs([{ objectType, objectId }]);
-          href = resolved ? hrefForObject(resolved) : null;
-        } catch (error: unknown) {
-          feedback.show(toFeedback(error, { fallback: "Linked object could not be opened." }));
-          return;
-        }
+      let href: string | null = null;
+      try {
+        const [resolved] = await resolveObjectRefs([{ objectType, objectId }]);
+        href = resolved?.route ?? null;
+      } catch (error: unknown) {
+        feedback.show(toFeedback(error, { fallback: "Linked object could not be opened." }));
+        return;
       }
       if (!href) return;
       if (openInNewPane) paneRuntime?.openInNewPane(href);

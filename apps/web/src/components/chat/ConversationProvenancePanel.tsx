@@ -38,14 +38,12 @@ interface ConversationProvenancePanelProps {
   conversationId?: string;
   messages: ConversationMessage[];
   memory?: ConversationMemoryInspection | null;
-  testId?: string;
 }
 
 export default function ConversationProvenancePanel({
   conversationId,
   messages,
   memory,
-  testId = "conversation-provenance-panel",
 }: ConversationProvenancePanelProps) {
   const model = useMemo(
     () => buildProvenanceModel(messages, memory),
@@ -91,7 +89,7 @@ export default function ConversationProvenancePanel({
 
   if (!hasSignals) {
     return (
-      <section className={styles.panel} data-testid={testId}>
+      <section className={styles.panel} aria-label="Conversation provenance">
         <div className={styles.empty}>
           <Network size={16} aria-hidden="true" />
           <span>No provenance signals yet.</span>
@@ -101,11 +99,7 @@ export default function ConversationProvenancePanel({
   }
 
   return (
-    <section
-      className={styles.panel}
-      aria-label="Conversation provenance"
-      data-testid={testId}
-    >
+    <section className={styles.panel} aria-label="Conversation provenance">
       <div className={styles.hero}>
         <div>
           <h3 className={styles.title}>Evidence map</h3>

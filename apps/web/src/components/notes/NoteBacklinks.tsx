@@ -3,9 +3,30 @@
 import { useEffect, useState } from "react";
 import { Link2 } from "lucide-react";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
-import { fetchObjectLinks, hrefForObject, type ObjectLink } from "@/lib/objectLinks";
-import type { ObjectRef } from "@/lib/objectRefs";
+import { apiFetch } from "@/lib/api/client";
+import type { HydratedObjectRef, ObjectRef } from "@/lib/objectRefs";
 import styles from "./NoteBacklinks.module.css";
+
+type ObjectLinkRelation =
+  | "references"
+  | "embeds"
+  | "note_about"
+  | "used_as_context"
+  | "derived_from"
+  | "related";
+
+interface ObjectLink {
+  id: string;
+  relationType: ObjectLinkRelation;
+  a: HydratedObjectRef;
+  b: HydratedObjectRef;
+}
+
+interface ObjectLinksResponse {
+  data: {
+    links: ObjectLink[];
+  };
+}
 
 export default function NoteBacklinks({ objectRef }: { objectRef: ObjectRef }) {
   const { objectId, objectType } = objectRef;
@@ -17,7 +38,7 @@ export default function NoteBacklinks({ objectRef }: { objectRef: ObjectRef }) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchObjectLinks({ object: { objectId, objectType } })
+    fetchObjectLinks({ objectId, objectType })
       .then((items) => {
         if (!cancelled) setLinks(items);
       })
@@ -40,7 +61,7 @@ export default function NoteBacklinks({ objectRef }: { objectRef: ObjectRef }) {
       link.a.objectType === objectType && link.a.objectId === objectId
         ? link.b
         : link.a;
-    const href = hrefForObject(other);
+    const href = other.route;
     return href
       ? [{ id: link.id, href, label: other.label, relationType: link.relationType }]
       : [];
@@ -67,4 +88,15 @@ export default function NoteBacklinks({ objectRef }: { objectRef: ObjectRef }) {
       ) : null}
     </section>
   );
+}
+
+async function fetchObjectLinks(object: ObjectRef): Promise<ObjectLink[]> {
+  const params = new URLSearchParams({
+    object_type: object.objectType,
+    object_id: object.objectId,
+  });
+  const response = await apiFetch<ObjectLinksResponse>(`/api/object-links?${params.toString()}`, {
+    cache: "no-store",
+  });
+  return response.data.links;
 }
