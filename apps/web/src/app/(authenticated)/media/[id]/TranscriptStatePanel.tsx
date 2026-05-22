@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
-import { useBillingAccount, type BillingPlanTier } from "@/lib/billing/useBillingAccount";
+import { planLabel } from "@/lib/billing/planLabel";
+import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { toFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import {
@@ -16,13 +17,6 @@ import {
 import styles from "./page.module.css";
 
 const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
-
-function planLabel(planTier: BillingPlanTier): string {
-  if (planTier === "plus") return "Plus";
-  if (planTier === "ai_plus") return "AI Plus";
-  if (planTier === "ai_pro") return "AI Pro";
-  return "Free";
-}
 
 type TranscriptCapabilities = {
   can_read: boolean;

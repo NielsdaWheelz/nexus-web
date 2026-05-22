@@ -10,6 +10,7 @@ import {
 import SectionCard from "@/components/ui/SectionCard";
 import Button from "@/components/ui/Button";
 import Pill from "@/components/ui/Pill";
+import { planLabel } from "@/lib/billing/planLabel";
 import { useBillingAccount, type BillingPlanTier } from "@/lib/billing/useBillingAccount";
 import styles from "./page.module.css";
 
@@ -22,13 +23,6 @@ interface CheckoutResponse {
 const PLAN_SEQUENCE: BillingPlanTier[] = ["free", "plus", "ai_plus", "ai_pro"];
 const BILLING_DISABLED_MESSAGE =
   "Billing is currently disabled. Plan changes and billing management are unavailable right now.";
-
-function planLabel(planTier: BillingPlanTier): string {
-  if (planTier === "plus") return "Plus";
-  if (planTier === "ai_plus") return "AI Plus";
-  if (planTier === "ai_pro") return "AI Pro";
-  return "Free";
-}
 
 function planDescription(planTier: BillingPlanTier): string {
   if (planTier === "plus") return "Sharing and collaboration.";

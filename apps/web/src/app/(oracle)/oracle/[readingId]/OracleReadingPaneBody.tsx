@@ -14,6 +14,7 @@ import { fetchStreamToken } from "@/lib/api/streamToken";
 import { isAbortError } from "@/lib/errors";
 import { toRoman } from "@/lib/toRoman";
 import { isRecord } from "@/lib/validation";
+import type { OracleCreateResponse } from "../types";
 import { useStickyHeadline } from "../../OracleShell";
 import BorderFrame from "../BorderFrame";
 import IlluminatedCapital from "../IlluminatedCapital";
@@ -83,18 +84,6 @@ interface ReadingState {
   omens: string[];
   error: { code: string; message: string } | null;
   cursor: number;
-}
-
-interface OracleCreateResponse {
-  reading_id: string;
-  folio_number: number;
-  status: string;
-  stream: {
-    token: string;
-    stream_base_url: string;
-    event_url: string;
-    expires_at: string;
-  };
 }
 
 type OracleStreamEvent = {
