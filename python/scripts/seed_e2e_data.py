@@ -49,7 +49,8 @@ from nexus.services.media import create_or_reuse_youtube_video, create_provision
 from nexus.services.notes import set_highlight_note_body
 from nexus.services.pdf_ingest import PdfExtractionError
 from nexus.services.upload import confirm_ingest, init_upload
-from nexus.storage import build_upload_staging_storage_path, get_file_extension, get_storage_client
+from nexus.storage.client import get_storage_client
+from nexus.storage.paths import build_upload_staging_storage_path, get_file_extension
 from nexus.tasks.ingest_epub import run_epub_ingest_sync
 from nexus.tasks.ingest_pdf import _index_pdf_evidence, run_pdf_ingest_sync
 

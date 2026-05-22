@@ -37,7 +37,7 @@ from nexus.services.upload import (
 from nexus.services.upload import (
     validate_source_integrity,
 )
-from nexus.storage import get_storage_client
+from nexus.storage.client import get_storage_client
 
 logger = logging.getLogger(__name__)
 

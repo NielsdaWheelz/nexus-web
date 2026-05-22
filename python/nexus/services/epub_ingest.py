@@ -40,8 +40,8 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
-from nexus.storage import build_epub_asset_storage_path
 from nexus.storage.client import StorageError
+from nexus.storage.paths import build_epub_asset_storage_path
 
 if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase

@@ -37,13 +37,12 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.services import libraries as libraries_service
-from nexus.storage import (
+from nexus.storage.client import StorageError, get_storage_client
+from nexus.storage.paths import (
     build_storage_path,
     build_upload_staging_storage_path,
     get_file_extension,
-    get_storage_client,
 )
-from nexus.storage.client import StorageError
 
 logger = logging.getLogger(__name__)
 

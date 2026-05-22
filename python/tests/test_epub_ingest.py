@@ -25,7 +25,7 @@ from nexus.services.epub_ingest import (
     EpubExtractionResult,
     extract_epub_artifacts,
 )
-from nexus.storage import build_epub_asset_storage_path, build_storage_path
+from nexus.storage.paths import build_epub_asset_storage_path, build_storage_path
 from nexus.tasks.ingest_epub import run_epub_ingest_sync
 from tests.support.storage import FakeStorageClient
 from tests.utils.db import task_session_factory

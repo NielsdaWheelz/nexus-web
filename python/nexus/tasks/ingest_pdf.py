@@ -26,7 +26,7 @@ from nexus.services.pdf_ingest import (
     PdfExtractionResult,
     extract_pdf_artifacts,
 )
-from nexus.storage import get_storage_client
+from nexus.storage.client import get_storage_client
 
 logger = get_logger(__name__)
 

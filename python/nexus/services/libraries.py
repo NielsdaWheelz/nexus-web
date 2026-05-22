@@ -38,8 +38,7 @@ from nexus.schemas.library import (
 )
 from nexus.schemas.media import MediaOut
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
-from nexus.storage import get_storage_client
-from nexus.storage.client import StorageError
+from nexus.storage.client import StorageError, get_storage_client
 
 logger = logging.getLogger(__name__)
 

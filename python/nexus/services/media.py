@@ -79,12 +79,11 @@ from nexus.services.sanitize_html import sanitize_html
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.x_identity import classify_x_url, is_x_url
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
-from nexus.storage import (
+from nexus.storage.client import StorageError, get_storage_client
+from nexus.storage.paths import (
     build_upload_staging_storage_path,
     get_file_extension,
-    get_storage_client,
 )
-from nexus.storage.client import StorageError
 
 logger = get_logger(__name__)
 
@@ -2112,7 +2111,7 @@ def get_epub_asset_for_viewer(
     Returns binary payload without exposing raw private storage URLs.
     """
     from nexus.errors import ApiError
-    from nexus.storage import get_storage_client
+    from nexus.storage.client import get_storage_client
 
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")

@@ -30,7 +30,7 @@ from nexus.db.models import (
     ProcessingStatus,
 )
 from nexus.services.contributor_credits import replace_media_contributor_credits
-from nexus.storage import build_epub_asset_storage_path
+from nexus.storage.paths import build_epub_asset_storage_path
 from tests.factories import (
     create_failed_epub_media,
     create_ready_epub_with_chapters,
@@ -1534,7 +1534,7 @@ class TestGetEpubAssetSuccessAndMasking:
         # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
-        with patch("nexus.storage.get_storage_client", return_value=fake):
+        with patch("nexus.storage.client.get_storage_client", return_value=fake):
             resp = auth_client.get(
                 f"/media/{media_id}/assets/images/fig1.png",
                 headers=auth_headers(user_id),
@@ -1636,7 +1636,7 @@ class TestGetEpubAssetSuccessAndMasking:
         # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
-        with patch("nexus.storage.get_storage_client", return_value=fake):
+        with patch("nexus.storage.client.get_storage_client", return_value=fake):
             resp = auth_client.get(
                 f"/media/{media_id}/assets/images/fig1.png",
                 headers=auth_headers(user_id),
@@ -1681,7 +1681,7 @@ class TestGetEpubAssetSuccessAndMasking:
         # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
-        with patch("nexus.storage.get_storage_client", return_value=fake):
+        with patch("nexus.storage.client.get_storage_client", return_value=fake):
             resp = auth_client.get(
                 f"/media/{media_id}/assets/nonexistent.png",
                 headers=auth_headers(user_id),
@@ -1781,7 +1781,7 @@ class TestGetEpubAssetSuccessAndMasking:
         # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
-        with patch("nexus.storage.get_storage_client", return_value=fake):
+        with patch("nexus.storage.client.get_storage_client", return_value=fake):
             resp = auth_client.get(
                 f"/media/{media_id}/assets/images/fig1.png",
                 headers=auth_headers(user_id),
@@ -1918,7 +1918,7 @@ class TestGetEpubAssetSuccessAndMasking:
         # Object storage is an external dependency; FakeStorageClient isolates tests
         # from the real storage service per testing standards Section 6 (Allowed Mocks).
         # Replacement: Real storage integration in E2E tests.
-        with patch("nexus.storage.get_storage_client", return_value=fake):
+        with patch("nexus.storage.client.get_storage_client", return_value=fake):
             resp = auth_client.get(
                 f"/media/{media_id}/assets/images/fig.svg",
                 headers=auth_headers(user_id),

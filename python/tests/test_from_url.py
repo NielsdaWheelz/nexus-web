@@ -29,8 +29,8 @@ import respx
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 
-from nexus.storage import build_storage_path, build_upload_staging_storage_path
 from nexus.storage.client import StorageError
+from nexus.storage.paths import build_storage_path, build_upload_staging_storage_path
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.storage import FakeStorageClient
 from tests.utils.db import DirectSessionManager

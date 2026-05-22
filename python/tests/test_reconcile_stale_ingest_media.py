@@ -8,7 +8,7 @@ from sqlalchemy import func, literal, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import FailureStage, Media, MediaFile, ProcessingStatus, User
-from nexus.storage import build_storage_path, build_upload_staging_storage_path
+from nexus.storage.paths import build_storage_path, build_upload_staging_storage_path
 from tests.support.storage import FakeStorageClient
 from tests.utils.db import task_session_factory
 

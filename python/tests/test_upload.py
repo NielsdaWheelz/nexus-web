@@ -28,8 +28,12 @@ from nexus.errors import ApiError, ApiErrorCode, ConflictError
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.upload import confirm_ingest as confirm_upload_ingest
 from nexus.services.upload import validate_source_integrity
-from nexus.storage import build_storage_path, build_upload_staging_storage_path, get_file_extension
 from nexus.storage.client import StorageError
+from nexus.storage.paths import (
+    build_storage_path,
+    build_upload_staging_storage_path,
+    get_file_extension,
+)
 from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.mock_verifier import MockJwtVerifier
