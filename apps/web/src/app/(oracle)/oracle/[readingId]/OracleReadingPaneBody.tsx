@@ -11,6 +11,7 @@ import {
 import { ApiError, apiFetch } from "@/lib/api/client";
 import { parseSSEJsonStream, type SSEJsonEvent } from "@/lib/api/sse";
 import { fetchStreamToken } from "@/lib/api/streamToken";
+import { isAbortError } from "@/lib/errors";
 import { useStickyHeadline } from "../../OracleShell";
 import BorderFrame from "../BorderFrame";
 import IlluminatedCapital from "../IlluminatedCapital";
@@ -245,10 +246,6 @@ function toOracleStreamEvent(event: SSEJsonEvent): OracleStreamEvent | null {
     event_type: event.type,
     payload: event.data,
   };
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function isRetryableOracleStreamError(error: unknown): boolean {

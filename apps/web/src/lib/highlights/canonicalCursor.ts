@@ -13,6 +13,8 @@
  * @see python/nexus/services/canonicalize.py
  */
 
+import { codepointLength } from "./codepoints";
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -107,14 +109,6 @@ function normalizeWhitespace(text: string): string {
   // Python's \s includes U+001C..U+001F and U+0085; JavaScript's \s does not.
   // to match backend canonicalize.py exactly.
   return text.replace(/[\s\u00a0\u0085\u001c-\u001f]+/g, " ");
-}
-
-/**
- * Get codepoint length of a string.
- * This handles astral characters (emoji, etc.) correctly.
- */
-export function codepointLength(str: string): number {
-  return [...str].length;
 }
 
 /**

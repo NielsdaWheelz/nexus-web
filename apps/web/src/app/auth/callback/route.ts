@@ -1,9 +1,12 @@
+import {
+  getInternalApiConfig,
+  isInternalApiConfigured,
+} from "@/lib/api/internal-config";
+import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { handleAuthCallback } from "@/lib/auth/callback";
 import { AUTH_CALLBACK_FAILURE_MESSAGE } from "@/lib/auth/messages";
 import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
 import { NextResponse } from "next/server";
-
-const HANDOFF_MINT_DEADLINE_MS = 5_000;
 
 export async function GET(request: Request) {
   const { supabase, applyCookies, settlePendingCookieWrites } =
@@ -31,42 +34,35 @@ export async function GET(request: Request) {
         }
       },
       mintHandoffCode: async ({ accessToken, refreshToken, challenge }) => {
-        const fastApiBaseUrl =
-          process.env.FASTAPI_BASE_URL ||
-          (process.env.NODE_ENV === "production" ? "" : "http://localhost:8000");
-        const internalSecret = process.env.NEXUS_INTERNAL_SECRET || "";
-        if (
-          !fastApiBaseUrl ||
-          (process.env.NODE_ENV === "production" && !internalSecret)
-        ) {
+        const config = getInternalApiConfig();
+        if (!isInternalApiConfigured(config)) {
           return { error: "not_configured" };
         }
 
         const requestId = crypto.randomUUID();
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => {
-          controller.abort(
-            new DOMException("Handoff mint request timed out", "AbortError")
-          );
-        }, HANDOFF_MINT_DEADLINE_MS);
 
         let response: Response;
         try {
-          response = await fetch(`${fastApiBaseUrl}/auth/handoff-codes`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              "Content-Type": "application/json",
-              "X-Request-ID": requestId,
-              ...(internalSecret ? { "X-Nexus-Internal": internalSecret } : {}),
+          response = await boundedAuthFetch(
+            `${config.fastApiBaseUrl}/auth/handoff-codes`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+                "X-Request-ID": requestId,
+                ...(config.internalSecret
+                  ? { "X-Nexus-Internal": config.internalSecret }
+                  : {}),
+              },
+              body: JSON.stringify({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+                challenge,
+              }),
             },
-            body: JSON.stringify({
-              access_token: accessToken,
-              refresh_token: refreshToken,
-              challenge,
-            }),
-            signal: controller.signal,
-          });
+            "Handoff mint request timed out",
+          );
         } catch (error) {
           if (!(error instanceof Error)) {
             throw error;
@@ -74,8 +70,6 @@ export async function GET(request: Request) {
           // justify-ignore-error: a timed-out or failed mint surfaces as a
           // single "handoff_mint_failed" deep link on the callback side.
           return { error: "fetch_failed" };
-        } finally {
-          clearTimeout(timeoutId);
         }
 
         if (!response.ok) {

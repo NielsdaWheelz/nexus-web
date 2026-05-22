@@ -5,9 +5,7 @@ import {
 } from "@/lib/api/sse";
 import type { ConversationScope } from "@/lib/conversations/types";
 import { isObjectType } from "@/lib/objectRefs";
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { isRecord, isUuid } from "@/lib/validation";
 
 const PENDING_CONTEXT_PARAM = "attach_context";
 const PENDING_CONTEXT_JSON_PARAM = "attach_context_json";
@@ -35,15 +33,27 @@ function parseEvidenceSpanIds(value: string | undefined): string[] | null {
     return null;
   }
   const ids = value.split(",").filter(Boolean);
-  if (ids.length === 0 || !ids.every((id) => UUID_RE.test(id))) {
+  if (ids.length === 0 || !ids.every(isUuid)) {
     return null;
   }
   return Array.from(new Set(ids));
 }
 
+// Shared `${type}:${id}` (plus optional `:${ids}`) wire format used by the
+// typed-id URL param and the in-memory identity key.
+function encodeTypedId(
+  type: string,
+  id: string,
+  evidenceSpanIds: readonly string[] | undefined,
+): string {
+  return evidenceSpanIds && evidenceSpanIds.length > 0
+    ? `${type}:${id}:${evidenceSpanIds.join(",")}`
+    : `${type}:${id}`;
+}
+
 function parseTypedId(value: string): ObjectRefContextItem | null {
   const [type, id, evidenceSpanIds, extra] = value.split(":");
-  if (extra !== undefined || !type || !id || !UUID_RE.test(id) || !isObjectType(type)) {
+  if (extra !== undefined || !type || !id || !isUuid(id) || !isObjectType(type)) {
     return null;
   }
   const parsedEvidenceSpanIds = parseEvidenceSpanIds(evidenceSpanIds);
@@ -60,8 +70,14 @@ function parseTypedId(value: string): ObjectRefContextItem | null {
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+// Shared scope wire format. Returns the URL-param value, or null to mean
+// "no param" (the general scope).
+function encodeScopeForUrl(scope: ConversationScope): string | null {
+  if (scope.type === "general") return null;
+  if (scope.type === "media") return `media:${scope.media_id}`;
+  if (scope.type === "library") return `library:${scope.library_id}`;
+  const exhaustive: never = scope;
+  return exhaustive;
 }
 
 function optionalString(value: unknown): string | null | undefined {
@@ -95,7 +111,7 @@ function parseJsonContext(value: string): ObjectRefContextItem | null {
     typeof parsed.type !== "string" ||
     !isObjectType(parsed.type) ||
     typeof parsed.id !== "string" ||
-    !UUID_RE.test(parsed.id)
+    !isUuid(parsed.id)
   ) {
     return null;
   }
@@ -104,7 +120,7 @@ function parseJsonContext(value: string): ObjectRefContextItem | null {
     : undefined;
   if (
     evidenceSpanIds !== undefined &&
-    !evidenceSpanIds.every((id) => typeof id === "string" && UUID_RE.test(id))
+    !evidenceSpanIds.every((id) => typeof id === "string" && isUuid(id))
   ) {
     return null;
   }
@@ -138,7 +154,7 @@ function parseJsonContext(value: string): ObjectRefContextItem | null {
   }
   if (
     typeof parsed.artifact_id !== "string" ||
-    !UUID_RE.test(parsed.artifact_id) ||
+    !isUuid(parsed.artifact_id) ||
     typeof sourceVersion !== "string" ||
     !sourceVersion ||
     !isRetrievalLocator(parsed.locator) ||
@@ -181,7 +197,7 @@ export function parseConversationScopeFromUrl(
   }
 
   const [type, id, extra] = rawScope.split(":");
-  if (extra !== undefined || !id || !UUID_RE.test(id)) {
+  if (extra !== undefined || !id || !isUuid(id)) {
     return { type: "general" };
   }
   if (type === "media") {
@@ -197,9 +213,7 @@ export function getContextIdentityKey(item: ContextItem): string {
   if (item.kind === "reader_selection") {
     return `reader_selection:${item.client_context_id}`;
   }
-  return item.evidence_span_ids?.length
-    ? `${item.type}:${item.id}:${item.evidence_span_ids.join(",")}`
-    : `${item.type}:${item.id}`;
+  return encodeTypedId(item.type, item.id, item.evidence_span_ids);
 }
 
 export function getPendingContextSignature(items: ContextItem[]): string {
@@ -224,17 +238,7 @@ export function mergeContextItems(
 }
 
 export function getConversationScopeSignature(scope: ConversationScope): string {
-  if (scope.type === "general") {
-    return "general";
-  }
-  if (scope.type === "media") {
-    return `media:${scope.media_id}`;
-  }
-  if (scope.type === "library") {
-    return `library:${scope.library_id}`;
-  }
-  const exhaustive: never = scope;
-  return exhaustive;
+  return encodeScopeForUrl(scope) ?? "general";
 }
 
 export function stripPendingContextParams(
@@ -285,9 +289,7 @@ export function setPendingContextParam(
   }
   next.append(
     PENDING_CONTEXT_PARAM,
-    context.evidence_span_ids?.length
-      ? `${context.type}:${context.id}:${context.evidence_span_ids.join(",")}`
-      : `${context.type}:${context.id}`,
+    encodeTypedId(context.type, context.id, context.evidence_span_ids),
   );
   return next;
 }
@@ -297,18 +299,11 @@ export function setConversationScopeParam(
   scope: ConversationScope,
 ): URLSearchParams {
   const next = new URLSearchParams(searchParams);
-  if (scope.type === "general") {
+  const value = encodeScopeForUrl(scope);
+  if (value === null) {
     next.delete(PENDING_SCOPE_PARAM);
-    return next;
+  } else {
+    next.set(PENDING_SCOPE_PARAM, value);
   }
-  if (scope.type === "media") {
-    next.set(PENDING_SCOPE_PARAM, `media:${scope.media_id}`);
-    return next;
-  }
-  if (scope.type === "library") {
-    next.set(PENDING_SCOPE_PARAM, `library:${scope.library_id}`);
-    return next;
-  }
-  const exhaustive: never = scope;
-  return exhaustive;
+  return next;
 }

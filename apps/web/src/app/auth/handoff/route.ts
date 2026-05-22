@@ -1,4 +1,9 @@
+import {
+  getInternalApiConfig,
+  isInternalApiConfigured,
+} from "@/lib/api/internal-config";
 import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
+import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import {
   AUTH_CALLBACK_CANCELLED_MESSAGE,
   AUTH_CALLBACK_FAILURE_MESSAGE,
@@ -13,7 +18,6 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 const TEMPORARY_REDIRECT = 307;
-const HANDOFF_CONSUME_DEADLINE_MS = 5_000;
 
 // The handoff route sets `HttpOnly` session cookies on every success response;
 // a cached response would hand one user another user's session, so every path
@@ -79,15 +83,8 @@ export async function GET(request: Request): Promise<NextResponse> {
       );
     }
 
-    const fastApiBaseUrl =
-      process.env.FASTAPI_BASE_URL ||
-      (process.env.NODE_ENV === "production" ? "" : "http://localhost:8000");
-    const internalSecret = process.env.NEXUS_INTERNAL_SECRET || "";
-
-    if (
-      !fastApiBaseUrl ||
-      (process.env.NODE_ENV === "production" && !internalSecret)
-    ) {
+    const config = getInternalApiConfig();
+    if (!isInternalApiConfigured(config)) {
       return noStore(
         NextResponse.redirect(
           buildLoginUrlWithError(
@@ -101,27 +98,23 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
 
     const requestId = crypto.randomUUID();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => {
-      controller.abort(
-        new DOMException("Handoff consume request timed out", "AbortError")
-      );
-    }, HANDOFF_CONSUME_DEADLINE_MS);
 
     let consumeResponse: Response;
     try {
-      consumeResponse = await fetch(
-        `${fastApiBaseUrl}/auth/handoff-codes/consume`,
+      consumeResponse = await boundedAuthFetch(
+        `${config.fastApiBaseUrl}/auth/handoff-codes/consume`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "X-Request-ID": requestId,
-            ...(internalSecret ? { "X-Nexus-Internal": internalSecret } : {}),
+            ...(config.internalSecret
+              ? { "X-Nexus-Internal": config.internalSecret }
+              : {}),
           },
           body: JSON.stringify({ code, verifier: hv }),
-          signal: controller.signal,
-        }
+        },
+        "Handoff consume request timed out"
       );
     } catch (error) {
       if (!(error instanceof Error)) {
@@ -140,8 +133,6 @@ export async function GET(request: Request): Promise<NextResponse> {
           { status: TEMPORARY_REDIRECT }
         )
       );
-    } finally {
-      clearTimeout(timeoutId);
     }
 
     if (!consumeResponse.ok) {

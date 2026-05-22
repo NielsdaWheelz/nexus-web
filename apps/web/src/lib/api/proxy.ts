@@ -15,11 +15,17 @@
 
 import { NextResponse } from "next/server";
 import {
+  getInternalApiConfig,
+  isInternalApiConfigured,
+} from "@/lib/api/internal-config";
+import {
+  clearSupabaseAuthCookies,
   parseCookieHeader,
   readSupabaseSessionCookie,
   type SessionState,
 } from "@/lib/auth/session-cookie";
 import { refreshSession } from "@/lib/auth/refresh";
+import { isAbortError } from "@/lib/errors";
 import { type CookieToSet } from "@/lib/supabase/types";
 
 const REQUEST_ID_HEADER = "x-request-id";
@@ -164,26 +170,6 @@ function setBodyContentLength(headers: Headers, body: string | ArrayBuffer) {
   headers.set("content-length", String(byteLength));
 }
 
-function isAbortLikeError(error: unknown): boolean {
-  if (error instanceof DOMException && error.name === "AbortError") {
-    return true;
-  }
-  if (typeof error === "object" && error !== null && "name" in error) {
-    const name = (error as { name?: unknown }).name;
-    return name === "AbortError" || name === "ResponseAborted";
-  }
-  return false;
-}
-
-function getDefaultConfig() {
-  const fastApiBaseUrl =
-    process.env.FASTAPI_BASE_URL ||
-    (process.env.NODE_ENV === "production" ? "" : "http://localhost:8000");
-  const internalSecret = process.env.NEXUS_INTERNAL_SECRET || "";
-
-  return { fastApiBaseUrl, internalSecret };
-}
-
 async function createDefaultDeps(): Promise<ProxyDeps> {
   return {
     readSession: (request) =>
@@ -192,7 +178,7 @@ async function createDefaultDeps(): Promise<ProxyDeps> {
       ),
     fetch: globalThis.fetch,
     generateRequestId,
-    config: getDefaultConfig(),
+    config: getInternalApiConfig(),
   };
 }
 
@@ -210,10 +196,7 @@ export async function proxyToFastAPIWithDeps(
 
   const requestId = getOrGenerateRequestId(request, deps.generateRequestId);
 
-  if (
-    !deps.config.fastApiBaseUrl ||
-    (process.env.NODE_ENV === "production" && !deps.config.internalSecret)
-  ) {
+  if (!isInternalApiConfigured(deps.config)) {
     return NextResponse.json(
       {
         error: {
@@ -322,9 +305,7 @@ export async function proxyToFastAPIWithDeps(
         },
         { status: 401, headers: { [REQUEST_ID_HEADER]: requestId } }
       );
-      for (const name of session.cookieNames) {
-        response.cookies.set(name, "", { maxAge: 0, path: "/" });
-      }
+      clearSupabaseAuthCookies(response, session.cookieNames);
       return response;
     }
     default:
@@ -440,7 +421,7 @@ export async function proxyToFastAPIWithDeps(
     }
     return proxied;
   } catch (error) {
-    if (isAbortLikeError(error)) {
+    if (isAbortError(error)) {
       if (timedOut) {
         return NextResponse.json(
           {
@@ -515,11 +496,9 @@ export async function proxyExtensionToFastAPI(
     );
   }
 
-  const { fastApiBaseUrl, internalSecret } = getDefaultConfig();
-  if (
-    !fastApiBaseUrl ||
-    (process.env.NODE_ENV === "production" && !internalSecret)
-  ) {
+  const config = getInternalApiConfig();
+  const { fastApiBaseUrl, internalSecret } = config;
+  if (!isInternalApiConfigured(config)) {
     return NextResponse.json(
       {
         error: {
@@ -623,7 +602,7 @@ export async function proxyExtensionToFastAPI(
       headers: responseHeaders,
     });
   } catch (error) {
-    if (isAbortLikeError(error)) {
+    if (isAbortError(error)) {
       if (timedOut) {
         return NextResponse.json(
           {

@@ -10,7 +10,8 @@ import {
   type SetStateAction,
 } from "react";
 import { apiFetch } from "@/lib/api/client";
-import { sseClientDirect, type SSEEvent } from "@/lib/api/sse";
+import type { SSEEvent } from "@/lib/api/sse";
+import { sseClientDirect } from "@/lib/api/sse-client";
 import { fetchStreamToken } from "@/lib/api/streamToken";
 import type {
   ChatRunResponse,

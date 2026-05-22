@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AUTH_OPERATION_DEADLINE_MS } from "@/lib/auth/internal-fetch";
 import { AUTH_CALLBACK_FAILURE_MESSAGE } from "@/lib/auth/messages";
 
 const mockCookieStore = {
@@ -8,7 +9,6 @@ const mockCookieStore = {
 
 const mockExchangeCodeForSession = vi.fn();
 
-const HANDOFF_MINT_DEADLINE_MS = 5_000;
 const previousFastApiBaseUrl = process.env.FASTAPI_BASE_URL;
 const previousInternalSecret = process.env.NEXUS_INTERNAL_SECRET;
 
@@ -390,7 +390,7 @@ describe("GET /auth/callback", () => {
         )
       );
 
-      await vi.advanceTimersByTimeAsync(HANDOFF_MINT_DEADLINE_MS);
+      await vi.advanceTimersByTimeAsync(AUTH_OPERATION_DEADLINE_MS);
 
       const response = await responsePromise;
       expect(response.status).toBe(307);

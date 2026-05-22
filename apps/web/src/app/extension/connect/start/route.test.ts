@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AUTH_OPERATION_DEADLINE_MS } from "@/lib/auth/internal-fetch";
 
 const fetchSpy = vi.spyOn(globalThis, "fetch");
 const SUPABASE_URL = "https://project-ref.supabase.co";
 const AUTH_COOKIE_NAME = "sb-project-ref-auth-token";
 const NOW_SECONDS = 1_900_000_000;
-const EXTENSION_SESSION_DEADLINE_MS = 5_000;
 const previousFastApiBaseUrl = process.env.FASTAPI_BASE_URL;
 const previousInternalSecret = process.env.NEXUS_INTERNAL_SECRET;
 const previousRedirectOrigins = process.env.NEXUS_EXTENSION_REDIRECT_ORIGINS;
@@ -192,7 +192,7 @@ describe("GET /extension/connect/start", () => {
       )
     );
 
-    await vi.advanceTimersByTimeAsync(EXTENSION_SESSION_DEADLINE_MS);
+    await vi.advanceTimersByTimeAsync(AUTH_OPERATION_DEADLINE_MS);
 
     const response = await responsePromise;
 

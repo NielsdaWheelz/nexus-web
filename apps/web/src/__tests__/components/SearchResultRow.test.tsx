@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import SearchResultRow from "@/components/search/SearchResultRow";
-import type { SearchResultRowViewModel } from "@/lib/search/resultRowAdapter";
+import type { SearchResultRowViewModel } from "@/lib/search/types";
 
 describe("SearchResultRow", () => {
   it("renders content-first note rows with contextual metadata", () => {

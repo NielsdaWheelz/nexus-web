@@ -59,11 +59,9 @@ import {
   validateCanonicalText,
   type CanonicalCursorResult,
 } from "@/lib/highlights/canonicalCursor";
+import { codepointToUtf16 } from "@/lib/highlights/codepoints";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
-import {
-  codepointToUtf16,
-  selectionToOffsets,
-} from "@/lib/highlights/selectionToOffsets";
+import { selectionToOffsets } from "@/lib/highlights/selectionToOffsets";
 import {
   useHighlightInteraction,
   parseHighlightElement,

@@ -1,7 +1,10 @@
 import { SESSION_ENDED_MESSAGE } from "@/lib/auth/messages";
 import { normalizeAuthRedirect } from "@/lib/auth/redirects";
 import { refreshSession } from "@/lib/auth/refresh";
-import { getSupabaseAuthCookieNames } from "@/lib/auth/session-cookie";
+import {
+  clearSupabaseAuthCookies,
+  getSupabaseAuthCookieNames,
+} from "@/lib/auth/session-cookie";
 import { type CookieToSet } from "@/lib/supabase/types";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
@@ -23,9 +26,7 @@ function applyRotatedCookies(
 
 async function clearAuthCookies(response: NextResponse): Promise<void> {
   const cookieNames = getSupabaseAuthCookieNames((await cookies()).getAll());
-  for (const name of cookieNames) {
-    response.cookies.set(name, "", { maxAge: 0, path: "/" });
-  }
+  clearSupabaseAuthCookies(response, cookieNames);
 }
 
 // A response that carries a rotated auth Set-Cookie must never be cached: a

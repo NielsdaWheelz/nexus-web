@@ -16,9 +16,9 @@ import {
   buildCanonicalCursor,
   canonicalCpToRawCp,
   validateCanonicalText,
-  codepointLength,
   type CanonicalCursorResult,
 } from "./canonicalCursor";
+import { codepointLength } from "./codepoints";
 
 // =============================================================================
 // Helpers
@@ -525,28 +525,3 @@ describe("buildCanonicalCursor", () => {
   });
 });
 
-describe("codepointLength", () => {
-  it("returns 0 for empty string", () => {
-    expect(codepointLength("")).toBe(0);
-  });
-
-  it("returns correct length for ASCII", () => {
-    expect(codepointLength("Hello")).toBe(5);
-  });
-
-  it("returns correct length for emoji", () => {
-    expect(codepointLength("🎉")).toBe(1);
-  });
-
-  it("handles emoji with skin tone modifier", () => {
-    // 👍🏽 is emoji + skin tone = 2 codepoints? Actually...
-    // It depends on the specific representation
-    const thumbsUp = "👍🏽";
-    // Just verify it's consistent
-    expect(codepointLength(thumbsUp)).toBe([...thumbsUp].length);
-  });
-
-  it("handles mixed content", () => {
-    expect(codepointLength("A🎉B")).toBe(3);
-  });
-});

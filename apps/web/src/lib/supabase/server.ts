@@ -11,13 +11,11 @@
 
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import {
+  SUPABASE_AUTH_COOKIE_OPTIONS,
+  createSupabaseDeadlineFetch,
+} from "./client-config";
 import { type CookieToSet } from "./types";
-
-const SUPABASE_AUTH_OPERATION_DEADLINE_MS = 5_000;
-
-function makeAuthOperationTimeoutError() {
-  return new DOMException("Supabase auth operation timed out", "AbortError");
-}
 
 /**
  * Create a Supabase client for server-side operations.
@@ -27,22 +25,11 @@ function makeAuthOperationTimeoutError() {
  */
 export async function createClient() {
   const cookieStore = await cookies();
-  const operationDeadlineAt = Date.now() + SUPABASE_AUTH_OPERATION_DEADLINE_MS;
-
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
-      // The auth cookie is server-only: no browser Supabase client reads it, so
-      // HttpOnly is safe. Secure is not in @supabase/ssr's defaults; set it
-      // explicitly. SameSite=Lax (the default, restated) is required so the
-      // cookie rides the top-level OAuth callback redirect.
-      cookieOptions: {
-        httpOnly: true,
-        secure: true,
-        sameSite: "lax",
-        path: "/",
-      },
+      cookieOptions: SUPABASE_AUTH_COOKIE_OPTIONS,
       cookies: {
         getAll() {
           return cookieStore.getAll();
@@ -64,24 +51,7 @@ export async function createClient() {
         },
       },
       global: {
-        // Share one total deadline across every fetch in the operation. A
-        // per-fetch abort window resets on each request and lets a chain of
-        // calls run unbounded; this budget is the contract's required shape.
-        fetch(input, init) {
-          const remainingMs = operationDeadlineAt - Date.now();
-          if (remainingMs <= 0) {
-            return Promise.reject(makeAuthOperationTimeoutError());
-          }
-
-          const controller = new AbortController();
-          const timeout = setTimeout(() => {
-            controller.abort(makeAuthOperationTimeoutError());
-          }, remainingMs);
-
-          return fetch(input, { ...init, signal: controller.signal }).finally(
-            () => clearTimeout(timeout)
-          );
-        },
+        fetch: createSupabaseDeadlineFetch("Supabase auth operation timed out"),
       },
     }
   );

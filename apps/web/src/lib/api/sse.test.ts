@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   isRetrievalLocator,
   isSearchCitationEventData,
-  sseClientDirect,
   toWireContextItem,
 } from "./sse";
 import type { ContextItem, RetrievalLocator } from "./sse";
+import { sseClientDirect } from "./sse-client";
 
 describe("toWireContextItem", () => {
   it("strips non-wire display detail from a context item", () => {

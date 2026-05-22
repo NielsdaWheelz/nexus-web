@@ -4,7 +4,10 @@ import {
   buildLoginRedirectUrl,
   normalizeAuthRedirect,
 } from "@/lib/auth/redirects";
-import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
+import {
+  clearSupabaseAuthCookies,
+  readSupabaseSessionCookie,
+} from "@/lib/auth/session-cookie";
 
 const REQUEST_PATH_HEADER = "x-nexus-request-path";
 const NONCE_HEADER = "x-nonce";
@@ -38,9 +41,7 @@ function clearAndRedirectToLogin(
   cookieNames: string[]
 ): NextResponse {
   const response = NextResponse.redirect(buildLoginRedirectUrl(request.nextUrl));
-  for (const name of cookieNames) {
-    response.cookies.set(name, "", { maxAge: 0, path: "/" });
-  }
+  clearSupabaseAuthCookies(response, cookieNames);
   return response;
 }
 

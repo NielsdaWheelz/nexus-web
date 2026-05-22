@@ -2,13 +2,11 @@
 
 import ContextRow from "@/components/ui/ContextRow";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
-import type { SearchResultRowViewModel } from "@/lib/search/resultRowAdapter";
+import type { SearchResultRowViewModel } from "@/lib/search/types";
 import { isObjectType } from "@/lib/objectRefs";
 import { setPendingContextParam } from "@/lib/conversations/attachedContext";
+import { isUuid } from "@/lib/validation";
 import styles from "./SearchResultRow.module.css";
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface SearchResultRowProps {
   row: SearchResultRowViewModel;
@@ -38,19 +36,19 @@ function buildAskHref(row: SearchResultRowViewModel): string | null {
   if (!row.contextRef) {
     return null;
   }
-  if (!isObjectType(row.contextRef.type) || !UUID_RE.test(row.contextRef.id)) {
+  if (!isObjectType(row.contextRef.type) || !isUuid(row.contextRef.id)) {
     return null;
   }
   if (
     row.contextRef.evidenceSpanIds.length > 0 &&
-    !row.contextRef.evidenceSpanIds.every((id) => UUID_RE.test(id))
+    !row.contextRef.evidenceSpanIds.every(isUuid)
   ) {
     return null;
   }
   if (
     row.contextRef.type === "artifact_part" &&
     (!row.contextRef.artifactId ||
-      !UUID_RE.test(row.contextRef.artifactId) ||
+      !isUuid(row.contextRef.artifactId) ||
       !row.contextRef.sourceVersion ||
       !row.contextRef.locator ||
       !row.contextRef.artifactPartProvenance)
@@ -62,7 +60,7 @@ function buildAskHref(row: SearchResultRowViewModel): string | null {
   if (
     row.type === "content_chunk" &&
     row.mediaId &&
-    UUID_RE.test(row.mediaId) &&
+    isUuid(row.mediaId) &&
     row.contextRef.evidenceSpanIds.length > 0
   ) {
     params.set("scope", `media:${row.mediaId}`);

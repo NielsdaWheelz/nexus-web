@@ -1,9 +1,12 @@
+import {
+  getInternalApiConfig,
+  isInternalApiConfigured,
+} from "@/lib/api/internal-config";
+import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-
-const HANDOFF_MINT_DEADLINE_MS = 5_000;
 
 // Native Android Credential Manager produces a Google ID token; this route
 // exchanges it for a Supabase session and mints a single-use handoff code so
@@ -25,15 +28,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: "invalid_request" }, { status: 400 });
     }
 
-    const fastApiBaseUrl =
-      process.env.FASTAPI_BASE_URL ||
-      (process.env.NODE_ENV === "production" ? "" : "http://localhost:8000");
-    const internalSecret = process.env.NEXUS_INTERNAL_SECRET || "";
-
-    if (
-      !fastApiBaseUrl ||
-      (process.env.NODE_ENV === "production" && !internalSecret)
-    ) {
+    const config = getInternalApiConfig();
+    if (!isInternalApiConfigured(config)) {
       return NextResponse.json({ error: "not_configured" }, { status: 500 });
     }
 
@@ -52,30 +48,29 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const requestId = crypto.randomUUID();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => {
-      controller.abort(
-        new DOMException("Handoff mint request timed out", "AbortError")
-      );
-    }, HANDOFF_MINT_DEADLINE_MS);
 
     let mintResponse: Response;
     try {
-      mintResponse = await fetch(`${fastApiBaseUrl}/auth/handoff-codes`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${data.session.access_token}`,
-          "Content-Type": "application/json",
-          "X-Request-ID": requestId,
-          ...(internalSecret ? { "X-Nexus-Internal": internalSecret } : {}),
+      mintResponse = await boundedAuthFetch(
+        `${config.fastApiBaseUrl}/auth/handoff-codes`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${data.session.access_token}`,
+            "Content-Type": "application/json",
+            "X-Request-ID": requestId,
+            ...(config.internalSecret
+              ? { "X-Nexus-Internal": config.internalSecret }
+              : {}),
+          },
+          body: JSON.stringify({
+            access_token: data.session.access_token,
+            refresh_token: data.session.refresh_token,
+            challenge: hc,
+          }),
         },
-        body: JSON.stringify({
-          access_token: data.session.access_token,
-          refresh_token: data.session.refresh_token,
-          challenge: hc,
-        }),
-        signal: controller.signal,
-      });
+        "Handoff mint request timed out"
+      );
     } catch (mintError) {
       if (!(mintError instanceof Error)) {
         throw mintError;
@@ -86,8 +81,6 @@ export async function POST(request: Request): Promise<NextResponse> {
         { error: "handoff_mint_failed" },
         { status: 502 }
       );
-    } finally {
-      clearTimeout(timeoutId);
     }
 
     if (!mintResponse.ok) {

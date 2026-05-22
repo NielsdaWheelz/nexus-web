@@ -28,6 +28,7 @@ import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { apiFetch } from "@/lib/api/client";
+import { isAbortError } from "@/lib/errors";
 import { loadKeybindings, matchesKeyEvent, formatKeyCombo } from "@/lib/keybindings";
 import { createNotePage, todayLocalDate } from "@/lib/notes/api";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
@@ -37,11 +38,11 @@ import {
   type PaneRouteId,
 } from "@/lib/panes/paneRouteRegistry";
 import { pinObjectToNavbar } from "@/lib/pinnedObjects";
+import { fetchSearchResultPage } from "@/lib/search/resultRowAdapter";
 import {
   ALL_SEARCH_TYPES,
-  fetchSearchResultPage,
   type SearchResultRowViewModel,
-} from "@/lib/search/resultRowAdapter";
+} from "@/lib/search/types";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
 import { isAndroidShell, isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import {
@@ -504,10 +505,6 @@ function toRoman(value: number): string {
     }
   }
   return result;
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function matchesCommand(command: PaletteCommand, query: string): boolean {

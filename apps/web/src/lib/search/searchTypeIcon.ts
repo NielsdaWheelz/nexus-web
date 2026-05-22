@@ -9,7 +9,7 @@ import {
   Video,
   type LucideIcon,
 } from "lucide-react";
-import type { SearchType } from "./resultRowAdapter";
+import type { SearchType } from "./types";
 
 /**
  * Canonical icon for each search result type. The chat evidence disclosure

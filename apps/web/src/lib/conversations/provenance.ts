@@ -11,6 +11,7 @@ import type {
   MessageRetrieval,
   MessageRetrievalResultRef,
 } from "@/lib/conversations/types";
+import { isRecord } from "@/lib/validation";
 
 export interface ProvenanceModel {
   messageCount: number;
@@ -1093,10 +1094,6 @@ function fnv1a(value: string): number {
     hash = Math.imul(hash, 0x01000193);
   }
   return hash >>> 0;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function ratio(numerator: number, denominator: number): number {

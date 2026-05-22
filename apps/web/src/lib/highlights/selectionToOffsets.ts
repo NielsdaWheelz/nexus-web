@@ -19,6 +19,7 @@ import {
   rawCpToCanonicalCp,
   type CanonicalCursorResult,
 } from "./canonicalCursor";
+import { codepointLength, utf16ToCodepoint } from "./codepoints";
 
 // =============================================================================
 // Types
@@ -77,41 +78,6 @@ export const MAX_HIGHLIGHT_LENGTH = 2000;
 // =============================================================================
 // Helpers
 // =============================================================================
-
-/**
- * Convert a UTF-16 string index to a codepoint offset.
- * This handles astral characters (emoji, etc.) correctly.
- *
- * @param str - The string to measure
- * @param utf16Index - The UTF-16 code unit index
- * @returns The codepoint offset
- */
-export function utf16ToCodepoint(str: string, utf16Index: number): number {
-  return [...str.slice(0, utf16Index)].length;
-}
-
-/**
- * Convert a codepoint offset to a UTF-16 string index.
- *
- * @param str - The string to measure
- * @param codepointOffset - The codepoint offset
- * @returns The UTF-16 code unit index
- */
-export function codepointToUtf16(str: string, codepointOffset: number): number {
-  const codepoints = [...str];
-  let utf16Index = 0;
-  for (let i = 0; i < codepointOffset && i < codepoints.length; i++) {
-    utf16Index += codepoints[i].length;
-  }
-  return utf16Index;
-}
-
-/**
- * Get the codepoint length of a string.
- */
-export function codepointLength(str: string): number {
-  return [...str].length;
-}
 
 /**
  * Check if a DOM node is inside a <pre> or <code> element.

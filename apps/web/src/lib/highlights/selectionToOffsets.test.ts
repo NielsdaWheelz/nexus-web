@@ -17,13 +17,11 @@ import { describe, it, expect } from "vitest";
 import {
   selectionToOffsets,
   selectionIntersectsCodeBlock,
-  utf16ToCodepoint,
-  codepointToUtf16,
-  codepointLength,
   MIN_HIGHLIGHT_LENGTH,
   MAX_HIGHLIGHT_LENGTH,
 } from "./selectionToOffsets";
 import { buildCanonicalCursor, type CanonicalCursorResult } from "./canonicalCursor";
+import { codepointLength, utf16ToCodepoint } from "./codepoints";
 
 // =============================================================================
 // Helper Functions
@@ -62,73 +60,6 @@ function codepointIndexOf(haystack: string, needle: string): number {
   }
   return utf16ToCodepoint(haystack, utf16Index);
 }
-
-// =============================================================================
-// Unit Tests: UTF-16/Codepoint Conversion
-// =============================================================================
-
-describe("utf16ToCodepoint", () => {
-  it("handles ASCII text correctly", () => {
-    expect(utf16ToCodepoint("hello", 0)).toBe(0);
-    expect(utf16ToCodepoint("hello", 3)).toBe(3);
-    expect(utf16ToCodepoint("hello", 5)).toBe(5);
-  });
-
-  it("handles emoji (astral characters) correctly", () => {
-    // "🎉" is a single codepoint but 2 UTF-16 code units
-    const text = "Hello 🎉 World";
-    // Positions: H(0) e(1) l(2) l(3) o(4) (space,5) 🎉(6-7) (space,8) W(9)...
-    expect(utf16ToCodepoint(text, 0)).toBe(0); // Before H
-    expect(utf16ToCodepoint(text, 6)).toBe(6); // Before emoji
-    expect(utf16ToCodepoint(text, 8)).toBe(7); // After emoji (UTF-16 index 8 = codepoint 7)
-    expect(utf16ToCodepoint(text, 9)).toBe(8); // W
-  });
-
-  it("handles multiple emoji", () => {
-    const text = "🎉🎊🎈";
-    expect(utf16ToCodepoint(text, 0)).toBe(0);
-    expect(utf16ToCodepoint(text, 2)).toBe(1);
-    expect(utf16ToCodepoint(text, 4)).toBe(2);
-    expect(utf16ToCodepoint(text, 6)).toBe(3);
-  });
-
-  it("handles ZWJ sequences", () => {
-    // "👨‍👩‍👧" is multiple codepoints
-    const text = "👨‍👩‍👧";
-    // This is: 👨 (2 UTF-16) + ZWJ (1) + 👩 (2) + ZWJ (1) + 👧 (2) = 8 UTF-16 units
-    // But ~5 codepoints (depending on exact sequence)
-    expect(utf16ToCodepoint(text, 0)).toBe(0);
-    // The exact codepoint count depends on the sequence
-    expect(utf16ToCodepoint(text, text.length)).toBe([...text].length);
-  });
-});
-
-describe("codepointToUtf16", () => {
-  it("handles ASCII text correctly", () => {
-    expect(codepointToUtf16("hello", 0)).toBe(0);
-    expect(codepointToUtf16("hello", 3)).toBe(3);
-    expect(codepointToUtf16("hello", 5)).toBe(5);
-  });
-
-  it("handles emoji correctly", () => {
-    const text = "Hello 🎉 World";
-    expect(codepointToUtf16(text, 0)).toBe(0);
-    expect(codepointToUtf16(text, 6)).toBe(6); // Before emoji
-    expect(codepointToUtf16(text, 7)).toBe(8); // After emoji
-    expect(codepointToUtf16(text, 8)).toBe(9); // W
-  });
-});
-
-describe("codepointLength", () => {
-  it("handles ASCII text", () => {
-    expect(codepointLength("hello")).toBe(5);
-  });
-
-  it("handles emoji", () => {
-    expect(codepointLength("🎉")).toBe(1);
-    expect(codepointLength("Hello 🎉")).toBe(7);
-  });
-});
 
 // =============================================================================
 // Tests: MIN/MAX constants

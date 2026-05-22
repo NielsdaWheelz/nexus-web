@@ -25,11 +25,11 @@
 import {
   buildCanonicalCursor,
   validateCanonicalText,
-  codepointLength,
   canonicalCpToRawCp,
   type CanonicalCursorResult,
   type CanonicalNode,
 } from "./canonicalCursor";
+import { codepointLength, codepointToUtf16 } from "./codepoints";
 import {
   segmentHighlights,
   type NormalizedHighlight,
@@ -130,19 +130,6 @@ function findNodeAtOffset(
   return null;
 }
 
-/**
- * Convert codepoint offset to UTF-16 offset within a text node.
- * This is necessary because JavaScript strings use UTF-16.
- */
-function codepointToUtf16Offset(text: string, codepointOffset: number): number {
-  const codepoints = [...text];
-  let utf16Offset = 0;
-  for (let i = 0; i < codepointOffset && i < codepoints.length; i++) {
-    utf16Offset += codepoints[i].length;
-  }
-  return utf16Offset;
-}
-
 // =============================================================================
 // DOM Manipulation
 // =============================================================================
@@ -195,8 +182,8 @@ function wrapTextRange(
   const clampedEnd = Math.max(clampedStart, Math.min(endOffset, totalCodepoints));
 
   // Convert to UTF-16 offsets
-  const utf16Start = codepointToUtf16Offset(text, clampedStart);
-  const utf16End = codepointToUtf16Offset(text, clampedEnd);
+  const utf16Start = codepointToUtf16(text, clampedStart);
+  const utf16End = codepointToUtf16(text, clampedEnd);
 
   // Create the span
   const span = createHighlightSpan(doc, segment);

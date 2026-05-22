@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  ALL_SEARCH_TYPES,
-  fetchSearchResultPage,
-  type SearchType,
-} from "@/lib/search/resultRowAdapter";
+import { fetchSearchResultPage } from "@/lib/search/resultRowAdapter";
+import { ALL_SEARCH_TYPES, type SearchType } from "@/lib/search/types";
 
 function setOf(...items: SearchType[]): Set<SearchType> {
   return new Set(items);
