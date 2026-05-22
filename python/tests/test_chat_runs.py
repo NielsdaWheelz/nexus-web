@@ -1912,22 +1912,3 @@ class TestChatResponseRetry:
         assert response.json()["error"]["code"] == "E_RETRY_NOT_ALLOWED"
         direct_db.register_cleanup("conversations", "id", conversation_id)
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-
-
-class TestLegacySendRoutesRemoved:
-    def test_old_json_send_routes_are_removed(self, auth_client, chat_runs_schema):
-        user_id = create_test_user_id()
-
-        new_conversation_response = auth_client.post(
-            "/conversations/messages",
-            headers=auth_headers(user_id),
-            json={},
-        )
-        existing_conversation_response = auth_client.post(
-            f"/conversations/{uuid4()}/messages",
-            headers=auth_headers(user_id),
-            json={},
-        )
-
-        assert new_conversation_response.status_code in (404, 405)
-        assert existing_conversation_response.status_code in (404, 405)

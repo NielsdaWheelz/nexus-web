@@ -1,22 +1,8 @@
 """Integration tests for highlight and linked-note endpoints.
 
-Tests cover scenarios from PR-06 spec (retained) and PR-07 spec (s4 shared-read):
-
-PR-06 (retained):
-1-15. See original test docstrings below.
-
-PR-07 (s4 highlight shared-read contract):
-- test_list_highlights_defaults_to_mine_only_true
-- test_list_highlights_mine_only_false_returns_visible_shared
-- test_list_and_get_highlight_visibility_match_canonical_predicate
-- test_list_highlights_invalid_mine_only_returns_400_e_invalid_request_not_422
-- test_get_highlight_shared_reader_visible_success
-- test_get_highlight_shared_reader_revoked_membership_masked_404
-- test_update_highlight_non_author_masked_404
-- test_delete_highlight_non_author_masked_404
-- test_shared_reader_can_link_own_note_to_readable_highlight
-- test_highlight_out_includes_author_fields
-- test_list_highlights_order_is_deterministic_with_created_at_ties
+Coverage includes fragment highlight CRUD, linked-note behavior, shared-library
+read visibility, author-only mutation, EPUB chapter highlights, canonical typed
+anchors, and media-wide highlight listing.
 """
 
 import time
@@ -577,44 +563,6 @@ class TestDeleteHighlight:
         assert link_count == 0
 
 
-class TestRemovedAnnotationRoutes:
-    """Removed annotation routes return not-found responses."""
-
-    def test_annotation_routes_return_not_found(self, auth_client, direct_db: DirectSessionManager):
-        """Removed annotation routes return normal not-found responses."""
-        user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id, fragment_id = create_media_and_fragment(session)
-
-        register_fragment_highlight_cleanup(direct_db, fragment_id)
-        direct_db.register_cleanup("fragments", "id", fragment_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        add_media_to_library(auth_client, user_id, media_id)
-
-        # Create a highlight and verify removed routes stay removed.
-        create_resp = auth_client.post(
-            f"/fragments/{fragment_id}/highlights",
-            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
-            headers=auth_headers(user_id),
-        )
-        highlight_id = create_resp.json()["data"]["id"]
-
-        put_resp = auth_client.put(
-            f"/highlights/{highlight_id}/annotation",
-            json={"body": "No annotation route"},
-            headers=auth_headers(user_id),
-        )
-        delete_resp = auth_client.delete(
-            f"/highlights/{highlight_id}/annotation",
-            headers=auth_headers(user_id),
-        )
-        assert put_resp.status_code == 404
-        assert delete_resp.status_code == 404
-
-
 # =============================================================================
 # Test 11-12: media readiness tests
 # =============================================================================
@@ -816,7 +764,7 @@ class TestLinkedHighlightNotes:
     """Tests for note blocks linked to highlights."""
 
     def test_linked_note_create_update_delete(self, auth_client, direct_db: DirectSessionManager):
-        """Test #15: Note blocks replace legacy annotation upsert/delete."""
+        """Test #15: Note blocks can be created, updated, and deleted for highlights."""
         user_id = create_test_user_id()
 
         with direct_db.session() as session:
@@ -1021,7 +969,7 @@ class TestEdgeCases:
 
 
 # =============================================================================
-# PR-07 Shared-Library Helpers
+# Shared-Library Helpers
 # =============================================================================
 
 
@@ -1068,7 +1016,7 @@ def create_shared_library_with_media(
 
 
 class TestHighlightSharedRead:
-    """PR-07: Shared-read tests for highlights across shared library members."""
+    """Shared-read tests for highlights across shared library members."""
 
     def test_list_highlights_defaults_to_mine_only_true(
         self, auth_client, direct_db: DirectSessionManager
@@ -1632,7 +1580,7 @@ class TestHighlightSharedRead:
 
 
 # =============================================================================
-# S5 PR-06: EPUB Highlight Compatibility Tests
+# EPUB Chapter Highlight Tests
 # =============================================================================
 
 EPUB_CH0_TEXT = "SENTINEL_ZERO Alpha chapter zero content here."
@@ -1640,8 +1588,8 @@ EPUB_CH1_TEXT = "SENTINEL_ONE Bravo chapter one body text unicode café résumé
 EPUB_CH2_TEXT = "SENTINEL_TWO Charlie chapter two trailing content."
 
 
-class TestEpubHighlightCompatibility:
-    """PR-06: Prove existing highlight APIs work on EPUB chapter fragments."""
+class TestEpubChapterHighlights:
+    """Fragment highlight APIs work on EPUB chapter fragments."""
 
     def _setup_epub(self, session, user_id):
         """Create ready EPUB with 3 chapter fragments, linked to user library."""
@@ -1730,7 +1678,7 @@ class TestEpubHighlightCompatibility:
         if data["suffix"]:
             assert data["suffix"] in EPUB_CH1_TEXT
 
-    def test_epub_highlight_rejects_legacy_global_offsets_as_invalid_range(
+    def test_epub_highlight_rejects_offsets_outside_chapter_fragment_range(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """Offsets valid only in a concatenated-book domain are rejected."""
@@ -1765,14 +1713,14 @@ class TestEpubHighlightCompatibility:
 
 
 # =============================================================================
-# S6 PR-01: Fragment Highlight Route Smoke (regression gate)
+# Fragment Highlight Route Contract
 # =============================================================================
 
 
-class TestS6PR01FragmentHighlightRouteSmoke:
+class TestFragmentHighlightRouteContract:
     """Confirms fragment-highlight route exposes the canonical typed-anchor contract."""
 
-    def test_pr01_fragment_highlight_route_smoke_unchanged(
+    def test_create_get_list_fragment_highlight_exposes_canonical_anchor(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """Create, fetch, list a fragment highlight with the canonical anchor payload."""

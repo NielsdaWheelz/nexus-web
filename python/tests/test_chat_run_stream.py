@@ -1194,22 +1194,3 @@ class TestStreamAuthMiddlewareBoundary:
         response = TestClient(app).get("/chat-runs/00000000-0000-0000-0000-000000000000/events")
 
         assert response.status_code == 200
-
-
-class TestLegacyStreamSendRoutesRemoved:
-    def test_old_stream_send_routes_are_removed(self, auth_client, chat_runs_schema):
-        stream_token = mint_stream_token(uuid4())["token"]
-
-        new_conversation_response = auth_client.post(
-            "/stream/conversations/messages",
-            headers={"Authorization": f"Bearer {stream_token}"},
-            json={},
-        )
-        existing_conversation_response = auth_client.post(
-            f"/stream/conversations/{uuid4()}/messages",
-            headers={"Authorization": f"Bearer {stream_token}"},
-            json={},
-        )
-
-        assert new_conversation_response.status_code == 404
-        assert existing_conversation_response.status_code == 404

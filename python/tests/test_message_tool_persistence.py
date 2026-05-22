@@ -427,7 +427,7 @@ def test_message_document_rejects_unknown_blocks():
             {
                 "type": "message_document",
                 "version": 1,
-                "blocks": [{"type": "legacy_citation", "id": "citation-1"}],
+                "blocks": [{"type": "unknown_block", "id": "unknown-1"}],
             }
         )
 
@@ -507,7 +507,7 @@ def test_message_out_serializes_message_document_contract():
                 "id": uuid4(),
                 "seq": 1,
                 "role": "assistant",
-                "content": "legacy mirror",
+                "content": "unexpected extra field",
                 "status": "complete",
                 "created_at": datetime(2026, 1, 1, tzinfo=UTC),
                 "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
@@ -2202,7 +2202,7 @@ def test_chat_run_event_payloads_are_strict():
                 "result_count": 1,
                 "selected_count": 1,
                 "filters": {},
-                "results": [{**retrieval_citation, "filters": {"legacy": True}}],
+                "results": [{**retrieval_citation, "filters": {"unexpected": True}}],
             },
         )
     assert (
