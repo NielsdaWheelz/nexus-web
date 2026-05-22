@@ -6,7 +6,7 @@ It registers exception handlers, auth middleware, request-id middleware, and rou
 Token Verification:
 - All environments (local, test, staging, prod) use SupabaseJwksVerifier
 - Runtime always verifies JWTs via Supabase JWKS endpoint
-- No local/test fallback - only env values change between environments
+- Only environment values change between environments
 
 Middleware Ordering (Critical):
 - Middleware runs in reverse order of registration
@@ -24,7 +24,7 @@ Actual execution order per request:
 4. AuthMiddleware (returns response)
 5. RequestIDMiddleware (logs, sets response header)
 
-LLM Client Lifecycle (PR-04 spec):
+LLM client lifecycle:
 - httpx.AsyncClient is created at startup, stored in app.state
 - LLMRouter wraps the shared client for connection pooling
 - Client is closed gracefully at shutdown
@@ -112,7 +112,7 @@ def create_token_verifier():
 async def lifespan(app: FastAPI):
     """Manage application lifecycle resources.
 
-    Per PR-04 spec Section 8:
+    Lifecycle behavior:
     - Creates shared httpx.AsyncClient for connection pooling
     - Initializes LLMRouter with feature flags
     - Cleans up on shutdown
@@ -234,10 +234,10 @@ def create_app(skip_auth_middleware: bool = False) -> FastAPI:
     api_router = create_api_router()
     app.include_router(api_router)
 
-    # PR-08: Include browser-callable stream-token routes
+    # Include browser-callable stream event routes.
     app.include_router(stream_router)
 
-    # PR-08: Include stream token minting route (/internal/stream-tokens) — BFF-only
+    # Include stream token minting route (/internal/stream-tokens) for the BFF.
     app.include_router(stream_tokens_router)
 
     # Add auth middleware (runs on all requests except public paths)
@@ -259,7 +259,7 @@ def create_app(skip_auth_middleware: bool = False) -> FastAPI:
             internal_header_required=settings.requires_internal_header,
         )
 
-    # PR-08: Add StreamCORSMiddleware for browser-callable stream routes
+    # Add StreamCORSMiddleware for browser-callable stream routes.
     # Must be added AFTER auth middleware (runs before it in the stack)
     cors_origins = settings.stream_cors_origin_list
     if cors_origins:

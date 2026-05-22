@@ -139,7 +139,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             # Always echo request ID in response
             response.headers[REQUEST_ID_HEADER] = request_id
 
-            # Log access entry (renamed per PR-09 event taxonomy: http.request.completed)
+            # Log access entry.
             if self.log_requests:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 logger.info(

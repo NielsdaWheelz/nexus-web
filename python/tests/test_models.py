@@ -1,10 +1,10 @@
 """Integration tests for models registry routes and service.
 
-Tests cover PR-03 requirements:
+Tests cover model availability behavior:
 - Model filtering based on billing-entitled platform keys and BYOK
 - Auth tests: endpoint requires authentication
 
-Per PR-03 spec, a model is available to a user iff:
+A model is available to a user iff:
 - model.is_available = true
 - model.provider is enabled by feature flag
 - AND (user has AI-tier access to a platform key for model.provider OR user has BYOK with status ∈ {untested, valid})
@@ -57,7 +57,7 @@ def setup_test_master_key(monkeypatch):
 
 
 # =============================================================================
-# Model Filtering Tests (PR-03 spec: "Model Filtering Tests")
+# Model Filtering Tests
 # =============================================================================
 
 
@@ -502,7 +502,7 @@ class TestModelResponseFormat:
 
 
 # =============================================================================
-# Auth Tests (PR-03 spec: "Auth Tests")
+# Auth Tests
 # =============================================================================
 
 
@@ -518,15 +518,15 @@ class TestModelsAuth:
 
 
 # =============================================================================
-# S6 PR-01: ORM Mapper Compatibility
+# ORM Mapper Compatibility
 # =============================================================================
 
 
-class TestS6PR01OrmMapperCompatibility:
-    """ORM mapper tests for S6 typed-highlight data foundation."""
+class TestOrmMapperCompatibility:
+    """ORM mapper tests for highlight, media, and note relationships."""
 
-    def test_pr01_orm_models_import_and_map_with_typed_anchor_foundation(self):
-        """Mapper configuration succeeds with S6 models and relationships."""
+    def test_orm_models_import_and_map_current_relationships(self):
+        """Mapper configuration succeeds with current models and relationships."""
         from nexus.db.models import (
             Highlight,
             HighlightFragmentAnchor,

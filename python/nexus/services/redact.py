@@ -1,6 +1,6 @@
 """Log guard utilities.
 
-Per PR-09 spec §6:
+Redaction behavior:
 - safe_kv: log guard that blocks forbidden keys at call site
 
 Never-log policy:

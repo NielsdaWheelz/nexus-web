@@ -3,13 +3,12 @@
 Handles resolution of API keys for LLM provider calls, supporting both
 platform keys and BYOK (bring your own key).
 
-Per PR-05 spec:
+Resolution behavior:
 - key_mode="auto": Try BYOK first, fall back to platform
 - key_mode="byok_only": Use only user's key
 - key_mode="platform_only": Use only platform key
 
-Note: This module has DB access and is intentionally kept outside the LLM
-adapter layer (which must be DB-free per PR-04 spec).
+This module owns DB-backed key lookup. The LLM adapter layer remains DB-free.
 """
 
 from dataclasses import dataclass
@@ -62,7 +61,7 @@ def resolve_api_key(
 ) -> ResolvedKey:
     """Resolve the API key to use for a request.
 
-    Per PR-05 spec:
+    Resolution behavior:
     - key_mode="auto": Try BYOK first, fall back to platform
     - key_mode="byok_only": Use only user's key
     - key_mode="platform_only": Use only platform key

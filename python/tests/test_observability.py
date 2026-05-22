@@ -1,4 +1,4 @@
-"""Tests for PR-09 observability instrumentation.
+"""Tests for observability instrumentation.
 
 Covers:
 - Redaction guard utilities (safe_kv)
@@ -67,7 +67,7 @@ class TestSafeKv:
 
 
 class TestContextVars:
-    """Tests for PR-09 ContextVar additions."""
+    """Tests for request-scoped logging ContextVars."""
 
     def setup_method(self):
         clear_request_context()

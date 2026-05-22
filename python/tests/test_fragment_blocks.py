@@ -3,7 +3,7 @@
 Tests the parsing of canonical_text into blocks and the context window
 algorithm that uses those blocks for LLM prompts.
 
-Per S3 spec:
+Behavior under test:
 - Blocks are contiguous and cover entire canonical_text
 - Delimiter (\n\n) is included at the END of the preceding block
 - Context window always contains the selection

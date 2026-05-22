@@ -1,13 +1,13 @@
 """Conversation and Message service layer.
 
 Read visibility: shared read allowed via canonical visibility predicate
-(owner, public, or library-shared with active dual membership per S4 spec §5.3).
+(owner, public, or library-shared with active dual membership).
 Write boundary: owner-only for all mutation operations.
 
 Error masking: E_CONVERSATION_NOT_FOUND / E_MESSAGE_NOT_FOUND consistently (prevent probing).
 Pagination: cursor-based, ordered by updated_at DESC, id DESC.
 
-Helper split (S4):
+Conversation access helpers:
 - get_conversation_for_visible_read_or_404: read path (visibility predicate)
 - get_conversation_for_owner_write_or_404: write path (owner-only)
 
@@ -229,7 +229,7 @@ def derive_conversation_title(content: str | None) -> str:
 def get_conversation_for_visible_read_or_404(
     db: Session, viewer_id: UUID, conversation_id: UUID
 ) -> Conversation:
-    """Load conversation and verify read visibility under s4 rules.
+    """Load conversation and verify canonical read visibility.
 
     Visible iff viewer is owner, or conversation is public, or conversation is
     library-shared with both viewer and owner as members of a share-target library.

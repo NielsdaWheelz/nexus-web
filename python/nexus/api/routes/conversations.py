@@ -3,7 +3,7 @@
 Route handlers for conversation and message CRUD operations.
 Routes are transport-only: each calls exactly one service function.
 
-Per PR-02 spec:
+Route contract:
 - Conversations: GET/POST/DELETE
 - Messages: GET (list), DELETE
 
@@ -249,7 +249,7 @@ def delete_conversation(
 
 
 # =============================================================================
-# Conversation Share Endpoints (S4 PR-06)
+# Conversation Share Endpoints
 # =============================================================================
 
 

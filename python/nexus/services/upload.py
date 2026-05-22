@@ -4,7 +4,7 @@ Handles file upload initialization, ingest confirmation, and signed URL generati
 All media-domain upload logic lives here.
 
 Key invariants:
-- No tasks enqueued in S1 (media stays pending)
+- Upload initialization creates pending media without dispatching extraction
 - SHA-256 computed synchronously at ingest time
 - Deduplication via (created_by_user_id, kind, file_sha256) constraint
 - Storage operations happen after DB transaction commits
@@ -253,7 +253,7 @@ def confirm_ingest(
     """Confirm upload and process file.
 
     Validates file, computes hash, handles deduplication.
-    Does NOT enqueue tasks in S1.
+    Extraction dispatch is owned by the media-kind lifecycle layer.
 
     Args:
         db: Database session.

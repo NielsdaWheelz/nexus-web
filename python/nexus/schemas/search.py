@@ -1,7 +1,6 @@
 """Search Pydantic schemas.
 
 Contains request and response models for the search endpoint.
-These schemas are introduced in Slice 3 (PR-06: Keyword Search).
 
 Search returns mixed typed results from different content types:
 - media (titles)

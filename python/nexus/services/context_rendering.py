@@ -1,15 +1,15 @@
 """Context rendering for LLM prompts.
 
- Renders context items into XML-tagged blocks
+Renders context items into XML-tagged blocks
 for inclusion in LLM prompts.
 
-Per S3 spec:
+Rendering behavior:
 - Context blocks include source, metadata, exact quote, surrounding context
 - Context cap: 25,000 chars total
 - Max 10 context items per message
 
-Note: This module has DB access and is intentionally kept outside the LLM
-adapter layer (which must be DB-free per PR-04 spec).
+This module owns DB-backed context rendering. The LLM adapter layer remains
+DB-free.
 """
 
 import json

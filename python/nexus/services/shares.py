@@ -4,7 +4,7 @@ Sharing rules:
 - Owner-only share management exposes a single atomic replacement API.
 - Empty share targets transition the conversation to private.
 - Owner must be a member of every target library.
-- Default libraries cannot be share targets (S4)
+- Default libraries cannot be share targets.
 """
 
 from datetime import UTC, datetime

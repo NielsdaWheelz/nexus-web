@@ -1,7 +1,6 @@
 """Conversation and Message Pydantic schemas.
 
 Contains request and response models for conversation and message endpoints.
-These schemas are introduced in Slice 3 (Chat + Quote-to-Chat + Keyword Search).
 
 Message creation happens through durable chat runs.
 """
@@ -227,7 +226,7 @@ class ConversationScopeOut(BaseModel):
 class ConversationOut(BaseModel):
     """Response schema for a conversation.
 
-    Conversations are owned by exactly one user. S4 additive fields:
+    Conversations are owned by exactly one user. Owner fields:
     - owner_user_id: UUID of the conversation owner
     - is_owner: viewer-local convenience flag
     """
@@ -1288,9 +1287,8 @@ class PageInfo(BaseModel):
 # =============================================================================
 
 
-# Note: CreateConversationRequest is empty in PR-02 (no body required).
+# Note: conversation creation has no request body.
 # POST /conversations creates an empty private conversation.
-# This is intentional per the spec.
 
 
 # =============================================================================
@@ -1723,7 +1721,7 @@ class ChatRunEventOut(BaseModel):
 
 
 # =============================================================================
-# S4 PR-06: Conversation Share Schemas
+# Conversation Share Schemas
 # =============================================================================
 
 

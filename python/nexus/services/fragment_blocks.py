@@ -4,7 +4,7 @@ Parses canonical_text into blocks based on block separators (\n\n).
 These blocks are used for deterministic context window computation
 without DOM traversal at query time.
 
-Per S3 spec:
+Block contract:
 - Blocks are contiguous and non-overlapping
 - Block offsets are codepoint indices (Python str indexing)
 - Delimiter (\n\n) is included at the END of the preceding block's range

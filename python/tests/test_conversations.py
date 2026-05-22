@@ -2794,12 +2794,12 @@ class TestListMessages:
 
 
 # =============================================================================
-# Legacy Streaming Route Removal Tests
+# Removed Streaming Route Tests
 # =============================================================================
 
 
-class TestLegacyStreamingRoutesRemoved:
-    """Old conversation-scoped streaming routes are gone after the cutover."""
+class TestRemovedStreamingRoutesReturnNotFound:
+    """Removed conversation-scoped streaming routes return 404."""
 
     def test_new_conversation_stream_route_returns_404(self, auth_client):
         user_id = create_test_user_id()
@@ -3181,7 +3181,7 @@ class TestVisibility:
 
 
 # =============================================================================
-# S4 PR-06: ConversationOut owner fields
+# ConversationOut owner fields
 # =============================================================================
 
 
@@ -3225,7 +3225,7 @@ class TestConversationOutOwnerFields:
 
 
 # =============================================================================
-# S4 PR-06: Conversation Scope Tests
+# Conversation Scope Tests
 # =============================================================================
 
 
@@ -3508,8 +3508,7 @@ class TestListConversationsScope:
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_MESSAGE_NOT_FOUND"
 
-    # NOTE: Chat send ownership checks are covered by the chat-run create contract
-    # after the durable chat-runs cutover.
+    # NOTE: Chat send ownership checks are covered by the chat-run create contract.
     # (requires lifespan-aware TestClient for llm_router setup)
 
     def test_list_conversations_scope_all_cursor_is_stable_across_mixed_visibility(

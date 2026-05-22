@@ -7,7 +7,7 @@ from nexus.services.models import get_model_catalog_metadata
 pytestmark = pytest.mark.unit
 
 
-def test_curated_catalog_contains_only_hard_cutover_models():
+def test_curated_catalog_contains_supported_models():
     catalog = {
         "openai": ["gpt-5.5", "gpt-5.4-mini"],
         "anthropic": [
@@ -65,8 +65,8 @@ def test_deepseek_reasoning_modes_match_pro_vs_flash_split():
     assert pro[3] == ["high"]
 
 
-def test_stale_model_names_are_not_curated():
-    stale_models = [
+def test_retired_model_names_are_not_curated():
+    retired_models = [
         ("openai", "gpt-5.4"),
         ("anthropic", "claude-opus-4-6"),
         ("anthropic", "claude-haiku-4-5-20250901"),
@@ -76,5 +76,5 @@ def test_stale_model_names_are_not_curated():
         ("deepseek", "deepseek-reasoner"),
     ]
 
-    for provider, model_name in stale_models:
+    for provider, model_name in retired_models:
         assert get_model_catalog_metadata(provider, model_name) is None

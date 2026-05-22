@@ -1054,17 +1054,12 @@ class TestMediaWithCapabilities:
         assert caps["can_read"] is True
         assert caps["can_highlight"] is True
         assert caps["can_download_file"] is True
-        # But can't quote until text extraction (not in S1)
+        # But can't quote until text extraction has completed.
         assert caps["can_quote"] is False
 
 
-# =============================================================================
-# S4 PR-05: Upload provenance assertions
-# =============================================================================
-
-
 class TestUploadProvenance:
-    """Tests for S4 PR-05: intrinsic provenance on upload init."""
+    """Tests intrinsic default-library provenance for uploads."""
 
     def test_upload_init_creates_default_library_intrinsic_row(
         self, upload_client, fake_storage, direct_db: DirectSessionManager
@@ -1188,7 +1183,7 @@ class TestUploadProvenance:
 
 
 class TestEpubIngestLifecycle:
-    """S5 PR-03: EPUB ingest dispatch and lifecycle tests."""
+    """EPUB ingest dispatch and lifecycle tests."""
 
     def _init_and_store_epub(self, upload_client, fake_storage, direct_db, user_id, content):
         """Helper: init upload + store content, return (media_id, storage_path)."""
@@ -1374,7 +1369,7 @@ class TestEpubIngestLifecycle:
 
 
 class TestPdfIngestLifecycle:
-    """S6 PR-03: PDF ingest dispatch and lifecycle tests."""
+    """PDF ingest dispatch and lifecycle tests."""
 
     def _init_and_store_pdf(self, upload_client, fake_storage, direct_db, user_id, content):
         """Helper: init upload + store content, return (media_id, storage_path)."""
@@ -1401,7 +1396,7 @@ class TestPdfIngestLifecycle:
         fake_storage.put_object(storage_path, content, "application/pdf")
         return mid, storage_path
 
-    def test_pr03_ingest_pdf_confirm_routes_to_pdf_lifecycle_and_dispatches(
+    def test_ingest_pdf_confirm_dispatches_pdf_extraction(
         self,
         upload_client,
         fake_storage,
@@ -1425,7 +1420,7 @@ class TestPdfIngestLifecycle:
         assert data["ingest_enqueued"] is True
         assert _count_jobs_for_media(direct_db, kind="ingest_pdf", media_id=str(mid)) == 1
 
-    def test_pr03_ingest_pdf_confirm_non_creator_forbidden(
+    def test_ingest_pdf_confirm_non_creator_forbidden(
         self,
         upload_client,
         fake_storage,
@@ -1446,7 +1441,7 @@ class TestPdfIngestLifecycle:
         resp = upload_client.post(f"/media/{mid}/ingest", headers=auth_headers(user_b))
         assert resp.status_code in (403, 404)
 
-    def test_pr03_ingest_pdf_confirm_repeat_call_idempotent_without_redispatch(
+    def test_ingest_pdf_confirm_repeat_call_idempotent_without_redispatch(
         self,
         upload_client,
         fake_storage,

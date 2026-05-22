@@ -173,7 +173,7 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
 def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     """Delete a library.
 
-    S4 rule: only the current owner can delete a non-default library.
+    Only the current owner can delete a non-default library.
     Non-owner admins get E_OWNER_REQUIRED. Non-members get masked 404.
 
     Args:
@@ -445,7 +445,7 @@ def add_media_to_library(
 ) -> LibraryEntryOut:
     """Add media to a library.
 
-    S4 closure rules:
+    Visibility closure rules:
     - Default target: ensure intrinsic + library entry, no closure edges.
     - Non-default target: insert source row, create closure edges + materialized
       default rows for all current members.
@@ -1047,7 +1047,7 @@ def _hydrate_library_entries(
 
 
 # =============================================================================
-# S4 PR-03: Library governance
+# Library governance
 # =============================================================================
 
 
@@ -1282,7 +1282,7 @@ def remove_library_member(
     Auth: viewer must be admin member. Cannot remove owner. Cannot remove last admin.
     Default library forbidden. Idempotent: absent target -> silent 204.
 
-    S4: on successful delete, run closure cleanup + gc for removed user and
+    On successful delete, run closure cleanup + gc for removed user and
     delete matching backfill job row.
     """
     from nexus.services.default_library_closure import remove_member_closure_and_gc
@@ -1348,7 +1348,7 @@ def remove_library_member(
             {"lid": library_id, "uid": target_user_id},
         )
 
-        # S4: closure cleanup + gc + backfill job deletion
+        # Closure cleanup + gc + backfill job deletion.
         remove_member_closure_and_gc(db, library_id, target_user_id)
 
 
@@ -1468,7 +1468,7 @@ def transfer_library_ownership(
 
 
 # =============================================================================
-# S4 PR-04: Invitation Lifecycle
+# Invitation lifecycle
 # =============================================================================
 
 

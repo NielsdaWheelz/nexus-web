@@ -171,7 +171,7 @@ def delete_library(
 ) -> Response:
     """Delete a library.
 
-    S4: owner-only for non-default libraries. Non-owner admins get 403 E_OWNER_REQUIRED.
+    Owner-only for non-default libraries. Non-owner admins get 403 E_OWNER_REQUIRED.
     """
     libraries_service.delete_library(db, viewer.user_id, library_id)
     return Response(status_code=204)

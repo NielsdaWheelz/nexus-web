@@ -3,7 +3,7 @@
 Implements XChaCha20-Poly1305 authenticated encryption for BYOK API keys
 using PyNaCl (libsodium bindings).
 
-Per S3 spec:
+Encryption contract:
 - Keys are encrypted at rest using envelope encryption
 - XChaCha20-Poly1305 provides authenticated encryption with a 24-byte nonce
 - Master key is loaded from NEXUS_KEY_ENCRYPTION_KEY environment variable
@@ -175,7 +175,7 @@ def compute_key_fingerprint(api_key: str) -> str:
 
 
 # =============================================================================
-# High-Level API Key Encryption Functions (per PR-03 spec)
+# High-level API key encryption functions
 # =============================================================================
 
 # Current master key version (v1 - no rotation implemented yet)
@@ -185,8 +185,8 @@ CURRENT_MASTER_KEY_VERSION = 1
 def encrypt_api_key(plaintext: str) -> tuple[bytes, bytes, int, str]:
     """Encrypt an API key for storage.
 
-    Per PR-03 spec:
-    - Nonce is generated internally (24 random bytes) — never supplied by caller
+    Behavior:
+    - Nonce is generated internally (24 random bytes) and never supplied by caller
     - Fingerprint is last 4 characters of plaintext
     - master_key_version is always 1 (current version)
 
@@ -214,9 +214,9 @@ def encrypt_api_key(plaintext: str) -> tuple[bytes, bytes, int, str]:
 def decrypt_api_key(ciphertext: bytes, nonce: bytes, version: int) -> str:
     """Decrypt an API key from storage.
 
-    Per PR-03 spec:
-    - If version == 1 → use current master key
-    - If version unknown → raise ApiError(E_INTERNAL)
+    Behavior:
+    - If version == 1, use current master key
+    - If version is unknown, raise ApiError(E_INTERNAL)
 
     Args:
         ciphertext: The encrypted API key.
