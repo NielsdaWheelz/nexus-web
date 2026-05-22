@@ -15,22 +15,26 @@ import type {
   ConversationMemoryInspection,
   ConversationMessage,
 } from "@/lib/conversations/types";
+import { buildProvenanceModel } from "@/lib/conversations/provenance/buildModel";
 import {
   assessProvenanceModel,
-  buildProvenanceModel,
+  statusSeverity,
+  supportStatusLabel,
+} from "@/lib/conversations/provenance/audit";
+import {
   createProvenancePacket,
   formatProvenanceBrief,
   stringifyProvenancePacket,
-  statusSeverity,
-  supportStatusLabel,
   verifyProvenancePacket,
-  type ProvenanceAudit,
-  type ProvenanceArtifact,
-  type ProvenanceClaim,
-  type ProvenanceModel,
-  type ProvenancePacketVerification,
-  type ProvenanceSource,
-} from "@/lib/conversations/provenance";
+} from "@/lib/conversations/provenance/packet";
+import type {
+  ProvenanceAudit,
+  ProvenanceArtifact,
+  ProvenanceClaim,
+  ProvenanceModel,
+  ProvenancePacketVerification,
+  ProvenanceSource,
+} from "@/lib/conversations/provenance/types";
 import { truncateText } from "@/lib/conversations/display";
 import styles from "./ConversationProvenancePanel.module.css";
 

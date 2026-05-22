@@ -1,9 +1,6 @@
 import { isAbortError } from "@/lib/errors";
-import {
-  parseSSEJsonStream,
-  toChatSSEEvent,
-  type SSEEvent,
-} from "./sse";
+import { toChatSSEEvent, type SSEEvent } from "./sse";
+import { parseSSEJsonStream } from "./sse-stream";
 
 const RECONNECT_DELAY_MS = 1000;
 const EVENT_STREAM_CONTENT_TYPE = "text/event-stream";

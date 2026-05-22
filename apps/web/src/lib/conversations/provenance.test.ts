@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
-  assessProvenanceModel,
   buildProvenanceModel,
   countProvenanceSignals,
+} from "@/lib/conversations/provenance/buildModel";
+import { assessProvenanceModel } from "@/lib/conversations/provenance/audit";
+import {
   createProvenancePacket,
   formatProvenanceBrief,
   stringifyProvenancePacket,
   verifyProvenancePacket,
-} from "@/lib/conversations/provenance";
+} from "@/lib/conversations/provenance/packet";
 import type { ConversationMessage } from "@/lib/conversations/types";
 
 const provenanceMessage = {

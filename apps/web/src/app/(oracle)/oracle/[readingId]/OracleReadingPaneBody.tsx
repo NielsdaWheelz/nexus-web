@@ -9,7 +9,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { ApiError, apiFetch } from "@/lib/api/client";
-import { parseSSEJsonStream, type SSEJsonEvent } from "@/lib/api/sse";
+import { parseSSEJsonStream, type SSEJsonEvent } from "@/lib/api/sse-stream";
 import { fetchStreamToken } from "@/lib/api/streamToken";
 import { isAbortError } from "@/lib/errors";
 import { useStickyHeadline } from "../../OracleShell";
