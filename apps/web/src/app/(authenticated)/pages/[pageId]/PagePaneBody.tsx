@@ -30,7 +30,7 @@ import {
 } from "@/lib/notes/useNoteEditorSession";
 import styles from "../../notes/notes.module.css";
 
-export interface PersistedDraftBlock {
+interface PersistedDraftBlock {
   id: string;
   parentBlockId: string | null;
   beforeBlockId: string | null;
