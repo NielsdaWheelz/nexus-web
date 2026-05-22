@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import Image from "next/image";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
-import { useGlobalPlayer, type GlobalPlayerChapter } from "@/lib/player/globalPlayer";
+import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import type { GlobalPlayerChapter } from "@/lib/player/chapters";
 import {
   formatTranscriptTimestampMs,
   normalizeTranscriptChapters,
