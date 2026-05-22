@@ -13,6 +13,7 @@ import {
   projectPdfQuadToViewportRect,
   type PdfPageViewportTransform,
 } from "@/lib/highlights/coordinateTransforms";
+import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 
@@ -51,13 +52,6 @@ export interface AnchoredHighlightRow {
 export interface AnchoredHighlightProjection {
   highlight: AnchoredHighlightRow;
   rect: { top: number; bottom: number };
-}
-
-export function escapeAttrValue(value: string): string {
-  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-    return CSS.escape(value);
-  }
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 export function findScrollParent(element: HTMLElement): HTMLElement {

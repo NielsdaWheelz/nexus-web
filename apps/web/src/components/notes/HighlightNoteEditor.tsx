@@ -18,15 +18,8 @@ import {
   type NoteEditorSessionStatus,
 } from "@/lib/notes/useNoteEditorSession";
 import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
+import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
 import styles from "./HighlightNoteEditor.module.css";
-
-export interface HighlightLinkedNoteBlock {
-  note_block_id: string;
-  body_pm_json?: Record<string, unknown>;
-  body_markdown?: string;
-  body_text: string;
-  revision: number;
-}
 
 export default function HighlightNoteEditor({
   highlightId,

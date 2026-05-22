@@ -3,7 +3,7 @@ import {
   patchHighlightLinkedNoteBlock,
   removeHighlightLinkedNoteBlock,
   type Highlight,
-} from "./mediaHighlights";
+} from "./api";
 
 function highlight(id: string, noteIds: string[] = []): Highlight {
   return {

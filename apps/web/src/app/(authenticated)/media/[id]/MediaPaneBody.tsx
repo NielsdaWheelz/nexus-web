@@ -55,11 +55,10 @@ import {
 } from "@/lib/highlights/applySegments";
 import {
   buildCanonicalCursor,
-  canonicalCpToRawCp,
   validateCanonicalText,
   type CanonicalCursorResult,
 } from "@/lib/highlights/canonicalCursor";
-import { codepointToUtf16 } from "@/lib/highlights/codepoints";
+import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { selectionToOffsets } from "@/lib/highlights/selectionToOffsets";
 import {
@@ -92,10 +91,24 @@ import {
   isPdfReaderResumeState,
   isReflowableReaderResumeState,
   type EpubReaderResumeState,
-  type ReaderResumeLocations,
   type ReaderResumeState,
-  type ReaderResumeTextContext,
 } from "@/lib/reader/types";
+import {
+  buildCanonicalQuoteWindow,
+  findCanonicalOffsetFromQuote,
+} from "@/lib/reader/canonicalQuote";
+import {
+  buildManualSectionRestoreRequest,
+  resolveInitialEpubRestoreRequest,
+  type EpubRestoreRequest,
+  type ReaderRestorePhase,
+} from "./epubRestore";
+import {
+  findFirstVisibleCanonicalOffset,
+  getPaneScrollContainer,
+  isCanonicalTextAnchorVisible,
+  scrollToCanonicalTextAnchor,
+} from "./paneTextAnchor";
 import { useReaderResumeState } from "@/lib/reader/useReaderResumeState";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import type { ConversationScope } from "@/lib/conversations/types";
@@ -138,7 +151,7 @@ import {
   patchHighlightLinkedNoteBlock,
   removeHighlightLinkedNoteBlock,
   type HighlightLinkedNoteBlock,
-} from "./mediaHighlights";
+} from "@/lib/highlights/api";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import {
@@ -245,11 +258,8 @@ interface EvidenceResolutionResponse {
 }
 
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
-const TEXT_ANCHOR_TOP_PADDING_PX = 56;
 const READER_POSITION_BUCKET_CP = 1024;
 const DOCUMENT_PROCESSING_POLL_INTERVAL_MS = 3000;
-const READER_QUOTE_EXACT_CP = 48;
-const READER_QUOTE_CONTEXT_CP = 24;
 const READER_SELECTION_CONTEXT_CP = 160;
 
 function createEmptyPdfHighlightsPaneState(): PdfHighlightsPaneState {
@@ -258,47 +268,6 @@ function createEmptyPdfHighlightsPaneState(): PdfHighlightsPaneState {
     highlights: [],
     version: 0,
   };
-}
-
-function escapeAttrValue(value: string): string {
-  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-    return CSS.escape(value);
-  }
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-function getPaneScrollContainer(
-  contentNode: HTMLDivElement | null,
-): HTMLElement | null {
-  if (!contentNode) {
-    return null;
-  }
-
-  const paneContent = contentNode.closest<HTMLElement>(
-    '[data-pane-content="true"]',
-  );
-  if (paneContent) {
-    return paneContent;
-  }
-
-  if (typeof document !== "undefined" && document.scrollingElement) {
-    return document.scrollingElement as HTMLElement;
-  }
-  return null;
-}
-
-function getPaneScrollTopPaddingPx(container: HTMLElement): number {
-  if (typeof window === "undefined") {
-    return TEXT_ANCHOR_TOP_PADDING_PX;
-  }
-
-  const parsed = Number.parseFloat(
-    window.getComputedStyle(container).scrollPaddingTop,
-  );
-  if (Number.isFinite(parsed) && parsed > 0) {
-    return parsed;
-  }
-  return TEXT_ANCHOR_TOP_PADDING_PX;
 }
 
 function buildSelectionSnapshotKey(selection: SelectionState): string {
@@ -313,204 +282,6 @@ function buildSelectionSnapshotKey(selection: SelectionState): string {
     width.toFixed(1),
     height.toFixed(1),
   ].join("::");
-}
-
-function findFirstVisibleCanonicalOffset(
-  container: HTMLElement,
-  cursor: CanonicalCursorResult,
-): number | null {
-  const containerRect = container.getBoundingClientRect();
-  const topPaddingPx = getPaneScrollTopPaddingPx(container);
-  const probeTop =
-    containerRect.top +
-    Math.min(
-      topPaddingPx,
-      Math.max(8, Math.floor(containerRect.height * 0.12)),
-    );
-
-  for (const entry of cursor.nodes) {
-    const anchorElement = entry.node.parentElement;
-    if (!anchorElement) {
-      continue;
-    }
-    const rect = anchorElement.getBoundingClientRect();
-    if (rect.bottom < probeTop || rect.top > containerRect.bottom) {
-      continue;
-    }
-    if ((entry.node.textContent ?? "").trim().length === 0) {
-      continue;
-    }
-    return entry.start;
-  }
-  return null;
-}
-
-function scrollToCanonicalTextAnchor(
-  container: HTMLElement,
-  cursor: CanonicalCursorResult,
-  canonicalOffset: number,
-): boolean {
-  if (cursor.nodes.length === 0) {
-    return false;
-  }
-
-  const clampedOffset = Math.max(0, Math.min(canonicalOffset, cursor.length));
-  const targetNode =
-    cursor.nodes.find(
-      (entry) => clampedOffset >= entry.start && clampedOffset < entry.end,
-    ) ??
-    cursor.nodes.find((entry) => entry.start >= clampedOffset) ??
-    cursor.nodes[cursor.nodes.length - 1];
-
-  if (!targetNode) {
-    return false;
-  }
-
-  const rawText = targetNode.node.textContent ?? "";
-  const nodeCanonicalLength = Math.max(0, targetNode.end - targetNode.start);
-  const localCanonicalOffset = Math.max(
-    0,
-    Math.min(clampedOffset - targetNode.start, nodeCanonicalLength),
-  );
-  const localRawCpOffset = canonicalCpToRawCp(
-    rawText,
-    localCanonicalOffset,
-    targetNode.trimLeadCp,
-  );
-  const localRawUtf16Offset = Math.max(
-    0,
-    Math.min(codepointToUtf16(rawText, localRawCpOffset), rawText.length),
-  );
-
-  const range = document.createRange();
-  range.setStart(targetNode.node, localRawUtf16Offset);
-  range.collapse(true);
-
-  const containerRect = container.getBoundingClientRect();
-  const topPaddingPx = getPaneScrollTopPaddingPx(container);
-  const targetRect = range.getBoundingClientRect();
-  if (targetRect.width > 0 || targetRect.height > 0) {
-    const delta = targetRect.top - containerRect.top - topPaddingPx;
-    container.scrollTop = Math.max(0, container.scrollTop + delta);
-    return true;
-  }
-
-  const fallbackElement = targetNode.node.parentElement;
-  if (fallbackElement) {
-    fallbackElement.scrollIntoView({ block: "start", behavior: "auto" });
-    return true;
-  }
-  return false;
-}
-
-function buildCanonicalQuoteWindow(
-  canonicalText: string,
-  canonicalOffset: number,
-): {
-  quote: string | null;
-  quotePrefix: string | null;
-  quoteSuffix: string | null;
-} {
-  const chars = [...canonicalText];
-  if (chars.length === 0) {
-    return { quote: null, quotePrefix: null, quoteSuffix: null };
-  }
-
-  const clampedOffset = Math.max(
-    0,
-    Math.min(Math.floor(canonicalOffset), chars.length - 1),
-  );
-  const quoteStart = Math.min(
-    clampedOffset,
-    Math.max(0, chars.length - READER_QUOTE_EXACT_CP),
-  );
-  const quoteEnd = Math.min(chars.length, quoteStart + READER_QUOTE_EXACT_CP);
-  const prefixStart = Math.max(0, quoteStart - READER_QUOTE_CONTEXT_CP);
-  const suffixEnd = Math.min(chars.length, quoteEnd + READER_QUOTE_CONTEXT_CP);
-
-  const quote = chars.slice(quoteStart, quoteEnd).join("");
-  const quotePrefix = chars.slice(prefixStart, quoteStart).join("");
-  const quoteSuffix = chars.slice(quoteEnd, suffixEnd).join("");
-
-  return {
-    quote: quote.length > 0 ? quote : null,
-    quotePrefix: quotePrefix.length > 0 ? quotePrefix : null,
-    quoteSuffix: quoteSuffix.length > 0 ? quoteSuffix : null,
-  };
-}
-
-function findCanonicalOffsetFromQuote(
-  canonicalText: string,
-  quote: string | null,
-  quotePrefix: string | null,
-  quoteSuffix: string | null,
-): number | null {
-  if (!quote) {
-    return null;
-  }
-
-  const chars = [...canonicalText];
-  const quoteChars = [...quote];
-  const prefixChars = quotePrefix ? [...quotePrefix] : [];
-  const suffixChars = quoteSuffix ? [...quoteSuffix] : [];
-  if (quoteChars.length === 0 || chars.length < quoteChars.length) {
-    return null;
-  }
-
-  let bestOffset: number | null = null;
-  let bestScore = -1;
-
-  for (let start = 0; start <= chars.length - quoteChars.length; start += 1) {
-    let matchesQuote = true;
-    for (let idx = 0; idx < quoteChars.length; idx += 1) {
-      if (chars[start + idx] !== quoteChars[idx]) {
-        matchesQuote = false;
-        break;
-      }
-    }
-    if (!matchesQuote) {
-      continue;
-    }
-
-    let score = 0;
-    if (prefixChars.length > 0 && start >= prefixChars.length) {
-      let matchesPrefix = true;
-      for (let idx = 0; idx < prefixChars.length; idx += 1) {
-        if (chars[start - prefixChars.length + idx] !== prefixChars[idx]) {
-          matchesPrefix = false;
-          break;
-        }
-      }
-      if (matchesPrefix) {
-        score += 2;
-      }
-    }
-    if (
-      suffixChars.length > 0 &&
-      start + quoteChars.length + suffixChars.length <= chars.length
-    ) {
-      let matchesSuffix = true;
-      for (let idx = 0; idx < suffixChars.length; idx += 1) {
-        if (chars[start + quoteChars.length + idx] !== suffixChars[idx]) {
-          matchesSuffix = false;
-          break;
-        }
-      }
-      if (matchesSuffix) {
-        score += 1;
-      }
-    }
-
-    if (bestOffset === null || score > bestScore) {
-      bestOffset = start;
-      bestScore = score;
-      if (score === 3) {
-        break;
-      }
-    }
-  }
-
-  return bestOffset;
 }
 
 function parsePositivePageNumber(
@@ -541,67 +312,6 @@ function textQuoteField(
   }
   const value = (textQuote as Record<string, unknown>)[key];
   return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function isCanonicalTextAnchorVisible(
-  container: HTMLElement,
-  cursor: CanonicalCursorResult,
-  canonicalOffset: number,
-): boolean {
-  if (cursor.nodes.length === 0) {
-    return false;
-  }
-
-  const clampedOffset = Math.max(0, Math.min(canonicalOffset, cursor.length));
-  const targetNode =
-    cursor.nodes.find(
-      (entry) => clampedOffset >= entry.start && clampedOffset < entry.end,
-    ) ??
-    cursor.nodes.find((entry) => entry.start >= clampedOffset) ??
-    cursor.nodes[cursor.nodes.length - 1];
-
-  if (!targetNode) {
-    return false;
-  }
-
-  const rawText = targetNode.node.textContent ?? "";
-  const nodeCanonicalLength = Math.max(0, targetNode.end - targetNode.start);
-  const localCanonicalOffset = Math.max(
-    0,
-    Math.min(clampedOffset - targetNode.start, nodeCanonicalLength),
-  );
-  const localRawCpOffset = canonicalCpToRawCp(
-    rawText,
-    localCanonicalOffset,
-    targetNode.trimLeadCp,
-  );
-  const localRawUtf16Offset = Math.max(
-    0,
-    Math.min(codepointToUtf16(rawText, localRawCpOffset), rawText.length),
-  );
-
-  const range = document.createRange();
-  range.setStart(targetNode.node, localRawUtf16Offset);
-  range.collapse(true);
-
-  const containerRect = container.getBoundingClientRect();
-  const visibleTop =
-    containerRect.top + Math.floor(getPaneScrollTopPaddingPx(container) / 2);
-  const targetRect = range.getBoundingClientRect();
-  if (targetRect.width > 0 || targetRect.height > 0) {
-    return (
-      targetRect.bottom > visibleTop && targetRect.top < containerRect.bottom
-    );
-  }
-
-  const fallbackElement = targetNode.node.parentElement;
-  if (!fallbackElement) {
-    return false;
-  }
-  const fallbackRect = fallbackElement.getBoundingClientRect();
-  return (
-    fallbackRect.bottom > visibleTop && fallbackRect.top < containerRect.bottom
-  );
 }
 
 function useIntervalPoll({
@@ -657,262 +367,6 @@ function shouldPollDocumentProcessing(
     processingStatus === "pending" ||
     processingStatus === "extracting" ||
     processingStatus === "embedding"
-  );
-}
-
-type ReaderRestorePhase =
-  | "idle"
-  | "resolving"
-  | "opening_target"
-  | "restoring_exact"
-  | "restoring_fallback"
-  | "settled"
-  | "cancelled";
-
-type EpubRestoreSource =
-  | "initial_url"
-  | "resume_target"
-  | "resume_total_progression"
-  | "resume_position"
-  | "default"
-  | "history"
-  | "manual_section"
-  | "internal_link";
-
-type EpubRestoreRequest = {
-  sectionId: string;
-  anchorId: string | null;
-  locations: ReaderResumeLocations;
-  text: ReaderResumeTextContext;
-  source: EpubRestoreSource;
-  allowSectionTopFallback: boolean;
-};
-
-const EMPTY_LOCATIONS: ReaderResumeLocations = {
-  text_offset: null,
-  progression: null,
-  total_progression: null,
-  position: null,
-};
-
-const EMPTY_TEXT_CONTEXT: ReaderResumeTextContext = {
-  quote: null,
-  quote_prefix: null,
-  quote_suffix: null,
-};
-
-function buildEmptyEpubRestoreRequest(
-  sectionId: string,
-  source: EpubRestoreSource,
-  anchorId: string | null,
-  allowSectionTopFallback = true,
-): EpubRestoreRequest {
-  return {
-    sectionId,
-    anchorId,
-    locations: EMPTY_LOCATIONS,
-    text: EMPTY_TEXT_CONTEXT,
-    source,
-    allowSectionTopFallback,
-  };
-}
-
-function cloneLocations(
-  locations: ReaderResumeLocations,
-): ReaderResumeLocations {
-  return {
-    text_offset: locations.text_offset,
-    progression: locations.progression,
-    total_progression: locations.total_progression,
-    position: locations.position,
-  };
-}
-
-function cloneTextContext(
-  text: ReaderResumeTextContext,
-): ReaderResumeTextContext {
-  return {
-    quote: text.quote,
-    quote_prefix: text.quote_prefix,
-    quote_suffix: text.quote_suffix,
-  };
-}
-
-function buildEpubResumeRequest(
-  sectionId: string,
-  source: EpubRestoreSource,
-  resumeState: EpubReaderResumeState | null,
-  anchorIdOverride: string | null,
-): EpubRestoreRequest {
-  if (!resumeState || resumeState.target.section_id !== sectionId) {
-    return buildEmptyEpubRestoreRequest(sectionId, source, anchorIdOverride);
-  }
-
-  return {
-    sectionId,
-    anchorId: anchorIdOverride ?? resumeState.target.anchor_id,
-    locations: cloneLocations(resumeState.locations),
-    text: cloneTextContext(resumeState.text),
-    source,
-    allowSectionTopFallback: true,
-  };
-}
-
-function findSectionByHrefPath(
-  sections: EpubNavigationSection[],
-  hrefPath: string,
-  anchorId: string | null,
-): EpubNavigationSection | null {
-  return (
-    sections.find(
-      (section) =>
-        section.href_path === hrefPath &&
-        anchorId !== null &&
-        section.anchor_id === anchorId,
-    ) ??
-    sections.find((section) => section.href_path === hrefPath) ??
-    null
-  );
-}
-
-function resolveSectionIdByTotalProgression(
-  sections: EpubNavigationSection[],
-  totalProgression: number,
-): string | null {
-  const totalCharCount = sections.reduce(
-    (sum, section) => sum + section.char_count,
-    0,
-  );
-  if (totalCharCount <= 0) {
-    return null;
-  }
-
-  const clampedProgression = Math.max(0, Math.min(totalProgression, 1));
-  const targetOffset = Math.min(
-    totalCharCount - 1,
-    Math.floor(clampedProgression * totalCharCount),
-  );
-
-  let sectionStart = 0;
-  for (const section of sections) {
-    const sectionEnd = sectionStart + section.char_count;
-    if (targetOffset < sectionEnd) {
-      return section.section_id;
-    }
-    sectionStart = sectionEnd;
-  }
-  return null;
-}
-
-function resolveSectionIdByPosition(
-  sections: EpubNavigationSection[],
-  position: number,
-  readerPositionBucketCp: number,
-): string | null {
-  const targetOffset = (position - 1) * readerPositionBucketCp;
-  let sectionStart = 0;
-  for (const section of sections) {
-    const sectionEnd = sectionStart + section.char_count;
-    if (targetOffset < sectionEnd) {
-      return section.section_id;
-    }
-    sectionStart = sectionEnd;
-  }
-  return null;
-}
-
-function resolveInitialEpubRestoreRequest({
-  requestedSectionId,
-  resumeState,
-  sections,
-  readerPositionBucketCp,
-}: {
-  requestedSectionId: string | null;
-  resumeState: EpubReaderResumeState | null;
-  sections: EpubNavigationSection[];
-  readerPositionBucketCp: number;
-}): EpubRestoreRequest | null {
-  if (sections.length === 0) {
-    return null;
-  }
-
-  if (requestedSectionId) {
-    const requestedSection = sections.find(
-      (section) => section.section_id === requestedSectionId,
-    );
-    if (requestedSection) {
-      return buildEpubResumeRequest(
-        requestedSection.section_id,
-        "initial_url",
-        resumeState,
-        null,
-      );
-    }
-  }
-
-  if (resumeState) {
-    const directMatch =
-      sections.find(
-        (section) => section.section_id === resumeState.target.section_id,
-      ) ??
-      findSectionByHrefPath(
-        sections,
-        resumeState.target.href_path,
-        resumeState.target.anchor_id,
-      );
-    if (directMatch) {
-      return buildEpubResumeRequest(
-        directMatch.section_id,
-        "resume_target",
-        resumeState,
-        resumeState.target.anchor_id,
-      );
-    }
-
-    if (resumeState.locations.total_progression !== null) {
-      const sectionId = resolveSectionIdByTotalProgression(
-        sections,
-        resumeState.locations.total_progression,
-      );
-      if (sectionId) {
-        return buildEpubResumeRequest(
-          sectionId,
-          "resume_total_progression",
-          resumeState,
-          null,
-        );
-      }
-    }
-
-    if (resumeState.locations.position !== null) {
-      const sectionId = resolveSectionIdByPosition(
-        sections,
-        resumeState.locations.position,
-        readerPositionBucketCp,
-      );
-      if (sectionId) {
-        return buildEpubResumeRequest(
-          sectionId,
-          "resume_position",
-          resumeState,
-          null,
-        );
-      }
-    }
-  }
-
-  return buildEmptyEpubRestoreRequest(sections[0].section_id, "default", null);
-}
-
-function buildManualSectionRestoreRequest(
-  sectionId: string,
-  anchorId: string | null = null,
-): EpubRestoreRequest {
-  return buildEmptyEpubRestoreRequest(
-    sectionId,
-    "manual_section",
-    anchorId,
-    anchorId === null,
   );
 }
 

@@ -16,17 +16,16 @@ import {
   toFeedback,
   useFeedback,
 } from "@/components/feedback/Feedback";
-import HighlightNoteEditor, {
-  type HighlightLinkedNoteBlock,
-} from "@/components/notes/HighlightNoteEditor";
+import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
+import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
 import Button from "@/components/ui/Button";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import HighlightActionsMenu from "./HighlightActionsMenu";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { NOTE_LAYOUT_MEASURE_DELAY_MS } from "@/lib/notes/useNoteEditorSession";
 import Pill from "@/components/ui/Pill";
+import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
 import {
-  escapeAttrValue,
   findScrollParent,
   useAnchoredHighlightProjection,
   type AnchoredHighlightRow,

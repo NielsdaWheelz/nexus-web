@@ -21,6 +21,7 @@
  */
 
 import { useState, useCallback, useRef } from "react";
+import { escapeAttrValue } from "./escapeAttrValue";
 
 // =============================================================================
 // Types
@@ -314,11 +315,7 @@ export function applyFocusClass(
   // Add focus class to elements containing the focused highlight
   // Use ~= selector for exact space-delimited token matching.
   if (highlightId) {
-    const escapedId =
-      typeof CSS !== "undefined" && typeof CSS.escape === "function"
-        ? CSS.escape(highlightId)
-        : highlightId.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    const selector = `[data-active-highlight-ids~="${escapedId}"]`;
+    const selector = `[data-active-highlight-ids~="${escapeAttrValue(highlightId)}"]`;
     const elements = container.querySelectorAll(selector);
     elements.forEach((el) => el.classList.add(focusClass));
   }

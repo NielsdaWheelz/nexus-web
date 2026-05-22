@@ -4,10 +4,11 @@ import { Component, memo, useCallback, useEffect, useMemo, useRef, useState } fr
 import {
   getParentHref,
   resolvePaneRoute,
+  type PaneBodyMode,
   type ResolvedPaneRoute,
 } from "@/lib/panes/paneRouteRegistry";
 import { PaneRuntimeProvider, usePaneRuntime } from "@/lib/panes/paneRuntime";
-import PaneShell, { type PaneBodyMode } from "@/components/workspace/PaneShell";
+import PaneShell from "@/components/workspace/PaneShell";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { loadKeybindings, matchesKeyEvent } from "@/lib/keybindings";
