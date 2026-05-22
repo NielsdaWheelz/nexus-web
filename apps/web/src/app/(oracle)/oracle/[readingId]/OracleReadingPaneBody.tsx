@@ -12,6 +12,7 @@ import { ApiError, apiFetch } from "@/lib/api/client";
 import { parseSSEJsonStream, type SSEJsonEvent } from "@/lib/api/sse-stream";
 import { fetchStreamToken } from "@/lib/api/streamToken";
 import { isAbortError } from "@/lib/errors";
+import { toRoman } from "@/lib/toRoman";
 import { isRecord } from "@/lib/validation";
 import { useStickyHeadline } from "../../OracleShell";
 import BorderFrame from "../BorderFrame";
@@ -391,22 +392,6 @@ function ordinalEnglish(day: number): string {
   return `${tens}-${ORDINAL_ONES[day % 10]!}`;
 }
 
-function toRoman(year: number): string {
-  const lookup: [number, string][] = [
-    [1000, "M"], [900, "CM"], [500, "D"], [400, "CD"],
-    [100, "C"], [90, "XC"], [50, "L"], [40, "XL"],
-    [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"],
-  ];
-  let remaining = year;
-  let out = "";
-  for (const [value, symbol] of lookup) {
-    while (remaining >= value) {
-      out += symbol;
-      remaining -= value;
-    }
-  }
-  return out;
-}
 
 function FleuronBreak() {
   return (
