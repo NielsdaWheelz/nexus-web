@@ -10,7 +10,10 @@ import {
   type MutableRefObject,
 } from "react";
 import { apiFetch } from "@/lib/api/client";
-import { toFeedback } from "@/components/feedback/Feedback";
+import {
+  PDF_PASSWORD_PROTECTED_MESSAGE,
+  toFeedback,
+} from "@/components/feedback/Feedback";
 import type { PdfReaderResumeState } from "@/lib/reader/types";
 import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
 import { usePaneMobileChromeController } from "@/components/workspace/PaneShell";
@@ -317,7 +320,7 @@ function isLikelySignedUrlExpiryError(error: unknown): boolean {
 
 function toUserFacingError(error: unknown): string {
   if (isPasswordPdfError(error)) {
-    return "This PDF is password-protected and cannot be opened in v1.";
+    return PDF_PASSWORD_PROTECTED_MESSAGE;
   }
   return toFeedback(error, {
     fallback: "Unable to load this PDF right now. Please retry.",

@@ -1,6 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { stateChangingApiHeaders } from "./api";
 import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
 
 interface SeededPdfMedia {
@@ -45,11 +46,26 @@ async function putReaderState(
   page: Page,
   mediaId: string,
   locator: PdfReaderResumeState | null,
-) {
+): Promise<void> {
   const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
     data: locator,
+    headers: stateChangingApiHeaders(),
   });
-  expect(response.ok()).toBeTruthy();
+  if (response.ok()) {
+    return;
+  }
+
+  let responseBody = "";
+  try {
+    responseBody = await response.text();
+  } catch (error) {
+    responseBody = `unable to read response body: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+  }
+  throw new Error(
+    `PUT /api/media/${mediaId}/reader-state failed with ${response.status()}: ${responseBody}`,
+  );
 }
 
 function activeTextLayer(page: Page) {
@@ -189,6 +205,7 @@ async function ensureOnPage(page: Page, targetPage: number, pageCount: number): 
 }
 
 async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
+  let lastError: unknown = null;
   try {
     await expect
       .poll(
@@ -202,7 +219,8 @@ async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
               zoom: 1,
             });
             return true;
-          } catch {
+          } catch (error) {
+            lastError = error;
             return false;
           }
         },
@@ -214,19 +232,17 @@ async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
       .toBe(true);
     return;
   } catch (error) {
+    const cause = lastError ?? error;
     throw new Error(
-      `Failed to reset PDF reader state for ${mediaId}. cause=${error instanceof Error ? error.message : String(error)}`,
+      `Failed to reset PDF reader state for ${mediaId}. cause=${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
     );
   }
 }
 
 test.describe("pdf reader", () => {
   test.describe.configure({ mode: "serial" });
-
-  test.beforeEach(async ({ page }) => {
-    const seeded = readSeededPdfMedia();
-    await resetPdfReaderState(page, seeded.media_id);
-  });
 
   test("upload -> viewer -> persistent highlight -> send to chat", async ({ page }) => {
     test.slow();
@@ -236,9 +252,9 @@ test.describe("pdf reader", () => {
     const expectedMediaId = seeded.media_id;
     let createdHighlightId: string | null = null;
     let productError: unknown = null;
-
     try {
       await page.goto("/libraries");
+      await resetPdfReaderState(page, expectedMediaId);
       await page.getByRole("button", { name: "Add content" }).click();
       const addContentDialog = page.getByRole("dialog", { name: "Add content" });
       await expect(addContentDialog).toBeVisible();
@@ -286,6 +302,7 @@ test.describe("pdf reader", () => {
             },
           ],
         },
+        headers: stateChangingApiHeaders(),
       });
       expect(createHighlight.ok()).toBe(true);
       createdHighlightId = (await createHighlight.json()).data.id as string;
@@ -339,6 +356,8 @@ test.describe("pdf reader", () => {
     const seeded = readSeededPdfMedia();
     const mediaId = seeded.media_id;
     const expectedPageCount = seeded.page_count;
+    await page.goto("/libraries");
+    await resetPdfReaderState(page, mediaId);
     test.skip(
       expectedPageCount < 2,
       "Seeded PDF fixture must include at least two pages for cross-page navigation coverage",
@@ -370,6 +389,7 @@ test.describe("pdf reader", () => {
             },
           ],
         },
+        headers: stateChangingApiHeaders(),
       });
       expect(createPageOne.ok()).toBe(true);
       pageOneHighlightId = (await createPageOne.json()).data.id as string;
@@ -392,6 +412,7 @@ test.describe("pdf reader", () => {
             },
           ],
         },
+        headers: stateChangingApiHeaders(),
       });
       expect(createPageTwo.ok()).toBe(true);
       pageTwoHighlightId = (await createPageTwo.json()).data.id as string;
@@ -454,7 +475,7 @@ test.describe("pdf reader", () => {
   test("password-protected seeded pdf shows deterministic failure semantics", async ({ page }) => {
     const seeded = readSeededPdfMedia();
     await page.goto(`/media/${seeded.password_media_id}`);
-    await expect(page.getByText(/password-protected and cannot be opened in v1/i)).toBeVisible();
+    await expect(page.getByText("This PDF is password-protected")).toBeVisible();
     await expect(page.getByRole("img", { name: "PDF page" })).toHaveCount(0);
   });
 
@@ -464,6 +485,8 @@ test.describe("pdf reader", () => {
     const seeded = readSeededPdfMedia();
     const mediaId = seeded.media_id;
     const expectedPageCount = seeded.page_count;
+    await page.goto("/libraries");
+    await resetPdfReaderState(page, mediaId);
     const fileEndpointPath = `/api/media/${mediaId}/file`;
     let fileEndpointRequests = 0;
     const initialFileResponsePromise = page.waitForResponse((response) => {

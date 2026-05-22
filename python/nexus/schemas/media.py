@@ -273,7 +273,7 @@ class TranscriptRequestBatchResponse(BaseModel):
 
 
 # =============================================================================
-# URL-Based Ingestion Schemas (S2)
+# URL-Based Ingestion Schemas
 # =============================================================================
 
 

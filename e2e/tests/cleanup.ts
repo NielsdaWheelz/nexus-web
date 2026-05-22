@@ -1,4 +1,5 @@
 import type { APIRequestContext } from "@playwright/test";
+import { stateChangingApiHeaders } from "./api";
 
 export async function deleteE2eResource(
   request: APIRequestContext,
@@ -7,7 +8,10 @@ export async function deleteE2eResource(
 ) {
   const response = path.startsWith("/api/notes/blocks/")
     ? await deleteNoteBlockResource(request, path)
-    : await request.delete(path, { timeout: 5_000 });
+    : await request.delete(path, {
+        timeout: 5_000,
+        headers: stateChangingApiHeaders(),
+      });
   if (response.ok() || response.status() === 404) {
     return;
   }
@@ -32,6 +36,7 @@ async function deleteNoteBlockResource(request: APIRequestContext, path: string)
   return request.delete(path, {
     timeout: 5_000,
     data: { base_revision: revision },
+    headers: stateChangingApiHeaders(),
   });
 }
 

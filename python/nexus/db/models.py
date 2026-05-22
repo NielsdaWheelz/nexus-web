@@ -142,7 +142,7 @@ class MembershipRole(str, PyEnum):
     member = "member"
 
 
-# --- Slice 4: Library Sharing Enums ---
+# Library sharing enums
 
 
 class LibraryInvitationRole(str, PyEnum):
@@ -751,7 +751,7 @@ class Media(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     canonical_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # S1 processing lifecycle fields
+    # Processing lifecycle fields
     processing_status: Mapped[ProcessingStatus] = mapped_column(
         Enum(
             ProcessingStatus,
@@ -780,24 +780,24 @@ class Media(Base):
     )
     failed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
-    # S1 URL/file identity fields
+    # URL and file identity fields
     requested_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     canonical_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     file_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
     external_playback_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # S1 provider fields (for future S7/S8)
+    # Provider identity fields
     provider: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # S1 creator tracking
+    # Creator tracking
     created_by_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
 
-    # S6 PDF text readiness fields
+    # PDF text readiness fields
     plain_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -1994,7 +1994,7 @@ class LibraryIntelligenceBuild(Base):
 
 
 # =============================================================================
-# Slice 7: Podcasts
+# Podcasts
 # =============================================================================
 
 
@@ -3203,7 +3203,7 @@ class PodcastTranscriptRequestAudit(Base):
 
 
 # =============================================================================
-# Slice 2: Highlights
+# Highlights
 # =============================================================================
 
 
@@ -3291,7 +3291,7 @@ class Highlight(Base):
 
 
 # =============================================================================
-# Slice 6: Typed Highlight Anchor Subtypes + PDF Text Artifacts
+# Typed Highlight Anchor Subtypes + PDF Text Artifacts
 # =============================================================================
 
 
@@ -3299,7 +3299,7 @@ class HighlightFragmentAnchor(Base):
     """Fragment-offset anchor subtype (1:1 with highlights).
 
     Stores the canonical fragment/offset data for html/epub/transcript
-    highlights.  Dormant in pr-01; pr-02 adopts typed-write paths.
+    highlights.
     """
 
     __tablename__ = "highlight_fragment_anchors"
@@ -3470,7 +3470,7 @@ class PdfPageTextSpan(Base):
 
 
 # =============================================================================
-# Slice 3: Chat + Conversations + LLM Infrastructure
+# Chat, Conversations, and LLM Infrastructure
 # =============================================================================
 
 
@@ -6673,7 +6673,7 @@ class ConversationMedia(Base):
 
 
 # =============================================================================
-# Slice 4: Library Sharing
+# Library Sharing
 # =============================================================================
 
 
@@ -6775,7 +6775,7 @@ class DefaultLibraryIntrinsic(Base):
     """Tracks media intentionally present in a user's default library.
 
     Independent of closure edges — represents direct user intent (e.g. upload,
-    from-url creation, or legacy pre-S4 presence).
+    from-url creation, or media captured by default-library backfill).
     """
 
     __tablename__ = "default_library_intrinsics"
@@ -6890,7 +6890,7 @@ class DefaultLibraryBackfillJob(Base):
 
 
 # =============================================================================
-# Slice 5: EPUB
+# EPUB
 # =============================================================================
 
 

@@ -90,6 +90,40 @@ function normalizePostgresUrl(dbUrl) {
   return dbUrl.replace(/^postgresql\+psycopg:\/\//, "postgresql://");
 }
 
+function readPdfUploadFixturePath() {
+  const pdf = readJson(PDF_SEED);
+  if (
+    typeof pdf.upload_fixture_path !== "string" ||
+    pdf.upload_fixture_path.length === 0 ||
+    path.isAbsolute(pdf.upload_fixture_path)
+  ) {
+    return null;
+  }
+  const resolved = path.resolve(E2E_DIR, pdf.upload_fixture_path);
+  const relativeToE2eDir = path.relative(E2E_DIR, resolved);
+  if (
+    relativeToE2eDir.startsWith("..") ||
+    path.isAbsolute(relativeToE2eDir)
+  ) {
+    return null;
+  }
+  return resolved;
+}
+
+function missingSeedArtifact() {
+  const missingSeedFile = SEED_FILES.find((filePath) => !existsSync(filePath));
+  if (missingSeedFile) {
+    return missingSeedFile;
+  }
+
+  const pdfUploadFixturePath = readPdfUploadFixturePath();
+  if (pdfUploadFixturePath === null || !existsSync(pdfUploadFixturePath)) {
+    return pdfUploadFixturePath ?? `${PDF_SEED}:upload_fixture_path`;
+  }
+
+  return null;
+}
+
 function assertRealMediaE2eEnvironmentIsLocal(dbUrl) {
   const nexusEnv = process.env.NEXUS_ENV ?? "local";
   if (nexusEnv !== "local") {
@@ -116,7 +150,7 @@ function assertRealMediaE2eEnvironmentIsLocal(dbUrl) {
 }
 
 function seedArtifactsExist() {
-  return SEED_FILES.every((filePath) => existsSync(filePath));
+  return missingSeedArtifact() === null;
 }
 
 function readSeededMediaIds() {
@@ -544,10 +578,10 @@ export default function globalSetup() {
   );
 
   // Step 3: Verify all seed artifacts were created.
-  const missingSeedFile = SEED_FILES.find((filePath) => !existsSync(filePath));
-  if (missingSeedFile) {
+  const missingArtifact = missingSeedArtifact();
+  if (missingArtifact) {
     throw new Error(
-      `[global-setup] Seed script succeeded but ${missingSeedFile} was not created.\n` +
+      `[global-setup] Seed script succeeded but ${missingArtifact} was not created.\n` +
         "  This indicates a bug in python/scripts/seed_e2e_data.py.",
     );
   }

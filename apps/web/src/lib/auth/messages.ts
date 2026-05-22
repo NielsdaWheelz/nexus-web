@@ -6,9 +6,9 @@ export const OAUTH_START_FAILURE_MESSAGE =
   "We couldn't start sign in. Please try again.";
 
 // Shown on /login after a forced sign-out: a refresh failed, or the session was
-// revoked. Stated plainly — never an opaque "session expired" — per the
-// cutover's forced-logout UX rule. The /auth/refresh route sets this exact
-// string as the `error_description` it redirects with.
+// revoked. Stated plainly — never as an opaque "session expired". The
+// /auth/refresh route sets this exact string as the `error_description` it
+// redirects with.
 export const SESSION_ENDED_MESSAGE = "Your session ended. Please sign in again.";
 
 export const PASSWORD_SIGN_IN_FAILURE_MESSAGE = "Email or password is incorrect.";

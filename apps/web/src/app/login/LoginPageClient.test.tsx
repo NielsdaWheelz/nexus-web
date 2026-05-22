@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import {
   PASSWORD_SIGN_IN_FAILURE_MESSAGE,
   PASSWORD_SIGN_UP_EMAIL_TAKEN_MESSAGE,
+  SESSION_ENDED_MESSAGE,
 } from "@/lib/auth/messages";
 
 const signInWithPasswordAction = vi.hoisted(() => vi.fn());
@@ -178,7 +179,7 @@ describe("LoginPageClient", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("renders a calm 'you were signed out' notice for forced-logout feedback", () => {
+  it("renders a calm 'you were signed out' notice for forced sign-out feedback", () => {
     render(
       <LoginPageClient
         nextPath="/libraries"
@@ -186,7 +187,7 @@ describe("LoginPageClient", () => {
         initialFeedback={{
           severity: "info",
           title: "You were signed out.",
-          message: "Your session ended. Please sign in again.",
+          message: SESSION_ENDED_MESSAGE,
         }}
       />
     );

@@ -1,3 +1,4 @@
+import { SESSION_ENDED_MESSAGE } from "@/lib/auth/messages";
 import { normalizeAuthRedirect } from "@/lib/auth/redirects";
 import { refreshSession } from "@/lib/auth/refresh";
 import { getSupabaseAuthCookieNames } from "@/lib/auth/session-cookie";
@@ -10,10 +11,6 @@ export const runtime = "nodejs";
 const TEMPORARY_REDIRECT = 307;
 const NO_CONTENT = 204;
 const UNAUTHORIZED = 401;
-
-// Shown on the /login redirect when a refresh fails — specific, not an opaque
-// "session expired", per the cutover's forced-logout UX rule.
-const SESSION_ENDED_MESSAGE = "Your session ended. Please sign in again.";
 
 function applyRotatedCookies(
   response: NextResponse,

@@ -2,9 +2,9 @@
 
 import { useEffect } from "react";
 
-// Refresh at ~67% of the ~1h access-token TTL — comfortably inside the cutover's
-// 50-75% band, so the session is renewed before it can reach `refreshable` and
-// the middleware-redirect / inline-refresh paths are hit only on cold loads.
+// Refresh at ~67% of the ~1h access-token TTL, so the session is renewed before
+// it can reach `refreshable` and the middleware-redirect / inline-refresh paths
+// are hit only on cold loads.
 const REFRESH_INTERVAL_MS = 40 * 60 * 1000;
 // Random delay added on top of each scheduled tick so multiple tabs — or web and
 // the Android shell opened together — do not all refresh at the same wall-clock

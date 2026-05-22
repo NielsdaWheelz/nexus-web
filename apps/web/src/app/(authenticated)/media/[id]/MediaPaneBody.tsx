@@ -42,6 +42,7 @@ import SelectionPopover from "@/components/SelectionPopover";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import {
   FeedbackNotice,
+  PDF_PASSWORD_PROTECTED_MESSAGE,
   toFeedback,
   useFeedback,
   type FeedbackContent,
@@ -5945,9 +5946,7 @@ export default function MediaPaneBody() {
                 <>
                   {isPdf &&
                   media.last_error_code === "E_PDF_PASSWORD_REQUIRED" ? (
-                    <p>
-                      This PDF is password-protected and cannot be opened in v1.
-                    </p>
+                    <p>{PDF_PASSWORD_PROTECTED_MESSAGE}</p>
                   ) : (
                     <p>This media cannot be opened right now.</p>
                   )}

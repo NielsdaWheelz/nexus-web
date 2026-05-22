@@ -1,6 +1,6 @@
 """Pure deterministic PDF geometry canonicalization, fingerprinting, and sort-key derivation.
 
-S6 geometry_version=1 contract (s6_spec Section 2.3):
+Current geometry_version=1 contract:
 - Canonical page-space points (CropBox top-left origin, x-right/y-down, unrotated)
 - Axis-aligned bounding rectangle canonicalization per quad
 - 0.001 pt quantization (round-half-away-from-zero)
@@ -165,7 +165,7 @@ def canonicalize_geometry(
     page_number: int,
     quads_input: list[dict],
 ) -> CanonicalGeometry:
-    """Canonicalize raw quad input into S6 geometry_version=1.
+    """Canonicalize raw quad input into the current geometry_version=1 shape.
 
     Args:
         page_number: 1-based page number (caller validates against page_count).
@@ -249,7 +249,7 @@ def derive_duplicate_lock_key(
 
 
 def validate_exact_length(exact: str) -> None:
-    """Validate exact text codepoint length against S6 bounds."""
+    """Validate exact text codepoint length against highlight storage bounds."""
     if exact and len(exact) > MAX_EXACT_CODEPOINTS:
         raise GeometryValidationError(
             f"exact text length {len(exact)} exceeds maximum {MAX_EXACT_CODEPOINTS} codepoints"

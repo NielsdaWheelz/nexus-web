@@ -513,7 +513,7 @@ def _handle_duplicate(
     if library_row:
         library_id = library_row[0]
 
-        # S4: use shared helper for intrinsic provenance (attach winner to default library)
+        # Use shared helper for intrinsic provenance (attach winner to default library)
         from nexus.services.default_library_closure import ensure_default_intrinsic
         from nexus.services.media_deletion import clear_user_media_deletion
 

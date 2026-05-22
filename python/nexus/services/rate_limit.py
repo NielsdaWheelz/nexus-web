@@ -645,31 +645,6 @@ class RateLimiter:
             )
             db.commit()
 
-    def get_budget_remaining(self, user_id: UUID) -> int | None:
-        """Return remaining monthly platform-token quota, or None when backend is unavailable."""
-        if not self.backend_available:
-            return None
-
-        try:
-            with self._session() as db:
-                entitlements = get_entitlements(db, user_id)
-                period_start, period_end = self._billing_usage_dates(
-                    datetime.now(UTC),
-                    entitlements.current_period_start,
-                    entitlements.current_period_end,
-                )
-                usage = get_platform_token_usage(db, user_id, period_start, period_end)
-                db.commit()
-        except Exception:
-            return None
-
-        if not entitlements.can_use_platform_llm:
-            return 0
-        return max(
-            0,
-            entitlements.platform_token_limit_monthly - usage["used"] - usage["reserved"],
-        )
-
     @contextmanager
     def _db_swallow(self, warn_msg: str, **warn_kw: object) -> Generator[Session, None, None]:
         """Open a session; on non-ApiError exceptions log a warning and swallow."""
