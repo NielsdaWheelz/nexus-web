@@ -75,8 +75,8 @@ is static.
 
 ## Host Composition
 
-`WorkspaceHost` builds `WorkspaceShellPane` records from workspace state and the
-title descriptor. It threads the same `title` and `titleState` into:
+`WorkspaceHost` builds host-owned pane records from workspace state and the title
+descriptor. It threads the same `title` and `titleState` into:
 
 - `WorkspacePaneStrip`, where pending titles render as tab skeletons.
 - `PaneShell` and `SurfaceHeader`, where pending titles render as heading

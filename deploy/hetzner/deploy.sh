@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-HOST="${NEXUS_HOST:-}"
+DEFAULT_NEXUS_HOST="5.78.194.235"
+HOST="${NEXUS_HOST:-$DEFAULT_NEXUS_HOST}"
 DEPLOY_USER="${NEXUS_DEPLOY_USER:-nexus}"
 DEPLOY_PATH="${NEXUS_DEPLOY_PATH:-/opt/nexus-web}"
 ENV_FILE="${NEXUS_REMOTE_ENV_FILE:-${NEXUS_ENV_FILE:-/etc/nexus/nexus.env}}"
@@ -15,7 +16,6 @@ die() {
   exit 1
 }
 
-[ -n "$HOST" ] || [ -n "${NEXUS_SSH_TARGET:-}" ] || die "set NEXUS_HOST or NEXUS_SSH_TARGET"
 command -v rsync >/dev/null 2>&1 || die "rsync is not installed locally"
 command -v ssh >/dev/null 2>&1 || die "ssh is not installed locally"
 

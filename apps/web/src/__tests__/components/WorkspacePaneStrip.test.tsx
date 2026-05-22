@@ -15,7 +15,7 @@ type PaneItem = {
   canMinimize: boolean;
 };
 
-function primaryButton(title: string): HTMLElement {
+function paneActivator(title: string): HTMLElement {
   return screen.getByRole("button", { name: new RegExp(`^${title}\\b`) });
 }
 
@@ -172,11 +172,11 @@ describe("WorkspacePaneStrip", () => {
       expect(button).not.toHaveAttribute("aria-selected");
       expect(button).not.toHaveAttribute("aria-controls");
     }
-    expect(primaryButton("Libraries")).toHaveAttribute("aria-current", "page");
-    expect(primaryButton("Search")).toHaveAccessibleName(/Minimized\. Restore\./);
+    expect(paneActivator("Libraries")).toHaveAttribute("aria-current", "page");
+    expect(paneActivator("Search")).toHaveAccessibleName(/Minimized\. Restore\./);
   });
 
-  it("roves focus across primary pane buttons without activating panes", async () => {
+  it("roves focus across pane activators without activating panes", async () => {
     const user = userEvent.setup();
     const onActivatePane = vi.fn();
     render(
@@ -220,22 +220,22 @@ describe("WorkspacePaneStrip", () => {
       />
     );
 
-    primaryButton("Search").focus();
+    paneActivator("Search").focus();
     await user.keyboard("{ArrowRight}");
-    expect(primaryButton("Media")).toHaveFocus();
+    expect(paneActivator("Media")).toHaveFocus();
 
     await user.keyboard("{Home}");
-    expect(primaryButton("Libraries")).toHaveFocus();
+    expect(paneActivator("Libraries")).toHaveFocus();
 
     await user.keyboard("{End}");
-    expect(primaryButton("Media")).toHaveFocus();
+    expect(paneActivator("Media")).toHaveFocus();
     expect(onActivatePane).not.toHaveBeenCalled();
 
     await user.keyboard("{Enter}");
     expect(onActivatePane).toHaveBeenCalledWith("pane-c");
   });
 
-  it("activates visible panes and restores minimized panes from primary buttons", async () => {
+  it("activates visible panes and restores minimized panes from pane activators", async () => {
     const user = userEvent.setup();
     const onActivatePane = vi.fn();
     const onRestorePane = vi.fn();
@@ -270,8 +270,8 @@ describe("WorkspacePaneStrip", () => {
       />
     );
 
-    await user.click(primaryButton("Libraries"));
-    await user.click(primaryButton("Search"));
+    await user.click(paneActivator("Libraries"));
+    await user.click(paneActivator("Search"));
     await user.click(screen.getByRole("button", { name: "Restore Search" }));
 
     expect(onActivatePane).toHaveBeenCalledWith("pane-a");
@@ -362,38 +362,38 @@ describe("WorkspacePaneStrip", () => {
       />
     );
 
-    const pending = primaryButton("Storm Front");
+    const pending = paneActivator("Storm Front");
     expect(pending).toHaveAttribute("aria-busy", "true");
     expect(pending).toHaveAccessibleName("Storm Front");
     expect(screen.queryByText("Storm Front")).not.toBeInTheDocument();
 
-    const resolved = primaryButton("Libraries");
+    const resolved = paneActivator("Libraries");
     expect(resolved).not.toHaveAttribute("aria-busy");
     expect(screen.getByText("Libraries")).toBeInTheDocument();
   });
 
-  it("closes the focused primary pane with Delete and focuses the next survivor", async () => {
+  it("closes the focused pane activator with Delete and focuses the next survivor", async () => {
     const user = userEvent.setup();
     render(<CloseHarness />);
 
-    primaryButton("Search").focus();
-    expect(primaryButton("Search")).toHaveFocus();
+    paneActivator("Search").focus();
+    expect(paneActivator("Search")).toHaveFocus();
 
     await user.keyboard("{Delete}");
 
     expect(screen.queryByRole("button", { name: /^Search\b/ })).not.toBeInTheDocument();
-    expect(primaryButton("Media")).toHaveFocus();
-    expect(primaryButton("Media")).toHaveAttribute("aria-current", "page");
+    expect(paneActivator("Media")).toHaveFocus();
+    expect(paneActivator("Media")).toHaveAttribute("aria-current", "page");
   });
 
-  it("moves focus to the next visible primary button after minimizing the active pane", async () => {
+  it("moves focus to the next visible activator after minimizing the active pane", async () => {
     const user = userEvent.setup();
     render(<MinimizeHarness />);
 
     await user.click(screen.getByRole("button", { name: "Minimize Search" }));
 
     expect(screen.getByRole("button", { name: "Restore Search" })).toBeInTheDocument();
-    expect(primaryButton("Media")).toHaveFocus();
-    expect(primaryButton("Media")).toHaveAttribute("aria-current", "page");
+    expect(paneActivator("Media")).toHaveFocus();
+    expect(paneActivator("Media")).toHaveAttribute("aria-current", "page");
   });
 });

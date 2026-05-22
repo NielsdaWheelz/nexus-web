@@ -54,13 +54,15 @@ Fill in the real values:
 Then upload the merged backend runtime env:
 
 ```bash
-NEXUS_HOST=<server-ip-or-api-domain> ./deploy/hetzner/sync-env.sh
+./deploy/hetzner/sync-env.sh
 ```
 
 The script merges `env-prod`, `env-prod-backend`, and `env-prod-worker` into
-`/etc/nexus/nexus.env` on the VPS. Do not commit the real env files.
-Set `NEXUS_REMOTE_ENV_FILE` if the server env file lives somewhere else; deploy
-and sync use the same value.
+`/etc/nexus/nexus.env` on the VPS. Do not commit the real env files. It defaults
+to `5.78.194.235`; set `NEXUS_HOST` to override the host, or
+`NEXUS_SSH_TARGET` to override the full SSH target. Set
+`NEXUS_REMOTE_ENV_FILE` if the server env file lives somewhere else; deploy and
+sync use the same value.
 
 Important matching Vercel env vars:
 
@@ -93,7 +95,7 @@ Caddy will request and renew the TLS certificate automatically after DNS is live
 From your local repo:
 
 ```bash
-NEXUS_HOST=<server-ip-or-api-domain> ./deploy/hetzner/deploy.sh
+./deploy/hetzner/deploy.sh
 ```
 
 The deploy script syncs the current working tree to `/opt/nexus-web`, builds both
@@ -108,7 +110,7 @@ The env sync rejects maintenance worker settings unless
 To deploy without uploading env again:
 
 ```bash
-NEXUS_HOST=<server-ip-or-api-domain> NEXUS_SYNC_ENV=0 ./deploy/hetzner/deploy.sh
+NEXUS_SYNC_ENV=0 ./deploy/hetzner/deploy.sh
 ```
 
 ## Operations

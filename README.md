@@ -90,6 +90,8 @@ make seed-real-media-e2e
 - `make dev` writes the live Supabase Auth URL and keys to `.dev-ports`.
 - Test wrappers choose free Postgres/MinIO ports unless `TEST_POSTGRES_PORT` or
   `TEST_MINIO_PORT` is set.
+- Android builds require `NEXUS_GOOGLE_WEB_CLIENT_ID`; `.env.example` owns the
+  contract, and local/CI environment owns the value.
 
 Real-media gates are strict. `make test-real-media` runs deterministic backend
 and Playwright acceptance coverage, requires Supabase Auth plus local
@@ -124,7 +126,7 @@ workflow uploads stable assets for `/android` plus versioned assets such as
 
 ## Repository Map
 
-- `apps/android/` -> Android shell app. Debug builds default to `http://10.0.2.2:3000`; local OAuth callbacks use the debug-only `nexus-dev://auth/callback` return path. Release APKs require explicit host, version, release keystore, and release certificate fingerprint inputs. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
+- `apps/android/` -> Android shell app. Debug builds default to `http://10.0.2.2:3000`; native auth uses the environment-agnostic `nexus://auth/handoff` flow plus native Google bootstrap. Release APKs require explicit host, version, release keystore, and release certificate fingerprint inputs. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
 - `apps/web/` -> frontend + BFF: see `apps/web/README.md`
 - `apps/extension/` -> browser extension for article, PDF/EPUB, and supported video capture
 - `python/` -> backend package + tests: see `python/README.md`
