@@ -6,10 +6,8 @@
  * canonical text offsets in the reader.
  */
 
-import {
-  canonicalCpToRawCp,
-  type CanonicalCursorResult,
-} from "@/lib/highlights/canonicalCursor";
+import { type CanonicalCursorResult } from "@/lib/highlights/canonicalCursor";
+import { canonicalCpToRawCp } from "@/lib/highlights/canonicalText";
 import { codepointToUtf16 } from "@/lib/highlights/codepoints";
 
 const TEXT_ANCHOR_TOP_PADDING_PX = 56;

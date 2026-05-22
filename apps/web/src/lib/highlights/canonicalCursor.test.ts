@@ -14,10 +14,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   buildCanonicalCursor,
-  canonicalCpToRawCp,
   validateCanonicalText,
   type CanonicalCursorResult,
 } from "./canonicalCursor";
+import { canonicalCpToRawCp } from "./canonicalText";
 import { codepointLength } from "./codepoints";
 
 // =============================================================================

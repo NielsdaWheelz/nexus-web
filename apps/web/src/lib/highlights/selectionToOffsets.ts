@@ -15,10 +15,8 @@
  * @see apps/web/README.md (Highlight Libraries / selectionToOffsets.ts)
  */
 
-import {
-  rawCpToCanonicalCp,
-  type CanonicalCursorResult,
-} from "./canonicalCursor";
+import { type CanonicalCursorResult } from "./canonicalCursor";
+import { rawCpToCanonicalCp } from "./canonicalText";
 import { codepointLength, utf16ToCodepoint } from "./codepoints";
 
 // =============================================================================

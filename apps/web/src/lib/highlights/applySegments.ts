@@ -25,10 +25,10 @@
 import {
   buildCanonicalCursor,
   validateCanonicalText,
-  canonicalCpToRawCp,
   type CanonicalCursorResult,
   type CanonicalNode,
 } from "./canonicalCursor";
+import { canonicalCpToRawCp } from "./canonicalText";
 import { codepointLength, codepointToUtf16 } from "./codepoints";
 import {
   segmentHighlights,
