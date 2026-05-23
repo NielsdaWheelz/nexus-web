@@ -12,6 +12,18 @@ packages:
   - rsync
   - ufw
 
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-nexus-hardening.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PubkeyAuthentication yes
+      PermitRootLogin no
+      X11Forwarding no
+      AllowUsers nexus
+
 users:
   - default
   - name: nexus
@@ -36,4 +48,6 @@ runcmd:
   - ufw allow 80/tcp
   - ufw allow 443/tcp
   - ufw --force enable
+  - sshd -t
+  - systemctl reload ssh || systemctl reload ssh.socket || systemctl restart ssh
   - systemctl enable --now docker
