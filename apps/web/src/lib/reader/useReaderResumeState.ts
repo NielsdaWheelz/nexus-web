@@ -119,13 +119,12 @@ export function useReaderResumeState(options: UseReaderResumeStateOptions) {
         return;
       }
 
-      const normalizedNextState = parseReaderResumeState(nextState);
       const baseline = hasPendingRef.current ? pendingRef.current : stateRef.current;
-      if (readerResumeStatesEqual(baseline, normalizedNextState)) {
+      if (readerResumeStatesEqual(baseline, nextState)) {
         return;
       }
 
-      pendingRef.current = normalizedNextState;
+      pendingRef.current = nextState;
       hasPendingRef.current = true;
 
       if (debounceRef.current) {

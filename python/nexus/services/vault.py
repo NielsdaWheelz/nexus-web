@@ -45,8 +45,8 @@ from nexus.services.notes import (
     set_highlight_note_body,
     set_note_block_markdown_body_without_commit,
 )
-from nexus.storage import get_file_extension, get_storage_client
-from nexus.storage.client import StorageClientBase
+from nexus.storage.client import StorageClientBase, get_storage_client
+from nexus.storage.paths import get_file_extension
 
 
 class VaultFile(TypedDict):

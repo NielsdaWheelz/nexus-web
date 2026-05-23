@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 ArtifactFreshnessStatus = Literal["current", "stale", "building", "failed", "unavailable"]
 BuildStatus = Literal["pending", "running", "succeeded", "failed"]
@@ -25,12 +25,6 @@ SupportState = Literal[
     "out_of_scope",
     "not_source_grounded",
 ]
-
-
-class LibraryIntelligenceRefreshRequest(BaseModel):
-    artifact_kind: Literal["overview"] = "overview"
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class LibraryIntelligenceBuildOut(BaseModel):

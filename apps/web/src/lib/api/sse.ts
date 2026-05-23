@@ -19,11 +19,7 @@ import type {
   MessageEvidenceRole,
   MessageEvidenceVerifierStatus,
 } from "@/lib/conversations/types";
-
-/** Maximum single event payload size (256 KB). */
-const MAX_EVENT_SIZE_BYTES = 256 * 1024;
-const RECONNECT_DELAY_MS = 1000;
-const EVENT_STREAM_CONTENT_TYPE = "text/event-stream";
+import { isRecord } from "@/lib/validation";
 
 // ============================================================================
 // Types
@@ -62,23 +58,6 @@ export interface SSEDoneEvent {
 export type ContextItemType = ObjectType;
 export type ContextItemColor = "yellow" | "green" | "blue" | "pink" | "purple";
 export type SearchCitationResultType =
-  | "media"
-  | "podcast"
-  | "episode"
-  | "video"
-  | "content_chunk"
-  | "fragment"
-  | "page"
-  | "note_block"
-  | "highlight"
-  | "message"
-  | "contributor"
-  | "evidence_span"
-  | "conversation"
-  | "artifact"
-  | "artifact_part";
-
-export type AppCitationResultType =
   | "media"
   | "podcast"
   | "episode"
@@ -700,19 +679,6 @@ export type SSEEvent =
   | SSEClaimEvent
   | SSEClaimEvidenceEvent;
 
-type SSEEventHandler = (event: SSEEvent) => void;
-type SSEErrorHandler = (error: Error) => void;
-type SSECompleteHandler = (terminalEventSeen: boolean) => void;
-type SSERetryHandler = (milliseconds: number) => void;
-
-export interface SSEJsonEvent {
-  id: string;
-  type: string;
-  data: unknown;
-}
-
-type SSEJsonEventHandler = (event: SSEJsonEvent) => void;
-
 // ============================================================================
 // Request payload types
 // ============================================================================
@@ -850,6 +816,7 @@ export function toWireContextItem(item: ContextItem): ChatRunContext {
 }
 
 export interface ChatRunCreateRequest {
+  conversation_id?: string;
   content: string;
   model_id: string;
   reasoning: "default" | "none" | "minimal" | "low" | "medium" | "high" | "max";
@@ -865,161 +832,6 @@ export interface ChatRunCreateRequest {
     blocked_domains?: string[];
   };
   artifact_intent: ArtifactIntentOptions;
-}
-
-// ============================================================================
-// SSE Parser
-// ============================================================================
-
-/**
- * Parse an SSE stream from a ReadableStream<Uint8Array>.
- *
- * Follows the SSE spec: events are separated by blank lines.
- * Each event has optional `event:` and required `data:` fields.
- */
-export async function parseSSEJsonStream(
-  body: ReadableStream<Uint8Array>,
-  onEvent: SSEJsonEventHandler,
-  onRetry: SSERetryHandler,
-): Promise<void> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let currentId = "";
-  let currentEvent = "";
-  let currentDataLines: string[] = [];
-  let currentDataBytes = 0;
-  const textEncoder = new TextEncoder();
-
-  const dispatchEvent = () => {
-    if (currentDataLines.length > 0) {
-      processJsonEvent(
-        currentEvent,
-        currentDataLines.join("\n"),
-        currentId,
-        onEvent,
-      );
-    }
-    currentId = "";
-    currentEvent = "";
-    currentDataLines = [];
-    currentDataBytes = 0;
-  };
-
-  const processLine = (line: string) => {
-    if (line === "") {
-      dispatchEvent();
-      return;
-    }
-
-    if (line.startsWith(":")) {
-      // Comment line — ignore
-      return;
-    }
-
-    const colonIndex = line.indexOf(":");
-    const field = colonIndex === -1 ? line : line.slice(0, colonIndex);
-    let value = colonIndex === -1 ? "" : line.slice(colonIndex + 1);
-    if (value.startsWith(" ")) value = value.slice(1);
-
-    switch (field) {
-      case "id":
-        currentId = value;
-        break;
-      case "event":
-        currentEvent = value;
-        break;
-      case "data": {
-        const valueBytes = textEncoder.encode(value).byteLength;
-        const newlineBytes = currentDataLines.length > 0 ? 1 : 0;
-        currentDataBytes += valueBytes + newlineBytes;
-        if (currentDataBytes > MAX_EVENT_SIZE_BYTES) {
-          throw new Error(
-            `SSE event exceeds maximum size of ${MAX_EVENT_SIZE_BYTES} bytes`,
-          );
-        }
-        currentDataLines.push(value);
-        break;
-      }
-      case "retry":
-        if (/^\d+$/.test(value)) {
-          onRetry(Number(value));
-        }
-        break;
-      default:
-        // Unknown field — ignore per SSE spec
-        break;
-    }
-  };
-
-  const processBufferedLines = (flush: boolean) => {
-    let start = 0;
-
-    for (let i = 0; i < buffer.length; i += 1) {
-      const char = buffer[i];
-      if (char !== "\n" && char !== "\r") continue;
-
-      if (char === "\r" && i + 1 === buffer.length && !flush) {
-        break;
-      }
-
-      processLine(buffer.slice(start, i));
-
-      if (char === "\r" && buffer[i + 1] === "\n") {
-        i += 1;
-      }
-      start = i + 1;
-    }
-
-    buffer = buffer.slice(start);
-
-    if (flush && buffer !== "") {
-      processLine(buffer);
-      buffer = "";
-    }
-  };
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      processBufferedLines(false);
-    }
-
-    buffer += decoder.decode();
-    processBufferedLines(true);
-    dispatchEvent();
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-/**
- * Process a single SSE event: parse JSON data and dispatch it with raw type.
- */
-function processJsonEvent(
-  eventType: string,
-  data: string,
-  id: string,
-  onEvent: SSEJsonEventHandler,
-): void {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(data);
-  } catch {
-    throw new Error(
-      `Failed to parse SSE ${eventType || "message"} event (${data.length} bytes)`,
-    );
-  }
-
-  onEvent({ id, type: eventType, data: parsed });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function hasOnlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
@@ -1978,7 +1790,7 @@ function isChatToolStatus(value: unknown): value is ChatToolStatus {
   );
 }
 
-function toChatSSEEvent(eventType: string, data: unknown): SSEEvent {
+export function toChatSSEEvent(eventType: string, data: unknown): SSEEvent {
   switch (eventType) {
     case "meta":
       return { type: "meta", data: parseMetaData(data) };
@@ -2004,189 +1816,4 @@ function toChatSSEEvent(eventType: string, data: unknown): SSEEvent {
     default:
       throw new Error(`Unknown SSE event type: ${eventType || "message"}`);
   }
-}
-
-// ============================================================================
-// Direct-to-FastAPI Chat Run SSE Client
-// ============================================================================
-
-/**
- * Tail a durable chat run via direct browser -> FastAPI SSE using a stream token.
- *
- * @param streamBaseUrl - The fastapi base URL for streaming
- * @param streamToken - The short-lived stream JWT, or a supplier that mints one per reconnect
- * @param runId - Chat run ID returned by POST /api/chat-runs
- * @param handlers - Event callbacks
- * @param options - Optional fetch options
- * @returns Cleanup function to abort the stream
- */
-export function sseClientDirect(
-  streamBaseUrl: string,
-  streamToken: string | (() => Promise<string>),
-  runId: string,
-  handlers: {
-    onEvent: SSEEventHandler;
-    onError: SSEErrorHandler;
-    onComplete?: SSECompleteHandler;
-    onLastEventId?: (id: string) => void;
-  },
-  options?: {
-    signal?: AbortSignal;
-    lastEventId?: string;
-  },
-): () => void {
-  const controller = new AbortController();
-  const combinedSignal = options?.signal
-    ? combineSignals(options.signal, controller.signal)
-    : controller.signal;
-
-  const url = `${streamBaseUrl}/chat-runs/${runId}/events`;
-  let lastEventId = options?.lastEventId ?? "";
-  let reconnectDelayMs = RECONNECT_DELAY_MS;
-
-  // Start the fetch + parse pipeline
-  (async () => {
-    let terminalEventSeen = false;
-
-    while (!combinedSignal.aborted && !terminalEventSeen) {
-      let response: Response;
-      try {
-        const token =
-          typeof streamToken === "function" ? await streamToken() : streamToken;
-        const headers: Record<string, string> = {
-          Accept: "text/event-stream",
-          Authorization: `Bearer ${token}`,
-        };
-        if (lastEventId) headers["Last-Event-ID"] = lastEventId;
-
-        response = await fetch(url, {
-          method: "GET",
-          headers,
-          signal: combinedSignal,
-        });
-      } catch (err) {
-        if (isAbortError(err) || combinedSignal.aborted) {
-          handlers.onComplete?.(terminalEventSeen);
-          return;
-        }
-        await delay(reconnectDelayMs);
-        continue;
-      }
-
-      if (!response.ok) {
-        let errorMessage = `Request failed with status ${response.status}`;
-        try {
-          const errorBody = await response.json();
-          if (errorBody?.error?.message) {
-            errorMessage = errorBody.error.message;
-          }
-        } catch {
-          // justify-ignore-error: error bodies are optional; the HTTP status fallback is enough.
-        }
-        handlers.onError(new Error(errorMessage));
-        return;
-      }
-
-      if (!isEventStreamResponse(response)) {
-        handlers.onError(new Error("Invalid SSE content type"));
-        return;
-      }
-
-      if (!response.body) {
-        handlers.onError(new Error("Response body is null"));
-        return;
-      }
-
-      try {
-        await parseSSEJsonStream(
-          response.body,
-          (jsonEvent) => {
-            if (jsonEvent.id) {
-              lastEventId = jsonEvent.id;
-              handlers.onLastEventId?.(lastEventId);
-            }
-            const event = toChatSSEEvent(jsonEvent.type, jsonEvent.data);
-            handlers.onEvent(event);
-            if (event.type === "done") terminalEventSeen = true;
-          },
-          (milliseconds) => {
-            reconnectDelayMs = milliseconds;
-          },
-        );
-      } catch (err) {
-        if (isAbortError(err) || combinedSignal.aborted) {
-          handlers.onComplete?.(terminalEventSeen);
-          return;
-        }
-        if (
-          err instanceof Error &&
-          (err.message.startsWith("SSE event exceeds maximum size") ||
-            err.message.startsWith("Failed to parse SSE ") ||
-            err.message.startsWith("Invalid SSE payload") ||
-            err.message.startsWith("Unknown SSE event type"))
-        ) {
-          handlers.onError(err);
-          return;
-        }
-        await delay(reconnectDelayMs);
-        continue;
-      }
-
-      break;
-    }
-
-    handlers.onComplete?.(terminalEventSeen);
-  })().catch((err) => {
-    if (isAbortError(err)) {
-      handlers.onComplete?.(false);
-      return;
-    }
-    handlers.onError(
-      err instanceof Error ? err : new Error("Unknown SSE error"),
-    );
-  });
-
-  return () => controller.abort();
-}
-
-function isEventStreamResponse(response: Response): boolean {
-  const contentType = response.headers.get("content-type");
-  return (
-    contentType?.split(";", 1)[0].trim().toLowerCase() ===
-    EVENT_STREAM_CONTENT_TYPE
-  );
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/**
- * Combine two AbortSignals so that aborting either aborts the combined signal.
- */
-function combineSignals(
-  signal1: AbortSignal,
-  signal2: AbortSignal,
-): AbortSignal {
-  const controller = new AbortController();
-
-  const abort = () => controller.abort();
-
-  if (signal1.aborted || signal2.aborted) {
-    controller.abort();
-    return controller.signal;
-  }
-
-  signal1.addEventListener("abort", abort, { once: true });
-  signal2.addEventListener("abort", abort, { once: true });
-
-  return controller.signal;
 }

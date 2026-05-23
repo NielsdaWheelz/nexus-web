@@ -30,7 +30,6 @@ from nexus.schemas.conversation import (
     MESSAGE_CONTEXT_TYPES,
     ContextItem,
     MessageContextRef,
-    ReaderSelectionContext,
 )
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.chat_prompt import (
@@ -53,6 +52,7 @@ from nexus.services.context_rendering import (
     render_context_blocks,
     render_conversation_scope_block,
 )
+from nexus.services.contexts import reader_selection_context_from_row
 from nexus.services.conversation_branches import load_message_path
 from nexus.services.conversation_memory import (
     ConversationMemoryItem,
@@ -62,6 +62,13 @@ from nexus.services.conversation_memory import (
 )
 from nexus.services.conversations import conversation_scope_metadata
 from nexus.services.library_intelligence import load_current_library_artifact_context
+from nexus.services.message_context_snapshots import (
+    artifact_context_snapshot_fields,
+    artifact_part_context_snapshot_fields,
+    trusted_content_chunk_context_snapshot_fields,
+    trusted_context_snapshot,
+    trusted_object_ref_context_snapshot_payload,
+)
 from nexus.services.prompt_budget import (
     BudgetItem,
     BudgetLane,
@@ -783,26 +790,15 @@ def _context_ref_payload(db: Session, ref: ContextItem) -> dict[str, object]:
         payload["source_version"] = ref.source_version
     if ref.locator is not None:
         payload["locator"] = ref.locator.model_dump(mode="json")
+    if ref.type == "artifact":
+        payload.update(
+            artifact_context_snapshot_fields(ref.model_dump(mode="json", exclude_none=True))
+        )
     if ref.type == "artifact_part":
         payload.update(
-            _artifact_part_context_fields(ref.model_dump(mode="json", exclude_none=True))
+            artifact_part_context_snapshot_fields(ref.model_dump(mode="json", exclude_none=True))
         )
     return payload
-
-
-def _artifact_part_context_fields(snapshot: Mapping[str, Any]) -> dict[str, object]:
-    provenance = snapshot.get("artifact_part_provenance")
-    provenance_map = provenance if isinstance(provenance, Mapping) else {}
-    fields: dict[str, object] = {}
-    for key in ("artifact_id", "artifact_key", "artifact_version", "source_version", "locator"):
-        value = snapshot.get(key)
-        if value is None:
-            value = provenance_map.get(key)
-        if value is not None:
-            fields[key] = value
-    if provenance is not None:
-        fields["artifact_part_provenance"] = provenance
-    return fields
 
 
 def _locator_json(value: object) -> dict[str, object]:
@@ -813,33 +809,6 @@ def _locator_json(value: object) -> dict[str, object]:
     else:
         return {}
     return retrieval_locator_json(raw) or {}
-
-
-def _context_snapshot_evidence_span_ids(snapshot: Mapping[str, Any] | None) -> list[UUID]:
-    if not isinstance(snapshot, Mapping):
-        return []
-    raw_values = snapshot.get("evidence_span_ids")
-    if raw_values is None:
-        raw_values = snapshot.get("evidence_span_id")
-    if isinstance(raw_values, str):
-        values = [raw_values]
-    elif isinstance(raw_values, Sequence) and not isinstance(raw_values, (str, bytes)):
-        values = list(raw_values)
-    else:
-        values = []
-
-    evidence_span_ids: list[UUID] = []
-    seen: set[UUID] = set()
-    for value in values:
-        try:
-            evidence_span_id = UUID(str(value))
-        except (TypeError, ValueError):
-            continue
-        if evidence_span_id in seen:
-            continue
-        seen.add(evidence_span_id)
-        evidence_span_ids.append(evidence_span_id)
-    return evidence_span_ids
 
 
 def load_message_context_refs(db: Session, user_message_id: UUID) -> list[ContextItem]:
@@ -854,87 +823,51 @@ def load_message_context_refs(db: Session, user_message_id: UUID) -> list[Contex
     )
     refs: list[ContextItem] = []
     for row in rows:
-        snapshot = (
-            row.context_snapshot_json if isinstance(row.context_snapshot_json, Mapping) else {}
-        )
         if row.context_kind == "reader_selection":
-            if row.source_media_id is None:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found")
-            if isinstance(row.locator_json, dict) and row.locator_json:
-                try:
-                    locator = retrieval_locator_json(cast(dict[str, Any], row.locator_json))
-                except ValidationError as exc:
-                    raise NotFoundError(
-                        ApiErrorCode.E_NOT_FOUND, "Message context not found"
-                    ) from exc
-                if locator is None:
-                    raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found")
-            else:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found")
-            refs.append(
-                ReaderSelectionContext.model_validate(
-                    {
-                        "kind": "reader_selection",
-                        "client_context_id": _context_snapshot_uuid(
-                            snapshot.get("client_context_id") or snapshot.get("clientContextId"),
-                            fallback=row.id,
-                        ),
-                        "media_id": row.source_media_id,
-                        "media_kind": _context_snapshot_string(
-                            snapshot.get("media_kind") or snapshot.get("mediaKind"),
-                            fallback="media",
-                        ),
-                        "media_title": _context_snapshot_string(
-                            snapshot.get("media_title") or snapshot.get("mediaTitle"),
-                            fallback="Selected source",
-                        ),
-                        "exact": _context_snapshot_string(snapshot.get("exact"), fallback=""),
-                        "prefix": _context_snapshot_optional_string(snapshot.get("prefix")),
-                        "suffix": _context_snapshot_optional_string(snapshot.get("suffix")),
-                        "locator": locator,
-                        "source_version": _context_snapshot_optional_string(
-                            snapshot.get("source_version")
-                        ),
-                    }
-                )
-            )
+            try:
+                refs.append(reader_selection_context_from_row(row))
+            except (KeyError, TypeError, ValueError, ValidationError) as exc:
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found") from exc
             continue
 
         if row.object_type is None or row.object_id is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found")
-        payload: dict[str, object] = {
-            "kind": "object_ref",
-            "type": cast(MESSAGE_CONTEXT_TYPES, row.object_type),
-            "id": row.object_id,
-            "evidence_span_ids": _context_snapshot_evidence_span_ids(snapshot),
-        }
-        source_version = snapshot.get("source_version")
-        if isinstance(source_version, str) and source_version:
-            payload["source_version"] = source_version
-        locator = snapshot.get("locator")
-        if isinstance(locator, Mapping) and locator:
-            payload["locator"] = dict(locator)
-        if row.object_type == "artifact_part":
-            payload.update(_artifact_part_context_fields(snapshot))
-        refs.append(MessageContextRef.model_validate(payload))
+        try:
+            snapshot = trusted_context_snapshot(row.context_snapshot_json)
+            object_payload = trusted_object_ref_context_snapshot_payload(
+                object_type=row.object_type,
+                object_id=row.object_id,
+                payload=snapshot,
+            )
+            payload: dict[str, object] = {
+                "kind": "object_ref",
+                "type": cast(MESSAGE_CONTEXT_TYPES, row.object_type),
+                "id": row.object_id,
+                "evidence_span_ids": object_payload["evidence_span_ids"],
+            }
+            if row.object_type == "content_chunk":
+                payload.update(
+                    trusted_content_chunk_context_snapshot_fields(
+                        object_type=row.object_type,
+                        object_id=row.object_id,
+                        payload=snapshot,
+                    )
+                )
+            else:
+                source_version = object_payload["source_version"]
+                if source_version is not None:
+                    payload["source_version"] = source_version
+                locator = object_payload["locator"]
+                if locator is not None:
+                    payload["locator"] = locator
+            if row.object_type == "artifact":
+                payload.update(artifact_context_snapshot_fields(snapshot))
+            if row.object_type == "artifact_part":
+                payload.update(artifact_part_context_snapshot_fields(snapshot))
+            refs.append(MessageContextRef.model_validate(payload))
+        except (ValueError, ValidationError) as exc:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found") from exc
     return refs
-
-
-def _context_snapshot_uuid(value: object, *, fallback: UUID) -> UUID:
-    try:
-        return UUID(str(value))
-    except (TypeError, ValueError):
-        return fallback
-
-
-def _context_snapshot_string(value: object, *, fallback: str) -> str:
-    if isinstance(value, str) and value:
-        return value
-    return fallback
-
-
-def _context_snapshot_optional_string(value: object) -> str | None:
-    return value if isinstance(value, str) else None
 
 
 def _render_branch_anchor_block(anchor: Mapping[str, object]) -> str:

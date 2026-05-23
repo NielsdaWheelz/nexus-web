@@ -171,7 +171,7 @@ def delete_library(
 ) -> Response:
     """Delete a library.
 
-    S4: owner-only for non-default libraries. Non-owner admins get 403 E_OWNER_REQUIRED.
+    Owner-only for non-default libraries. Non-owner admins get 403 E_OWNER_REQUIRED.
     """
     libraries_service.delete_library(db, viewer.user_id, library_id)
     return Response(status_code=204)
@@ -250,7 +250,7 @@ def update_library_member_role(
 ) -> dict:
     """Update a library member's role.
 
-    Admin-only. Cannot change owner role. Cannot demote last admin.
+    Admin-only. Cannot change owner role.
     Default library forbidden.
     """
     result = libraries_service.update_library_member_role(
@@ -268,7 +268,7 @@ def remove_library_member(
 ) -> Response:
     """Remove a member from a library.
 
-    Admin-only. Cannot remove owner. Cannot remove last admin.
+    Admin-only. Cannot remove owner.
     Default library forbidden. Idempotent for absent targets.
     """
     libraries_service.remove_library_member(db, viewer.user_id, library_id, user_id)

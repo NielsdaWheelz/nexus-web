@@ -145,23 +145,6 @@ class UploadInitRequest(BaseModel):
     library_id: UUID | None = None
 
 
-class UploadInitResponse(BaseModel):
-    """Response schema for POST /media/upload/init."""
-
-    media_id: str
-    upload_url: str
-    expires_at: str
-
-
-class IngestResponse(BaseModel):
-    """Response schema for POST /media/{id}/ingest."""
-
-    media_id: str
-    duplicate: bool
-    processing_status: str = "pending"
-    ingest_enqueued: bool = False
-
-
 class ArticleCaptureRequest(BaseModel):
     """Request schema for browser-captured web articles."""
 
@@ -179,14 +162,6 @@ class ArticleCaptureResponse(BaseModel):
 
     media_id: UUID
     processing_status: str
-
-
-class RetryResponse(BaseModel):
-    """Response schema for POST /media/{id}/retry."""
-
-    media_id: str
-    processing_status: str
-    retry_enqueued: bool
 
 
 TranscriptRequestReason = Literal[
@@ -297,15 +272,8 @@ class TranscriptRequestBatchResponse(BaseModel):
     results: list[TranscriptRequestBatchItemResponse]
 
 
-class FileDownloadResponse(BaseModel):
-    """Response schema for GET /media/{id}/file."""
-
-    url: str
-    expires_at: str
-
-
 # =============================================================================
-# URL-Based Ingestion Schemas (S2)
+# URL-Based Ingestion Schemas
 # =============================================================================
 
 

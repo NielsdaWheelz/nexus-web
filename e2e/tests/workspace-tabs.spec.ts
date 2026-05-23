@@ -210,12 +210,11 @@ test.describe("workspace tabs", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Dynamic-content pane: resolved title (Part B end-to-end)
+  // Dynamic-content pane: resolved title
   //
   // A media pane is titleMode:"dynamic".  Once the body loads and publishes a
-  // title, the tab must show that specific resource title — NOT a category word
-  // like "Media".  This is the core Part B acceptance criterion (§10 Title
-  // lifecycle).
+  // title, the tab must show that specific resource title, not a category word
+  // like "Media".
   //
   // The epub seed gives us a deterministic title we can assert on.
   // -------------------------------------------------------------------------
@@ -231,7 +230,7 @@ test.describe("workspace tabs", () => {
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
 
-    // Wait until the tab no longer carries aria-busy — meaning titleState has
+    // Wait until the tab no longer carries aria-busy, meaning titleState has
     // transitioned from "pending" to "resolved".
     const activator = strip
       .getByRole("button")
@@ -244,17 +243,15 @@ test.describe("workspace tabs", () => {
     await expect(activator).not.toHaveText(/^Media$/i);
 
     // The activator should carry aria-busy while pending and drop it once
-    // resolved — assert the final state is not busy.
+    // resolved. Assert the final state is not busy.
     await expect(activator).not.toHaveAttribute("aria-busy", { timeout: 15_000 });
   });
 
   // -------------------------------------------------------------------------
   // Dynamic pane: title is not a category word
   //
-  // This uses the epub seed (slowest loader, most visible in §1.3).  We open
-  // the pane via a pre-encoded workspace URL so we can assert on the strip
-  // tab specifically.  We wait for a non-"Media" resolved title — the key
-  // Part B invariant.
+  // This uses the epub seed so we can assert on the strip tab specifically
+  // while waiting for a non-"Media" resolved title.
   // -------------------------------------------------------------------------
 
   test("desktop: epub tab eventually carries a real book title, not \"Media\"", async ({

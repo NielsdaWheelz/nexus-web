@@ -1,22 +1,19 @@
 /**
  * Tests for applying highlight segments to DOM.
  *
- * Required test cases per PR-08 spec §12:
+ * Required highlight rendering cases:
  * 1. Single highlight wrapping
  * 2. Nested highlights (3 segments)
  * 3. Partial overlaps
  * 4. Deterministic topmost selection
  * 5. Correct <span> wrapping with expected classes
- * 6. data-active-highlight-ids matches segmenter ordering (PR-10: space-delimited)
+ * 6. data-active-highlight-ids matches segmenter ordering (space-delimited)
  * 7. data-highlight-top matches topmostId
  * 8. Exactly one anchor per highlight
  * 9. Anchor at correct position
  * 10. Valid HTML output
  * 11. Invalid highlight (out of bounds) — skipped, warning logged
  * 12. Canonical mismatch — all highlights skipped
- *
- * @see docs/v1/s2/s2_prs/s2_pr08.md §12
- * @see docs/v1/s2/s2_prs/s2_pr10.md §15 (attribute name change)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -97,8 +94,7 @@ describe("applyHighlightsToHtml", () => {
       expect(result.validationPassed).toBe(true);
       expect(result.failedIds).toHaveLength(0);
 
-      // Should contain a span with the right attributes
-      // PR-10: data-active-highlight-ids (space-delimited)
+      // Should contain a span with the right attributes.
       expect(result.html).toContain('data-active-highlight-ids="h1"');
       expect(result.html).toContain('data-highlight-top="h1"');
       expect(result.html).toContain('class="hl-yellow"');
@@ -215,9 +211,8 @@ describe("applyHighlightsToHtml", () => {
 
       const result = applyHighlightsToHtml(html, canonical, "frag-1", highlights);
 
-      // IDs should be ordered by (created_at DESC, id ASC)
-      // c is newest, so first
-      // PR-10: space-delimited instead of comma
+      // IDs should be ordered by (created_at DESC, id ASC).
+      // c is newest, so first.
       expect(result.html).toContain('data-active-highlight-ids="c b a"');
     });
 

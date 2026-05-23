@@ -22,6 +22,7 @@ This directory is the canonical home for repository documentation.
 
 ## Rule Documents
 
+- [cleanliness.md](cleanliness.md)
 - [codebase.md](codebase.md)
 - [concurrency.md](concurrency.md)
 - [control-flow.md](control-flow.md)

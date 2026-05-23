@@ -1,4 +1,4 @@
-"""Pure unit tests for deterministic PDF quote-match (plain_text_match_version=1)."""
+"""Pure unit tests for deterministic PDF quote-match."""
 
 import pytest
 
@@ -13,7 +13,7 @@ pytestmark = pytest.mark.unit
 
 
 class TestPageScopedUniqueMatch:
-    """test_pr04_pdf_quote_match_v1_page_scoped_unique_match_derives_prefix_suffix"""
+    """Page-scoped unique matches derive offsets and context."""
 
     def test_unique_match_with_context(self):
         plain_text = "prefix text hello world suffix text"
@@ -51,7 +51,7 @@ class TestPageScopedUniqueMatch:
 
 
 class TestAmbiguousOrNoMatch:
-    """test_pr04_pdf_quote_match_v1_ambiguous_or_no_match_returns_empty_prefix_suffix"""
+    """Ambiguous and missing matches return empty context."""
 
     def test_ambiguous_match(self):
         plain_text = "the the the"
@@ -96,10 +96,10 @@ class TestEmptyExact:
         assert result.start_offset is None
 
 
-class TestFallbackBehavior:
-    """test_pr04_pdf_quote_match_v1_fallbacks_only_when_page_span_unavailable"""
+class TestPageSpanAvailability:
+    """Page-span availability controls the search boundary."""
 
-    def test_no_fallback_when_page_span_present_and_no_match(self):
+    def test_page_span_match_does_not_search_outside_page(self):
         plain_text = "page1text target page2text"
         result = compute_match(
             exact="target",
@@ -110,7 +110,7 @@ class TestFallbackBehavior:
         )
         assert result.status == MatchStatus.no_match
 
-    def test_global_fallback_when_page_span_unavailable(self):
+    def test_searches_full_text_when_page_span_unavailable(self):
         plain_text = "some target text"
         result = compute_match(
             exact="target",
@@ -125,7 +125,7 @@ class TestFallbackBehavior:
 
 
 class TestMatcherAnomaly:
-    """test_pr04_pdf_quote_match_exposes_typed_recoverable_anomaly_classification_without_logging"""
+    """Matcher exposes typed recoverable anomaly classifications."""
 
     def test_negative_offsets_raise_anomaly(self):
         with pytest.raises(MatcherAnomaly) as exc_info:

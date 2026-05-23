@@ -1,15 +1,15 @@
 """Context rendering for LLM prompts.
 
- Renders context items into XML-tagged blocks
+Renders context items into XML-tagged blocks
 for inclusion in LLM prompts.
 
-Per S3 spec:
+Rendering behavior:
 - Context blocks include source, metadata, exact quote, surrounding context
 - Context cap: 25,000 chars total
 - Max 10 context items per message
 
-Note: This module has DB access and is intentionally kept outside the LLM
-adapter layer (which must be DB-free per PR-04 spec).
+This module owns DB-backed context rendering. The LLM adapter layer remains
+DB-free.
 """
 
 import json
@@ -46,7 +46,6 @@ from nexus.services.contributor_credits import load_contributor_credits_for_podc
 from nexus.services.pdf_quote_match import MatcherAnomaly, MatchStatus, compute_match
 from nexus.services.pdf_quote_match_policy import (
     CoherenceAnomalyKind,
-    CoherenceFallbackAction,
     PdfQuoteMatchInternalError,
     handle_coherence_unclassified_exception,
     handle_recoverable_anomaly,
@@ -240,7 +239,7 @@ def _render_single_context(db: Session, ctx: ContextItem) -> str | None:
     if ctx_type == "media":
         return _render_media_context(db, ctx_id)
     if ctx_type == "highlight":
-        return _render_highlight_context(db, ctx_id)
+        return _render_highlight_context(db, ctx)
     if ctx_type == "page":
         return _render_note_context(db, ctx_type, ctx_id)
     if ctx_type == "note_block":
@@ -309,8 +308,9 @@ def _render_media_context(db: Session, media_id: UUID) -> str | None:
     return "\n".join(lines)
 
 
-def _render_highlight_context(db: Session, highlight_id: UUID) -> str | None:
+def _render_highlight_context(db: Session, ctx: MessageContextRef) -> str | None:
     """Render a highlight context with quote and surrounding context."""
+    highlight_id = ctx.id
     highlight = db.get(Highlight, highlight_id)
     if not highlight:
         return None
@@ -324,13 +324,47 @@ def _render_highlight_context(db: Session, highlight_id: UUID) -> str | None:
         )
         return None
 
+    source_version = ctx.source_version
+    if source_version is None:
+        logger.warning(
+            "context_render_highlight_missing_source_version",
+            highlight_id=str(highlight_id),
+            anchor_kind=highlight.anchor_kind,
+        )
+        return None
+
     if anchor_kind == "fragment_offsets":
-        return _render_fragment_highlight_context(db, highlight)
+        return _render_fragment_highlight_context(
+            db,
+            highlight,
+            context_ref=ctx,
+            source_version=source_version,
+        )
 
-    return _render_pdf_highlight_context(db, highlight)
+    return _render_pdf_highlight_context(
+        db,
+        highlight,
+        context_ref=ctx,
+        source_version=source_version,
+    )
 
 
-def _render_fragment_highlight_context(db, highlight) -> str | None:
+def _source_metadata_locator(
+    context_ref: MessageContextRef,
+    fallback_locator: dict[str, object],
+) -> dict[str, object]:
+    if context_ref.locator is None:
+        return fallback_locator
+    return _locator_json(context_ref.locator) or fallback_locator
+
+
+def _render_fragment_highlight_context(
+    db: Session,
+    highlight: Highlight,
+    *,
+    context_ref: MessageContextRef,
+    source_version: str,
+) -> str | None:
     """Render a fragment-anchored highlight context."""
     fragment_anchor = highlight.fragment_anchor
     if fragment_anchor is None or fragment_anchor.fragment is None:
@@ -391,8 +425,8 @@ def _render_fragment_highlight_context(db, highlight) -> str | None:
             }
         _append_source_metadata_xml(
             lines,
-            locator=locator,
-            source_version=f"highlight:{highlight.id}",
+            locator=_source_metadata_locator(context_ref, locator),
+            source_version=source_version,
         )
     lines.append("</highlight>")
     return "\n".join(lines)
@@ -477,24 +511,21 @@ def _resolve_pdf_nearby_context(
 ) -> str | None:
     """Resolve nearby context deterministically for PDF quote rendering."""
     plain_text = media.plain_text or ""
-    status = pdf_anchor.plain_text_match_status
+    status = MatchStatus(pdf_anchor.plain_text_match_status)
 
-    if status == MatchStatus.unique.value and not highlight.exact:
-        fallback_action = handle_recoverable_coherence_anomaly(
+    if status == MatchStatus.unique and not highlight.exact:
+        handle_recoverable_coherence_anomaly(
             CoherenceAnomalyKind.exact_status_inconsistent,
             highlight_id=highlight.id,
             media_id=media.id,
             page_number=pdf_anchor.page_number,
-            match_status=status,
+            match_status=status.value,
             match_version=pdf_anchor.plain_text_match_version,
             path=_PDF_CONTEXT_RENDER_PATH,
         )
-        if fallback_action == CoherenceFallbackAction.retry_as_pending:
-            status = MatchStatus.pending.value
-        else:
-            return None
+        status = MatchStatus.pending
 
-    if status == MatchStatus.unique.value:
+    if status == MatchStatus.unique:
         try:
             coherent_offsets = _validate_unique_pdf_offsets(db, highlight, media, pdf_anchor)
         except Exception as exc:
@@ -504,7 +535,7 @@ def _resolve_pdf_nearby_context(
                     highlight_id=highlight.id,
                     media_id=media.id,
                     page_number=pdf_anchor.page_number,
-                    match_status=status,
+                    match_status=status.value,
                     match_version=pdf_anchor.plain_text_match_version,
                     path=_PDF_CONTEXT_RENDER_PATH,
                 )
@@ -515,29 +546,14 @@ def _resolve_pdf_nearby_context(
             start_offset, end_offset = coherent_offsets
             return _build_pdf_nearby_context(plain_text, start_offset, end_offset)
         # Incoherent persisted metadata is treated as pending for in-memory retry.
-        status = MatchStatus.pending.value
+        status = MatchStatus.pending
 
     if status in {
-        MatchStatus.ambiguous.value,
-        MatchStatus.no_match.value,
-        MatchStatus.empty_exact.value,
+        MatchStatus.ambiguous,
+        MatchStatus.no_match,
+        MatchStatus.empty_exact,
     }:
         return None
-
-    if status != MatchStatus.pending.value:
-        fallback_action = handle_recoverable_coherence_anomaly(
-            CoherenceAnomalyKind.unknown_match_status,
-            highlight_id=highlight.id,
-            media_id=media.id,
-            page_number=pdf_anchor.page_number,
-            match_status=status,
-            match_version=pdf_anchor.plain_text_match_version,
-            path=_PDF_CONTEXT_RENDER_PATH,
-        )
-        if fallback_action == CoherenceFallbackAction.retry_as_pending:
-            status = MatchStatus.pending.value
-        else:
-            return None
 
     page_span = _load_pdf_page_span(db, media.id, pdf_anchor.page_number)
     page_span_start = page_span.start_offset if page_span else None
@@ -583,7 +599,13 @@ def _resolve_pdf_nearby_context(
     return _build_pdf_nearby_context(plain_text, result.start_offset, result.end_offset)
 
 
-def _render_pdf_highlight_context(db, highlight) -> str | None:
+def _render_pdf_highlight_context(
+    db: Session,
+    highlight: Highlight,
+    *,
+    context_ref: MessageContextRef,
+    source_version: str,
+) -> str | None:
     """Render a PDF-anchored highlight context with deterministic degrade semantics."""
     pdf_anchor = highlight.pdf_anchor
     if pdf_anchor is None or pdf_anchor.media_id != highlight.anchor_media_id:
@@ -601,35 +623,36 @@ def _render_pdf_highlight_context(db, highlight) -> str | None:
     nearby_context = _resolve_pdf_nearby_context(db, highlight, media, pdf_anchor)
     if nearby_context and nearby_context != highlight.exact:
         lines.append(f"<surrounding>{xml_escape(nearby_context)}</surrounding>")
-    _append_source_metadata_xml(
-        lines,
-        locator={
-            "type": "pdf_page_geometry",
-            "media_id": str(media.id),
-            "page_number": pdf_anchor.page_number,
-            "quads": [
-                {
-                    "x1": quad.x1,
-                    "y1": quad.y1,
-                    "x2": quad.x2,
-                    "y2": quad.y2,
-                    "x3": quad.x3,
-                    "y3": quad.y3,
-                    "x4": quad.x4,
-                    "y4": quad.y4,
-                }
-                for quad in highlight.pdf_quads
-            ],
+    locator = {
+        "type": "pdf_page_geometry",
+        "media_id": str(media.id),
+        "page_number": pdf_anchor.page_number,
+        "quads": [
+            {
+                "x1": quad.x1,
+                "y1": quad.y1,
+                "x2": quad.x2,
+                "y2": quad.y2,
+                "x3": quad.x3,
+                "y3": quad.y3,
+                "x4": quad.x4,
+                "y4": quad.y4,
+            }
+            for quad in highlight.pdf_quads
+        ],
+        "exact": highlight.exact,
+        "prefix": highlight.prefix,
+        "suffix": highlight.suffix,
+        "text_quote_selector": {
             "exact": highlight.exact,
             "prefix": highlight.prefix,
             "suffix": highlight.suffix,
-            "text_quote_selector": {
-                "exact": highlight.exact,
-                "prefix": highlight.prefix,
-                "suffix": highlight.suffix,
-            },
         },
-        source_version=f"highlight:{highlight.id}",
+    }
+    _append_source_metadata_xml(
+        lines,
+        locator=_source_metadata_locator(context_ref, locator),
+        source_version=source_version,
     )
     lines.append("</highlight>")
     return "\n".join(lines)

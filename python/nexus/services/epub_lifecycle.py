@@ -1,12 +1,11 @@
-"""EPUB ingest + retry lifecycle orchestration (S5 PR-03).
+"""EPUB ingest + retry lifecycle orchestration.
 
-Owns C4 lifecycle policy: dispatch, state transitions, retry guards, and
+Owns lifecycle policy: dispatch, state transitions, retry guards, and
 artifact cleanup for EPUB media.  Routes call exactly one function here.
-Non-EPUB kinds fall through to existing upload-confirm behavior.
+Non-EPUB kinds delegate to upload-confirm behavior.
 """
 
 import logging
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -43,25 +42,9 @@ from nexus.services.upload import (
 from nexus.services.upload import (
     validate_source_integrity,
 )
-from nexus.storage import get_storage_client
-from nexus.storage.client import StorageError
+from nexus.storage.client import StorageError, get_storage_client
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class EpubIngestConfirmOut:
-    media_id: str
-    duplicate: bool
-    processing_status: str
-    ingest_enqueued: bool
-
-
-@dataclass(frozen=True)
-class EpubRetryOut:
-    media_id: str
-    processing_status: str
-    retry_enqueued: bool
 
 
 def confirm_ingest_for_viewer(
@@ -76,7 +59,7 @@ def confirm_ingest_for_viewer(
     For EPUB: validates, hashes, deduplicates via base confirm_ingest, then
     runs preflight archive safety and dispatches extraction.
     For PDF: delegates to the PDF lifecycle module.
-    For non-EPUB/non-PDF: delegates to base confirm_ingest (S1 behavior).
+    For non-EPUB/non-PDF: delegates to base confirm_ingest.
     """
     media = db.execute(select(Media).where(Media.id == media_id)).scalar()
 

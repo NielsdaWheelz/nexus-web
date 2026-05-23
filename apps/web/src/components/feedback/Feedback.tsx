@@ -23,6 +23,8 @@ import styles from "./Feedback.module.css";
 
 export type FeedbackSeverity = "neutral" | "info" | "success" | "warning" | "error";
 
+export const PDF_PASSWORD_PROTECTED_MESSAGE = "This PDF is password-protected";
+
 export interface FeedbackContent {
   severity: FeedbackSeverity;
   title: string;
@@ -83,7 +85,7 @@ function apiErrorTitle(error: ApiError, fallback: string) {
   if (error.code === "E_KEY_TEST_FAILED") return "Provider test failed";
   if (error.code === "E_MEDIA_NOT_READY") return "This item is not ready yet";
   if (error.code === "E_HIGHLIGHT_CONFLICT") return "That highlight changed. Reload and try again.";
-  if (error.code === "E_PDF_PASSWORD_REQUIRED") return "This PDF is password-protected";
+  if (error.code === "E_PDF_PASSWORD_REQUIRED") return PDF_PASSWORD_PROTECTED_MESSAGE;
   if (error.code === "E_FILE_TOO_LARGE") return "That file is too large";
   if (error.code === "E_CAPTURE_TOO_LARGE") return "That capture is too large";
   if (error.code === "E_INVALID_FILE_TYPE") return "That file type is not supported";

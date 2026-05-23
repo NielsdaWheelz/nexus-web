@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { apiFetch } from "@/lib/api/client";
+import { toRoman } from "@/lib/toRoman";
 import styles from "./oracle.module.css";
 
 interface OracleSummary {
@@ -16,23 +17,6 @@ interface OracleSummary {
   plate_alt_text: string | null;
   question_text: string;
   status: string;
-}
-
-function toRoman(n: number): string {
-  const lookup: [number, string][] = [
-    [1000, "M"], [900, "CM"], [500, "D"], [400, "CD"],
-    [100, "C"], [90, "XC"], [50, "L"], [40, "XL"],
-    [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"],
-  ];
-  let remaining = n;
-  let out = "";
-  for (const [value, symbol] of lookup) {
-    while (remaining >= value) {
-      out += symbol;
-      remaining -= value;
-    }
-  }
-  return out;
 }
 
 export default function OracleAlephGrid() {

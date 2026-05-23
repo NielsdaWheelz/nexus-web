@@ -4,7 +4,7 @@ Handles file upload initialization, ingest confirmation, and signed URL generati
 All media-domain upload logic lives here.
 
 Key invariants:
-- No tasks enqueued in S1 (media stays pending)
+- Upload initialization creates pending media without dispatching extraction
 - SHA-256 computed synchronously at ingest time
 - Deduplication via (created_by_user_id, kind, file_sha256) constraint
 - Storage operations happen after DB transaction commits
@@ -37,13 +37,12 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.services import libraries as libraries_service
-from nexus.storage import (
+from nexus.storage.client import StorageError, get_storage_client
+from nexus.storage.paths import (
     build_storage_path,
     build_upload_staging_storage_path,
     get_file_extension,
-    get_storage_client,
 )
-from nexus.storage.client import StorageError
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +98,7 @@ def _get_default_library_id(db: Session, user_id: UUID) -> UUID:
     result = db.execute(
         select(Library.id).where(
             Library.owner_user_id == user_id,
-            Library.is_default == True,  # noqa: E712
+            Library.is_default.is_(True),
         )
     )
     library_id = result.scalar()
@@ -254,7 +253,7 @@ def confirm_ingest(
     """Confirm upload and process file.
 
     Validates file, computes hash, handles deduplication.
-    Does NOT enqueue tasks in S1.
+    Extraction dispatch is owned by the media-kind lifecycle layer.
 
     Args:
         db: Database session.

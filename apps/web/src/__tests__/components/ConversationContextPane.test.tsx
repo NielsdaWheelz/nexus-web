@@ -365,7 +365,9 @@ describe("ConversationContextPane", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: /provenance/i }));
 
-    expect(screen.getByTestId("conversation-provenance-panel")).toBeVisible();
+    expect(
+      screen.getByRole("region", { name: "Conversation provenance" }),
+    ).toBeVisible();
     expect(screen.getByText("Evidence map")).toBeVisible();
     expect(screen.getByRole("button", { name: "Copy brief" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Copy packet" })).toBeVisible();

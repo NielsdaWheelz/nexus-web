@@ -118,7 +118,6 @@ for attempt in 1 2; do
     wait_for_supabase_ports_to_close
 done
 test_env_export_supabase_env
-test_env_export_storage_prefix
 
 status=0
 "$@" || status=$?

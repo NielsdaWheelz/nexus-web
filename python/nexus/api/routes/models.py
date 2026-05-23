@@ -3,7 +3,7 @@
 Route handlers for viewing available LLM models.
 Routes are transport-only: each calls exactly one service function.
 
-Per PR-03 spec:
+Route contract:
 - GET /models: List models available to the current user
 
 Model availability rule:

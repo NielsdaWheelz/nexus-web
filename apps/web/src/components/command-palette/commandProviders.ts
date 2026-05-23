@@ -1,7 +1,7 @@
 import { MessageSquare, Search } from "lucide-react";
 import type { PaletteCommand } from "@/components/palette/types";
 
-export function getAskAiFallbackCommand({
+export function getAskAiPinnedCommand({
   query,
   localCommands,
   canOpenConversation,

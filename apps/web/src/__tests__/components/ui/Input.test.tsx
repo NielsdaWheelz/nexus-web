@@ -9,29 +9,6 @@ describe("Input", () => {
     expect(screen.getByPlaceholderText("Search")).toBeInTheDocument();
   });
 
-  it("applies different className per variant", () => {
-    const { rerender } = render(<Input variant="default" aria-label="i" />);
-    const def = screen.getByLabelText("i").className;
-
-    rerender(<Input variant="bare" aria-label="i" />);
-    const bare = screen.getByLabelText("i").className;
-
-    expect(def).not.toBe(bare);
-  });
-
-  it("applies different className per size", () => {
-    const { rerender } = render(<Input size="sm" aria-label="i" />);
-    const sm = screen.getByLabelText("i").className;
-
-    rerender(<Input size="md" aria-label="i" />);
-    const md = screen.getByLabelText("i").className;
-
-    rerender(<Input size="lg" aria-label="i" />);
-    const lg = screen.getByLabelText("i").className;
-
-    expect(new Set([sm, md, lg]).size).toBe(3);
-  });
-
   it("reflects disabled state in DOM", () => {
     render(<Input disabled aria-label="x" />);
     expect(screen.getByLabelText("x")).toBeDisabled();

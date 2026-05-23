@@ -56,7 +56,7 @@ require(
     "nexusAndroidDebugBaseUrl must be an origin without path, query, fragment, or credentials."
 }
 require(!nexusGoogleWebClientId.isNullOrBlank()) {
-    "Set nexusGoogleWebClientId in gradle.properties or NEXUS_GOOGLE_WEB_CLIENT_ID env var; required by the native Google sign-in flow."
+    "Set NEXUS_GOOGLE_WEB_CLIENT_ID or a local nexusGoogleWebClientId Gradle property; required by the native Google sign-in flow."
 }
 if (requestedReleaseBuild) {
     require(!releaseBaseUrlProperty.isNullOrBlank()) {

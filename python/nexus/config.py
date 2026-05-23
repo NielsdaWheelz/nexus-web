@@ -135,7 +135,7 @@ class Settings(BaseSettings):
     ingest_stream_timeout_s: int = Field(default=60, alias="INGEST_STREAM_TIMEOUT_S")
     signed_url_expiry_s: int = Field(default=300, alias="SIGNED_URL_EXPIRY_S")  # 5 minutes
 
-    # S7: Podcast discovery + subscription ingestion policy
+    # Podcast discovery and subscription ingestion policy.
     podcasts_enabled: bool = Field(default=True, alias="PODCASTS_ENABLED")
     podcast_index_api_key: str | None = Field(default=None, alias="PODCAST_INDEX_API_KEY")
     podcast_index_api_secret: str | None = Field(default=None, alias="PODCAST_INDEX_API_SECRET")
@@ -257,7 +257,7 @@ class Settings(BaseSettings):
         default=100, alias="BACKGROUND_JOB_PRUNE_BATCH_SIZE"
     )
 
-    # S5: EPUB archive safety limits (L2 baseline = ceiling; may be stricter, never weaker)
+    # EPUB archive safety limits. Runtime values may be stricter, never weaker.
     max_epub_archive_entries: int = Field(default=10_000, alias="MAX_EPUB_ARCHIVE_ENTRIES")
     max_epub_archive_total_uncompressed_bytes: int = Field(
         default=536_870_912, alias="MAX_EPUB_ARCHIVE_TOTAL_UNCOMPRESSED_BYTES"
@@ -272,12 +272,12 @@ class Settings(BaseSettings):
         default=30_000, alias="MAX_EPUB_ARCHIVE_PARSE_TIME_MS"
     )
 
-    # S3: Key encryption for BYOK API keys
+    # Key encryption for BYOK API keys.
     # Base64-encoded 32-byte key for XChaCha20-Poly1305 encryption
     # Required in staging/prod, optional in local/test (uses deterministic test key)
     nexus_key_encryption_key: str | None = Field(default=None, alias="NEXUS_KEY_ENCRYPTION_KEY")
 
-    # S3: Platform API keys for LLM providers (optional)
+    # Platform API keys for LLM providers.
     # If set, models from that provider are available to all users
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
@@ -303,7 +303,7 @@ class Settings(BaseSettings):
         alias="BRAVE_SEARCH_SAFE_SEARCH",
     )
 
-    # S3 PR-04: LLM provider feature flags
+    # LLM provider feature flags.
     # Controls whether each provider is available to users
     # All providers enabled by default; disable in production if needed
     enable_openai: bool = Field(default=True, alias="ENABLE_OPENAI")
@@ -311,11 +311,11 @@ class Settings(BaseSettings):
     enable_gemini: bool = Field(default=True, alias="ENABLE_GEMINI")
     enable_deepseek: bool = Field(default=True, alias="ENABLE_DEEPSEEK")
 
-    # PR-05: Rate limiting settings
+    # Rate limiting settings.
     rate_limit_rpm: int = Field(default=20, alias="RATE_LIMIT_RPM")  # Requests per minute
     rate_limit_concurrent: int = Field(default=3, alias="RATE_LIMIT_CONCURRENT")  # Max concurrent
 
-    # PR-05: LLM settings
+    # LLM runtime settings.
     llm_timeout_seconds: float = Field(default=45.0, alias="LLM_TIMEOUT_SECONDS")
 
     # Transcript semantic embedding settings
@@ -347,7 +347,7 @@ class Settings(BaseSettings):
         default=2000, alias="METADATA_ENRICHMENT_MAX_CONTENT_CHARS"
     )
 
-    # PR-08: Stream token auth
+    # Stream token auth.
     # HS256 signing key for short-lived stream tokens (base64-encoded 32+ bytes)
     # Required in staging/prod; auto-generated deterministic key in local/test
     stream_token_signing_key: str | None = Field(default=None, alias="STREAM_TOKEN_SIGNING_KEY")
@@ -366,8 +366,8 @@ class Settings(BaseSettings):
         "extra": "ignore",
     }
 
-    # L2 baseline ceilings for archive safety (used by floor validator)
-    _EPUB_ARCHIVE_BASELINE = {
+    # Maximum accepted EPUB archive safety values.
+    _EPUB_ARCHIVE_CEILINGS = {
         "max_epub_archive_entries": 10_000,
         "max_epub_archive_total_uncompressed_bytes": 536_870_912,
         "max_epub_archive_single_entry_uncompressed_bytes": 67_108_864,
@@ -458,13 +458,12 @@ class Settings(BaseSettings):
                     "R2_ENDPOINT_URL must be the Cloudflare R2 S3 API endpoint for staging/prod."
                 )
 
-        # S5: EPUB archive safety floor validation
-        for field_name, baseline in self._EPUB_ARCHIVE_BASELINE.items():
+        for field_name, ceiling in self._EPUB_ARCHIVE_CEILINGS.items():
             value = getattr(self, field_name)
-            if value > baseline:
+            if value > ceiling:
                 raise ValueError(
-                    f"{field_name.upper()}={value} exceeds L2 baseline ceiling {baseline}. "
-                    "Runtime values may be stricter (lower) but never weaker than L2 baseline."
+                    f"{field_name.upper()}={value} exceeds archive safety ceiling {ceiling}. "
+                    "Runtime values may be stricter (lower) but never weaker."
                 )
             if value < 1:
                 raise ValueError(f"{field_name.upper()}={value} must be >= 1.")

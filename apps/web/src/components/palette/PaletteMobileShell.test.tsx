@@ -54,7 +54,7 @@ beforeEach(() => {
 });
 
 describe("PaletteMobileShell", () => {
-  // visualViewport resizing and the swipe gesture are covered by e2e and manual device verification.
+  // visualViewport resizing and swipe dismissal require device-level verification.
 
   it("renders an open full-screen dialog", () => {
     renderShell();
@@ -84,6 +84,15 @@ describe("PaletteMobileShell", () => {
     await user.click(screen.getByRole("button", { name: "Close command palette" }));
 
     expect(onClose).toHaveBeenCalledTimes(1);
+    expect(history.back).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not pop history during effect cleanup", () => {
+    const { unmount } = renderShell();
+
+    unmount();
+
+    expect(history.back).not.toHaveBeenCalled();
   });
 
   it("closes when the browser back button fires popstate", () => {
@@ -95,5 +104,6 @@ describe("PaletteMobileShell", () => {
     });
 
     expect(onClose).toHaveBeenCalledTimes(1);
+    expect(history.back).not.toHaveBeenCalled();
   });
 });

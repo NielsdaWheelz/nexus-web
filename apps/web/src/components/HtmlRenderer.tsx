@@ -1,20 +1,17 @@
 /**
  * HtmlRenderer - THE ONLY component that may use dangerouslySetInnerHTML.
  *
- * This component renders sanitized HTML content from the API.
- * It accepts ONLY html_sanitized strings from fragment responses,
- * optionally with highlights already applied.
+ * This component renders sanitized HTML content from API-owned fields:
+ * fragment/EPUB/transcript `html_sanitized` and podcast `description_html`.
+ * Callers may apply local transforms that only annotate sanitized HTML, such
+ * as highlight spans or podcast timestamp buttons.
  *
- * S2 Constraints:
- * - Render HTML as-is from html_sanitized field
- * - Support pre-rendered HTML with highlight spans (PR-08)
+ * Constraints:
  * - Do NOT perform additional client-side sanitization
  * - Do NOT fetch remote resources or proxy rewrite
  * - Images in HTML render as-is (display if src is reachable)
  *
  * ESLint exception: react/no-danger is disabled for this file only.
- *
- * @see docs/v1/s2/s2_prs/s2_pr08.md
  */
 
 import { memo, useCallback, useEffect, useRef } from "react";
@@ -24,12 +21,12 @@ import styles from "./HtmlRenderer.module.css";
 
 interface HtmlRendererProps {
   /**
-   * Sanitized HTML content from API (must be html_sanitized field).
+   * Sanitized HTML content from the API.
    * This can be either:
-   * - Raw html_sanitized (no highlights)
-   * - Pre-rendered HTML with highlight spans applied via applyHighlightsToHtml()
+   * - Raw `html_sanitized` / `description_html`
+   * - Sanitized HTML annotated with highlight spans or timestamp buttons
    *
-   * The component treats both the same way - it just renders the HTML.
+   * The component treats both the same way: it only renders the HTML.
    */
   htmlSanitized: string;
   /** Optional class name for the container */
@@ -49,15 +46,15 @@ const PULSE_DURATION_MS = 1200;
  *
  * This is the ONLY component in the application that may use
  * dangerouslySetInnerHTML. All HTML rendered through this component
- * must come from the API's html_sanitized field or be processed
- * through applyHighlightsToHtml() which only adds highlight spans.
+ * must come from an API-owned sanitized HTML field or be processed
+ * by a local transform that only annotates already-sanitized HTML.
  *
  * @example
  * ```tsx
- * // Without highlights (original behavior)
+ * // Raw sanitized fragment HTML.
  * <HtmlRenderer htmlSanitized={fragment.html_sanitized} />
  *
- * // With highlights (PR-08 behavior)
+ * // Sanitized fragment HTML with local highlight annotations.
  * const { html } = applyHighlightsToHtml(
  *   fragment.html_sanitized,
  *   fragment.canonical_text,

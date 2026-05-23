@@ -4,8 +4,6 @@
  * Proxies:
  * - POST /api/fragments/{fragmentId}/highlights → FastAPI
  * - GET /api/fragments/{fragmentId}/highlights → FastAPI
- *
- * @see docs/v1/s2/s2_prs/s2_pr09.md §7.5
  */
 
 import { proxyToFastAPI } from "@/lib/api/proxy";

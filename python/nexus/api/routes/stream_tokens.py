@@ -1,9 +1,9 @@
 """Internal stream token minting endpoint.
 
-Per PR-08 spec §2:
-- POST /internal/stream-tokens — mints a stream token JWT
-- BFF-only: requires X-Nexus-Internal header + supabase bearer auth
-- Signing key never leaves fastapi env
+Behavior:
+- POST /internal/stream-tokens mints a stream token JWT
+- BFF-only: requires X-Nexus-Internal header + Supabase bearer auth
+- Signing key never leaves the FastAPI environment
 - Rate-limited: shares the same per-user RPM limit as chat run creation
 """
 
@@ -22,9 +22,9 @@ router = APIRouter(tags=["stream-tokens"])
 def create_stream_token(
     viewer: Annotated[Viewer, Depends(get_viewer)],
 ) -> dict:
-    """Mint a short-lived stream token for direct browser→fastapi SSE.
+    """Mint a short-lived stream token for direct browser-to-FastAPI SSE.
 
-    The BFF proxies to this endpoint with supabase bearer + X-Nexus-Internal.
+    The BFF proxies to this endpoint with Supabase bearer + X-Nexus-Internal.
     Returns a JWT the browser can use for direct SSE endpoints.
 
     Response:

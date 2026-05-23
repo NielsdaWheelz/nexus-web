@@ -16,14 +16,12 @@
  * - Subsequent clicks on same segment cycle through data-active-highlight-ids
  * - Clicking different segment resets cycling
  *
- * PR-10: Changed from data-highlight-ids (comma-delimited) to
- * data-active-highlight-ids (space-delimited) for efficient CSS ~= selector.
- *
- * @see docs/v1/s2/s2_prs/s2_pr09.md §9
- * @see docs/v1/s2/s2_prs/s2_pr10.md §15
+ * The DOM contract stores active highlight ids in the space-delimited
+ * data-active-highlight-ids attribute for efficient CSS ~= selection.
  */
 
 import { useState, useCallback, useRef } from "react";
+import { escapeAttrValue } from "./escapeAttrValue";
 
 // =============================================================================
 // Types
@@ -250,8 +248,8 @@ export function useHighlightInteraction(
 /**
  * Parse highlight data from a DOM element's data attributes.
  *
- * PR-10: Uses data-active-highlight-ids (space-delimited) instead of
- * data-highlight-ids (comma-delimited) for efficient CSS ~= selector.
+ * Uses data-active-highlight-ids as space-delimited tokens for efficient
+ * CSS ~= selector matching.
  *
  * @param element - Element with data-active-highlight-ids and data-highlight-top
  * @returns HighlightClickData or null if not a highlight span
@@ -262,7 +260,6 @@ export function parseHighlightElement(element: Element): HighlightClickData | nu
     return null;
   }
 
-  // Space-delimited per PR-10
   const highlightIds = idsAttr.split(" ").filter(Boolean);
   if (highlightIds.length === 0) {
     return null;
@@ -279,8 +276,6 @@ export function parseHighlightElement(element: Element): HighlightClickData | nu
 
 /**
  * Find the closest ancestor with highlight data attributes.
- *
- * PR-10: Uses data-active-highlight-ids instead of data-highlight-ids.
  *
  * @param element - Starting element
  * @returns Element with highlight data or null
@@ -301,7 +296,7 @@ export function findHighlightElement(element: Element | null): Element | null {
  * This is a DOM-based approach that doesn't require re-rendering.
  * Call this when focus changes to update visual state.
  *
- * PR-10: Uses data-active-highlight-ids with ~= selector for efficient
+ * Uses data-active-highlight-ids with ~= selector for efficient
  * space-delimited token matching.
  *
  * @param container - The container element to search within
@@ -318,13 +313,9 @@ export function applyFocusClass(
   focusedElements.forEach((el) => el.classList.remove(focusClass));
 
   // Add focus class to elements containing the focused highlight
-  // Using ~= selector for O(1) space-delimited token matching (PR-10)
+  // Use ~= selector for exact space-delimited token matching.
   if (highlightId) {
-    const escapedId =
-      typeof CSS !== "undefined" && typeof CSS.escape === "function"
-        ? CSS.escape(highlightId)
-        : highlightId.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    const selector = `[data-active-highlight-ids~="${escapedId}"]`;
+    const selector = `[data-active-highlight-ids~="${escapeAttrValue(highlightId)}"]`;
     const elements = container.querySelectorAll(selector);
     elements.forEach((el) => el.classList.add(focusClass));
   }

@@ -49,7 +49,8 @@ from nexus.services.media import create_or_reuse_youtube_video, create_provision
 from nexus.services.notes import set_highlight_note_body
 from nexus.services.pdf_ingest import PdfExtractionError
 from nexus.services.upload import confirm_ingest, init_upload
-from nexus.storage import build_upload_staging_storage_path, get_file_extension, get_storage_client
+from nexus.storage.client import get_storage_client
+from nexus.storage.paths import build_upload_staging_storage_path, get_file_extension
 from nexus.tasks.ingest_epub import run_epub_ingest_sync
 from nexus.tasks.ingest_pdf import _index_pdf_evidence, run_pdf_ingest_sync
 
@@ -74,13 +75,13 @@ YOUTUBE_PLAYBACK_ONLY_WATCH_URL = (
 YOUTUBE_EMBED_URL = f"https://www.youtube.com/embed/{YOUTUBE_VIDEO_ID}"
 YOUTUBE_TRANSCRIPT_SEGMENTS = [
     {
-        "canonical_text": "S8 E2E segment alpha intro line.",
+        "canonical_text": "E2E YouTube transcript segment alpha intro line.",
         "speaker_label": "Host",
         "t_start_ms": 4_000,
         "t_end_ms": 8_000,
     },
     {
-        "canonical_text": "S8 E2E segment beta seek target.",
+        "canonical_text": "E2E YouTube transcript segment beta seek target.",
         "speaker_label": "Guest",
         "t_start_ms": 12_000,
         "t_end_ms": 17_000,

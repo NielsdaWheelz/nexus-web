@@ -242,7 +242,7 @@ Single-use is enforced by `DELETE … RETURNING` on consume (no `used_at` column
 - **`MainActivity.startAuthFlow(uri)`** — `internal`. Validate `provider`/`mode`; generate `verifier`/`challenge`; persist the verifier on a pending-attempt field; build the `/auth/oauth?…&flow=handoff&hc=<challenge>` URL; launch a Custom Tab (reusing the `openExternalUrl` `CustomTabsIntent` builder).
 - **`MainActivity.loadUrlFromIntent`** — delete the `nexus-dev://auth/callback` branch; add a `nexus://auth/handoff` branch (not debug-gated) that rewrites to `<NEXUS_BASE_URL>/auth/handoff`, appending `hv=<verifier>` from the pending attempt, then loads it in the WebView.
 - **`GoogleSignInController.kt`** — new. Owns the Credential Manager call, the OIDC nonce, the verifier/challenge, the `POST /auth/native/google` call, and loading the WebView at `/auth/handoff`.
-- **`build.gradle.kts`** — add `androidx.credentials:credentials:1.6.0`, `androidx.credentials:credentials-play-services-auth:1.6.0`, `com.google.android.libraries.identity.googleid:googleid:1.1.1`; add a `GOOGLE_WEB_CLIENT_ID` `buildConfigField` sourced from a Gradle property (per the release-signing precedent — not committed).
+- **`build.gradle.kts`** — add `androidx.credentials:credentials:1.6.0`, `androidx.credentials:credentials-play-services-auth:1.6.0`, `com.google.android.libraries.identity.googleid:googleid:1.1.1`; add a `GOOGLE_WEB_CLIENT_ID` `buildConfigField` sourced from `NEXUS_GOOGLE_WEB_CLIENT_ID` in the local/CI environment, with an uncommitted local Gradle property accepted for developer overrides.
 
 ### 10.5 Login page (`apps/web/src/app/login`)
 
@@ -356,7 +356,7 @@ After this change:
 - `apps/web/src/lib/auth/messages.ts` (+ a handoff-failure error code/message in the public allowlist, if not already covered)
 - `apps/android/app/src/main/AndroidManifest.xml` (+ `nexus://auth/handoff` filter)
 - `apps/android/app/src/main/java/app/nexus/android/MainActivity.kt` (intercept `nexus://auth/start`+`/native`; `startAuthFlow`; − `nexus-dev` branch, + `nexus://auth/handoff` branch)
-- `apps/android/app/build.gradle.kts` (+ 3 deps, + `GOOGLE_WEB_CLIENT_ID` field) and `gradle.properties`
+- `apps/android/app/build.gradle.kts` (+ 3 deps, + `GOOGLE_WEB_CLIENT_ID` field)
 - `apps/android/app/src/androidTest/java/app/nexus/android/MainActivityTest.kt`
 - `python/nexus/db/models.py` (+ `AuthHandoffCode`)
 - `python/nexus/jobs/registry.py` (+ purge job) and its handler module
@@ -376,7 +376,7 @@ These must be done by the maintainer; Option 2 cannot be completed without O1–
 - **O1. Google Cloud — Web OAuth client.** Confirm the existing Google OAuth *Web* client ID (already used by the Supabase Google provider). It becomes `GOOGLE_WEB_CLIENT_ID` (Credential Manager `serverClientId`) and the ID token's `aud`.
 - **O2. Google Cloud — Android OAuth clients.** Create an Android OAuth client for `app.nexus.android` (release package) with the **release keystore SHA-1**, and one for `app.nexus.android.debug` with the **debug keystore SHA-1**. Required for Credential Manager.
 - **O3. Supabase dashboard.** Confirm the Google provider is enabled and accepts the Web client ID; no redirect-allowlist change is needed (the `nexus://` hop is app-side, after the Supabase callback).
-- **O4. Gradle property.** Provide `GOOGLE_WEB_CLIENT_ID` as a Gradle property / CI secret (uncommitted), per the release-signing-property precedent.
+- **O4. Environment variable.** Provide `NEXUS_GOOGLE_WEB_CLIENT_ID` in local and CI environments; do not commit the Web client ID to `gradle.properties`.
 
 ---
 

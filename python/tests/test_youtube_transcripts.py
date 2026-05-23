@@ -167,18 +167,18 @@ class TestYoutubeTranscriptBoundary:
             f"got {result}"
         )
 
-    def test_legacy_dict_segments_are_rejected_after_provider_cutover(self, monkeypatch):
-        def _legacy_fetch(_video_id: str):
-            return [{"start": 0.5, "duration": 1.0, "text": "legacy dict snippet"}]
+    def test_dict_segment_rows_without_provider_attributes_are_rejected(self, monkeypatch):
+        def _fetch_dict_rows(_video_id: str):
+            return [{"start": 0.5, "duration": 1.0, "text": "dict row snippet"}]
 
-        _install_fake_provider(monkeypatch, _legacy_fetch)
+        _install_fake_provider(monkeypatch, _fetch_dict_rows)
         result = fetch_youtube_transcript("dQw4w9WgXcQ")
 
         assert result["status"] == "failed", (
-            f"expected failed status for legacy dict segments after cutover, got {result}"
+            f"expected failed status for dict rows without provider attributes, got {result}"
         )
         assert result["error_code"] == "E_TRANSCRIPT_UNAVAILABLE", (
-            f"expected E_TRANSCRIPT_UNAVAILABLE for legacy dict segments after cutover, got {result}"
+            f"expected E_TRANSCRIPT_UNAVAILABLE for dict rows without provider attributes, got {result}"
         )
 
     def test_successful_fetch_normalizes_and_sorts_segments(self, monkeypatch):

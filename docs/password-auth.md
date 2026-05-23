@@ -10,7 +10,7 @@ Adds email + password authentication as a first-class sign-in method alongside t
 
 Hard cutover. No feature flag. No fallback. No backward compatibility — there is no prior password code to be compatible with. One PR brings the feature live; Supabase config flips simultaneously.
 
-The implementation is thin because Supabase Auth ships email/password natively (`signInWithPassword`, `signUp`, `updateUser`, `unlinkIdentity({ provider: "email" })`). The work is overwhelmingly UI, server-action plumbing, and a single FastAPI display-name endpoint. No password hashing, no reset-token table, no SMTP, no schema changes to `public.users`.
+The implementation is thin because Supabase Auth ships email/password natively (`signInWithPassword`, `signUp`, `updateUser`, `unlinkIdentity({ provider: "email" })`). The work is overwhelmingly UI, server-action plumbing, and reuse of the existing FastAPI profile endpoint for display-name writes. No password hashing, no reset-token table, no SMTP, no schema changes to `public.users`.
 
 ## 2. Problem
 
@@ -50,7 +50,7 @@ Three feature gaps follow:
 
 ## 5. Scope
 
-**In scope.** The Next.js web app (`apps/web`): new `/sign-up` and `/settings/account` routes; password fields on `/login`; new server actions for password and email/display-name management; a Password row on `/settings/identities`; whitelisted message constants; middleware public-route additions. The FastAPI backend (`python/nexus`): one new endpoint to update `public.users.display_name`. The Supabase project configuration (`supabase/config.toml`): enable signup, set minimum password length, leave email confirmations off. Docs: this spec; one-paragraph update to `docs/android-auth.md`; one-line update to `docs/rules/codebase.md`.
+**In scope.** The Next.js web app (`apps/web`): new `/sign-up` and `/settings/account` routes; password fields on `/login`; new server actions for password and email management; a client-side display-name update through the existing `/api/me` BFF route; a Password row on `/settings/identities`; whitelisted message constants; middleware public-route additions. The FastAPI backend (`python/nexus`) reuses the existing `/me` profile endpoint to update `public.users.display_name`. The Supabase project configuration (`supabase/config.toml`): enable signup, set minimum password length, leave email confirmations off. Docs: this spec; one-paragraph update to `docs/android-auth.md`; one-line update to `docs/rules/codebase.md`.
 
 **Out of scope.** SMTP. The `auth_handoff_codes` table and Android native auth pipeline (`apps/android`, `/auth/native/google`, `/auth/handoff`, `/auth/oauth?flow=handoff`). The Postgres `public.users` schema (no new columns). The extension session model. The worker.
 
@@ -76,7 +76,7 @@ Three feature gaps follow:
 4. The action runs a `createRouteHandlerClient()` and calls `supabase.auth.signUp({ email, password, options: { data: { display_name: displayName } } })`.
 5. On Supabase success: cookies are settled, applied via `applyCookies`, the action throws a `redirect("/libraries")` (Next.js Server Action redirect). The browser/WebView follows the 303 and navigates to `/libraries`.
 6. On the first authenticated FastAPI call from `/libraries`, `AuthMiddleware` fires `ensure_user_and_default_library(user_id, email)`. The `public.users` row is created with `email` set from the JWT. The default library is created.
-7. The display-name from `user_metadata.display_name` is read by the front-end where needed (existing OAuth users already do this for Google's `name`). It is also written into `public.users.display_name` by the server action via the new `PATCH /me/display-name` BFF call **after** the signup session is established and **before** the redirect. (See §11.3 for ordering.)
+7. The display-name from `user_metadata.display_name` is read by the front-end where needed (existing OAuth users already do this for Google's `name`). It is also written into `public.users.display_name` by the server action via the existing FastAPI `PATCH /me` profile endpoint **after** the signup session is established and **before** the redirect. (See §11.3 for ordering.)
 8. On Supabase failure (email already in use, password too short, generic error), the action returns `{ ok: false, error: "<whitelisted constant>" }`. The form re-renders with a `FeedbackNotice` carrying the message. No partial state: no `auth.users` row is created if Supabase rejects.
 
 Cancel path: the user clicks "Cancel" or navigates away. No state has been written. No cleanup required.
@@ -167,7 +167,7 @@ The login page's existing `isShell` branch is preserved exclusively for the OAut
                 │    ▶ applyCookies                              │
                 │    ▶ redirect(nextPath)                        │
                 │                                                │
-                │  BFF Route (api/me/display-name/route.ts)      │
+                │  BFF Route (api/me/route.ts)                   │
                 │    ▶ proxyToFastAPI (existing)                 │
                 └────────────┬───────────────────────────────────┘
                              │  HTTPS to Supabase Auth (auth)
@@ -184,7 +184,7 @@ The login page's existing `isShell` branch is preserved exclusively for the OAut
                 │    ▶ ensure_user_and_default_library           │
                 │       (idempotent UPSERT into public.users)    │
                 │                                                │
-                │  PATCH /me/display-name (new)                  │
+                │  PATCH /me (existing)                          │
                 │    ▶ UPDATE public.users SET display_name = …  │
                 │      WHERE id = :viewer_id                     │
                 └────────────────────────────────────────────────┘
@@ -250,7 +250,7 @@ The same shape holds for sign-in (skips the bootstrap-creates-row step if the us
 - **I3.** No password value is ever logged, stored on the Next.js process beyond the duration of a single Server Action, or written to any database controlled by this repository. Password hashing is Supabase's responsibility.
 - **I4.** Every user-facing error message displayed by a password flow is a constant from `apps/web/src/lib/auth/messages.ts`. Raw Supabase errors never surface.
 - **I5.** Every password Server Action owns one total deadline of 5 seconds, inherited from `createRouteHandlerClient`. No password operation may block longer.
-- **I6.** Display-name and email writes to `public.users` are idempotent: the bootstrap callback's UPSERT handles all email changes; the display-name endpoint is a plain UPDATE by primary key.
+- **I6.** Display-name and email writes to `public.users` are idempotent: the bootstrap callback's UPSERT handles all email changes; the `PATCH /me` profile update is a plain UPDATE by primary key.
 - **I7.** Email and password fields validate length and required-ness on the server; client-side `required` and `minLength` are UX hints only.
 - **I8.** A successful sign-up immediately yields an authenticated session. There is no "verify your email" interstitial under v1 configuration.
 - **I9.** The `provider` field on `auth.identities` is matched exhaustively against the closed set `{email, google, github}` in every UI branch. New providers require updating this enum and the matching code.
@@ -294,8 +294,7 @@ apps/web/src/
 │   │   │       └── actions.ts                       (N)  changeEmailAction (display-name is client-side apiFetch, not a server action)
 │   ├── api/
 │   │   └── me/
-│   │       └── display-name/
-│   │           └── route.ts             (N)  PATCH proxy to FastAPI
+│   │       └── route.ts                 (M)  existing PATCH proxy to FastAPI
 │   └── ...
 ├── lib/
 │   ├── auth/
@@ -310,9 +309,9 @@ apps/web/src/
 python/nexus/
 ├── api/
 │   └── routes/
-│       └── me.py                        (M)  add PATCH /me/display-name
+│       └── me.py                        (unchanged — existing PATCH /me suffices)
 ├── services/
-│   └── users.py                         (N or M)  update_display_name(user_id, display_name)
+│   └── users.py                         (unchanged — existing update_display_name suffices)
 └── ...
 
 supabase/
@@ -372,7 +371,7 @@ export async function changePasswordAction(input: {
 export async function removePasswordAction(): Promise<ActionResult>;
 ```
 
-Email-change and display-name-change actions live in `apps/web/src/app/(authenticated)/settings/account/actions.ts`:
+The email-change action lives in `apps/web/src/app/(authenticated)/settings/account/actions.ts`; the display-name form uses the existing client-side profile update path:
 
 ```ts
 "use server";
@@ -490,9 +489,9 @@ export const KEEP_ONE_SIGN_IN_METHOD_MESSAGE = "Keep at least one sign-in method
 | `apps/web/src/middleware.ts` + `lib/supabase/middleware.ts` | `PUBLIC_ROUTES` adds `/sign-up`. `/login` already public. `/settings/*` already protected. | `/sign-up` reachable when `anonymous` or `ended`. If `active`, the page itself redirects to `/libraries` (matches `/login`). |
 | `apps/web/src/lib/auth/dal.ts` | No change. Verified session checks are identical regardless of how the JWT was minted. | Password sessions are interchangeable with OAuth sessions in every protected route. |
 | `apps/web/src/lib/supabase/route-handler.ts` | No change. `createRouteHandlerClient`'s 5-second deadline applies to every password action's Supabase call. | Inherits I5. |
-| `apps/web/src/lib/api/proxy.ts` | No change. Used by the new `/api/me/display-name` BFF route handler. | New endpoint follows the existing bearer-forward + Origin-check pattern. |
+| `apps/web/src/lib/api/proxy.ts` | No change. Used by the existing `/api/me` BFF route handler. | Display-name writes follow the existing bearer-forward + Origin-check pattern. |
 | `python/nexus/auth/middleware.py` + `services/bootstrap.py` | No change. `ensure_user_and_default_library` runs on the first authenticated request after sign-up; the `INSERT … ON CONFLICT DO UPDATE SET email = COALESCE(:email, users.email)` upserts the row and syncs email on every login. | Sign-up + first FastAPI hit → `public.users` row exists. Email change + next FastAPI hit → `public.users.email` updated. No bespoke code path needed. |
-| `python/nexus/api/routes/me.py` | New `PATCH /me/display-name`. Existing `GET /me` is unchanged. | Display-name reads continue from `/me`; writes go through the new endpoint. |
+| `python/nexus/api/routes/me.py` | No change. Existing `GET /me` and `PATCH /me` are unchanged. | Display-name reads and writes stay on the profile endpoint. |
 | `/auth/oauth`, `/auth/callback`, `/auth/handoff`, `/auth/native/google` | Untouched. | OAuth and Android handoff flows are orthogonal to password auth. |
 | `auth_handoff_codes` table + handoff service (`python/nexus/services/auth_handoff_codes.py`) | Untouched. Not reused for password. | The handoff codes are specifically for cookie-jar transfer between Custom Tab and WebView, which password does not require. |
 | `apps/android/*` | Untouched (Kotlin, Manifest, Gradle). One-paragraph note in `docs/android-auth.md` clarifying password is web-only in the rendering sense (it renders inside the WebView same-origin). | No new intent filters, no new native HTTP calls. Rule I3 of `docs/android-auth.md` (debug == release) is preserved trivially. |
@@ -519,8 +518,8 @@ Honors the repo rules (`docs/rules/`):
 - **`layers.md`** — Password auth runs entirely server-side via Server Actions. The browser never holds Supabase tokens. The DAL is unchanged: a session is a session. BFF proxy is used only for display-name; password actions skip FastAPI entirely (no proxy, no business logic outside Supabase).
 - **`control-flow.md`** — `provider` is matched exhaustively against `{email, google, github}`. Action results are matched on the closed set `{ok: true} | {ok: false}`. No catch-all branches; unrecognized Supabase errors fall through `toPublicAuthErrorMessage` to the action's default message constant.
 - **`errors.md`** — Every error path terminates in a whitelisted message (I4). Raw exception messages from Supabase or FastAPI are converted via `toPublicAuthErrorMessage` or `toFeedback` and the original is logged (with request-id) but not displayed.
-- **`database.md`** — No new tables. No new migrations. Updates to `public.users` are routed through `ensure_user_and_default_library` (email) or the explicit FastAPI endpoint (display name). Direct writes to `public.users` from Server Actions are forbidden.
-- **`codebase.md`** — One added line: password identities are managed via Supabase Auth; the app stores no password material. Module ownership: `apps/web/src/lib/auth/password-actions.ts` owns all password Server Actions; `apps/web/src/lib/auth/identities.ts` owns identity-shape helpers; `python/nexus/api/routes/me.py` owns the display-name endpoint.
+- **`database.md`** — No new tables. No new migrations. Updates to `public.users` are routed through `ensure_user_and_default_library` (email) or the existing FastAPI profile endpoint (display name). Direct writes to `public.users` from Server Actions are forbidden.
+- **`codebase.md`** — One added line: password identities are managed via Supabase Auth; the app stores no password material. Module ownership: `apps/web/src/lib/auth/password-actions.ts` owns all password Server Actions; `apps/web/src/lib/auth/identities.ts` owns identity-shape helpers; `python/nexus/api/routes/me.py` owns profile reads and display-name writes.
 - **`concurrency.md`** — Server Actions run sequentially per request. `ensure_user_and_default_library` is already race-safe via `INSERT … ON CONFLICT` and `IntegrityError` recovery. No new concurrency surface.
 - **`tech-stack.md`** — No new dependencies. Continues to use `@supabase/ssr` and `@supabase/supabase-js` exclusively for auth.
 - **`docs/android-auth.md` I1 / I2 / I3** — Preserved. Password flows do not load Supabase or provider URLs in the WebView; they POST same-origin to Nexus. Debug and release run identical code. Handoff code semantics are untouched.
@@ -556,7 +555,7 @@ After implementation:
 - `apps/web/src/lib/auth/password-actions.ts` is the only place that calls `signInWithPassword`, `signUp`, `updateUser`, and `unlinkIdentity({ provider: 'email' })`.
 - `apps/web/src/lib/auth/messages.ts` carries the new `PASSWORD_*`, `EMAIL_*`, `DISPLAY_NAME_*` constants.
 - `apps/web/src/lib/supabase/middleware.ts` PUBLIC_ROUTES includes `/sign-up`.
-- `python/nexus/api/routes/me.py` exposes `PATCH /me/display-name`.
+- `python/nexus/api/routes/me.py` keeps the existing `PATCH /me` display-name write path.
 - `supabase/config.toml` has `enable_signup = true`, `password_min_length = 12`, `enable_confirmations = false`.
 - No new database migration. No new table. No new column on `public.users`. No new env var.
 - The Android shell, the FastAPI auth handoff path, the OAuth routes, the extension session model, and the worker are byte-identical to today.
@@ -639,7 +638,7 @@ None. This spec adds; it does not remove. There is no legacy password code to de
 ### 20.1 Backend (`python/`)
 
 - Unit test for `update_display_name(db, user_id, display_name)` service: success, length validation, idempotent re-application.
-- Integration test for `PATCH /me/display-name`: 200 with valid body; 401 without bearer; 422 on empty or oversize.
+- Integration test for `PATCH /me`: 200 with valid display-name body; 401 without bearer; 422 on empty or oversize.
 - Integration test confirming the existing bootstrap path still works when the JWT comes from a `signUp` (synthesize a JWT with a fresh sub + email, run a `GET /me`, assert `public.users` row exists with that email + display name carried from `user_metadata`).
 - Pyright clean.
 
@@ -699,7 +698,7 @@ Each phase leaves the suite green; phases land in one PR (hard cutover) but in t
 ## 22. Risks and mitigations
 
 - **R1. Supabase changes the shape of `auth.identities` returned by `getUserIdentities()`.** Mitigation: the response is consumed through the existing `normalizeLinkedIdentities` helper which already shields the UI. Add a fast unit test that asserts the helper accepts an `email`-provider row.
-- **R2. The `display_name` written via `user_metadata` at sign-up is not visible to the front-end before the `/me` FastAPI call.** Mitigation: the post-sign-up Server Action immediately calls `PATCH /me/display-name` after `applyCookies` and before `redirect`. By the time the browser navigates to `/libraries`, `public.users.display_name` is set.
+- **R2. The `display_name` written via `user_metadata` at sign-up is not visible to the front-end before the `/me` FastAPI call.** Mitigation: the post-sign-up Server Action immediately calls `PATCH /me` after `applyCookies` and before `redirect`. By the time the browser navigates to `/libraries`, `public.users.display_name` is set.
 - **R3. A browser test for Server Actions requires CSRF tokens / form-data shape.** Mitigation: Next.js handles the CSRF/RSC plumbing; the tests submit through `<form action={...}>` so the framework owns the transport. Where direct invocation is required, the action is exported and called from the test in the same way as `loadLinkedIdentities` is today.
 - **R4. The 5-second Supabase deadline is too tight for `signUp` on a cold project.** Mitigation: 5 s is the existing repo-wide invariant (I5). If sign-up exceeds it in practice we extend the deadline at the `createRouteHandlerClient` layer for **all** auth operations — never per-action.
 - **R5. A user with `auth.users.email = "X"` and an OAuth identity for `"X"` calls `setPassword`; Supabase rejects because the email identity already exists for a different `user_id`.** Mitigation: this can only occur if email + provider provisioning has produced two distinct users. Our schema does not currently allow it (Supabase emails are globally unique at the auth layer; provider emails are stored on the identity, not the user). Document the failure mode and surface `PASSWORD_CHANGE_FAILURE_MESSAGE`; manual recovery via Supabase admin.

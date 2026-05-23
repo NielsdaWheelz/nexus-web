@@ -26,6 +26,18 @@ class YouTubeIdentity:
     embed_url: str
 
 
+def build_youtube_identity(provider_video_id: str) -> YouTubeIdentity:
+    """Build canonical YouTube playback URLs for a known provider video id."""
+    watch_url = f"https://www.youtube.com/watch?v={provider_video_id}"
+    embed_url = f"https://www.youtube.com/embed/{provider_video_id}"
+    return YouTubeIdentity(
+        provider=_YOUTUBE_PROVIDER,
+        provider_video_id=provider_video_id,
+        watch_url=watch_url,
+        embed_url=embed_url,
+    )
+
+
 def is_youtube_url(url: str) -> bool:
     """Return True when URL host is one of the YouTube host variants."""
     parsed = urlparse(url)
@@ -47,14 +59,7 @@ def classify_youtube_url(url: str) -> YouTubeIdentity | None:
     if provider_video_id is None:
         return None
 
-    watch_url = f"https://www.youtube.com/watch?v={provider_video_id}"
-    embed_url = f"https://www.youtube.com/embed/{provider_video_id}"
-    return YouTubeIdentity(
-        provider=_YOUTUBE_PROVIDER,
-        provider_video_id=provider_video_id,
-        watch_url=watch_url,
-        embed_url=embed_url,
-    )
+    return build_youtube_identity(provider_video_id)
 
 
 def _normalize_host(hostname: str | None) -> str:

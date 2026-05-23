@@ -102,19 +102,15 @@ function normalizeString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
-function normalizeNullableNumber(value: unknown): number | null {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  return isFiniteNumber(value) ? value : null;
-}
-
-function hasOnlyKeys(record: Record<string, unknown>, allowedKeys: string[]): boolean {
-  return Object.keys(record).every((key) => allowedKeys.includes(key));
+function hasExactKeys(record: Record<string, unknown>, expectedKeys: string[]): boolean {
+  const keys = Object.keys(record);
+  return (
+    keys.length === expectedKeys.length && keys.every((key) => expectedKeys.includes(key))
+  );
 }
 
 function parseNullableStringField(value: unknown): { ok: boolean; value: string | null } {
-  if (value === null || value === undefined) {
+  if (value === null) {
     return { ok: true, value: null };
   }
   const normalized = normalizeString(value);
@@ -133,14 +129,13 @@ function parseNullableNumberField(
   value: unknown,
   predicate: (candidate: number) => boolean
 ): { ok: boolean; value: number | null } {
-  if (value === null || value === undefined) {
+  if (value === null) {
     return { ok: true, value: null };
   }
-  const normalized = normalizeNullableNumber(value);
-  if (normalized === null || !predicate(normalized)) {
+  if (!isFiniteNumber(value) || !predicate(value)) {
     return { ok: false, value: null };
   }
-  return { ok: true, value: normalized };
+  return { ok: true, value };
 }
 
 function parseLocations(value: unknown): ReaderResumeLocations | null {
@@ -149,7 +144,7 @@ function parseLocations(value: unknown): ReaderResumeLocations | null {
   }
 
   const record = value as Record<string, unknown>;
-  if (!hasOnlyKeys(record, ["text_offset", "progression", "total_progression", "position"])) {
+  if (!hasExactKeys(record, ["text_offset", "progression", "total_progression", "position"])) {
     return null;
   }
   const textOffset = parseNullableNumberField(
@@ -186,7 +181,7 @@ function parseTextContext(value: unknown): ReaderResumeTextContext | null {
   }
 
   const record = value as Record<string, unknown>;
-  if (!hasOnlyKeys(record, ["quote", "quote_prefix", "quote_suffix"])) {
+  if (!hasExactKeys(record, ["quote", "quote_prefix", "quote_suffix"])) {
     return null;
   }
   const quote = parseNullableStringField(record.quote);
@@ -221,19 +216,22 @@ export function isReflowableReaderResumeState(
 }
 
 export function parseReaderResumeState(value: unknown): ReaderResumeState | null {
-  if (typeof value !== "object" || value === null) {
+  if (value === null) {
     return null;
+  }
+  if (typeof value !== "object") {
+    throw new Error("Invalid reader state payload");
   }
 
   const record = value as Record<string, unknown>;
   const kind = normalizeString(record.kind);
   if (kind === null) {
-    return null;
+    throw new Error("Invalid reader state payload");
   }
 
   if (kind === "pdf") {
-    if (!hasOnlyKeys(record, ["kind", "page", "page_progression", "zoom", "position"])) {
-      return null;
+    if (!hasExactKeys(record, ["kind", "page", "page_progression", "zoom", "position"])) {
+      throw new Error("Invalid reader state payload");
     }
     const page = parseNullableNumberField(
       record.page,
@@ -252,7 +250,7 @@ export function parseReaderResumeState(value: unknown): ReaderResumeState | null
       (candidate) => Number.isInteger(candidate) && candidate >= 1
     );
     if (!page.ok || page.value === null || !pageProgression.ok || !zoom.ok || !position.ok) {
-      return null;
+      throw new Error("Invalid reader state payload");
     }
     return {
       kind,
@@ -267,20 +265,20 @@ export function parseReaderResumeState(value: unknown): ReaderResumeState | null
   const locations = parseLocations(record.locations);
   const text = parseTextContext(record.text);
   if (typeof target !== "object" || target === null || locations === null || text === null) {
-    return null;
+    throw new Error("Invalid reader state payload");
   }
 
   const targetRecord = target as Record<string, unknown>;
   if (kind === "web" || kind === "transcript") {
-    if (!hasOnlyKeys(record, ["kind", "target", "locations", "text"])) {
-      return null;
+    if (!hasExactKeys(record, ["kind", "target", "locations", "text"])) {
+      throw new Error("Invalid reader state payload");
     }
-    if (!hasOnlyKeys(targetRecord, ["fragment_id"])) {
-      return null;
+    if (!hasExactKeys(targetRecord, ["fragment_id"])) {
+      throw new Error("Invalid reader state payload");
     }
     const fragmentId = parseRequiredStringField(targetRecord.fragment_id);
     if (!fragmentId.ok || fragmentId.value === null) {
-      return null;
+      throw new Error("Invalid reader state payload");
     }
     return {
       kind,
@@ -291,11 +289,11 @@ export function parseReaderResumeState(value: unknown): ReaderResumeState | null
   }
 
   if (kind === "epub") {
-    if (!hasOnlyKeys(record, ["kind", "target", "locations", "text"])) {
-      return null;
+    if (!hasExactKeys(record, ["kind", "target", "locations", "text"])) {
+      throw new Error("Invalid reader state payload");
     }
-    if (!hasOnlyKeys(targetRecord, ["section_id", "href_path", "anchor_id"])) {
-      return null;
+    if (!hasExactKeys(targetRecord, ["section_id", "href_path", "anchor_id"])) {
+      throw new Error("Invalid reader state payload");
     }
     const sectionId = parseRequiredStringField(targetRecord.section_id);
     const hrefPath = parseRequiredStringField(targetRecord.href_path);
@@ -307,7 +305,7 @@ export function parseReaderResumeState(value: unknown): ReaderResumeState | null
       hrefPath.value === null ||
       !anchorId.ok
     ) {
-      return null;
+      throw new Error("Invalid reader state payload");
     }
     return {
       kind,
@@ -321,7 +319,7 @@ export function parseReaderResumeState(value: unknown): ReaderResumeState | null
     };
   }
 
-  return null;
+  throw new Error("Invalid reader state payload");
 }
 
 function reflowableReaderResumeStatesEqual(

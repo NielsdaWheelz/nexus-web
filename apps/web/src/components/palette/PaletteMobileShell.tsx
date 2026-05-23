@@ -19,6 +19,17 @@ interface PaletteMobileShellProps {
 }
 
 const SWIPE_DISMISS_THRESHOLD_PX = 96;
+const PALETTE_HISTORY_OPEN_KEY = "__nexusCommandPaletteOpen";
+
+function readHistoryState(): Record<string, unknown> {
+  return typeof history.state === "object" && history.state !== null
+    ? (history.state as Record<string, unknown>)
+    : {};
+}
+
+function historyStateHasPaletteMarker(): boolean {
+  return readHistoryState()[PALETTE_HISTORY_OPEN_KEY] === true;
+}
 
 export default function PaletteMobileShell({
   query,
@@ -36,12 +47,15 @@ export default function PaletteMobileShell({
     () => window.visualViewport?.height ?? null,
   );
   const dragStartYRef = useRef<number | null>(null);
+  const historyEntryActiveRef = useRef(false);
+  const ignoreNextPopStateRef = useRef(false);
 
   useEffect(() => {
     dialogRef.current?.showModal();
   }, []);
 
-  // visualViewport resizing is covered by e2e and manual device verification, not unit tests.
+  // visualViewport resizing is browser/device behavior; component tests cover the
+  // shell contract, while device verification covers keyboard resizing.
   useEffect(() => {
     const viewport = window.visualViewport;
     if (!viewport) return;
@@ -55,19 +69,46 @@ export default function PaletteMobileShell({
   }, []);
 
   useEffect(() => {
-    history.pushState({ paletteOpen: true }, "");
-    let closedByBack = false;
+    if (historyStateHasPaletteMarker()) {
+      historyEntryActiveRef.current = true;
+    } else {
+      history.pushState(
+        { ...readHistoryState(), [PALETTE_HISTORY_OPEN_KEY]: true },
+        "",
+      );
+      historyEntryActiveRef.current = true;
+    }
+
     const onPopState = () => {
-      closedByBack = true;
+      if (ignoreNextPopStateRef.current) {
+        ignoreNextPopStateRef.current = false;
+        return;
+      }
+      historyEntryActiveRef.current = false;
       onClose();
     };
     window.addEventListener("popstate", onPopState);
     return () => {
       window.removeEventListener("popstate", onPopState);
-      // The UI closed the palette: pop our own marker entry so back does not strand it.
-      if (!closedByBack) history.back();
     };
   }, [onClose]);
+
+  function popPaletteHistoryEntry() {
+    if (!historyEntryActiveRef.current && !historyStateHasPaletteMarker()) return;
+    historyEntryActiveRef.current = false;
+    ignoreNextPopStateRef.current = true;
+    history.back();
+  }
+
+  function closeFromUi() {
+    popPaletteHistoryEntry();
+    onClose();
+  }
+
+  function selectFromUi(command: PaletteCommand) {
+    popPaletteHistoryEntry();
+    onSelect(command);
+  }
 
   function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -91,7 +132,7 @@ export default function PaletteMobileShell({
     dragStartYRef.current = null;
     if (start === null || !panelRef.current) return;
     panelRef.current.style.transform = "";
-    if (event.clientY - start > SWIPE_DISMISS_THRESHOLD_PX) onClose();
+    if (event.clientY - start > SWIPE_DISMISS_THRESHOLD_PX) closeFromUi();
   }
 
   return (
@@ -102,7 +143,7 @@ export default function PaletteMobileShell({
       aria-label="Command palette"
       onCancel={(event) => {
         event.preventDefault();
-        onClose();
+        closeFromUi();
       }}
     >
       <div
@@ -117,11 +158,10 @@ export default function PaletteMobileShell({
           <Button
             iconOnly
             variant="ghost"
-            size="md"
+            size="lg"
             type="button"
-            className={styles.closeButton}
             aria-label="Close command palette"
-            onClick={onClose}
+            onClick={closeFromUi}
           >
             <X size={20} aria-hidden="true" />
           </Button>
@@ -137,7 +177,7 @@ export default function PaletteMobileShell({
           autoFocusInput={false}
           onQueryChange={onQueryChange}
           onClearScope={onClearScope}
-          onSelect={onSelect}
+          onSelect={selectFromUi}
         />
       </div>
     </dialog>

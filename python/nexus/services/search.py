@@ -3,8 +3,8 @@
 Implements keyword search across all user-visible content using PostgreSQL
 full-text search.
 
-Search enforces strict s4 visibility guarantees:
-- Media/content chunks: visible via s4 provenance (non-default membership, default
+Search enforces strict canonical visibility guarantees:
+- Media/content chunks: visible via canonical provenance (non-default membership, default
   intrinsic, or active closure edge with source membership)
 - Note blocks: visible if owned by the viewer
 - Messages: visible if conversation is visible (owner, public, or library-shared
@@ -30,6 +30,7 @@ from typing import Any, Literal
 from urllib.parse import urlencode
 from uuid import UUID
 
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -42,7 +43,11 @@ from nexus.auth.permissions import (
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.contributors import ContributorCreditOut, ContributorOut
-from nexus.schemas.retrieval import retrieval_locator_json, retrieval_result_ref_json
+from nexus.schemas.retrieval import (
+    RetrievalLocator,
+    retrieval_locator_json,
+    retrieval_result_ref_json,
+)
 from nexus.schemas.search import (
     SearchPageInfo,
     SearchResponse,
@@ -69,6 +74,7 @@ from nexus.schemas.search import (
 from nexus.services import object_search
 from nexus.services.contributor_credits import normalize_contributor_role
 from nexus.services.locator_resolver import resolve_evidence_span
+from nexus.services.message_context_snapshots import artifact_part_context_ref
 from nexus.services.semantic_chunks import (
     build_text_embedding,
     to_pgvector_literal,
@@ -76,6 +82,7 @@ from nexus.services.semantic_chunks import (
 )
 
 logger = get_logger(__name__)
+RETRIEVAL_LOCATOR_ADAPTER = TypeAdapter(RetrievalLocator)
 
 # =============================================================================
 # Constants
@@ -273,6 +280,8 @@ class _RankedArtifactPartResult:
     artifact_id: UUID
     message_id: UUID
     conversation_id: UUID
+    artifact_key: str
+    artifact_version: int
     artifact_kind: str
     artifact_title: str | None
     part_key: str | None
@@ -899,20 +908,6 @@ def search(
     )
 
 
-def resolve_search_result(
-    db: Session,
-    viewer_id: UUID,
-    result_ref: SearchResultContextRefOut,
-) -> SearchResultOut:
-    return get_search_result(
-        db=db,
-        viewer_id=viewer_id,
-        result_type=result_ref.type,
-        result_id=str(result_ref.id),
-        evidence_span_ids=result_ref.evidence_span_ids,
-    )
-
-
 def get_search_result(
     db: Session,
     viewer_id: UUID,
@@ -1286,13 +1281,35 @@ def get_search_result(
                     FROM highlight_pdf_quads hpq
                     WHERE hpq.highlight_id = h.id
                 ) pdf_quads ON true
-                LEFT JOIN media_content_index_states mcis ON mcis.media_id = h.anchor_media_id
-                LEFT JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
+                JOIN media_content_index_states mcis ON mcis.media_id = h.anchor_media_id
+                JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
                     AND active_run.state = 'ready'
                     AND active_run.deactivated_at IS NULL
+                    AND NULLIF(btrim(active_run.source_version), '') IS NOT NULL
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
                 WHERE h.id = :id
                   AND h.anchor_media_id IS NOT NULL
+                  AND (
+                        (
+                            h.anchor_kind = 'fragment_offsets'
+                            AND EXISTS (
+                                SELECT 1
+                                FROM highlight_fragment_anchors hfa
+                                JOIN fragments f ON f.id = hfa.fragment_id
+                                WHERE hfa.highlight_id = h.id
+                                  AND f.media_id = h.anchor_media_id
+                            )
+                        )
+                        OR (
+                            h.anchor_kind = 'pdf_page_geometry'
+                            AND EXISTS (
+                                SELECT 1
+                                FROM highlight_pdf_anchors hpa
+                                WHERE hpa.highlight_id = h.id
+                                  AND hpa.media_id = h.anchor_media_id
+                            )
+                        )
+                  )
                   AND EXISTS (
                         SELECT 1
                         FROM library_entries le
@@ -1354,7 +1371,7 @@ def get_search_result(
                 color=str(row[4] or "yellow"),
                 source=_build_search_source(row[5], row[6], row[7], row[9], row[8]),
                 score=score,
-                source_version=str(row[20] or f"highlight:{row[0]}"),
+                source_version=_required_source_version("highlight", row[20]),
                 citation_label=f"highlight {str(row[0])[:8]}",
                 locator=locator,
             )
@@ -1587,6 +1604,8 @@ def get_search_result(
                     ma.id,
                     ma.message_id,
                     ma.conversation_id,
+                    ma.artifact_key,
+                    ma.artifact_version,
                     ma.artifact_kind,
                     ma.title,
                     part.part_key,
@@ -1611,16 +1630,18 @@ def get_search_result(
                 artifact_id=row[1],
                 message_id=row[2],
                 conversation_id=row[3],
-                artifact_kind=str(row[4]),
-                artifact_title=str(row[5]) if row[5] is not None else None,
-                part_key=str(row[6]) if row[6] is not None else None,
-                part_type=str(row[7]) if row[7] is not None else None,
-                evidence_span_ids=[UUID(str(value)) for value in row[9] if isinstance(value, str)]
-                if isinstance(row[9], list)
+                artifact_key=str(row[4]),
+                artifact_version=int(row[5]),
+                artifact_kind=str(row[6]),
+                artifact_title=str(row[7]) if row[7] is not None else None,
+                part_key=str(row[8]) if row[8] is not None else None,
+                part_type=str(row[9]) if row[9] is not None else None,
+                evidence_span_ids=[UUID(str(value)) for value in row[11] if isinstance(value, str)]
+                if isinstance(row[11], list)
                 else [],
-                source_version=_required_source_version("artifact_part", str(row[10])),
-                locator=_required_locator("artifact_part", row[11]),
-                snippet=_truncate_snippet(str(row[8] or row[5] or row[4])),
+                source_version=_required_source_version("artifact_part", str(row[12])),
+                locator=_required_locator("artifact_part", row[13]),
+                snippet=_truncate_snippet(str(row[10] or row[7] or row[6])),
                 score=score,
             )
         )
@@ -3042,10 +3063,11 @@ def _search_highlights(
                 FROM highlight_pdf_quads hpq
                 WHERE hpq.highlight_id = h.id
             ) pdf_quads ON true
-            LEFT JOIN media_content_index_states mcis ON mcis.media_id = h.anchor_media_id
-            LEFT JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
+            JOIN media_content_index_states mcis ON mcis.media_id = h.anchor_media_id
+            JOIN content_index_runs active_run ON active_run.id = mcis.active_run_id
                 AND active_run.state = 'ready'
                 AND active_run.deactivated_at IS NULL
+                AND NULLIF(btrim(active_run.source_version), '') IS NOT NULL
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
             WHERE to_tsvector(
                     'english',
@@ -3138,7 +3160,7 @@ def _search_highlights(
                 color=str(row[4] or "yellow"),
                 source=_build_search_source(row[5], row[6], row[7], row[9], row[8]),
                 score=_build_search_score(row[21]),
-                source_version=str(row[20] or f"highlight:{row[0]}"),
+                source_version=_required_source_version("highlight", row[20]),
                 citation_label=f"highlight {str(row[0])[:8]}",
                 locator=locator,
             )
@@ -3156,7 +3178,7 @@ def _search_messages(
 ) -> list[InternalSearchResult]:
     """Search message content with visibility filtering.
 
-    Message visibility follows conversation visibility (canonical s4 CTE).
+    Message visibility follows the canonical conversation visibility CTE.
     Pending messages are never searchable.
 
     Library scope includes only messages from conversations actively shared
@@ -3520,6 +3542,8 @@ def _search_artifact_parts(
                 ma.id AS artifact_id,
                 ma.message_id,
                 ma.conversation_id,
+                ma.artifact_key,
+                ma.artifact_version,
                 ma.artifact_kind,
                 ma.title,
                 part.part_key,
@@ -3586,17 +3610,19 @@ def _search_artifact_parts(
             artifact_id=row[1],
             message_id=row[2],
             conversation_id=row[3],
-            artifact_kind=str(row[4]),
-            artifact_title=str(row[5]) if row[5] is not None else None,
-            part_key=str(row[6]) if row[6] is not None else None,
-            part_type=str(row[7]) if row[7] is not None else None,
-            evidence_span_ids=[UUID(str(value)) for value in row[9] if isinstance(value, str)]
-            if isinstance(row[9], list)
+            artifact_key=str(row[4]),
+            artifact_version=int(row[5]),
+            artifact_kind=str(row[6]),
+            artifact_title=str(row[7]) if row[7] is not None else None,
+            part_key=str(row[8]) if row[8] is not None else None,
+            part_type=str(row[9]) if row[9] is not None else None,
+            evidence_span_ids=[UUID(str(value)) for value in row[11] if isinstance(value, str)]
+            if isinstance(row[11], list)
             else [],
-            source_version=_required_source_version("artifact_part", str(row[10])),
-            locator=_required_locator("artifact_part", row[11]),
-            snippet=_truncate_snippet(str(row[13] or row[8] or row[5] or row[4])),
-            score=_build_search_score(row[12]),
+            source_version=_required_source_version("artifact_part", str(row[12])),
+            locator=_required_locator("artifact_part", row[13]),
+            snippet=_truncate_snippet(str(row[15] or row[10] or row[7] or row[6])),
+            score=_build_search_score(row[14]),
         )
         for row in rows
     ]
@@ -3878,6 +3904,25 @@ def _result_context_ref(result: InternalSearchResult) -> SearchResultContextRefO
         )
     if isinstance(result, _RankedContributorResult):
         return SearchResultContextRefOut(type=result.result_type, id=result.handle)
+    if isinstance(result, _RankedArtifactPartResult):
+        context = artifact_part_context_ref(
+            artifact_part_id=result.id,
+            artifact_id=result.artifact_id,
+            source_version=result.source_version,
+            locator=result.locator,
+            evidence_span_ids=result.evidence_span_ids,
+            artifact_kind=result.artifact_kind,
+            message_id=result.message_id,
+            conversation_id=result.conversation_id,
+            artifact_key=result.artifact_key,
+            artifact_version=result.artifact_version,
+            artifact_title=result.artifact_title,
+            part_key=result.part_key,
+            part_type=result.part_type,
+        )
+        return SearchResultContextRefOut.model_validate(
+            context.model_dump(mode="json", exclude_none=True, exclude={"kind"})
+        )
     return SearchResultContextRefOut(type=result.result_type, id=result.id)
 
 
@@ -4067,8 +4112,17 @@ def _required_source_version(result_type: str, source_version: str | None) -> st
     raise AssertionError(f"{result_type} search result is missing source_version")
 
 
-def _required_locator(result_type: str, locator: dict[str, Any] | None) -> dict[str, Any]:
+def _required_locator(
+    result_type: str,
+    locator: RetrievalLocator | dict[str, Any] | None,
+) -> Any:
+    if isinstance(locator, BaseModel):
+        return locator
     if isinstance(locator, dict) and locator:
+        try:
+            RETRIEVAL_LOCATOR_ADAPTER.validate_python(locator)
+        except ValidationError as exc:
+            raise AssertionError(f"{result_type} search result locator is invalid") from exc
         return locator
     raise AssertionError(f"{result_type} search result is missing locator")
 

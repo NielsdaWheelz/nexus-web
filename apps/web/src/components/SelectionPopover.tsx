@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MessageSquare } from "lucide-react";
+import { clamp } from "@/lib/clamp";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
@@ -31,10 +32,6 @@ const DEFAULT_COLOR: HighlightColor = "yellow";
 const VIEWPORT_PADDING_PX = 8;
 const POPOVER_GAP_PX = 8;
 const MOBILE_BOTTOM_NAV_HEIGHT_VAR = "--mobile-bottom-nav-height";
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(value, max));
-}
 
 function readPx(rawValue: string | null | undefined): number {
   if (!rawValue) {

@@ -21,12 +21,12 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import ContributorFilter from "@/components/contributors/ContributorFilter";
 import SearchResultRow from "@/components/search/SearchResultRow";
+import { fetchSearchResultPage } from "@/lib/search/resultRowAdapter";
 import {
   ALL_SEARCH_TYPES,
-  fetchSearchResultPage,
   type SearchResultRowViewModel,
   type SearchType,
-} from "@/lib/search/resultRowAdapter";
+} from "@/lib/search/types";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 

@@ -37,12 +37,10 @@ from nexus.schemas.conversation import (
     APP_SEARCH_RESULT_TYPES,
     CHAT_RUN_EVENT_TYPES,
     MESSAGE_TOOL_STATUSES,
-    MessageClaimEvidenceOut,
     MessageContextRef,
     MessageDocument,
     MessageOut,
     MessageRetrievalOut,
-    MessageToolCallOut,
     chat_run_event_payload_json,
 )
 from nexus.schemas.notes import OBJECT_TYPE_VALUES
@@ -54,6 +52,7 @@ from nexus.services.agent_tools.app_search import (
     AppSearchRun,
     _citation_from_search_result,
     persist_app_search_run,
+    render_retrieved_context_blocks,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.chat_runs import (
@@ -428,7 +427,7 @@ def test_message_document_rejects_unknown_blocks():
             {
                 "type": "message_document",
                 "version": 1,
-                "blocks": [{"type": "legacy_citation", "id": "citation-1"}],
+                "blocks": [{"type": "unknown_block", "id": "unknown-1"}],
             }
         )
 
@@ -508,7 +507,7 @@ def test_message_out_serializes_message_document_contract():
                 "id": uuid4(),
                 "seq": 1,
                 "role": "assistant",
-                "content": "legacy mirror",
+                "content": "unexpected extra field",
                 "status": "complete",
                 "created_at": datetime(2026, 1, 1, tzinfo=UTC),
                 "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
@@ -614,7 +613,7 @@ def test_artifact_part_app_search_ref_emits_strict_source_version():
         artifact_id=artifact_id,
         message_id=message_id,
         conversation_id=conversation_id,
-        artifact_kind="table",
+        artifact_kind="comparison_table",
         artifact_title="Research Table",
         part_key="row-1",
         part_type="table_row",
@@ -626,7 +625,24 @@ def test_artifact_part_app_search_ref_emits_strict_source_version():
         media_id=None,
         media_kind=None,
         deep_link=f"/conversations/{conversation_id}?artifact={artifact_id}&artifactPart={part_id}",
-        context_ref={"type": "artifact_part", "id": part_id},
+        context_ref={
+            "type": "artifact_part",
+            "id": part_id,
+            "artifact_id": artifact_id,
+            "source_version": f"artifact_part:{part_id}:v1",
+            "locator": locator,
+            "artifact_part_provenance": {
+                "type": "artifact_part",
+                "artifact_id": artifact_id,
+                "artifact_kind": "comparison_table",
+                "message_id": message_id,
+                "conversation_id": conversation_id,
+                "artifact_part_id": part_id,
+                "part_key": "row-1",
+                "source_version": f"artifact_part:{part_id}:v1",
+                "locator": locator,
+            },
+        },
     )
 
     citation = _citation_from_search_result(result, filters={})
@@ -636,36 +652,98 @@ def test_artifact_part_app_search_ref_emits_strict_source_version():
     assert citation.result_ref_json()["source_version"] == f"artifact_part:{part_id}:v1"
 
 
-def test_message_claim_evidence_out_validates_retrieval_refs():
-    retrieval = _web_retrieval_payload()
-    evidence = {
-        "id": uuid4(),
-        "claim_id": uuid4(),
-        "ordinal": 0,
-        "evidence_role": "supports",
-        "source_ref": {
-            "type": "web_result",
-            "id": retrieval["source_id"],
-            "source_version": retrieval["source_version"],
+def test_app_search_renders_selected_artifact_part_context(db_session, bootstrapped_user):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    user_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=1,
+        role="user",
+        content="Build a comparison table.",
+    )
+    assistant_message_id = create_test_message(
+        db_session,
+        conversation_id,
+        seq=2,
+        role="assistant",
+        content="Done.",
+        parent_message_id=user_message_id,
+    )
+    artifact_id = uuid4()
+    part_id = uuid4()
+    db_session.execute(
+        text("""
+            INSERT INTO message_artifacts (
+                id, conversation_id, message_id, artifact_key,
+                artifact_version, artifact_kind, title, status
+            )
+            VALUES (
+                :artifact_id, :conversation_id, :message_id, 'research-table',
+                1, 'comparison_table', 'Research Table', 'complete'
+            )
+        """),
+        {
+            "artifact_id": artifact_id,
+            "conversation_id": conversation_id,
+            "message_id": assistant_message_id,
         },
-        "retrieval_id": retrieval["id"],
-        "evidence_span_id": None,
-        "context_ref": retrieval["context_ref"],
-        "result_ref": retrieval["result_ref"],
-        "exact_snippet": "Web excerpt",
-        "snippet_prefix": None,
-        "snippet_suffix": None,
-        "locator": retrieval["locator"],
-        "deep_link": retrieval["deep_link"],
-        "score": 1.0,
-        "retrieval_status": "web_result",
-        "selected": True,
-        "included_in_prompt": True,
-        "source_version": retrieval["source_version"],
-        "created_at": datetime.now(UTC),
-    }
+    )
+    db_session.execute(
+        text("""
+            INSERT INTO message_artifact_parts (
+                id, artifact_id, ordinal, part_key, part_type, text,
+                source_version, locator, metadata
+            )
+            VALUES (
+                :part_id, :artifact_id, 0, 'row-1', 'table_row',
+                'Artifact needle row evidence',
+                concat('artifact_part', chr(58), CAST(:part_id AS text), chr(58), 'v1'),
+                jsonb_build_object(
+                    'type', 'artifact_part_ref',
+                    'artifact_id', CAST(:artifact_id AS text),
+                    'artifact_part_id', CAST(:part_id AS text),
+                    'message_id', CAST(:message_id AS text),
+                    'conversation_id', CAST(:conversation_id AS text),
+                    'part_key', 'row-1'
+                ),
+                '{"support_state":"not_source_grounded"}'::jsonb
+            )
+        """),
+        {
+            "part_id": part_id,
+            "artifact_id": artifact_id,
+            "message_id": assistant_message_id,
+            "conversation_id": conversation_id,
+        },
+    )
+    db_session.flush()
+    citation = AppSearchCitation(
+        result_type="artifact_part",
+        source_id=str(part_id),
+        title="Research Table",
+        source_label="artifact part",
+        snippet="Artifact needle row evidence",
+        deep_link=f"/conversations/{conversation_id}?artifact={artifact_id}&artifactPart={part_id}",
+        citation_label=None,
+        locator=None,
+        context_ref={"type": "artifact_part", "id": str(part_id)},
+        evidence_span_id=None,
+        source_version=f"artifact_part:{part_id}:v1",
+        media_id=None,
+        media_kind=None,
+        score=0.9,
+    )
 
-    assert MessageClaimEvidenceOut.model_validate(evidence).retrieval_status == "web_result"
+    rendered, total_chars, selected = render_retrieved_context_blocks(
+        db_session,
+        viewer_id=bootstrapped_user,
+        citations=[citation],
+    )
+
+    assert selected == [citation]
+    assert total_chars > 0
+    assert "<artifact_part>" in rendered
+    assert "Artifact needle row evidence" in rendered
 
 
 def test_message_document_rejects_incomplete_citable_claim_evidence():
@@ -712,38 +790,6 @@ def test_message_document_rejects_incomplete_citable_claim_evidence():
             MessageDocument.model_validate(
                 {"type": "message_document", "version": 1, "blocks": [incomplete]}
             )
-
-
-def test_message_tool_call_out_rejects_loose_result_and_context_refs():
-    base = {
-        "id": uuid4(),
-        "conversation_id": uuid4(),
-        "user_message_id": uuid4(),
-        "assistant_message_id": uuid4(),
-        "tool_name": "app_search",
-        "tool_call_index": 0,
-        "scope": "all",
-        "semantic": True,
-        "status": "complete",
-        "created_at": datetime.now(UTC),
-        "updated_at": datetime.now(UTC),
-    }
-    with pytest.raises(ValidationError):
-        MessageToolCallOut.model_validate(
-            {
-                **base,
-                "result_refs": [{"kind": "web", "route": "/legacy"}],
-                "selected_context_refs": [],
-            }
-        )
-    with pytest.raises(ValidationError):
-        MessageToolCallOut.model_validate(
-            {
-                **base,
-                "result_refs": [],
-                "selected_context_refs": [{"kind": "message", "id": "legacy"}],
-            }
-        )
 
 
 def test_message_tool_call_and_retrieval_round_trip(db_session: Session):
@@ -1469,6 +1515,20 @@ def test_finalize_run_persists_artifact_delta_rows(db_session: Session):
         text("SELECT owner_user_id FROM conversations WHERE id = :id"),
         {"id": conversation_id},
     ).scalar_one()
+    ensure_user_and_default_library(db_session, user_id)
+    media_id = create_searchable_media(db_session, user_id, title="Artifact Delta Evidence")
+    evidence_span_id = db_session.execute(
+        text(
+            """
+            SELECT primary_evidence_span_id
+            FROM content_chunks
+            WHERE media_id = :media_id
+            ORDER BY chunk_idx ASC
+            LIMIT 1
+            """
+        ),
+        {"media_id": media_id},
+    ).scalar_one()
     model_id = create_test_model(db_session)
     run = ChatRun(
         owner_user_id=user_id,
@@ -1513,6 +1573,7 @@ def test_finalize_run_persists_artifact_delta_rows(db_session: Session):
                         },
                         "source_ref": {"type": "message", "id": str(user_message_id)},
                         "source_refs": [{"type": "message", "id": str(user_message_id)}],
+                        "evidence_span_id": str(evidence_span_id),
                     }
                 ],
             },
@@ -1555,7 +1616,9 @@ def test_finalize_run_persists_artifact_delta_rows(db_session: Session):
         db_session.execute(
             text(
                 """
-            SELECT ordinal, part_key, part_type, text, source_ref, source_refs
+            SELECT
+                ordinal, part_key, part_type, text, source_ref, source_refs,
+                evidence_span_id, evidence_span_ids
             FROM message_artifact_parts
             WHERE artifact_id = (
                 SELECT id FROM message_artifacts WHERE message_id = :message_id
@@ -1580,6 +1643,8 @@ def test_finalize_run_persists_artifact_delta_rows(db_session: Session):
     assert part_row["text"] == "Cited event"
     assert part_row["source_ref"] == {"type": "message", "id": str(user_message_id)}
     assert part_row["source_refs"] == [{"type": "message", "id": str(user_message_id)}]
+    assert part_row["evidence_span_id"] == evidence_span_id
+    assert part_row["evidence_span_ids"] == [str(evidence_span_id)]
 
 
 def test_reconcile_prompt_retrievals_preserves_empty_manifest_metadata(
@@ -2137,7 +2202,7 @@ def test_chat_run_event_payloads_are_strict():
                 "result_count": 1,
                 "selected_count": 1,
                 "filters": {},
-                "results": [{**retrieval_citation, "filters": {"legacy": True}}],
+                "results": [{**retrieval_citation, "filters": {"unexpected": True}}],
             },
         )
     assert (

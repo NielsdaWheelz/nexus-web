@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { isLocalDate } from "@/lib/localDate";
 import {
   fetchDailyNotePage,
-  isLocalDate,
   quickCaptureDailyNote,
   saveNotePageDocument,
 } from "./api";

@@ -3,7 +3,7 @@
 These tests verify that the seq assignment helper correctly handles
 concurrent access using FOR UPDATE locks.
 
-Per S3 spec:
+Behavior under test:
 - Seq assignment locks the conversation row
 - Concurrent sessions must block until the lock is released
 - Seq values are strictly increasing and unique per conversation

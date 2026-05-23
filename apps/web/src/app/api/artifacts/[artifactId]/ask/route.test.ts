@@ -31,7 +31,7 @@ describe("POST /api/artifacts/[artifactId]/ask", () => {
     vi.clearAllMocks();
   });
 
-  it("proxies artifact follow-up requests to the canonical artifact backend path", async () => {
+  it("proxies artifact ask requests to the canonical artifact backend path", async () => {
     const fetchMock = vi.fn<typeof fetch>(
       async () => Response.json({ data: { message_id: "message-2" } })
     );

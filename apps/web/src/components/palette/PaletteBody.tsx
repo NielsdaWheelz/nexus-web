@@ -98,7 +98,7 @@ export default function PaletteBody({
           <Button
             iconOnly
             variant="ghost"
-            size="md"
+            size="lg"
             type="button"
             aria-label="Clear scope"
             onClick={onClearScope}

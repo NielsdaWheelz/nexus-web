@@ -3,7 +3,7 @@
 Route handlers for BYOK (Bring Your Own Key) API key management.
 Routes are transport-only: each calls exactly one service function.
 
-Per PR-03 spec:
+Route contract:
 - GET /keys: List user's keys (safe fields only, no secrets)
 - POST /keys: Upsert key for provider (encrypt at rest)
 - DELETE /keys/:id: Revoke key (wipe ciphertext, retain fingerprint)

@@ -73,7 +73,7 @@ def create_test_model(session: Session) -> UUID:
 
 
 def seed_test_models(session: Session) -> None:
-    """Seed the hard-cutover test model catalog."""
+    """Seed the curated test model catalog."""
     catalog = [
         ("openai", "gpt-5.5", 400000),
         ("openai", "gpt-5.4-mini", 400000),
@@ -421,6 +421,67 @@ def create_searchable_media(
         add_media_to_library(session, lib.id, media.id)
     session.commit()
     return media.id
+
+
+def activate_replacement_content_index_run(
+    session: Session,
+    *,
+    media_id: UUID,
+    active_run_id: UUID,
+) -> UUID:
+    replacement_run_id = uuid4()
+    session.execute(
+        text(
+            """
+            INSERT INTO content_index_runs (
+                id,
+                media_id,
+                state,
+                source_version,
+                extractor_version,
+                chunker_version,
+                embedding_provider,
+                embedding_model,
+                embedding_version,
+                embedding_config_hash,
+                started_at,
+                finished_at,
+                activated_at
+            )
+            SELECT
+                :replacement_run_id,
+                media_id,
+                'ready',
+                source_version || '-replacement',
+                extractor_version,
+                chunker_version,
+                embedding_provider,
+                embedding_model,
+                embedding_version,
+                embedding_config_hash,
+                now(),
+                now(),
+                now()
+            FROM content_index_runs
+            WHERE id = :active_run_id
+            """
+        ),
+        {"replacement_run_id": replacement_run_id, "active_run_id": active_run_id},
+    )
+    session.execute(
+        text(
+            """
+            UPDATE media_content_index_states
+            SET active_run_id = :replacement_run_id,
+                latest_run_id = :replacement_run_id,
+                updated_at = now()
+            WHERE media_id = :media_id
+            """
+        ),
+        {"replacement_run_id": replacement_run_id, "media_id": media_id},
+    )
+    session.flush()
+    return replacement_run_id
 
 
 # =============================================================================

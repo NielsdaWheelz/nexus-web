@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SESSION_ENDED_MESSAGE } from "@/lib/auth/messages";
 
 interface CookieFixture {
   name: string;
@@ -156,7 +157,9 @@ describe("/auth/refresh route", () => {
       const location = new URL(response.headers.get("location")!);
       expect(location.pathname).toBe("/login");
       expect(location.searchParams.get("next")).toBe("/libraries");
-      expect(location.searchParams.get("error_description")).toBeTruthy();
+      expect(location.searchParams.get("error_description")).toBe(
+        SESSION_ENDED_MESSAGE
+      );
 
       const setCookie = response.headers.get("set-cookie") ?? "";
       expect(setCookie).toContain("sb-local-auth-token=;");
@@ -168,7 +171,7 @@ describe("/auth/refresh route", () => {
     it("attempts the refresh at most once and cannot loop", async () => {
       vi.spyOn(console, "error").mockImplementation(() => {});
       refreshOutcomes.push({
-        error: { code: "session_expired", message: "Session Expired" },
+        error: { code: "refresh_token_not_found", message: "Not Found" },
       });
 
       const { GET } = await import("./route");

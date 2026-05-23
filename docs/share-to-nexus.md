@@ -108,7 +108,8 @@ processing state when the item is opened.
 ### 3.5 Dismissal and hand-off
 
 The card's actions cross the native boundary through a `nexus-share://` URL
-scheme (§6.4), mirroring the existing `nexus-dev://` OAuth convention:
+scheme (§6.4). It is an internal WebView hand-off, separate from the registered
+`nexus://auth/handoff` auth return scheme:
 
 - **Open in Nexus** (a media row) and **Open** (a daily-note row) navigate to
   `nexus-share://open?path=/media/<id>` or `nexus-share://open?path=/daily`.
@@ -342,10 +343,11 @@ hardening — the one concern that is identical — is the correct boundary.
 ### 6.4 The `nexus-share://` scheme
 
 A custom scheme carries two signals from the `/share` web page to
-`ShareActivity`, mirroring how `nexus-dev://auth/callback` carries the OAuth
-callback to `MainActivity` (`apps/web/src/lib/auth/redirects.ts:64`,
-`MainActivity.kt:210`). It uses no `addJavascriptInterface` — consistent with the
-current shell, which has no JS bridge.
+`ShareActivity`, using the same native-owned custom-scheme interception pattern
+as the current `nexus://auth/handoff` OAuth hand-off to `MainActivity`
+(`apps/web/src/lib/auth/redirects.ts`, `MainActivity.kt`). It uses no
+`addJavascriptInterface` — consistent with the current shell, which has no JS
+bridge.
 
 | URL | `ShareActivity` action |
 |---|---|
@@ -503,7 +505,7 @@ honouring the warm-neutral palette and `prefers-reduced-motion`. Used by
 | Capture client functions | `addMediaFromUrl`, `quickCaptureDailyNote` reused verbatim — the same functions `AddContentTray` calls. No new capture client. |
 | `extractUrls` | Moved out of `AddContentTray.tsx` to the flat lib module `lib/extractUrls.ts`; `AddContentTray` becomes a consumer of the shared owner. |
 | Auth | Reuses the Supabase cookie session, `readSupabaseSessionCookie`, and `proxyToFastAPI`'s inline refresh + CSRF Origin check. No new token, no new auth code. |
-| Android shell | `ShareActivity` is a sibling of `MainActivity`; they share `NexusWebView` configuration only. `nexus-share://` joins `nexus-dev://` as a shell scheme. `MainActivity` is otherwise untouched. |
+| Android shell | `ShareActivity` is a sibling of `MainActivity`; they share `NexusWebView` configuration only. `nexus-share://` is intercepted inside `ShareActivity`'s WebView; `nexus://auth/handoff` remains the registered auth return scheme. `MainActivity` is otherwise untouched. |
 | `isAndroidShell` | `isAndroidShellUserAgent` (server-side) gates the `nexus-share://` action targets. The shell-detection owner (`androidShell.ts`) is unchanged. |
 | Workspace / reader | `Open in Nexus` hands `MainActivity` a `/media/<id>` or `/daily` URL, which it opens as a pane through its existing routing. `/share` never touches the workspace store or pane system. |
 | Command palette | None. "Share to Nexus" is an inbound OS feature; it adds no palette command. |
@@ -576,9 +578,10 @@ honouring the warm-neutral palette and `prefers-reduced-motion`. Used by
    `MainActivity` is `singleTask` and owns the live app. A separate activity in
    its own task captures and dies without perturbing the workspace or back-stack.
 
-4. **`nexus-share://` URL scheme for the native hand-off**, mirroring the
-   existing `nexus-dev://` convention — no `addJavascriptInterface`, consistent
-   with a shell that has no JS bridge, and a minimal two-signal surface.
+4. **`nexus-share://` URL scheme for the native hand-off**, matching the
+   current native-owned custom-scheme pattern — no `addJavascriptInterface`,
+   consistent with a shell that has no JS bridge, and a minimal two-signal
+   surface.
 
 5. **Logged-out is terminal; the share surface never hosts OAuth.** An OAuth
    callback is an App-Links `VIEW` intent bound to `MainActivity` and would

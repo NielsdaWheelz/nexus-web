@@ -19,7 +19,6 @@ class ApiErrorCode(str, Enum):
     E_FORBIDDEN = "E_FORBIDDEN"
     E_INTERNAL_ONLY = "E_INTERNAL_ONLY"
     E_DEFAULT_LIBRARY_FORBIDDEN = "E_DEFAULT_LIBRARY_FORBIDDEN"
-    E_LAST_ADMIN_FORBIDDEN = "E_LAST_ADMIN_FORBIDDEN"
     E_OWNER_REQUIRED = "E_OWNER_REQUIRED"
     E_OWNER_EXIT_FORBIDDEN = "E_OWNER_EXIT_FORBIDDEN"
     E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN = (
@@ -56,8 +55,6 @@ class ApiErrorCode(str, Enum):
     E_BRANCH_ANCHOR_INVALID = "E_BRANCH_ANCHOR_INVALID"
 
     # Conflict errors (409)
-    E_SHARE_REQUIRED = "E_SHARE_REQUIRED"
-    E_SHARES_NOT_ALLOWED = "E_SHARES_NOT_ALLOWED"
     E_INVITE_ALREADY_EXISTS = "E_INVITE_ALREADY_EXISTS"
     E_INVITE_MEMBER_EXISTS = "E_INVITE_MEMBER_EXISTS"
     E_INVITE_NOT_PENDING = "E_INVITE_NOT_PENDING"
@@ -77,7 +74,7 @@ class ApiErrorCode(str, Enum):
     E_KEY_INVALID_FORMAT = "E_KEY_INVALID_FORMAT"  # 400 - Key too short or contains whitespace
     E_KEY_NOT_FOUND = "E_KEY_NOT_FOUND"  # 404 - Key doesn't exist or not owned by viewer
 
-    # LLM errors (PR-05)
+    # LLM errors
     E_LLM_NO_KEY = "E_LLM_NO_KEY"  # 400 - No API key available for provider
     E_LLM_RATE_LIMIT = "E_LLM_RATE_LIMIT"  # 429 - Provider rate limit exceeded
     E_LLM_QUOTA_EXCEEDED = (
@@ -100,7 +97,7 @@ class ApiErrorCode(str, Enum):
         "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"  # 409 - Key reused with different payload
     )
 
-    # Streaming errors (PR-08)
+    # Streaming errors
     E_CLIENT_DISCONNECT = "E_CLIENT_DISCONNECT"  # stream aborted by client
     E_ORPHANED_PENDING = "E_ORPHANED_PENDING"  # sweeper cleanup
     E_STREAM_IN_PROGRESS = "E_STREAM_IN_PROGRESS"  # replay while stream running
@@ -114,13 +111,13 @@ class ApiErrorCode(str, Enum):
         "E_PODCAST_QUOTA_EXCEEDED"  # 429 monthly transcription quota exceeded
     )
 
-    # S5 EPUB errors (400/404/409)
+    # EPUB errors (400/404/409)
     E_RETRY_INVALID_STATE = "E_RETRY_INVALID_STATE"  # 409
     E_RETRY_NOT_ALLOWED = "E_RETRY_NOT_ALLOWED"  # 409
     E_CHAPTER_NOT_FOUND = "E_CHAPTER_NOT_FOUND"  # 404
     E_ARCHIVE_UNSAFE = "E_ARCHIVE_UNSAFE"  # 400
 
-    # S7 Podcast provider errors
+    # Podcast provider errors
     E_BROWSE_PROVIDER_UNAVAILABLE = "E_BROWSE_PROVIDER_UNAVAILABLE"  # 503 upstream unavailable
     E_PODCAST_PROVIDER_UNAVAILABLE = "E_PODCAST_PROVIDER_UNAVAILABLE"  # 503 upstream unavailable
     E_TRANSCRIPTION_FAILED = "E_TRANSCRIPTION_FAILED"  # 502 provider returned error
@@ -128,7 +125,7 @@ class ApiErrorCode(str, Enum):
     E_DIARIZATION_FAILED = "E_DIARIZATION_FAILED"  # 502 diarized attempt failed (diagnostic)
     E_TRANSCRIPT_UNAVAILABLE = "E_TRANSCRIPT_UNAVAILABLE"  # 409 transcript unavailable
 
-    # S6 PDF errors (422)
+    # PDF errors (422)
     E_PDF_PASSWORD_REQUIRED = "E_PDF_PASSWORD_REQUIRED"  # 422
 
     # Ingestion errors (502/504)
@@ -171,7 +168,6 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_FORBIDDEN: 403,
     ApiErrorCode.E_INTERNAL_ONLY: 403,
     ApiErrorCode.E_DEFAULT_LIBRARY_FORBIDDEN: 403,
-    ApiErrorCode.E_LAST_ADMIN_FORBIDDEN: 403,
     ApiErrorCode.E_OWNER_REQUIRED: 403,
     ApiErrorCode.E_OWNER_EXIT_FORBIDDEN: 403,
     ApiErrorCode.E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN: 403,
@@ -199,8 +195,6 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_BRANCH_PATH_INVALID: 400,
     ApiErrorCode.E_BRANCH_ANCHOR_INVALID: 400,
     # Conflict errors
-    ApiErrorCode.E_SHARE_REQUIRED: 409,
-    ApiErrorCode.E_SHARES_NOT_ALLOWED: 409,
     ApiErrorCode.E_INVITE_ALREADY_EXISTS: 409,
     ApiErrorCode.E_INVITE_MEMBER_EXISTS: 409,
     ApiErrorCode.E_INVITE_NOT_PENDING: 409,
@@ -217,7 +211,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_KEY_PROVIDER_INVALID: 400,
     ApiErrorCode.E_KEY_INVALID_FORMAT: 400,
     ApiErrorCode.E_KEY_NOT_FOUND: 404,
-    # LLM errors (PR-05)
+    # LLM errors
     ApiErrorCode.E_LLM_NO_KEY: 400,
     ApiErrorCode.E_LLM_RATE_LIMIT: 429,
     ApiErrorCode.E_LLM_QUOTA_EXCEEDED: 429,
@@ -235,7 +229,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_RATE_LIMITED: 429,
     ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED: 429,
     ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH: 409,
-    # Streaming errors (PR-08)
+    # Streaming errors
     ApiErrorCode.E_CLIENT_DISCONNECT: 499,
     ApiErrorCode.E_ORPHANED_PENDING: 500,
     ApiErrorCode.E_STREAM_IN_PROGRESS: 409,
@@ -246,19 +240,19 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_CANCELLED: 499,
     ApiErrorCode.E_LLM_INTERRUPTED: 503,
     ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED: 429,
-    # S5 EPUB errors
+    # EPUB errors
     ApiErrorCode.E_RETRY_INVALID_STATE: 409,
     ApiErrorCode.E_RETRY_NOT_ALLOWED: 409,
     ApiErrorCode.E_CHAPTER_NOT_FOUND: 404,
     ApiErrorCode.E_ARCHIVE_UNSAFE: 400,
-    # S7 podcast provider errors
+    # Podcast provider errors
     ApiErrorCode.E_BROWSE_PROVIDER_UNAVAILABLE: 503,
     ApiErrorCode.E_PODCAST_PROVIDER_UNAVAILABLE: 503,
     ApiErrorCode.E_TRANSCRIPTION_FAILED: 502,
     ApiErrorCode.E_TRANSCRIPTION_TIMEOUT: 504,
     ApiErrorCode.E_DIARIZATION_FAILED: 502,
     ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE: 409,
-    # S6 PDF errors
+    # PDF errors
     ApiErrorCode.E_PDF_PASSWORD_REQUIRED: 422,
     # Ingestion errors
     ApiErrorCode.E_INGEST_FAILED: 502,

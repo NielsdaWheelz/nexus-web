@@ -10,7 +10,6 @@ Tests cover:
 """
 
 import hashlib
-import json
 from uuid import UUID, uuid4
 
 import pytest
@@ -19,21 +18,24 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
-    AssistantMessageCitationAudit,
     AssistantMessageVerifierRun,
     ChatRun,
     ConversationBranch,
     Message,
+    MessageContextItem,
     MessageRerankLedger,
     MessageRetrieval,
     MessageRetrievalCandidateLedger,
     MessageToolCall,
 )
+from nexus.schemas.conversation import ChatRunCreateRequest
 from nexus.services.conversations import (
     DEFAULT_CONVERSATION_TITLE,
     MAX_CONVERSATION_TITLE_LENGTH,
     derive_conversation_title,
+    load_message_context_snapshots_for_message_ids,
 )
+from nexus.services.message_context_snapshots import object_ref_context_snapshot
 from tests.factories import (
     create_test_conversation,
     create_test_library,
@@ -486,17 +488,38 @@ class TestDeleteConversation:
             session.execute(
                 text("""
                     INSERT INTO message_context_items (
-                        id, message_id, user_id, object_type, object_id, ordinal, context_snapshot
+                        id,
+                        message_id,
+                        user_id,
+                        context_kind,
+                        object_type,
+                        object_id,
+                        ordinal,
+                        context_snapshot
                     )
                     VALUES (
-                        :id, :message_id, :user_id, 'message', :object_id, 0, '{}'::jsonb
+                        :id,
+                        :message_id,
+                        :user_id,
+                        'object_ref',
+                        'message',
+                        :object_id,
+                        0,
+                        :context_snapshot
                     )
-                """),
+                """).bindparams(bindparam("context_snapshot", type_=JSONB)),
                 {
                     "id": message_context_id,
                     "message_id": user_message_id,
                     "user_id": user_id,
                     "object_id": assistant_message_id,
+                    "context_snapshot": object_ref_context_snapshot(
+                        object_type="message",
+                        object_id=assistant_message_id,
+                        title="Message #2",
+                        preview="Answer",
+                        route=f"/conversations/{conversation_id}",
+                    ),
                 },
             )
             session.execute(
@@ -653,6 +676,51 @@ class TestDeleteConversation:
 
 class TestListMessages:
     """Tests for GET /conversations/:id/messages endpoint."""
+
+    @staticmethod
+    def _insert_object_ref_context_snapshot(
+        session: Session,
+        *,
+        user_id: UUID,
+        snapshot: dict[str, object],
+    ) -> UUID:
+        context_id = uuid4()
+        chunk_id = uuid4()
+        conversation_id = create_test_conversation(session, user_id)
+        message_id = create_test_message(
+            session,
+            conversation_id,
+            seq=1,
+            content="Message with saved context",
+        )
+        session.add(
+            MessageContextItem(
+                id=context_id,
+                message_id=message_id,
+                user_id=user_id,
+                context_kind="object_ref",
+                object_type="content_chunk",
+                object_id=chunk_id,
+                ordinal=0,
+                context_snapshot_json={
+                    "kind": "object_ref",
+                    "type": "content_chunk",
+                    "id": str(chunk_id),
+                    "title": "Saved Context Title",
+                    "source_version": "content-index:test:v1",
+                    "locator": {
+                        "type": "web_text_offsets",
+                        "media_id": str(uuid4()),
+                        "fragment_id": str(uuid4()),
+                        "start_offset": 0,
+                        "end_offset": 12,
+                    },
+                    **snapshot,
+                },
+            )
+        )
+        session.commit()
+        return message_id
 
     def test_list_messages_empty(self, auth_client):
         """List messages for empty conversation returns empty list."""
@@ -1262,14 +1330,17 @@ class TestListMessages:
         assert next_data["artifact_version"] == 2
         assert next_data["supersedes_artifact_id"] == data["id"]
 
-    def test_message_artifact_follow_up_returns_chat_run_payload(
+    def test_artifact_ask_returns_chat_run_payload(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         artifact_id = uuid4()
         part_id = uuid4()
+        first_span_id = uuid4()
+        second_span_id = uuid4()
         model_id = uuid4()
+        artifact_version = 7
 
         with direct_db.session() as session:
             conversation_id = create_test_conversation(session, user_id)
@@ -1287,11 +1358,11 @@ class TestListMessages:
                     """
                     INSERT INTO message_artifacts (
                         id, conversation_id, message_id, artifact_key,
-                        artifact_kind, title, status
+                        artifact_kind, title, status, artifact_version
                     )
                     VALUES (
                         :artifact_id, :conversation_id, :message_id, 'artifact-1',
-                        'timeline', 'Timeline', 'complete'
+                        'timeline', 'Timeline', 'complete', :artifact_version
                     )
                     """
                 ),
@@ -1299,6 +1370,7 @@ class TestListMessages:
                     "artifact_id": artifact_id,
                     "conversation_id": conversation_id,
                     "message_id": assistant_message_id,
+                    "artifact_version": artifact_version,
                 },
             )
             session.execute(
@@ -1319,7 +1391,10 @@ class TestListMessages:
                             'conversation_id', CAST(:conversation_id AS text),
                             'part_key', 'part-1'
                         ),
-                        '[]'::jsonb,
+                        jsonb_build_array(
+                            to_jsonb(CAST(:first_span_id AS text)),
+                            to_jsonb(CAST(:second_span_id AS text))
+                        ),
                         '{"support_state":"not_source_grounded"}'::jsonb
                     )
                     """
@@ -1329,6 +1404,8 @@ class TestListMessages:
                     "artifact_id": artifact_id,
                     "message_id": assistant_message_id,
                     "conversation_id": conversation_id,
+                    "first_span_id": first_span_id,
+                    "second_span_id": second_span_id,
                 },
             )
             session.commit()
@@ -1342,7 +1419,6 @@ class TestListMessages:
             f"/artifacts/{artifact_id}/ask",
             headers=auth_headers(user_id),
             json={
-                "mode": "chat_run_payload",
                 "content": "Explain this part",
                 "artifact_part_id": str(part_id),
                 "model_id": str(model_id),
@@ -1350,9 +1426,9 @@ class TestListMessages:
         )
 
         assert response.status_code == 200, response.text
-        data = response.json()["data"]
-        assert data["artifact_part_provenance"]["artifact_part_id"] == str(part_id)
-        payload = data["chat_run_payload"]
+        payload = response.json()["data"]
+        ChatRunCreateRequest.model_validate(payload)
+        assert "conversation_scope" not in payload
         assert payload["conversation_id"] == str(conversation_id)
         assert payload["parent_message_id"] == str(assistant_message_id)
         assert payload["branch_anchor"] == {
@@ -1365,7 +1441,11 @@ class TestListMessages:
         assert payload["contexts"][0]["id"] == str(part_id)
         assert payload["contexts"][0]["artifact_id"] == str(artifact_id)
         assert payload["contexts"][0]["artifact_key"] == "artifact-1"
-        assert payload["contexts"][0]["artifact_version"] == 1
+        assert payload["contexts"][0]["artifact_version"] == artifact_version
+        assert payload["contexts"][0]["evidence_span_ids"] == [
+            str(first_span_id),
+            str(second_span_id),
+        ]
         assert payload["contexts"][0]["source_version"] == f"artifact_part:{part_id}:v1"
         assert payload["contexts"][0]["locator"] == {
             "type": "artifact_part_ref",
@@ -1375,124 +1455,52 @@ class TestListMessages:
             "conversation_id": str(conversation_id),
             "part_key": "part-1",
         }
-        assert payload["contexts"][0]["artifact_part_provenance"]["artifact_part_id"] == str(
-            part_id
-        )
+        provenance = payload["contexts"][0]["artifact_part_provenance"]
+        assert provenance["artifact_part_id"] == str(part_id)
+        assert provenance["artifact_version"] == artifact_version
+        assert provenance["evidence_span_ids"] == [
+            str(first_span_id),
+            str(second_span_id),
+        ]
 
-    def test_message_artifact_follow_up_creates_context_item(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-        artifact_id = uuid4()
-        part_id = uuid4()
-
-        with direct_db.session() as session:
-            conversation_id = create_test_conversation(session, user_id)
-            root_user_message_id = create_test_message(
-                session, conversation_id, seq=1, content="Make"
-            )
-            assistant_message_id = create_test_message(
-                session,
-                conversation_id,
-                seq=2,
-                role="assistant",
-                content="Done",
-                parent_message_id=root_user_message_id,
-            )
-            follow_up_message_id = create_test_message(
-                session,
-                conversation_id,
-                seq=3,
-                role="user",
-                content="Explain this part",
-                parent_message_id=assistant_message_id,
-            )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO message_artifacts (
-                        id, conversation_id, message_id, artifact_key,
-                        artifact_kind, title, status
-                    )
-                    VALUES (
-                        :artifact_id, :conversation_id, :message_id, 'artifact-1',
-                        'timeline', 'Timeline', 'complete'
-                    )
-                    """
-                ),
-                {
-                    "artifact_id": artifact_id,
-                    "conversation_id": conversation_id,
-                    "message_id": assistant_message_id,
-                },
-            )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO message_artifact_parts (
-                        id, artifact_id, ordinal, part_key, part_type, text,
-                        source_version, locator, evidence_span_ids, metadata
-                    )
-                    VALUES (
-                        :part_id, :artifact_id, 0, 'part-1', 'event', 'Cited event',
-                        concat('artifact_part', chr(58), CAST(:part_id AS text), chr(58), 'v1'),
-                        jsonb_build_object(
-                            'type', 'artifact_part_ref',
-                            'artifact_id', CAST(:artifact_id AS text),
-                            'artifact_part_id', CAST(:part_id AS text),
-                            'message_id', CAST(:message_id AS text),
-                            'conversation_id', CAST(:conversation_id AS text),
-                            'part_key', 'part-1'
-                        ),
-                        '[]'::jsonb,
-                        '{"support_state":"not_source_grounded"}'::jsonb
-                    )
-                    """
-                ),
-                {
-                    "part_id": part_id,
-                    "artifact_id": artifact_id,
-                    "message_id": assistant_message_id,
-                    "conversation_id": conversation_id,
-                },
-            )
-            session.commit()
-
-        direct_db.register_cleanup("object_links", "user_id", user_id)
-        direct_db.register_cleanup("message_context_items", "message_id", follow_up_message_id)
-        direct_db.register_cleanup("conversations", "id", conversation_id)
-        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-        direct_db.register_cleanup("message_artifacts", "id", artifact_id)
-        direct_db.register_cleanup("message_artifact_parts", "artifact_id", artifact_id)
-
-        response = auth_client.post(
+        whole_response = auth_client.post(
             f"/artifacts/{artifact_id}/ask",
             headers=auth_headers(user_id),
             json={
-                "mode": "context_item",
-                "content": "Explain this part",
-                "artifact_part_id": str(part_id),
-                "target_message_id": str(follow_up_message_id),
+                "content": "Explain the artifact",
+                "model_id": str(model_id),
             },
         )
 
-        assert response.status_code == 200, response.text
-        data = response.json()["data"]
-        assert data["artifact_part_provenance"]["artifact_part_id"] == str(part_id)
-        context_item = data["context_item"]
-        assert context_item["message_id"] == str(follow_up_message_id)
-        assert context_item["object_ref"] == {
-            "objectType": "artifact_part",
-            "objectId": str(part_id),
-        }
-        assert context_item["context_snapshot"]["type"] == "artifact_part"
-        assert context_item["context_snapshot"]["id"] == str(part_id)
-        assert context_item["context_snapshot"]["artifact_part_provenance"][
-            "artifact_part_id"
-        ] == str(part_id)
+        assert whole_response.status_code == 200, whole_response.text
+        whole_payload = whole_response.json()["data"]
+        ChatRunCreateRequest.model_validate(whole_payload)
+        assert "conversation_scope" not in whole_payload
+        whole_context = whole_payload["contexts"][0]
+        assert whole_context["type"] == "artifact"
+        assert whole_context["id"] == str(artifact_id)
+        assert whole_context["artifact_id"] == str(artifact_id)
+        assert whole_context["artifact_key"] == "artifact-1"
+        assert whole_context["artifact_version"] == artifact_version
+        whole_provenance = whole_context["artifact_part_provenance"]
+        assert whole_provenance["type"] == "artifact"
+        assert whole_provenance["artifact_id"] == str(artifact_id)
+        assert whole_provenance["artifact_key"] == "artifact-1"
+        assert whole_provenance["artifact_version"] == artifact_version
 
-    def test_source_manifest_read_path_and_message_cleanup(
+        missing_part_response = auth_client.post(
+            f"/artifacts/{artifact_id}/ask",
+            headers=auth_headers(user_id),
+            json={
+                "content": "Explain this missing part",
+                "artifact_part_id": str(uuid4()),
+                "model_id": str(model_id),
+            },
+        )
+        assert missing_part_response.status_code == 404, missing_part_response.text
+        assert missing_part_response.json()["error"]["code"] == "E_NOT_FOUND"
+
+    def test_source_manifest_message_cleanup(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -1673,20 +1681,6 @@ class TestListMessages:
         direct_db.register_cleanup("conversations", "id", conversation_id)
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
 
-        response = auth_client.get(
-            f"/conversations/{conversation_id}/source-manifests",
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 200, response.text
-        data = response.json()["data"]
-        assert len(data) == 1
-        assert data[0]["id"] == str(manifest_id)
-        assert data[0]["tool_call_id"] == str(tool_call_id)
-        assert data[0]["filters"] == {"allowed_domains": ["example.com"]}
-        assert data[0]["candidate_count"] == 3
-        assert data[0]["included_in_prompt_count"] == 1
-
         delete_response = auth_client.delete(
             f"/messages/{assistant_message_id}",
             headers=auth_headers(user_id),
@@ -1710,7 +1704,6 @@ class TestListMessages:
 
         with direct_db.session() as session:
             conversation_id = create_test_conversation(session, user_id)
-            other_conversation_id = create_test_conversation(session, user_id)
             model_id = create_test_model(session)
             user_message_id = create_test_message(session, conversation_id, seq=1, content="Find")
             assistant_message_id = create_test_message(
@@ -1831,22 +1824,6 @@ class TestListMessages:
                 not_enough_evidence_count=0,
                 metadata_={"source": "test"},
             )
-            citation_audit = AssistantMessageCitationAudit(
-                id=uuid4(),
-                message_id=assistant_message_id,
-                chat_run_id=run.id,
-                verifier_run_id=verifier_run.id,
-                supported_claim_count=1,
-                supported_claims_with_valid_offsets_count=1,
-                supported_claims_with_citation_count=1,
-                missing_locator_count=0,
-                missing_source_version_count=0,
-                supported_claims_have_valid_offsets=True,
-                supported_claims_have_citation_placement=True,
-                claim_evidence_has_required_locators=True,
-                claim_evidence_has_source_versions=True,
-                details={"checked": True},
-            )
             session.add_all(
                 [
                     run,
@@ -1855,7 +1832,6 @@ class TestListMessages:
                     candidate,
                     rerank,
                     verifier_run,
-                    citation_audit,
                 ]
             )
             session.commit()
@@ -1865,17 +1841,14 @@ class TestListMessages:
             candidate_id = candidate.id
             rerank_id = rerank.id
             verifier_run_id = verifier_run.id
-            citation_audit_id = citation_audit.id
 
         direct_db.register_cleanup("users", "id", user_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
-        direct_db.register_cleanup("conversations", "id", other_conversation_id)
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("chat_runs", "id", run_id)
         direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)
         direct_db.register_cleanup("message_retrievals", "id", retrieval_id)
         direct_db.register_cleanup("assistant_message_verifier_runs", "id", verifier_run_id)
-        direct_db.register_cleanup("assistant_message_citation_audits", "id", citation_audit_id)
         direct_db.register_cleanup("message_rerank_ledgers", "id", rerank_id)
         direct_db.register_cleanup("message_retrieval_candidate_ledgers", "id", candidate_id)
 
@@ -1883,24 +1856,16 @@ class TestListMessages:
             f"/messages/{assistant_message_id}/verifier-runs",
             headers=auth_headers(user_id),
         )
-        citation_response = auth_client.get(
-            f"/messages/{assistant_message_id}/citation-audits",
-            headers=auth_headers(user_id),
-        )
         candidate_response = auth_client.get(
             f"/messages/{assistant_message_id}/retrieval-candidate-ledgers",
             headers=auth_headers(user_id),
         )
         rerank_response = auth_client.get(
-            f"/conversations/{conversation_id}/messages/{assistant_message_id}/rerank-ledgers",
+            f"/messages/{assistant_message_id}/rerank-ledgers",
             headers=auth_headers(user_id),
         )
         filtered_candidate_response = auth_client.get(
             f"/messages/{assistant_message_id}/retrieval-candidate-ledgers?tool_call_id={uuid4()}",
-            headers=auth_headers(user_id),
-        )
-        mismatched_alias_response = auth_client.get(
-            f"/conversations/{other_conversation_id}/messages/{assistant_message_id}/verifier-runs",
             headers=auth_headers(user_id),
         )
 
@@ -1909,11 +1874,6 @@ class TestListMessages:
         assert verifier_data[0]["id"] == str(verifier_run_id)
         assert verifier_data[0]["verifier_name"] == "lexical_matcher"
         assert verifier_data[0]["metadata"] == {"source": "test"}
-
-        assert citation_response.status_code == 200, citation_response.text
-        citation_data = citation_response.json()["data"]
-        assert citation_data[0]["id"] == str(citation_audit_id)
-        assert citation_data[0]["details"] == {"checked": True}
 
         assert candidate_response.status_code == 200, candidate_response.text
         candidate_data = candidate_response.json()["data"]
@@ -1933,9 +1893,6 @@ class TestListMessages:
         assert filtered_candidate_response.status_code == 200, filtered_candidate_response.text
         assert filtered_candidate_response.json()["data"] == []
 
-        assert mismatched_alias_response.status_code == 404, mismatched_alias_response.text
-        assert mismatched_alias_response.json()["error"]["code"] == "E_MESSAGE_NOT_FOUND"
-
     def test_list_messages_preserves_rich_context_snapshot_fields(
         self, auth_client, direct_db: DirectSessionManager
     ):
@@ -1946,6 +1903,34 @@ class TestListMessages:
         first_span_id = uuid4()
         second_span_id = uuid4()
         media_id = uuid4()
+        fragment_id = uuid4()
+        source_version = "content-index:test:v1"
+        locator = {
+            "type": "web_text_offsets",
+            "media_id": str(media_id),
+            "fragment_id": str(fragment_id),
+            "start_offset": 0,
+            "end_offset": 12,
+        }
+        context_snapshot = {
+            **object_ref_context_snapshot(
+                object_type="content_chunk",
+                object_id=chunk_id,
+                title="Saved Context Title",
+                preview="Saved preview",
+                route=f"/media/{media_id}",
+                evidence_span_ids=[first_span_id, second_span_id],
+                media_id=media_id,
+                media_title="Snapshot Source",
+                media_kind="web_article",
+                locator=locator,
+                source_version=source_version,
+            ),
+            "color": "green",
+            "exact": "exact quote",
+            "prefix": "before",
+            "suffix": "after",
+        }
 
         with direct_db.session() as session:
             conversation_id = create_test_conversation(session, user_id)
@@ -1962,6 +1947,7 @@ class TestListMessages:
                         id,
                         message_id,
                         user_id,
+                        context_kind,
                         object_type,
                         object_id,
                         ordinal,
@@ -1971,33 +1957,20 @@ class TestListMessages:
                         :id,
                         :message_id,
                         :user_id,
+                        'object_ref',
                         'content_chunk',
                         :object_id,
                         0,
-                        CAST(:context_snapshot AS jsonb)
+                        :context_snapshot
                     )
                     """
-                ),
+                ).bindparams(bindparam("context_snapshot", type_=JSONB)),
                 {
                     "id": context_id,
                     "message_id": message_id,
                     "user_id": user_id,
                     "object_id": chunk_id,
-                    "context_snapshot": json.dumps(
-                        {
-                            "evidence_span_ids": [str(first_span_id), str(second_span_id)],
-                            "color": "green",
-                            "exact": "exact quote",
-                            "prefix": "before",
-                            "suffix": "after",
-                            "media_id": str(media_id),
-                            "media_title": "Snapshot Source",
-                            "media_kind": "web_article",
-                            "title": "Saved Context Title",
-                            "route": f"/media/{media_id}",
-                            "preview": "Saved preview",
-                        }
-                    ),
+                    "context_snapshot": context_snapshot,
                 },
             )
             session.commit()
@@ -2005,6 +1978,7 @@ class TestListMessages:
         direct_db.register_cleanup("message_context_items", "id", context_id)
         direct_db.register_cleanup("conversations", "id", conversation_id)
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("users", "id", user_id)
 
         response = auth_client.get(
             f"/conversations/{conversation_id}/messages", headers=auth_headers(user_id)
@@ -2027,9 +2001,60 @@ class TestListMessages:
             "media_id": str(media_id),
             "media_title": "Snapshot Source",
             "media_kind": "web_article",
+            "locator": locator,
+            "source_version": source_version,
             "title": "Saved Context Title",
             "route": f"/media/{media_id}",
         }
+
+    def test_load_message_context_snapshots_rejects_invalid_object_ref_evidence_span_ids(
+        self,
+        db_session: Session,
+        bootstrapped_user: UUID,
+    ):
+        message_id = self._insert_object_ref_context_snapshot(
+            db_session,
+            user_id=bootstrapped_user,
+            snapshot={
+                "evidence_span_ids": ["not-a-uuid"],
+            },
+        )
+
+        with pytest.raises(ValueError, match="evidence_span_ids must be UUIDs"):
+            load_message_context_snapshots_for_message_ids(db_session, [message_id])
+
+    @pytest.mark.parametrize(
+        ("field_name", "field_value", "error_message"),
+        [
+            ("color", "orange", "context snapshot color must be a highlight color"),
+            ("media_id", "not-a-uuid", "context snapshot media_id must be a UUID string"),
+            ("locator", "not-an-object", "context snapshot locator must be an object"),
+            ("source_version", 42, "context snapshot source_version must be a string"),
+            (
+                "source_version",
+                "",
+                "context snapshot source_version must be a non-empty string",
+            ),
+            ("title", [], "context snapshot title must be a string"),
+            ("preview", 7, "context snapshot preview must be a string"),
+        ],
+    )
+    def test_load_message_context_snapshots_rejects_invalid_object_ref_optional_fields(
+        self,
+        db_session: Session,
+        bootstrapped_user: UUID,
+        field_name: str,
+        field_value: object,
+        error_message: str,
+    ):
+        message_id = self._insert_object_ref_context_snapshot(
+            db_session,
+            user_id=bootstrapped_user,
+            snapshot={field_name: field_value},
+        )
+
+        with pytest.raises(ValueError, match=error_message):
+            load_message_context_snapshots_for_message_ids(db_session, [message_id])
 
     def test_list_messages_returns_reader_selection_snapshot(
         self, auth_client, direct_db: DirectSessionManager
@@ -2075,33 +2100,34 @@ class TestListMessages:
                         :user_id,
                         'reader_selection',
                         :media_id,
-                        CAST(:locator AS jsonb),
+                        :locator,
                         0,
-                        CAST(:context_snapshot AS jsonb)
+                        :context_snapshot
                     )
-                """),
+                """).bindparams(
+                    bindparam("locator", type_=JSONB),
+                    bindparam("context_snapshot", type_=JSONB),
+                ),
                 {
                     "id": context_id,
                     "message_id": message_id,
                     "user_id": user_id,
                     "media_id": media_id,
-                    "locator": json.dumps(locator),
-                    "context_snapshot": json.dumps(
-                        {
-                            "kind": "reader_selection",
-                            "client_context_id": str(client_context_id),
-                            "media_id": str(media_id),
-                            "source_media_id": str(media_id),
-                            "media_title": "Reader Source",
-                            "media_kind": "web_article",
-                            "exact": "selected quote",
-                            "prefix": "before ",
-                            "suffix": " after",
-                            "locator": locator,
-                            "source_version": "content-index:v1",
-                            "route": f"/media/{media_id}",
-                        }
-                    ),
+                    "locator": locator,
+                    "context_snapshot": {
+                        "kind": "reader_selection",
+                        "client_context_id": str(client_context_id),
+                        "media_id": str(media_id),
+                        "source_media_id": str(media_id),
+                        "media_title": "Reader Source",
+                        "media_kind": "web_article",
+                        "exact": "selected quote",
+                        "prefix": "before ",
+                        "suffix": " after",
+                        "locator": locator,
+                        "source_version": "content-index:v1",
+                        "route": f"/media/{media_id}",
+                    },
                 },
             )
             session.commit()
@@ -2768,12 +2794,12 @@ class TestListMessages:
 
 
 # =============================================================================
-# Legacy Streaming Route Removal Tests
+# Removed Streaming Route Tests
 # =============================================================================
 
 
-class TestLegacyStreamingRoutesRemoved:
-    """Old conversation-scoped streaming routes are gone after the cutover."""
+class TestRemovedStreamingRoutesReturnNotFound:
+    """Removed conversation-scoped streaming routes return 404."""
 
     def test_new_conversation_stream_route_returns_404(self, auth_client):
         user_id = create_test_user_id()
@@ -2861,17 +2887,38 @@ class TestDeleteMessage:
             session.execute(
                 text("""
                     INSERT INTO message_context_items (
-                        id, message_id, user_id, object_type, object_id, ordinal, context_snapshot
+                        id,
+                        message_id,
+                        user_id,
+                        context_kind,
+                        object_type,
+                        object_id,
+                        ordinal,
+                        context_snapshot
                     )
                     VALUES (
-                        :id, :message_id, :user_id, 'message', :object_id, 0, '{}'::jsonb
+                        :id,
+                        :message_id,
+                        :user_id,
+                        'object_ref',
+                        'message',
+                        :object_id,
+                        0,
+                        :context_snapshot
                     )
-                """),
+                """).bindparams(bindparam("context_snapshot", type_=JSONB)),
                 {
                     "id": message_context_id,
                     "message_id": assistant_message_id,
                     "user_id": user_id,
                     "object_id": user_message_id,
+                    "context_snapshot": object_ref_context_snapshot(
+                        object_type="message",
+                        object_id=user_message_id,
+                        title="Message #1",
+                        preview="Test message",
+                        route=f"/conversations/{conversation_id}",
+                    ),
                 },
             )
             session.execute(
@@ -3134,7 +3181,7 @@ class TestVisibility:
 
 
 # =============================================================================
-# S4 PR-06: ConversationOut owner fields
+# ConversationOut owner fields
 # =============================================================================
 
 
@@ -3178,7 +3225,7 @@ class TestConversationOutOwnerFields:
 
 
 # =============================================================================
-# S4 PR-06: Conversation Scope Tests
+# Conversation Scope Tests
 # =============================================================================
 
 
@@ -3461,8 +3508,7 @@ class TestListConversationsScope:
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_MESSAGE_NOT_FOUND"
 
-    # NOTE: Chat send ownership checks are covered by the chat-run create contract
-    # after the durable chat-runs cutover.
+    # NOTE: Chat send ownership checks are covered by the chat-run create contract.
     # (requires lifespan-aware TestClient for llm_router setup)
 
     def test_list_conversations_scope_all_cursor_is_stable_across_mixed_visibility(

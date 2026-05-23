@@ -170,7 +170,7 @@ class TestIngestionStateTransitions:
         assert result["reason"] == "already_ready"
 
     def test_idempotency_repairs_ready_media_without_content_index(self, db_session: Session):
-        """Ready legacy media with fragments but no evidence index should rebuild the index."""
+        """Ready media with fragments but no content index should rebuild the index."""
         from nexus.tasks.ingest_web_article import run_ingest_sync
 
         user_id = create_test_user_id()
@@ -185,16 +185,16 @@ class TestIngestionStateTransitions:
             {
                 "id": media_id,
                 "kind": MediaKind.web_article.value,
-                "title": "Legacy Article",
+                "title": "Ready Article Missing Index",
                 "status": ProcessingStatus.ready_for_reading.value,
-                "url": "https://example.com/legacy",
+                "url": "https://example.com/ready-missing-index",
                 "user_id": user_id,
             },
         )
         db_session.execute(
             text("""
                 INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
-                VALUES (:id, :media_id, 0, '<p>Legacy evidence text</p>', 'Legacy evidence text')
+                VALUES (:id, :media_id, 0, '<p>Ready article text</p>', 'Ready article text')
             """),
             {"id": fragment_id, "media_id": media_id},
         )

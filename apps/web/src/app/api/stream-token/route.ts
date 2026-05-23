@@ -1,7 +1,7 @@
 /**
  * BFF endpoint for minting stream tokens.
  *
- * Per PR-08 spec §10:
+ * Stream token contract:
  * - POST /api/stream-token — proxies to fastapi POST /internal/stream-tokens
  * - Returns { token, stream_base_url, expires_at }
  * - Requires authenticated session (supabase cookie auth)

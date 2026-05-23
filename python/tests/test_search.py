@@ -2,7 +2,7 @@
 
 Tests cover:
 - Basic search functionality across all types
-- Visibility enforcement (s4 provenance for media, note ownership,
+- Visibility enforcement (canonical media provenance, note ownership,
   canonical conversation visibility for messages)
 - Scope filtering (all, media, library, conversation)
 - Type filtering
@@ -12,9 +12,9 @@ Tests cover:
 - Invalid cursor handling
 - No visibility leakage
 - Note-block ownership and library revocation behavior
-- S4 library-scope message search
-- S4 conversation scope with shared-read visibility
-- S4 media provenance (stale default-library rows)
+- Library-scope message search
+- Conversation scope with shared-read visibility
+- Canonical media provenance (stale default-library rows)
 - Response shape preservation
 """
 
@@ -25,10 +25,12 @@ from uuid import UUID, uuid4
 import pytest
 import respx
 from pydantic import ValidationError
-from sqlalchemy import select, text
+from sqlalchemy import bindparam, select, text
+from sqlalchemy.dialects.postgresql import JSONB
 
 from nexus.config import clear_settings_cache
-from nexus.db.models import Fragment, ObjectSearchDocument, Page
+from nexus.db.models import Fragment, ObjectSearchDocument, ObjectSearchEmbedding, Page
+from nexus.errors import InvalidRequestError, NotFoundError
 from nexus.schemas.notes import CreatePageRequest
 from nexus.services import notes, object_search
 from nexus.services.content_indexing import (
@@ -38,6 +40,7 @@ from nexus.services.content_indexing import (
 )
 from nexus.services.contributor_credits import replace_media_contributor_credits
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.message_context_snapshots import object_ref_context_snapshot
 from nexus.services.search import (
     _snippet_around_query,
     _truncate_snippet,
@@ -47,12 +50,16 @@ from nexus.services.search import (
 from nexus.services.semantic_chunks import build_text_embedding, to_pgvector_literal
 from tests.factories import (
     add_library_member,
+    add_media_to_library,
+    create_normalized_fragment_highlight,
     create_searchable_media,
     create_searchable_media_in_library,
     create_test_conversation,
     create_test_conversation_with_message,
+    create_test_fragment,
     create_test_highlight_note,
     create_test_library,
+    create_test_media,
     create_test_message,
     get_user_default_library,
     share_conversation_to_library,
@@ -370,24 +377,15 @@ class TestBasicSearch:
         assert str(unavailable_podcast_id) in result_ids
 
         episode_row = next(row for row in response.json()["results"] if row["type"] == "episode")
-        resolved_episode = auth_client.post(
-            "/search/resolve",
-            json={"result_ref": {"type": "episode", "id": episode_row["id"]}},
-            headers=auth_headers(user_id),
-        )
-        assert resolved_episode.status_code == 200, (
-            f"expected episode resolve to succeed, got "
-            f"{resolved_episode.status_code}: {resolved_episode.text}"
-        )
-        assert resolved_episode.json()["result"]["type"] == "episode"
-        assert resolved_episode.json()["result"]["id"] == episode_row["id"]
-
-        old_context_body = auth_client.post(
-            "/search/resolve",
-            json={"context_ref": episode_row["context_ref"]},
-            headers=auth_headers(user_id),
-        )
-        assert old_context_body.status_code in {400, 422}
+        with direct_db.session() as session:
+            resolved_episode = get_search_result(
+                db=session,
+                viewer_id=user_id,
+                result_type="episode",
+                result_id=episode_row["id"],
+            )
+        assert resolved_episode.type == "episode"
+        assert str(resolved_episode.id) == episode_row["id"]
 
     def test_fragment_search_excludes_transcript_media_marked_unavailable(
         self, auth_client, direct_db
@@ -573,10 +571,59 @@ class TestBasicSearch:
         highlight_row = next(
             r for r in highlight_response.json()["results"] if r["id"] == str(highlight_id)
         )
-        assert highlight_row["source_version"]
+        assert highlight_row["source_version"] == "fragments_v1"
         assert highlight_row["citation_label"]
         assert highlight_row["locator"]["type"] == "web_text_offsets"
         assert highlight_row["locator"]["media_id"] == str(media_id)
+
+    def test_highlight_search_requires_active_source_version(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Highlight search omits citable results without durable source provenance."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="Unindexed Highlight Article")
+            fragment_id = create_test_fragment(
+                session,
+                media_id,
+                "unindexed highlight quote around context",
+            )
+            library_id = get_user_default_library(session, user_id)
+            assert library_id is not None
+            add_media_to_library(session, library_id, media_id)
+            highlight_id = create_normalized_fragment_highlight(
+                session,
+                user_id,
+                fragment_id,
+                media_id,
+                start_offset=0,
+                end_offset=len("unindexed"),
+                exact="unindexed",
+            )
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("fragments", "id", fragment_id)
+        direct_db.register_cleanup("highlights", "id", highlight_id)
+
+        response = auth_client.get(
+            "/search?q=unindexed&types=highlight",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200
+        result_ids = {row["id"] for row in response.json()["results"]}
+        assert str(highlight_id) not in result_ids
+
+        with direct_db.session() as session:
+            with pytest.raises(NotFoundError):
+                get_search_result(
+                    db=session,
+                    viewer_id=user_id,
+                    result_type="highlight",
+                    result_id=str(highlight_id),
+                )
 
     def test_search_finds_messages(self, auth_client, direct_db: DirectSessionManager):
         """Search finds messages in conversations."""
@@ -1518,7 +1565,7 @@ class TestSearchResultFormat:
         assert result["deep_link"] == f"/conversations/{conversation_id}"
         assert result["context_ref"] == {"type": "message", "id": str(message_id)}
 
-    def test_web_result_search_and_resolution_routes(
+    def test_web_result_search_and_service_resolution(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """Persisted web retrievals are searchable only through visible conversations."""
@@ -1652,33 +1699,23 @@ class TestSearchResultFormat:
         }
         assert result["context_ref"] == {"type": "web_result", "id": str(retrieval_id)}
 
-        resolved = auth_client.get(
-            f"/search/results/{retrieval_id}?type=web_result",
-            headers=auth_headers(user_id),
-        )
-        assert resolved.status_code == 200, (
-            f"Expected web result read to succeed, got {resolved.status_code}: {resolved.text}"
-        )
-        assert resolved.json()["result"]["id"] == str(retrieval_id)
+        with direct_db.session() as session:
+            resolved = get_search_result(
+                db=session,
+                viewer_id=user_id,
+                result_type="web_result",
+                result_id=str(retrieval_id),
+            )
+            assert str(resolved.id) == str(retrieval_id)
+            assert resolved.result_ref == "web:calypso"
 
-        posted = auth_client.post(
-            "/search/resolve",
-            json={"result_ref": {"type": "web_result", "id": str(retrieval_id)}},
-            headers=auth_headers(user_id),
-        )
-        assert posted.status_code == 200, (
-            f"Expected web result resolve to succeed, got {posted.status_code}: {posted.text}"
-        )
-        assert posted.json()["result"]["id"] == str(retrieval_id)
-        assert posted.json()["result"]["result_ref"] == "web:calypso"
-
-        provider_ref = auth_client.post(
-            "/search/resolve",
-            json={"result_ref": {"type": "web_result", "id": "web:calypso"}},
-            headers=auth_headers(user_id),
-        )
-        assert provider_ref.status_code == 400
-        assert provider_ref.json()["error"]["code"] == "E_INVALID_REQUEST"
+            with pytest.raises(InvalidRequestError):
+                get_search_result(
+                    db=session,
+                    viewer_id=user_id,
+                    result_type="web_result",
+                    result_id="web:calypso",
+                )
 
         with direct_db.session() as session:
             session.execute(
@@ -1708,7 +1745,7 @@ class TestSearchResultFormat:
                     types=["web_result"],
                 )
 
-    def test_artifact_part_search_and_resolution_routes(
+    def test_artifact_part_search_and_service_resolution(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """Artifact parts are searchable and resolvable as strict result refs."""
@@ -1797,7 +1834,44 @@ class TestSearchResultFormat:
         assert result["deep_link"] == (
             f"/conversations/{conversation_id}?artifact={artifact_id}&artifactPart={part_id}"
         )
-        assert result["context_ref"] == {"type": "artifact_part", "id": str(part_id)}
+        assert result["context_ref"] == {
+            "type": "artifact_part",
+            "id": str(part_id),
+            "artifact_id": str(artifact_id),
+            "artifact_key": "research-table",
+            "artifact_version": 1,
+            "source_version": f"artifact_part:{part_id}:v1",
+            "locator": {
+                "type": "artifact_part_ref",
+                "artifact_id": str(artifact_id),
+                "artifact_part_id": str(part_id),
+                "message_id": str(message_id),
+                "conversation_id": str(conversation_id),
+                "part_key": "row-1",
+            },
+            "artifact_part_provenance": {
+                "type": "artifact_part",
+                "artifact_id": str(artifact_id),
+                "artifact_kind": "comparison_table",
+                "message_id": str(message_id),
+                "conversation_id": str(conversation_id),
+                "artifact_key": "research-table",
+                "artifact_version": 1,
+                "artifact_title": "Research Table",
+                "artifact_part_id": str(part_id),
+                "part_key": "row-1",
+                "part_type": "table_row",
+                "source_version": f"artifact_part:{part_id}:v1",
+                "locator": {
+                    "type": "artifact_part_ref",
+                    "artifact_id": str(artifact_id),
+                    "artifact_part_id": str(part_id),
+                    "message_id": str(message_id),
+                    "conversation_id": str(conversation_id),
+                    "part_key": "row-1",
+                },
+            },
+        }
         assert result["locator"] == {
             "type": "artifact_part_ref",
             "artifact_id": str(artifact_id),
@@ -1809,25 +1883,14 @@ class TestSearchResultFormat:
         if "source_version" in result:
             assert result["source_version"] == f"artifact_part:{part_id}:v1"
 
-        resolved = auth_client.get(
-            f"/search/results/{part_id}?type=artifact_part",
-            headers=auth_headers(user_id),
-        )
-        assert resolved.status_code == 200, (
-            f"Expected artifact part result read to succeed, got "
-            f"{resolved.status_code}: {resolved.text}"
-        )
-        assert resolved.json()["result"]["id"] == str(part_id)
-
-        posted = auth_client.post(
-            "/search/resolve",
-            json={"result_ref": {"type": "artifact_part", "id": str(part_id)}},
-            headers=auth_headers(user_id),
-        )
-        assert posted.status_code == 200, (
-            f"Expected artifact part resolve to succeed, got {posted.status_code}: {posted.text}"
-        )
-        assert posted.json()["result"]["id"] == str(part_id)
+        with direct_db.session() as session:
+            resolved = get_search_result(
+                db=session,
+                viewer_id=user_id,
+                result_type="artifact_part",
+                result_id=str(part_id),
+            )
+        assert str(resolved.id) == str(part_id)
 
     def test_snippet_max_length(self, auth_client, direct_db: DirectSessionManager):
         """Snippets are truncated to max 300 chars."""
@@ -1874,7 +1937,7 @@ class TestSearchResultFormat:
     def test_note_block_results_use_note_contract(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Note-block search returns the hard-cutover note result contract."""
+        """Note-block search returns the note result contract."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         note_body = "Unique metadata-rich note lookup term harmonica"
@@ -1979,29 +2042,29 @@ class TestSearchResultFormat:
                 user_id,
                 CreatePageRequest(title="Vector Only Page", description="ordinary garden notes"),
             )
-            assert object_search.rebuild_missing_embeddings(session, user_id) == 1
-            assert object_search.rebuild_missing_embeddings(session, user_id) == 0
-            document_id = session.scalar(
-                select(ObjectSearchDocument.id).where(
+            document = session.scalar(
+                select(ObjectSearchDocument).where(
                     ObjectSearchDocument.user_id == user_id,
                     ObjectSearchDocument.object_type == "page",
                     ObjectSearchDocument.object_id == page.id,
                 )
             )
-            assert document_id is not None
             _model, vector = build_text_embedding("semanticneedle")
-            session.execute(
-                text(
-                    """
-                    UPDATE object_search_embeddings
-                    SET embedding = CAST(:embedding AS vector(256))
-                    WHERE search_document_id = :document_id
-                    """
-                ),
-                {
-                    "document_id": document_id,
-                    "embedding": to_pgvector_literal(vector),
-                },
+            assert document is not None
+            document_id = document.id
+            document.index_status = "ready"
+            session.add(
+                ObjectSearchEmbedding(
+                    user_id=user_id,
+                    search_document_id=document.id,
+                    object_type=document.object_type,
+                    object_id=document.object_id,
+                    embedding_model=_model,
+                    embedding_dimensions=len(vector),
+                    content_hash=document.content_hash,
+                    index_version=document.index_version,
+                    embedding=vector,
+                )
             )
             session.commit()
 
@@ -2054,12 +2117,12 @@ class TestSearchResultFormat:
 
 
 # =============================================================================
-# S4 Search Alignment Tests
+# Search Visibility Alignment Tests
 # =============================================================================
 
 
-class TestSearchS4ConversationScope:
-    """Tests for s4 conversation scope using shared-read visibility."""
+class TestSearchConversationScope:
+    """Tests for conversation scope using shared-read visibility."""
 
     def test_scope_conversation_shared_reader_allowed_by_read_visibility(
         self, auth_client, direct_db: DirectSessionManager
@@ -2217,16 +2280,35 @@ class TestSearchS4ConversationScope:
             session.execute(
                 text("""
                     INSERT INTO message_context_items (
-                        message_id, user_id, object_type, object_id, ordinal, context_snapshot
+                        message_id,
+                        user_id,
+                        context_kind,
+                        object_type,
+                        object_id,
+                        ordinal,
+                        context_snapshot
                     )
                     VALUES (
-                        :message_id, :user_id, 'note_block', :note_block_id, 0, '{}'::jsonb
+                        :message_id,
+                        :user_id,
+                        'object_ref',
+                        'note_block',
+                        :note_block_id,
+                        0,
+                        :context_snapshot
                     )
-                """),
+                """).bindparams(bindparam("context_snapshot", type_=JSONB)),
                 {
                     "message_id": message_id,
                     "user_id": user_id,
                     "note_block_id": context_note_id,
+                    "context_snapshot": object_ref_context_snapshot(
+                        object_type="note_block",
+                        object_id=context_note_id,
+                        title="message context item note block piccolo needle",
+                        preview="message context item note block piccolo needle",
+                        route=f"/notes/{context_note_id}",
+                    ),
                 },
             )
             session.execute(
@@ -2269,7 +2351,7 @@ class TestSearchS4ConversationScope:
 
 
 class TestSearchNoteBlockOwnership:
-    """Tests for note-block search ownership after the hard cutover."""
+    """Tests for note-block search under user-owned note visibility."""
 
     def test_search_note_blocks_exclude_other_users_shared_media_notes(
         self, auth_client, direct_db: DirectSessionManager
@@ -2366,8 +2448,8 @@ class TestSearchNoteBlockOwnership:
         assert str(note_block_id) not in after_ids
 
 
-class TestSearchS4LibraryScopeMessages:
-    """Tests for s4 library-scope message search."""
+class TestSearchLibraryScopeMessages:
+    """Tests for library-scope message search."""
 
     def test_scope_library_message_search_includes_only_target_shared_conversations(
         self, auth_client, direct_db: DirectSessionManager
@@ -2504,13 +2586,13 @@ class TestSearchS4LibraryScopeMessages:
         assert str(msg_id) not in msg_ids
 
 
-class TestSearchS4ResponseShape:
+class TestSearchResponseShape:
     """Tests for response shape preservation."""
 
     def test_search_response_shape_remains_results_page(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Response has top-level 'results' and 'page', no envelope migration."""
+        """Response has top-level 'results' and 'page', no data envelope."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -2536,8 +2618,8 @@ class TestSearchS4ResponseShape:
         assert "error" not in data
 
 
-class TestSearchS4Provenance:
-    """Tests for s4 media provenance in search visibility."""
+class TestSearchProvenance:
+    """Tests for media provenance in search visibility."""
 
     def test_search_does_not_return_stale_default_library_rows_without_intrinsic_or_closure(
         self, auth_client, direct_db: DirectSessionManager
@@ -2598,7 +2680,7 @@ class TestSearchS4Provenance:
         assert str(fragment_id) not in fragment_ids
 
 
-class TestSearchS4ScopeMasking:
+class TestSearchScopeMasking:
     """Tests for scope authorization masking with typed 404s."""
 
     def test_scope_media_unauthorized_returns_not_found(self, auth_client):

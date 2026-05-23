@@ -1,8 +1,7 @@
 /**
  * Media View Page styles.
  *
- * Styling for the media content pane and highlights pane.
- * EPUB chapter navigation and TOC styles added in S5 PR-05.
+ * Styling for the media content pane, EPUB navigation, and highlights pane.
  *
  * Reader scope: the `.readerThemeLight` and `.readerThemeDark` blocks below
  * define `--reader-*` overrides with literal hex values. They are independent
@@ -612,7 +611,7 @@
 }
 
 /* =============================================================================
-   EPUB Chapter Navigation (S5 PR-05)
+   EPUB Chapter Navigation
    ============================================================================= */
 
 .epubContainer {
@@ -622,7 +621,7 @@
 }
 
 /* =============================================================================
-   EPUB Table of Contents (S5 PR-05)
+   EPUB Table of Contents
    ============================================================================= */
 
 .tocSection {

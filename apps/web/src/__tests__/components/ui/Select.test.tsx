@@ -16,31 +16,6 @@ describe("Select", () => {
     expect(sel.options).toHaveLength(2);
   });
 
-  it("applies different className per size", () => {
-    const { rerender } = render(
-      <Select size="sm" aria-label="s">
-        <option value="a">A</option>
-      </Select>
-    );
-    const sm = screen.getByLabelText("s").className;
-
-    rerender(
-      <Select size="md" aria-label="s">
-        <option value="a">A</option>
-      </Select>
-    );
-    const md = screen.getByLabelText("s").className;
-
-    rerender(
-      <Select size="lg" aria-label="s">
-        <option value="a">A</option>
-      </Select>
-    );
-    const lg = screen.getByLabelText("s").className;
-
-    expect(new Set([sm, md, lg]).size).toBe(3);
-  });
-
   it("reflects disabled state in DOM", () => {
     render(
       <Select disabled aria-label="x">

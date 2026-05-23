@@ -9,17 +9,14 @@ import type {
   ConversationSourceRefType,
   ConversationStateSnapshot,
 } from "@/lib/conversations/types";
+import { getStringField } from "@/lib/validation";
 import styles from "./ConversationMemoryPanel.module.css";
 
 interface ConversationMemoryPanelProps {
   memory?: ConversationMemoryInspection | null;
-  testId?: string;
 }
 
-export default function ConversationMemoryPanel({
-  memory,
-  testId = "conversation-memory-panel",
-}: ConversationMemoryPanelProps) {
+export default function ConversationMemoryPanel({ memory }: ConversationMemoryPanelProps) {
   const activeSnapshot =
     memory?.state_snapshot?.status === "active" ? memory.state_snapshot : null;
   const activeItems = (memory?.memory_items ?? []).filter(
@@ -31,11 +28,7 @@ export default function ConversationMemoryPanel({
   }
 
   return (
-    <section
-      className={styles.panel}
-      aria-label="Conversation memory"
-      data-testid={testId}
-    >
+    <section className={styles.panel} aria-label="Conversation memory">
       <h3 className={styles.title}>Memory</h3>
 
       {activeSnapshot ? <StateSnapshot snapshot={activeSnapshot} /> : null}
@@ -179,10 +172,10 @@ function getSourceLabel(sourceRef: ConversationSourceRef): string {
   }
 
   const resultTitle =
-    getRecordString(sourceRef.result_ref, "title") ||
-    getRecordString(sourceRef.result_ref, "source_label") ||
-    getRecordString(sourceRef.result_ref, "source_name") ||
-    getRecordString(sourceRef.result_ref, "display_url");
+    getStringField(sourceRef.result_ref, "title") ||
+    getStringField(sourceRef.result_ref, "source_label") ||
+    getStringField(sourceRef.result_ref, "source_name") ||
+    getStringField(sourceRef.result_ref, "display_url");
   if (resultTitle) {
     return resultTitle;
   }
@@ -235,18 +228,11 @@ function getSourceDetail(sourceRef: ConversationSourceRef, label: string): strin
 function getSourceHref(sourceRef: ConversationSourceRef): string | undefined {
   return (
     sourceRef.deep_link ||
-    getRecordString(sourceRef.result_ref, "url") ||
-    getRecordString(sourceRef.result_ref, "deep_link")
+    getStringField(sourceRef.result_ref, "url") ||
+    getStringField(sourceRef.result_ref, "deep_link")
   );
 }
 
-function getRecordString(
-  record: Record<string, unknown> | null | undefined,
-  key: string,
-): string | undefined {
-  const value = record?.[key];
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
 
 function formatSeqRange(item: ConversationMemoryItem): string | undefined {
   const from = item.valid_from_seq;

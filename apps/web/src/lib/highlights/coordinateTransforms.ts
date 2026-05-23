@@ -77,42 +77,6 @@ export function pagePointToViewportPoint(
   }
 }
 
-export function viewportPointToPagePoint(
-  point: PdfViewportPoint,
-  transform: PdfPageViewportTransform
-): { x: PageSpaceX; y: PageSpaceY } {
-  const effectiveScale = transform.scale * transform.dpiScale;
-  if (effectiveScale <= 0) {
-    return { x: toPageSpaceX(0), y: toPageSpaceY(0) };
-  }
-  const vx = point.x / effectiveScale;
-  const vy = point.y / effectiveScale;
-
-  switch (transform.rotation) {
-    case 90:
-      return {
-        x: toPageSpaceX(vy),
-        y: toPageSpaceY(transform.pageHeightPoints - vx),
-      };
-    case 180:
-      return {
-        x: toPageSpaceX(transform.pageWidthPoints - vx),
-        y: toPageSpaceY(transform.pageHeightPoints - vy),
-      };
-    case 270:
-      return {
-        x: toPageSpaceX(transform.pageWidthPoints - vy),
-        y: toPageSpaceY(vx),
-      };
-    case 0:
-    default:
-      return {
-        x: toPageSpaceX(vx),
-        y: toPageSpaceY(vy),
-      };
-  }
-}
-
 export function projectPdfQuadToViewportRect(
   quad: PdfHighlightQuad,
   transform: PdfPageViewportTransform

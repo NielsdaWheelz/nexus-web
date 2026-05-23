@@ -4,9 +4,6 @@ Tests cover the helpers in services/contexts.py:
 - Insert message context items with ordinal ordering
 - Compute media_id from context targets (media, highlight, note_block)
 - Transactionally upsert conversation_media
-- recompute_conversation_media helper is idempotent
-
-NO PUBLIC ROUTES use these in PR-02. These are service-layer tests only.
 """
 
 import json
@@ -27,7 +24,8 @@ from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.context_assembler import load_message_context_refs
 from nexus.services.conversations import load_message_context_snapshots_for_message_ids
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
-from tests.factories import create_searchable_media
+from nexus.services.message_context_snapshots import object_ref_context_snapshot
+from tests.factories import activate_replacement_content_index_run, create_searchable_media
 
 pytestmark = pytest.mark.integration
 
@@ -350,6 +348,60 @@ def _context_ref(target_type: str, target_id: UUID) -> MessageContextRef:
     return MessageContextRef(kind="object_ref", type=target_type, id=target_id)
 
 
+def _insert_object_ref_context_item(
+    db_session: Session,
+    *,
+    context_id: UUID,
+    message_id: UUID,
+    user_id: UUID,
+    object_type: str,
+    object_id: UUID,
+    title: str,
+    source_media_id: UUID | None = None,
+) -> None:
+    db_session.execute(
+        text(
+            """
+            INSERT INTO message_context_items (
+                id,
+                message_id,
+                user_id,
+                context_kind,
+                object_type,
+                object_id,
+                source_media_id,
+                ordinal,
+                context_snapshot
+            )
+            VALUES (
+                :id,
+                :message_id,
+                :user_id,
+                'object_ref',
+                :object_type,
+                :object_id,
+                :source_media_id,
+                0,
+                :context_snapshot
+            )
+            """
+        ).bindparams(bindparam("context_snapshot", type_=JSONB)),
+        {
+            "id": context_id,
+            "message_id": message_id,
+            "user_id": user_id,
+            "object_type": object_type,
+            "object_id": object_id,
+            "source_media_id": source_media_id,
+            "context_snapshot": object_ref_context_snapshot(
+                object_type=object_type,
+                object_id=object_id,
+                title=title,
+            ),
+        },
+    )
+
+
 def _reader_selection(media_id: UUID, fragment_id: UUID | None = None) -> ReaderSelectionContext:
     selected_fragment_id = fragment_id or uuid4()
     return ReaderSelectionContext(
@@ -661,6 +713,88 @@ class TestContextInsertion:
         assert readback["source_version"] == row["source_version"]
         assert readback["locator"] == snapshot["locator"]
 
+    def test_insert_content_chunk_context_rejects_stale_evidence_span(
+        self,
+        db_session: Session,
+        conversation_with_message: tuple,
+    ):
+        _conversation_id, message_id, user_id, _library_id = conversation_with_message
+        media_id = create_searchable_media(db_session, user_id, title="Stale context source")
+        row = (
+            db_session.execute(
+                text(
+                    """
+                    SELECT
+                        cc.id AS chunk_id,
+                        cc.index_run_id AS active_run_id,
+                        cc.primary_evidence_span_id AS evidence_span_id
+                    FROM content_chunks cc
+                    WHERE cc.media_id = :media_id
+                    ORDER BY cc.chunk_idx ASC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            .mappings()
+            .one()
+        )
+        activate_replacement_content_index_run(
+            db_session,
+            media_id=media_id,
+            active_run_id=row["active_run_id"],
+        )
+
+        with pytest.raises(ApiError) as exc_info:
+            contexts_service.insert_context(
+                db=db_session,
+                message_id=message_id,
+                ordinal=0,
+                context=MessageContextRef(
+                    kind="object_ref",
+                    type="content_chunk",
+                    id=row["chunk_id"],
+                    evidence_span_ids=[row["evidence_span_id"]],
+                ),
+            )
+
+        assert exc_info.value.code == ApiErrorCode.E_INVALID_REQUEST
+
+    def test_validate_content_chunk_evidence_span_ids_rejects_duplicates(
+        self,
+        db_session: Session,
+        conversation_with_message: tuple,
+    ):
+        _conversation_id, _message_id, user_id, _library_id = conversation_with_message
+        media_id = create_searchable_media(db_session, user_id, title="Duplicate span source")
+        row = (
+            db_session.execute(
+                text(
+                    """
+                    SELECT
+                        cc.id AS chunk_id,
+                        cc.primary_evidence_span_id AS evidence_span_id
+                    FROM content_chunks cc
+                    WHERE cc.media_id = :media_id
+                    ORDER BY cc.chunk_idx ASC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            .mappings()
+            .one()
+        )
+
+        with pytest.raises(ApiError) as exc_info:
+            contexts_service.validate_content_chunk_evidence_span_ids(
+                db_session,
+                row["chunk_id"],
+                [row["evidence_span_id"], row["evidence_span_id"]],
+            )
+
+        assert exc_info.value.code == ApiErrorCode.E_INVALID_REQUEST
+
     def test_insert_reader_selection_context(
         self,
         db_session: Session,
@@ -911,6 +1045,137 @@ class TestContextInsertion:
         assert readback.artifact_part_provenance is not None
         assert readback.artifact_part_provenance.artifact_part_id == part_id
 
+    def test_insert_artifact_context_stores_json_provenance(
+        self,
+        db_session: Session,
+        conversation_with_message: tuple,
+    ):
+        conversation_id, user_message_id, _user_id, _default_library_id = conversation_with_message
+        assistant_message_id = uuid4()
+        artifact_id = uuid4()
+        db_session.execute(
+            text(
+                """
+                INSERT INTO messages (
+                    id, conversation_id, seq, role, content, status, parent_message_id
+                )
+                VALUES (
+                    :message_id, :conversation_id, 2, 'assistant', 'Done',
+                    'complete', :parent_message_id
+                )
+                """
+            ),
+            {
+                "message_id": assistant_message_id,
+                "conversation_id": conversation_id,
+                "parent_message_id": user_message_id,
+            },
+        )
+        db_session.execute(
+            text(
+                """
+                INSERT INTO message_artifacts (
+                    id, conversation_id, message_id, artifact_key,
+                    artifact_version, artifact_kind, title, status
+                )
+                VALUES (
+                    :artifact_id, :conversation_id, :message_id, 'brief-1',
+                    2, 'briefing_document', 'Brief', 'complete'
+                )
+                """
+            ),
+            {
+                "artifact_id": artifact_id,
+                "conversation_id": conversation_id,
+                "message_id": assistant_message_id,
+            },
+        )
+        db_session.flush()
+
+        with pytest.raises(ApiError) as exc_info:
+            contexts_service.insert_context(
+                db=db_session,
+                message_id=user_message_id,
+                ordinal=0,
+                context=MessageContextRef.model_validate(
+                    {
+                        "kind": "object_ref",
+                        "type": "artifact",
+                        "id": str(artifact_id),
+                        "artifact_id": str(artifact_id),
+                        "artifact_key": "caller-brief",
+                        "artifact_version": 9,
+                        "artifact_part_provenance": {
+                            "type": "artifact",
+                            "artifact_id": str(artifact_id),
+                            "artifact_kind": "briefing_document",
+                            "message_id": str(user_message_id),
+                            "conversation_id": str(conversation_id),
+                            "artifact_key": "caller-brief",
+                            "artifact_version": 9,
+                            "artifact_title": "Caller Brief",
+                        },
+                    }
+                ),
+            )
+        assert exc_info.value.code == ApiErrorCode.E_INVALID_REQUEST
+        assert "does not match the stored artifact" in exc_info.value.message
+
+        row = contexts_service.insert_context(
+            db=db_session,
+            message_id=user_message_id,
+            ordinal=0,
+            context=MessageContextRef.model_validate(
+                {
+                    "kind": "object_ref",
+                    "type": "artifact",
+                    "id": str(artifact_id),
+                }
+            ),
+        )
+
+        json.dumps(row.context_snapshot_json)
+        snapshot = row.context_snapshot_json
+        stored = snapshot["artifact_part_provenance"]
+        assert snapshot["type"] == "artifact"
+        assert snapshot["id"] == str(artifact_id)
+        assert snapshot["artifact_id"] == str(artifact_id)
+        assert snapshot["artifact_key"] == "brief-1"
+        assert snapshot["artifact_version"] == 2
+        assert stored["type"] == "artifact"
+        assert stored["artifact_id"] == str(artifact_id)
+        assert stored["artifact_key"] == "brief-1"
+        assert stored["artifact_version"] == 2
+        assert stored["message_id"] == str(assistant_message_id)
+        assert stored["conversation_id"] == str(conversation_id)
+        assert stored["artifact_title"] == "Brief"
+
+        refs = load_message_context_refs(db_session, user_message_id)
+        ref = refs[0]
+        assert isinstance(ref, MessageContextRef)
+        assert ref.type == "artifact"
+        assert ref.id == artifact_id
+        assert ref.artifact_id == artifact_id
+        assert ref.artifact_key == "brief-1"
+        assert ref.artifact_version == 2
+        assert ref.artifact_part_provenance is not None
+        assert ref.artifact_part_provenance.artifact_key == "brief-1"
+        assert ref.artifact_part_provenance.artifact_version == 2
+        assert ref.artifact_part_provenance.message_id == assistant_message_id
+
+        snapshots = load_message_context_snapshots_for_message_ids(db_session, [user_message_id])
+        readback = snapshots[user_message_id][0]
+        readback_json = readback.model_dump(mode="json")
+        assert readback.type == "artifact"
+        assert readback.id == artifact_id
+        assert readback.artifact_id == artifact_id
+        assert readback.artifact_key == "brief-1"
+        assert readback.artifact_version == 2
+        assert readback.artifact_part_provenance is not None
+        assert readback.artifact_part_provenance.message_id == assistant_message_id
+        assert readback_json["artifact_part_provenance"]["artifact_key"] == "brief-1"
+        assert readback_json["artifact_part_provenance"]["artifact_version"] == 2
+
     def test_insert_artifact_part_context_stores_json_provenance(
         self,
         db_session: Session,
@@ -952,11 +1217,11 @@ class TestContextInsertion:
                 """
                 INSERT INTO message_artifacts (
                     id, conversation_id, message_id, artifact_key,
-                    artifact_kind, title, status
+                    artifact_version, artifact_kind, title, status
                 )
                 VALUES (
                     :artifact_id, :conversation_id, :message_id, 'brief-1',
-                    'briefing_document', 'Brief', 'complete'
+                    2, 'briefing_document', 'Brief', 'complete'
                 )
                 """
             ),
@@ -989,6 +1254,42 @@ class TestContextInsertion:
         )
         db_session.flush()
 
+        with pytest.raises(ApiError) as exc_info:
+            contexts_service.insert_context(
+                db=db_session,
+                message_id=user_message_id,
+                ordinal=0,
+                context=MessageContextRef.model_validate(
+                    {
+                        "kind": "object_ref",
+                        "type": "artifact_part",
+                        "id": str(part_id),
+                        "artifact_id": str(artifact_id),
+                        "artifact_key": "caller-brief",
+                        "artifact_version": 9,
+                        "source_version": source_version,
+                        "locator": locator,
+                        "artifact_part_provenance": {
+                            "type": "artifact_part",
+                            "artifact_id": str(artifact_id),
+                            "artifact_kind": "briefing_document",
+                            "message_id": str(user_message_id),
+                            "conversation_id": str(conversation_id),
+                            "artifact_key": "caller-brief",
+                            "artifact_version": 9,
+                            "artifact_part_id": str(part_id),
+                            "part_key": "caller-claim",
+                            "part_type": "caller-type",
+                            "text": "Caller supplied text",
+                            "source_version": source_version,
+                            "locator": locator,
+                        },
+                    }
+                ),
+            )
+        assert exc_info.value.code == ApiErrorCode.E_INVALID_REQUEST
+        assert "does not match the stored part" in exc_info.value.message
+
         row = contexts_service.insert_context(
             db=db_session,
             message_id=user_message_id,
@@ -1000,7 +1301,7 @@ class TestContextInsertion:
                     "id": str(part_id),
                     "artifact_id": str(artifact_id),
                     "artifact_key": "brief-1",
-                    "artifact_version": 1,
+                    "artifact_version": 2,
                     "source_version": source_version,
                     "locator": locator,
                     "artifact_part_provenance": {
@@ -1010,7 +1311,7 @@ class TestContextInsertion:
                         "message_id": str(assistant_message_id),
                         "conversation_id": str(conversation_id),
                         "artifact_key": "brief-1",
-                        "artifact_version": 1,
+                        "artifact_version": 2,
                         "artifact_part_id": str(part_id),
                         "part_key": "claim-1",
                         "part_type": "claim",
@@ -1023,9 +1324,19 @@ class TestContextInsertion:
         )
 
         json.dumps(row.context_snapshot_json)
+        snapshot = row.context_snapshot_json
         stored = row.context_snapshot_json["artifact_part_provenance"]
+        assert snapshot["artifact_key"] == "brief-1"
+        assert snapshot["artifact_version"] == 2
         assert stored["artifact_part_id"] == str(part_id)
         assert stored["artifact_id"] == str(artifact_id)
+        assert stored["artifact_key"] == "brief-1"
+        assert stored["artifact_version"] == 2
+        assert stored["message_id"] == str(assistant_message_id)
+        assert stored["conversation_id"] == str(conversation_id)
+        assert stored["part_key"] == "claim-1"
+        assert stored["part_type"] == "claim"
+        assert stored["text"] == "Durable claim text"
         assert stored["locator"] == locator
 
     def test_insert_reader_selection_context_requires_media_visibility(
@@ -1146,140 +1457,6 @@ class TestContextInsertion:
 
 
 # =============================================================================
-# Conversation Media Recompute Tests
-# =============================================================================
-
-
-class TestConversationMediaRecompute:
-    """Tests for recompute_conversation_media helper."""
-
-    def test_recompute_is_idempotent(
-        self,
-        db_session: Session,
-        conversation_with_message: tuple,
-        media_with_highlight: tuple,
-    ):
-        """recompute_conversation_media is idempotent."""
-        conversation_id, message_id, user_id, default_library_id = conversation_with_message
-        media_id, fragment_id, highlight_id, note_block_id = media_with_highlight
-
-        # Insert context
-        contexts_service.insert_context(
-            db=db_session,
-            message_id=message_id,
-            ordinal=0,
-            context=_context_ref("media", media_id),
-        )
-
-        # Recompute multiple times
-        contexts_service.recompute_conversation_media(db_session, conversation_id)
-        contexts_service.recompute_conversation_media(db_session, conversation_id)
-        contexts_service.recompute_conversation_media(db_session, conversation_id)
-
-        # Should still have exactly one entry
-        result = db_session.execute(
-            text("""
-                SELECT COUNT(*) FROM conversation_media
-                WHERE conversation_id = :conv_id
-            """),
-            {"conv_id": conversation_id},
-        )
-        assert result.scalar() == 1
-
-    def test_recompute_removes_stale_entries(
-        self,
-        db_session: Session,
-        conversation_with_message: tuple,
-        media_with_highlight: tuple,
-    ):
-        """recompute removes stale conversation_media entries."""
-        conversation_id, message_id, user_id, default_library_id = conversation_with_message
-        media_id, fragment_id, highlight_id, note_block_id = media_with_highlight
-
-        # Insert context
-        context = contexts_service.insert_context(
-            db=db_session,
-            message_id=message_id,
-            ordinal=0,
-            context=_context_ref("media", media_id),
-        )
-
-        # Manually delete the context (simulating cascade from highlight delete)
-        db_session.execute(
-            text("DELETE FROM message_context_items WHERE id = :id"),
-            {"id": context.id},
-        )
-        db_session.flush()
-
-        # conversation_media is now stale
-        result = db_session.execute(
-            text("""
-                SELECT COUNT(*) FROM conversation_media
-                WHERE conversation_id = :conv_id
-            """),
-            {"conv_id": conversation_id},
-        )
-        assert result.scalar() == 1
-
-        # Recompute should remove it
-        contexts_service.recompute_conversation_media(db_session, conversation_id)
-
-        result = db_session.execute(
-            text("""
-                SELECT COUNT(*) FROM conversation_media
-                WHERE conversation_id = :conv_id
-            """),
-            {"conv_id": conversation_id},
-        )
-        assert result.scalar() == 0
-
-    def test_recompute_adds_missing_entries(
-        self,
-        db_session: Session,
-        conversation_with_message: tuple,
-        media_with_highlight: tuple,
-    ):
-        """recompute adds missing conversation_media entries."""
-        conversation_id, message_id, user_id, default_library_id = conversation_with_message
-        media_id, fragment_id, highlight_id, note_block_id = media_with_highlight
-
-        # Manually insert context without going through service
-        context_id = uuid4()
-        db_session.execute(
-            text("""
-                INSERT INTO message_context_items (
-                    id, message_id, user_id, ordinal, object_type, object_id, context_snapshot
-                )
-                VALUES (:id, :message_id, :user_id, 0, 'media', :media_id, '{}'::jsonb)
-            """),
-            {"id": context_id, "message_id": message_id, "user_id": user_id, "media_id": media_id},
-        )
-        db_session.flush()
-
-        # No conversation_media yet
-        result = db_session.execute(
-            text("""
-                SELECT COUNT(*) FROM conversation_media
-                WHERE conversation_id = :conv_id
-            """),
-            {"conv_id": conversation_id},
-        )
-        assert result.scalar() == 0
-
-        # Recompute should add it
-        contexts_service.recompute_conversation_media(db_session, conversation_id)
-
-        result = db_session.execute(
-            text("""
-                SELECT COUNT(*) FROM conversation_media
-                WHERE conversation_id = :conv_id AND media_id = :media_id
-            """),
-            {"conv_id": conversation_id, "media_id": media_id},
-        )
-        assert result.scalar() == 1
-
-
-# =============================================================================
 # Batch Insert Tests
 # =============================================================================
 
@@ -1316,7 +1493,7 @@ class TestBatchInsert:
 
 
 # =============================================================================
-# S6 PR-02: Kernel-Based Context Resolution Tests
+# Typed Anchor Context Resolution Tests
 # =============================================================================
 
 
@@ -1347,8 +1524,8 @@ class TestTypedAnchorMediaResolution:
         )
         assert resolved == media_id
 
-    def test_resolve_media_direct_unchanged(self, db_session: Session, media_with_highlight: tuple):
-        """Direct media resolution path is unaffected by typed-anchor changes."""
+    def test_resolve_media_direct_reference(self, db_session: Session, media_with_highlight: tuple):
+        """Direct media context resolves to media_id."""
         media_id, fragment_id, highlight_id, note_block_id = media_with_highlight
 
         resolved = contexts_service.resolve_media_id_for_context(
@@ -1356,121 +1533,3 @@ class TestTypedAnchorMediaResolution:
             _context_ref("media", media_id),
         )
         assert resolved == media_id
-
-
-class TestTypedAnchorRecompute:
-    """recompute_conversation_media uses canonical typed anchors."""
-
-    def test_recompute_with_highlight_context_resolves_via_typed_anchor(
-        self,
-        db_session: Session,
-        conversation_with_message: tuple,
-        media_with_highlight: tuple,
-    ):
-        """Recompute correctly resolves media for highlight context through typed anchors."""
-        conversation_id, message_id, user_id, default_library_id = conversation_with_message
-        media_id, fragment_id, highlight_id, note_block_id = media_with_highlight
-
-        context_id = uuid4()
-        db_session.execute(
-            text("""
-                INSERT INTO message_context_items (
-                    id, message_id, user_id, ordinal, object_type, object_id, context_snapshot
-                )
-                VALUES (:id, :message_id, :user_id, 0, 'highlight', :highlight_id, '{}'::jsonb)
-            """),
-            {
-                "id": context_id,
-                "message_id": message_id,
-                "user_id": user_id,
-                "highlight_id": highlight_id,
-            },
-        )
-        db_session.flush()
-
-        contexts_service.recompute_conversation_media(db_session, conversation_id)
-
-        result = db_session.execute(
-            text("""
-                SELECT COUNT(*) FROM conversation_media
-                WHERE conversation_id = :conv_id AND media_id = :media_id
-            """),
-            {"conv_id": conversation_id, "media_id": media_id},
-        )
-        assert result.scalar() == 1
-
-    def test_recompute_with_note_block_context_resolves_via_typed_anchor(
-        self,
-        db_session: Session,
-        conversation_with_message: tuple,
-        media_with_highlight: tuple,
-    ):
-        """Recompute resolves media for a highlight-linked note block."""
-        conversation_id, message_id, user_id, default_library_id = conversation_with_message
-        media_id, fragment_id, highlight_id, note_block_id = media_with_highlight
-
-        context_id = uuid4()
-        db_session.execute(
-            text("""
-                INSERT INTO message_context_items (
-                    id, message_id, user_id, ordinal, object_type, object_id, context_snapshot
-                )
-                VALUES (:id, :message_id, :user_id, 0, 'note_block', :note_block_id, '{}'::jsonb)
-            """),
-            {
-                "id": context_id,
-                "message_id": message_id,
-                "user_id": user_id,
-                "note_block_id": note_block_id,
-            },
-        )
-        db_session.flush()
-
-        contexts_service.recompute_conversation_media(db_session, conversation_id)
-
-        result = db_session.execute(
-            text("""
-                SELECT COUNT(*) FROM conversation_media
-                WHERE conversation_id = :conv_id AND media_id = :media_id
-            """),
-            {"conv_id": conversation_id, "media_id": media_id},
-        )
-        assert result.scalar() == 1
-
-    def test_recompute_with_pdf_highlight_context_resolves_via_typed_anchor(
-        self,
-        db_session: Session,
-        conversation_with_message: tuple,
-        user_with_library: tuple,
-    ):
-        """Recompute also handles PDF highlight contexts through typed anchors."""
-        conversation_id, message_id, user_id, default_library_id = conversation_with_message
-        media_id, highlight_id = _create_pdf_media_with_highlight(db_session, user_id)
-
-        context_id = uuid4()
-        db_session.execute(
-            text("""
-                INSERT INTO message_context_items (
-                    id, message_id, user_id, ordinal, object_type, object_id, context_snapshot
-                )
-                VALUES (:id, :message_id, :user_id, 0, 'highlight', :highlight_id, '{}'::jsonb)
-            """),
-            {
-                "id": context_id,
-                "message_id": message_id,
-                "user_id": user_id,
-                "highlight_id": highlight_id,
-            },
-        )
-        db_session.flush()
-
-        contexts_service.recompute_conversation_media(db_session, conversation_id)
-
-        result = db_session.execute(
-            text("""
-                SELECT COUNT(*) FROM conversation_media
-                WHERE conversation_id = :conv_id AND media_id = :media_id
-            """),
-            {"conv_id": conversation_id, "media_id": media_id},
-        )
-        assert result.scalar() == 1

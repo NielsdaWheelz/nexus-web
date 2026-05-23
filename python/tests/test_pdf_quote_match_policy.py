@@ -13,7 +13,6 @@ from nexus.services.pdf_quote_match import (
 )
 from nexus.services.pdf_quote_match_policy import (
     CoherenceAnomalyKind,
-    CoherenceFallbackAction,
     PdfQuoteMatchInternalError,
     PendingWriteOutcome,
     handle_coherence_unclassified_exception,
@@ -27,7 +26,7 @@ pytestmark = pytest.mark.unit
 
 
 class TestRecoverableAnomaly:
-    """test_pr04_pdf_quote_match_policy_maps_recoverable_anomaly_to_pending_write_outcome"""
+    """Recoverable matcher anomalies map to the pending write outcome."""
 
     def test_returns_pending_outcome(self):
         anomaly = MatcherAnomaly(
@@ -52,7 +51,7 @@ class TestRecoverableAnomaly:
 
 
 class TestUnclassifiedException:
-    """test_pr04_pdf_quote_match_policy_raises_internal_for_unclassified_matcher_exception"""
+    """Unclassified matcher exceptions become internal errors."""
 
     def test_raises_internal_error(self):
         exc = RuntimeError("unexpected bug")
@@ -70,7 +69,7 @@ class TestUnclassifiedException:
 
 
 class TestCanonicalEventSchema:
-    """test_pr04_pdf_quote_match_policy_emits_canonical_pdf_quote_match_anomaly_event_with_required_fields"""
+    """Matcher anomaly events include the required canonical fields."""
 
     def test_recoverable_event_fields(self):
         anomaly = MatcherAnomaly(
@@ -97,7 +96,7 @@ class TestCanonicalEventSchema:
 
 
 class TestNoContentLogging:
-    """test_pr04_pdf_quote_match_policy_omits_raw_document_text_and_unsalted_text_hashes_from_anomaly_event"""
+    """Matcher anomaly events omit raw document text."""
 
     def test_no_raw_text_in_recoverable_event(self):
         anomaly = MatcherAnomaly(
@@ -121,7 +120,7 @@ class TestNoContentLogging:
 
 
 class TestExceptionSanitization:
-    """test_pr04_pdf_quote_match_policy_sanitizes_exception_message_to_avoid_document_text_leakage"""
+    """Matcher exception events avoid document-text leakage."""
 
     def test_exception_message_not_in_event(self):
         exc = RuntimeError("this contains user document text that should not leak")
@@ -140,32 +139,6 @@ class TestExceptionSanitization:
             all_values = str(call_kwargs)
             assert "user document text" not in all_values
             assert call_kwargs["exception_type"] == "RuntimeError"
-
-
-class TestRecoverableCoherenceAnomaly:
-    def test_retry_as_pending_action_for_offset_anomaly(self):
-        action = handle_recoverable_coherence_anomaly(
-            CoherenceAnomalyKind.offsets_out_of_range,
-            highlight_id=uuid4(),
-            media_id=uuid4(),
-            page_number=2,
-            match_status="unique",
-            match_version=1,
-            path="test_context_render",
-        )
-        assert action == CoherenceFallbackAction.retry_as_pending
-
-    def test_unknown_match_status_maps_to_omit_action(self):
-        action = handle_recoverable_coherence_anomaly(
-            CoherenceAnomalyKind.unknown_match_status,
-            highlight_id=uuid4(),
-            media_id=uuid4(),
-            page_number=2,
-            match_status="legacy_status",
-            match_version=1,
-            path="test_context_render",
-        )
-        assert action == CoherenceFallbackAction.omit_nearby_context
 
 
 class TestCoherenceCanonicalEventSchema:

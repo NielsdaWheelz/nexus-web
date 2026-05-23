@@ -1,9 +1,8 @@
 """User API Key and Model Pydantic schemas.
 
 Contains request and response models for the models and keys endpoints.
-These schemas are introduced in Slice 3 PR-03 (Models Registry + User API Keys).
 
-Per PR-03 spec:
+Security contract:
 - No secrets ever leave the backend
 - Keys are encrypted at rest
 - Response never includes encrypted_key, key_nonce, master_key_version
@@ -112,9 +111,8 @@ class UserApiKeyCreate(BaseModel):
     @field_validator("api_key")
     @classmethod
     def validate_api_key_format(cls, v: str) -> str:
-        """Validate API key format per spec.
+        """Validate API key format.
 
-        Per PR-03 spec:
         - Strip whitespace from ends
         - Reject if < 20 chars after stripping
         - Reject if contains any whitespace characters

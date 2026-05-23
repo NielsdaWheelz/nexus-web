@@ -4,11 +4,12 @@ import {
   getSupabaseAuthCookieNames,
   type CookieValue,
 } from "@/lib/auth/session-cookie";
+import { isAbortError } from "@/lib/errors";
+import {
+  SUPABASE_AUTH_COOKIE_OPTIONS,
+  createSupabaseDeadlineFetch,
+} from "@/lib/supabase/client-config";
 import { type CookieToSet } from "@/lib/supabase/types";
-
-// One bounded Supabase refresh — its single total network deadline. Per-fetch
-// aborts alone are not sufficient; the whole operation owns one budget.
-const REFRESH_OPERATION_DEADLINE_MS = 5_000;
 
 // Supabase rotates the refresh token single-use on every successful refresh and
 // reports a re-presented just-rotated token with this exact REST error code.
@@ -36,10 +37,6 @@ type RefreshAttempt =
 // value is a distinct refresh token and so a genuinely distinct operation.
 const inFlightRefreshes = new Map<string, Promise<RefreshResult>>();
 
-function makeRefreshTimeoutError(): DOMException {
-  return new DOMException("Supabase refresh timed out", "AbortError");
-}
-
 // The reconstructed auth-cookie value is the single-use refresh-token blob the
 // caller presents; concurrent callers presenting the same value share one
 // refresh.
@@ -54,7 +51,6 @@ function readAuthCookieValue(cookieList: readonly CookieValue[]): string {
 
 async function runBoundedRefresh(): Promise<RefreshAttempt> {
   const cookieStore = await cookies();
-  const operationDeadlineAt = Date.now() + REFRESH_OPERATION_DEADLINE_MS;
 
   // Force Next to materialize incoming cookies before the refresh reads them.
   cookieStore.getAll();
@@ -66,16 +62,7 @@ async function runBoundedRefresh(): Promise<RefreshAttempt> {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
-      // The auth cookie is server-only: no browser Supabase client reads it, so
-      // HttpOnly is safe. Secure is not in @supabase/ssr's defaults; set it
-      // explicitly. SameSite=Lax (the default, restated) is required so the
-      // cookie rides the top-level OAuth callback redirect.
-      cookieOptions: {
-        httpOnly: true,
-        secure: true,
-        sameSite: "lax",
-        path: "/",
-      },
+      cookieOptions: SUPABASE_AUTH_COOKIE_OPTIONS,
       cookies: {
         getAll() {
           return cookieStore.getAll();
@@ -89,21 +76,7 @@ async function runBoundedRefresh(): Promise<RefreshAttempt> {
         },
       },
       global: {
-        fetch(input, init) {
-          const remainingMs = operationDeadlineAt - Date.now();
-          if (remainingMs <= 0) {
-            return Promise.reject(makeRefreshTimeoutError());
-          }
-
-          const controller = new AbortController();
-          const timeout = setTimeout(() => {
-            controller.abort(makeRefreshTimeoutError());
-          }, remainingMs);
-
-          return fetch(input, { ...init, signal: controller.signal }).finally(
-            () => clearTimeout(timeout)
-          );
-        },
+        fetch: createSupabaseDeadlineFetch("Supabase refresh timed out"),
       },
     }
   );
@@ -114,7 +87,7 @@ async function runBoundedRefresh(): Promise<RefreshAttempt> {
   try {
     result = await supabase.auth.refreshSession();
   } catch (error) {
-    if (!(error instanceof DOMException) || error.name !== "AbortError") {
+    if (!isAbortError(error)) {
       throw error;
     }
     return { status: "failed", reason: "timeout" };

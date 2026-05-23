@@ -1,6 +1,6 @@
 const STORAGE_KEY = "nexus.keybindings.v1";
 
-const DEFAULTS: Record<string, string> = {
+export const DEFAULT_KEYBINDINGS: Record<string, string> = {
   "open-palette": "Meta+k",
   "pane-next": "Meta+Shift+arrowright",
   "pane-previous": "Meta+Shift+arrowleft",
@@ -49,18 +49,18 @@ export function loadKeybindings(): Record<string, string> {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (typeof parsed === "object" && parsed !== null) {
-        return { ...DEFAULTS, ...parsed };
+        return { ...DEFAULT_KEYBINDINGS, ...parsed };
       }
     }
   } catch { /* ignore */ }
-  return { ...DEFAULTS };
+  return { ...DEFAULT_KEYBINDINGS };
 }
 
 export function saveKeybindings(bindings: Record<string, string>): void {
   // Only persist user overrides (exclude entries identical to defaults)
   const overrides: Record<string, string> = {};
   for (const [id, combo] of Object.entries(bindings)) {
-    if (DEFAULTS[id] !== combo) {
+    if (DEFAULT_KEYBINDINGS[id] !== combo) {
       overrides[id] = combo;
     }
   }
@@ -119,5 +119,3 @@ export function captureKeyCombo(event: KeyboardEvent): string | null {
   parts.push(event.key.toLowerCase());
   return parts.join("+");
 }
-
-export { DEFAULTS as DEFAULT_KEYBINDINGS };

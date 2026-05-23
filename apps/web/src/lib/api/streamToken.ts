@@ -1,7 +1,7 @@
 /**
  * Stream token client — fetches a short-lived JWT for direct SSE to fastapi.
  *
- * Per PR-08 spec §11.1:
+ * Stream token flow:
  * 1. Call POST /api/stream-token (BFF, supabase cookie auth)
  * 2. Receive { token, stream_base_url, expires_at }
  * 3. Use token as Authorization: Bearer for direct stream endpoints

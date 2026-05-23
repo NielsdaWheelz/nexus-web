@@ -123,13 +123,13 @@ Proxy: DNS only
 Upload the merged VPS env:
 
 ```bash
-NEXUS_HOST=5.78.194.235 ./deploy/hetzner/sync-env.sh
+./deploy/hetzner/sync-env.sh
 ```
 
 Deploy API and worker:
 
 ```bash
-NEXUS_HOST=5.78.194.235 ./deploy/hetzner/deploy.sh
+./deploy/hetzner/deploy.sh
 ```
 
 `deploy.sh` runs `deploy/hetzner/sync-env.sh` first by default, so normal
@@ -137,11 +137,13 @@ deploys validate and upload env before rebuilding. Skip that only when the
 remote env was already verified for the same deploy:
 
 ```bash
-NEXUS_HOST=5.78.194.235 NEXUS_SYNC_ENV=0 ./deploy/hetzner/deploy.sh
+NEXUS_SYNC_ENV=0 ./deploy/hetzner/deploy.sh
 ```
 
-The deploy script syncs the repo to `/opt/nexus-web`, builds Docker images on
-the VPS, runs Alembic migrations, and starts the Compose stack.
+The Hetzner scripts default to the current production IPv4 listed above. Set
+`NEXUS_HOST` to target another host, or `NEXUS_SSH_TARGET` to override the full
+SSH target. The deploy script syncs the repo to `/opt/nexus-web`, builds Docker
+images on the VPS, runs Alembic migrations, and starts the Compose stack.
 
 Deploy may recreate/start the worker. Keep the safe worker env in place during
 normal deploys; use `NEXUS_ALLOW_WORKER_MAINTENANCE=1` only for a bounded

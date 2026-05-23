@@ -1,8 +1,6 @@
-"""Redaction, hashing, and log guard utilities.
+"""Log guard utilities.
 
-Per PR-09 spec §6:
-- hash_text: stable SHA-256 hex digest for log correlation
-- redact_text: partial or full masking for display
+Redaction behavior:
 - safe_kv: log guard that blocks forbidden keys at call site
 
 Never-log policy:
@@ -20,7 +18,6 @@ Allowed (with suffix):
 - Token counts, cost, provider request ID
 """
 
-import hashlib
 import os
 
 FORBIDDEN_KEYS = frozenset(
@@ -43,44 +40,7 @@ FORBIDDEN_KEYS = frozenset(
 REDACTED_SUFFIXES = ("_sha256", "_hash", "_length", "_chars")
 
 
-def hash_text(value: str) -> str:
-    """SHA-256 hex digest of a string.
-
-    Stable: same input always produces same output.
-    Used for log correlation without exposing content.
-
-    Args:
-        value: Text to hash.
-
-    Returns:
-        Hex-encoded SHA-256 digest.
-    """
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def redact_text(value: str, keep: int = 0) -> str:
-    """Return masked version of text.
-
-    Args:
-        value: Text to redact.
-        keep: Number of leading characters to preserve (0 = full redact).
-
-    Returns:
-        Redacted string: prefix + '***' or just '***'.
-    """
-    if not value:
-        return "***"
-    if keep <= 0 or keep >= len(value):
-        return "***"
-    return value[:keep] + "***"
-
-
-def _has_redacted_suffix(key: str) -> bool:
-    """Check if key ends with a recognized redacted suffix."""
-    return any(key.endswith(suffix) for suffix in REDACTED_SUFFIXES)
-
-
-def safe_kv(*, _env: str | None = None, **kwargs) -> dict:
+def safe_kv(**kwargs) -> dict:
     """Validate that no forbidden keys are present unless already redacted.
 
     Raises ValueError in dev/test environments if a forbidden key is used
@@ -95,10 +55,6 @@ def safe_kv(*, _env: str | None = None, **kwargs) -> dict:
             # prompt="hello world",   # BLOCKED: forbidden key
         ))
 
-    Args:
-        _env: Override for NEXUS_ENV (test-only). If None, reads from env.
-        **kwargs: Keyword arguments to validate and return.
-
     Returns:
         The same kwargs dict, after validation.
 
@@ -107,12 +63,12 @@ def safe_kv(*, _env: str | None = None, **kwargs) -> dict:
     """
     violations = []
     for key in kwargs:
-        if key in FORBIDDEN_KEYS and not _has_redacted_suffix(key):
+        if key in FORBIDDEN_KEYS and not any(key.endswith(suffix) for suffix in REDACTED_SUFFIXES):
             violations.append(key)
 
     if violations:
         msg = f"Forbidden log keys without redacted suffix: {violations}"
-        env = _env or os.environ.get("NEXUS_ENV", "local")
+        env = os.environ.get("NEXUS_ENV", "local")
         if env in ("local", "test"):
             raise ValueError(msg)
         else:

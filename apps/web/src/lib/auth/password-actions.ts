@@ -17,6 +17,8 @@ import {
   mayUnlinkIdentity,
   normalizeLinkedIdentities,
 } from "@/lib/auth/identities";
+import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
+import { getInternalApiConfig } from "@/lib/api/internal-config";
 import { createClient } from "@/lib/supabase/server";
 
 export async function signInWithPasswordAction(input: {
@@ -77,27 +79,22 @@ export async function signUpWithPasswordAction(input: {
     return { ok: false, error: PASSWORD_SIGN_UP_FAILURE_MESSAGE };
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    controller.abort(
-      new DOMException("Display-name PATCH timed out", "AbortError")
-    );
-  }, 5_000);
+  const config = getInternalApiConfig();
   let response: Response;
   try {
-    response = await fetch(
-      `${process.env.FASTAPI_BASE_URL ?? "http://localhost:8000"}/me`,
+    response = await boundedAuthFetch(
+      `${config.fastApiBaseUrl}/me`,
       {
         method: "PATCH",
         headers: {
           Authorization: `Bearer ${data.session.access_token}`,
           "Content-Type": "application/json",
-          "X-Nexus-Internal": process.env.NEXUS_INTERNAL_SECRET ?? "",
+          "X-Nexus-Internal": config.internalSecret,
           "X-Request-ID": crypto.randomUUID(),
         },
         body: JSON.stringify({ display_name: displayName }),
-        signal: controller.signal,
-      }
+      },
+      "Display-name PATCH timed out",
     );
   } catch (fetchError) {
     if (!(fetchError instanceof Error)) {
@@ -107,8 +104,6 @@ export async function signUpWithPasswordAction(input: {
     // partially complete signup. The user can re-attempt the display-name set
     // from /settings/account later.
     return { ok: false, error: PASSWORD_SIGN_UP_FAILURE_MESSAGE };
-  } finally {
-    clearTimeout(timeoutId);
   }
   if (!response.ok) {
     return { ok: false, error: PASSWORD_SIGN_UP_FAILURE_MESSAGE };

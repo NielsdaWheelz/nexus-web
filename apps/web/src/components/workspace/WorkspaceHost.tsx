@@ -4,13 +4,15 @@ import { Component, memo, useCallback, useEffect, useMemo, useRef, useState } fr
 import {
   getParentHref,
   resolvePaneRoute,
+  type PaneBodyMode,
   type ResolvedPaneRoute,
 } from "@/lib/panes/paneRouteRegistry";
 import { PaneRuntimeProvider, usePaneRuntime } from "@/lib/panes/paneRuntime";
-import PaneShell, { type PaneBodyMode } from "@/components/workspace/PaneShell";
+import PaneShell from "@/components/workspace/PaneShell";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { loadKeybindings, matchesKeyEvent } from "@/lib/keybindings";
+import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import type { SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import {
   MAX_STANDARD_PANE_WIDTH_PX,
@@ -28,10 +30,10 @@ import { usePaneCanvas } from "./usePaneCanvas";
 import styles from "./WorkspaceHost.module.css";
 
 // ---------------------------------------------------------------------------
-// WorkspaceShellPane — local type, previously exported from WorkspaceShell.
+// WorkspaceHostPane - host-owned pane render model.
 // ---------------------------------------------------------------------------
 
-interface WorkspaceShellPane {
+interface WorkspaceHostPane {
   paneId: string;
   href: string;
   title: string;
@@ -242,10 +244,10 @@ const PaneContent = memo(function PaneContent({
 });
 
 // ---------------------------------------------------------------------------
-// buildShellPane — builds the descriptor object consumed by the shell layout.
+// buildHostPane - builds the pane record consumed by the host layout.
 // ---------------------------------------------------------------------------
 
-function buildShellPane(input: {
+function buildHostPane(input: {
   pane: WorkspacePaneStateV4;
   descriptor: WorkspacePaneTitleDescriptor;
   onNavigatePane: (
@@ -260,7 +262,7 @@ function buildShellPane(input: {
   isActive: boolean;
   runtimeMinWidthPx: number | null;
   runtimeExtraWidthPx: number;
-}): WorkspaceShellPane {
+}): WorkspaceHostPane {
   const { chrome, route, title, titleState } = input.descriptor;
   const parentHref = getParentHref(route);
   const onBack = parentHref
@@ -330,7 +332,7 @@ export default function WorkspaceHost() {
     Map<string, number>
   >(() => new Map());
 
-  // --- Mobile / focus management (inlined from WorkspaceShell) ---
+  // --- Mobile viewport and pane chrome focus state ---
   const isMobile = useIsMobileViewport();
   const paneWrapRefById = useRef<Map<string, HTMLDivElement>>(new Map());
   const pendingPaneChromeFocusPaneIdRef = useRef<string | null>(null);
@@ -411,7 +413,7 @@ export default function WorkspaceHost() {
   const panes = useMemo(
     () =>
       paneDescriptors.map(({ pane, descriptor }) =>
-        buildShellPane({
+        buildHostPane({
           pane,
           descriptor,
           onNavigatePane: navigatePane,
@@ -475,7 +477,7 @@ export default function WorkspaceHost() {
     null;
   const renderedPanes = isMobile ? (activePane ? [activePane] : []) : panes;
 
-  // --- Focus management (from WorkspaceShell) ---
+  // --- Pane chrome focus management ---
   useEffect(() => {
     const targetPaneId =
       pendingPaneChromeFocusPaneIdRef.current ?? (isMobile ? state.activePaneId : null);
@@ -528,11 +530,7 @@ export default function WorkspaceHost() {
   useEffect(() => {
     const keybindings = loadKeybindings();
     const handleKeyDown = (event: KeyboardEvent) => {
-      const target = event.target;
-      if (
-        target instanceof HTMLElement &&
-        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
-      ) {
+      if (isEditableTarget(event.target)) {
         return;
       }
       const nextCombo = keybindings["pane-next"];

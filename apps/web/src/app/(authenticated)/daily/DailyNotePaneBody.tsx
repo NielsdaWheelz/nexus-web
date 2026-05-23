@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
-import { fetchDailyNotePage, isLocalDate, todayLocalDate, type NotePage } from "@/lib/notes/api";
+import { isLocalDate, todayLocalDate } from "@/lib/localDate";
+import { fetchDailyNotePage, type NotePage } from "@/lib/notes/api";
 import { usePaneParam, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import PagePaneBody from "../pages/[pageId]/PagePaneBody";
 

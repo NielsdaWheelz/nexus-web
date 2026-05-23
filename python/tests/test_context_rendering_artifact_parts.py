@@ -14,6 +14,54 @@ from tests.factories import create_test_conversation, create_test_message
 pytestmark = pytest.mark.integration
 
 
+def _artifact_part_context_ref(
+    *,
+    conversation_id: UUID,
+    message_id: UUID,
+    artifact_id: UUID,
+    part_id: UUID,
+    artifact_kind: str = "timeline",
+    artifact_key: str = "timeline-1",
+    part_key: str = "event-1",
+    part_type: str = "event",
+    text: str | None = None,
+) -> dict[str, object]:
+    source_version = f"artifact_part:{part_id}:v1"
+    locator = {
+        "type": "artifact_part_ref",
+        "artifact_id": str(artifact_id),
+        "artifact_part_id": str(part_id),
+        "message_id": str(message_id),
+        "conversation_id": str(conversation_id),
+        "part_key": part_key,
+    }
+    provenance: dict[str, object] = {
+        "type": "artifact_part",
+        "artifact_id": str(artifact_id),
+        "artifact_kind": artifact_kind,
+        "message_id": str(message_id),
+        "conversation_id": str(conversation_id),
+        "artifact_key": artifact_key,
+        "artifact_part_id": str(part_id),
+        "ordinal": 0,
+        "part_key": part_key,
+        "part_type": part_type,
+        "source_version": source_version,
+        "locator": locator,
+    }
+    if text is not None:
+        provenance["text"] = text
+    return {
+        "type": "artifact_part",
+        "id": str(part_id),
+        "artifact_id": str(artifact_id),
+        "artifact_key": artifact_key,
+        "source_version": source_version,
+        "locator": locator,
+        "artifact_part_provenance": provenance,
+    }
+
+
 def test_artifact_part_context_ref_renders_durable_metadata_and_skips_missing(
     db_session: Session,
     bootstrapped_user: UUID,
@@ -112,27 +160,18 @@ def test_artifact_part_context_ref_renders_durable_metadata_and_skips_missing(
         },
     )
     db_session.commit()
-    locator = {
-        "type": "artifact_part_ref",
-        "artifact_id": str(artifact_id),
-        "artifact_part_id": str(part_id),
-        "message_id": str(assistant_message_id),
-        "conversation_id": str(conversation_id),
-        "part_key": "event-1",
-    }
+    context_ref = _artifact_part_context_ref(
+        conversation_id=conversation_id,
+        message_id=assistant_message_id,
+        artifact_id=artifact_id,
+        part_id=part_id,
+        text=part_text,
+    )
     source_version = f"artifact_part:{part_id}:v1"
 
     rendered, total_chars = render_context_blocks(
         db_session,
-        [
-            MessageContextRef(
-                type="artifact_part",
-                id=part_id,
-                artifact_id=artifact_id,
-                source_version=source_version,
-                locator=locator,
-            )
-        ],
+        [MessageContextRef.model_validate(context_ref)],
     )
 
     assert rendered, (
@@ -159,13 +198,7 @@ def test_artifact_part_context_ref_renders_durable_metadata_and_skips_missing(
     hydrated = hydrate_context_ref(
         db_session,
         viewer_id=bootstrapped_user,
-        context_ref={
-            "type": "artifact_part",
-            "id": str(part_id),
-            "artifact_id": str(artifact_id),
-            "source_version": source_version,
-            "locator": locator,
-        },
+        context_ref=context_ref,
     )
 
     assert hydrated.resolved, hydrated.failure
@@ -192,39 +225,24 @@ def test_artifact_part_context_ref_renders_durable_metadata_and_skips_missing(
 
     mismatched_rendered, mismatched_total_chars = render_context_blocks(
         db_session,
-        [
-            MessageContextRef(
-                type="artifact_part",
-                id=part_id,
-                artifact_id=artifact_id,
-                source_version=source_version,
-                locator=locator,
-            )
-        ],
+        [MessageContextRef.model_validate(context_ref)],
     )
     assert mismatched_rendered == ""
     assert mismatched_total_chars == 0
 
     missing_artifact_id = uuid4()
     missing_part_id = uuid4()
+    missing_context_ref = _artifact_part_context_ref(
+        conversation_id=conversation_id,
+        message_id=assistant_message_id,
+        artifact_id=missing_artifact_id,
+        part_id=missing_part_id,
+        artifact_key="missing-artifact",
+        part_key="missing",
+    )
     missing_rendered, missing_total_chars = render_context_blocks(
         db_session,
-        [
-            MessageContextRef(
-                type="artifact_part",
-                id=missing_part_id,
-                artifact_id=missing_artifact_id,
-                source_version=f"artifact_part:{missing_part_id}:v1",
-                locator={
-                    "type": "artifact_part_ref",
-                    "artifact_id": str(missing_artifact_id),
-                    "artifact_part_id": str(missing_part_id),
-                    "message_id": str(assistant_message_id),
-                    "conversation_id": str(conversation_id),
-                    "part_key": "missing",
-                },
-            )
-        ],
+        [MessageContextRef.model_validate(missing_context_ref)],
     )
 
     assert missing_rendered == ""

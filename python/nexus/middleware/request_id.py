@@ -119,8 +119,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         # Attach to request state for downstream middleware/routes
         request.state.request_id = request_id
 
-        # Set logging context with path and method (available to all subsequent log calls)
-        # Note: route_template is NOT available here (before routing); set downstream.
+        # Set logging context with path and method for subsequent log calls.
         set_request_context(
             request_id,
             path=request.url.path,
@@ -140,7 +139,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             # Always echo request ID in response
             response.headers[REQUEST_ID_HEADER] = request_id
 
-            # Log access entry (renamed per PR-09 event taxonomy: http.request.completed)
+            # Log access entry.
             if self.log_requests:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 logger.info(
@@ -161,15 +160,3 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         finally:
             # Clear context at end of request
             clear_request_context()
-
-
-def get_request_id_from_request(request: Request) -> str | None:
-    """Get the request ID from request state.
-
-    Args:
-        request: The FastAPI request object.
-
-    Returns:
-        The request ID if set, None otherwise.
-    """
-    return getattr(request.state, "request_id", None)

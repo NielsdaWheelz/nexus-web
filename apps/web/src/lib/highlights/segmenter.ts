@@ -3,9 +3,7 @@
  *
  * This module performs no DOM work and has no backend dependencies.
  * It is the canonical frontend implementation of overlap semantics
- * used by PR-08 (rendering) and PR-09 (interaction).
- *
- * @see docs/v1/s2/s2_prs/s2_pr07.md
+ * used by highlight rendering and interaction.
  */
 
 // =============================================================================

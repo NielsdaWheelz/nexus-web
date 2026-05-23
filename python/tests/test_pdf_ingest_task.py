@@ -1,7 +1,4 @@
-"""Task-level tests for ingest_pdf async lifecycle transitions (S6 PR-03).
-
-Mirrors test_epub_ingest.py coverage style with PDF-specific behavior.
-"""
+"""Integration tests for the PDF ingest worker lifecycle and content indexing."""
 
 from datetime import UTC, datetime
 from unittest.mock import patch
@@ -13,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.errors import ApiErrorCode
-from nexus.storage.client import FakeStorageClient
+from tests.support.storage import FakeStorageClient
 from tests.utils.db import task_session_factory
 
 pytestmark = pytest.mark.integration
@@ -82,7 +79,7 @@ def _create_extracting_pdf(db: Session, storage: FakeStorageClient, pdf_bytes: b
 
 
 class TestIngestPdfTask:
-    def test_pr03_ingest_pdf_task_marks_ready_for_reading_on_success(self, db_session: Session):
+    def test_ingest_pdf_marks_ready_for_reading_and_persists_page_count(self, db_session: Session):
         storage = FakeStorageClient()
         pdf_bytes = _make_simple_pdf("Success test", num_pages=2)
         media = _create_extracting_pdf(db_session, storage, pdf_bytes)
@@ -109,7 +106,7 @@ class TestIngestPdfTask:
 
     def test_pdf_ingest_writes_page_aware_evidence_index_for_digital_pdf(self, db_session: Session):
         storage = FakeStorageClient()
-        pdf_bytes = _make_simple_pdf("Evidence cutover", num_pages=2)
+        pdf_bytes = _make_simple_pdf("Evidence indexing", num_pages=2)
         media = _create_extracting_pdf(db_session, storage, pdf_bytes)
         mid = media.id
 
@@ -167,7 +164,7 @@ class TestIngestPdfTask:
         ).fetchall()
         assert len(blocks) == 2
         assert blocks[0][1] == "pdf_text_block"
-        assert "Evidence cutover p1" in blocks[0][2]
+        assert "Evidence indexing p1" in blocks[0][2]
         locator = blocks[0][3]
         selector = blocks[0][4]
         assert locator["source_fingerprint"] == snapshot[2]["source_fingerprint"]
@@ -342,7 +339,7 @@ class TestIngestPdfTask:
             == 0
         )
 
-    def test_pr03_ingest_pdf_task_marks_failed_on_extraction_error(self, db_session: Session):
+    def test_ingest_pdf_marks_extract_failed_for_password_protected_pdf(self, db_session: Session):
         storage = FakeStorageClient()
         media_id = uuid4()
         user_id = uuid4()
@@ -390,9 +387,7 @@ class TestIngestPdfTask:
         assert refreshed.failure_stage == FailureStage.extract
         assert refreshed.last_error_code == ApiErrorCode.E_PDF_PASSWORD_REQUIRED.value
 
-    def test_pr03_ingest_pdf_task_idempotent_on_missing_or_nonextracting_media(
-        self, db_session: Session
-    ):
+    def test_ingest_pdf_skips_missing_or_non_extracting_media(self, db_session: Session):
         storage = FakeStorageClient()
 
         with (
@@ -422,7 +417,7 @@ class TestIngestPdfTask:
             result_pending = ingest_pdf(str(media_id))
             assert result_pending["status"] == "skipped"
 
-    def test_pr03_ingest_pdf_task_unexpected_error_marks_failed_when_possible(
+    def test_ingest_pdf_marks_extract_failed_before_reraising_unexpected_error(
         self, db_session: Session
     ):
         storage = FakeStorageClient()
@@ -452,9 +447,7 @@ class TestIngestPdfTask:
         assert refreshed.processing_status == ProcessingStatus.failed
         assert refreshed.failure_stage == FailureStage.extract
 
-    def test_pr03_ingest_pdf_task_hands_off_to_embedding_pipeline_after_successful_extraction(
-        self, db_session: Session
-    ):
+    def test_ingest_pdf_indexes_pdf_evidence_after_successful_extraction(self, db_session: Session):
         """After successful extraction, the task indexes PDF evidence."""
         storage = FakeStorageClient()
         pdf_bytes = _make_simple_pdf("Embed test")
@@ -467,19 +460,19 @@ class TestIngestPdfTask:
                 return_value=task_session_factory(db_session),
             ),
             patch("nexus.tasks.ingest_pdf.get_storage_client", return_value=storage),
-            patch("nexus.tasks.ingest_pdf._index_pdf_evidence") as mock_handoff,
+            patch("nexus.tasks.ingest_pdf._index_pdf_evidence") as mock_indexer,
         ):
             from nexus.tasks.ingest_pdf import ingest_pdf
 
             result = ingest_pdf(str(mid))
 
         assert result["status"] == "success"
-        mock_handoff.assert_called_once()
+        mock_indexer.assert_called_once()
 
-    def test_pr03_ingest_pdf_task_handoff_failure_marks_failed_with_embed_stage_and_preserves_extracted_artifacts(
+    def test_ingest_pdf_preserves_extracted_artifacts_when_evidence_index_marks_embed_failed(
         self, db_session: Session
     ):
-        """If embedding handoff fails, media is marked failed with embed stage
+        """If evidence indexing fails, media is marked failed with embed stage
         but extracted artifacts (page_count, plain_text, page_spans) are preserved."""
         storage = FakeStorageClient()
         pdf_bytes = _make_simple_pdf("Handoff fail test", num_pages=2)
@@ -493,7 +486,7 @@ class TestIngestPdfTask:
                 m.processing_status = ProcessingStatus.failed
                 m.failure_stage = FailureStage.embed
                 m.last_error_code = "E_INGEST_FAILED"
-                m.last_error_message = "Embedding handoff failed: test"
+                m.last_error_message = "PDF evidence index failed: test"
                 m.failed_at = now
                 m.updated_at = now
                 db.commit()
@@ -514,5 +507,8 @@ class TestIngestPdfTask:
 
         db_session.expire_all()
         refreshed = db_session.get(Media, mid)
+        assert refreshed.processing_status == ProcessingStatus.failed
+        assert refreshed.failure_stage == FailureStage.embed
+        assert refreshed.last_error_code == "E_INGEST_FAILED"
         assert refreshed.page_count == 2
         assert refreshed.plain_text is not None

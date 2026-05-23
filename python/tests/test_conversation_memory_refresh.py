@@ -9,7 +9,6 @@ from nexus.services.context_rendering import PROMPT_VERSION
 from nexus.services.conversation_memory import (
     conversation_memory_inspection,
     load_active_memory_items,
-    load_active_state_snapshot,
     refresh_conversation_memory,
 )
 from tests.factories import create_test_conversation, create_test_message
@@ -38,11 +37,8 @@ def test_refresh_conversation_memory_snapshots_older_turns(
     )
     db_session.commit()
 
-    snapshot = load_active_state_snapshot(
-        db_session,
-        conversation_id=conversation_id,
-        prompt_version=PROMPT_VERSION,
-    )
+    inspection = conversation_memory_inspection(db_session, conversation_id=conversation_id)
+    snapshot = inspection.state_snapshot
     assert snapshot is not None
     assert snapshot.covered_through_seq == 2
     assert snapshot.source_refs
@@ -56,8 +52,5 @@ def test_refresh_conversation_memory_snapshots_older_turns(
         == []
     )
 
-    inspection = conversation_memory_inspection(db_session, conversation_id=conversation_id)
-    assert inspection.state_snapshot is not None
-    assert inspection.state_snapshot.covered_through_seq == 2
     assert [item.kind for item in inspection.memory_items] == ["user_preference"]
     assert inspection.memory_items[0].sources[0].source_ref.message_seq == 1

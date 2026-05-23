@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api/client";
+import { todayLocalDate } from "@/lib/localDate";
 import type { ObjectRef } from "@/lib/objectRefs";
 
 export type NoteBlockKind =
@@ -95,29 +96,6 @@ export interface SaveNotePageDocumentInput {
 export interface SaveNotePageDocumentResult {
   page: NotePage;
   clientMutationId: string;
-}
-
-const LOCAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-export function todayLocalDate(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-export function isLocalDate(value: string): boolean {
-  if (!LOCAL_DATE_RE.test(value)) {
-    return false;
-  }
-  const [year, month, day] = value.split("-").map(Number);
-  const parsed = new Date(year, month - 1, day);
-  return (
-    parsed.getFullYear() === year &&
-    parsed.getMonth() === month - 1 &&
-    parsed.getDate() === day
-  );
 }
 
 function browserTimeZone(): string {
@@ -307,10 +285,6 @@ export async function saveNotePageDocument(
   };
 }
 
-export async function deleteNotePage(pageId: string): Promise<void> {
-  await apiFetch(`/api/notes/pages/${pageId}`, { method: "DELETE" });
-}
-
 export async function fetchNoteBlock(blockId: string): Promise<NoteBlock> {
   const response = await apiFetch<NoteBlockResponse>(`/api/notes/blocks/${blockId}`, {
     cache: "no-store",
@@ -380,35 +354,4 @@ export async function deleteNoteBlock(
     method: "DELETE",
     body: JSON.stringify({ base_revision: input.baseRevision }),
   });
-}
-
-export async function splitNoteBlock(blockId: string, input: { offset: number }) {
-  const response = await apiFetch<NoteBlockResponse>(`/api/notes/blocks/${blockId}/split`, {
-    method: "POST",
-    body: JSON.stringify({ offset: input.offset }),
-  });
-  return normalizeBlock(response.data as unknown as Record<string, unknown>);
-}
-
-export async function mergeNoteBlock(blockId: string) {
-  const response = await apiFetch<NoteBlockResponse>(`/api/notes/blocks/${blockId}/merge`, {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
-  return normalizeBlock(response.data as unknown as Record<string, unknown>);
-}
-
-export async function moveNoteBlock(
-  blockId: string,
-  input: { parentBlockId?: string | null; beforeBlockId?: string | null; afterBlockId?: string | null }
-) {
-  const response = await apiFetch<NoteBlockResponse>(`/api/notes/blocks/${blockId}/move`, {
-    method: "POST",
-    body: JSON.stringify({
-      parent_block_id: input.parentBlockId ?? null,
-      before_block_id: input.beforeBlockId ?? null,
-      after_block_id: input.afterBlockId ?? null,
-    }),
-  });
-  return normalizeBlock(response.data as unknown as Record<string, unknown>);
 }

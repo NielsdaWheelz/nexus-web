@@ -13,7 +13,6 @@ from nexus.db.models import (
     ConversationStateSnapshot,
 )
 from nexus.schemas.context_memory import (
-    ChatPromptAssemblyOut,
     ConversationMemoryItemOut,
     SourceRef,
     SourceRefLocation,
@@ -121,28 +120,4 @@ def test_memory_item_schema_rejects_invalid_reason_on_active_item() -> None:
             invalid_reason="validation_failed",
             created_at=now,
             updated_at=now,
-        )
-
-
-def test_prompt_assembly_schema_rejects_overspent_budget() -> None:
-    with pytest.raises(ValidationError):
-        ChatPromptAssemblyOut(
-            id=uuid4(),
-            chat_run_id=uuid4(),
-            conversation_id=uuid4(),
-            assistant_message_id=uuid4(),
-            model_id=uuid4(),
-            prompt_version="ContextMemory.V1",
-            prompt_plan_version="prompt-plan-v1",
-            assembler_version="ContextAssembler.V1",
-            stable_prefix_hash="hash",
-            cacheable_input_tokens_estimate=10,
-            prompt_block_manifest={"blocks": []},
-            provider_request_hash="request-hash",
-            max_context_tokens=100,
-            reserved_output_tokens=40,
-            reserved_reasoning_tokens=20,
-            input_budget_tokens=50,
-            estimated_input_tokens=45,
-            created_at=datetime.now(UTC),
         )

@@ -1,10 +1,10 @@
 """Integration tests for models registry routes and service.
 
-Tests cover PR-03 requirements:
+Tests cover model availability behavior:
 - Model filtering based on billing-entitled platform keys and BYOK
 - Auth tests: endpoint requires authentication
 
-Per PR-03 spec, a model is available to a user iff:
+A model is available to a user iff:
 - model.is_available = true
 - model.provider is enabled by feature flag
 - AND (user has AI-tier access to a platform key for model.provider OR user has BYOK with status ∈ {untested, valid})
@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import text
 
 from nexus.config import clear_settings_cache
-from nexus.services.crypto import MASTER_KEY_SIZE, clear_master_key_cache
+from nexus.services.crypto import MASTER_KEY_SIZE, _get_master_key
 from tests.factories import seed_test_models
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.integration
 @pytest.fixture(autouse=True)
 def setup_test_master_key(monkeypatch):
     """Set up a deterministic test master key for all tests."""
-    clear_master_key_cache()
+    _get_master_key.cache_clear()
 
     test_key = b"test_master_key_for_encryption!!"
     assert len(test_key) == MASTER_KEY_SIZE
@@ -53,11 +53,11 @@ def setup_test_master_key(monkeypatch):
     yield
 
     clear_settings_cache()
-    clear_master_key_cache()
+    _get_master_key.cache_clear()
 
 
 # =============================================================================
-# Model Filtering Tests (PR-03 spec: "Model Filtering Tests")
+# Model Filtering Tests
 # =============================================================================
 
 
@@ -502,7 +502,7 @@ class TestModelResponseFormat:
 
 
 # =============================================================================
-# Auth Tests (PR-03 spec: "Auth Tests")
+# Auth Tests
 # =============================================================================
 
 
@@ -515,63 +515,3 @@ class TestModelsAuth:
 
         assert response.status_code == 401
         assert response.json()["error"]["code"] == "E_UNAUTHENTICATED"
-
-
-# =============================================================================
-# S6 PR-01: ORM Mapper Compatibility
-# =============================================================================
-
-
-class TestS6PR01OrmMapperCompatibility:
-    """ORM mapper tests for S6 typed-highlight data foundation."""
-
-    def test_pr01_orm_models_import_and_map_with_typed_anchor_foundation(self):
-        """Mapper configuration succeeds with S6 models and relationships."""
-        from nexus.db.models import (
-            Highlight,
-            HighlightFragmentAnchor,
-            HighlightPdfAnchor,
-            HighlightPdfQuad,
-            Media,
-            MediaContentIndexState,
-            NoteBlock,
-            ObjectLink,
-            PdfPageTextSpan,
-        )
-
-        assert Highlight.__tablename__ == "highlights"
-        assert HighlightFragmentAnchor.__tablename__ == "highlight_fragment_anchors"
-        assert HighlightPdfAnchor.__tablename__ == "highlight_pdf_anchors"
-        assert HighlightPdfQuad.__tablename__ == "highlight_pdf_quads"
-        assert NoteBlock.__tablename__ == "note_blocks"
-        assert ObjectLink.__tablename__ == "object_links"
-        assert PdfPageTextSpan.__tablename__ == "pdf_page_text_spans"
-        assert MediaContentIndexState.__tablename__ == "media_content_index_states"
-
-        # Verify new fields exist on Highlight
-        h_cols = {c.name for c in Highlight.__table__.columns}
-        assert "anchor_kind" in h_cols
-        assert "anchor_media_id" in h_cols
-        assert "fragment_id" not in h_cols
-        assert "start_offset" not in h_cols
-        assert "end_offset" not in h_cols
-
-        # Verify new fields on Media
-        m_cols = {c.name for c in Media.__table__.columns}
-        assert "plain_text" in m_cols
-        assert "page_count" in m_cols
-
-        # Verify relationships don't break existing mappings
-        assert hasattr(Highlight, "fragment_anchor")
-        assert hasattr(Highlight, "pdf_anchor")
-        assert hasattr(Highlight, "pdf_quads")
-        assert not hasattr(Highlight, "fragment")
-        assert hasattr(Media, "pdf_page_text_spans")
-        ppts_cols = {c.name for c in PdfPageTextSpan.__table__.columns}
-        assert "page_label" in ppts_cols
-        assert "page_width" in ppts_cols
-        assert "page_height" in ppts_cols
-        assert "page_rotation_degrees" in ppts_cols
-        index_state_cols = {c.name for c in MediaContentIndexState.__table__.columns}
-        assert "id" in index_state_cols
-        assert MediaContentIndexState.__table__.primary_key.columns.keys() == ["id"]

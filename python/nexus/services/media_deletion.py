@@ -16,7 +16,7 @@ from nexus.logging import get_logger
 from nexus.schemas.media import DeleteDocumentResponse, DeleteDocumentStatus
 from nexus.services.content_indexing import delete_media_content_index
 from nexus.services.default_library_closure import remove_media_from_non_default_closure
-from nexus.storage import get_storage_client
+from nexus.storage.client import get_storage_client
 
 if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase

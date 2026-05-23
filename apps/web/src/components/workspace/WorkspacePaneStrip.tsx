@@ -119,7 +119,7 @@ export default function WorkspacePaneStrip({
   onRestorePane,
   onClosePane,
 }: WorkspacePaneStripProps) {
-  const primaryButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const activatorRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const [rovingPaneId, setRovingPaneId] = useState<string | null>(null);
   const [pendingFocusPaneId, setPendingFocusPaneId] = useState<string | null>(null);
 
@@ -133,12 +133,12 @@ export default function WorkspacePaneStrip({
     [items, paneIds, rovingPaneId]
   );
 
-  const focusPrimaryButton = (paneId: string) => {
+  const focusActivator = (paneId: string) => {
     setRovingPaneId(paneId);
-    primaryButtonRefs.current.get(paneId)?.focus();
+    activatorRefs.current.get(paneId)?.focus();
   };
 
-  const focusPrimaryButtonByIndex = (index: number) => {
+  const focusActivatorByIndex = (index: number) => {
     if (!items.length) {
       return;
     }
@@ -147,7 +147,7 @@ export default function WorkspacePaneStrip({
     if (!nextPaneId) {
       return;
     }
-    focusPrimaryButton(nextPaneId);
+    focusActivator(nextPaneId);
   };
 
   const nextSurvivingPaneId = (paneId: string): string | null => {
@@ -181,7 +181,7 @@ export default function WorkspacePaneStrip({
     return null;
   };
 
-  const activatePrimaryButton = (item: WorkspacePaneStripItem) => {
+  const activateFromActivator = (item: WorkspacePaneStripItem) => {
     if (item.visibility === "minimized") {
       setPendingFocusPaneId(item.paneId);
       onRestorePane(item.paneId);
@@ -210,7 +210,7 @@ export default function WorkspacePaneStrip({
     onClosePane(paneId);
   };
 
-  const handlePrimaryKeyDown = (
+  const handleActivatorKeyDown = (
     event: KeyboardEvent<HTMLButtonElement>,
     item: WorkspacePaneStripItem
   ) => {
@@ -221,22 +221,22 @@ export default function WorkspacePaneStrip({
 
     if (event.key === "ArrowRight") {
       event.preventDefault();
-      focusPrimaryButtonByIndex(currentIndex + 1);
+      focusActivatorByIndex(currentIndex + 1);
       return;
     }
     if (event.key === "ArrowLeft") {
       event.preventDefault();
-      focusPrimaryButtonByIndex(currentIndex - 1);
+      focusActivatorByIndex(currentIndex - 1);
       return;
     }
     if (event.key === "Home") {
       event.preventDefault();
-      focusPrimaryButtonByIndex(0);
+      focusActivatorByIndex(0);
       return;
     }
     if (event.key === "End") {
       event.preventDefault();
-      focusPrimaryButtonByIndex(items.length - 1);
+      focusActivatorByIndex(items.length - 1);
       return;
     }
     if (event.key === "Delete" || event.key === "Backspace") {
@@ -254,7 +254,7 @@ export default function WorkspacePaneStrip({
       : paneIds[0] ?? null;
     if (nextPaneId) {
       setRovingPaneId(nextPaneId);
-      primaryButtonRefs.current.get(nextPaneId)?.focus();
+      activatorRefs.current.get(nextPaneId)?.focus();
     }
     setPendingFocusPaneId(null);
   }, [paneIds, pendingFocusPaneId]);
@@ -269,16 +269,16 @@ export default function WorkspacePaneStrip({
             isFocusable={item.paneId === focusablePaneId}
             activatorRef={(element) => {
               if (element) {
-                primaryButtonRefs.current.set(item.paneId, element);
+                activatorRefs.current.set(item.paneId, element);
               } else {
-                primaryButtonRefs.current.delete(item.paneId);
+                activatorRefs.current.delete(item.paneId);
               }
             }}
-            onActivate={() => activatePrimaryButton(item)}
+            onActivate={() => activateFromActivator(item)}
             onMinimize={() => handleMinimizePane(item)}
             onRestore={() => handleRestorePane(item.paneId)}
             onClose={() => handleClosePane(item.paneId)}
-            onActivatorKeyDown={(event) => handlePrimaryKeyDown(event, item)}
+            onActivatorKeyDown={(event) => handleActivatorKeyDown(event, item)}
             onActivatorFocus={() => setRovingPaneId(item.paneId)}
           />
         ))}

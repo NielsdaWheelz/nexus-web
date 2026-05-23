@@ -20,7 +20,8 @@ const eslintConfig = [
     },
   },
   {
-    files: ["**/components/HtmlRenderer.tsx"],
+    // HtmlRenderer is the sole sanctioned sink for API-sanitized HTML.
+    files: ["src/components/HtmlRenderer.tsx"],
     rules: { "react/no-danger": "off" },
   },
   {

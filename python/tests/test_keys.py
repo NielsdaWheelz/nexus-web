@@ -1,6 +1,6 @@
 """Integration tests for user API keys routes and service.
 
-Tests cover PR-03 requirements:
+Tests cover user API key behavior:
 - Crypto tests: encrypt/decrypt round-trip, unique nonces, unknown version
 - API safety tests: response never includes sensitive fields
 - Validation tests: invalid provider, key too short, whitespace in key
@@ -8,7 +8,7 @@ Tests cover PR-03 requirements:
 - Revocation tests: wipe ciphertext, retain fingerprint, idempotent
 - Auth tests: all endpoints require authentication
 
-Per PR-03 spec:
+Security behavior:
 - No secrets ever leave the backend
 - Keys are encrypted at rest with XChaCha20-Poly1305
 - Fingerprint is the last 4 chars of the original key
@@ -27,7 +27,7 @@ from nexus.services.crypto import (
     CURRENT_MASTER_KEY_VERSION,
     MASTER_KEY_SIZE,
     CryptoError,
-    clear_master_key_cache,
+    _get_master_key,
     decrypt_api_key,
     encrypt_api_key,
 )
@@ -68,7 +68,7 @@ def _provider_state(data: list[dict], provider: str) -> dict:
 @pytest.fixture(autouse=True)
 def setup_test_master_key(monkeypatch):
     """Set up a deterministic test master key for all tests."""
-    clear_master_key_cache()
+    _get_master_key.cache_clear()
 
     test_key = b"test_master_key_for_encryption!!"
     assert len(test_key) == MASTER_KEY_SIZE
@@ -78,11 +78,11 @@ def setup_test_master_key(monkeypatch):
 
     yield
 
-    clear_master_key_cache()
+    _get_master_key.cache_clear()
 
 
 # =============================================================================
-# Crypto Tests (PR-03 spec: "Crypto Tests")
+# Crypto Tests
 # =============================================================================
 
 
@@ -145,7 +145,7 @@ class TestCryptoApiKey:
 
 
 # =============================================================================
-# API Safety Tests (PR-03 spec: "API Safety Tests")
+# API Safety Tests
 # =============================================================================
 
 
@@ -223,7 +223,7 @@ class TestApiSafety:
 
 
 # =============================================================================
-# Validation Tests - Negative (PR-03 spec: "Validation Tests (Negative)")
+# Validation Tests - Negative
 # =============================================================================
 
 
@@ -336,7 +336,7 @@ class TestValidation:
 
 
 # =============================================================================
-# Upsert Semantics Tests (PR-03 spec: "Upsert Semantics Tests")
+# Upsert Semantics Tests
 # =============================================================================
 
 
@@ -504,7 +504,7 @@ class TestUpsertSemantics:
 
 
 # =============================================================================
-# Revocation Tests (PR-03 spec: "Revocation Tests")
+# Revocation Tests
 # =============================================================================
 
 
@@ -658,7 +658,7 @@ class TestRevocation:
 
 
 # =============================================================================
-# Auth Tests (PR-03 spec: "Auth Tests")
+# Auth Tests
 # =============================================================================
 
 
@@ -780,7 +780,7 @@ class TestKeyValidation:
 
     @respx.mock
     def test_openai_key_test_uses_gpt5_mini_responses_payload(self, auth_client):
-        """OpenAI saved-key smoke tests use the hard-cutover Responses shape."""
+        """OpenAI saved-key smoke tests use the current Responses shape."""
         user_id = create_test_user_id()
         create_resp = auth_client.post(
             "/keys",

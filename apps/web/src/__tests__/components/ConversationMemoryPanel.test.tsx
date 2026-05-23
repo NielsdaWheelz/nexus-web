@@ -77,7 +77,9 @@ describe("ConversationMemoryPanel", () => {
   it("stays hidden when no active memory data is present", () => {
     render(<ConversationMemoryPanel />);
 
-    expect(screen.queryByTestId("conversation-memory-panel")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Conversation memory" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders active snapshot coverage and memory source refs", () => {
@@ -124,6 +126,8 @@ describe("ConversationMemoryPanel", () => {
 
     render(<ConversationMemoryPanel memory={inactiveMemory} />);
 
-    expect(screen.queryByTestId("conversation-memory-panel")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Conversation memory" }),
+    ).not.toBeInTheDocument();
   });
 });

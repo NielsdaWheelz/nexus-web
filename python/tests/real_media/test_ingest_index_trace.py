@@ -7,7 +7,7 @@ from uuid import UUID
 
 import pytest
 
-from nexus.storage import get_storage_client
+from nexus.storage.client import get_storage_client
 from nexus.tasks.ingest_web_article import run_ingest_sync as run_web_article_ingest_sync
 from tests.helpers import auth_headers, create_test_user_id
 from tests.real_media.assertions import (

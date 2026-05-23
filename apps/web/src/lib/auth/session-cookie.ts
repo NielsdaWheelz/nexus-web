@@ -1,3 +1,5 @@
+import type { NextResponse } from "next/server";
+
 // A token within this many seconds of expiry is classified `refreshable` so a
 // request never races its own access-token expiry.
 const REFRESH_MARGIN_SECONDS = 60;
@@ -58,6 +60,18 @@ export function getSupabaseAuthCookieNames(
       }
       return /^\d+$/.test(name.slice(cookieName.length + 1));
     });
+}
+
+// Expire every Supabase auth cookie on the outgoing response. The empty value
+// plus maxAge: 0 is the browser-supported way to drop a cookie; the path must
+// match the original set (the app sets these at `/`).
+export function clearSupabaseAuthCookies(
+  response: NextResponse,
+  cookieNames: readonly string[],
+): void {
+  for (const name of cookieNames) {
+    response.cookies.set(name, "", { maxAge: 0, path: "/" });
+  }
 }
 
 export function parseCookieHeader(header: string | null): CookieValue[] {

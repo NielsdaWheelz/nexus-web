@@ -197,7 +197,7 @@ describe("useReaderResumeState", () => {
     });
   });
 
-  it("rejects removed flat payloads when hydrating reader state", async () => {
+  it("surfaces invalid API payloads when hydrating reader state", async () => {
     const apiFetchImpl = async <T,>(path: string): Promise<T> => {
       if (path === "/api/media/media-1/reader-state") {
         return {
@@ -221,5 +221,6 @@ describe("useReaderResumeState", () => {
       expect(result.current.loading).toBe(false);
     });
     expect(result.current.state).toBeNull();
+    expect(result.current.error).toBe("Failed to load reader state");
   });
 });

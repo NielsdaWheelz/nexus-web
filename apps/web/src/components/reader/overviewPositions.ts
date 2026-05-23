@@ -1,16 +1,11 @@
 import type { Fragment } from "@/app/(authenticated)/media/[id]/transcriptView";
 import type { EpubNavigationSection } from "@/lib/media/epubReader";
+import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import type { AnchoredHighlightRow } from "./useAnchoredHighlightProjection";
 
 export interface PositionedHighlight {
   highlight: AnchoredHighlightRow;
   position: number; // 0..1, fraction through the whole document
-}
-
-// Codepoint length, not UTF-16 unit count: text offsets are codepoints.
-// Mirrors the helper reader resume uses in MediaPaneBody.
-function canonicalCpLength(text: string): number {
-  return [...text].length;
 }
 
 /**

@@ -5,8 +5,6 @@
  * - GET /api/highlights/{highlightId} → FastAPI
  * - PATCH /api/highlights/{highlightId} → FastAPI
  * - DELETE /api/highlights/{highlightId} → FastAPI
- *
- * @see docs/v1/s2/s2_prs/s2_pr09.md §8
  */
 
 import { proxyToFastAPI } from "@/lib/api/proxy";

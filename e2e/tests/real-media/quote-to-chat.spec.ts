@@ -1,9 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
-import {
-  readRealMediaSeed,
-  selectFreshVisibleTextSnippet,
-  writeRealMediaTrace,
-} from "./real-media-seed";
+import { selectFreshVisibleTextSnippet } from "../selection";
+import { readRealMediaSeed, writeRealMediaTrace } from "./real-media-seed";
 
 async function existingHighlightExacts(
   page: Page,

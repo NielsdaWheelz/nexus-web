@@ -26,7 +26,6 @@ from nexus.schemas.contributors import (
     ContributorExternalIdCreateRequest,
     ContributorExternalIdOut,
     ContributorKind,
-    ContributorMergeRequest,
     ContributorOut,
     ContributorSearchResultOut,
     ContributorSplitRequest,
@@ -40,6 +39,7 @@ from nexus.services.contributor_credits import (
     normalize_contributor_role,
     unique_contributor_handle_for_name,
 )
+from nexus.services.message_context_snapshots import object_ref_context_snapshot
 
 ACTIVE_STATUSES = ("unverified", "verified")
 CONTRIBUTOR_CURATOR_ROLES = frozenset({"admin", "contributor_curator"})
@@ -348,70 +348,6 @@ def search_contributors(
         )
         for row in rows
     ]
-
-
-def merge_contributors(
-    db: Session,
-    *,
-    actor_user_id: UUID,
-    actor_roles: Collection[str] = frozenset(),
-    request: ContributorMergeRequest,
-) -> ContributorOut:
-    _require_contributor_curator(actor_roles)
-    source = _load_active_contributor_by_handle(db, request.source_handle)
-    target = _load_active_contributor_by_handle(db, request.target_handle)
-    if source.id == target.id:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Choose two different contributors")
-
-    _move_external_ids_for_merge(db, source, target)
-
-    moved_credit_count = 0
-    for credit in db.scalars(
-        select(ContributorCredit).where(ContributorCredit.contributor_id == source.id)
-    ):
-        credit.contributor_id = target.id
-        credit.resolution_status = "manual"
-        moved_credit_count += 1
-
-    moved_alias_count = 0
-    for alias in db.scalars(
-        select(ContributorAlias).where(ContributorAlias.contributor_id == source.id)
-    ):
-        alias.contributor_id = target.id
-        alias.source = "manual"
-        moved_alias_count += 1
-
-    moved_link_count = _retarget_contributor_object_links(db, source.id, target.id)
-    moved_context_count = _retarget_contributor_context_items(db, source.id, target)
-
-    db_now = db.scalar(select(func.now()))
-    assert (
-        db_now is not None
-    )  # justify-service-invariant-check: PostgreSQL now() always yields a row.
-    source.status = "merged"
-    source.merged_into_contributor_id = target.id
-    source.merged_at = db_now
-    source.updated_at = db_now
-    target.updated_at = db_now
-    db.add(
-        ContributorIdentityEvent(
-            event_type="merge",
-            actor_user_id=actor_user_id,
-            source_contributor_id=source.id,
-            target_contributor_id=target.id,
-            payload={
-                "source_handle": source.handle,
-                "target_handle": target.handle,
-                "moved_credit_count": moved_credit_count,
-                "moved_alias_count": moved_alias_count,
-                "moved_link_count": moved_link_count,
-                "moved_context_count": moved_context_count,
-            },
-        )
-    )
-    db.commit()
-    db.refresh(target)
-    return _contributor_out(db, target)
 
 
 def split_contributor(
@@ -908,100 +844,6 @@ def _visible_contributor_ctes_sql() -> str:
     """
 
 
-def _move_external_ids_for_merge(db: Session, source: Contributor, target: Contributor) -> None:
-    target_external_ids = db.scalars(
-        select(ContributorExternalId).where(ContributorExternalId.contributor_id == target.id)
-    ).all()
-    for external_id in db.scalars(
-        select(ContributorExternalId).where(ContributorExternalId.contributor_id == source.id)
-    ):
-        target_matches = [
-            existing
-            for existing in target_external_ids
-            if existing.authority == external_id.authority
-        ]
-        duplicate = next(
-            (
-                existing
-                for existing in target_matches
-                if existing.external_key == external_id.external_key
-            ),
-            None,
-        )
-        if duplicate is not None:
-            db.delete(external_id)
-            continue
-        if target_matches:
-            raise ApiError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Contributor external IDs conflict",
-            )
-        external_id.contributor_id = target.id
-
-
-def _retarget_contributor_object_links(db: Session, source_id: UUID, target_id: UUID) -> int:
-    moved = 0
-    links = db.scalars(
-        select(ObjectLink).where(
-            or_(
-                (ObjectLink.a_type == "contributor") & (ObjectLink.a_id == source_id),
-                (ObjectLink.b_type == "contributor") & (ObjectLink.b_id == source_id),
-            )
-        )
-    ).all()
-    for link in links:
-        next_a_type = link.a_type
-        next_a_id = link.a_id
-        next_b_type = link.b_type
-        next_b_id = link.b_id
-        if link.a_type == "contributor" and link.a_id == source_id:
-            next_a_id = target_id
-            moved += 1
-        if link.b_type == "contributor" and link.b_id == source_id:
-            next_b_id = target_id
-            moved += 1
-        if next_a_type == next_b_type and next_a_id == next_b_id:
-            db.delete(link)
-            continue
-        if _duplicate_unlocated_object_link_exists(
-            db,
-            link,
-            a_type=next_a_type,
-            a_id=next_a_id,
-            b_type=next_b_type,
-            b_id=next_b_id,
-        ):
-            db.delete(link)
-            continue
-        link.a_type = next_a_type
-        link.a_id = next_a_id
-        link.b_type = next_b_type
-        link.b_id = next_b_id
-    return moved
-
-
-def _retarget_contributor_context_items(
-    db: Session,
-    source_id: UUID,
-    target: Contributor,
-) -> int:
-    moved = 0
-    items = db.scalars(
-        select(MessageContextItem).where(
-            MessageContextItem.object_type == "contributor",
-            MessageContextItem.object_id == source_id,
-        )
-    ).all()
-    for item in items:
-        item.object_id = target.id
-        item.context_snapshot_json = _contributor_context_snapshot(
-            item.context_snapshot_json,
-            target,
-        )
-        moved += 1
-    return moved
-
-
 def _load_selected_credits_for_split(
     db: Session,
     source_id: UUID,
@@ -1192,23 +1034,18 @@ def _move_selected_context_items(
 ) -> int:
     for item in items:
         item.object_id = target.id
-        item.context_snapshot_json = _contributor_context_snapshot(
-            item.context_snapshot_json,
-            target,
-        )
+        item.context_snapshot_json = _contributor_context_snapshot(target)
     return len(items)
 
 
-def _contributor_context_snapshot(
-    snapshot: dict[str, object],
-    contributor: Contributor,
-) -> dict[str, object]:
-    next_snapshot = dict(snapshot)
-    next_snapshot["objectType"] = "contributor"
-    next_snapshot["objectId"] = str(contributor.id)
-    next_snapshot["label"] = contributor.display_name
-    next_snapshot["route"] = f"/authors/{contributor.handle}"
-    return next_snapshot
+def _contributor_context_snapshot(contributor: Contributor) -> dict[str, object]:
+    return object_ref_context_snapshot(
+        object_type="contributor",
+        object_id=contributor.id,
+        title=contributor.display_name,
+        preview=contributor.disambiguation or contributor.sort_name,
+        route=f"/authors/{contributor.handle}",
+    )
 
 
 def _blocking_contributor_reference_kind(db: Session, contributor: Contributor) -> str | None:

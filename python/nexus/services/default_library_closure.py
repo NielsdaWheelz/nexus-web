@@ -1,9 +1,11 @@
 """Default-library closure, intrinsic, and backfill invariant service.
 
-Centralises all s4 provenance helpers so writer touchpoints cannot diverge.
+Centralises default-library provenance helpers so writer touchpoints cannot diverge.
 
 Rules:
-- All helpers accept Session and never call commit()/rollback().
+- Low-level helpers accept Session and never call commit()/rollback().
+- Public service entrypoints own their transactions and perform external side
+  effects after commit.
 - Lock ordering for worker paths:
     1. claim/update default_library_backfill_jobs
     2. lock membership row (source_library_id, user_id)
@@ -11,20 +13,40 @@ Rules:
 """
 
 import logging
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import CursorResult, Row
 from sqlalchemy.orm import Session
 
 from nexus.config import Environment, get_settings
-from nexus.db.session import get_session_factory
+from nexus.db.session import get_session_factory, transaction
 from nexus.jobs.queue import enqueue_job
 
 logger = logging.getLogger(__name__)
 
+BackfillJobStatus = Literal["pending", "running", "completed", "failed"]
+
+
+@dataclass(frozen=True)
+class BackfillRequeueResult:
+    default_library_id: UUID
+    source_library_id: UUID
+    user_id: UUID
+    status: BackfillJobStatus
+    attempts: int
+    last_error_code: str | None
+    updated_at: datetime
+    finished_at: datetime | None
+    idempotent: bool
+    enqueue_dispatched: bool
+
+
 # ---------------------------------------------------------------------------
-# Constants (s4 spec / l3 spec)
+# Constants
 # ---------------------------------------------------------------------------
 
 BACKFILL_RETRY_DELAYS_SECONDS: tuple[int, ...] = (60, 300, 900, 3600, 21600)
@@ -94,28 +116,6 @@ def ensure_default_intrinsic(
             """),
             {"lib": default_library_id, "media": media_id},
         )
-
-
-def remove_default_intrinsic_and_gc(
-    db: Session,
-    default_library_id: UUID,
-    media_id: UUID,
-) -> None:
-    """Remove intrinsic row and gc the materialized library entry if unjustified.
-
-    Does NOT delete closure edges -- those are removed only by membership or
-    non-default library media removal paths.
-    """
-    # Remove intrinsic
-    db.execute(
-        text("""
-            DELETE FROM default_library_intrinsics
-            WHERE default_library_id = :lib AND media_id = :media
-        """),
-        {"lib": default_library_id, "media": media_id},
-    )
-    # GC
-    _gc_default_library_entry(db, default_library_id, media_id)
 
 
 # ---------------------------------------------------------------------------
@@ -416,8 +416,10 @@ def mark_backfill_job_completed(
 ) -> bool:
     """Status-guarded running -> completed. Returns True if transition happened."""
     now = datetime.now(UTC)
-    result = db.execute(
-        text("""
+    result = cast(
+        CursorResult[Any],
+        db.execute(
+            text("""
             UPDATE default_library_backfill_jobs
             SET status = 'completed', finished_at = :now, updated_at = :now
             WHERE default_library_id = :dl
@@ -425,7 +427,8 @@ def mark_backfill_job_completed(
               AND user_id = :uid
               AND status = 'running'
         """),
-        {"dl": default_library_id, "source": source_library_id, "uid": user_id, "now": now},
+            {"dl": default_library_id, "source": source_library_id, "uid": user_id, "now": now},
+        ),
     )
     return result.rowcount > 0
 
@@ -476,8 +479,10 @@ def reset_backfill_job_to_pending_for_retry(
 ) -> bool:
     """Transition failed -> pending for auto-retry. Clears finished_at and error_code."""
     now = datetime.now(UTC)
-    result = db.execute(
-        text("""
+    result = cast(
+        CursorResult[Any],
+        db.execute(
+            text("""
             UPDATE default_library_backfill_jobs
             SET status = 'pending',
                 finished_at = NULL,
@@ -488,7 +493,8 @@ def reset_backfill_job_to_pending_for_retry(
               AND user_id = :uid
               AND status = 'failed'
         """),
-        {"dl": default_library_id, "source": source_library_id, "uid": user_id, "now": now},
+            {"dl": default_library_id, "source": source_library_id, "uid": user_id, "now": now},
+        ),
     )
     return result.rowcount > 0
 
@@ -498,12 +504,41 @@ def requeue_backfill_job(
     default_library_id: UUID,
     source_library_id: UUID,
     user_id: UUID,
-) -> dict:
-    """Operator requeue: reset pending|failed|completed -> pending.
+) -> BackfillRequeueResult:
+    """Operator requeue: reset pending|failed|completed -> pending and enqueue.
 
-    Lock the job row first. Returns dict with job state + idempotent/enqueue flags.
+    Commits the state transition before attempting the advisory worker dispatch.
+    Returns typed job state with idempotent/enqueue flags.
     Raises NotFoundError if row missing.
     """
+    with transaction(db):
+        result = _requeue_backfill_job_state(
+            db,
+            default_library_id,
+            source_library_id,
+            user_id,
+        )
+
+    if not result.idempotent:
+        result = replace(
+            result,
+            enqueue_dispatched=enqueue_backfill_task(
+                default_library_id,
+                source_library_id,
+                user_id,
+            ),
+        )
+
+    return result
+
+
+def _requeue_backfill_job_state(
+    db: Session,
+    default_library_id: UUID,
+    source_library_id: UUID,
+    user_id: UUID,
+) -> BackfillRequeueResult:
+    """Lock and update the durable backfill job row without dispatching work."""
     from nexus.errors import ApiErrorCode, NotFoundError
 
     row = db.execute(
@@ -527,10 +562,7 @@ def requeue_backfill_job(
 
     # Running -> idempotent no-op
     if current_status == "running":
-        data = _backfill_row_to_dict(row)
-        data["idempotent"] = True
-        data["enqueue_dispatched"] = False
-        return data
+        return _backfill_row_to_requeue_result(row, idempotent=True)
 
     # Reset to pending
     now = datetime.now(UTC)
@@ -549,19 +581,18 @@ def requeue_backfill_job(
         {"dl": default_library_id, "source": source_library_id, "uid": user_id, "now": now},
     )
 
-    data = {
-        "default_library_id": default_library_id,
-        "source_library_id": source_library_id,
-        "user_id": user_id,
-        "status": "pending",
-        "attempts": 0,
-        "last_error_code": None,
-        "updated_at": now,
-        "finished_at": None,
-        "idempotent": False,
-        "enqueue_dispatched": False,
-    }
-    return data
+    return BackfillRequeueResult(
+        default_library_id=default_library_id,
+        source_library_id=source_library_id,
+        user_id=user_id,
+        status="pending",
+        attempts=0,
+        last_error_code=None,
+        updated_at=now,
+        finished_at=None,
+        idempotent=False,
+        enqueue_dispatched=False,
+    )
 
 
 def materialize_closure_for_source(
@@ -732,9 +763,12 @@ def get_backfill_backlog_health(db: Session) -> dict:
             WHERE status = 'pending'
         """)
     ).fetchone()
-
-    pending_count = row[0]
-    pending_age_p95 = float(row[1])
+    if row is None:
+        pending_count = 0
+        pending_age_p95 = 0.0
+    else:
+        pending_count = row[0]
+        pending_age_p95 = float(row[1])
 
     degraded = (
         pending_count > BACKFILL_PENDING_COUNT_GUARDRAIL
@@ -753,7 +787,7 @@ def get_backfill_backlog_health(db: Session) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _backfill_row_to_dict(row: tuple) -> dict:
+def _backfill_row_to_dict(row: Row[Any]) -> dict:
     """Convert a backfill job query row to dict."""
     return {
         "default_library_id": row[0],
@@ -765,3 +799,19 @@ def _backfill_row_to_dict(row: tuple) -> dict:
         "updated_at": row[7],
         "finished_at": row[8],
     }
+
+
+def _backfill_row_to_requeue_result(row: Row[Any], idempotent: bool) -> BackfillRequeueResult:
+    """Convert a locked backfill job row to the operator requeue result."""
+    return BackfillRequeueResult(
+        default_library_id=row[0],
+        source_library_id=row[1],
+        user_id=row[2],
+        status=cast(BackfillJobStatus, row[3]),
+        attempts=row[4],
+        last_error_code=row[5],
+        updated_at=row[7],
+        finished_at=row[8],
+        idempotent=idempotent,
+        enqueue_dispatched=False,
+    )

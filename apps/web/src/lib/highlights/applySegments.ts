@@ -15,8 +15,8 @@
  *
  * All DOM work happens on a detached DOM tree, never mutating the live DOM.
  *
- * PR-10: Changed data-highlight-ids (comma-delimited) to data-active-highlight-ids
- * (space-delimited) for efficient CSS ~= selector matching.
+ * Active highlight ids are stored in data-active-highlight-ids as
+ * space-delimited tokens for efficient CSS ~= selector matching.
  *
  * @see apps/web/README.md (Highlight Libraries / applySegments.ts)
  * @see python/nexus/services/canonicalize.py
@@ -25,11 +25,11 @@
 import {
   buildCanonicalCursor,
   validateCanonicalText,
-  codepointLength,
-  canonicalCpToRawCp,
   type CanonicalCursorResult,
   type CanonicalNode,
 } from "./canonicalCursor";
+import { canonicalCpToRawCp } from "./canonicalText";
+import { codepointLength, codepointToUtf16 } from "./codepoints";
 import {
   segmentHighlights,
   type NormalizedHighlight,
@@ -56,7 +56,7 @@ export type HighlightInput = {
 /**
  * Result of applying highlights to HTML.
  */
-export type ApplyHighlightsResult = {
+type ApplyHighlightsResult = {
   /** The transformed HTML with highlight spans */
   html: string;
   /** IDs of highlights that failed to render */
@@ -130,19 +130,6 @@ function findNodeAtOffset(
   return null;
 }
 
-/**
- * Convert codepoint offset to UTF-16 offset within a text node.
- * This is necessary because JavaScript strings use UTF-16.
- */
-function codepointToUtf16Offset(text: string, codepointOffset: number): number {
-  const codepoints = [...text];
-  let utf16Offset = 0;
-  for (let i = 0; i < codepointOffset && i < codepoints.length; i++) {
-    utf16Offset += codepoints[i].length;
-  }
-  return utf16Offset;
-}
-
 // =============================================================================
 // DOM Manipulation
 // =============================================================================
@@ -150,15 +137,14 @@ function codepointToUtf16Offset(text: string, codepointOffset: number): number {
 /**
  * Create a highlight span element.
  *
- * PR-10 requirement: Use space-delimited IDs in data-active-highlight-ids
- * for efficient CSS `~=` selector matching in hover interactions.
+ * Use space-delimited IDs in data-active-highlight-ids for efficient CSS `~=`
+ * selector matching in hover interactions.
  */
 function createHighlightSpan(
   doc: Document,
   segment: Segment
 ): HTMLSpanElement {
   const span = doc.createElement("span");
-  // Space-delimited for efficient ~= selector (PR-10)
   span.setAttribute("data-active-highlight-ids", segment.activeIds.join(" "));
   span.setAttribute("data-highlight-top", segment.topmostId);
   span.className = segment.activeIds.some((id) => id.startsWith("evidence-"))
@@ -196,8 +182,8 @@ function wrapTextRange(
   const clampedEnd = Math.max(clampedStart, Math.min(endOffset, totalCodepoints));
 
   // Convert to UTF-16 offsets
-  const utf16Start = codepointToUtf16Offset(text, clampedStart);
-  const utf16End = codepointToUtf16Offset(text, clampedEnd);
+  const utf16Start = codepointToUtf16(text, clampedStart);
+  const utf16End = codepointToUtf16(text, clampedEnd);
 
   // Create the span
   const span = createHighlightSpan(doc, segment);

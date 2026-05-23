@@ -14,10 +14,6 @@ import {
 } from "@/lib/vault/localVault";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 
-interface VaultResponse {
-  data: VaultSyncPayload;
-}
-
 export default function LocalVaultAutoSync() {
   const feedback = useFeedback();
 
@@ -40,7 +36,7 @@ export default function LocalVaultAutoSync() {
           return;
         }
         const files = await readEditableVaultFiles(handle);
-        const response = await apiFetch<VaultResponse>("/api/vault", {
+        const response = await apiFetch<{ data: VaultSyncPayload }>("/api/vault", {
           method: "POST",
           body: JSON.stringify({ files }),
         });

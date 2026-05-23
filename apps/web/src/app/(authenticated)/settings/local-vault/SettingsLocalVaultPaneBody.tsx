@@ -25,10 +25,6 @@ import styles from "./page.module.css";
 
 type VaultStatus = "notConnected" | "needsPermission" | "synced" | "syncing" | "conflicts" | "error";
 
-interface VaultResponse {
-  data: VaultSyncPayload;
-}
-
 function statusLabel(status: VaultStatus): string {
   if (status === "notConnected") return "Not connected";
   if (status === "needsPermission") return "Needs permission";
@@ -121,7 +117,7 @@ export default function SettingsLocalVaultPaneBody({
         setMessage("Reconnect folder access to keep this vault current.");
         return;
       }
-      const response = await apiFetch<VaultResponse>("/api/vault");
+      const response = await apiFetch<{ data: VaultSyncPayload }>("/api/vault");
       await writeVaultPayload(directoryHandle, response.data);
       setStatus(response.data.conflicts.length ? "conflicts" : "synced");
       setMessage(
@@ -151,7 +147,7 @@ export default function SettingsLocalVaultPaneBody({
         return;
       }
       const files = await readEditableVaultFiles(directoryHandle);
-      const response = await apiFetch<VaultResponse>("/api/vault", {
+      const response = await apiFetch<{ data: VaultSyncPayload }>("/api/vault", {
         method: "POST",
         body: JSON.stringify({ files }),
       });

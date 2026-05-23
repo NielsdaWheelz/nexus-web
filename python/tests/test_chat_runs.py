@@ -6,12 +6,14 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import inspect, text
+from sqlalchemy import bindparam, inspect, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Engine
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import ChatRun
 from nexus.services.conversation_branches import ensure_branch_metadata, persist_active_leaf
+from nexus.services.message_context_snapshots import object_ref_context_snapshot
 from tests.factories import (
     create_searchable_media,
     create_test_conversation,
@@ -1172,6 +1174,145 @@ class TestChatRunCreate:
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
+    def test_create_run_with_whole_artifact_context_returns_canonical_snapshot(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        artifact_id = uuid4()
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            conversation_id = create_test_conversation(session, user_id)
+            root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
+            parent_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "Complete answer",
+                parent_message_id=root_user_id,
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO message_artifacts (
+                        id,
+                        conversation_id,
+                        message_id,
+                        artifact_key,
+                        artifact_version,
+                        artifact_kind,
+                        title,
+                        status,
+                        preview_text
+                    )
+                    VALUES (
+                        :artifact_id,
+                        :conversation_id,
+                        :message_id,
+                        'brief-1',
+                        2,
+                        'briefing_document',
+                        'Brief',
+                        'complete',
+                        'Canonical brief preview'
+                    )
+                    """
+                ),
+                {
+                    "artifact_id": artifact_id,
+                    "conversation_id": conversation_id,
+                    "message_id": parent_assistant_id,
+                },
+            )
+            session.commit()
+
+        response = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                conversation_id=str(conversation_id),
+                parent_message_id=str(parent_assistant_id),
+                branch_anchor=_assistant_message_anchor(parent_assistant_id),
+                contexts=[
+                    {
+                        "kind": "object_ref",
+                        "type": "artifact",
+                        "id": str(artifact_id),
+                    }
+                ],
+            ),
+            idempotency_key="chat-run-whole-artifact-context",
+        )
+
+        assert response.status_code == 200, (
+            f"Expected artifact context chat run create to succeed, got "
+            f"{response.status_code}: {response.text}"
+        )
+        data = response.json()["data"]
+        run_id = UUID(data["run"]["id"])
+        user_message_id = UUID(data["user_message"]["id"])
+        _register_run_cleanup(direct_db, run_id, conversation_id)
+        direct_db.register_cleanup("message_context_items", "message_id", user_message_id)
+        direct_db.register_cleanup("object_links", "a_id", user_message_id)
+        direct_db.register_cleanup("message_artifacts", "id", artifact_id)
+
+        context = data["user_message"]["contexts"][0]
+        assert context["type"] == "artifact"
+        assert context["id"] == str(artifact_id)
+        assert context["artifact_id"] == str(artifact_id)
+        assert context["artifact_key"] == "brief-1"
+        assert context["artifact_version"] == 2
+        assert context["artifact_part_provenance"]["type"] == "artifact"
+        assert context["artifact_part_provenance"]["artifact_id"] == str(artifact_id)
+        assert context["artifact_part_provenance"]["artifact_key"] == "brief-1"
+        assert context["artifact_part_provenance"]["artifact_version"] == 2
+        assert context["artifact_part_provenance"]["message_id"] == str(parent_assistant_id)
+        assert context["artifact_part_provenance"]["conversation_id"] == str(conversation_id)
+
+        with direct_db.session() as session:
+            stored_snapshot = session.execute(
+                text(
+                    """
+                    SELECT context_snapshot
+                    FROM message_context_items
+                    WHERE message_id = :message_id
+                      AND object_type = 'artifact'
+                      AND object_id = :artifact_id
+                    """
+                ),
+                {
+                    "message_id": user_message_id,
+                    "artifact_id": artifact_id,
+                },
+            ).scalar_one()
+
+        assert stored_snapshot["artifact_key"] == "brief-1"
+        assert stored_snapshot["artifact_version"] == 2
+        assert stored_snapshot["artifact_part_provenance"]["artifact_key"] == "brief-1"
+        assert stored_snapshot["artifact_part_provenance"]["artifact_version"] == 2
+
+        messages_response = auth_client.get(
+            f"/conversations/{conversation_id}/messages",
+            headers=auth_headers(user_id),
+        )
+        assert messages_response.status_code == 200, (
+            f"Expected conversation messages to load, got "
+            f"{messages_response.status_code}: {messages_response.text}"
+        )
+        persisted_message = next(
+            message
+            for message in messages_response.json()["data"]
+            if message["id"] == str(user_message_id)
+        )
+        persisted_context = persisted_message["contexts"][0]
+        assert persisted_context["artifact_key"] == "brief-1"
+        assert persisted_context["artifact_version"] == 2
+        assert persisted_context["artifact_part_provenance"]["artifact_key"] == "brief-1"
+        assert persisted_context["artifact_part_provenance"]["artifact_version"] == 2
+
     def test_active_sibling_run_does_not_block_anchored_send(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
@@ -1381,16 +1522,18 @@ class TestChatResponseRetry:
                         'page',
                         :object_id,
                         0,
-                        CAST(:snapshot AS jsonb)
+                        :snapshot
                     )
                     """
-                ),
+                ).bindparams(bindparam("snapshot", type_=JSONB)),
                 {
                     "message_id": source_user_id,
                     "user_id": user_id,
                     "object_id": context_object_id,
-                    "snapshot": json.dumps(
-                        {"kind": "object_ref", "type": "page", "title": "Retry Source"}
+                    "snapshot": object_ref_context_snapshot(
+                        object_type="page",
+                        object_id=context_object_id,
+                        title="Retry Source",
                     ),
                 },
             )
@@ -1769,22 +1912,3 @@ class TestChatResponseRetry:
         assert response.json()["error"]["code"] == "E_RETRY_NOT_ALLOWED"
         direct_db.register_cleanup("conversations", "id", conversation_id)
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-
-
-class TestLegacySendRoutesRemoved:
-    def test_old_json_send_routes_are_removed(self, auth_client, chat_runs_schema):
-        user_id = create_test_user_id()
-
-        new_conversation_response = auth_client.post(
-            "/conversations/messages",
-            headers=auth_headers(user_id),
-            json={},
-        )
-        existing_conversation_response = auth_client.post(
-            f"/conversations/{uuid4()}/messages",
-            headers=auth_headers(user_id),
-            json={},
-        )
-
-        assert new_conversation_response.status_code in (404, 405)
-        assert existing_conversation_response.status_code in (404, 405)

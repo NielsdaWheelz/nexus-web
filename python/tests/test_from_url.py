@@ -29,9 +29,10 @@ import respx
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 
-from nexus.storage import build_storage_path, build_upload_staging_storage_path
-from nexus.storage.client import FakeStorageClient, StorageError
+from nexus.storage.client import StorageError
+from nexus.storage.paths import build_storage_path, build_upload_staging_storage_path
 from tests.helpers import auth_headers, create_test_user_id
+from tests.support.storage import FakeStorageClient
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
@@ -324,7 +325,7 @@ class TestFromUrlSuccess:
             assert row[0] == "web_article"  # kind
             assert row[1] == url  # title (placeholder)
             assert row[2] == url  # requested_url (exact)
-            assert row[3] is None  # canonical_url (NULL until PR-04)
+            assert row[3] is None  # canonical_url (set after ingestion resolves redirects)
             assert row[4] == "https://example.com/article"  # canonical_source_url (normalized)
             assert row[5] == "pending"  # processing_status
             assert row[6] == user_id  # created_by_user_id
@@ -1799,12 +1800,12 @@ class TestFromUrlAuth:
 
 
 # =============================================================================
-# S4 PR-05: Provenance assertions
+# From-url provenance assertions
 # =============================================================================
 
 
 class TestFromUrlProvenance:
-    """Tests for S4 PR-05: intrinsic provenance on from_url creation."""
+    """Tests intrinsic provenance on from_url creation."""
 
     def test_from_url_creates_default_library_intrinsic_row(
         self, auth_client, direct_db: DirectSessionManager

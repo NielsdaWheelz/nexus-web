@@ -16,9 +16,8 @@ import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import SurfaceHeader, { type SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import Button from "@/components/ui/Button";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
+import type { PaneBodyMode } from "@/lib/panes/paneRouteRegistry";
 import styles from "./PaneShell.module.css";
-
-export type PaneBodyMode = "standard" | "document" | "contained";
 
 // ---------------------------------------------------------------------------
 // Chrome override — lets body components push toolbar/options/meta into the

@@ -1,7 +1,7 @@
 /**
  * Tests for the canonical cursor builder.
  *
- * Required test cases per PR-08 spec §12.1:
+ * Required canonical cursor cases:
  * 1. Block boundary insertion — \n between blocks
  * 2. <br> handling — single \n
  * 3. Adjacent block collapse — multiple blocks → single \n\n
@@ -9,19 +9,16 @@
  * 5. Codepoint length accounting for astral characters (emoji)
  * 6. Whitespace normalization — multiple spaces → single space
  * 7. Validation gate — mismatch triggers warning and aborts
- *
- * @see docs/v1/s2/s2_prs/s2_pr08.md §12.1
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   buildCanonicalCursor,
-  canonicalCpToRawCp,
   validateCanonicalText,
-  codepointLength,
-  BLOCK_ELEMENTS,
   type CanonicalCursorResult,
 } from "./canonicalCursor";
+import { canonicalCpToRawCp } from "./canonicalText";
+import { codepointLength } from "./codepoints";
 
 // =============================================================================
 // Helpers
@@ -528,64 +525,3 @@ describe("buildCanonicalCursor", () => {
   });
 });
 
-describe("BLOCK_ELEMENTS constant", () => {
-  it("contains all required block elements from spec", () => {
-    const required = [
-      "p",
-      "li",
-      "ul",
-      "ol",
-      "h1",
-      "h2",
-      "h3",
-      "h4",
-      "h5",
-      "h6",
-      "blockquote",
-      "pre",
-      "div",
-      "section",
-      "article",
-      "header",
-      "footer",
-      "nav",
-      "aside",
-      "figure",
-      "figcaption",
-      "table",
-      "tr",
-      "td",
-      "th",
-    ];
-
-    for (const elem of required) {
-      expect(BLOCK_ELEMENTS.has(elem)).toBe(true);
-    }
-  });
-});
-
-describe("codepointLength", () => {
-  it("returns 0 for empty string", () => {
-    expect(codepointLength("")).toBe(0);
-  });
-
-  it("returns correct length for ASCII", () => {
-    expect(codepointLength("Hello")).toBe(5);
-  });
-
-  it("returns correct length for emoji", () => {
-    expect(codepointLength("🎉")).toBe(1);
-  });
-
-  it("handles emoji with skin tone modifier", () => {
-    // 👍🏽 is emoji + skin tone = 2 codepoints? Actually...
-    // It depends on the specific representation
-    const thumbsUp = "👍🏽";
-    // Just verify it's consistent
-    expect(codepointLength(thumbsUp)).toBe([...thumbsUp].length);
-  });
-
-  it("handles mixed content", () => {
-    expect(codepointLength("A🎉B")).toBe(3);
-  });
-});

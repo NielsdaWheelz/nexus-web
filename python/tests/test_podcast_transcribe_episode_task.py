@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -10,13 +10,13 @@ pytestmark = pytest.mark.unit
 def test_podcast_transcribe_episode_task_rejects_invalid_media_id(monkeypatch):
     called = {"value": False}
 
-    def fail_if_called(*args, **kwargs):  # noqa: ANN002, ANN003
+    def fail_if_called(*args: object, **kwargs: object) -> None:
         _ = args, kwargs
         called["value"] = True
         raise AssertionError("service should not run for invalid media id")
 
     monkeypatch.setattr(
-        "nexus.tasks.podcast_transcribe_episode.run_podcast_transcription_now_service",
+        "nexus.tasks.podcast_transcribe_episode.run_podcast_transcription_now",
         fail_if_called,
     )
 
@@ -36,7 +36,13 @@ def test_podcast_transcribe_episode_task_ignores_invalid_requested_by_user_id(mo
     def fake_session_factory():
         return lambda: _FakeDb()
 
-    def fake_run(db, *, media_id, requested_by_user_id, request_id):  # noqa: ANN001
+    def fake_run(
+        db: object,
+        *,
+        media_id: UUID,
+        requested_by_user_id: UUID | None,
+        request_id: str | None,
+    ) -> dict[str, object]:
         _ = db, media_id, request_id
         captured["requested_by_user_id"] = requested_by_user_id
         return {"status": "completed", "segment_count": 1}
@@ -46,7 +52,7 @@ def test_podcast_transcribe_episode_task_ignores_invalid_requested_by_user_id(mo
         fake_session_factory,
     )
     monkeypatch.setattr(
-        "nexus.tasks.podcast_transcribe_episode.run_podcast_transcription_now_service",
+        "nexus.tasks.podcast_transcribe_episode.run_podcast_transcription_now",
         fake_run,
     )
 

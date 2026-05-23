@@ -8,8 +8,8 @@ from sqlalchemy import func, literal, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import FailureStage, Media, MediaFile, ProcessingStatus, User
-from nexus.storage import build_storage_path, build_upload_staging_storage_path
-from nexus.storage.client import FakeStorageClient
+from nexus.storage.paths import build_storage_path, build_upload_staging_storage_path
+from tests.support.storage import FakeStorageClient
 from tests.utils.db import task_session_factory
 
 pytestmark = pytest.mark.integration
@@ -437,7 +437,7 @@ def _insert_ready_document_with_pending_content_index(db: Session, *, kind: str)
             VALUES (
                 :media_id,
                 :kind,
-                'Legacy indexed document',
+                'Sample indexed document',
                 'ready_for_reading',
                 :plain_text,
                 :page_count,
@@ -448,7 +448,7 @@ def _insert_ready_document_with_pending_content_index(db: Session, *, kind: str)
         {
             "media_id": media_id,
             "kind": kind,
-            "plain_text": "Legacy PDF evidence repair needle." if kind == "pdf" else None,
+            "plain_text": "Sample PDF evidence repair needle." if kind == "pdf" else None,
             "page_count": 1 if kind == "pdf" else None,
             "user_id": user_id,
         },
@@ -462,8 +462,8 @@ def _insert_ready_document_with_pending_content_index(db: Session, *, kind: str)
                     :fragment_id,
                     :media_id,
                     0,
-                    '<p>Legacy evidence repair needle.</p>',
-                    'Legacy evidence repair needle.'
+                    '<p>Sample evidence repair needle.</p>',
+                    'Sample evidence repair needle.'
                 )
                 """
             ),
@@ -474,7 +474,7 @@ def _insert_ready_document_with_pending_content_index(db: Session, *, kind: str)
             text(
                 """
                 INSERT INTO media_file (media_id, storage_path, content_type, size_bytes)
-                VALUES (:media_id, 'media/test/legacy.pdf', 'application/pdf', 1024)
+                VALUES (:media_id, 'media/test/sample.pdf', 'application/pdf', 1024)
                 """
             ),
             {"media_id": media_id},
@@ -817,7 +817,7 @@ def test_reconciler_recovers_stale_indexing_document_content_index(db_session: S
     assert rows[0][1] != stale_run_id
     assert rows[0][2] == "failed"
     assert rows[0][3] == "E_INGEST_TIMEOUT"
-    assert rows[0][4] == "Legacy evidence repair needle."
+    assert rows[0][4] == "Sample evidence repair needle."
 
 
 def test_reconciler_fails_stale_pdf_after_max_recovery_attempts(db_session: Session):
@@ -996,7 +996,7 @@ def test_reconciler_repairs_pending_semantic_backlog_for_ready_podcast_transcrip
         {"media_id": media_id, "transcript_version_id": str(version_id)},
     ).fetchall()
     assert model_row == [(current_transcript_embedding_model(),)], (
-        "semantic repair must fully replace legacy cutover embeddings with current runtime model"
+        "semantic repair must fully replace superseded embeddings with current runtime model"
     )
 
 

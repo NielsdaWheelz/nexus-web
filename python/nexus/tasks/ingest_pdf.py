@@ -1,10 +1,10 @@
-"""Worker job handler for PDF extraction (S6 PR-03).
+"""Worker job handler for PDF extraction.
 
 Owns async completion-state transitions for PDF extraction:
 extracting -> ready_for_reading (success) or extracting -> failed (error).
 
-On successful extraction, performs explicit handoff to the existing
-embedding pipeline so downstream failures surface as failure_stage='embed'.
+On successful extraction, performs explicit PDF evidence indexing so downstream
+indexing failures surface as failure_stage='embed'.
 """
 
 import hashlib
@@ -26,7 +26,7 @@ from nexus.services.pdf_ingest import (
     PdfExtractionResult,
     extract_pdf_artifacts,
 )
-from nexus.storage import get_storage_client
+from nexus.storage.client import get_storage_client
 
 logger = get_logger(__name__)
 

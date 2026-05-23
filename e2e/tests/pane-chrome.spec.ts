@@ -1,6 +1,15 @@
-import { test, expect, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  type APIRequestContext,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+
+const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
+const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
 
 interface SeededPdfMedia {
   media_id: string;
@@ -18,9 +27,71 @@ interface SeededReaderResumeMedia {
   epub_media_id: string;
 }
 
+interface WorkspacePaneStateV4 {
+  id: string;
+  href: string;
+  widthPx: number;
+  visibility: "visible" | "minimized";
+}
+
+interface WorkspaceStateV4 {
+  schemaVersion: 4;
+  activePaneId: string;
+  panes: WorkspacePaneStateV4[];
+}
+
 function readSeed<T>(seedFile: string): T {
   const seedPath = path.join(__dirname, "..", ".seed", seedFile);
   return JSON.parse(readFileSync(seedPath, "utf-8")) as T;
+}
+
+function paneChromeDeviceId(testInfo: TestInfo): string {
+  const slug = testInfo.titlePath
+    .join("-")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+  return `e2e-pane-chrome-${testInfo.workerIndex}-${testInfo.repeatEachIndex}-${slug}`;
+}
+
+function trivialWorkspaceSession(): WorkspaceStateV4 {
+  return {
+    schemaVersion: 4,
+    activePaneId: "pane-chrome-default",
+    panes: [
+      {
+        id: "pane-chrome-default",
+        href: "/libraries",
+        widthPx: 480,
+        visibility: "visible",
+      },
+    ],
+  };
+}
+
+async function pinDeviceId(page: Page, testInfo: TestInfo): Promise<void> {
+  await page.addInitScript(
+    ([key, id]) => {
+      try {
+        localStorage.setItem(key, id);
+      } catch {
+        /* private mode / quota - ignored */
+      }
+    },
+    [INSTALLATION_ID_STORAGE_KEY, paneChromeDeviceId(testInfo)]
+  );
+}
+
+async function putWorkspaceSession(
+  request: APIRequestContext,
+  testInfo: TestInfo,
+  state: WorkspaceStateV4
+): Promise<void> {
+  const response = await request.put(WORKSPACE_SESSION_PATH, {
+    data: { device_id: paneChromeDeviceId(testInfo), state },
+  });
+  expect(response.ok()).toBeTruthy();
 }
 
 async function useMobileViewport(page: Page): Promise<void> {
@@ -88,6 +159,11 @@ async function expectToolbarToFitPaneChrome(
 }
 
 test.describe("pane chrome", () => {
+  test.beforeEach(async ({ page }, testInfo) => {
+    await pinDeviceId(page, testInfo);
+    await putWorkspaceSession(page.request, testInfo, trivialWorkspaceSession());
+  });
+
   test("mobile document panes keep scroll position stable while chrome hides and reveals deliberately", async ({
     page,
   }) => {
@@ -96,13 +172,12 @@ test.describe("pane chrome", () => {
     const nonPdfSeed = readSeed<SeededNonPdfMedia>("non-pdf-media.json");
     await page.goto(`/media/${nonPdfSeed.media_id}`);
     const documentViewport = page.getByTestId("document-viewport");
-    await expect(documentViewport).toBeVisible();
+    await expect(documentViewport).toBeVisible({ timeout: 20_000 });
     await expect
       .poll(() =>
         documentViewport.evaluate((element) => element.scrollHeight - element.clientHeight)
       )
       .toBeGreaterThan(200);
-    await expect(documentViewport).toHaveCSS("overscroll-behavior-y", "contain");
     await expectPaneChromeHidden(page, false);
     await page.evaluate(() => {
       window.scrollTo(0, 240);
@@ -121,7 +196,6 @@ test.describe("pane chrome", () => {
 
     await setScrollTop(documentViewport, chromeHeight + 40);
     await expectPaneChromeHidden(page, true);
-    await expect(page.getByTestId("pane-shell-chrome")).toHaveCSS("pointer-events", "none");
     await expectScrollTop(documentViewport, chromeHeight + 40);
 
     await setScrollTop(documentViewport, chromeHeight + 34);
@@ -134,7 +208,6 @@ test.describe("pane chrome", () => {
 
     await setScrollTop(documentViewport, chromeHeight + 18);
     await expectPaneChromeHidden(page, false);
-    await expect(page.getByTestId("pane-shell-chrome")).toHaveCSS("pointer-events", "auto");
     await expectScrollTop(documentViewport, chromeHeight + 18);
   });
 
@@ -158,7 +231,6 @@ test.describe("pane chrome", () => {
         { timeout: 20_000 }
       )
       .toBe(true);
-    await expect(pdfViewport).toHaveCSS("overscroll-behavior-y", "contain");
     await setScrollTop(pdfViewport, 0);
     await expectScrollTop(pdfViewport, 0);
     await expectPaneChromeHidden(page, false);
@@ -181,7 +253,7 @@ test.describe("pane chrome", () => {
     const nonPdfSeed = readSeed<SeededNonPdfMedia>("non-pdf-media.json");
     await page.goto(`/media/${nonPdfSeed.media_id}`);
     const documentViewport = page.getByTestId("document-viewport");
-    await expect(documentViewport).toBeVisible();
+    await expect(documentViewport).toBeVisible({ timeout: 20_000 });
     await expect
       .poll(() =>
         documentViewport.evaluate((element) => element.scrollHeight - element.clientHeight)

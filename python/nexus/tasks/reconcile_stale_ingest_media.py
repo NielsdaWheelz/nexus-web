@@ -27,8 +27,8 @@ from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     transcript_embedding_dimensions,
 )
-from nexus.storage import build_storage_path, get_file_extension, get_storage_client
-from nexus.storage.client import StorageError
+from nexus.storage.client import StorageError, get_storage_client
+from nexus.storage.paths import build_storage_path, get_file_extension
 
 logger = get_logger(__name__)
 

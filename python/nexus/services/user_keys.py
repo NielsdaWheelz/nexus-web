@@ -5,12 +5,12 @@ Handles BYOK (Bring Your Own Key) API key management:
 - Upsert (add/update) keys with encryption
 - Revoke keys (wipe ciphertext, retain fingerprint)
 
-Per PR-03 spec:
+Behavior:
 - Keys are encrypted at rest using XChaCha20-Poly1305
 - Fingerprint is last 4 chars (retained on revoke for audit)
 - Upsert by (user_id, provider) - same provider = same row
 - Revoke wipes encrypted_key, key_nonce, master_key_version to NULL
-- Status transitions: untested → valid/invalid (via LLM calls in PR-04)
+- Status transitions: untested to valid/invalid through saved-key validation
 - Revoked keys have status='revoked' and revoked_at set
 
 Security invariants:
@@ -145,7 +145,7 @@ def upsert_user_key(
     This is an upsert operation: if a key already exists for (user_id, provider),
     it is overwritten with new encryption.
 
-    Per PR-03 spec, on upsert:
+    On upsert:
     - Generate new nonce
     - Re-encrypt with new ciphertext
     - Set status = 'untested'
@@ -373,7 +373,7 @@ async def test_user_key(
 def revoke_user_key(db: Session, user_id: UUID, key_id: UUID) -> None:
     """Revoke a user's API key.
 
-    Per PR-03 spec, secure revocation wipes ciphertext:
+    Secure revocation wipes ciphertext:
     - Set status = 'revoked'
     - Set revoked_at = now()
     - Set encrypted_key = NULL
@@ -415,9 +415,9 @@ def revoke_user_key(db: Session, user_id: UUID, key_id: UUID) -> None:
         return
 
     # Wipe ciphertext and mark as revoked
-    key.encrypted_key = None  # type: ignore[assignment]
-    key.key_nonce = None  # type: ignore[assignment]
-    key.master_key_version = None  # type: ignore[assignment]
+    key.encrypted_key = None
+    key.key_nonce = None
+    key.master_key_version = None
     key.status = "revoked"
     key.revoked_at = datetime.now(UTC)
     # key_fingerprint is retained for audit trail

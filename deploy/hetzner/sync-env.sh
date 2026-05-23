@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-HOST="${NEXUS_HOST:-}"
+DEFAULT_NEXUS_HOST="5.78.194.235"
+HOST="${NEXUS_HOST:-$DEFAULT_NEXUS_HOST}"
 DEPLOY_USER="${NEXUS_DEPLOY_USER:-nexus}"
 ENV_TARGET="${NEXUS_REMOTE_ENV_FILE:-${NEXUS_ENV_FILE:-/etc/nexus/nexus.env}}"
 ENV_TARGET_DIR="$(dirname "$ENV_TARGET")"
@@ -234,7 +235,6 @@ require_safe_worker_defaults() {
   done
 }
 
-[ -n "$HOST" ] || [ -n "${NEXUS_SSH_TARGET:-}" ] || die "set NEXUS_HOST or NEXUS_SSH_TARGET"
 case "$ENV_TARGET" in
   /*) ;;
   *) die "NEXUS_REMOTE_ENV_FILE must be an absolute path" ;;

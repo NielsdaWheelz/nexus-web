@@ -10,7 +10,10 @@ import {
   type MutableRefObject,
 } from "react";
 import { apiFetch } from "@/lib/api/client";
-import { toFeedback } from "@/components/feedback/Feedback";
+import {
+  PDF_PASSWORD_PROTECTED_MESSAGE,
+  toFeedback,
+} from "@/components/feedback/Feedback";
 import type { PdfReaderResumeState } from "@/lib/reader/types";
 import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
 import { usePaneMobileChromeController } from "@/components/workspace/PaneShell";
@@ -37,9 +40,8 @@ import {
   type PdfPageViewportTransform,
 } from "@/lib/highlights/coordinateTransforms";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { isPositiveFinite } from "@/lib/validation";
 import styles from "./PdfReader.module.css";
-
-export type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 
 interface PdfFileAccessResponse {
   data: {
@@ -317,7 +319,7 @@ function isLikelySignedUrlExpiryError(error: unknown): boolean {
 
 function toUserFacingError(error: unknown): string {
   if (isPasswordPdfError(error)) {
-    return "This PDF is password-protected and cannot be opened in v1.";
+    return PDF_PASSWORD_PROTECTED_MESSAGE;
   }
   return toFeedback(error, {
     fallback: "Unable to load this PDF right now. Please retry.",
@@ -557,7 +559,7 @@ function deriveScaleFromPageView(
     });
     if (baseViewport.width > 0) {
       const scale = viewport.width / baseViewport.width;
-      if (Number.isFinite(scale) && scale > 0) {
+      if (isPositiveFinite(scale)) {
         return scale;
       }
     }
@@ -1371,10 +1373,9 @@ export default function PdfReader({
           return;
         }
         const event = rawEvent as { pagesCount?: number };
-        const pagesCount =
-          Number.isFinite(event.pagesCount) && (event.pagesCount as number) > 0
-            ? Math.floor(event.pagesCount as number)
-            : (documentRef.current?.numPages ?? 0);
+        const pagesCount = isPositiveFinite(event.pagesCount)
+          ? Math.floor(event.pagesCount)
+          : (documentRef.current?.numPages ?? 0);
         setNumPages(pagesCount);
         const viewer = pdfViewerRef.current;
         const pendingScale = pendingViewerScaleRef.current;
@@ -1434,10 +1435,9 @@ export default function PdfReader({
           source?: PdfPageViewLike;
           error?: unknown;
         };
-        const renderedPage =
-          Number.isFinite(event.pageNumber) && (event.pageNumber as number) > 0
-            ? Math.floor(event.pageNumber as number)
-            : pageNumberRef.current;
+        const renderedPage = isPositiveFinite(event.pageNumber)
+          ? Math.floor(event.pageNumber)
+          : pageNumberRef.current;
 
         markPageSurfaceForTesting(renderedPage, event.source);
         rememberPageScale(renderedPage, event.source);
@@ -1487,10 +1487,9 @@ export default function PdfReader({
           return;
         }
         const event = rawEvent as { pageNumber?: number };
-        const renderedPage =
-          Number.isFinite(event.pageNumber) && (event.pageNumber as number) > 0
-            ? Math.floor(event.pageNumber as number)
-            : pageNumberRef.current;
+        const renderedPage = isPositiveFinite(event.pageNumber)
+          ? Math.floor(event.pageNumber)
+          : pageNumberRef.current;
         if (renderedPage === pageNumberRef.current) {
           scheduleTextLayerStateRefresh(renderedPage, runId);
         }
@@ -1504,10 +1503,9 @@ export default function PdfReader({
         if (!event.error) {
           return;
         }
-        const renderedPage =
-          Number.isFinite(event.pageNumber) && (event.pageNumber as number) > 0
-            ? Math.floor(event.pageNumber as number)
-            : pageNumberRef.current;
+        const renderedPage = isPositiveFinite(event.pageNumber)
+          ? Math.floor(event.pageNumber)
+          : pageNumberRef.current;
         const expiryError = isLikelySignedUrlExpiryError(event.error);
         if (expiryError && !recoveringFromRenderErrorRef.current) {
           recoveringFromRenderErrorRef.current = true;
@@ -2497,7 +2495,7 @@ export default function PdfReader({
       });
     }
     return projected;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- pageRenderEpoch is an intentional invalidation trigger
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: pageRenderEpoch is an intentional invalidation trigger
   }, [
     pageHighlights,
     pageNumber,

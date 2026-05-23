@@ -28,7 +28,11 @@ import type {
   ReaderCitationPreview,
 } from "@/components/ui/ReaderCitation";
 import Button from "@/components/ui/Button";
-import { isRetrievalLocator, type ContextItem } from "@/lib/api/sse";
+import {
+  isRetrievalLocator,
+  type ChatRunCreateRequest,
+  type ContextItem,
+} from "@/lib/api/sse";
 import { apiFetch } from "@/lib/api/client";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
 import type {
@@ -40,7 +44,6 @@ import type {
   MessageArtifactDelta,
   MessageArtifactExport,
   MessageArtifactExportLedger,
-  MessageArtifactFollowUp,
   MessageArtifactPart,
   MessageCitationAudit,
   MessageClaim,
@@ -1293,9 +1296,25 @@ function ArtifactInspector({
     setAskResult(null);
     try {
       const durableArtifact = artifact ?? (await loadArtifact());
+      const durableParts = durableArtifact.parts;
       const durablePart = selectedPart
-        ? artifactPartForAsk(durableArtifact.parts, selectedPart)
-        : (durableArtifact.parts[0] ?? null);
+        ? (durableParts.find(
+            (part) => part.id && part.id === selectedPart.id,
+          ) ??
+          durableParts.find(
+            (part) =>
+              part.part_key &&
+              selectedPart.part_key &&
+              part.part_key === selectedPart.part_key,
+          ) ??
+          durableParts.find(
+            (part) =>
+              typeof part.ordinal === "number" &&
+              part.ordinal === selectedPart.ordinal,
+          ) ??
+          durableParts[0] ??
+          null)
+        : (durableParts[0] ?? null);
       if (!durablePart?.id) {
         setAskError("Select a durable artifact part first.");
         return;
@@ -1309,57 +1328,29 @@ function ArtifactInspector({
       const runResponse = await apiFetch<ChatRunResponse>(
         `/api/chat-runs/${durableArtifact.chat_run_id}`,
       );
-      const askResponse = await apiFetch<{ data: MessageArtifactFollowUp }>(
+      const askResponse = await apiFetch<{ data: ChatRunCreateRequest }>(
         `/api/artifacts/${artifactId}/ask`,
         {
           method: "POST",
           body: JSON.stringify({
-            mode: "chat_run_payload",
             content,
             artifact_part_id: durablePart.id,
             model_id: runResponse.data.run.model_id,
           }),
         },
       );
-      const payload = askResponse.data.chat_run_payload;
-      const context = payload?.contexts.find(
-        (item) => item.kind === "object_ref",
-      );
-      if (!payload || !context) {
+      const payload = askResponse.data;
+      if (!(payload.contexts ?? []).some((item) => item.kind === "object_ref")) {
         setAskError("Artifact ask did not return a runnable chat payload.");
         return;
       }
-      const evidenceSpanIds = [
-        ...(durablePart.evidence_span_ids ?? []),
-        ...(durablePart.evidence_span_id ? [durablePart.evidence_span_id] : []),
-      ];
-      const runPayload = {
-        ...payload,
-        contexts: payload.contexts.map((item) =>
-          item === context
-            ? {
-                ...item,
-                ...(evidenceSpanIds.length
-                  ? { evidence_span_ids: [...new Set(evidenceSpanIds)] }
-                  : {}),
-                artifact_id: durableArtifact.id,
-                artifact_key: durableArtifact.artifact_key ?? null,
-                artifact_version: durableArtifact.artifact_version,
-                source_version: durablePart.source_version,
-                locator: durablePart.locator,
-                artifact_part_provenance:
-                  askResponse.data.artifact_part_provenance,
-              }
-            : item,
-        ),
-      };
       const createdRun = await apiFetch<ChatRunResponse>("/api/chat-runs", {
         method: "POST",
         headers: { "Idempotency-Key": crypto.randomUUID() },
-        body: JSON.stringify(runPayload),
+        body: JSON.stringify(payload),
       });
       onChatRunCreated?.(createdRun.data);
-      setAskResult("Started follow-up chat run.");
+      setAskResult("Started artifact ask.");
     } catch {
       setAskError("Artifact ask is unavailable.");
     } finally {
@@ -1818,28 +1809,6 @@ function artifactPartHasEvidence(part: unknown): boolean {
 function partEvidenceLabel(part: MessageArtifact["parts"][number]): string {
   if (artifactPartHasEvidence(part)) return "cited";
   return "uncited";
-}
-
-function artifactPartForAsk(
-  parts: MessageArtifactPart[],
-  selectedPart: MessageArtifactPart,
-): MessageArtifactPart | null {
-  return (
-    parts.find((part) => part.id && part.id === selectedPart.id) ??
-    parts.find(
-      (part) =>
-        part.part_key &&
-        selectedPart.part_key &&
-        part.part_key === selectedPart.part_key,
-    ) ??
-    parts.find(
-      (part) =>
-        typeof part.ordinal === "number" &&
-        part.ordinal === selectedPart.ordinal,
-    ) ??
-    parts[0] ??
-    null
-  );
 }
 
 function artifactPartHref(part: MessageArtifactPart): string | null {

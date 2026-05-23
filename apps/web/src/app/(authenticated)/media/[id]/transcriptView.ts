@@ -1,6 +1,6 @@
 "use client";
 
-import { type GlobalPlayerChapter } from "@/lib/player/globalPlayer";
+import { type GlobalPlayerChapter } from "@/lib/player/chapters";
 
 export interface TranscriptPlaybackSource {
   kind: "external_audio" | "external_video";

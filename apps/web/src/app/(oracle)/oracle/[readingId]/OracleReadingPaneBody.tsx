@@ -9,8 +9,12 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { ApiError, apiFetch } from "@/lib/api/client";
-import { parseSSEJsonStream, type SSEJsonEvent } from "@/lib/api/sse";
+import { parseSSEJsonStream, type SSEJsonEvent } from "@/lib/api/sse-stream";
 import { fetchStreamToken } from "@/lib/api/streamToken";
+import { isAbortError } from "@/lib/errors";
+import { toRoman } from "@/lib/toRoman";
+import { isRecord } from "@/lib/validation";
+import type { OracleCreateResponse } from "../types";
 import { useStickyHeadline } from "../../OracleShell";
 import BorderFrame from "../BorderFrame";
 import IlluminatedCapital from "../IlluminatedCapital";
@@ -80,18 +84,6 @@ interface ReadingState {
   omens: string[];
   error: { code: string; message: string } | null;
   cursor: number;
-}
-
-interface OracleCreateResponse {
-  reading_id: string;
-  folio_number: number;
-  status: string;
-  stream: {
-    token: string;
-    stream_base_url: string;
-    event_url: string;
-    expires_at: string;
-  };
 }
 
 type OracleStreamEvent = {
@@ -231,10 +223,6 @@ class OracleStreamParseError extends Error {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 function toOracleStreamEvent(event: SSEJsonEvent): OracleStreamEvent | null {
   const seq = Number(event.id);
   if (!Number.isSafeInteger(seq) || seq <= 0 || !isRecord(event.data)) {
@@ -245,10 +233,6 @@ function toOracleStreamEvent(event: SSEJsonEvent): OracleStreamEvent | null {
     event_type: event.type,
     payload: event.data,
   };
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function isRetryableOracleStreamError(error: unknown): boolean {
@@ -397,22 +381,6 @@ function ordinalEnglish(day: number): string {
   return `${tens}-${ORDINAL_ONES[day % 10]!}`;
 }
 
-function toRoman(year: number): string {
-  const lookup: [number, string][] = [
-    [1000, "M"], [900, "CM"], [500, "D"], [400, "CD"],
-    [100, "C"], [90, "XC"], [50, "L"], [40, "XL"],
-    [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"],
-  ];
-  let remaining = year;
-  let out = "";
-  for (const [value, symbol] of lookup) {
-    while (remaining >= value) {
-      out += symbol;
-      remaining -= value;
-    }
-  }
-  return out;
-}
 
 function FleuronBreak() {
   return (

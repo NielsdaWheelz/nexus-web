@@ -8,11 +8,8 @@
  * - Focus persistence after refetch
  * - Edit bounds mode
  *
- * PR-10: Changed from data-highlight-ids (comma-delimited) to
- * data-active-highlight-ids (space-delimited).
- *
- * @see docs/v1/s2/s2_prs/s2_pr09.md §9
- * @see docs/v1/s2/s2_prs/s2_pr10.md §15
+ * The DOM contract stores active highlight ids in the space-delimited
+ * data-active-highlight-ids attribute.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -32,7 +29,6 @@ import {
 
 function createMockElement(highlightIds: string[], topmostId?: string): Element {
   const el = document.createElement("span");
-  // PR-10: space-delimited
   el.setAttribute("data-active-highlight-ids", highlightIds.join(" "));
   el.setAttribute("data-highlight-top", topmostId || highlightIds[0]);
   return el;
@@ -357,7 +353,6 @@ describe("parseHighlightElement", () => {
 
   it("uses first highlight as topmost if data-highlight-top missing", () => {
     const el = document.createElement("span");
-    // PR-10: space-delimited
     el.setAttribute("data-active-highlight-ids", "h1 h2 h3");
     const result = parseHighlightElement(el);
 
@@ -369,7 +364,6 @@ describe("findHighlightElement", () => {
   it("finds ancestor with highlight data", () => {
     const container = document.createElement("div");
     const highlight = document.createElement("span");
-    // PR-10: data-active-highlight-ids
     highlight.setAttribute("data-active-highlight-ids", "h1");
     const inner = document.createElement("em");
     highlight.appendChild(inner);
@@ -440,7 +434,6 @@ describe("applyFocusClass", () => {
   it("handles element in multiple highlights", () => {
     const container = document.createElement("div");
     const span = document.createElement("span");
-    // PR-10: space-delimited
     span.setAttribute("data-active-highlight-ids", "h1 h2 h3");
     container.appendChild(span);
     document.body.appendChild(container);

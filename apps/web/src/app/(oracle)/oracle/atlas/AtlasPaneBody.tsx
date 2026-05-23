@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { apiFetch } from "@/lib/api/client";
+import { toRoman } from "@/lib/toRoman";
 import { useStickyHeadline } from "../../OracleShell";
 import styles from "./atlas.module.css";
 import {
@@ -40,22 +41,6 @@ const STAR_HIT_RADIUS_PX = 22;
 /** How long the constellation lingers after click, before navigating. */
 const SELECTION_LINGER_MS = 1100;
 
-function toRoman(n: number): string {
-  const lookup: [number, string][] = [
-    [1000, "M"], [900, "CM"], [500, "D"], [400, "CD"],
-    [100, "C"], [90, "XC"], [50, "L"], [40, "XL"],
-    [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"],
-  ];
-  let remaining = n;
-  let out = "";
-  for (const [value, symbol] of lookup) {
-    while (remaining >= value) {
-      out += symbol;
-      remaining -= value;
-    }
-  }
-  return out;
-}
 
 interface StarStyle {
   /** Solid disc radius in CSS pixels. */

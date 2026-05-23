@@ -11,27 +11,27 @@ All functions:
 Query Semantics:
 - Membership role values: 'admin', 'member' (lowercase strings, not enums)
 - LibraryEntry rows with non-null media_id connect libraries and media
-- Media readability is via s4 provenance: non-default membership, intrinsic, or active closure edge
+- Media readability is via provenance: non-default membership, intrinsic, or active closure edge
 
-S4 Provenance Rules (can_read_media):
+Media Provenance Rules (can_read_media):
 - Non-default path: exists non-default library L with viewer membership and library_entries(L, media)
 - Default intrinsic path: viewer owns default library D, row in default_library_intrinsics(D, media)
 - Default closure path: viewer owns default library D, closure edge (D, media, source_L), viewer member of source_L
 - Raw (default_library_id, media_id) in library_entries is NOT sufficient without provenance
 
-S4 Conversation Visibility (can_read_conversation):
+Conversation Visibility (can_read_conversation):
 - Viewer is owner, OR
 - Conversation is public, OR
 - Conversation is library-shared and both viewer+owner are members of a share-target library
 
-S4 Highlight Visibility (can_read_highlight):
+Highlight Visibility (can_read_highlight):
 - Viewer can read anchor media (via can_read_media), AND
 - Exists a library containing that media where both viewer and highlight author are members
 """
 
 from uuid import UUID
 
-from sqlalchemy import exists, literal, select, union_all
+from sqlalchemy import exists, literal, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -48,7 +48,7 @@ from nexus.db.models import (
 
 
 def can_read_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bool:
-    """Check if viewer can read a media item under s4 provenance rules.
+    """Check if viewer can read a media item under provenance rules.
 
     True iff any of:
     1. Non-default path: exists non-default library L where viewer is member and media is in L
@@ -65,7 +65,7 @@ def can_read_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bo
         LibraryEntry.library_id == Membership.library_id,
         Membership.user_id == viewer_user_id,
         LibraryEntry.library_id == Library.id,
-        Library.is_default == False,  # noqa: E712
+        Library.is_default.is_(False),
     )
 
     # Path 2: default intrinsic
@@ -73,7 +73,7 @@ def can_read_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bo
         DefaultLibraryIntrinsic.media_id == media_id,
         DefaultLibraryIntrinsic.default_library_id == Library.id,
         Library.owner_user_id == viewer_user_id,
-        Library.is_default == True,  # noqa: E712
+        Library.is_default.is_(True),
     )
 
     # Path 3: default closure edge with active source membership
@@ -81,7 +81,7 @@ def can_read_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bo
         DefaultLibraryClosureEdge.media_id == media_id,
         DefaultLibraryClosureEdge.default_library_id == Library.id,
         Library.owner_user_id == viewer_user_id,
-        Library.is_default == True,  # noqa: E712
+        Library.is_default.is_(True),
         DefaultLibraryClosureEdge.source_library_id == Membership.library_id,
         Membership.user_id == viewer_user_id,
     )
@@ -94,78 +94,6 @@ def can_read_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bo
     query = select((non_default | default_intrinsic | default_closure) & not_deleted)
     result = session.execute(query)
     return bool(result.scalar())
-
-
-def can_read_media_bulk(
-    session: Session,
-    viewer_user_id: UUID,
-    media_ids: list[UUID],
-) -> dict[UUID, bool]:
-    """Check if viewer can read multiple media items under s4 provenance rules.
-
-    Returns a dict containing ALL input ids as keys.
-    For any media_id not readable (or non-existent), value is False.
-
-    Implementation constraint: executes exactly ONE SELECT query.
-    Empty list input: return {} without executing any query.
-    """
-    if not media_ids:
-        return {}
-
-    # Path 1: non-default library membership
-    non_default_q = (
-        select(LibraryEntry.media_id)
-        .join(Membership, LibraryEntry.library_id == Membership.library_id)
-        .join(Library, LibraryEntry.library_id == Library.id)
-        .where(
-            LibraryEntry.media_id.in_(media_ids),
-            LibraryEntry.media_id.is_not(None),
-            Membership.user_id == viewer_user_id,
-            Library.is_default == False,  # noqa: E712
-        )
-    )
-
-    # Path 2: default intrinsic
-    intrinsic_q = (
-        select(DefaultLibraryIntrinsic.media_id)
-        .join(Library, DefaultLibraryIntrinsic.default_library_id == Library.id)
-        .where(
-            DefaultLibraryIntrinsic.media_id.in_(media_ids),
-            Library.owner_user_id == viewer_user_id,
-            Library.is_default == True,  # noqa: E712
-        )
-    )
-
-    # Path 3: default closure edge with active source membership
-    closure_q = (
-        select(DefaultLibraryClosureEdge.media_id)
-        .join(Library, DefaultLibraryClosureEdge.default_library_id == Library.id)
-        .join(Membership, DefaultLibraryClosureEdge.source_library_id == Membership.library_id)
-        .where(
-            DefaultLibraryClosureEdge.media_id.in_(media_ids),
-            Library.owner_user_id == viewer_user_id,
-            Library.is_default == True,  # noqa: E712
-            Membership.user_id == viewer_user_id,
-        )
-    )
-
-    # Union all three paths and get distinct readable ids
-    combined = union_all(non_default_q, intrinsic_q, closure_q).subquery()
-    query = (
-        select(combined.c.media_id)
-        .where(
-            ~exists().where(
-                UserMediaDeletion.user_id == viewer_user_id,
-                UserMediaDeletion.media_id == combined.c.media_id,
-            )
-        )
-        .distinct()
-    )
-
-    result = session.execute(query)
-    readable_ids = {row[0] for row in result.fetchall()}
-
-    return {mid: mid in readable_ids for mid in media_ids}
 
 
 def visible_media_ids_cte_sql() -> str:
@@ -207,7 +135,7 @@ def visible_media_ids_cte_sql() -> str:
 
 
 def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_id: UUID) -> bool:
-    """Check if viewer can read a conversation under s4 visibility rules.
+    """Check if viewer can read a conversation under visibility rules.
 
     True iff:
     - Viewer is the conversation owner, OR
@@ -341,7 +269,7 @@ def highlight_visibility_filter(viewer_user_id: UUID, media_id: UUID):
 
 
 def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUID) -> bool:
-    """Check if viewer can read a highlight under s4 visibility rules.
+    """Check if viewer can read a highlight under visibility rules.
 
     True iff:
     - Viewer can read the anchor media (via can_read_media), AND
@@ -371,47 +299,6 @@ def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUI
         media_id=media_id,
     )
     result = session.execute(select(intersection_expr))
-    return bool(result.scalar())
-
-
-def is_library_admin(session: Session, viewer_user_id: UUID, library_id: UUID) -> bool:
-    """Check if viewer is an admin of a library.
-
-    True iff viewer_user_id is a member of library_id with role == 'admin'.
-    Returns False if library_id does not exist.
-    """
-    query = select(
-        exists().where(
-            Membership.library_id == library_id,
-            Membership.user_id == viewer_user_id,
-            Membership.role == "admin",
-        )
-    )
-    result = session.execute(query)
-    return bool(result.scalar())
-
-
-def is_admin_of_any_containing_library(
-    session: Session, viewer_user_id: UUID, media_id: UUID
-) -> bool:
-    """Check if viewer is admin of any library containing the media.
-
-    True iff there exists a library L such that:
-    - (L contains media_id via LibraryEntry.media_id) AND
-    - viewer_user_id has Membership in L with role == 'admin'.
-
-    Returns False if media_id does not exist.
-    """
-    query = select(
-        exists().where(
-            LibraryEntry.media_id == media_id,
-            LibraryEntry.media_id.is_not(None),
-            LibraryEntry.library_id == Membership.library_id,
-            Membership.user_id == viewer_user_id,
-            Membership.role == "admin",
-        )
-    )
-    result = session.execute(query)
     return bool(result.scalar())
 
 

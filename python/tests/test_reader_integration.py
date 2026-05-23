@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
+from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus, ReaderMediaState
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -324,6 +324,71 @@ class TestReaderState:
         assert resp.status_code == 200
         assert resp.json()["data"] is None
 
+    def test_get_reader_state_fails_loudly_for_invalid_stored_resume_payload(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, _ = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        with direct_db.session() as session:
+            session.add(
+                ReaderMediaState(
+                    user_id=user_id,
+                    media_id=media_id,
+                    locator={
+                        "source": "fragment-2",
+                        "text_offset": 84,
+                    },
+                )
+            )
+            session.commit()
+
+        resp = auth_client.get(
+            f"/media/{media_id}/reader-state",
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 500
+        assert resp.json()["error"]["code"] == "E_INTERNAL"
+
+    def test_get_reader_state_fails_loudly_for_persisted_kind_mismatch(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.pdf.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        with direct_db.session() as session:
+            session.add(
+                ReaderMediaState(
+                    user_id=user_id,
+                    media_id=media_id,
+                    locator=_build_reader_state_payload(MediaKind.web_article.value, fragment_ids),
+                )
+            )
+            session.commit()
+
+        resp = auth_client.get(
+            f"/media/{media_id}/reader-state",
+            headers=auth_headers(user_id),
+        )
+
+        assert resp.status_code == 500
+        assert resp.json()["error"]["code"] == "E_INTERNAL"
+
     @pytest.mark.parametrize(
         "media_kind",
         [
@@ -403,9 +468,67 @@ class TestReaderState:
         assert get_resp.status_code == 200
         assert get_resp.json()["data"] is None
 
+    def test_put_reader_state_rejects_missing_body_without_clearing(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        set_resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=payload,
+            headers=auth_headers(user_id),
+        )
+        missing_body_resp = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            headers=auth_headers(user_id),
+        )
+        get_resp = auth_client.get(
+            f"/media/{media_id}/reader-state",
+            headers=auth_headers(user_id),
+        )
+
+        assert set_resp.status_code == 200
+        assert missing_body_resp.status_code == 400
+        assert missing_body_resp.json()["error"]["code"] == "E_INVALID_REQUEST"
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"] == payload
+
     @pytest.mark.parametrize(
         ("media_kind", "payload", "label"),
         [
+            (
+                MediaKind.web_article.value,
+                {
+                    "source": "fragment-2",
+                    "text_offset": 84,
+                },
+                "removed flat payloads are rejected",
+            ),
+            (
+                MediaKind.web_article.value,
+                {
+                    "kind": "web",
+                    "target": {"fragment_id": "frag-1"},
+                    "locations": {
+                        "text_offset": 12,
+                        "progression": 0.1,
+                        "total_progression": 0.2,
+                        "position": 1,
+                    },
+                    "text": {"quote": "q", "quote_prefix": None, "quote_suffix": None},
+                    "unexpected_field": "unexpected",
+                },
+                "unknown fields are rejected",
+            ),
             (
                 MediaKind.web_article.value,
                 {

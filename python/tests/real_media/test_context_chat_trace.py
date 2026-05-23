@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from nexus.services.chat_runs import execute_chat_run
-from nexus.storage import get_storage_client
+from nexus.storage.client import get_storage_client
 from tests.factories import create_test_model
 from tests.helpers import auth_headers, create_test_user_id
 from tests.real_media.assertions import (

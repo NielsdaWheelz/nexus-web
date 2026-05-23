@@ -24,9 +24,10 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import QuickNotePanel from "@/components/QuickNotePanel";
 import { apiFetch, apiPostFormData } from "@/lib/api/client";
 import { extractUrls } from "@/lib/extractUrls";
-import { createNotePage, quickCaptureDailyNote } from "@/lib/notes/api";
+import { createNotePage } from "@/lib/notes/api";
 import {
   addMediaFromUrl,
   getFileUploadError,
@@ -34,6 +35,7 @@ import {
 } from "@/lib/media/ingestionClient";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { getFocusableElements } from "@/lib/ui/getFocusableElements";
+import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Button from "@/components/ui/Button";
@@ -76,13 +78,6 @@ type LibrarySummary = {
 
 const MAX_ACTIVE_UPLOADS = 2;
 
-function eventTargetAcceptsText(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-  return Boolean(target.closest("input, textarea, select, [contenteditable]"));
-}
-
 function dragHasSupportedData(event: DragEvent): boolean {
   const types = Array.from(event.dataTransfer?.types ?? []);
   return types.includes("Files") || types.includes("text/uri-list");
@@ -105,7 +100,6 @@ export default function AddContentTray() {
   const [importResult, setImportResult] = useState<PodcastOpmlImportResult | null>(null);
   const [noteBusy, setNoteBusy] = useState(false);
   const [noteFeedback, setNoteFeedback] = useState<FeedbackContent | null>(null);
-  const [quickNoteText, setQuickNoteText] = useState("");
   const nextIdRef = useRef(1);
   const activeIdsRef = useRef<Set<number>>(new Set());
   const dragDepthRef = useRef(0);
@@ -316,7 +310,6 @@ export default function AddContentTray() {
       }
       if (requestedMode === "quick-note") {
         setNoteFeedback(null);
-        setQuickNoteText("");
       }
       setOpen(true);
     };
@@ -389,7 +382,7 @@ export default function AddContentTray() {
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
-      if (eventTargetAcceptsText(event.target)) {
+      if (isEditableTarget(event.target)) {
         return;
       }
       const urls = extractUrls(event.clipboardData?.getData("text/plain") ?? "");
@@ -492,31 +485,6 @@ export default function AddContentTray() {
     setOpen(false);
     requestOpenInAppPane("/daily", { titleHint: "Today" });
   }, []);
-
-  const quickCapture = useCallback(async () => {
-    const bodyMarkdown = quickNoteText.trim();
-    if (!bodyMarkdown) {
-      setNoteFeedback({
-        severity: "error",
-        title: "Write a quick note first.",
-      });
-      return;
-    }
-    setNoteBusy(true);
-    setNoteFeedback(null);
-    try {
-      await quickCaptureDailyNote({ bodyMarkdown });
-      setQuickNoteText("");
-      setNoteFeedback({
-        severity: "success",
-        title: "Added to today.",
-      });
-    } catch (error: unknown) {
-      setNoteFeedback(toFeedback(error, { fallback: "Quick note could not be added." }));
-    } finally {
-      setNoteBusy(false);
-    }
-  }, [quickNoteText]);
 
   const modeDescription =
     mode === "opml"
@@ -765,43 +733,7 @@ export default function AddContentTray() {
               ) : null}
             </>
           ) : mode === "quick-note" ? (
-            <>
-              <form
-                className={styles.quickNoteForm}
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void quickCapture();
-                }}
-              >
-                <label htmlFor="quick-note-input">Quick note to today</label>
-                <Textarea
-                  id="quick-note-input"
-                  size="sm"
-                  className={styles.quickNoteTextarea}
-                  value={quickNoteText}
-                  onChange={(event) => {
-                    setQuickNoteText(event.currentTarget.value);
-                    setNoteFeedback(null);
-                  }}
-                  rows={5}
-                  placeholder="Capture a thought..."
-                />
-                <div className={styles.quickNoteActions}>
-                  <Button variant="secondary" size="md" onClick={openToday}>
-                    Open today
-                  </Button>
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    size="md"
-                    disabled={noteBusy || !quickNoteText.trim()}
-                  >
-                    {noteBusy ? "Adding..." : "Add note"}
-                  </Button>
-                </div>
-              </form>
-              {noteFeedback ? <FeedbackNotice feedback={noteFeedback} /> : null}
-            </>
+            <QuickNotePanel onClose={() => setOpen(false)} />
           ) : (
             <>
               <div className={styles.opmlFieldset}>

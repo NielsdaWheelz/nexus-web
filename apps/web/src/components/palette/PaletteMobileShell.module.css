@@ -29,11 +29,6 @@
   padding: var(--space-2) var(--space-2) 0;
 }
 
-.closeButton {
-  width: var(--size-xl);
-  height: var(--size-xl);
-}
-
 @keyframes paletteSlideIn {
   from {
     transform: translateY(16px);

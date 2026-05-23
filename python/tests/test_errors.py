@@ -88,7 +88,6 @@ class TestErrorCodeToStatus:
             (ApiErrorCode.E_FORBIDDEN, 403),
             (ApiErrorCode.E_INTERNAL_ONLY, 403),
             (ApiErrorCode.E_DEFAULT_LIBRARY_FORBIDDEN, 403),
-            (ApiErrorCode.E_LAST_ADMIN_FORBIDDEN, 403),
             (ApiErrorCode.E_NOT_FOUND, 404),
             (ApiErrorCode.E_LIBRARY_NOT_FOUND, 404),
             (ApiErrorCode.E_MEDIA_NOT_FOUND, 404),
@@ -96,7 +95,6 @@ class TestErrorCodeToStatus:
             (ApiErrorCode.E_NAME_INVALID, 400),
             (ApiErrorCode.E_AUTH_UNAVAILABLE, 503),
             (ApiErrorCode.E_INTERNAL, 500),
-            # S2 error codes
             (ApiErrorCode.E_INGEST_FAILED, 502),
             (ApiErrorCode.E_INGEST_TIMEOUT, 504),
             (ApiErrorCode.E_SANITIZATION_FAILED, 500),
@@ -104,7 +102,6 @@ class TestErrorCodeToStatus:
             (ApiErrorCode.E_HIGHLIGHT_CONFLICT, 409),
             (ApiErrorCode.E_NOTE_CONFLICT, 409),
             (ApiErrorCode.E_MEDIA_NOT_READY, 409),
-            # S4 error codes
             (ApiErrorCode.E_USER_NOT_FOUND, 404),
             (ApiErrorCode.E_INVITE_NOT_FOUND, 404),
             (ApiErrorCode.E_INVITE_ALREADY_EXISTS, 409),
@@ -114,12 +111,10 @@ class TestErrorCodeToStatus:
             (ApiErrorCode.E_OWNER_EXIT_FORBIDDEN, 403),
             (ApiErrorCode.E_OWNERSHIP_TRANSFER_INVALID, 409),
             (ApiErrorCode.E_CONVERSATION_SHARE_DEFAULT_LIBRARY_FORBIDDEN, 403),
-            # S5 error codes
             (ApiErrorCode.E_RETRY_INVALID_STATE, 409),
             (ApiErrorCode.E_RETRY_NOT_ALLOWED, 409),
             (ApiErrorCode.E_CHAPTER_NOT_FOUND, 404),
             (ApiErrorCode.E_ARCHIVE_UNSAFE, 400),
-            # S7 transcription error codes
             (ApiErrorCode.E_TRANSCRIPTION_FAILED, 502),
             (ApiErrorCode.E_TRANSCRIPTION_TIMEOUT, 504),
             (ApiErrorCode.E_DIARIZATION_FAILED, 502),

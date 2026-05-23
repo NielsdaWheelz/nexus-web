@@ -214,7 +214,6 @@ describe("CommandPalette", () => {
 
     expect(await screen.findByRole("option", { name: /Searchable note/ })).toBeInTheDocument();
     expect(screen.queryByRole("group")).not.toBeInTheDocument();
-    expect(screen.queryByText("Top result")).not.toBeInTheDocument();
   });
 
   it("represents secondary pane operations as commands", async () => {

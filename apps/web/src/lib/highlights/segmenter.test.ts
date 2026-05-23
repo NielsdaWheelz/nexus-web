@@ -1,7 +1,7 @@
 /**
  * Tests for the highlight overlap segmenter.
  *
- * Required test cases per PR-07 spec:
+ * Required highlight segmentation cases:
  * 1. Single highlight
  * 2. Non-overlapping highlights
  * 3. Partially overlapping highlights
@@ -12,8 +12,6 @@
  * 8. Adjacent segments merged
  * 9. Boundary cases
  * 10. Stress test (seeded)
- *
- * @see docs/v1/s2/s2_prs/s2_pr07.md
  */
 
 import { describe, it, expect } from "vitest";

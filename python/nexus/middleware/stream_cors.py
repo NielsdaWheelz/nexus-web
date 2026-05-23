@@ -1,6 +1,6 @@
 """Pure ASGI CORS middleware for browser-callable stream endpoints only.
 
-Per PR-08 spec §3:
+Behavior:
 - Do NOT use starlette's CORSMiddleware (not path-scoped).
 - Do NOT use BaseHTTPMiddleware (buffers StreamingResponse, defeats incremental delivery).
 - This is a pure ASGI middleware that injects CORS headers only on stream paths.

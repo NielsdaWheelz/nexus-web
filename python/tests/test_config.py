@@ -1,4 +1,4 @@
-"""Tests for application configuration (S5 PR-02: archive safety settings)."""
+"""Tests for application configuration."""
 
 import pytest
 from pydantic import ValidationError
@@ -49,10 +49,8 @@ def _make_deploy_settings(**overrides) -> Settings:
     return _make_settings(**values)
 
 
-class TestEpubArchiveSafetyConfigDefaultsAndFloorValidation:
-    """test_epub_archive_safety_config_defaults_and_floor_validation"""
-
-    def test_defaults_match_l2_baseline(self):
+class TestEpubArchiveSafetyConfigGuardrails:
+    def test_defaults_match_archive_safety_ceilings(self):
         s = _make_settings()
         assert s.max_epub_archive_entries == 10_000
         assert s.max_epub_archive_total_uncompressed_bytes == 536_870_912

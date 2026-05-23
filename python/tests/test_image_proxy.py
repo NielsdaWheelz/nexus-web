@@ -18,10 +18,10 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.image_proxy import (
     ImageCache,
     check_hostname_denylist,
-    clear_cache,
     compute_etag,
     etags_match,
     fetch_image,
+    get_cache,
     is_private_ip,
     normalize_image_url,
     sniff_magic_bytes,
@@ -589,9 +589,9 @@ class TestFetchImageIntegration:
     @pytest.fixture(autouse=True)
     def clear_image_cache(self):
         """Clear the global cache before each test."""
-        clear_cache()
+        get_cache().clear()
         yield
-        clear_cache()
+        get_cache().clear()
 
     @respx.mock
     def test_fetch_valid_png(self, monkeypatch):
@@ -881,7 +881,7 @@ class TestImageProxyEndpoint:
 
     def test_ssrf_blocked_returns_403(self, authenticated_client, test_user_id):
         """Test that SSRF attempts return 403."""
-        clear_cache()
+        get_cache().clear()
 
         response = authenticated_client.get(
             "/media/image",
@@ -915,13 +915,13 @@ class TestImageProxyEndpoint:
 
 
 # =============================================================================
-# E2E Integration Tests for Image Proxy (PR-11)
+# E2E Integration Tests for Image Proxy
 # =============================================================================
 
 
 @pytest.mark.integration
 class TestImageProxyE2E:
-    """E2E integration tests for image proxy per PR-11 spec section 7.
+    """E2E integration tests for image proxy caching and response headers.
 
     Tests verify:
     1. Request proxied image returns correct headers
@@ -936,15 +936,15 @@ class TestImageProxyE2E:
     @pytest.fixture(autouse=True)
     def clear_image_cache_e2e(self):
         """Clear the global cache before each test."""
-        clear_cache()
+        get_cache().clear()
         yield
-        clear_cache()
+        get_cache().clear()
 
     @respx.mock
     def test_e2e_proxied_image_has_required_headers(
         self, authenticated_client, test_user_id, monkeypatch
     ):
-        """PR-11 Section 7.2: Verify Content-Type, ETag, and Cache-Control headers."""
+        """Verify Content-Type, ETag, and Cache-Control headers."""
 
         def fake_getaddrinfo(host, port, *args, **kwargs):
             return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 80))]
@@ -979,7 +979,7 @@ class TestImageProxyE2E:
     def test_e2e_conditional_request_returns_304(
         self, authenticated_client, test_user_id, monkeypatch
     ):
-        """PR-11 Section 7.3: Re-request with If-None-Match returns 304 Not Modified."""
+        """Verify re-request with If-None-Match returns 304 Not Modified."""
 
         def fake_getaddrinfo(host, port, *args, **kwargs):
             return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 80))]

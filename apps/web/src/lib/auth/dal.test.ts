@@ -223,18 +223,4 @@ describe("verifySession", () => {
     );
   });
 
-  it("exposes getCurrentUser as the same verified viewer", async () => {
-    mockCookies.mockResolvedValue(makeCookieStore([sessionCookie()]));
-    mockGetClaims.mockResolvedValue({
-      data: { claims: { sub: "user-1", email: "viewer@example.com" } },
-      error: null,
-    });
-
-    const { getCurrentUser } = await import("./dal");
-
-    await expect(getCurrentUser()).resolves.toEqual({
-      userId: "user-1",
-      email: "viewer@example.com",
-    });
-  });
 });

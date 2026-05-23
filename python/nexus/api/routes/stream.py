@@ -12,8 +12,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import StreamingResponse
 
-from nexus.api.deps import get_session_factory
 from nexus.auth.stream_token import verify_stream_token
+from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import set_stream_jti
 from nexus.services import chat_runs as chat_runs_service

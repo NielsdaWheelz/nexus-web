@@ -10,19 +10,8 @@ import {
 } from "@/components/feedback/Feedback";
 import { apiFetch } from "@/lib/api/client";
 import OracleAlephGrid from "./OracleAlephGrid";
+import type { OracleCreateResponse } from "./types";
 import styles from "./oracle.module.css";
-
-interface OracleCreateResponse {
-  reading_id: string;
-  folio_number: number;
-  status: string;
-  stream: {
-    token: string;
-    stream_base_url: string;
-    event_url: string;
-    expires_at: string;
-  };
-}
 
 const QUESTION_MAX = 280;
 

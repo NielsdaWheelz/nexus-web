@@ -3,7 +3,7 @@
 Tests the parsing of canonical_text into blocks and the context window
 algorithm that uses those blocks for LLM prompts.
 
-Per S3 spec:
+Behavior under test:
 - Blocks are contiguous and cover entire canonical_text
 - Delimiter (\n\n) is included at the END of the preceding block
 - Context window always contains the selection
@@ -13,20 +13,30 @@ Per S3 spec:
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from nexus.db.models import FragmentBlock
 from nexus.services.context_window import (
     MAX_CONTEXT_CHARS,
     get_context_window,
 )
 from nexus.services.fragment_blocks import (
-    get_fragment_blocks,
     insert_fragment_blocks,
     parse_fragment_blocks,
 )
 
 pytestmark = pytest.mark.integration
+
+
+def _fragment_blocks(db: Session, fragment_id) -> list[FragmentBlock]:
+    return list(
+        db.scalars(
+            select(FragmentBlock)
+            .where(FragmentBlock.fragment_id == fragment_id)
+            .order_by(FragmentBlock.block_idx)
+        ).all()
+    )
 
 
 class TestParseFragmentBlocks:
@@ -179,7 +189,7 @@ class TestInsertFragmentBlocks:
         db_session.flush()
 
         # Verify in database
-        blocks = get_fragment_blocks(db_session, fragment_id)
+        blocks = _fragment_blocks(db_session, fragment_id)
         assert len(blocks) == 2
         assert blocks[0].block_idx == 0
         assert blocks[1].block_idx == 1
@@ -390,7 +400,7 @@ class TestContextWindowBlockSelection:
         fragment_id = self._create_fragment_with_blocks(db_session, text)
 
         # Verify we have blocks with an empty one
-        blocks = get_fragment_blocks(db_session, fragment_id)
+        blocks = _fragment_blocks(db_session, fragment_id)
         assert len(blocks) == 4
         assert blocks[2].is_empty is True  # The "\n\n" after BlockB
 

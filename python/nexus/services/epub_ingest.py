@@ -2,7 +2,7 @@
 
 Deterministic extraction of chapter fragments, TOC snapshots, title, and
 internal assets from EPUB archives.  No route bindings; invoked by task
-wrappers (PR-02) and orchestrated by lifecycle endpoints (PR-03).
+wrappers and orchestrated by lifecycle endpoints.
 
 Reuses existing sanitization/canonicalization/fragment-block primitives.
 """
@@ -40,8 +40,8 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
-from nexus.storage import build_epub_asset_storage_path
 from nexus.storage.client import StorageError
+from nexus.storage.paths import build_epub_asset_storage_path
 
 if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
@@ -76,7 +76,7 @@ class EpubExtractionError:
 
 
 # ---------------------------------------------------------------------------
-# Internal spec types
+# Internal parsing types
 # ---------------------------------------------------------------------------
 
 _READABLE_MEDIA_TYPES = frozenset(
@@ -400,7 +400,7 @@ def extract_epub_artifacts(
 ) -> EpubExtractionResult | EpubExtractionError:
     """Deterministic EPUB extraction.  Single-transaction artifact write.
 
-    Does NOT mutate media.processing_status (owned by PR-03).
+    Does NOT mutate media.processing_status; callers own lifecycle state changes.
     """
     if now is None:
         now = datetime.now(UTC)

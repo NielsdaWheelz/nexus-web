@@ -7,12 +7,10 @@ import pytest
 from botocore.exceptions import ClientError
 
 from nexus.storage.client import (
-    FakeStorageClient,
     ObjectMetadata,
     SignedUpload,
     StorageClient,
     StorageError,
-    compute_sha256,
     get_storage_client,
 )
 from nexus.storage.paths import (
@@ -20,8 +18,8 @@ from nexus.storage.paths import (
     build_storage_path,
     build_upload_staging_storage_path,
     get_file_extension,
-    parse_storage_path,
 )
+from tests.support.storage import FakeStorageClient
 
 pytestmark = pytest.mark.unit
 
@@ -114,34 +112,13 @@ class TestPathBuilding:
         with pytest.raises(ValueError, match="not a file-backed media type"):
             get_file_extension("web_article")
 
-    def test_build_storage_path_production(self, monkeypatch):
-        monkeypatch.delenv("STORAGE_TEST_PREFIX", raising=False)
-
+    def test_build_storage_path(self):
         media_id = uuid4()
         path = build_storage_path(media_id, "pdf")
 
         assert path == f"media/{media_id}/original.pdf"
-        assert not path.startswith("test_runs/")
 
-    def test_build_storage_path_test_prefix(self, monkeypatch):
-        monkeypatch.setenv("STORAGE_TEST_PREFIX", "test_runs/test-run-123/")
-
-        media_id = uuid4()
-        path = build_storage_path(media_id, "epub")
-
-        assert path == f"test_runs/test-run-123/media/{media_id}/original.epub"
-
-    def test_build_storage_path_test_prefix_no_trailing_slash(self, monkeypatch):
-        monkeypatch.setenv("STORAGE_TEST_PREFIX", "test_runs/test-run-456")
-
-        media_id = uuid4()
-        path = build_storage_path(media_id, "pdf")
-
-        assert path == f"test_runs/test-run-456/media/{media_id}/original.pdf"
-
-    def test_build_upload_staging_storage_path(self, monkeypatch):
-        monkeypatch.delenv("STORAGE_TEST_PREFIX", raising=False)
-
+    def test_build_upload_staging_storage_path(self):
         media_id = uuid4()
 
         assert (
@@ -149,42 +126,12 @@ class TestPathBuilding:
             == f"uploads/media/{media_id}/original.pdf"
         )
 
-    @pytest.mark.parametrize(
-        "prefix",
-        [
-            "/test_runs/test-run",
-            "test_runs",
-            "test_runs/",
-            "other/test-run",
-            "test_runs/test-run/extra",
-            "test_runs/../test-run",
-            "test_runs/test run",
-        ],
-    )
-    def test_build_storage_path_rejects_invalid_test_prefix(self, monkeypatch, prefix: str):
-        monkeypatch.setenv("STORAGE_TEST_PREFIX", prefix)
-
-        with pytest.raises(ValueError, match="STORAGE_TEST_PREFIX"):
-            build_storage_path(uuid4(), "pdf")
-
-    def test_build_epub_asset_storage_path_production(self, monkeypatch):
-        monkeypatch.delenv("STORAGE_TEST_PREFIX", raising=False)
-
+    def test_build_epub_asset_storage_path(self):
         media_id = uuid4()
 
         assert (
             build_epub_asset_storage_path(media_id, "OEBPS/images/cover.png")
             == f"media/{media_id}/assets/OEBPS/images/cover.png"
-        )
-
-    def test_build_epub_asset_storage_path_test_prefix(self, monkeypatch):
-        monkeypatch.setenv("STORAGE_TEST_PREFIX", "test_runs/test-run-789")
-
-        media_id = uuid4()
-
-        assert (
-            build_epub_asset_storage_path(media_id, "OEBPS/images/cover.png")
-            == f"test_runs/test-run-789/media/{media_id}/assets/OEBPS/images/cover.png"
         )
 
     @pytest.mark.parametrize(
@@ -194,22 +141,6 @@ class TestPathBuilding:
     def test_build_epub_asset_storage_path_rejects_unsafe_asset_key(self, asset_key: str):
         with pytest.raises(ValueError, match="EPUB asset key"):
             build_epub_asset_storage_path(uuid4(), asset_key)
-
-    def test_parse_storage_path_production(self):
-        media_id = str(uuid4())
-
-        parsed_id, ext = parse_storage_path(f"media/{media_id}/original.pdf")
-
-        assert parsed_id == media_id
-        assert ext == "pdf"
-
-    def test_parse_storage_path_test_prefix(self):
-        media_id = str(uuid4())
-
-        parsed_id, ext = parse_storage_path(f"test_runs/run-123/media/{media_id}/original.epub")
-
-        assert parsed_id == media_id
-        assert ext == "epub"
 
 
 class TestFakeStorageClient:
@@ -528,22 +459,3 @@ class TestGetStorageClient:
         assert calls[0][1]["aws_access_key_id"] == "access"
         assert calls[0][1]["aws_secret_access_key"] == "secret"
         assert calls[0][1]["region_name"] == "auto"
-
-
-class TestComputeSha256:
-    def test_compute_sha256_bytes(self):
-        result = compute_sha256(b"hello")
-        assert result == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-
-    def test_compute_sha256_iterator(self):
-        def chunks():
-            yield b"hel"
-            yield b"lo"
-
-        result = compute_sha256(chunks())
-
-        assert result == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-
-    def test_compute_sha256_empty(self):
-        result = compute_sha256(b"")
-        assert result == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"

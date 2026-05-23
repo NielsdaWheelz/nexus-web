@@ -4,7 +4,7 @@ Provides atomic sequence number assignment for messages within a conversation
 using PostgreSQL row-level locking (FOR UPDATE) to ensure strict ordering
 without race conditions.
 
-Per S3 spec:
+Behavior:
 - Each conversation has a `next_seq` counter (starts at 1)
 - Seq assignment locks the conversation row, reads next_seq, increments it
 - The returned seq is the one to use for the new message

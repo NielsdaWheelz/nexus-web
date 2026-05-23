@@ -14,11 +14,11 @@ import pytest
 from sqlalchemy import text
 
 from nexus.config import get_settings
-from nexus.storage import (
+from nexus.storage.client import get_storage_client
+from nexus.storage.paths import (
     build_storage_path,
     build_upload_staging_storage_path,
     get_file_extension,
-    get_storage_client,
 )
 from tests.real_media.assertions import assert_fragment_content_contains
 from tests.utils.db import DirectSessionManager
@@ -316,10 +316,10 @@ def create_nasa_podcast_episode(
     )
     assert transcript_request.status_code in {200, 202}, transcript_request.text
 
-    from nexus.tasks.podcast_transcribe_episode import run_podcast_transcribe_now
+    from nexus.services.podcasts.transcripts import run_podcast_transcription_now
 
     with direct_db.session() as session:
-        transcription_result = run_podcast_transcribe_now(
+        transcription_result = run_podcast_transcription_now(
             session,
             media_id=media_id,
             requested_by_user_id=user_id,

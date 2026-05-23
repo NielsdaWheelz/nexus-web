@@ -35,6 +35,7 @@ from nexus.schemas.retrieval import (
 )
 from nexus.schemas.search import SearchResultOut
 from nexus.services.context_rendering import render_context_blocks
+from nexus.services.contexts import load_artifact_part_context_ref
 from nexus.services.contributor_credits import normalize_contributor_role
 from nexus.services.contributors import get_contributor_by_handle
 from nexus.services.search import hash_query, parse_scope, search
@@ -1054,7 +1055,23 @@ def _render_single_retrieved_context(
     if context_type == "highlight":
         if not can_read_highlight(db, viewer_id, context_id):
             return None
-        return render_context_blocks(db, [MessageContextRef(type="highlight", id=context_id)])[0]
+        source_version = citation.source_version
+        locator = retrieval_locator_json(citation.locator)
+        if not isinstance(source_version, str) or not source_version.strip() or locator is None:
+            return None
+        return render_context_blocks(
+            db,
+            [
+                MessageContextRef.model_validate(
+                    {
+                        "type": "highlight",
+                        "id": context_id,
+                        "source_version": source_version,
+                        "locator": locator,
+                    }
+                )
+            ],
+        )[0]
 
     if context_type == "fragment":
         return _render_fragment_context(db, viewer_id, context_id, citation)
@@ -1097,22 +1114,16 @@ def _render_single_retrieved_context(
         return render_context_blocks(db, [MessageContextRef(type="artifact", id=context_id)])[0]
 
     if context_type == "artifact_part":
-        row = db.execute(
-            text(
-                """
-                SELECT ma.conversation_id
-                FROM message_artifact_parts part
-                JOIN message_artifacts ma ON ma.id = part.artifact_id
-                WHERE part.id = :artifact_part_id
-                """
-            ),
-            {"artifact_part_id": context_id},
-        ).fetchone()
-        if row is None or not can_read_conversation(db, viewer_id, row[0]):
+        try:
+            context = load_artifact_part_context_ref(db, context_id)
+        except (ApiError, NotFoundError, ValueError):
             return None
-        return render_context_blocks(db, [MessageContextRef(type="artifact_part", id=context_id)])[
-            0
-        ]
+        provenance = context.artifact_part_provenance
+        if provenance is None or provenance.conversation_id is None:
+            return None
+        if not can_read_conversation(db, viewer_id, provenance.conversation_id):
+            return None
+        return render_context_blocks(db, [context])[0]
 
     return None
 

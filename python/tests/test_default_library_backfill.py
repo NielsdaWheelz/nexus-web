@@ -1,10 +1,10 @@
-"""Tests for S4 PR-05: default library backfill jobs and requeue endpoint.
+"""Tests for default library backfill jobs and operator requeue behavior.
 
 Tests cover:
 - Backfill job state machine (pending -> running -> completed/failed)
 - Claim idempotency and status guards
 - Retry logic with deterministic delays
-- Requeue endpoint semantics (reset, idempotent running, 404 missing)
+- Requeue semantics (reset, idempotent running, 404 missing)
 - Materialize closure for source
 - Guardrail health check
 - Validate backfill job tuple integrity
@@ -34,7 +34,8 @@ from nexus.services.default_library_closure import (
     validate_backfill_job_tuple,
 )
 from tests.factories import add_media_to_library
-from tests.helpers import create_test_user_id
+from tests.helpers import auth_headers, create_test_user_id
+from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
 
@@ -406,6 +407,39 @@ class TestValidateBackfillJobTuple:
 class TestRequeueBackfillJob:
     """Tests for requeue_backfill_job service function."""
 
+    def test_requeue_failed_enqueues_after_reset(self, db_session: Session, monkeypatch):
+        """Failed job reset dispatches exactly one worker enqueue."""
+        user_id = create_test_user_id()
+        dl_id = _create_user(db_session, user_id)
+        src_id = _create_non_default_library(db_session, user_id)
+        _insert_backfill_job(
+            db_session,
+            dl_id,
+            src_id,
+            user_id,
+            status="failed",
+            attempts=3,
+            error_code="some_err",
+        )
+        dispatched: list[tuple[UUID, UUID, UUID]] = []
+
+        def fake_enqueue(default_library_id: UUID, source_library_id: UUID, owner_id: UUID) -> bool:
+            dispatched.append((default_library_id, source_library_id, owner_id))
+            return True
+
+        monkeypatch.setattr(
+            "nexus.services.default_library_closure.enqueue_backfill_task",
+            fake_enqueue,
+        )
+
+        data = requeue_backfill_job(db_session, dl_id, src_id, user_id)
+
+        assert data.status == "pending"
+        assert data.attempts == 0
+        assert data.enqueue_dispatched is True
+        assert dispatched == [(dl_id, src_id, user_id)]
+        assert _get_job_status(db_session, dl_id, src_id, user_id) == "pending"
+
     def test_requeue_failed_resets_to_pending(self, db_session: Session):
         """Failed job is reset to pending with zeroed attempts."""
         user_id = create_test_user_id()
@@ -422,9 +456,9 @@ class TestRequeueBackfillJob:
         )
 
         data = requeue_backfill_job(db_session, dl_id, src_id, user_id)
-        assert data["status"] == "pending"
-        assert data["attempts"] == 0
-        assert data["idempotent"] is False
+        assert data.status == "pending"
+        assert data.attempts == 0
+        assert data.idempotent is False
         assert _get_job_status(db_session, dl_id, src_id, user_id) == "pending"
 
     def test_requeue_completed_resets_to_pending(self, db_session: Session):
@@ -435,8 +469,8 @@ class TestRequeueBackfillJob:
         _insert_backfill_job(db_session, dl_id, src_id, user_id, status="completed")
 
         data = requeue_backfill_job(db_session, dl_id, src_id, user_id)
-        assert data["status"] == "pending"
-        assert data["idempotent"] is False
+        assert data.status == "pending"
+        assert data.idempotent is False
 
     def test_requeue_pending_is_idempotent_reset(self, db_session: Session):
         """Pending job is reset (attempts zeroed) but still not idempotent flag."""
@@ -446,25 +480,98 @@ class TestRequeueBackfillJob:
         _insert_backfill_job(db_session, dl_id, src_id, user_id, status="pending")
 
         data = requeue_backfill_job(db_session, dl_id, src_id, user_id)
-        assert data["status"] == "pending"
-        assert data["idempotent"] is False
+        assert data.status == "pending"
+        assert data.idempotent is False
 
-    def test_requeue_running_is_idempotent_noop(self, db_session: Session):
+    def test_requeue_running_is_idempotent_noop(self, db_session: Session, monkeypatch):
         """Running job returns idempotent=True, no state change."""
         user_id = create_test_user_id()
         dl_id = _create_user(db_session, user_id)
         src_id = _create_non_default_library(db_session, user_id)
         _insert_backfill_job(db_session, dl_id, src_id, user_id, status="running")
 
+        def reject_enqueue(
+            default_library_id: UUID, source_library_id: UUID, owner_id: UUID
+        ) -> bool:
+            pytest.fail(
+                "running backfill job requeue should not dispatch a duplicate worker "
+                f"for {(default_library_id, source_library_id, owner_id)}"
+            )
+
+        monkeypatch.setattr(
+            "nexus.services.default_library_closure.enqueue_backfill_task",
+            reject_enqueue,
+        )
+
         data = requeue_backfill_job(db_session, dl_id, src_id, user_id)
-        assert data["idempotent"] is True
-        assert data["enqueue_dispatched"] is False
-        assert data["status"] == "running"
+        assert data.idempotent is True
+        assert data.enqueue_dispatched is False
+        assert data.status == "running"
 
     def test_requeue_missing_raises_not_found(self, db_session: Session):
         """Missing job raises NotFoundError."""
         with pytest.raises(NotFoundError):
             requeue_backfill_job(db_session, uuid4(), uuid4(), uuid4())
+
+
+class TestRequeueBackfillJobEndpoint:
+    """Tests for the internal operator requeue boundary."""
+
+    def test_endpoint_requeues_failed_job(self, auth_client, direct_db: DirectSessionManager):
+        """Internal route delegates the full operator requeue operation to the service."""
+        user_id = create_test_user_id()
+
+        with direct_db.session() as db:
+            dl_id = _create_user(db, user_id)
+            src_id = _create_non_default_library(db, user_id)
+            _insert_backfill_job(
+                db,
+                dl_id,
+                src_id,
+                user_id,
+                status="failed",
+                attempts=3,
+                error_code="some_err",
+            )
+            db.commit()
+
+        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("libraries", "id", dl_id)
+        direct_db.register_cleanup("libraries", "id", src_id)
+        direct_db.register_cleanup("memberships", "user_id", user_id)
+        direct_db.register_cleanup("default_library_backfill_jobs", "default_library_id", dl_id)
+
+        response = auth_client.post(
+            "/internal/libraries/backfill-jobs/requeue",
+            headers=auth_headers(user_id),
+            json={
+                "default_library_id": str(dl_id),
+                "source_library_id": str(src_id),
+                "user_id": str(user_id),
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["status"] == "pending"
+        assert data["attempts"] == 0
+        assert data["idempotent"] is False
+        assert data["enqueue_dispatched"] is False
+
+        with direct_db.session() as db:
+            row = db.execute(
+                text("""
+                    SELECT status, attempts, last_error_code, finished_at
+                    FROM default_library_backfill_jobs
+                    WHERE default_library_id = :dl
+                      AND source_library_id = :src
+                      AND user_id = :uid
+                """),
+                {"dl": dl_id, "src": src_id, "uid": user_id},
+            ).fetchone()
+
+        assert row is not None
+        assert tuple(row) == ("pending", 0, None, None)
 
 
 # =============================================================================

@@ -1,17 +1,6 @@
 const AUTH_ALLOWED_REDIRECT_ORIGINS = "AUTH_ALLOWED_REDIRECT_ORIGINS";
 const AUTH_TRUSTED_PROXY_ORIGINS = "AUTH_TRUSTED_PROXY_ORIGINS";
-const NEXUS_ENV = "NEXUS_ENV";
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
-function isTestEnvironment(): boolean {
-  const nodeEnv = process.env.NODE_ENV;
-  if (nodeEnv === "test") {
-    return true;
-  }
-
-  const nexusEnv = process.env[NEXUS_ENV];
-  return nexusEnv === "test";
-}
 
 function getFirstHeaderValue(value: string | null): string | null {
   if (!value) {
@@ -86,7 +75,7 @@ export function resolveCallbackRedirectOrigin(
   const requestOrigin = requestUrl.origin;
 
   if (allowlistedOrigins.length === 0) {
-    if (isLocalOrigin(requestOrigin) || isTestEnvironment()) {
+    if (isLocalOrigin(requestOrigin)) {
       return requestOrigin;
     }
 

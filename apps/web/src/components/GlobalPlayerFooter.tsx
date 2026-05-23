@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { formatClock } from "@/lib/formatClock";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { isPositiveFinite } from "@/lib/validation";
 import {
   PLAYER_SKIP_BACK_SECONDS,
   PLAYER_SKIP_FORWARD_SECONDS,
@@ -15,9 +17,8 @@ import {
   areAudioEffectsActive,
   type AudioEffectsVolumeBoost,
 } from "@/lib/player/audioEffects";
-import { type PlaybackQueueItem } from "@/lib/player/playbackQueueClient";
 import Image from "next/image";
-import SortableList from "@/components/sortable/SortableList";
+import GlobalPlayerQueuePanel from "@/components/GlobalPlayerQueuePanel";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import styles from "./GlobalPlayerFooter.module.css";
@@ -28,22 +29,6 @@ const VOLUME_BOOST_OPTIONS: Array<{ value: AudioEffectsVolumeBoost; label: strin
   { value: "medium", label: "Medium (+6dB)" },
   { value: "high", label: "High (+9dB)" },
 ];
-
-function formatClock(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) {
-    return "00:00";
-  }
-  const rounded = Math.floor(seconds);
-  const hours = Math.floor(rounded / 3600);
-  const minutes = Math.floor((rounded % 3600) / 60);
-  const remaining = rounded % 60;
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, "0")}:${remaining
-      .toString()
-      .padStart(2, "0")}`;
-  }
-  return `${minutes.toString().padStart(2, "0")}:${remaining.toString().padStart(2, "0")}`;
-}
 
 function EffectsPanel({
   audioEffects,
@@ -112,7 +97,7 @@ function EffectsPanel({
         <span>Mono audio</span>
       </label>
 
-      <p className={styles.effectsMeta}>Time saved: {Number.isFinite(silenceTimeSavedSeconds) && silenceTimeSavedSeconds > 0 ? silenceTimeSavedSeconds.toFixed(1) : "0.0"}s</p>
+      <p className={styles.effectsMeta}>Time saved: {isPositiveFinite(silenceTimeSavedSeconds) ? silenceTimeSavedSeconds.toFixed(1) : "0.0"}s</p>
       {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
     </section>
   );
@@ -151,15 +136,9 @@ export default function GlobalPlayerFooter() {
     skipBySeconds,
     setPlaybackRate,
     setVolume,
-    queueItems,
     refreshQueue,
-    removeFromQueue,
-    reorderQueue,
-    clearQueue,
-    playQueueItem,
     playNextInQueue,
     playPreviousInQueue,
-    currentQueueItemId,
     upcomingQueueCount,
     hasNextInQueue,
   } = useGlobalPlayer();
@@ -209,7 +188,7 @@ export default function GlobalPlayerFooter() {
     return null;
   }
 
-  const durationSafe = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 0;
+  const durationSafe = isPositiveFinite(durationSeconds) ? durationSeconds : 0;
   const currentSafe = Math.max(0, currentTimeSeconds);
   const bufferedSafe = Math.max(0, bufferedSeconds);
   const progressPercent = durationSafe > 0 ? Math.min(100, (currentSafe / durationSafe) * 100) : 0;
@@ -230,15 +209,6 @@ export default function GlobalPlayerFooter() {
   };
 
   const hasActiveAudioEffects = areAudioEffectsActive(audioEffects);
-
-  const handleQueueItemPlay = (item: (typeof queueItems)[number]) => {
-    playQueueItem(item);
-    setQueueOpen(false);
-  };
-
-  const handleQueueReorder = (nextItems: PlaybackQueueItem[]) => {
-    void reorderQueue(nextItems.map((item) => item.item_id));
-  };
 
   const closeMobileExpanded = () => {
     setMobileExpanded(false);
@@ -761,89 +731,7 @@ export default function GlobalPlayerFooter() {
         aria-label="Global podcast player"
       />
 
-      {queueOpen && (
-        <div className={styles.queueOverlay}>
-          <section className={styles.queuePanel} role="dialog" aria-label="Playback queue panel">
-            <header className={styles.queueHeader}>
-              <h2 className={styles.queueTitle}>Playback queue</h2>
-              <Button
-                variant="secondary"
-                size="sm"
-                className={styles.queueCloseButton}
-                onClick={() => setQueueOpen(false)}
-                aria-label="Close playback queue"
-              >
-                Close
-              </Button>
-            </header>
-
-            {queueItems.length === 0 ? (
-              <p className={styles.queueEmpty}>Queue is empty.</p>
-            ) : (
-              <SortableList
-                className={styles.queueList}
-                itemClassName={styles.queueListItem}
-                items={queueItems}
-                getItemId={(item) => item.item_id}
-                onReorder={handleQueueReorder}
-                renderItem={({ item, handleProps }) => {
-                  const isCurrent = item.item_id === currentQueueItemId;
-                  return (
-                    <div className={styles.queueListItemInner} data-current={isCurrent ? "true" : "false"}>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className={styles.queueDragHandle}
-                        aria-label={`Reorder ${item.title}`}
-                        {...handleProps.attributes}
-                        {...handleProps.listeners}
-                      >
-                        ⋮⋮
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        className={styles.queueItemMain}
-                        onClick={() => handleQueueItemPlay(item)}
-                        aria-label={`Play ${item.title} from queue`}
-                      >
-                        <span className={styles.queueItemTitle}>{item.title}</span>
-                        <span className={styles.queueItemMeta}>
-                          {item.podcast_title ?? "Unknown podcast"}
-                        </span>
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className={styles.queueItemRemoveButton}
-                        aria-label={`Remove ${item.title} from queue`}
-                        onClick={() => {
-                          void removeFromQueue(item.item_id);
-                        }}
-                      >
-                        Remove
-                      </Button>
-                    </div>
-                  );
-                }}
-              />
-            )}
-
-            <footer className={styles.queueFooter}>
-              <Button
-                variant="secondary"
-                size="sm"
-                className={styles.queueClearButton}
-                aria-label="Clear queue"
-                onClick={() => {
-                  void clearQueue();
-                }}
-              >
-                Clear queue
-              </Button>
-            </footer>
-          </section>
-        </div>
-      )}
+      {queueOpen && <GlobalPlayerQueuePanel onClose={() => setQueueOpen(false)} />}
     </footer>
   );
 }

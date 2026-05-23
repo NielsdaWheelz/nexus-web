@@ -1,13 +1,13 @@
-"""PDF highlight create/list/update transactional orchestration (S6 PR-04).
+"""PDF highlight create/list/update transactional orchestration.
 
 Owns:
-- Media/kind/ready guards (reuses visibility and PR-03 readiness semantics)
-- S6 payload guardrails and page_number validation
+- Media/kind/readiness guards
+- PDF payload guardrails and page_number validation
 - Transactional write-time coherence across highlights + highlight_pdf_anchors + highlight_pdf_quads
-- D02 advisory-lock duplicate race safety
-- D06 write-time PDF match metadata + prefix/suffix storage
-- D09 lock ordering (media coordination -> duplicate)
-- D17/D18/D19/D20 effective-state comparison and no-op detection
+- Advisory-lock duplicate race safety
+- Write-time PDF match metadata + prefix/suffix storage
+- Lock ordering from media coordination to duplicate detection
+- Effective-state comparison and no-op detection
 """
 
 from dataclasses import dataclass
@@ -38,6 +38,7 @@ from nexus.schemas.highlights import (
     PdfQuadOut,
     TypedHighlightOut,
 )
+from nexus.services.highlights import require_media_ready_or_409
 from nexus.services.notes import linked_note_blocks_for_highlights
 from nexus.services.pdf_highlight_geometry import (
     CanonicalGeometry,
@@ -59,8 +60,6 @@ from nexus.services.pdf_quote_match_policy import (
 
 logger = get_logger(__name__)
 
-READY_STATUSES: set[str] = {"ready_for_reading", "embedding", "ready"}
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,12 +76,6 @@ def _get_pdf_media_for_viewer_or_404(db: Session, viewer_id: UUID, media_id: UUI
     if media.kind != "pdf":
         raise ApiError(ApiErrorCode.E_INVALID_KIND, "Operation requires PDF media")
     return media
-
-
-def _require_pdf_ready(media: Media) -> None:
-    """Require media in mutation-ready state for PDF highlight writes."""
-    if media.processing_status.value not in READY_STATUSES:
-        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media not ready")
 
 
 def _validate_page_number(page_number: int, page_count: int | None) -> None:
@@ -276,7 +269,7 @@ def _compute_write_time_match(
 
 
 # ---------------------------------------------------------------------------
-# D20: Canonical effective-state comparison
+# Canonical effective-state comparison
 # ---------------------------------------------------------------------------
 
 
@@ -294,7 +287,7 @@ def compare_effective_state(
     new_exact: str,
     new_color: str | None,
 ) -> EffectiveStateComparison:
-    """D20: Canonical side-effect-free effective-state comparison.
+    """Canonical side-effect-free effective-state comparison.
 
     Returns is_noop=True only when all effective mutable fields are unchanged.
     Returns requires_full_path=True when safe equality cannot be proven.
@@ -332,7 +325,7 @@ def create_pdf_highlight(
 ) -> TypedHighlightOut:
     """Create a PDF geometry highlight."""
     media = _get_pdf_media_for_viewer_or_404(db, viewer_id, media_id)
-    _require_pdf_ready(media)
+    require_media_ready_or_409(media.processing_status.value)
     _validate_page_number(req.page_number, media.page_count)
 
     try:
@@ -484,7 +477,7 @@ def update_pdf_highlight_bounds(
     if media is None or media.kind != "pdf":
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
 
-    _require_pdf_ready(media)
+    require_media_ready_or_409(media.processing_status.value)
     _validate_page_number(bounds.page_number, media.page_count)
 
     try:
@@ -498,7 +491,7 @@ def update_pdf_highlight_bounds(
     except GeometryValidationError as e:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, e.message) from e
 
-    # D19/D20: pre-lock no-op short circuit with row lock
+    # Pre-lock no-op short circuit with row lock.
     db.execute(
         text("SELECT id FROM highlights WHERE id = :hid FOR UPDATE"),
         {"hid": highlight.id},
@@ -509,7 +502,7 @@ def update_pdf_highlight_bounds(
         return _highlight_to_typed_out(highlight, viewer_id)
 
     if comparison.requires_full_path:
-        pass  # fall through to normal D09 path
+        pass  # fall through to the normal locked write path.
 
     match_fields = _compute_write_time_match(
         db,
@@ -529,7 +522,7 @@ def update_pdf_highlight_bounds(
     )
     acquire_ordered_locks(db, coord_key, dup_key)
 
-    # D17: duplicate check excludes self
+    # Duplicate check excludes the highlight being updated.
     dup = (
         db.query(HighlightPdfAnchor)
         .join(Highlight, Highlight.id == HighlightPdfAnchor.highlight_id)
@@ -546,7 +539,7 @@ def update_pdf_highlight_bounds(
     if dup is not None:
         raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Duplicate PDF highlight")
 
-    # Post-lock D18 no-op recheck using same comparison helper
+    # Post-lock no-op recheck using the same comparison helper.
     post_comparison = compare_effective_state(highlight, canonical, bounds.exact, new_color)
     if post_comparison.is_noop:
         return _highlight_to_typed_out(highlight, viewer_id)

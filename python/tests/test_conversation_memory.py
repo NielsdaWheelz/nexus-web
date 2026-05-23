@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from nexus.services.conversation_memory import (
+    ConversationMemoryItem,
     MemorySource,
     MemoryValidationError,
     collect_memory_source_refs,
@@ -54,21 +55,30 @@ def test_memory_sources_validate_evidence_roles():
             [
                 MemorySource(
                     source_ref={"type": "message", "id": str(uuid4()), "message_id": str(uuid4())},
-                    evidence_role="unknown",  # type: ignore[arg-type]
+                    evidence_role="unknown",  # type: ignore[arg-type]  # justify-python-override: invalid role exercises validation.
                 )
             ]
         )
 
 
 def test_collect_memory_source_refs_keeps_prompt_order():
-    class Item:
-        sources = (
+    item = ConversationMemoryItem(
+        id=uuid4(),
+        conversation_id=uuid4(),
+        kind="goal",
+        body="Remember the source order.",
+        source_required=True,
+        valid_from_seq=None,
+        valid_through_seq=None,
+        created_by_message_id=None,
+        sources=(
             MemorySource(
                 source_ref={"type": "message", "id": "m1", "message_id": "m1"},
                 evidence_role="supports",
             ),
-        )
+        ),
+    )
 
-    refs = collect_memory_source_refs(memory_items=[Item()], snapshot=None)  # type: ignore[list-item]
+    refs = collect_memory_source_refs(memory_items=[item], snapshot=None)
 
     assert refs == [{"type": "message", "id": "m1", "message_id": "m1"}]

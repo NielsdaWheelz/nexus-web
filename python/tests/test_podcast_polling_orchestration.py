@@ -7,10 +7,11 @@ pytestmark = pytest.mark.unit
 
 def _clear_registry_cache() -> None:
     from nexus.config import clear_settings_cache
-    from nexus.jobs.registry import clear_registry_cache
+    from nexus.jobs import registry
 
     clear_settings_cache()
-    clear_registry_cache()
+    registry._build_default_registry.cache_clear()
+    registry.get_task_contract_version.cache_clear()
 
 
 @pytest.fixture(autouse=True)

@@ -179,7 +179,7 @@ describe("buildPaletteView", () => {
     expect(view.results[0].id).toBe("settings-keybindings");
   });
 
-  it("does not duplicate the best match into a synthetic top result", () => {
+  it("returns each matching command once in querying results", () => {
     const view = buildPaletteView({
       query: "library",
       commands: [

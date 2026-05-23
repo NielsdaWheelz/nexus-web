@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   isRetrievalLocator,
   isSearchCitationEventData,
-  sseClientDirect,
   toWireContextItem,
 } from "./sse";
 import type { ContextItem, RetrievalLocator } from "./sse";
+import { sseClientDirect } from "./sse-client";
 
 describe("toWireContextItem", () => {
   it("strips non-wire display detail from a context item", () => {
@@ -236,7 +236,7 @@ describe("retrieval locator contract", () => {
     expect(validLocator.type).toBe("message_offsets");
 
     const invalidLocator: RetrievalLocator = {
-      // @ts-expect-error Unknown locator variants are not part of the retrieval contract.
+      // @ts-expect-error justify-ts-override: unknown locator variants stay rejected.
       type: "totally_unknown",
       id: "x",
     };
@@ -245,7 +245,7 @@ describe("retrieval locator contract", () => {
     const invalidExternalLocator: RetrievalLocator = {
       type: "external_url",
       url: "https://example.test",
-      // @ts-expect-error External URL locators do not carry fragment IDs.
+      // @ts-expect-error justify-ts-override: external URL locators reject fragment IDs.
       fragment_id: "fragment-1",
     };
     expect((invalidExternalLocator as { fragment_id: string }).fragment_id).toBe(

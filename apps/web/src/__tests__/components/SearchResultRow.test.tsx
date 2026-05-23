@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import SearchResultRow from "@/components/search/SearchResultRow";
-import type { SearchResultRowViewModel } from "@/lib/search/resultRowAdapter";
+import type { SearchResultRowViewModel } from "@/lib/search/types";
 
 describe("SearchResultRow", () => {
   it("renders content-first note rows with contextual metadata", () => {
@@ -135,6 +135,64 @@ describe("SearchResultRow", () => {
     expect(screen.getByText("web")).toBeInTheDocument();
     expect(screen.getByText("example.com")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /ask with/i })).toBeNull();
+  });
+
+  it("links artifact-part rows with their full context contract", () => {
+    const row: SearchResultRowViewModel = {
+      key: "artifact_part-part-1",
+      href: "/conversations/conv-1?artifact=artifact-1&artifactPart=part-1",
+      type: "artifact_part",
+      mediaId: null,
+      contextRef: {
+        type: "artifact_part",
+        id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        evidenceSpanIds: [],
+        artifactId: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        artifactKey: "research-table",
+        artifactVersion: 1,
+        sourceVersion: "artifact_part:a1b2c3d4-e5f6-7890-abcd-ef1234567890:v1",
+        locator: {
+          type: "artifact_part_ref",
+          artifact_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          artifact_part_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          message_id: "c1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          conversation_id: "d1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        },
+        artifactPartProvenance: {
+          type: "artifact_part",
+          artifact_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          artifact_part_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          source_version: "artifact_part:a1b2c3d4-e5f6-7890-abcd-ef1234567890:v1",
+          locator: {
+            type: "artifact_part_ref",
+            artifact_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            artifact_part_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            message_id: "c1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            conversation_id: "d1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          },
+        },
+      },
+      typeLabel: "artifact",
+      primaryText: "artifact row evidence",
+      snippetSegments: [],
+      sourceMeta: "Research Table - artifact",
+      noteBody: null,
+      scoreLabel: "score 0.82",
+      contributorCredits: [],
+    };
+
+    render(<SearchResultRow row={row} />);
+
+    const href = screen.getByRole("link", { name: "Ask with context" }).getAttribute("href");
+    const url = new URL(href ?? "", "https://example.test");
+    const context = JSON.parse(url.searchParams.get("attach_context_json") ?? "{}");
+    expect(context).toMatchObject({
+      type: "artifact_part",
+      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      artifact_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      source_version: "artifact_part:a1b2c3d4-e5f6-7890-abcd-ef1234567890:v1",
+    });
+    expect(url.searchParams.has("attach_context")).toBe(false);
   });
 
   it("renders message metadata without duplicate score text", () => {

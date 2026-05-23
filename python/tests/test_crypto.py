@@ -16,7 +16,7 @@ import pytest
 from nexus.services.crypto import (
     MASTER_KEY_SIZE,
     CryptoError,
-    clear_master_key_cache,
+    _get_master_key,
     compute_key_fingerprint,
     decrypt_secretbox,
     encrypt_secretbox,
@@ -31,7 +31,7 @@ pytestmark = pytest.mark.unit
 def setup_test_master_key(monkeypatch):
     """Set up a deterministic test master key for all tests."""
     # Clear any cached key first
-    clear_master_key_cache()
+    _get_master_key.cache_clear()
 
     # Generate a deterministic test key (32 bytes)
     test_key = b"test_master_key_for_encryption!!"
@@ -44,7 +44,7 @@ def setup_test_master_key(monkeypatch):
     yield
 
     # Clear cache after test
-    clear_master_key_cache()
+    _get_master_key.cache_clear()
 
 
 class TestMasterKey:
@@ -59,7 +59,7 @@ class TestMasterKey:
 
     def test_missing_key_raises_error(self, monkeypatch):
         """Missing NEXUS_KEY_ENCRYPTION_KEY raises CryptoError."""
-        clear_master_key_cache()
+        _get_master_key.cache_clear()
         monkeypatch.delenv("NEXUS_KEY_ENCRYPTION_KEY", raising=False)
 
         with pytest.raises(CryptoError) as exc_info:
@@ -69,7 +69,7 @@ class TestMasterKey:
 
     def test_invalid_base64_raises_error(self, monkeypatch):
         """Invalid base64 in NEXUS_KEY_ENCRYPTION_KEY raises CryptoError."""
-        clear_master_key_cache()
+        _get_master_key.cache_clear()
         monkeypatch.setenv("NEXUS_KEY_ENCRYPTION_KEY", "not-valid-base64!!!")
 
         with pytest.raises(CryptoError) as exc_info:
@@ -79,7 +79,7 @@ class TestMasterKey:
 
     def test_wrong_key_size_raises_error(self, monkeypatch):
         """Key of wrong size raises CryptoError."""
-        clear_master_key_cache()
+        _get_master_key.cache_clear()
         wrong_size_key = b"too_short"
         monkeypatch.setenv(
             "NEXUS_KEY_ENCRYPTION_KEY",
@@ -156,7 +156,7 @@ class TestEncryptDecrypt:
         ciphertext = encrypt_secretbox(plaintext, nonce)
 
         # Change master key
-        clear_master_key_cache()
+        _get_master_key.cache_clear()
         different_key = b"different_key_for_testing!!!!!32"
         assert len(different_key) == MASTER_KEY_SIZE
         monkeypatch.setenv(

@@ -24,7 +24,8 @@ from sqlalchemy.engine import Engine
 
 from nexus.app import create_app
 from nexus.config import get_settings
-from nexus.storage import build_upload_staging_storage_path, get_file_extension, get_storage_client
+from nexus.storage.client import get_storage_client
+from nexus.storage.paths import build_upload_staging_storage_path, get_file_extension
 from nexus.tasks.ingest_web_article import run_ingest_sync as run_web_article_ingest_sync
 from tests.real_media.conftest import (
     FIXTURES_DIR,

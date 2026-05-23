@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  ALL_SEARCH_TYPES,
-  fetchSearchResultPage,
-  type SearchType,
-} from "@/lib/search/resultRowAdapter";
+import { fetchSearchResultPage } from "@/lib/search/resultRowAdapter";
+import { ALL_SEARCH_TYPES, type SearchType } from "@/lib/search/types";
 
 function setOf(...items: SearchType[]): Set<SearchType> {
   return new Set(items);
@@ -45,7 +42,7 @@ describe("fetchSearchResultPage", () => {
     expect(url.searchParams.has("semantic")).toBe(false);
   });
 
-  it("serializes all content evidence types without legacy semantic flags", async () => {
+  it("serializes all search types without overriding backend semantic defaults", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(
@@ -138,11 +135,11 @@ describe("fetchSearchResultPage", () => {
           },
           {
             type: "fragment",
-            id: "legacy-frag",
+            id: "invalid-frag",
             score: 0.5,
-            snippet: "legacy row",
+            snippet: "invalid row",
             idx: 3,
-            media_id: "media-legacy",
+            media_id: "media-invalid",
           },
         ],
         page: { next_cursor: "cursor-next" },
@@ -270,7 +267,36 @@ describe("fetchSearchResultPage", () => {
       media_id: null,
       media_kind: null,
       deep_link: "/conversations/conversation-1?artifact=artifact-1&artifactPart=part-1",
-      context_ref: { type: "artifact_part", id: "part-1" },
+      context_ref: {
+        type: "artifact_part",
+        id: "part-1",
+        artifact_id: "artifact-1",
+        artifact_key: "research-table",
+        artifact_version: 1,
+        source_version: "artifact_part:part-1:v1",
+        locator: {
+          type: "artifact_part_ref",
+          artifact_id: "artifact-1",
+          artifact_part_id: "part-1",
+          message_id: "message-1",
+          conversation_id: "conversation-1",
+          part_key: "row-1",
+        },
+        artifact_part_provenance: {
+          type: "artifact_part",
+          artifact_id: "artifact-1",
+          artifact_part_id: "part-1",
+          source_version: "artifact_part:part-1:v1",
+          locator: {
+            type: "artifact_part_ref",
+            artifact_id: "artifact-1",
+            artifact_part_id: "part-1",
+            message_id: "message-1",
+            conversation_id: "conversation-1",
+            part_key: "row-1",
+          },
+        },
+      },
       artifact_id: "artifact-1",
       message_id: "message-1",
       conversation_id: "conversation-1",
@@ -605,7 +631,36 @@ describe("fetchSearchResultPage", () => {
             media_id: null,
             media_kind: null,
             deep_link: "/conversations/conversation-1?artifact=artifact-1&artifactPart=part-1",
-            context_ref: { type: "artifact_part", id: "part-1" },
+            context_ref: {
+              type: "artifact_part",
+              id: "part-1",
+              artifact_id: "artifact-1",
+              artifact_key: "research-table",
+              artifact_version: 1,
+              source_version: "artifact_part:part-1:v1",
+              locator: {
+                type: "artifact_part_ref",
+                artifact_id: "artifact-1",
+                artifact_part_id: "part-1",
+                message_id: "message-1",
+                conversation_id: "conversation-1",
+                part_key: "row-1",
+              },
+              artifact_part_provenance: {
+                type: "artifact_part",
+                artifact_id: "artifact-1",
+                artifact_part_id: "part-1",
+                source_version: "artifact_part:part-1:v1",
+                locator: {
+                  type: "artifact_part_ref",
+                  artifact_id: "artifact-1",
+                  artifact_part_id: "part-1",
+                  message_id: "message-1",
+                  conversation_id: "conversation-1",
+                  part_key: "row-1",
+                },
+              },
+            },
             artifact_id: "artifact-1",
             message_id: "message-1",
             conversation_id: "conversation-1",
@@ -646,6 +701,10 @@ describe("fetchSearchResultPage", () => {
       contextRef: {
         type: "artifact_part",
         id: "part-1",
+        artifactId: "artifact-1",
+        artifactKey: "research-table",
+        artifactVersion: 1,
+        sourceVersion: "artifact_part:part-1:v1",
         evidenceSpanIds: [],
       },
     });

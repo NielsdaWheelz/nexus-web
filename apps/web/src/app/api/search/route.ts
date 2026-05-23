@@ -7,7 +7,3 @@ export const revalidate = 0;
 export async function GET(req: Request) {
   return proxyToFastAPI(req, "/search");
 }
-
-export async function POST(req: Request) {
-  return proxyToFastAPI(req, "/search/resolve");
-}

@@ -8,20 +8,17 @@ Routes are transport-only:
 No domain logic or raw DB access in routes.
 
 This endpoint implements keyword search across all user-visible content
-using PostgreSQL full-text search. Visibility follows s4 canonical predicates.
+using PostgreSQL full-text search. Visibility follows canonical predicates.
 """
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from nexus.api.deps import get_db
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.schemas.search import (
-    SEARCH_RESULT_TYPES,
-    SearchResolveRequest,
-    SearchResolveResponse,
     SearchResponse,
 )
 from nexus.services import search as search_service
@@ -95,7 +92,8 @@ def search(
 
     **Visibility:**
     - Search never returns invisible content
-    - Media/content chunks visible via s4 provenance (non-default membership, intrinsic, closure)
+    - Media/content chunks visible via canonical provenance
+      (non-default membership, intrinsic, closure)
     - Notes visible when owned by the viewer
     - Messages visible via conversation visibility (owner, public, or library-shared dual membership)
     - Pending messages are never searchable
@@ -150,43 +148,3 @@ def search(
         limit=limit,
     )
     return result.model_dump(mode="json")
-
-
-@router.post(
-    "/search/resolve",
-    response_model=SearchResolveResponse,
-    response_model_by_alias=False,
-)
-def resolve_search_result(
-    request: SearchResolveRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    result = search_service.resolve_search_result(
-        db=db,
-        viewer_id=viewer.user_id,
-        result_ref=request.result_ref,
-    )
-    return SearchResolveResponse(result=result).model_dump(mode="json")
-
-
-@router.get(
-    "/search/results/{result_id}",
-    response_model=SearchResolveResponse,
-    response_model_by_alias=False,
-)
-def get_search_result(
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    result_id: Annotated[str, Path(description="Search result object ID")],
-    result_type: Annotated[
-        SEARCH_RESULT_TYPES, Query(alias="type", description="Search result type")
-    ],
-) -> dict:
-    result = search_service.get_search_result(
-        db=db,
-        viewer_id=viewer.user_id,
-        result_type=result_type,
-        result_id=result_id,
-    )
-    return SearchResolveResponse(result=result).model_dump(mode="json")

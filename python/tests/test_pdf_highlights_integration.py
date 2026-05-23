@@ -9,6 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from nexus.schemas.conversation import MessageContextRef
+from nexus.services import contexts as contexts_service
+from nexus.services.content_indexing import repair_ready_media_content_index_now
 from tests.factories import (
     create_pdf_media_with_text,
     get_user_default_library,
@@ -88,6 +91,14 @@ def _setup_pdf_media(
             page_spans=page_spans or PDF_PAGE_SPANS[:page_count],
             status=status,
         )
+        if status in {"ready", "ready_for_reading", "embedding"}:
+            index_result = repair_ready_media_content_index_now(
+                session,
+                media_id=media_id,
+                reason="test_pdf_highlight_fixture",
+            )
+            assert index_result is not None
+            session.commit()
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
@@ -102,7 +113,7 @@ def _create_shared_library(session, owner_id: UUID) -> UUID:
     session.execute(
         text("""
             INSERT INTO libraries (id, name, owner_user_id, is_default)
-            VALUES (:id, 'S6 Shared PDF Library', :owner, false)
+            VALUES (:id, 'Shared PDF Library', :owner, false)
         """),
         {"id": library_id, "owner": owner_id},
     )
@@ -505,23 +516,18 @@ class TestListPdfHighlights:
                 """),
                 {"id": message_id, "conversation_id": conversation_id},
             )
+            context = contexts_service.insert_context(
+                db=session,
+                message_id=message_id,
+                ordinal=0,
+                context=MessageContextRef(
+                    kind="object_ref",
+                    type="highlight",
+                    id=UUID(highlight_id),
+                ),
+            )
             session.commit()
-
-        context_resp = auth_client.post(
-            "/message-context-items",
-            json={
-                "message_id": str(message_id),
-                "object_type": "highlight",
-                "object_id": str(highlight_id),
-                "ordinal": 0,
-            },
-            headers=auth_headers(user_id),
-        )
-        assert context_resp.status_code == 201, (
-            f"expected context item creation to succeed, got {context_resp.status_code}: "
-            f"{context_resp.text}"
-        )
-        context_id = context_resp.json()["data"]["id"]
+            context_id = context.id
 
         direct_db.register_cleanup("message_context_items", "id", context_id)
         direct_db.register_cleanup("messages", "id", message_id)
@@ -538,8 +544,8 @@ class TestListPdfHighlights:
         ]
 
 
-class TestPdfHighlightVisibilityRegression:
-    """S6 PR-08 visibility regression coverage for PDF highlight surfaces."""
+class TestPdfHighlightSharedVisibility:
+    """Shared-library visibility coverage for PDF highlight surfaces."""
 
     def test_shared_reader_can_list_and_get_pdf_highlights_with_mine_only_split(
         self, auth_client, direct_db: DirectSessionManager
@@ -741,7 +747,7 @@ class TestUpdatePdfHighlight:
         assert update_resp.status_code == 200
         assert update_resp.json()["data"]["color"] == "green"
 
-    def test_d16_pdf_anchor_on_fragment_rejected(
+    def test_pdf_anchor_update_on_fragment_highlight_rejected(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """PDF anchor updates on fragment highlights are rejected."""
@@ -797,7 +803,7 @@ class TestUpdatePdfHighlight:
         )
         assert update_resp.status_code == 400
 
-    def test_d16_fragment_offsets_on_pdf_rejected(
+    def test_fragment_anchor_update_on_pdf_highlight_rejected(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """Fragment anchor updates on PDF highlights are rejected."""
@@ -824,7 +830,9 @@ class TestUpdatePdfHighlight:
         )
         assert update_resp.status_code == 400
 
-    def test_d17_update_duplicate_excludes_self(self, auth_client, direct_db: DirectSessionManager):
+    def test_update_duplicate_geometry_excludes_same_highlight(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
         """Updating to same geometry as self → no conflict (no-op or success)."""
         user_id = create_test_user_id()
         media_id = _setup_pdf_media(auth_client, direct_db, user_id)
@@ -850,7 +858,7 @@ class TestUpdatePdfHighlight:
         )
         assert update_resp.status_code == 200
 
-    def test_d17_update_duplicate_conflicts_with_other(
+    def test_update_duplicate_geometry_conflicts_with_other_highlight(
         self, auth_client, direct_db: DirectSessionManager
     ):
         """Updating to another highlight's geometry → 409."""

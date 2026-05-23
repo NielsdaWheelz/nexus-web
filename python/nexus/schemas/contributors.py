@@ -247,23 +247,6 @@ class ContributorSearchResultOut(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
-class ContributorMergeRequest(BaseModel):
-    source_handle: str = Field(
-        validation_alias=AliasChoices("source_handle", "sourceHandle"),
-        serialization_alias="sourceHandle",
-        min_length=1,
-        max_length=200,
-    )
-    target_handle: str = Field(
-        validation_alias=AliasChoices("target_handle", "targetHandle"),
-        serialization_alias="targetHandle",
-        min_length=1,
-        max_length=200,
-    )
-
-    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
-
-
 class ContributorSplitRequest(BaseModel):
     display_name: str = Field(
         validation_alias=AliasChoices("display_name", "displayName"),
@@ -298,15 +281,3 @@ class ContributorSplitRequest(BaseModel):
     )
 
     model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True, extra="forbid")
-
-
-class ContributorsListOut(BaseModel):
-    contributors: list[ContributorOut] = Field(default_factory=list)
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class ContributorWorksOut(BaseModel):
-    works: list[ContributorWorkOut] = Field(default_factory=list)
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")

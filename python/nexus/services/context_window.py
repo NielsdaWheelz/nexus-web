@@ -4,7 +4,7 @@ Computes surrounding context for highlighted text to include in LLM prompts.
 Uses fragment_block rows when available for precise block-based windows,
 falls back to character-based windowing when blocks are missing.
 
-Per S3 spec:
+Window contract:
 - Context window ALWAYS fully contains the selection [start_offset, end_offset)
 - When blocks exist: use containing block + adjacent non-empty blocks
 - When blocks missing: use ±600 chars from highlight boundaries

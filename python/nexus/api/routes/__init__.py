@@ -23,7 +23,6 @@ from nexus.api.routes.libraries import router as libraries_router
 from nexus.api.routes.library_intelligence import router as library_intelligence_router
 from nexus.api.routes.me import router as me_router
 from nexus.api.routes.media import router as media_router
-from nexus.api.routes.message_context_items import router as message_context_items_router
 from nexus.api.routes.models import router as models_router
 from nexus.api.routes.notes import router as notes_router
 from nexus.api.routes.object_links import router as object_links_router
@@ -38,11 +37,8 @@ from nexus.api.routes.vault import router as vault_router
 from nexus.config import get_settings
 
 
-def create_api_router(include_test_routes: bool = False) -> APIRouter:
+def create_api_router() -> APIRouter:
     """Create and configure the API router.
-
-    Args:
-        include_test_routes: If True, include test-only routes (for test environment).
 
     Returns:
         Configured APIRouter with all routes registered.
@@ -59,7 +55,6 @@ def create_api_router(include_test_routes: bool = False) -> APIRouter:
     api_router.include_router(object_refs_router, tags=["object-refs"])
     api_router.include_router(pinned_objects_router, tags=["pinned-objects"])
     api_router.include_router(object_links_router, tags=["object-links"])
-    api_router.include_router(message_context_items_router, tags=["message-context-items"])
     api_router.include_router(highlights_router, tags=["highlights"])
     api_router.include_router(billing_router, tags=["billing"])
     api_router.include_router(conversations_router, tags=["conversations"])
@@ -78,11 +73,6 @@ def create_api_router(include_test_routes: bool = False) -> APIRouter:
         api_router.include_router(podcasts_router, tags=["podcasts"])
     api_router.include_router(internal_libraries_router, tags=["internal"])
     api_router.include_router(internal_ingest_router, tags=["internal"])
-
-    if include_test_routes:
-        from nexus.api.routes.test import router as test_router
-
-        api_router.include_router(test_router, tags=["test"])
 
     return api_router
 

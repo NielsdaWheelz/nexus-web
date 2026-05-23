@@ -6,7 +6,7 @@ It registers exception handlers, auth middleware, request-id middleware, and rou
 Token Verification:
 - All environments (local, test, staging, prod) use SupabaseJwksVerifier
 - Runtime always verifies JWTs via Supabase JWKS endpoint
-- No local/test fallback - only env values change between environments
+- Only environment values change between environments
 
 Middleware Ordering (Critical):
 - Middleware runs in reverse order of registration
@@ -24,7 +24,7 @@ Actual execution order per request:
 4. AuthMiddleware (returns response)
 5. RequestIDMiddleware (logs, sets response header)
 
-LLM Client Lifecycle (PR-04 spec):
+LLM client lifecycle:
 - httpx.AsyncClient is created at startup, stored in app.state
 - LLMRouter wraps the shared client for connection pooling
 - Client is closed gracefully at shutdown
@@ -96,10 +96,14 @@ def create_token_verifier():
         SupabaseJwksVerifier configured with settings from environment.
     """
     settings = get_settings()
+    jwks_url = settings.supabase_jwks_url
+    issuer = settings.normalized_issuer
+    if not jwks_url or not issuer:
+        raise RuntimeError("Supabase auth settings are not configured")
 
     return SupabaseJwksVerifier(
-        jwks_url=settings.supabase_jwks_url,  # type: ignore
-        issuer=settings.normalized_issuer,  # type: ignore
+        jwks_url=jwks_url,
+        issuer=issuer,
         audiences=settings.audience_list,
     )
 
@@ -108,7 +112,7 @@ def create_token_verifier():
 async def lifespan(app: FastAPI):
     """Manage application lifecycle resources.
 
-    Per PR-04 spec Section 8:
+    Lifecycle behavior:
     - Creates shared httpx.AsyncClient for connection pooling
     - Initializes LLMRouter with feature flags
     - Cleans up on shutdown
@@ -164,15 +168,11 @@ async def lifespan(app: FastAPI):
     logger.info("httpx_client_closed")
 
 
-def create_app(
-    skip_auth_middleware: bool = False,
-    token_verifier=None,
-) -> FastAPI:
+def create_app(skip_auth_middleware: bool = False) -> FastAPI:
     """Create and configure the FastAPI application.
 
     Args:
         skip_auth_middleware: If True, skip adding auth middleware (for testing).
-        token_verifier: Optional custom token verifier (for testing).
 
     Returns:
         Configured FastAPI application instance.
@@ -231,18 +231,18 @@ def create_app(
 
     # Include API routes (must be before middleware for correct ordering)
     # Use router factory to avoid import-time settings loading
-    api_router = create_api_router(include_test_routes=settings.nexus_env == Environment.TEST)
+    api_router = create_api_router()
     app.include_router(api_router)
 
-    # PR-08: Include browser-callable stream-token routes
+    # Include browser-callable stream event routes.
     app.include_router(stream_router)
 
-    # PR-08: Include stream token minting route (/internal/stream-tokens) — BFF-only
+    # Include stream token minting route (/internal/stream-tokens) for the BFF.
     app.include_router(stream_tokens_router)
 
     # Add auth middleware (runs on all requests except public paths)
     if not skip_auth_middleware:
-        verifier = token_verifier or create_token_verifier()
+        verifier = create_token_verifier()
         bootstrap_callback = create_bootstrap_callback()
 
         app.add_middleware(
@@ -259,7 +259,7 @@ def create_app(
             internal_header_required=settings.requires_internal_header,
         )
 
-    # PR-08: Add StreamCORSMiddleware for browser-callable stream routes
+    # Add StreamCORSMiddleware for browser-callable stream routes.
     # Must be added AFTER auth middleware (runs before it in the stack)
     cors_origins = settings.stream_cors_origin_list
     if cors_origins:

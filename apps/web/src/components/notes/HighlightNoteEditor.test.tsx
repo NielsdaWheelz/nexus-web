@@ -4,7 +4,7 @@ import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
-import HighlightNoteEditor, { highlightNoteBodyHasContent } from "./HighlightNoteEditor";
+import HighlightNoteEditor from "./HighlightNoteEditor";
 
 describe("HighlightNoteEditor persistence", () => {
   it("flushes the latest pending note doc on unmount while a save is in flight", async () => {
@@ -153,49 +153,6 @@ describe("HighlightNoteEditor persistence", () => {
       paragraphFromText("firstsecond").toJSON(),
       1
     );
-  });
-
-  it("treats object refs and images as note content", () => {
-    const objectId = "11111111-1111-4111-8111-111111111111";
-
-    expect(
-      highlightNoteBodyHasContent({
-        bodyText: "",
-        bodyPmJson: {
-          type: "paragraph",
-          content: [
-            {
-              type: "object_ref",
-              attrs: {
-                objectType: "media",
-                objectId,
-                label: "Source media",
-              },
-            },
-          ],
-        },
-      }),
-    ).toBe(true);
-    expect(
-      highlightNoteBodyHasContent({
-        bodyText: "",
-        bodyPmJson: {
-          type: "paragraph",
-          content: [
-            {
-              type: "image",
-              attrs: { src: "/image.png", alt: "diagram", title: null },
-            },
-          ],
-        },
-      }),
-    ).toBe(true);
-    expect(
-      highlightNoteBodyHasContent({
-        bodyText: "",
-        bodyPmJson: { type: "paragraph" },
-      }),
-    ).toBe(false);
   });
 
   it("keeps focus when a new note save is echoed back by parent props", async () => {
