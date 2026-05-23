@@ -9,7 +9,7 @@ LOCATION="${HCLOUD_LOCATION:-hil}"
 IMAGE="${HCLOUD_IMAGE:-ubuntu-24.04}"
 SSH_KEY="${HCLOUD_SSH_KEY:-}"
 FIREWALL_NAME="${HCLOUD_FIREWALL_NAME:-nexus-web}"
-SSH_ALLOWED_IPS="${HCLOUD_SSH_ALLOWED_IPS:-0.0.0.0/0,::/0}"
+SSH_ALLOWED_IPS="${HCLOUD_SSH_ALLOWED_IPS:-}"
 CLOUD_INIT="${ROOT_DIR}/deploy/hetzner/cloud-init.yml"
 TEMP_FILES=()
 
@@ -28,6 +28,7 @@ die() {
 command -v hcloud >/dev/null 2>&1 || die "hcloud CLI is not installed"
 command -v python3 >/dev/null 2>&1 || die "python3 is required to render cloud-init"
 [ -n "$SSH_KEY" ] || die "set HCLOUD_SSH_KEY to an existing Hetzner SSH key name"
+[ -n "$SSH_ALLOWED_IPS" ] || die "set HCLOUD_SSH_ALLOWED_IPS to comma-separated SSH source CIDRs, e.g. '<your-ip>/32'"
 
 ssh_public_key="$(
   hcloud ssh-key describe "$SSH_KEY" --output json |
@@ -79,6 +80,8 @@ hcloud server create \
   --location "$LOCATION" \
   --ssh-key "$SSH_KEY" \
   --firewall "$FIREWALL_NAME" \
+  --enable-protection delete \
+  --enable-protection rebuild \
   --user-data-from-file "$rendered_cloud_init" \
   --label app=nexus \
   --label role=api-worker

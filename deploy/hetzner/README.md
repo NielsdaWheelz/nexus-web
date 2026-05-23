@@ -26,6 +26,7 @@ Create or register an SSH key in Hetzner Cloud, then provision a server:
 
 ```bash
 HCLOUD_SSH_KEY=<hetzner-ssh-key-name> \
+HCLOUD_SSH_ALLOWED_IPS="$(curl -fsS4 https://api.ipify.org)/32" \
 HCLOUD_LOCATION=hil \
 HCLOUD_SERVER_TYPE=cpx11 \
 ./deploy/hetzner/provision.sh
@@ -34,6 +35,7 @@ HCLOUD_SERVER_TYPE=cpx11 \
 Defaults are intentionally cheap: `hil` for Hillsboro, Oregon, and `cpx11` for
 the smallest US CPX instance. Use a larger `HCLOUD_SERVER_TYPE` if image builds
 or media jobs need more memory, and choose the region closest to users and R2.
+The provisioned server has Hetzner delete/rebuild protection enabled.
 
 ## Server Env
 

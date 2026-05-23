@@ -95,6 +95,7 @@ Provision a cheap US server:
 
 ```bash
 HCLOUD_SSH_KEY=<hetzner-ssh-key-name> \
+HCLOUD_SSH_ALLOWED_IPS="$(curl -fsS4 https://api.ipify.org)/32" \
 HCLOUD_LOCATION=hil \
 HCLOUD_SERVER_TYPE=cpx11 \
 ./deploy/hetzner/provision.sh
