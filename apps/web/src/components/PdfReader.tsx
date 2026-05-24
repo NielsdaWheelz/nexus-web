@@ -531,17 +531,10 @@ export default function PdfReader({
     frameId: number | null;
   } | null>(null);
 
-  useEffect(() => {
-    onPageHighlightsChangeRef.current = onPageHighlightsChange;
-  }, [onPageHighlightsChange]);
-
-  useEffect(() => {
-    onHighlightTapRef.current = onHighlightTap;
-  }, [onHighlightTap]);
-
-  useEffect(() => {
-    isMobileRef.current = isMobile;
-  }, [isMobile]);
+  // Latest-value refs read by async callbacks (event handlers, RAF, etc.).
+  onPageHighlightsChangeRef.current = onPageHighlightsChange;
+  onHighlightTapRef.current = onHighlightTap;
+  isMobileRef.current = isMobile;
 
   useEffect(() => {
     return () => {
@@ -555,9 +548,7 @@ export default function PdfReader({
   }, []);
 
   const onResumeStateChangeRef = useRef(onResumeStateChange);
-  useEffect(() => {
-    onResumeStateChangeRef.current = onResumeStateChange;
-  }, [onResumeStateChange]);
+  onResumeStateChangeRef.current = onResumeStateChange;
 
   const publishResumeLocator = useCallback(
     (
@@ -975,9 +966,7 @@ export default function PdfReader({
     getPdfSelection()?.removeAllRanges();
   }, [resetSelectionState]);
 
-  useEffect(() => {
-    selectionVisibleRef.current = selection !== null;
-  }, [selection]);
+  selectionVisibleRef.current = selection !== null;
 
   useEffect(() => {
     return () => {
