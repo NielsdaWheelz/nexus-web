@@ -73,6 +73,33 @@ export async function fetchMediaHighlights(
   return response.data.highlights;
 }
 
+/**
+ * Total order on text-anchored highlights: anchor start, then anchor end,
+ * then created_at, then id. Stable across reads from the API.
+ */
+export function compareHighlightsByAnchor(a: Highlight, b: Highlight): number {
+  if (a.anchor.start_offset !== b.anchor.start_offset) {
+    return a.anchor.start_offset - b.anchor.start_offset;
+  }
+  if (a.anchor.end_offset !== b.anchor.end_offset) {
+    return a.anchor.end_offset - b.anchor.end_offset;
+  }
+  if (a.created_at !== b.created_at) {
+    return a.created_at.localeCompare(b.created_at);
+  }
+  return a.id.localeCompare(b.id);
+}
+
+/** Replace any prior copy of `highlight` in `list`, then sort by anchor. */
+export function upsertHighlightSorted(
+  list: Highlight[],
+  highlight: Highlight,
+): Highlight[] {
+  return [...list.filter((h) => h.id !== highlight.id), highlight].sort(
+    compareHighlightsByAnchor,
+  );
+}
+
 export async function createHighlight(
   fragmentId: string,
   startOffset: number,

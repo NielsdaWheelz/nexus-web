@@ -2,24 +2,33 @@ import { describe, expect, it } from "vitest";
 import {
   patchHighlightLinkedNoteBlock,
   removeHighlightLinkedNoteBlock,
+  upsertHighlightSorted,
   type Highlight,
 } from "./api";
 
-function highlight(id: string, noteIds: string[] = []): Highlight {
+function highlight(
+  id: string,
+  noteIds: string[] = [],
+  overrides: Partial<{
+    start: number;
+    end: number;
+    created_at: string;
+  }> = {},
+): Highlight {
   return {
     id,
     anchor: {
       type: "fragment_offsets",
       media_id: "media-1",
       fragment_id: "fragment-1",
-      start_offset: 0,
-      end_offset: 10,
+      start_offset: overrides.start ?? 0,
+      end_offset: overrides.end ?? 10,
     },
     color: "yellow",
     exact: "quote",
     prefix: "",
     suffix: "",
-    created_at: "2026-01-01T00:00:00Z",
+    created_at: overrides.created_at ?? "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     author_user_id: "user-1",
     is_owner: true,
@@ -81,6 +90,46 @@ describe("media highlight note summary helpers", () => {
 
     expect(next[0]?.linked_note_blocks?.map((note) => note.note_block_id)).toEqual([
       "note-2",
+    ]);
+  });
+});
+
+describe("upsertHighlightSorted", () => {
+  it("appends a new highlight in anchor order", () => {
+    const a = highlight("a", [], { start: 0, end: 5 });
+    const c = highlight("c", [], { start: 20, end: 25 });
+    const b = highlight("b", [], { start: 10, end: 15 });
+    expect(upsertHighlightSorted([a, c], b).map((h) => h.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("replaces an existing highlight by id and re-sorts", () => {
+    const a = highlight("a", [], { start: 0, end: 5 });
+    const b = highlight("b", [], { start: 10, end: 15 });
+    const bMoved = highlight("b", [], { start: 30, end: 35 });
+    expect(upsertHighlightSorted([a, b], bMoved).map((h) => h.id)).toEqual(["a", "b"]);
+    expect(upsertHighlightSorted([a, b], bMoved)[1]?.anchor.start_offset).toBe(30);
+  });
+
+  it("breaks anchor ties by end_offset, then created_at, then id", () => {
+    const earlier = highlight("z", [], {
+      start: 0,
+      end: 5,
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    const later = highlight("a", [], {
+      start: 0,
+      end: 5,
+      created_at: "2026-02-01T00:00:00Z",
+    });
+    const wider = highlight("m", [], {
+      start: 0,
+      end: 8,
+      created_at: "2026-01-15T00:00:00Z",
+    });
+    expect(upsertHighlightSorted([later, wider], earlier).map((h) => h.id)).toEqual([
+      "z",
+      "a",
+      "m",
     ]);
   });
 });

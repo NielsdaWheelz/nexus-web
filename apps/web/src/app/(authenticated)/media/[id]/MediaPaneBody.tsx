@@ -159,6 +159,7 @@ import {
   deleteHighlightNote,
   patchHighlightLinkedNoteBlock,
   removeHighlightLinkedNoteBlock,
+  upsertHighlightSorted,
   type HighlightLinkedNoteBlock,
 } from "@/lib/highlights/api";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
@@ -2527,22 +2528,7 @@ export default function MediaPaneBody() {
           return null;
         }
 
-        setHighlights((prev) =>
-          [
-            ...prev.filter((h) => h.id !== createdHighlight.id),
-            createdHighlight,
-          ].sort((a, b) => {
-            if (a.anchor.start_offset !== b.anchor.start_offset) {
-              return a.anchor.start_offset - b.anchor.start_offset;
-            }
-            if (a.anchor.end_offset !== b.anchor.end_offset) {
-              return a.anchor.end_offset - b.anchor.end_offset;
-            }
-            if (a.created_at !== b.created_at)
-              return a.created_at.localeCompare(b.created_at);
-            return a.id.localeCompare(b.id);
-          }),
-        );
+        setHighlights((prev) => upsertHighlightSorted(prev, createdHighlight));
         focusHighlight(createdHighlight.id);
         clearRetainedSelection(true);
         refreshMediaHighlights();
@@ -4133,22 +4119,7 @@ export default function MediaPaneBody() {
           locator.end_offset,
           "yellow",
         );
-        setHighlights((prev) =>
-          [
-            ...prev.filter((h) => h.id !== createdHighlight.id),
-            createdHighlight,
-          ].sort((a, b) => {
-            if (a.anchor.start_offset !== b.anchor.start_offset) {
-              return a.anchor.start_offset - b.anchor.start_offset;
-            }
-            if (a.anchor.end_offset !== b.anchor.end_offset) {
-              return a.anchor.end_offset - b.anchor.end_offset;
-            }
-            if (a.created_at !== b.created_at)
-              return a.created_at.localeCompare(b.created_at);
-            return a.id.localeCompare(b.id);
-          }),
-        );
+        setHighlights((prev) => upsertHighlightSorted(prev, createdHighlight));
         focusHighlight(createdHighlight.id);
         return;
       }
