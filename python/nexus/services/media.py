@@ -1593,15 +1593,10 @@ def create_or_reuse_x_oembed_article(
     if media is not None:
         _ensure_in_default_library(db, viewer_id, media.id)
         db.commit()
-        processing_status = (
-            media.processing_status.value
-            if hasattr(media.processing_status, "value")
-            else str(media.processing_status)
-        )
         return FromUrlResponse(
             media_id=media.id,
             idempotency_outcome="reused",
-            processing_status=processing_status,
+            processing_status=_status_to_str(media.processing_status),
             ingest_enqueued=False,
         )
 
@@ -1857,15 +1852,10 @@ def create_or_reuse_youtube_video(
         db.rollback()
         raise
 
-    processing_status = (
-        media.processing_status.value
-        if hasattr(media.processing_status, "value")
-        else str(media.processing_status)
-    )
     return FromUrlResponse(
         media_id=media.id,
         idempotency_outcome="created" if created else "reused",
-        processing_status=processing_status,
+        processing_status=_status_to_str(media.processing_status),
         ingest_enqueued=ingest_enqueued,
     )
 
