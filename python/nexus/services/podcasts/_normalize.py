@@ -6,6 +6,20 @@ from datetime import UTC, datetime
 from typing import Any
 
 
+def normalize_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def normalize_language_tag(value: Any) -> str | None:
+    normalized = normalize_optional_text(value)
+    if normalized is None:
+        return None
+    return normalized.lower().replace("_", "-")
+
+
 def parse_iso_datetime(raw_value: Any) -> datetime | None:
     if raw_value is None:
         return None

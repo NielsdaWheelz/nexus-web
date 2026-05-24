@@ -13,6 +13,7 @@ import httpx
 from nexus.config import get_settings, real_media_provider_fixtures_requested
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
+from nexus.services.podcasts._normalize import normalize_language_tag
 from nexus.services.url_normalize import validate_requested_url
 
 logger = get_logger(__name__)
@@ -200,8 +201,8 @@ def _order_transcript_refs(
 ) -> list[dict[str, Any]]:
     ordered: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str | None]] = set()
-    normalized_episode_language = _normalize_language_tag(episode_language)
-    normalized_feed_language = _normalize_language_tag(feed_language)
+    normalized_episode_language = normalize_language_tag(episode_language)
+    normalized_feed_language = normalize_language_tag(feed_language)
 
     for idx, ref in enumerate(refs):
         if not isinstance(ref, dict):
@@ -218,7 +219,7 @@ def _order_transcript_refs(
         if source_type is None:
             continue
 
-        language = _normalize_language_tag(ref.get("language"))
+        language = normalize_language_tag(ref.get("language"))
         dedupe_key = (url, source_type, language)
         if dedupe_key in seen:
             continue
@@ -642,13 +643,6 @@ def _normalize_content_type(raw_value: Any) -> str | None:
     if not normalized:
         return None
     return normalized.split(";", 1)[0].strip() or None
-
-
-def _normalize_language_tag(raw_value: Any) -> str | None:
-    if raw_value is None:
-        return None
-    normalized = str(raw_value).strip().lower().replace("_", "-")
-    return normalized or None
 
 
 def _failure(error_code: str, error_message: str) -> dict[str, Any]:

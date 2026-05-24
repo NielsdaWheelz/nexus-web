@@ -50,7 +50,12 @@ from nexus.services.transcript_segments import (
 from nexus.services.upload import _ensure_in_default_library
 from nexus.services.url_normalize import validate_requested_url
 
-from ._normalize import normalize_provider_published_at, parse_iso_datetime
+from ._normalize import (
+    normalize_language_tag,
+    normalize_optional_text,
+    normalize_provider_published_at,
+    parse_iso_datetime,
+)
 from .provider import (
     PODCAST_INDEX_EPISODE_PAGE_SIZE,
     PODCAST_PROVIDER,
@@ -668,14 +673,14 @@ def _sync_subscription_ingest(
     ]
 
     for episode in selected_episodes:
-        guid = _normalize_optional_text(episode.get("guid"))
+        guid = normalize_optional_text(episode.get("guid"))
         fallback_identity = _compute_fallback_identity(podcast_id, episode)
-        description_html = _normalize_optional_text(episode.get("description_html"))
-        description_text = _normalize_optional_text(episode.get("description_text"))
+        description_html = normalize_optional_text(episode.get("description_html"))
+        description_text = normalize_optional_text(episode.get("description_text"))
         description = description_text[:2000] if description_text else None
         published_at = parse_iso_datetime(episode.get("published_at"))
         published_date = str(episode.get("published_at") or "").strip()[:64] or None
-        language = _normalize_language_tag(episode.get("language")) or _normalize_language_tag(
+        language = normalize_language_tag(episode.get("language")) or normalize_language_tag(
             episode.get("feed_language")
         )
         duration_seconds = coerce_positive_int(episode.get("duration_seconds"))
@@ -912,8 +917,8 @@ def _sync_subscription_ingest(
                 "media_id": media_id,
                 "refs": rss_transcript_refs,
                 "duration_seconds": duration_seconds,
-                "episode_language": _normalize_language_tag(episode.get("language")),
-                "feed_language": _normalize_language_tag(episode.get("feed_language")),
+                "episode_language": normalize_language_tag(episode.get("language")),
+                "feed_language": normalize_language_tag(episode.get("feed_language")),
             }
         )
 
@@ -1845,7 +1850,7 @@ def _parse_feed_episode_page(
     if not item_nodes:
         item_nodes = root.xpath(".//atom:entry", namespaces=_ATOM_NAMESPACE)
 
-    feed_language = _normalize_language_tag(root.xpath("string(./channel/language)"))
+    feed_language = normalize_language_tag(root.xpath("string(./channel/language)"))
 
     episodes: list[dict[str, Any]] = []
     for item in item_nodes:
@@ -1868,7 +1873,7 @@ def _episode_from_feed_item(
     feed_language: str | None = None,
 ) -> dict[str, Any] | None:
     title = str(item.xpath("string(./title)")).strip() or "Untitled Episode"
-    guid = _normalize_optional_text(item.xpath("string(./guid)") or item.xpath("string(./id)"))
+    guid = normalize_optional_text(item.xpath("string(./guid)") or item.xpath("string(./id)"))
 
     audio_url = str(item.xpath("string(./enclosure/@url)")).strip()
     if not audio_url:
@@ -1925,7 +1930,7 @@ def _episode_from_feed_item(
 
     chapter_rows = _extract_rss_chapters_from_feed_item(item, base_url=base_url)
     transcript_refs = _extract_rss_transcript_refs_from_feed_item(item, base_url=base_url)
-    episode_language = _normalize_language_tag(item.xpath("string(./language)")) or feed_language
+    episode_language = normalize_language_tag(item.xpath("string(./language)")) or feed_language
 
     return {
         "provider_episode_id": provider_episode_id,
@@ -1964,7 +1969,7 @@ def _extract_episode_show_notes_from_feed_item(
     except ValueError:
         sanitized_html = ""
 
-    normalized_html = _normalize_optional_text(sanitized_html)
+    normalized_html = normalize_optional_text(sanitized_html)
     if normalized_html is not None:
         normalized_html = _truncate_utf8_bytes(
             normalized_html,
@@ -1972,7 +1977,7 @@ def _extract_episode_show_notes_from_feed_item(
         )
 
     description_text_source = normalized_html or raw_show_notes
-    normalized_text = _normalize_optional_text(
+    normalized_text = normalize_optional_text(
         _extract_plain_text_from_html_fragment(description_text_source)
     )
     if normalized_text is not None:
@@ -2037,7 +2042,7 @@ def _extract_rss_transcript_refs_from_feed_item(
         if not _is_safe_feed_page_url(resolved_url):
             continue
         transcript_type = str(transcript_node.attrib.get("type") or "").strip().lower() or None
-        transcript_language = _normalize_language_tag(transcript_node.attrib.get("language"))
+        transcript_language = normalize_language_tag(transcript_node.attrib.get("language"))
         refs.append(
             {
                 "url": resolved_url,
@@ -2298,7 +2303,7 @@ def _parse_feed_duration_seconds(raw_value: Any) -> int | None:
 
 
 def _episode_dedupe_key(episode: dict[str, Any]) -> tuple[str, str, str, str]:
-    guid = _normalize_optional_text(episode.get("guid")) or ""
+    guid = normalize_optional_text(episode.get("guid")) or ""
     audio_url = str(episode.get("audio_url") or "").strip().lower()
     title = str(episode.get("title") or "").strip().lower()
     published_at = str(episode.get("published_at") or "").strip().lower()
@@ -2307,7 +2312,7 @@ def _episode_dedupe_key(episode: dict[str, Any]) -> tuple[str, str, str, str]:
 
 def _episode_match_keys(episode: dict[str, Any]) -> list[str]:
     keys: list[str] = []
-    guid = _normalize_optional_text(episode.get("guid"))
+    guid = normalize_optional_text(episode.get("guid"))
     if guid:
         keys.append(f"guid:{guid.lower()}")
 
@@ -2325,20 +2330,6 @@ def _episode_match_keys(episode: dict[str, Any]) -> list[str]:
         keys.append(f"title_published:{title}|{normalized_published_at.lower()}")
 
     return keys
-
-
-def _normalize_optional_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    normalized = str(value).strip()
-    return normalized or None
-
-
-def _normalize_language_tag(value: Any) -> str | None:
-    normalized = _normalize_optional_text(value)
-    if normalized is None:
-        return None
-    return normalized.lower().replace("_", "-")
 
 
 def _published_sort_key(raw_value: Any) -> datetime:
