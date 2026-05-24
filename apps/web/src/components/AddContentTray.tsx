@@ -35,6 +35,7 @@ import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { getFocusableElements } from "@/lib/ui/getFocusableElements";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
+import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Button from "@/components/ui/Button";
@@ -373,16 +374,7 @@ export default function AddContentTray() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
-  useEffect(() => {
-    if (!isMobile || !open) {
-      return;
-    }
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [isMobile, open]);
+  useBodyOverflowLock(isMobile && open);
 
   useFocusTrap(trayRef, isMobile && open);
 

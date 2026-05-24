@@ -13,6 +13,7 @@ import ReaderAssistantPane, {
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { type ContextItem } from "@/lib/api/sse/requests";
 import type { ConversationScope } from "@/lib/conversations/types";
+import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import styles from "./QuoteChatSheet.module.css";
 
@@ -48,12 +49,11 @@ export default function QuoteChatSheet({
   const [composerFocused, setComposerFocused] = useState(false);
 
   useFocusTrap(sheetRef, true);
+  useBodyOverflowLock(true);
 
   useEffect(() => {
     previousFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -62,7 +62,6 @@ export default function QuoteChatSheet({
     };
     document.addEventListener("keydown", handleEscape);
     return () => {
-      document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleEscape);
       previousFocusRef.current?.focus({ preventScroll: true });
     };

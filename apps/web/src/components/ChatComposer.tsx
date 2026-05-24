@@ -23,6 +23,7 @@ import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import Textarea from "@/components/ui/Textarea";
 import Toggle from "@/components/ui/Toggle";
+import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   scopeToRequestInput,
@@ -361,14 +362,7 @@ export default function ChatComposer({
     };
   }, [settingsOpen, isMobile]);
 
-  useEffect(() => {
-    if (!settingsOpen || !isMobile) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [settingsOpen, isMobile]);
+  useBodyOverflowLock(settingsOpen && isMobile);
 
   // --------------------------------------------------------------------------
   // Chat-run send

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { formatClock } from "@/lib/formatClock";
+import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { isPositiveFinite } from "@/lib/validation";
 import {
@@ -150,14 +151,7 @@ export default function GlobalPlayerFooter() {
     void refreshQueue();
   }, [queueOpen, refreshQueue, track]);
 
-  useEffect(() => {
-    if (!mobileExpanded || !isMobile) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [mobileExpanded, isMobile]);
+  useBodyOverflowLock(mobileExpanded && isMobile);
 
   useEffect(() => {
     if (!moreOpen) return;

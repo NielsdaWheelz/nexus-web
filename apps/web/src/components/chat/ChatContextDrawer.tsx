@@ -5,6 +5,7 @@ import { PanelRight, X } from "lucide-react";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import Button from "@/components/ui/Button";
 import type { ContextItem } from "@/lib/api/sse/requests";
+import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import type {
   ConversationMemoryInspection,
   ConversationScope,
@@ -55,10 +56,10 @@ export default function ChatContextDrawer({
   const [open, setOpen] = useState(false);
   const drawerRef = useRef<HTMLElement>(null);
 
+  useBodyOverflowLock(open);
+
   useEffect(() => {
     if (!open) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setOpen(false);
@@ -83,7 +84,6 @@ export default function ChatContextDrawer({
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [open]);
