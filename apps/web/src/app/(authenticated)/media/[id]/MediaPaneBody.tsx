@@ -27,6 +27,10 @@ import ReaderOverviewRuler, {
   OVERVIEW_RULER_WIDTH_PX,
 } from "@/components/reader/ReaderOverviewRuler";
 import { positionHighlights } from "@/components/reader/overviewPositions";
+import {
+  toPdfAnchoredHighlightRow,
+  toTextAnchoredHighlightRow,
+} from "@/components/reader/toAnchoredHighlightRow";
 import type { AnchoredHighlightRow } from "@/components/reader/useAnchoredHighlightProjection";
 import SecondaryRail, {
   SECONDARY_RAIL_EXPANDED_WIDTH_PX,
@@ -4237,68 +4241,23 @@ export default function MediaPaneBody() {
 
   const anchoredHighlights = useMemo<AnchoredHighlightRow[]>(() => {
     if (isPdf) {
-      return pdfDocumentHighlights.map((highlight) => {
-        const firstQuad = highlight.anchor.quads[0];
-        return {
-          id: highlight.id,
-          exact: highlight.exact,
-          source_version: highlight.source_version,
-          color: highlight.color,
-          linked_note_blocks: highlight.linked_note_blocks,
-          created_at: highlight.created_at,
-          updated_at: highlight.updated_at,
-          prefix: highlight.prefix,
-          suffix: highlight.suffix,
-          is_owner: highlight.is_owner,
-          linked_conversations: highlight.linked_conversations,
-          page_number: highlight.anchor.page_number,
-          quads: highlight.anchor.quads,
-          stable_order_key: [
-            String(highlight.anchor.page_number).padStart(6, "0"),
-            (firstQuad?.y1 ?? 0).toFixed(3).padStart(12, "0"),
-            (firstQuad?.x1 ?? 0).toFixed(3).padStart(12, "0"),
-            highlight.created_at,
-            highlight.id,
-          ].join(":"),
-        };
-      });
+      return pdfDocumentHighlights.map((highlight) =>
+        toPdfAnchoredHighlightRow(
+          highlight,
+          highlight.anchor.page_number,
+          highlight.anchor.quads,
+        ),
+      );
     }
-
-    return highlights.map((highlight) => {
-      const fragment = isTranscriptMedia
-        ? fragments.find((item) => item.id === highlight.anchor.fragment_id)
-        : null;
-      return {
-        id: highlight.id,
-        exact: highlight.exact,
-        source_version: highlight.source_version,
-        color: highlight.color,
-        linked_note_blocks: highlight.linked_note_blocks,
-        created_at: highlight.created_at,
-        updated_at: highlight.updated_at,
-        prefix: highlight.prefix,
-        suffix: highlight.suffix,
-        is_owner: highlight.is_owner,
-        linked_conversations: highlight.linked_conversations,
-        anchor: {
-          fragment_id: highlight.anchor.fragment_id,
-          start_offset: highlight.anchor.start_offset,
-          end_offset: highlight.anchor.end_offset,
-          ...(fragment
-            ? {
-                t_start_ms: fragment.t_start_ms ?? undefined,
-                t_end_ms: fragment.t_end_ms ?? undefined,
-              }
-            : {}),
-        },
-        stable_order_key: [
-          String(highlight.anchor.start_offset).padStart(12, "0"),
-          String(highlight.anchor.end_offset).padStart(12, "0"),
-          highlight.created_at,
-          highlight.id,
-        ].join(":"),
-      };
-    });
+    return highlights.map((highlight) =>
+      toTextAnchoredHighlightRow(
+        highlight,
+        highlight.anchor,
+        isTranscriptMedia
+          ? (fragments.find((item) => item.id === highlight.anchor.fragment_id) ?? null)
+          : null,
+      ),
+    );
   }, [fragments, highlights, isPdf, isTranscriptMedia, pdfDocumentHighlights]);
 
   // Media-wide highlights mapped to overview-ruler rows. Separate from
@@ -4308,63 +4267,19 @@ export default function MediaPaneBody() {
     return mediaHighlights.map((highlight) => {
       const anchor = highlight.anchor;
       if (anchor.type === "pdf_page_geometry") {
-        const firstQuad = anchor.quads[0];
-        return {
-          id: highlight.id,
-          exact: highlight.exact,
-          source_version: highlight.source_version,
-          color: highlight.color,
-          linked_note_blocks: highlight.linked_note_blocks,
-          created_at: highlight.created_at,
-          updated_at: highlight.updated_at,
-          prefix: highlight.prefix,
-          suffix: highlight.suffix,
-          is_owner: highlight.is_owner,
-          linked_conversations: highlight.linked_conversations,
-          page_number: anchor.page_number,
-          quads: anchor.quads,
-          stable_order_key: [
-            String(anchor.page_number).padStart(6, "0"),
-            (firstQuad?.y1 ?? 0).toFixed(3).padStart(12, "0"),
-            (firstQuad?.x1 ?? 0).toFixed(3).padStart(12, "0"),
-            highlight.created_at,
-            highlight.id,
-          ].join(":"),
-        };
+        return toPdfAnchoredHighlightRow(
+          highlight,
+          anchor.page_number,
+          anchor.quads,
+        );
       }
-      const fragment = isTranscriptMedia
-        ? fragments.find((item) => item.id === anchor.fragment_id)
-        : null;
-      return {
-        id: highlight.id,
-        exact: highlight.exact,
-        source_version: highlight.source_version,
-        color: highlight.color,
-        linked_note_blocks: highlight.linked_note_blocks,
-        created_at: highlight.created_at,
-        updated_at: highlight.updated_at,
-        prefix: highlight.prefix,
-        suffix: highlight.suffix,
-        is_owner: highlight.is_owner,
-        linked_conversations: highlight.linked_conversations,
-        anchor: {
-          fragment_id: anchor.fragment_id,
-          start_offset: anchor.start_offset,
-          end_offset: anchor.end_offset,
-          ...(fragment
-            ? {
-                t_start_ms: fragment.t_start_ms ?? undefined,
-                t_end_ms: fragment.t_end_ms ?? undefined,
-              }
-            : {}),
-        },
-        stable_order_key: [
-          String(anchor.start_offset).padStart(12, "0"),
-          String(anchor.end_offset).padStart(12, "0"),
-          highlight.created_at,
-          highlight.id,
-        ].join(":"),
-      };
+      return toTextAnchoredHighlightRow(
+        highlight,
+        anchor,
+        isTranscriptMedia
+          ? (fragments.find((item) => item.id === anchor.fragment_id) ?? null)
+          : null,
+      );
     });
   }, [fragments, isTranscriptMedia, mediaHighlights]);
 
