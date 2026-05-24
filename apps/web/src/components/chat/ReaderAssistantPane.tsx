@@ -38,12 +38,13 @@ import {
   getContextMediaTitle,
   truncateText,
 } from "@/lib/conversations/display";
-import type {
-  ChatRunResponse,
-  ConversationMessage,
-  ConversationMessagesResponse,
-  ConversationScope,
-  ConversationSummary,
+import {
+  scopeToRequestInput,
+  type ChatRunResponse,
+  type ConversationMessage,
+  type ConversationMessagesResponse,
+  type ConversationScope,
+  type ConversationSummary,
 } from "@/lib/conversations/types";
 import styles from "./ReaderAssistantPane.module.css";
 
@@ -145,22 +146,14 @@ export default function ReaderAssistantPane({
     () => getPendingContextSignature(contexts),
     [contexts],
   );
-  const scopeType = conversationScope.type;
-  const scopeMediaId = scopeType === "media" ? conversationScope.media_id : null;
-  const scopeLibraryId = scopeType === "library" ? conversationScope.library_id : null;
   const conversationScopeKey = useMemo(
     () => getConversationScopeSignature(conversationScope),
     [conversationScope],
   );
-  const resolveScopeBody = useMemo(() => {
-    if (scopeType === "media" && scopeMediaId) {
-      return { type: "media" as const, media_id: scopeMediaId };
-    }
-    if (scopeType === "library" && scopeLibraryId) {
-      return { type: "library" as const, library_id: scopeLibraryId };
-    }
-    return { type: "general" as const };
-  }, [scopeLibraryId, scopeMediaId, scopeType]);
+  const resolveScopeBody = useMemo(
+    () => scopeToRequestInput(conversationScope),
+    [conversationScope],
+  );
   const composerFocusKey = `${incomingContextKey}:${activeConversationId ?? "new"}`;
   const telemetryBase = useCallback(
     () => ({

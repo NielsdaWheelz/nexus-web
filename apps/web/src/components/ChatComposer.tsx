@@ -24,11 +24,12 @@ import Select from "@/components/ui/Select";
 import Textarea from "@/components/ui/Textarea";
 import Toggle from "@/components/ui/Toggle";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import type {
-  BranchDraft,
-  ChatRunResponse,
-  ConversationScope,
-  ConversationModel,
+import {
+  scopeToRequestInput,
+  type BranchDraft,
+  type ChatRunResponse,
+  type ConversationScope,
+  type ConversationModel,
 } from "@/lib/conversations/types";
 import styles from "./ChatComposer.module.css";
 
@@ -445,18 +446,8 @@ export default function ChatComposer({
           ? attachedContexts.slice(0, MAX_CONTEXTS).map(toWireContextItem)
           : undefined,
     };
-    if (!conversationId && conversationScope.type === "general") {
-      body.conversation_scope = { type: "general" };
-    } else if (!conversationId && conversationScope.type === "media") {
-      body.conversation_scope = {
-        type: "media",
-        media_id: conversationScope.media_id,
-      };
-    } else if (!conversationId && conversationScope.type === "library") {
-      body.conversation_scope = {
-        type: "library",
-        library_id: conversationScope.library_id,
-      };
+    if (!conversationId) {
+      body.conversation_scope = scopeToRequestInput(conversationScope);
     }
 
     let sent = false;

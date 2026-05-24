@@ -9,6 +9,7 @@ import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type {
   ContextItemColor,
   ContextItemType,
+  ConversationScopeInput,
 } from "@/lib/api/sse/requests";
 import type { ContributorCredit } from "@/lib/contributors/types";
 
@@ -33,6 +34,23 @@ export type ConversationScope =
       media_kinds?: string[];
       source_policy?: string | null;
     };
+
+/**
+ * Drop the display-only fields off a ConversationScope so the wire shape
+ * matches the FastAPI request schema (media_id / library_id only).
+ */
+export function scopeToRequestInput(
+  scope: ConversationScope,
+): ConversationScopeInput {
+  switch (scope.type) {
+    case "media":
+      return { type: "media", media_id: scope.media_id };
+    case "library":
+      return { type: "library", library_id: scope.library_id };
+    case "general":
+      return { type: "general" };
+  }
+}
 
 export interface ConversationSummary {
   id: string;
