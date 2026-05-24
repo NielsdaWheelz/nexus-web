@@ -20,7 +20,6 @@ Key design decisions:
 """
 
 import base64
-import binascii
 import hashlib
 import json
 import re
@@ -447,7 +446,10 @@ def decode_search_cursor(cursor: str) -> int:
         if offset < 0:
             raise ValueError("Offset must be non-negative")
         return offset
-    except (binascii.Error, KeyError, TypeError, UnicodeDecodeError, ValueError):
+    except (KeyError, ValueError):
+        # justify-ignore-error: malformed cursor decode path. ValueError covers
+        # binascii.Error, json.JSONDecodeError, UnicodeDecodeError, and the
+        # explicit shape/offset raises; KeyError covers a missing offset key.
         raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
 
 
