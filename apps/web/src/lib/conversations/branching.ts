@@ -105,13 +105,7 @@ export function activeForkOptionsForPath(
   optionsByParentId: Record<string, ForkOption[]>,
   path: ConversationMessage[],
 ): Record<string, ForkOption[]> {
-  return activeForkOptionsForMessageIds(optionsByParentId, selectedPathMessageIds(path));
-}
-
-function activeForkOptionsForMessageIds(
-  optionsByParentId: Record<string, ForkOption[]>,
-  selectedIds: Set<string>,
-): Record<string, ForkOption[]> {
+  const selectedIds = selectedPathMessageIds(path);
   const next: Record<string, ForkOption[]> = {};
   for (const [parentId, options] of Object.entries(optionsByParentId)) {
     next[parentId] = options.map((option) => ({
