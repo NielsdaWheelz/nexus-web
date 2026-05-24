@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol, cast
@@ -2046,41 +2046,37 @@ def _artifact_delta_from_model_response(
     )
 
 
-def _artifact_source_ref_json(value: object, field_name: str) -> dict[str, Any] | None:
+def _artifact_ref_or_die(
+    value: object,
+    field_name: str,
+    validator: Callable[[dict[str, Any]], dict[str, Any] | None],
+) -> dict[str, Any] | None:
     if value is None:
         return None
     if not isinstance(value, dict):
         raise ValueError(f"artifact_delta {field_name} must be an object")
     try:
-        return SourceRef.model_validate(value).model_dump(
-            mode="json",
-            exclude_none=True,
-            exclude_defaults=True,
-        )
+        return validator(value)
     except ValidationError as exc:
         raise ValueError(f"artifact_delta {field_name} is invalid") from exc
 
 
+def _artifact_source_ref_json(value: object, field_name: str) -> dict[str, Any] | None:
+    return _artifact_ref_or_die(
+        value,
+        field_name,
+        lambda v: SourceRef.model_validate(v).model_dump(
+            mode="json", exclude_none=True, exclude_defaults=True
+        ),
+    )
+
+
 def _artifact_context_ref_json(value: object) -> dict[str, Any] | None:
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise ValueError("artifact_delta context_ref must be an object")
-    try:
-        return retrieval_context_ref_json(value)
-    except ValidationError as exc:
-        raise ValueError("artifact_delta context_ref is invalid") from exc
+    return _artifact_ref_or_die(value, "context_ref", retrieval_context_ref_json)
 
 
 def _artifact_result_ref_json(value: object) -> dict[str, Any] | None:
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise ValueError("artifact_delta result_ref must be an object")
-    try:
-        return retrieval_result_ref_json(value)
-    except ValidationError as exc:
-        raise ValueError("artifact_delta result_ref is invalid") from exc
+    return _artifact_ref_or_die(value, "result_ref", retrieval_result_ref_json)
 
 
 def _artifact_part_has_evidence(
