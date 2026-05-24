@@ -24,6 +24,7 @@ import Select from "@/components/ui/Select";
 import Textarea from "@/components/ui/Textarea";
 import Toggle from "@/components/ui/Toggle";
 import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
+import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   scopeToRequestInput,
@@ -333,34 +334,16 @@ export default function ChatComposer({
     ? `${selectedModel.model_display_name} / ${REASONING_LABELS[selectedReasoning]}`
     : "Model";
 
-  useEffect(() => {
-    if (!settingsOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (isMobile) return;
-      const target = event.target as Node;
-      if (
-        settingsPanelRef.current?.contains(target) ||
-        settingsButtonRef.current?.contains(target)
-      ) {
-        return;
-      }
+  useDismissOnOutsideOrEscape({
+    enabled: settingsOpen,
+    refs: [settingsPanelRef, settingsButtonRef],
+    onDismiss: (reason) => {
+      // Mobile: full-screen panel, outside-click is impossible/unintended;
+      // Escape still closes.
+      if (reason === "outside-click" && isMobile) return;
       setSettingsOpen(false);
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSettingsOpen(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [settingsOpen, isMobile]);
+    },
+  });
 
   useBodyOverflowLock(settingsOpen && isMobile);
 
