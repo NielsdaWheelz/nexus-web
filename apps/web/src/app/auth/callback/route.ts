@@ -5,6 +5,7 @@ import {
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { handleAuthCallback } from "@/lib/auth/callback";
 import { AUTH_CALLBACK_FAILURE_MESSAGE } from "@/lib/auth/messages";
+import { createRandomId } from "@/lib/createRandomId";
 import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
 import { NextResponse } from "next/server";
 
@@ -39,7 +40,7 @@ export async function GET(request: Request) {
           return { error: "not_configured" };
         }
 
-        const requestId = crypto.randomUUID();
+        const requestId = createRandomId();
 
         let response: Response;
         try {

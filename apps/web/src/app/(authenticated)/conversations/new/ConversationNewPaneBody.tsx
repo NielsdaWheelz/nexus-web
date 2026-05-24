@@ -38,6 +38,7 @@ import {
 import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
 import Button from "@/components/ui/Button";
 import { apiFetch } from "@/lib/api/client";
+import { createRandomId } from "@/lib/createRandomId";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   usePaneRouter,
@@ -247,7 +248,7 @@ export default function ConversationNewPaneBody() {
         mergeContextItems(current, [
           {
             kind: "reader_selection",
-            client_context_id: crypto.randomUUID(),
+            client_context_id: createRandomId(),
             media_id: target.media_id,
             media_kind:
               locator.type === "pdf_page_geometry"

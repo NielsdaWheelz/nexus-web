@@ -1,5 +1,6 @@
 "use client";
 
+import { createRandomId } from "@/lib/createRandomId";
 import { isRecord } from "@/lib/validation";
 
 export const WORKSPACE_SCHEMA_VERSION = 4;
@@ -29,10 +30,7 @@ export interface WorkspaceStateV4 {
 }
 
 export function createPaneId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `pane-${crypto.randomUUID()}`;
-  }
-  return `pane-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return createRandomId("pane");
 }
 
 function resolveBaseOrigin(baseOrigin?: string): string {

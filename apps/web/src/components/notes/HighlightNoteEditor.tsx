@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
+import { createRandomId } from "@/lib/createRandomId";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { fetchNoteBlock } from "@/lib/notes/api";
@@ -295,7 +296,7 @@ export default function HighlightNoteEditor({
 }
 
 function newBlockId(): string {
-  return crypto.randomUUID();
+  return createRandomId();
 }
 
 function highlightNoteBodyHasContent(block: {

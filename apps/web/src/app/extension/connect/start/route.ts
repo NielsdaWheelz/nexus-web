@@ -5,6 +5,7 @@ import {
 } from "@/lib/api/internal-config";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { buildLoginRedirectUrl } from "@/lib/auth/redirects";
+import { createRandomId } from "@/lib/createRandomId";
 import {
   parseCookieHeader,
   readSupabaseSessionCookie,
@@ -57,7 +58,7 @@ export async function GET(req: Request) {
   }
   session.state satisfies "active";
 
-  const requestId = crypto.randomUUID();
+  const requestId = createRandomId();
   const config = getInternalApiConfig();
   if (!isInternalApiConfigured(config)) {
     return NextResponse.json(

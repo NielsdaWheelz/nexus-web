@@ -21,6 +21,7 @@ import { PanelRightOpen } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
 import { type ContextItem } from "@/lib/api/sse/requests";
+import { createRandomId } from "@/lib/createRandomId";
 import { mergeContextItems } from "@/lib/conversations/attachedContext";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
 import ChatComposer from "@/components/ChatComposer";
@@ -537,7 +538,7 @@ function ChatView({
           `/api/messages/${assistantMessageId}/retry`,
           {
             method: "POST",
-            headers: { "Idempotency-Key": crypto.randomUUID() },
+            headers: { "Idempotency-Key": createRandomId() },
           },
         );
         handleChatRunCreated(response.data);
@@ -705,7 +706,7 @@ function ChatView({
         mergeContextItems(current, [
           {
             kind: "reader_selection",
-            client_context_id: crypto.randomUUID(),
+            client_context_id: createRandomId(),
             media_id: target.media_id,
             media_kind:
               locator.type === "pdf_page_geometry"

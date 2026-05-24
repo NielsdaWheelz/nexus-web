@@ -1,4 +1,5 @@
 import { type NextRequest } from "next/server";
+import { createRandomId } from "@/lib/createRandomId";
 import { updateSession } from "@/lib/supabase/middleware";
 
 /**
@@ -10,7 +11,7 @@ export function middleware(request: NextRequest) {
   // A fresh per-request nonce. updateSession sets it on the request `x-nonce`
   // header; it is also placed in the CSP below so Next.js applies it to
   // framework and page scripts automatically.
-  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
+  const nonce = Buffer.from(createRandomId()).toString("base64");
 
   const response = updateSession(request, nonce);
 

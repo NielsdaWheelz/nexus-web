@@ -1,3 +1,5 @@
+import { createRandomId } from "@/lib/createRandomId";
+
 const STORAGE_KEY = "nexus.installationId.v1";
 
 export function getInstallationId(): string {
@@ -8,10 +10,7 @@ export function getInstallationId(): string {
     }
   } catch { /* ignore */ }
 
-  const id =
-    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const id = createRandomId();
 
   try {
     localStorage.setItem(STORAGE_KEY, id);

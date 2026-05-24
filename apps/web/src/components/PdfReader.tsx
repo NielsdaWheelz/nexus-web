@@ -44,6 +44,7 @@ import {
   deriveViewportTransformFromPageView,
 } from "@/lib/highlights/pdfPageViewport";
 import { clamp } from "@/lib/clamp";
+import { createRandomId } from "@/lib/createRandomId";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { isPositiveFinite } from "@/lib/validation";
 import styles from "./PdfReader.module.css";
@@ -439,16 +440,6 @@ function clipQuotePrefix(value: string): string {
 
 function clipQuoteSuffix(value: string): string {
   return compactPdfQuoteText(value).slice(0, PDF_QUOTE_CONTEXT_TEXT_RADIUS);
-}
-
-function createPdfSelectionContextId(): string {
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    return crypto.randomUUID();
-  }
-  return `pdf-selection-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 function readPdfQuoteTextWindow(
@@ -2551,7 +2542,7 @@ export default function PdfReader({
 
       onAskSelection({
         kind: "reader_selection",
-        client_context_id: createPdfSelectionContextId(),
+        client_context_id: createRandomId("pdf-selection"),
         media_id: mediaId,
         color,
         exact: quoteText.exact,

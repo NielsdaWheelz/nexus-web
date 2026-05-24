@@ -19,6 +19,7 @@ import {
 } from "@/lib/auth/identities";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
 import { getInternalApiConfig } from "@/lib/api/internal-config";
+import { createRandomId } from "@/lib/createRandomId";
 import { createClient } from "@/lib/supabase/server";
 
 export async function signInWithPasswordAction(input: {
@@ -90,7 +91,7 @@ export async function signUpWithPasswordAction(input: {
           Authorization: `Bearer ${data.session.access_token}`,
           "Content-Type": "application/json",
           "X-Nexus-Internal": config.internalSecret,
-          "X-Request-ID": crypto.randomUUID(),
+          "X-Request-ID": createRandomId(),
         },
         body: JSON.stringify({ display_name: displayName }),
       },

@@ -7,6 +7,7 @@ import NoteBacklinks from "@/components/notes/NoteBacklinks";
 import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
 import Button from "@/components/ui/Button";
 import { usePaneParam, usePaneRuntime, useSetPaneTitle } from "@/lib/panes/paneRuntime";
+import { createRandomId } from "@/lib/createRandomId";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
 import {
   createEmptyOutlineDoc,
@@ -465,7 +466,7 @@ export default function PagePaneBody({
 }
 
 function newBlockId(): string {
-  return crypto.randomUUID();
+  return createRandomId();
 }
 
 function saveLabelForStatus(status: NoteEditorSessionStatus): string {

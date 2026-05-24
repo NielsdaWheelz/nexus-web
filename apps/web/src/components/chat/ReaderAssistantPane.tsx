@@ -22,6 +22,7 @@ import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import { type ContextItem } from "@/lib/api/sse/requests";
+import { createRandomId } from "@/lib/createRandomId";
 import {
   getContextIdentityKey,
   getConversationScopeSignature,
@@ -480,7 +481,7 @@ export default function ReaderAssistantPane({
           `/api/messages/${assistantMessageId}/retry`,
           {
             method: "POST",
-            headers: { "Idempotency-Key": crypto.randomUUID() },
+            headers: { "Idempotency-Key": createRandomId() },
           },
         );
         handleChatRunCreated(response.data);

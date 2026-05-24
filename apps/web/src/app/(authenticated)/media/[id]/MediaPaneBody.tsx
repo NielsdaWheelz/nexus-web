@@ -49,6 +49,7 @@ import {
 } from "@/components/feedback/Feedback";
 import { mediaResourceOptions } from "@/lib/actions/resourceActions";
 import type { ContextItem } from "@/lib/api/sse/requests";
+import { createRandomId } from "@/lib/createRandomId";
 import {
   applyHighlightsToHtml,
   type HighlightInput,
@@ -3814,7 +3815,7 @@ export default function MediaPaneBody() {
         openReaderAssistant([
           {
             kind: "reader_selection",
-            client_context_id: crypto.randomUUID(),
+            client_context_id: createRandomId(),
             media_id: media.id,
             media_kind: media.kind,
             media_title: media.title,
@@ -3852,7 +3853,7 @@ export default function MediaPaneBody() {
       openReaderAssistant([
         {
           kind: "reader_selection",
-          client_context_id: crypto.randomUUID(),
+          client_context_id: createRandomId(),
           media_id: media.id,
           media_kind: media.kind,
           media_title: media.title,
@@ -4447,7 +4448,7 @@ export default function MediaPaneBody() {
       openReaderAssistant([
         {
           kind: "reader_selection",
-          client_context_id: crypto.randomUUID(),
+          client_context_id: createRandomId(),
           media_id: media.id,
           media_kind: media.kind,
           media_title: media.title,

@@ -2,6 +2,7 @@ import { Fragment, type Node as ProseMirrorNode } from "prosemirror-model";
 import { Plugin, TextSelection, type Command, type EditorState } from "prosemirror-state";
 import { undo, redo } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
+import { createRandomId } from "@/lib/createRandomId";
 import { outlineSchema } from "@/lib/notes/prosemirror/schema";
 
 interface DraftBlock {
@@ -21,10 +22,7 @@ const OBJECT_REF_PATTERN =
   /\[\[(page|note_block|media|highlight|conversation|message|podcast|content_chunk|contributor):([0-9a-fA-F-]{36})(?:\|([^\]]+))?\]\]/g;
 
 function defaultCreateBlockId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `block-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return createRandomId();
 }
 
 function emptyParagraph(): ProseMirrorNode {

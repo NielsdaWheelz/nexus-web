@@ -3,6 +3,7 @@ import {
   isInternalApiConfigured,
 } from "@/lib/api/internal-config";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
+import { createRandomId } from "@/lib/createRandomId";
 import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
 import { NextResponse } from "next/server";
 
@@ -47,7 +48,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const requestId = crypto.randomUUID();
+    const requestId = createRandomId();
 
     let mintResponse: Response;
     try {

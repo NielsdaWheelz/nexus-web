@@ -10,6 +10,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { ArrowUp, ChevronDown, FileText, Search, X } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
+import { createRandomId } from "@/lib/createRandomId";
 import { toFeedback } from "@/components/feedback/Feedback";
 import {
   toWireContextItem,
@@ -408,7 +409,7 @@ export default function ChatComposer({
     setError(null);
     onSendStarted?.();
 
-    const idempotencyKey = crypto.randomUUID();
+    const idempotencyKey = createRandomId();
     const replyParentMessageId = branchDraft?.parentMessageId ?? parentMessageId;
     const branchAnchor = branchDraft
       ? branchDraft.anchor.kind === "assistant_message"

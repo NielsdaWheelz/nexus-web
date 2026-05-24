@@ -9,6 +9,7 @@ import {
   mapAssistantSelectionToSource,
 } from "@/lib/conversations/assistantSelection";
 import type { ContextItem } from "@/lib/api/sse/requests";
+import { createRandomId } from "@/lib/createRandomId";
 import type {
   BranchDraft,
   ChatRunResponse,
@@ -147,7 +148,7 @@ export default function AssistantMessage({
       start_offset: mapping.start_offset,
       end_offset: mapping.end_offset,
       offset_status: mapping.offset_status,
-      client_selection_id: crypto.randomUUID(),
+      client_selection_id: createRandomId(),
       rect: {
         top,
         left: left + width / 2,

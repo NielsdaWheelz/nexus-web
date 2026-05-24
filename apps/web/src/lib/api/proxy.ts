@@ -18,6 +18,7 @@ import {
   getInternalApiConfig,
   isInternalApiConfigured,
 } from "@/lib/api/internal-config";
+import { createRandomId } from "@/lib/createRandomId";
 import {
   clearSupabaseAuthCookies,
   parseCookieHeader,
@@ -109,7 +110,7 @@ interface ExtensionProxyOptions {
 }
 
 function generateRequestId(): string {
-  return crypto.randomUUID();
+  return createRandomId();
 }
 
 function isValidRequestId(value: string | null): value is string {

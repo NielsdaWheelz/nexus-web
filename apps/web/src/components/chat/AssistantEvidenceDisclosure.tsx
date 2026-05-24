@@ -34,6 +34,7 @@ import type {
   ContextItem,
 } from "@/lib/api/sse/requests";
 import { apiFetch } from "@/lib/api/client";
+import { createRandomId } from "@/lib/createRandomId";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
 import type {
   AssistantVerifierRun,
@@ -1346,7 +1347,7 @@ function ArtifactInspector({
       }
       const createdRun = await apiFetch<ChatRunResponse>("/api/chat-runs", {
         method: "POST",
-        headers: { "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Idempotency-Key": createRandomId() },
         body: JSON.stringify(payload),
       });
       onChatRunCreated?.(createdRun.data);

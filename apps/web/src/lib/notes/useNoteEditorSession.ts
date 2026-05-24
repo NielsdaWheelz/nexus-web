@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Node as ProseMirrorNode } from "prosemirror-model";
 import { isApiError } from "@/lib/api/client";
+import { createRandomId } from "@/lib/createRandomId";
 import { outlineSchema } from "@/lib/notes/prosemirror/schema";
 
 export const NOTE_AUTOSAVE_IDLE_DELAY_MS = 1500;
@@ -296,11 +297,7 @@ function isNoteConflictError(error: unknown): boolean {
 }
 
 function createClientMutationId(resourceKey: string, sequence: number): string {
-  const random =
-    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return `${resourceKey}:${sequence}:${random}`;
+  return `${resourceKey}:${sequence}:${createRandomId()}`;
 }
 
 export function readStoredNoteEditorDraft(resourceKey: string): StoredNoteEditorDraft | null {

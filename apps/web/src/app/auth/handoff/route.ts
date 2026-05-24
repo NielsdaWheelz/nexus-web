@@ -4,6 +4,7 @@ import {
 } from "@/lib/api/internal-config";
 import { resolveCallbackRedirectOrigin } from "@/lib/auth/callback-origin";
 import { boundedAuthFetch } from "@/lib/auth/internal-fetch";
+import { createRandomId } from "@/lib/createRandomId";
 import {
   AUTH_CALLBACK_CANCELLED_MESSAGE,
   AUTH_CALLBACK_FAILURE_MESSAGE,
@@ -97,7 +98,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       );
     }
 
-    const requestId = crypto.randomUUID();
+    const requestId = createRandomId();
 
     let consumeResponse: Response;
     try {
