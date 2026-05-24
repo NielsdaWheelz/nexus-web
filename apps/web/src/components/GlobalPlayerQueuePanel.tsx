@@ -2,9 +2,6 @@
 
 import SortableList from "@/components/sortable/SortableList";
 import Button from "@/components/ui/Button";
-import {
-  type PlaybackQueueItem,
-} from "@/lib/player/playbackQueueClient";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import styles from "./GlobalPlayerFooter.module.css";
 
@@ -17,15 +14,6 @@ export default function GlobalPlayerQueuePanel({ onClose }: { onClose: () => voi
     removeFromQueue,
     clearQueue,
   } = useGlobalPlayer();
-
-  const handlePlay = (item: PlaybackQueueItem) => {
-    playQueueItem(item);
-    onClose();
-  };
-
-  const handleReorder = (next: PlaybackQueueItem[]) => {
-    void reorderQueue(next.map((item) => item.item_id));
-  };
 
   return (
     <div className={styles.queueOverlay}>
@@ -51,7 +39,9 @@ export default function GlobalPlayerQueuePanel({ onClose }: { onClose: () => voi
             itemClassName={styles.queueListItem}
             items={queueItems}
             getItemId={(item) => item.item_id}
-            onReorder={handleReorder}
+            onReorder={(next) =>
+              void reorderQueue(next.map((item) => item.item_id))
+            }
             renderItem={({ item, handleProps }) => {
               const isCurrent = item.item_id === currentQueueItemId;
               return (
@@ -69,7 +59,10 @@ export default function GlobalPlayerQueuePanel({ onClose }: { onClose: () => voi
                   <Button
                     variant="ghost"
                     className={styles.queueItemMain}
-                    onClick={() => handlePlay(item)}
+                    onClick={() => {
+                      playQueueItem(item);
+                      onClose();
+                    }}
                     aria-label={`Play ${item.title} from queue`}
                   >
                     <span className={styles.queueItemTitle}>{item.title}</span>
