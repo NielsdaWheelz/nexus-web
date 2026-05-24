@@ -12,6 +12,7 @@ import { Check, ChevronDown } from "lucide-react";
 import { createPortal } from "react-dom";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import styles from "./LibraryTargetPicker.module.css";
 
 export interface LibraryTargetPickerItem {
@@ -72,15 +73,24 @@ export default function LibraryTargetPicker({
     );
   }, [libraries, query]);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const updatePanelStyle = () => {
-      if (!buttonRef.current) {
-        return;
+  useDismissOnOutsideOrEscape({
+    enabled: open,
+    refs: [panelRef, buttonRef],
+    onDismiss: (reason) => {
+      setOpen(false);
+      setPanelStyle(null);
+      if (reason === "escape") {
+        requestAnimationFrame(() => {
+          buttonRef.current?.focus();
+        });
       }
+    },
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    const updatePanelStyle = () => {
+      if (!buttonRef.current) return;
       const rect = buttonRef.current.getBoundingClientRect();
       const width = Math.max(rect.width, 260);
       const maxLeft = window.innerWidth - width - 8;
@@ -90,44 +100,14 @@ export default function LibraryTargetPicker({
         width,
       });
     };
-
     updatePanelStyle();
     requestAnimationFrame(() => {
       inputRef.current?.focus();
       inputRef.current?.select();
     });
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        panelRef.current?.contains(target) ||
-        buttonRef.current?.contains(target)
-      ) {
-        return;
-      }
-      setOpen(false);
-      setPanelStyle(null);
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") {
-        return;
-      }
-      event.preventDefault();
-      setOpen(false);
-      setPanelStyle(null);
-      requestAnimationFrame(() => {
-        buttonRef.current?.focus();
-      });
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
     window.addEventListener("resize", updatePanelStyle);
     window.addEventListener("scroll", updatePanelStyle, true);
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("resize", updatePanelStyle);
       window.removeEventListener("scroll", updatePanelStyle, true);
     };

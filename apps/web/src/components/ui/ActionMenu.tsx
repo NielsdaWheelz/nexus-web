@@ -11,6 +11,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import styles from "./ActionMenu.module.css";
 
 export interface ActionMenuOption {
@@ -82,49 +83,27 @@ export default function ActionMenu({
     };
   }, [menuOpen, onOpenChange]);
 
+  useDismissOnOutsideOrEscape({
+    enabled: menuOpen,
+    refs: [menuRef, menuContainerRef],
+    onDismiss: (reason) => closeMenu(reason === "escape"),
+  });
+
   useEffect(() => {
     if (!menuOpen) return;
-
     const updateMenuPos = () => {
       if (!toggleRef.current) return;
       const rect = toggleRef.current.getBoundingClientRect();
-      setMenuPos({
-        top: rect.bottom + 4,
-        left: rect.right,
-      });
+      setMenuPos({ top: rect.bottom + 4, left: rect.right });
     };
-
     updateMenuPos();
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (
-        menuRef.current &&
-        !menuRef.current.contains(event.target as Node) &&
-        menuContainerRef.current &&
-        !menuContainerRef.current.contains(event.target as Node)
-      ) {
-        setMenuOpen(false);
-        setMenuPos(null);
-      }
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        closeMenu();
-      }
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
     window.addEventListener("scroll", updateMenuPos, true);
     window.addEventListener("resize", updateMenuPos);
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("scroll", updateMenuPos, true);
       window.removeEventListener("resize", updateMenuPos);
     };
-  }, [closeMenu, menuOpen]);
+  }, [menuOpen]);
 
   useEffect(() => {
     if (!menuOpen || !menuPos) return;

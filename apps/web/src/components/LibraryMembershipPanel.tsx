@@ -18,6 +18,7 @@ import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
+import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./LibraryMembershipPanel.module.css";
 
@@ -94,15 +95,18 @@ export default function LibraryMembershipPanel({
     });
   }, [open]);
 
-  useEffect(() => {
-    if (!open || isMobile) {
-      return;
-    }
+  const anchorRef = useMemo(() => ({ current: anchorEl }), [anchorEl]);
 
+  useDismissOnOutsideOrEscape({
+    enabled: open && !isMobile,
+    refs: [panelRef, anchorRef],
+    onDismiss: handleClose,
+  });
+
+  useEffect(() => {
+    if (!open || isMobile) return;
     const updatePanelStyle = () => {
-      if (!anchorEl) {
-        return;
-      }
+      if (!anchorEl) return;
       const rect = anchorEl.getBoundingClientRect();
       const width = Math.max(rect.width, 320);
       const maxLeft = window.innerWidth - width - 8;
@@ -112,39 +116,14 @@ export default function LibraryMembershipPanel({
         width,
       });
     };
-
     updatePanelStyle();
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (
-        panelRef.current?.contains(target) ||
-        anchorEl?.contains(target)
-      ) {
-        return;
-      }
-      handleClose();
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") {
-        return;
-      }
-      event.preventDefault();
-      handleClose();
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
     window.addEventListener("resize", updatePanelStyle);
     window.addEventListener("scroll", updatePanelStyle, true);
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("resize", updatePanelStyle);
       window.removeEventListener("scroll", updatePanelStyle, true);
     };
-  }, [anchorEl, handleClose, isMobile, open]);
+  }, [anchorEl, isMobile, open]);
 
   if (!open) {
     return null;

@@ -13,6 +13,7 @@ import { MoreHorizontal } from "lucide-react";
 import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
 import Button from "@/components/ui/Button";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
+import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import styles from "./HighlightActionsMenu.module.css";
 
 export default function HighlightActionsMenu({
@@ -48,50 +49,30 @@ export default function HighlightActionsMenu({
     setPosition(null);
   }, []);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
+  useDismissOnOutsideOrEscape({
+    enabled: open,
+    refs: [triggerRef, menuRef],
+    onDismiss: (reason) => {
+      close();
+      if (reason === "escape") triggerRef.current?.focus();
+    },
+  });
 
+  useEffect(() => {
+    if (!open) return;
     const updatePosition = () => {
       const rect = triggerRef.current?.getBoundingClientRect();
-      if (!rect) {
-        return;
-      }
+      if (!rect) return;
       setPosition({ top: rect.bottom + 4, left: rect.right });
     };
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (
-        triggerRef.current?.contains(target) ||
-        menuRef.current?.contains(target)
-      ) {
-        return;
-      }
-      close();
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        close();
-        triggerRef.current?.focus();
-      }
-    };
-
     updatePosition();
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
     window.addEventListener("scroll", updatePosition, true);
     window.addEventListener("resize", updatePosition);
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("scroll", updatePosition, true);
       window.removeEventListener("resize", updatePosition);
     };
-  }, [close, open]);
+  }, [open]);
 
   const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Tab") {
