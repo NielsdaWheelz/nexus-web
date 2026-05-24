@@ -38,7 +38,7 @@ import {
   patchLibraryMembership,
   removeMediaFromLibrary,
 } from "@/lib/media/mediaLibraries";
-import { useStringIdSet } from "@/lib/useStringIdSet";
+import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import { fetchPodcastLibraries } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import LibraryIntelligenceView from "./LibraryIntelligenceView";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
@@ -455,18 +455,28 @@ export default function LibraryPaneBody() {
     ],
   );
 
-  const handleRetryProcessing = useCallback(
-    async (mediaId: string) => {
-      if (retryingMediaIds.ids.has(mediaId)) {
-        return;
-      }
-
-      retryingMediaIds.add(mediaId);
+  const runMediaProcessingMutation = useCallback(
+    async (args: {
+      mediaId: string;
+      busySet: StringIdSet;
+      endpoint: string;
+      successTitle: string;
+      errorFallback: string;
+      capabilityPatch: Partial<{
+        can_delete: boolean;
+        can_retry: boolean;
+        can_refresh_source: boolean;
+      }>;
+    }) => {
+      if (args.busySet.ids.has(args.mediaId)) return;
+      args.busySet.add(args.mediaId);
       try {
-        await apiFetch(`/api/media/${mediaId}/retry`, { method: "POST" });
+        await apiFetch(`/api/media/${args.mediaId}${args.endpoint}`, {
+          method: "POST",
+        });
         setEntries((current) =>
           current.map((entry) =>
-            entry.kind === "media" && entry.media.id === mediaId
+            entry.kind === "media" && entry.media.id === args.mediaId
               ? {
                   ...entry,
                   media: {
@@ -474,72 +484,49 @@ export default function LibraryPaneBody() {
                     processing_status: "extracting",
                     capabilities: {
                       ...(entry.media.capabilities ?? {}),
-                      can_retry: false,
+                      ...args.capabilityPatch,
                     },
                   },
                 }
               : entry,
           ),
         );
-        feedback.show({
-          severity: "success",
-          title: "Processing retry started.",
-        });
+        feedback.show({ severity: "success", title: args.successTitle });
       } catch (err) {
         feedback.show({
-          ...toFeedback(err, {
-            fallback: "Failed to retry processing",
-          }),
+          ...toFeedback(err, { fallback: args.errorFallback }),
         });
       } finally {
-        retryingMediaIds.remove(mediaId);
+        args.busySet.remove(args.mediaId);
       }
     },
-    [feedback, retryingMediaIds],
+    [feedback],
+  );
+
+  const handleRetryProcessing = useCallback(
+    (mediaId: string) =>
+      runMediaProcessingMutation({
+        mediaId,
+        busySet: retryingMediaIds,
+        endpoint: "/retry",
+        successTitle: "Processing retry started.",
+        errorFallback: "Failed to retry processing",
+        capabilityPatch: { can_retry: false },
+      }),
+    [retryingMediaIds, runMediaProcessingMutation],
   );
 
   const handleRefreshSource = useCallback(
-    async (mediaId: string) => {
-      if (refreshingMediaIds.ids.has(mediaId)) {
-        return;
-      }
-
-      refreshingMediaIds.add(mediaId);
-      try {
-        await apiFetch(`/api/media/${mediaId}/refresh`, { method: "POST" });
-        setEntries((current) =>
-          current.map((entry) =>
-            entry.kind === "media" && entry.media.id === mediaId
-              ? {
-                  ...entry,
-                  media: {
-                    ...entry.media,
-                    processing_status: "extracting",
-                    capabilities: {
-                      ...(entry.media.capabilities ?? {}),
-                      can_refresh_source: false,
-                      can_retry: false,
-                    },
-                  },
-                }
-              : entry,
-          ),
-        );
-        feedback.show({
-          severity: "success",
-          title: "Source refresh started.",
-        });
-      } catch (err) {
-        feedback.show({
-          ...toFeedback(err, {
-            fallback: "Failed to refresh source",
-          }),
-        });
-      } finally {
-        refreshingMediaIds.remove(mediaId);
-      }
-    },
-    [feedback, refreshingMediaIds],
+    (mediaId: string) =>
+      runMediaProcessingMutation({
+        mediaId,
+        busySet: refreshingMediaIds,
+        endpoint: "/refresh",
+        successTitle: "Source refresh started.",
+        errorFallback: "Failed to refresh source",
+        capabilityPatch: { can_refresh_source: false, can_retry: false },
+      }),
+    [refreshingMediaIds, runMediaProcessingMutation],
   );
 
   const handleDeleteMedia = useCallback(
