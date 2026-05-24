@@ -109,10 +109,6 @@ interface ExtensionProxyOptions {
   forwardHeaders?: readonly string[];
 }
 
-function generateRequestId(): string {
-  return createRandomId();
-}
-
 function isValidRequestId(value: string | null): value is string {
   return Boolean(value && /^[A-Za-z0-9._:-]{1,128}$/.test(value));
 }
@@ -178,7 +174,7 @@ async function createDefaultDeps(): Promise<ProxyDeps> {
         parseCookieHeader(request.headers.get("cookie"))
       ),
     fetch: globalThis.fetch,
-    generateRequestId,
+    generateRequestId: createRandomId,
     config: getInternalApiConfig(),
   };
 }
@@ -478,7 +474,7 @@ export async function proxyExtensionToFastAPI(
   path: string,
   options: ExtensionProxyOptions = {}
 ): Promise<Response> {
-  const requestId = getOrGenerateRequestId(request, generateRequestId);
+  const requestId = getOrGenerateRequestId(request, createRandomId);
   const authorization = request.headers.get("authorization") || "";
 
   if (!authorization.toLowerCase().startsWith("bearer ")) {
