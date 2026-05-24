@@ -2,13 +2,13 @@
 
 export const WORKSPACE_TELEMETRY_EVENT = "nexus:workspace-telemetry";
 
-export interface WorkspaceCodecTelemetryDetail {
+interface WorkspaceCodecTelemetryDetail {
   type: "decode" | "encode";
   status: "ok" | "fallback" | "error";
   errorCode: string | null;
 }
 
-export interface WorkspaceTitleTelemetryDetail {
+interface WorkspaceTitleTelemetryDetail {
   type: "title";
   status: "ok" | "fallback";
   errorCode: string | null;
@@ -16,7 +16,7 @@ export interface WorkspaceTitleTelemetryDetail {
   routeId: string;
 }
 
-export type WorkspaceTelemetryDetail =
+type WorkspaceTelemetryDetail =
   | WorkspaceCodecTelemetryDetail
   | WorkspaceTitleTelemetryDetail;
 

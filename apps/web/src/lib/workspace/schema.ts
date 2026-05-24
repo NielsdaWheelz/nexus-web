@@ -15,7 +15,7 @@ export const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 export const MAX_MEDIA_PANE_WIDTH_PX = 2400;
 const MAX_PANE_TITLE_LENGTH = 120;
 
-export type WorkspacePaneVisibility = "visible" | "minimized";
+type WorkspacePaneVisibility = "visible" | "minimized";
 
 export interface WorkspacePaneStateV4 {
   id: string;
