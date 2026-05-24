@@ -2,7 +2,6 @@
 
 import { formatContributorCreditSummary } from "@/lib/contributors/formatting";
 import type { ContributorCredit } from "@/lib/contributors/types";
-import { formatClock } from "@/lib/formatClock";
 
 export interface Media {
   title: string;
@@ -24,8 +23,4 @@ export function buildCompactMediaPaneTitle(
 
   const compactTitle = `${title} · ${authorSummary}`;
   return compactTitle.length <= 56 ? compactTitle : title;
-}
-
-export function formatResumeTime(positionMs: number): string {
-  return formatClock(positionMs / 1000);
 }

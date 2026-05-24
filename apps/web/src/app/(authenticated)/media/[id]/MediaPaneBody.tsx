@@ -141,7 +141,7 @@ import {
   type TranscriptState,
   resolveActiveTranscriptFragment,
 } from "./transcriptView";
-import { normalizeTrackChapters } from "@/lib/player/chapters";
+import { usePodcastTrackSeeding } from "@/lib/player/usePodcastTrackSeeding";
 import {
   type Highlight,
   type MediaHighlight,
@@ -158,10 +158,7 @@ import {
 } from "@/lib/highlights/api";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import type { ContributorCredit } from "@/lib/contributors/types";
-import {
-  buildCompactMediaPaneTitle,
-  formatResumeTime,
-} from "./mediaFormatting";
+import { buildCompactMediaPaneTitle } from "./mediaFormatting";
 import {
   type NavigationTocNodeLike,
   buildEpubLocationHref,
@@ -3116,7 +3113,7 @@ export default function MediaPaneBody() {
   const chapterLoading = epubSectionLoading;
   const handleMediaContentClick = handleReaderContentClick;
 
-  const { setTrack, seekToMs, play } = useGlobalPlayer();
+  const { seekToMs, play } = useGlobalPlayer();
   const readerFontFamily =
     readerProfile.font_family === "sans"
       ? "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
@@ -3365,8 +3362,7 @@ export default function MediaPaneBody() {
   const [videoSeekTargetMs, setVideoSeekTargetMs] = useState<number | null>(
     null,
   );
-  const resumeNoticeMediaIdRef = useRef<string | null>(null);
-  const seededPodcastTrackRef = useRef<string | null>(null);
+  usePodcastTrackSeeding(media);
 
   useEffect(() => {
     if (!media?.id) {
@@ -4430,97 +4426,6 @@ export default function MediaPaneBody() {
     setLibraryPanelOpen(false);
     setLibraryPanelAnchorEl(null);
   }, [media]);
-
-  useEffect(() => {
-    if (!media || !isTranscriptMedia) {
-      seededPodcastTrackRef.current = null;
-      return;
-    }
-    if (
-      media.kind !== "podcast_episode" ||
-      playbackSource?.kind !== "external_audio"
-    ) {
-      seededPodcastTrackRef.current = null;
-      return;
-    }
-
-    const listeningState = media.listening_state;
-    const seededTrackKey = JSON.stringify({
-      mediaId: media.id,
-      streamUrl: playbackSource.stream_url,
-      sourceUrl: playbackSource.source_url,
-      podcastTitle: media.podcast_title ?? null,
-      imageUrl: media.podcast_image_url ?? null,
-      chapters: media.chapters ?? [],
-      positionMs: listeningState?.position_ms ?? null,
-      playbackSpeed:
-        listeningState?.playback_speed ??
-        media.subscription_default_playback_speed ??
-        null,
-    });
-    if (seededPodcastTrackRef.current === seededTrackKey) {
-      return;
-    }
-    seededPodcastTrackRef.current = seededTrackKey;
-
-    const trackOptions: {
-      autoplay: false;
-      seek_seconds?: number;
-      playback_rate?: number;
-    } = { autoplay: false };
-
-    if (listeningState) {
-      trackOptions.seek_seconds = Math.max(
-        0,
-        Math.floor(listeningState.position_ms / 1000),
-      );
-      trackOptions.playback_rate = listeningState.playback_speed;
-    } else if (media.subscription_default_playback_speed != null) {
-      trackOptions.playback_rate = media.subscription_default_playback_speed;
-    }
-
-    setTrack(
-      {
-        media_id: media.id,
-        title: media.title,
-        stream_url: playbackSource.stream_url,
-        source_url: playbackSource.source_url,
-        podcast_title: media.podcast_title ?? undefined,
-        image_url: media.podcast_image_url ?? undefined,
-        chapters: normalizeTrackChapters(media.chapters),
-      },
-      trackOptions,
-    );
-
-    if (!listeningState || listeningState.position_ms <= 0) {
-      return;
-    }
-    if (resumeNoticeMediaIdRef.current === media.id) {
-      return;
-    }
-
-    resumeNoticeMediaIdRef.current = media.id;
-    feedback.show({
-      severity: "info",
-      title: `Resuming from ${formatResumeTime(listeningState.position_ms)}`,
-    });
-  }, [
-    isTranscriptMedia,
-    media,
-    media?.chapters,
-    media?.id,
-    media?.kind,
-    media?.listening_state,
-    media?.podcast_image_url,
-    media?.podcast_title,
-    media?.subscription_default_playback_speed,
-    media?.title,
-    playbackSource?.kind,
-    playbackSource?.source_url,
-    playbackSource?.stream_url,
-    setTrack,
-    feedback,
-  ]);
 
   const anchoredHighlights = useMemo<AnchoredHighlightRow[]>(() => {
     if (isPdf) {
