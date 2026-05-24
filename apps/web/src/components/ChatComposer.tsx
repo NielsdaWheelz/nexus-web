@@ -606,41 +606,29 @@ export default function ChatComposer({
 
           {onlyUseMyKeys && <span className={styles.keyModeStatus}>Your key</span>}
 
-          {branchDraft ? (
-            <Button
-              variant="primary"
-              size="md"
-              className={styles.sendButton}
-              leadingIcon={<ArrowUp size={16} aria-hidden="true" />}
-              onClick={handleSend}
-              aria-label={sending ? "Sending fork reply" : sendLabel}
-              disabled={
-                sendDisabled ||
-                !content.trim() ||
-                !selectedProvider ||
-                !selectedModelId
-              }
-            >
-              {sendLabel}
-            </Button>
-          ) : (
-            <Button
-              variant="primary"
-              size="md"
-              iconOnly
-              className={styles.sendButton}
-              onClick={handleSend}
-              aria-label={sending ? "Sending message" : sendLabel}
-              disabled={
-                sendDisabled ||
-                !content.trim() ||
-                !selectedProvider ||
-                !selectedModelId
-              }
-            >
-              <ArrowUp size={18} aria-hidden="true" />
-            </Button>
-          )}
+          <Button
+            variant="primary"
+            size="md"
+            className={styles.sendButton}
+            iconOnly={!branchDraft}
+            leadingIcon={branchDraft ? <ArrowUp size={16} aria-hidden="true" /> : undefined}
+            onClick={handleSend}
+            aria-label={
+              sending
+                ? branchDraft
+                  ? "Sending fork reply"
+                  : "Sending message"
+                : sendLabel
+            }
+            disabled={
+              sendDisabled ||
+              !content.trim() ||
+              !selectedProvider ||
+              !selectedModelId
+            }
+          >
+            {branchDraft ? sendLabel : <ArrowUp size={18} aria-hidden="true" />}
+          </Button>
         </div>
 
         {settingsOpen && (
