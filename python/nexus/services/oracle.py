@@ -348,7 +348,7 @@ def get_reading_detail(
                 ApiErrorCode.E_INTERNAL,
                 "Oracle reading references a missing image",
             )
-        image_out = _oracle_image_out(image)
+        image_out = OracleReadingImageOut(**_oracle_image_payload(image))
     passages_sorted = sorted(
         passage_rows,
         key=lambda row: ORACLE_PHASES.index(row.phase)
@@ -993,10 +993,6 @@ def _oracle_image_payload(image: OracleCorpusImage) -> dict[str, Any]:
         "width": image.width,
         "height": image.height,
     }
-
-
-def _oracle_image_out(image: OracleCorpusImage) -> OracleReadingImageOut:
-    return OracleReadingImageOut(**_oracle_image_payload(image))
 
 
 def _oracle_event_out(row: OracleReadingEvent) -> OracleReadingEventOut:
