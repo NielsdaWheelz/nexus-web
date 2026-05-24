@@ -16,16 +16,14 @@ import {
   OPEN_ADD_CONTENT_EVENT,
   type AddContentMode,
 } from "@/components/addContentEvents";
-import LibraryTargetPicker, {
-  type LibraryTargetPickerItem,
-} from "@/components/LibraryTargetPicker";
+import LibraryTargetPicker from "@/components/LibraryTargetPicker";
 import {
   FeedbackNotice,
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import QuickNotePanel from "@/components/QuickNotePanel";
-import { apiFetch, apiPostFormData } from "@/lib/api/client";
+import { apiPostFormData } from "@/lib/api/client";
 import { extractUrls } from "@/lib/extractUrls";
 import { createNotePage } from "@/lib/notes/api";
 import {
@@ -33,6 +31,7 @@ import {
   getFileUploadError,
   uploadIngestFile,
 } from "@/lib/media/ingestionClient";
+import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { getFocusableElements } from "@/lib/ui/getFocusableElements";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
@@ -69,13 +68,6 @@ type PodcastOpmlImportResult = {
   }>;
 };
 
-type LibrarySummary = {
-  id: string;
-  name: string;
-  is_default: boolean;
-  color?: string | null;
-};
-
 const MAX_ACTIVE_UPLOADS = 2;
 
 function dragHasSupportedData(event: DragEvent): boolean {
@@ -89,10 +81,7 @@ export default function AddContentTray() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [urlText, setUrlText] = useState("");
   const [urlError, setUrlError] = useState<string | null>(null);
-  const [libraries, setLibraries] = useState<LibraryTargetPickerItem[]>([]);
-  const [librariesLoading, setLibrariesLoading] = useState(false);
-  const [librariesLoaded, setLibrariesLoaded] = useState(false);
-  const [libraryError, setLibraryError] = useState<FeedbackContent | null>(null);
+  const libraryPicker = useNonDefaultLibraries();
   const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importBusy, setImportBusy] = useState(false);
@@ -108,42 +97,14 @@ export default function AddContentTray() {
   const trayRef = useRef<HTMLElement>(null);
   const isMobile = useIsMobileViewport();
 
-  const loadLibraries = useCallback(async () => {
-    if (librariesLoading || librariesLoaded) {
-      return;
-    }
-    setLibrariesLoading(true);
-    setLibraryError(null);
-    try {
-      const response = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
-      setLibraries(
-        response.data
-          .filter((library) => !library.is_default)
-          .map((library) => ({
-            id: library.id,
-            name: library.name,
-            color: library.color ?? null,
-            isInLibrary: false,
-            canAdd: true,
-            canRemove: false,
-          }))
-      );
-      setLibrariesLoaded(true);
-    } catch (error) {
-      setLibraryError(toFeedback(error, { fallback: "Failed to load libraries" }));
-      setLibraries([]);
-    } finally {
-      setLibrariesLoading(false);
-    }
-  }, [librariesLoaded, librariesLoading]);
-
   const enqueueFiles = useCallback(
     (files: File[], autoOpenSingle: boolean) => {
       if (files.length === 0) {
         return;
       }
       const selectedLibraryName =
-        libraries.find((library) => library.id === selectedLibraryId)?.name ?? null;
+        libraryPicker.libraries.find((library) => library.id === selectedLibraryId)
+          ?.name ?? null;
       setMode("content");
       setOpen(true);
       setQueue((current) => [
@@ -164,7 +125,7 @@ export default function AddContentTray() {
         }),
       ]);
     },
-    [libraries, selectedLibraryId]
+    [libraryPicker.libraries, selectedLibraryId]
   );
 
   const enqueueUrls = useCallback(
@@ -173,7 +134,8 @@ export default function AddContentTray() {
         return;
       }
       const selectedLibraryName =
-        libraries.find((library) => library.id === selectedLibraryId)?.name ?? null;
+        libraryPicker.libraries.find((library) => library.id === selectedLibraryId)
+          ?.name ?? null;
       setMode("content");
       setOpen(true);
       setQueue((current) => [
@@ -190,7 +152,7 @@ export default function AddContentTray() {
         })),
       ]);
     },
-    [libraries, selectedLibraryId]
+    [libraryPicker.libraries, selectedLibraryId]
   );
 
   const startItem = useCallback((item: QueueItem) => {
@@ -319,6 +281,7 @@ export default function AddContentTray() {
     };
   }, []);
 
+  const { load: loadLibraries } = libraryPicker;
   useEffect(() => {
     if (!open) {
       return;
@@ -582,8 +545,8 @@ export default function AddContentTray() {
                 <label className={styles.libraryLabel}>Library</label>
                 <LibraryTargetPicker
                   label="My Library only"
-                  libraries={libraries}
-                  loading={librariesLoading}
+                  libraries={libraryPicker.libraries}
+                  loading={libraryPicker.loading}
                   allowNoLibrary
                   noLibraryLabel="My Library only"
                   selectedLibraryId={selectedLibraryId}
@@ -594,7 +557,7 @@ export default function AddContentTray() {
                   emptyMessage="No non-default libraries available."
                 />
                 <small className={styles.libraryHelp}>
-                  {libraryError?.title ??
+                  {libraryPicker.error?.title ??
                     "Pick one non-default library to add there too, or use My Library only."}
                 </small>
               </div>

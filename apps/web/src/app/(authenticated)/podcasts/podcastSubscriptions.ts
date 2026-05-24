@@ -10,13 +10,6 @@ export type PodcastSubscriptionSyncStatus =
   | "source_limited"
   | "failed";
 
-export type LibrarySummary = {
-  id: string;
-  name: string;
-  is_default: boolean;
-  color?: string | null;
-};
-
 export type PodcastSummary = {
   id: string;
   provider: string;
@@ -178,11 +171,6 @@ function toPodcastLibraryMembership(
     canAdd: library.can_add,
     canRemove: library.can_remove,
   };
-}
-
-export async function fetchNonDefaultLibraries(): Promise<LibrarySummary[]> {
-  const response = await apiFetch<{ data: LibrarySummary[] }>("/api/libraries");
-  return response.data.filter((library) => !library.is_default);
 }
 
 export async function fetchPodcastLibraries(

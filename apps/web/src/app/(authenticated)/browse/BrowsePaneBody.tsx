@@ -3,9 +3,7 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import { FileText, Mic, Play, Video } from "lucide-react";
-import LibraryTargetPicker, {
-  type LibraryTargetPickerItem,
-} from "@/components/LibraryTargetPicker";
+import LibraryTargetPicker from "@/components/LibraryTargetPicker";
 import {
   FeedbackNotice,
   toFeedback,
@@ -52,14 +50,8 @@ import {
   type BrowseVideoResult,
 } from "./browseState";
 import { useStringIdSet } from "@/lib/useStringIdSet";
+import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
 import styles from "./page.module.css";
-
-type LibrarySummary = {
-  id: string;
-  name: string;
-  is_default: boolean;
-  color?: string | null;
-};
 
 export default function BrowsePaneBody() {
   const paneRouter = usePaneRouter();
@@ -77,9 +69,7 @@ export default function BrowsePaneBody() {
   const busyKeys = useStringIdSet();
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [hasSearched, setHasSearched] = useState(Boolean(appliedQuery));
-  const [libraries, setLibraries] = useState<LibraryTargetPickerItem[]>([]);
-  const [librariesLoading, setLibrariesLoading] = useState(false);
-  const [librariesLoaded, setLibrariesLoaded] = useState(false);
+  const libraryPicker = useNonDefaultLibraries();
 
   useEffect(() => {
     setDraftQuery(appliedQuery);
@@ -131,33 +121,6 @@ export default function BrowsePaneBody() {
       cancelled = true;
     };
   }, [appliedQuery]);
-
-  async function loadLibraries() {
-    if (librariesLoading || librariesLoaded) {
-      return;
-    }
-    setLibrariesLoading(true);
-    try {
-      const response = await apiFetch<{ data: LibrarySummary[] }>(
-        "/api/libraries",
-      );
-      setLibraries(
-        response.data
-          .filter((library) => !library.is_default)
-          .map((library) => ({
-            id: library.id,
-            name: library.name,
-            color: library.color ?? null,
-            isInLibrary: false,
-            canAdd: true,
-            canRemove: false,
-          })),
-      );
-      setLibrariesLoaded(true);
-    } finally {
-      setLibrariesLoading(false);
-    }
-  }
 
   function updateVisibleTypes(nextVisibleTypes: BrowseSectionType[]) {
     paneRouter.replace(buildBrowseHref(appliedQuery, nextVisibleTypes));
@@ -508,11 +471,11 @@ export default function BrowsePaneBody() {
                         {!result.media_id ? (
                           <LibraryTargetPicker
                             label={getDocumentLibraryActionLabel(result)}
-                            libraries={libraries}
-                            loading={librariesLoading}
+                            libraries={libraryPicker.libraries}
+                            loading={libraryPicker.loading}
                             disabled={busy}
                             onOpen={() => {
-                              void loadLibraries();
+                              void libraryPicker.load();
                             }}
                             onSelectLibrary={(libraryId) => {
                               void addAndOpenResult(result, libraryId);
@@ -601,11 +564,11 @@ export default function BrowsePaneBody() {
                         {!result.media_id ? (
                           <LibraryTargetPicker
                             label="Add + library"
-                            libraries={libraries}
-                            loading={librariesLoading}
+                            libraries={libraryPicker.libraries}
+                            loading={libraryPicker.loading}
                             disabled={busy}
                             onOpen={() => {
-                              void loadLibraries();
+                              void libraryPicker.load();
                             }}
                             onSelectLibrary={(libraryId) => {
                               void addAndOpenResult(result, libraryId);
@@ -703,11 +666,11 @@ export default function BrowsePaneBody() {
                             </Button>
                             <LibraryTargetPicker
                               label="Follow + library"
-                              libraries={libraries}
-                              loading={librariesLoading}
+                              libraries={libraryPicker.libraries}
+                              loading={libraryPicker.loading}
                               disabled={busy}
                               onOpen={() => {
-                                void loadLibraries();
+                                void libraryPicker.load();
                               }}
                               onSelectLibrary={(libraryId) => {
                                 void followPodcast(result, libraryId);

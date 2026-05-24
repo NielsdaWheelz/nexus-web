@@ -1,6 +1,17 @@
 import { apiFetch } from "@/lib/api/client";
 import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
 
+export interface LibrarySummary {
+  id: string;
+  name: string;
+  is_default: boolean;
+  color?: string | null;
+}
+
+interface LibraryListResponse {
+  data: LibrarySummary[];
+}
+
 interface MediaLibrariesResponse {
   data: Array<{
     id: string;
@@ -15,6 +26,11 @@ interface MediaLibrariesResponse {
 
 interface MediaDeleteResponse {
   data: { hard_deleted: boolean };
+}
+
+export async function fetchNonDefaultLibraries(): Promise<LibrarySummary[]> {
+  const response = await apiFetch<LibraryListResponse>("/api/libraries");
+  return response.data.filter((library) => !library.is_default);
 }
 
 export interface FetchMediaLibraryMembershipsOptions {

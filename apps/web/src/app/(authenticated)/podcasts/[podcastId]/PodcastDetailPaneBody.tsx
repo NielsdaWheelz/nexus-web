@@ -50,7 +50,6 @@ import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import {
   addPodcastToLibrary,
   buildPodcastUnsubscribeConfirmation,
-  fetchNonDefaultLibraries,
   fetchPodcastLibraries,
   getPodcastSubscriptionSettingsPatch,
   getPodcastSubscriptionSyncPatch,
@@ -61,6 +60,7 @@ import {
   type PodcastLibraryMembership,
   unsubscribeFromPodcast,
 } from "../podcastSubscriptions";
+import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
 import { usePodcastSubscriptionSettingsModal } from "../usePodcastSubscriptionSettingsModal";
 import { formatContributorCreditSummary } from "@/lib/contributors/formatting";
 import {
@@ -130,13 +130,7 @@ export default function PodcastDetailPaneBody() {
   );
   const [hasMoreEpisodes, setHasMoreEpisodes] = useState(false);
   const [loadingMoreEpisodes, setLoadingMoreEpisodes] = useState(false);
-  const [availableLibraries, setAvailableLibraries] = useState<
-    LibraryTargetPickerItem[]
-  >([]);
-  const [availableLibrariesLoading, setAvailableLibrariesLoading] =
-    useState(false);
-  const [availableLibrariesLoaded, setAvailableLibrariesLoaded] =
-    useState(false);
+  const availableLibraries = useNonDefaultLibraries();
   const [podcastLibraries, setPodcastLibraries] = useState<
     PodcastLibraryMembership[]
   >([]);
@@ -211,32 +205,6 @@ export default function PodcastDetailPaneBody() {
     (billingAccount?.transcription_usage.limit ?? 0) > 0;
 
   useSetPaneTitle(detail?.podcast.title ?? (loading ? null : "Podcast"));
-
-  const loadAvailableLibraries = useCallback(async () => {
-    if (availableLibrariesLoading || availableLibrariesLoaded) {
-      return;
-    }
-    setAvailableLibrariesLoading(true);
-    try {
-      const libraries = await fetchNonDefaultLibraries();
-      setAvailableLibraries(
-        libraries.map((library) => ({
-          id: library.id,
-          name: library.name,
-          color: library.color ?? null,
-          isInLibrary: false,
-          canAdd: true,
-          canRemove: false,
-        })),
-      );
-      setAvailableLibrariesLoaded(true);
-    } catch (loadError) {
-      setError(toFeedback(loadError, { fallback: "Failed to load libraries" }));
-      setAvailableLibraries([]);
-    } finally {
-      setAvailableLibrariesLoading(false);
-    }
-  }, [availableLibrariesLoaded, availableLibrariesLoading]);
 
   const loadPodcastLibraries = useCallback(
     async (force = false) => {
@@ -367,6 +335,7 @@ export default function PodcastDetailPaneBody() {
     void load();
   }, [load]);
 
+  const { load: loadAvailableLibraries } = availableLibraries;
   useEffect(() => {
     void loadAvailableLibraries();
   }, [loadAvailableLibraries]);
@@ -1839,8 +1808,8 @@ export default function PodcastDetailPaneBody() {
                     </Button>
                     <LibraryTargetPicker
                       label="Subscribe + library"
-                      libraries={availableLibraries}
-                      loading={availableLibrariesLoading}
+                      libraries={availableLibraries.libraries}
+                      loading={availableLibraries.loading}
                       disabled={subscribeBusy}
                       onOpen={() => {
                         void loadAvailableLibraries();
