@@ -513,24 +513,10 @@ def refresh_source_for_viewer(
         )
 
     if media.kind == MediaKind.web_article.value:
-        media.processing_status = ProcessingStatus.extracting
-        media.processing_started_at = datetime.now(UTC)
-        media.processing_completed_at = None
-        media.failure_stage = None
-        media.last_error_code = None
-        media.last_error_message = None
-        media.failed_at = None
-        media.updated_at = datetime.now(UTC)
+        _reset_media_for_reingest(media)
         _enqueue_ingest_task(db, media.id, viewer_id, request_id)
     elif media.kind == MediaKind.video.value:
-        media.processing_status = ProcessingStatus.extracting
-        media.processing_started_at = datetime.now(UTC)
-        media.processing_completed_at = None
-        media.failure_stage = None
-        media.last_error_code = None
-        media.last_error_message = None
-        media.failed_at = None
-        media.updated_at = datetime.now(UTC)
+        _reset_media_for_reingest(media)
         _enqueue_youtube_ingest_task(db, media.id, viewer_id, request_id)
     else:
         now = datetime.now(UTC)
@@ -858,6 +844,19 @@ def _parse_kind_filter(kind: str | None) -> list[str] | None:
 def _escape_ilike_pattern(value: str) -> str:
     """Escape wildcard metacharacters for ILIKE pattern matching."""
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _reset_media_for_reingest(media: Media) -> None:
+    """Clear failure metadata and mark a media row ready for re-ingestion."""
+    now = datetime.now(UTC)
+    media.processing_status = ProcessingStatus.extracting
+    media.processing_started_at = now
+    media.processing_completed_at = None
+    media.failure_stage = None
+    media.last_error_code = None
+    media.last_error_message = None
+    media.failed_at = None
+    media.updated_at = now
 
 
 def _status_to_str(value: object) -> str:
