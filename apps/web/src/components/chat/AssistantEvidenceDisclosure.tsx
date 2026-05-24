@@ -1838,6 +1838,36 @@ function artifactPartHref(part: MessageArtifactPart): string | null {
   return null;
 }
 
+function buildReaderSourceTarget(input: {
+  source: ReaderSourceTarget["source"];
+  mediaId: string;
+  locator: MessageEvidenceLocator;
+  sourceVersion: string;
+  status: string;
+  label: string;
+  snippet?: string | null;
+  href?: string | null;
+  evidenceSpanId?: string | null;
+  evidenceId?: string | null;
+  contextId?: string | null;
+}): ReaderSourceTarget {
+  return {
+    source: input.source,
+    media_id: input.mediaId,
+    locator: input.locator,
+    snippet: input.snippet ?? null,
+    source_version: input.sourceVersion,
+    highlight_behavior: "pulse",
+    focus_behavior: "scroll_into_view",
+    status: input.status,
+    label: input.label,
+    href: input.href ?? null,
+    evidence_span_id: input.evidenceSpanId ?? null,
+    ...(input.evidenceId ? { evidence_id: input.evidenceId } : {}),
+    context_id: input.contextId ?? null,
+  };
+}
+
 function readerTargetFromArtifactPart(
   part: MessageArtifactPart,
 ): ReaderSourceTarget | null {
@@ -1847,20 +1877,18 @@ function readerTargetFromArtifactPart(
       if (!part.source_version) {
         return null;
       }
-      return {
+      return buildReaderSourceTarget({
         source: "message_retrieval",
-        media_id: mediaId,
+        mediaId,
         locator: part.locator,
-        snippet: part.text ?? null,
-        source_version: part.source_version,
-        highlight_behavior: "pulse",
-        focus_behavior: "scroll_into_view",
+        sourceVersion: part.source_version,
         status: "selected",
         label: part.part_key || "Artifact source",
-        evidence_span_id: part.evidence_span_id ?? null,
-        ...(part.id ? { evidence_id: part.id } : {}),
-        context_id: textField(part.context_ref, "id"),
-      };
+        snippet: part.text ?? null,
+        evidenceSpanId: part.evidence_span_id ?? null,
+        evidenceId: part.id ?? null,
+        contextId: textField(part.context_ref, "id"),
+      });
     }
   }
   const refs = [
@@ -1883,28 +1911,26 @@ function readerTargetFromArtifactPart(
       continue;
     }
     const contextRef = objectField(ref, "context_ref");
-    return {
+    return buildReaderSourceTarget({
       source: "message_retrieval",
-      media_id: mediaId,
+      mediaId,
       locator,
-      snippet:
-        part.text ?? textField(ref, "snippet") ?? textField(ref, "excerpt"),
-      source_version: sourceVersion,
-      highlight_behavior: "pulse",
-      focus_behavior: "scroll_into_view",
+      sourceVersion,
       status: "selected",
       label:
         textField(ref, "title") ||
         textField(ref, "source_label") ||
         part.part_key ||
         "Artifact source",
+      snippet:
+        part.text ?? textField(ref, "snippet") ?? textField(ref, "excerpt"),
       href: textField(ref, "deep_link"),
-      evidence_span_id:
+      evidenceSpanId:
         part.evidence_span_id ?? textField(ref, "evidence_span_id"),
-      ...(part.id ? { evidence_id: part.id } : {}),
-      context_id:
+      evidenceId: part.id ?? null,
+      contextId:
         textField(part.context_ref, "id") ?? textField(contextRef, "id"),
-    };
+    });
   }
   return null;
 }
@@ -1945,24 +1971,22 @@ function readerTargetFromRetrieval(
   if (!("type" in retrieval.locator)) {
     return null;
   }
-  return {
+  return buildReaderSourceTarget({
     source: "message_retrieval",
-    media_id: retrieval.media_id,
+    mediaId: retrieval.media_id,
     locator: retrieval.locator,
-    snippet: retrievalSnippet(retrieval),
-    source_version: retrieval.source_version,
-    highlight_behavior: "pulse",
-    focus_behavior: "scroll_into_view",
+    sourceVersion: retrieval.source_version,
     status: retrieval.retrieval_status ?? "retrieved",
     label: retrievalTitle(retrieval),
+    snippet: retrievalSnippet(retrieval),
     href: retrieval.deep_link,
-    evidence_span_id: retrieval.evidence_span_id ?? null,
-    evidence_id: retrieval.id,
-    context_id:
+    evidenceSpanId: retrieval.evidence_span_id ?? null,
+    evidenceId: retrieval.id,
+    contextId:
       typeof retrieval.context_ref.id === "string"
         ? retrieval.context_ref.id
         : null,
-  };
+  });
 }
 
 function retrievalCitationText(retrieval: MessageRetrieval): string {
@@ -2787,21 +2811,19 @@ function readerTargetFromEvidence(
   if (!evidence.source_version) {
     return null;
   }
-  return {
+  return buildReaderSourceTarget({
     source: "claim_evidence",
-    media_id: mediaId,
+    mediaId,
     locator,
-    snippet: evidence.exact_snippet ?? null,
-    source_version: evidence.source_version,
-    highlight_behavior: "pulse",
-    focus_behavior: "scroll_into_view",
+    sourceVersion: evidence.source_version,
     status: evidence.retrieval_status,
     label,
+    snippet: evidence.exact_snippet ?? null,
     href: evidenceHref(evidence),
-    evidence_span_id: evidence.evidence_span_id ?? null,
-    evidence_id: evidence.id,
-    context_id: textField(evidence.context_ref, "id"),
-  };
+    evidenceSpanId: evidence.evidence_span_id ?? null,
+    evidenceId: evidence.id,
+    contextId: textField(evidence.context_ref, "id"),
+  });
 }
 
 function mediaIdFromLocator(locator: MessageEvidenceLocator): string | null {
