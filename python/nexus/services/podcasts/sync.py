@@ -18,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from nexus.coerce import coerce_non_negative_int, coerce_positive_int
 from nexus.config import get_settings, real_media_provider_fixtures_requested
 from nexus.db.session import transaction
 from nexus.errors import (
@@ -676,7 +677,7 @@ def _sync_subscription_ingest(
         language = _normalize_language_tag(episode.get("language")) or _normalize_language_tag(
             episode.get("feed_language")
         )
-        duration_seconds = _coerce_positive_int(episode.get("duration_seconds"))
+        duration_seconds = coerce_positive_int(episode.get("duration_seconds"))
         author_names: list[str] = []
         raw_authors = episode.get("authors")
         if isinstance(raw_authors, list):
@@ -974,8 +975,8 @@ def _sync_subscription_ingest(
             for segment in fetched_segments:
                 if not isinstance(segment, dict):
                     continue
-                t_start_ms = _coerce_non_negative_int(segment.get("t_start_ms"))
-                t_end_ms = _coerce_non_negative_int(segment.get("t_end_ms"))
+                t_start_ms = coerce_non_negative_int(segment.get("t_start_ms"))
+                t_end_ms = coerce_non_negative_int(segment.get("t_end_ms"))
                 if t_start_ms is None:
                     continue
                 if t_end_ms is None or t_end_ms <= t_start_ms:
@@ -1233,10 +1234,10 @@ def _normalize_chapter_rows_for_persistence(
         title = str(chapter.get("title") or "").strip()
         if not title:
             continue
-        t_start_ms = _coerce_non_negative_int(chapter.get("t_start_ms"))
+        t_start_ms = coerce_non_negative_int(chapter.get("t_start_ms"))
         if t_start_ms is None:
             continue
-        t_end_ms = _coerce_non_negative_int(chapter.get("t_end_ms"))
+        t_end_ms = coerce_non_negative_int(chapter.get("t_end_ms"))
         if t_end_ms is not None and t_end_ms < t_start_ms:
             t_end_ms = None
         source = str(chapter.get("source") or "").strip()
@@ -2275,7 +2276,7 @@ def _parse_feed_duration_seconds(raw_value: Any) -> int | None:
         return None
 
     if ":" not in raw_text:
-        return _coerce_positive_int(raw_text)
+        return coerce_positive_int(raw_text)
 
     parts = raw_text.split(":")
     if len(parts) not in (2, 3):
@@ -2377,25 +2378,3 @@ def _published_sort_key(raw_value: Any) -> datetime:
     return parsed
 
 
-def _coerce_positive_int(raw_value: Any) -> int | None:
-    if raw_value is None:
-        return None
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        return None
-    if value <= 0:
-        return None
-    return value
-
-
-def _coerce_non_negative_int(raw_value: Any) -> int | None:
-    if raw_value is None:
-        return None
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        return None
-    if value < 0:
-        return None
-    return value

@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import httpx
 
+from nexus.coerce import coerce_positive_int
 from nexus.config import get_settings, real_media_provider_fixtures_requested
 from nexus.errors import (
     ApiError,
@@ -291,7 +292,7 @@ class PodcastIndexClient:
             guid = str(guid_raw).strip() if guid_raw is not None and str(guid_raw).strip() else None
 
             published_at = _normalize_provider_published_at(item.get("datePublished"))
-            duration_seconds = _coerce_positive_int(item.get("duration"))
+            duration_seconds = coerce_positive_int(item.get("duration"))
             audio_url = str(item.get("enclosureUrl") or item.get("enclosure_url") or "").strip()
             if not audio_url:
                 audio_url = str(item.get("url") or "").strip()
@@ -403,13 +404,3 @@ def _parse_iso_datetime(raw_value: Any) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
-def _coerce_positive_int(raw_value: Any) -> int | None:
-    if raw_value is None:
-        return None
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        return None
-    if value <= 0:
-        return None
-    return value

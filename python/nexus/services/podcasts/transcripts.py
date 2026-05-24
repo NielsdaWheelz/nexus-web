@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from nexus.coerce import coerce_non_negative_int, coerce_positive_int
 from nexus.config import Environment, get_settings
 from nexus.db.session import create_session_factory
 from nexus.errors import (
@@ -38,7 +39,6 @@ from nexus.services.semantic_chunks import (
     transcript_embedding_dimensions,
 )
 from nexus.services.transcript_segments import (
-    canonicalize_transcript_segment_text,
     insert_transcript_fragments,
     normalize_transcript_segments,
 )
@@ -179,7 +179,7 @@ def request_podcast_transcript_for_viewer(
 
     media_kind = str(media_row[0] or "")
     processing_status = str(media_row[1] or "")
-    duration_seconds = _coerce_positive_int(media_row[3])
+    duration_seconds = coerce_positive_int(media_row[3])
     job_status = str(media_row[4] or "").strip() or None
     transcript_state = str(media_row[5] or "").strip() or None
     transcript_coverage = str(media_row[6] or "").strip() or None
@@ -635,9 +635,9 @@ def request_podcast_transcripts_batch_for_viewer(
             continue
 
         status = _batch_transcript_status_from_admission(admission)
-        required_minutes = _coerce_non_negative_int(admission.get("required_minutes"))
+        required_minutes = coerce_non_negative_int(admission.get("required_minutes"))
         remaining_minutes = (
-            _coerce_non_negative_int(admission.get("remaining_minutes"))
+            coerce_non_negative_int(admission.get("remaining_minutes"))
             if admission.get("remaining_minutes") is not None
             else None
         )
@@ -2307,34 +2307,12 @@ def _commit_reserved_usage_for_media(
 
 
 def _episode_minutes(episode: dict[str, Any]) -> int:
-    seconds = _coerce_positive_int(episode.get("duration_seconds"))
+    seconds = coerce_positive_int(episode.get("duration_seconds"))
     if seconds is None:
         return 1
     return max(1, (seconds + 59) // 60)
 
 
-def _coerce_positive_int(raw_value: Any) -> int | None:
-    if raw_value is None:
-        return None
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        return None
-    if value <= 0:
-        return None
-    return value
-
-
-def _coerce_non_negative_int(raw_value: Any) -> int | None:
-    if raw_value is None:
-        return None
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        return None
-    if value < 0:
-        return None
-    return value
 
 
 def _normalize_terminal_transcription_error_code(raw_value: Any) -> str | None:

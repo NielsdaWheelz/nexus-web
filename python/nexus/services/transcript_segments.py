@@ -12,6 +12,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.coerce import coerce_non_negative_int
+
 _TRANSCRIPT_WHITESPACE_RE = re.compile(r"[\s\u00a0]+", re.UNICODE)
 
 
@@ -37,8 +39,8 @@ def normalize_transcript_segments(raw_segments: Any) -> list[dict[str, Any]]:
         if not text_value:
             continue
 
-        t_start_ms = _coerce_non_negative_int(segment.get("t_start_ms"))
-        t_end_ms = _coerce_non_negative_int(segment.get("t_end_ms"))
+        t_start_ms = coerce_non_negative_int(segment.get("t_start_ms"))
+        t_end_ms = coerce_non_negative_int(segment.get("t_end_ms"))
         if t_start_ms is None or t_end_ms is None:
             continue
         if t_start_ms >= t_end_ms:
@@ -118,13 +120,3 @@ def insert_transcript_fragments(
         )
 
 
-def _coerce_non_negative_int(raw_value: Any) -> int | None:
-    if raw_value is None:
-        return None
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        return None
-    if value < 0:
-        return None
-    return value
