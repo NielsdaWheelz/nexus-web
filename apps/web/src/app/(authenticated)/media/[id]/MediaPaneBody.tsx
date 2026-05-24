@@ -4270,6 +4270,7 @@ export default function MediaPaneBody() {
         return;
       }
       const anchor = highlight.anchor;
+      const selector = buildQuoteSelector(highlight);
 
       if (anchor.type === "pdf_page_geometry") {
         // The PDF pulse handler performs its own cross-page navigation.
@@ -4281,9 +4282,7 @@ export default function MediaPaneBody() {
             media_id: id,
             page_number: anchor.page_number,
             quads: anchor.quads,
-            exact: highlight.exact,
-            ...(highlight.prefix ? { prefix: highlight.prefix } : {}),
-            ...(highlight.suffix ? { suffix: highlight.suffix } : {}),
+            ...selector,
           },
           snippet: highlight.exact,
           sourceVersion: highlight.source_version ?? `highlight:${highlight.id}`,
@@ -4295,7 +4294,6 @@ export default function MediaPaneBody() {
 
       const fragmentId = anchor.fragment_id;
       const fragment = fragments.find((item) => item.id === fragmentId);
-      const selector = buildQuoteSelector(highlight);
       const target: ReaderPulseTarget = isTranscriptMedia
         ? {
             mediaId: id,
