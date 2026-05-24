@@ -12,6 +12,7 @@ import type {
 } from "@/lib/conversations/types";
 import { conversationMessageText } from "@/lib/conversations/types";
 import { isRetrievalLocator } from "@/lib/api/sse/locators";
+import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import type { ReaderSourceTarget } from "./MessageRow";
 import styles from "./MessageRow.module.css";
 
@@ -102,7 +103,7 @@ export default function UserMessage({
 }
 
 function userPromptPresentation(content: string): "compact" | "expanded" {
-  const visible = content.trim().replace(/\s+/g, " ");
+  const visible = collapseWhitespace(content);
   if (visible.length > 320) return "expanded";
   if (/[\r\n]/.test(content)) return "expanded";
   if (content.includes("```") || content.includes("~~~")) return "expanded";

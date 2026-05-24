@@ -44,6 +44,7 @@ import {
   deriveViewportTransformFromPageView,
 } from "@/lib/highlights/pdfPageViewport";
 import { clamp } from "@/lib/clamp";
+import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { createRandomId } from "@/lib/createRandomId";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { isPositiveFinite } from "@/lib/validation";
@@ -430,16 +431,12 @@ function buildSelectionSnapshotKey(selection: SelectionState): string {
   ].join("::");
 }
 
-function compactPdfQuoteText(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
 function clipQuotePrefix(value: string): string {
-  return compactPdfQuoteText(value).slice(-PDF_QUOTE_CONTEXT_TEXT_RADIUS);
+  return collapseWhitespace(value).slice(-PDF_QUOTE_CONTEXT_TEXT_RADIUS);
 }
 
 function clipQuoteSuffix(value: string): string {
-  return compactPdfQuoteText(value).slice(0, PDF_QUOTE_CONTEXT_TEXT_RADIUS);
+  return collapseWhitespace(value).slice(0, PDF_QUOTE_CONTEXT_TEXT_RADIUS);
 }
 
 function readPdfQuoteTextWindow(
@@ -453,7 +450,7 @@ function readPdfQuoteTextWindow(
   pageTextEndOffset?: number;
 } {
   const rawExact = range.toString();
-  const exact = compactPdfQuoteText(rawExact);
+  const exact = collapseWhitespace(rawExact);
   if (!textLayerRoot) {
     return { exact };
   }

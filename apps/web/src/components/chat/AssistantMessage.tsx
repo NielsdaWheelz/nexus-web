@@ -9,6 +9,7 @@ import {
   mapAssistantSelectionToSource,
 } from "@/lib/conversations/assistantSelection";
 import type { ContextItem } from "@/lib/api/sse/requests";
+import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { createRandomId } from "@/lib/createRandomId";
 import type {
   BranchDraft,
@@ -225,7 +226,7 @@ export default function AssistantMessage({
 }
 
 function isGenericAssistantFailureContent(content: string): boolean {
-  const normalized = content.trim().replace(/\s+/g, " ");
+  const normalized = collapseWhitespace(content);
   return (
     normalized === "An unexpected error occurred. Please try again." ||
     normalized === "The response failed."

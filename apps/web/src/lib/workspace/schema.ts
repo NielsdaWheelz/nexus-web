@@ -1,5 +1,6 @@
 "use client";
 
+import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { createRandomId } from "@/lib/createRandomId";
 import { isRecord } from "@/lib/validation";
 
@@ -84,7 +85,7 @@ export function normalizePaneTitle(raw: string | null | undefined): string | nul
   if (typeof raw !== "string") {
     return null;
   }
-  const normalized = raw.trim().replace(/\s+/g, " ");
+  const normalized = collapseWhitespace(raw);
   if (!normalized) {
     return null;
   }
