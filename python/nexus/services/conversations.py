@@ -1547,8 +1547,13 @@ def _artifact_manifest_entry_json(part: MessageArtifactPartOut) -> str:
     )
 
 
+def _artifact_display_title(artifact: MessageArtifactOut) -> str:
+    """Title shown in exports; falls back to humanized artifact_kind."""
+    return artifact.title or artifact.artifact_kind.replace("_", " ").title()
+
+
 def _artifact_html(artifact: MessageArtifactOut) -> str:
-    title = artifact.title or artifact.artifact_kind.replace("_", " ").title()
+    title = _artifact_display_title(artifact)
     lines = [
         "<!doctype html>",
         '<html lang="en">',
@@ -1627,7 +1632,7 @@ def _artifact_csv(artifact: MessageArtifactOut) -> str:
 
 
 def _artifact_pdf(artifact: MessageArtifactOut) -> str:
-    title = artifact.title or artifact.artifact_kind.replace("_", " ").title()
+    title = _artifact_display_title(artifact)
     lines = [title, ""]
     for part in artifact.parts:
         if part.part_type:
