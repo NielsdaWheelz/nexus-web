@@ -33,7 +33,10 @@ import {
 } from "@/components/pdfReaderRuntime";
 import SelectionPopover from "./SelectionPopover";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
-import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
+import {
+  rectToCanonicalQuad,
+  type PdfHighlightQuad,
+} from "@/lib/highlights/pdfTypes";
 import { usePdfScrollToTarget } from "@/lib/highlights/usePdfScrollToTarget";
 import {
   PDF_QUAD_EPSILON,
@@ -380,10 +383,6 @@ function isSelectionRangeInTextLayer(
     selectionRect.top < layerRect.bottom &&
     selectionRect.bottom > layerRect.top
   );
-}
-
-function toCanonicalPoint(value: number): number {
-  return Math.round(value * 1000) / 1000;
 }
 
 function readPageNumberFromTextLayer(
@@ -1609,31 +1608,9 @@ export default function PdfReader({
               ? [layerRect]
               : [];
 
-      return rects.map((rect) => {
-        const left = toCanonicalPoint(
-          (rect.left - layerRect.left) / pageScaleValue,
-        );
-        const right = toCanonicalPoint(
-          (rect.right - layerRect.left) / pageScaleValue,
-        );
-        const top = toCanonicalPoint(
-          (rect.top - layerRect.top) / pageScaleValue,
-        );
-        const bottom = toCanonicalPoint(
-          (rect.bottom - layerRect.top) / pageScaleValue,
-        );
-
-        return {
-          x1: left,
-          y1: top,
-          x2: right,
-          y2: top,
-          x3: right,
-          y3: bottom,
-          x4: left,
-          y4: bottom,
-        };
-      });
+      return rects.map((rect) =>
+        rectToCanonicalQuad(rect, layerRect, pageScaleValue),
+      );
     },
     [getTextLayerRootForPage, readPageScale],
   );
@@ -1655,38 +1632,19 @@ export default function PdfReader({
       }
 
       const selectedRect = targetSelection.rect;
-      const leftPx = Math.max(pageRect.left, selectedRect.left);
-      const rightPx = Math.min(pageRect.right, selectedRect.right);
-      const topPx = Math.max(pageRect.top, selectedRect.top);
-      const bottomPx = Math.min(pageRect.bottom, selectedRect.bottom);
+      const clippedRect = {
+        left: Math.max(pageRect.left, selectedRect.left),
+        right: Math.min(pageRect.right, selectedRect.right),
+        top: Math.max(pageRect.top, selectedRect.top),
+        bottom: Math.min(pageRect.bottom, selectedRect.bottom),
+      };
       if (
-        rightPx - leftPx <= PDF_QUAD_EPSILON ||
-        bottomPx - topPx <= PDF_QUAD_EPSILON
+        clippedRect.right - clippedRect.left <= PDF_QUAD_EPSILON ||
+        clippedRect.bottom - clippedRect.top <= PDF_QUAD_EPSILON
       ) {
         return [];
       }
-
-      const left = toCanonicalPoint((leftPx - pageRect.left) / pageScaleValue);
-      const right = toCanonicalPoint(
-        (rightPx - pageRect.left) / pageScaleValue,
-      );
-      const top = toCanonicalPoint((topPx - pageRect.top) / pageScaleValue);
-      const bottom = toCanonicalPoint(
-        (bottomPx - pageRect.top) / pageScaleValue,
-      );
-
-      return [
-        {
-          x1: left,
-          y1: top,
-          x2: right,
-          y2: top,
-          x3: right,
-          y3: bottom,
-          x4: left,
-          y4: bottom,
-        },
-      ];
+      return [rectToCanonicalQuad(clippedRect, pageRect, pageScaleValue)];
     },
     [getPageElement, readPageScale],
   );
