@@ -566,17 +566,18 @@ def _normalize_result_types(types: list[str] | None) -> list[str]:
     return normalized_types
 
 
-def _normalize_contributor_handles(contributor_handles: list[str] | None) -> list[str]:
-    if contributor_handles is None:
+def _dedup_strings(values: list[str] | None) -> list[str]:
+    """Trim and dedup a list of strings, preserving first-seen order. None → []."""
+    if values is None:
         return []
     normalized: list[str] = []
     seen: set[str] = set()
-    for raw_handle in contributor_handles:
-        handle = str(raw_handle or "").strip()
-        if not handle or handle in seen:
+    for raw in values:
+        text = str(raw or "").strip()
+        if not text or text in seen:
             continue
-        normalized.append(handle)
-        seen.add(handle)
+        normalized.append(text)
+        seen.add(text)
     return normalized
 
 
@@ -593,20 +594,6 @@ def _normalize_credit_roles(roles: list[str] | None) -> list[str]:
         if role not in seen:
             normalized.append(role)
             seen.add(role)
-    return normalized
-
-
-def _normalize_content_kinds(content_kinds: list[str] | None) -> list[str]:
-    if content_kinds is None:
-        return []
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for raw_kind in content_kinds:
-        kind = str(raw_kind or "").strip()
-        if not kind or kind in seen:
-            continue
-        normalized.append(kind)
-        seen.add(kind)
     return normalized
 
 
@@ -804,9 +791,9 @@ def search(
     q = q.strip()
     offset = decode_search_cursor(cursor) if cursor else 0
     normalized_types = _normalize_result_types(types)
-    normalized_contributor_handles = _normalize_contributor_handles(contributor_handles)
+    normalized_contributor_handles = _dedup_strings(contributor_handles)
     normalized_roles = _normalize_credit_roles(roles)
-    normalized_content_kinds = _normalize_content_kinds(content_kinds)
+    normalized_content_kinds = _dedup_strings(content_kinds)
     has_query = len(q) >= MIN_QUERY_LENGTH
     has_structured_filter = bool(
         normalized_contributor_handles or normalized_roles or normalized_content_kinds
