@@ -36,7 +36,7 @@ interface ObjectRefsResolveResponse {
   };
 }
 
-export function objectRefKey(ref: ObjectRef): string {
+function objectRefKey(ref: ObjectRef): string {
   return `${ref.objectType}:${ref.objectId}`;
 }
 
