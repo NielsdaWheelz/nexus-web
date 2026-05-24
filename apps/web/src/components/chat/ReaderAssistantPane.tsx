@@ -46,6 +46,7 @@ import {
   type ConversationScope,
   type ConversationSummary,
 } from "@/lib/conversations/types";
+import { useStringIdSet } from "@/lib/useStringIdSet";
 import styles from "./ReaderAssistantPane.module.css";
 
 const MESSAGE_PAGE_SIZE = 30;
@@ -117,9 +118,7 @@ export default function ReaderAssistantPane({
   const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
   const [resolveError, setResolveError] = useState<FeedbackContent | null>(null);
   const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
-  const [retryingAssistantMessageIds, setRetryingAssistantMessageIds] = useState<
-    Set<string>
-  >(new Set());
+  const retryingAssistantMessageIds = useStringIdSet();
   const [resolvingConversation, setResolvingConversation] = useState(false);
   const [pendingContexts, setPendingContexts] = useState<ContextItem[]>(() =>
     mergeContextItems([], contexts),
@@ -164,7 +163,6 @@ export default function ReaderAssistantPane({
     [conversationScope.type, pendingContexts],
   );
   const telemetryBaseRef = useRef(telemetryBase());
-  const retryingAssistantMessageIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     telemetryBaseRef.current = telemetryBase();
@@ -459,13 +457,9 @@ export default function ReaderAssistantPane({
 
   const handleRetryAssistantResponse = useCallback(
     async (assistantMessageId: string) => {
-      if (retryingAssistantMessageIdsRef.current.has(assistantMessageId)) return;
+      if (retryingAssistantMessageIds.has(assistantMessageId)) return;
 
-      retryingAssistantMessageIdsRef.current = new Set([
-        ...retryingAssistantMessageIdsRef.current,
-        assistantMessageId,
-      ]);
-      setRetryingAssistantMessageIds(retryingAssistantMessageIdsRef.current);
+      retryingAssistantMessageIds.add(assistantMessageId);
       setRetryError(null);
       lastSendStartedAtMsRef.current = nowMs();
 
@@ -481,13 +475,10 @@ export default function ReaderAssistantPane({
       } catch (err) {
         setRetryError(toFeedback(err, { fallback: "Failed to retry response" }));
       } finally {
-        const next = new Set(retryingAssistantMessageIdsRef.current);
-        next.delete(assistantMessageId);
-        retryingAssistantMessageIdsRef.current = next;
-        setRetryingAssistantMessageIds(next);
+        retryingAssistantMessageIds.remove(assistantMessageId);
       }
     },
-    [handleChatRunCreated],
+    [handleChatRunCreated, retryingAssistantMessageIds],
   );
 
   const fullChatTarget =
@@ -631,7 +622,7 @@ export default function ReaderAssistantPane({
         scrollportRef={scrollportRef}
         onScroll={handleChatScroll}
         onRetryAssistantResponse={handleRetryAssistantResponse}
-        retryingAssistantMessageIds={retryingAssistantMessageIds}
+        retryingAssistantMessageIds={retryingAssistantMessageIds.ids}
         onReaderSourceActivate={onReaderSourceActivate}
         onAskAboutSource={onAskAboutSource}
         onSaveSourceQuote={onSaveSourceQuote}
