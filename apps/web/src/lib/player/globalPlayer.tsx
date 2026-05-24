@@ -553,16 +553,6 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     []
   );
 
-  const flushCurrentTrackState = useCallback(
-    (mediaId: string | null | undefined, keepalive = false) => {
-      if (!mediaId) {
-        return;
-      }
-      void persistListeningState(mediaId, keepalive);
-    },
-    [persistListeningState]
-  );
-
   const updateMediaSessionPositionState = useCallback(
     (force = false) => {
       const mediaSession = getMediaSession();
@@ -627,7 +617,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       const isTrackSwitch = track?.media_id !== nextTrack.media_id;
       if (isTrackSwitch) {
         if (track) {
-          flushCurrentTrackState(track.media_id);
+          void persistListeningState(track.media_id);
         }
         stopSilenceTrimming();
         setSilenceTimeSavedSeconds(0);
@@ -655,12 +645,12 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       });
       setRequestVersion((value) => value + 1);
     },
-    [flushCurrentTrackState, stopSilenceTrimming, track]
+    [persistListeningState, stopSilenceTrimming, track]
   );
 
   const clearTrack = useCallback(() => {
     if (track) {
-      flushCurrentTrackState(track.media_id);
+      void persistListeningState(track.media_id);
     }
     stopSilenceTrimming();
     if (audioElement) {
@@ -675,7 +665,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     setBufferedSeconds(0);
     setSilenceTimeSavedSeconds(0);
     lastMediaSessionPositionUpdateAtRef.current = 0;
-  }, [audioElement, flushCurrentTrackState, stopSilenceTrimming, track]);
+  }, [audioElement, persistListeningState, stopSilenceTrimming, track]);
 
   const play = useCallback(() => {
     const audio = audioElementRef.current;
@@ -1224,32 +1214,32 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
     const intervalId = window.setInterval(() => {
-      flushCurrentTrackState(track.media_id);
+      void persistListeningState(track.media_id);
     }, LISTENING_STATE_SYNC_INTERVAL_MS);
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [flushCurrentTrackState, isPlaying, track]);
+  }, [isPlaying, persistListeningState, track]);
 
   useEffect(() => {
     if (wasPlayingRef.current && !isPlaying && track) {
-      flushCurrentTrackState(track.media_id);
+      void persistListeningState(track.media_id);
     }
     wasPlayingRef.current = isPlaying;
-  }, [flushCurrentTrackState, isPlaying, track]);
+  }, [isPlaying, persistListeningState, track]);
 
   useEffect(() => {
     const onBeforeUnload = () => {
       if (!track) {
         return;
       }
-      flushCurrentTrackState(track.media_id, true);
+      void persistListeningState(track.media_id, true);
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => {
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
-  }, [flushCurrentTrackState, track]);
+  }, [persistListeningState, track]);
 
   useEffect(() => {
     if (!track) {
