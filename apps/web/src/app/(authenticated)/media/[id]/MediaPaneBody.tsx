@@ -2853,19 +2853,16 @@ export default function MediaPaneBody() {
         (item) => item.id === highlightId,
       );
       const exact = highlight?.exact;
-      const preview = exact ? exact.slice(0, 120) : undefined;
-      const color = highlight?.color;
-
       return {
         kind: "object_ref",
         type: "highlight",
         id: highlightId,
-        ...(color ? { color } : {}),
-        ...(preview ? { preview } : {}),
-        ...(exact ? { exact } : {}),
-        ...(media?.id ? { mediaId: media.id } : {}),
-        ...(media?.title ? { mediaTitle: media.title } : {}),
-        ...(media?.kind ? { mediaKind: media.kind } : {}),
+        color: highlight?.color,
+        preview: exact ? exact.slice(0, 120) : undefined,
+        exact,
+        mediaId: media?.id,
+        mediaTitle: media?.title,
+        mediaKind: media?.kind,
       };
     },
     [activeChatHighlights, media?.id, media?.kind, media?.title],
