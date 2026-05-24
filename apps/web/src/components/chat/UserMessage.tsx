@@ -10,6 +10,7 @@ import type {
   ConversationMessage,
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
+import { buildArtifactHref } from "@/lib/conversations/display";
 import { conversationMessageText } from "@/lib/conversations/types";
 import { isRetrievalLocator } from "@/lib/api/sse/locators";
 import { collapseWhitespace } from "@/lib/collapseWhitespace";
@@ -219,7 +220,11 @@ function contextHref(context: MessageContextSnapshot): string | null {
       return null;
     case "artifact_part":
       if (context.locator?.type !== "artifact_part_ref") return null;
-      return `/conversations/${context.locator.conversation_id}?artifact=${context.locator.artifact_id}&artifactPart=${context.locator.artifact_part_id}`;
+      return buildArtifactHref({
+        conversationId: context.locator.conversation_id,
+        artifactId: context.locator.artifact_id,
+        artifactPartId: context.locator.artifact_part_id,
+      });
     case "conversation":
       return `/conversations/${context.id}`;
     case "message":

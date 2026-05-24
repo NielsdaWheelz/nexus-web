@@ -35,7 +35,7 @@ import type {
   ProvenancePacketVerification,
   ProvenanceSource,
 } from "@/lib/conversations/provenance/types";
-import { truncateText } from "@/lib/conversations/display";
+import { buildArtifactHref, truncateText } from "@/lib/conversations/display";
 import styles from "./ConversationProvenancePanel.module.css";
 
 interface ConversationProvenancePanelProps {
@@ -468,9 +468,7 @@ function ArtifactLineageNode({
 }) {
   const href =
     conversationId && artifact.id
-      ? `/conversations/${encodeURIComponent(conversationId)}?artifact=${encodeURIComponent(
-          artifact.id,
-        )}`
+      ? buildArtifactHref({ conversationId, artifactId: artifact.id })
       : artifact.href;
   const content = (
     <>
@@ -669,9 +667,7 @@ function ArtifactRow({
 }) {
   const href =
     conversationId && artifact.id
-      ? `/conversations/${encodeURIComponent(conversationId)}?artifact=${encodeURIComponent(
-          artifact.id,
-        )}`
+      ? buildArtifactHref({ conversationId, artifactId: artifact.id })
       : artifact.href;
   const body = (
     <>

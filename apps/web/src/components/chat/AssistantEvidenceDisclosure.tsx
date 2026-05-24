@@ -37,6 +37,7 @@ import type {
   ContextItem,
 } from "@/lib/api/sse/requests";
 import { apiFetch } from "@/lib/api/client";
+import { buildArtifactHref } from "@/lib/conversations/display";
 import { createRandomId } from "@/lib/createRandomId";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
 import { useLazyFetchOnOpen } from "@/lib/useLazyFetchOnOpen";
@@ -1826,9 +1827,7 @@ function artifactPartHref(part: MessageArtifactPart): string | null {
     const artifactId = textField(part.locator, "artifact_id");
     const artifactPartId = textField(part.locator, "artifact_part_id");
     if (conversationId && artifactId && artifactPartId) {
-      return `/conversations/${encodeURIComponent(conversationId)}?artifact=${encodeURIComponent(
-        artifactId,
-      )}&artifactPart=${encodeURIComponent(artifactPartId)}`;
+      return buildArtifactHref({ conversationId, artifactId, artifactPartId });
     }
   }
 
