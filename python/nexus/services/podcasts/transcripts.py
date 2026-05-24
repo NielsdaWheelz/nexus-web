@@ -696,7 +696,7 @@ def forecast_podcast_transcripts_for_viewer(
                 )
             )
         db.commit()
-    except Exception:
+    except Exception:  # justify-ignore-error: rollback boundary; re-raises after cleanup
         db.rollback()
         raise
 
@@ -862,7 +862,7 @@ def _enqueue_podcast_transcription_job(
             },
         )
         return True
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: enqueue boundary; degrade gracefully so callers can decide
         logger.warning(
             "podcast_transcription_enqueue_failed",
             media_id=str(media_id),
@@ -902,7 +902,7 @@ def _enqueue_podcast_semantic_repair_job(
             },
         )
         return True
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: enqueue boundary; degrade gracefully so callers can decide
         logger.warning(
             "podcast_semantic_repair_enqueue_failed",
             media_id=str(media_id),
@@ -936,7 +936,7 @@ def _try_enqueue_metadata_enrichment(
             max_attempts=1,
         )
         return True
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: enqueue boundary; metadata enrichment is best-effort
         logger.warning(
             "metadata_enrichment_enqueue_failed",
             media_id=str(media_id),
@@ -964,7 +964,7 @@ def _enqueue_video_transcription_retry(
             },
         )
         return True
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: enqueue boundary; degrade gracefully so callers can decide
         logger.warning(
             "video_transcription_retry_enqueue_failed",
             media_id=str(media_id),
@@ -1113,7 +1113,7 @@ def _run_transcription_job_heartbeat(
                     {"media_id": media_id, "now": heartbeat_now},
                 )
                 heartbeat_db.commit()
-        except Exception:
+        except Exception:  # justify-ignore-error: heartbeat is best-effort; transcription job continues on heartbeat failure
             logger.warning(
                 "podcast_transcription_heartbeat_failed",
                 media_id=str(media_id),
@@ -1312,14 +1312,14 @@ def run_podcast_transcription_now(
             media_id=media_id,
             stale_extracting_seconds=stale_extracting_seconds,
         )
-    except Exception:
+    except Exception:  # justify-ignore-error: heartbeat is best-effort; transcription proceeds without it
         logger.warning(
             "podcast_transcription_heartbeat_start_failed",
             media_id=str(media_id),
         )
     try:
         transcription_result = _transcribe_podcast_audio(audio_url)
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: provider boundary; recover into failed-status terminal record
         now = datetime.now(UTC)
         logger.exception(
             "podcast_transcription_unhandled_error",
@@ -1396,8 +1396,7 @@ def run_podcast_transcription_now(
                 transcript_segments=transcript_segments,
                 reason="podcast_transcription",
             )
-        except Exception as exc:
-            # Transcript text remains usable even when semantic indexing fails.
+        except Exception as exc:  # justify-ignore-error: transcript text stays usable when semantic indexing fails
             semantic_status = "failed"
             error_code = (
                 exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INTERNAL.value
@@ -1638,7 +1637,7 @@ def repair_podcast_transcript_semantic_index_now(
             "transcript_version_id": str(transcript_version_id),
             "chunk_count": len(transcript_segments),
         }
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: semantic repair boundary; mark content index failure and surface in state
         logger.exception(
             "podcast_semantic_repair_failed",
             media_id=str(media_id),
@@ -2478,7 +2477,7 @@ def _transcribe_with_deepgram(audio_url: str, *, diarize: bool) -> dict[str, Any
             status_code=exc.response.status_code,
         )
         return _transcription_failure_result(code, "Transcription failed")
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: provider HTTP boundary; recover into a typed failure result
         logger.warning(
             "podcast_transcription_provider_request_failed",
             audio_url=audio_url,
