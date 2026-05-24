@@ -35,12 +35,11 @@ from nexus.schemas.podcast import (
 )
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
-    replace_podcast_contributor_credits,
     upstream_contributor_credit_previews_for_names,
 )
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
-from ._writes import update_podcast_metadata
+from ._writes import replace_podcast_contributors_from_body, update_podcast_metadata
 from .provider import PODCAST_PROVIDER, get_podcast_index_client
 
 logger = get_logger(__name__)
@@ -119,7 +118,7 @@ def ensure_podcast(
                 update_podcast_metadata(
                     db, podcast_id=podcast_id, body=normalized_body, now=now
                 )
-                _replace_podcast_contributors_from_body(db, podcast_id, normalized_body)
+                replace_podcast_contributors_from_body(db, podcast_id, normalized_body)
                 return PodcastEnsureOut(podcast_id=podcast_id)
 
             podcast_id = _upsert_podcast(db, normalized_body, now=now)
@@ -135,7 +134,7 @@ def ensure_podcast(
                 set_feed_url=True,
                 set_provider_podcast_id=True,
             )
-            _replace_podcast_contributors_from_body(db, podcast_id, normalized_body)
+            replace_podcast_contributors_from_body(db, podcast_id, normalized_body)
             return PodcastEnsureOut(podcast_id=podcast_id)
 
         podcast_id = _upsert_podcast(db, normalized_body, now=now)
@@ -615,13 +614,13 @@ def _upsert_podcast(
         feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
         if feed_owner_id is not None and feed_owner_id != existing_id:
             update_podcast_metadata(db, podcast_id=existing_id, body=body, now=now)
-            _replace_podcast_contributors_from_body(db, existing_id, body)
+            replace_podcast_contributors_from_body(db, existing_id, body)
             return existing_id
 
         update_podcast_metadata(
             db, podcast_id=existing_id, body=body, now=now, set_feed_url=True
         )
-        _replace_podcast_contributors_from_body(db, existing_id, body)
+        replace_podcast_contributors_from_body(db, existing_id, body)
         return existing_id
 
     feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
@@ -634,7 +633,7 @@ def _upsert_podcast(
             set_feed_url=True,
             set_provider_podcast_id=True,
         )
-        _replace_podcast_contributors_from_body(db, feed_owner_id, body)
+        replace_podcast_contributors_from_body(db, feed_owner_id, body)
         return feed_owner_id
 
     try:
@@ -689,7 +688,7 @@ def _upsert_podcast(
             update_podcast_metadata(
                 db, podcast_id=existing_id, body=body, now=now, set_feed_url=set_feed_url
             )
-            _replace_podcast_contributors_from_body(db, existing_id, body)
+            replace_podcast_contributors_from_body(db, existing_id, body)
             return existing_id
 
         feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
@@ -703,24 +702,11 @@ def _upsert_podcast(
             set_feed_url=True,
             set_provider_podcast_id=True,
         )
-        _replace_podcast_contributors_from_body(db, feed_owner_id, body)
+        replace_podcast_contributors_from_body(db, feed_owner_id, body)
         return feed_owner_id
 
-    _replace_podcast_contributors_from_body(db, row[0], body)
+    replace_podcast_contributors_from_body(db, row[0], body)
     return row[0]
-
-
-def _replace_podcast_contributors_from_body(
-    db: Session,
-    podcast_id: UUID,
-    body: PodcastSubscribeRequest | PodcastEnsureRequest,
-) -> None:
-    replace_podcast_contributor_credits(
-        db,
-        podcast_id=podcast_id,
-        credits=[credit.model_dump(mode="json") for credit in body.contributors],
-        source=PODCAST_PROVIDER,
-    )
 
 
 def _select_podcast_id_by_provider_id(db: Session, provider_podcast_id: str) -> UUID | None:

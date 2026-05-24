@@ -31,10 +31,9 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionStatusOut,
     PodcastUnsubscribeOut,
 )
-from nexus.services.contributor_credits import replace_podcast_contributor_credits
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
-from ._writes import update_podcast_metadata
+from ._writes import replace_podcast_contributors_from_body, update_podcast_metadata
 from .catalog import (
     _is_podcast_identity_conflict,
     _select_podcast_id_by_feed_url,
@@ -677,7 +676,7 @@ def _upsert_podcast_from_opml(
             now=now,
             set_provider_podcast_id=set_provider_podcast_id,
         )
-        _replace_opml_podcast_contributors(db, feed_owner_id, body)
+        replace_podcast_contributors_from_body(db, feed_owner_id, body)
         return feed_owner_id
 
     provider_owner_id = _select_podcast_id_by_provider_id(db, body.provider_podcast_id)
@@ -689,7 +688,7 @@ def _upsert_podcast_from_opml(
             now=now,
             set_feed_url=True,
         )
-        _replace_opml_podcast_contributors(db, provider_owner_id, body)
+        replace_podcast_contributors_from_body(db, provider_owner_id, body)
         return provider_owner_id
 
     try:
@@ -750,7 +749,7 @@ def _upsert_podcast_from_opml(
                 now=now,
                 set_provider_podcast_id=set_provider_podcast_id,
             )
-            _replace_opml_podcast_contributors(db, feed_owner_id, body)
+            replace_podcast_contributors_from_body(db, feed_owner_id, body)
             return feed_owner_id
 
         provider_owner_id = _select_podcast_id_by_provider_id(db, body.provider_podcast_id)
@@ -763,25 +762,12 @@ def _upsert_podcast_from_opml(
             now=now,
             set_feed_url=True,
         )
-        _replace_opml_podcast_contributors(db, provider_owner_id, body)
+        replace_podcast_contributors_from_body(db, provider_owner_id, body)
         return provider_owner_id
 
     podcast_id = row[0]
-    _replace_opml_podcast_contributors(db, podcast_id, body)
+    replace_podcast_contributors_from_body(db, podcast_id, body)
     return podcast_id
-
-
-def _replace_opml_podcast_contributors(
-    db: Session,
-    podcast_id: UUID,
-    body: PodcastSubscribeRequest,
-) -> None:
-    replace_podcast_contributor_credits(
-        db,
-        podcast_id=podcast_id,
-        credits=[credit.model_dump(mode="json") for credit in body.contributors],
-        source=PODCAST_PROVIDER,
-    )
 
 
 def _get_subscription_status_value(db: Session, viewer_id: UUID, podcast_id: UUID) -> str | None:

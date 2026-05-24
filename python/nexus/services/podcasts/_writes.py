@@ -10,6 +10,22 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.schemas.podcast import PodcastEnsureRequest, PodcastSubscribeRequest
+from nexus.services.contributor_credits import replace_podcast_contributor_credits
+
+from .provider import PODCAST_PROVIDER
+
+
+def replace_podcast_contributors_from_body(
+    db: Session,
+    podcast_id: UUID,
+    body: PodcastSubscribeRequest | PodcastEnsureRequest,
+) -> None:
+    replace_podcast_contributor_credits(
+        db,
+        podcast_id=podcast_id,
+        credits=[credit.model_dump(mode="json") for credit in body.contributors],
+        source=PODCAST_PROVIDER,
+    )
 
 
 def update_podcast_metadata(
