@@ -1748,14 +1748,6 @@ def _search_type(
             content_kinds,
             limit,
         )
-    if result_type == "evidence_span":
-        if contributor_handles or roles or content_kinds:
-            return []
-        return _search_evidence_spans(db, viewer_id, q, scope_type, scope_id, limit)
-    if result_type == "fragment":
-        if contributor_handles or roles or content_kinds:
-            return []
-        return _search_fragments(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "contributor":
         return _search_contributors(
             db,
@@ -1769,53 +1761,35 @@ def _search_type(
             content_kinds,
             limit,
         )
+
+    # Remaining types do not filter by contributor handles, roles, or content_kinds;
+    # any such filter rules out a match entirely.
+    if contributor_handles or roles or content_kinds:
+        return []
+
+    if result_type == "evidence_span":
+        return _search_evidence_spans(db, viewer_id, q, scope_type, scope_id, limit)
+    if result_type == "fragment":
+        return _search_fragments(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "page":
-        if contributor_handles or roles or content_kinds:
-            return []
         return _search_pages(
-            db,
-            viewer_id,
-            q,
-            semantic_query_embedding,
-            scope_type,
-            scope_id,
-            limit,
+            db, viewer_id, q, semantic_query_embedding, scope_type, scope_id, limit
         )
     if result_type == "note_block":
-        if contributor_handles or roles or content_kinds:
-            return []
         return _search_note_blocks(
-            db,
-            viewer_id,
-            q,
-            semantic_query_embedding,
-            scope_type,
-            scope_id,
-            limit,
+            db, viewer_id, q, semantic_query_embedding, scope_type, scope_id, limit
         )
     if result_type == "highlight":
-        if contributor_handles or roles or content_kinds:
-            return []
         return _search_highlights(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "message":
-        if contributor_handles or roles or content_kinds:
-            return []
         return _search_messages(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "conversation":
-        if contributor_handles or roles or content_kinds:
-            return []
         return _search_conversations(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "artifact":
-        if contributor_handles or roles or content_kinds:
-            return []
         return _search_artifacts(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "artifact_part":
-        if contributor_handles or roles or content_kinds:
-            return []
         return _search_artifact_parts(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "web_result":
-        if contributor_handles or roles or content_kinds:
-            return []
         return _search_web_results(db, viewer_id, q, has_query, scope_type, scope_id, limit)
     raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid search type: {result_type}")
 
