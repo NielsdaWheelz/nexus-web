@@ -70,7 +70,7 @@ def discover_podcasts(
         feed_url = row["feed_url"]
         try:
             feed_url = validate_and_normalize_feed_url(feed_url)
-        except InvalidRequestError:
+        except InvalidRequestError:  # justify-ignore-error: surface upstream provider results even when their feed_url fails canonicalization
             pass
 
         podcast_id = select_podcast_id_by_provider_id(db, row["provider_podcast_id"])
