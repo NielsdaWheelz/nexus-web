@@ -1,4 +1,5 @@
 import {
+  isMediaRetrievalLocator,
   isRetrievalLocator,
   type RetrievalLocator,
 } from "@/lib/api/sse/locators";
@@ -65,14 +66,7 @@ function locatorMatchesSearchType(
     type === "highlight" ||
     type === "evidence_span"
   ) {
-    return (
-      locator.type === "web_text_offsets" ||
-      locator.type === "epub_fragment_offsets" ||
-      locator.type === "pdf_page_geometry" ||
-      locator.type === "transcript_time_range" ||
-      locator.type === "audio_time_range" ||
-      locator.type === "video_time_range"
-    );
+    return isMediaRetrievalLocator(locator);
   }
   if (type === "note_block") return locator.type === "note_block_offsets";
   if (type === "message") return locator.type === "message_offsets";

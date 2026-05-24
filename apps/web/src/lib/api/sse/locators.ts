@@ -96,6 +96,21 @@ export type MediaRetrievalLocator = Extract<
   }
 >;
 
+const MEDIA_RETRIEVAL_LOCATOR_TYPES = new Set<RetrievalLocator["type"]>([
+  "web_text_offsets",
+  "epub_fragment_offsets",
+  "pdf_page_geometry",
+  "audio_time_range",
+  "video_time_range",
+  "transcript_time_range",
+]);
+
+export function isMediaRetrievalLocator(
+  locator: RetrievalLocator,
+): locator is MediaRetrievalLocator {
+  return MEDIA_RETRIEVAL_LOCATOR_TYPES.has(locator.type);
+}
+
 export function isRetrievalLocator(value: unknown): value is RetrievalLocator {
   if (!isRecord(value) || typeof value.type !== "string") {
     return false;

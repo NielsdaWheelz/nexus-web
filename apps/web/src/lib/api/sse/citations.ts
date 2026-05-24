@@ -1,6 +1,7 @@
 import { isRecord } from "@/lib/validation";
 import { hasOnlyKeys, isOptionalString } from "./guards";
 import {
+  isMediaRetrievalLocator,
   isRetrievalLocator,
   type MediaRetrievalLocator,
   type RetrievalLocator,
@@ -486,15 +487,6 @@ function isSearchCitationBase(
   );
 }
 
-const MEDIA_RETRIEVAL_LOCATOR_TYPES = new Set<RetrievalLocator["type"]>([
-  "web_text_offsets",
-  "epub_fragment_offsets",
-  "pdf_page_geometry",
-  "audio_time_range",
-  "video_time_range",
-  "transcript_time_range",
-]);
-
 function isSearchCitationLocator(
   resultType: SearchCitationResultType,
   locator: unknown,
@@ -513,10 +505,7 @@ function isSearchCitationLocator(
     case "fragment":
     case "highlight":
     case "evidence_span":
-      return (
-        isRetrievalLocator(locator) &&
-        MEDIA_RETRIEVAL_LOCATOR_TYPES.has(locator.type)
-      );
+      return isRetrievalLocator(locator) && isMediaRetrievalLocator(locator);
     case "note_block":
       return (
         isRetrievalLocator(locator) && locator.type === "note_block_offsets"

@@ -28,7 +28,10 @@ import type {
   ReaderCitationPreview,
 } from "@/components/ui/ReaderCitation";
 import Button from "@/components/ui/Button";
-import { isRetrievalLocator } from "@/lib/api/sse/locators";
+import {
+  isMediaRetrievalLocator,
+  isRetrievalLocator,
+} from "@/lib/api/sse/locators";
 import type {
   ChatRunCreateRequest,
   ContextItem,
@@ -1838,7 +1841,7 @@ function artifactPartHref(part: MessageArtifactPart): string | null {
 function readerTargetFromArtifactPart(
   part: MessageArtifactPart,
 ): ReaderSourceTarget | null {
-  if (isReaderMediaLocator(part.locator)) {
+  if (isMediaRetrievalLocator(part.locator)) {
     const mediaId = mediaIdFromLocator(part.locator);
     if (mediaId) {
       if (!part.source_version) {
@@ -1872,7 +1875,7 @@ function readerTargetFromArtifactPart(
       continue;
     }
     const locator = objectField(ref, "locator");
-    if (!isRetrievalLocator(locator) || !isReaderMediaLocator(locator)) {
+    if (!isRetrievalLocator(locator) || !isMediaRetrievalLocator(locator)) {
       continue;
     }
     const mediaId = mediaIdFromLocator(locator);
@@ -2774,7 +2777,7 @@ function readerTargetFromEvidence(
   if (!locator) {
     return null;
   }
-  if (!isReaderMediaLocator(locator)) {
+  if (!isMediaRetrievalLocator(locator)) {
     return null;
   }
   const mediaId = mediaIdFromLocator(locator);
@@ -2801,42 +2804,8 @@ function readerTargetFromEvidence(
   };
 }
 
-function isReaderMediaLocator(
-  locator: MessageEvidenceLocator,
-): locator is Extract<
-  MessageEvidenceLocator,
-  {
-    type:
-      | "web_text_offsets"
-      | "epub_fragment_offsets"
-      | "pdf_page_geometry"
-      | "transcript_time_range"
-      | "audio_time_range"
-      | "video_time_range";
-  }
-> {
-  return (
-    locator.type === "web_text_offsets" ||
-    locator.type === "epub_fragment_offsets" ||
-    locator.type === "pdf_page_geometry" ||
-    locator.type === "transcript_time_range" ||
-    locator.type === "audio_time_range" ||
-    locator.type === "video_time_range"
-  );
-}
-
 function mediaIdFromLocator(locator: MessageEvidenceLocator): string | null {
-  if (
-    locator.type === "web_text_offsets" ||
-    locator.type === "epub_fragment_offsets" ||
-    locator.type === "pdf_page_geometry" ||
-    locator.type === "transcript_time_range" ||
-    locator.type === "audio_time_range" ||
-    locator.type === "video_time_range"
-  ) {
-    return locator.media_id;
-  }
-  return null;
+  return isMediaRetrievalLocator(locator) ? locator.media_id : null;
 }
 
 function supportStatusLabel(status: MessageClaimSupportStatus): string {
