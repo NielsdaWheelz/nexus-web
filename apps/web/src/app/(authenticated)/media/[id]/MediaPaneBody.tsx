@@ -125,6 +125,7 @@ import {
   type EpubSectionContent,
   type NormalizedNavigationTocNode,
 } from "@/lib/media/epubReader";
+import { useDocumentActions } from "@/lib/media/useDocumentActions";
 import EpubContentPane from "./EpubContentPane";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
 import TranscriptContentPanel from "./TranscriptContentPanel";
@@ -3526,9 +3527,6 @@ export default function MediaPaneBody() {
     null,
   );
   const [libraryMembershipBusy, setLibraryMembershipBusy] = useState(false);
-  const [documentDeleteBusy, setDocumentDeleteBusy] = useState(false);
-  const [retryProcessingBusy, setRetryProcessingBusy] = useState(false);
-  const [refreshSourceBusy, setRefreshSourceBusy] = useState(false);
   const [videoSeekTargetMs, setVideoSeekTargetMs] = useState<number | null>(
     null,
   );
@@ -3668,54 +3666,17 @@ export default function MediaPaneBody() {
     [libraryMembershipBusy, media?.id, router],
   );
 
-  const handleDeleteDocument = useCallback(async () => {
-    if (!media?.id || documentDeleteBusy) {
-      return;
-    }
-    if (
-      !window.confirm(
-        `Delete "${media.title}" from My Library and libraries you manage? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
-
-    setDocumentDeleteBusy(true);
-    try {
-      await apiFetch<{
-        data: {
-          status: "deleted" | "removed" | "hidden";
-          hard_deleted: boolean;
-          removed_from_library_ids?: string[];
-          hidden_for_viewer?: boolean;
-          remaining_reference_count?: number;
-        };
-      }>(`/api/media/${media.id}`, { method: "DELETE" });
-      router.push("/libraries");
-    } catch (err) {
-      feedback.show({
-        ...toFeedback(err, { fallback: "Failed to delete document" }),
-      });
-    } finally {
-      setDocumentDeleteBusy(false);
-    }
-  }, [documentDeleteBusy, feedback, media?.id, media?.title, router]);
-
-  const handleRetryProcessing = useCallback(async () => {
-    if (!media?.id || retryProcessingBusy || !media.capabilities?.can_retry) {
-      return;
-    }
-
-    setRetryProcessingBusy(true);
-    try {
-      await apiFetch(`/api/media/${media.id}/retry`, { method: "POST" });
+  const handleProcessingRestarted = useCallback(
+    ({ resetRefreshSource }: { resetRefreshSource: boolean }) => {
       setFragments([]);
       setEpubSections(null);
       setEpubToc(null);
       setActiveSectionId(null);
       setEpubError("processing");
+      if (!media) return;
+      const targetId = media.id;
       setMedia((prev) =>
-        prev && prev.id === media.id
+        prev && prev.id === targetId
           ? {
               ...prev,
               processing_status: "extracting",
@@ -3729,81 +3690,27 @@ export default function MediaPaneBody() {
                     can_quote: false,
                     can_search: false,
                     can_retry: false,
+                    ...(resetRefreshSource ? { can_refresh_source: false } : {}),
                   }
                 : prev.capabilities,
             }
           : prev,
       );
-      feedback.show({
-        severity: "success",
-        title: "Processing retry started.",
-      });
-    } catch (err) {
-      feedback.show({
-        ...toFeedback(err, { fallback: "Failed to retry processing" }),
-      });
-    } finally {
-      setRetryProcessingBusy(false);
-    }
-  }, [
-    feedback,
-    media?.capabilities?.can_retry,
-    media?.id,
-    retryProcessingBusy,
-  ]);
+    },
+    [media],
+  );
 
-  const handleRefreshSource = useCallback(async () => {
-    if (
-      !media?.id ||
-      refreshSourceBusy ||
-      !media.capabilities?.can_refresh_source
-    ) {
-      return;
-    }
-
-    setRefreshSourceBusy(true);
-    try {
-      await apiFetch(`/api/media/${media.id}/refresh`, { method: "POST" });
-      setFragments([]);
-      setEpubSections(null);
-      setEpubToc(null);
-      setActiveSectionId(null);
-      setEpubError("processing");
-      setMedia((prev) =>
-        prev && prev.id === media.id
-          ? {
-              ...prev,
-              processing_status: "extracting",
-              failure_stage: null,
-              last_error_code: null,
-              capabilities: prev.capabilities
-                ? {
-                    ...prev.capabilities,
-                    can_read: false,
-                    can_highlight: false,
-                    can_quote: false,
-                    can_search: false,
-                    can_retry: false,
-                    can_refresh_source: false,
-                  }
-                : prev.capabilities,
-            }
-          : prev,
-      );
-      feedback.show({ severity: "success", title: "Source refresh started." });
-    } catch (err) {
-      feedback.show({
-        ...toFeedback(err, { fallback: "Failed to refresh source" }),
-      });
-    } finally {
-      setRefreshSourceBusy(false);
-    }
-  }, [
-    feedback,
-    media?.capabilities?.can_refresh_source,
-    media?.id,
-    refreshSourceBusy,
-  ]);
+  const {
+    deleteBusy: documentDeleteBusy,
+    retryBusy: retryProcessingBusy,
+    refreshBusy: refreshSourceBusy,
+    handleDelete: handleDeleteDocument,
+    handleRetry: handleRetryProcessing,
+    handleRefresh: handleRefreshSource,
+  } = useDocumentActions({
+    media,
+    onProcessingRestarted: handleProcessingRestarted,
+  });
 
   const handleContentClick = useCallback(
     (e: React.MouseEvent) => {
