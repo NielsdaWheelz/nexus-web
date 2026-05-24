@@ -5,12 +5,11 @@ import {
   getPodcastSubscriptionSettingsPatch,
   getPodcastSubscriptionSyncPatch,
   parsePodcastSubscriptionDefaultPlaybackSpeed,
-  updatePodcastLibraryMemberships,
   type PodcastLibraryMembership,
 } from "./podcastSubscriptions";
 
 function createLibraryMembership(
-  overrides: Partial<PodcastLibraryMembership> = {}
+  overrides: Partial<PodcastLibraryMembership> = {},
 ): PodcastLibraryMembership {
   return {
     id: "library-1",
@@ -43,37 +42,6 @@ describe("podcastSubscriptions helpers", () => {
   it("parses playback speed form values", () => {
     expect(parsePodcastSubscriptionDefaultPlaybackSpeed("default")).toBeNull();
     expect(parsePodcastSubscriptionDefaultPlaybackSpeed("1.5")).toBe(1.5);
-  });
-
-  it("applies podcast library membership updates only to the targeted library", () => {
-    const nextLibraries = updatePodcastLibraryMemberships(
-      [
-        createLibraryMembership(),
-        createLibraryMembership({
-          id: "library-2",
-          name: "Shared",
-          isInLibrary: true,
-          canAdd: false,
-          canRemove: true,
-        }),
-      ],
-      { libraryId: "library-1", isInLibrary: true }
-    );
-
-    expect(nextLibraries).toEqual([
-      createLibraryMembership({
-        isInLibrary: true,
-        canAdd: false,
-        canRemove: true,
-      }),
-      createLibraryMembership({
-        id: "library-2",
-        name: "Shared",
-        isInLibrary: true,
-        canAdd: false,
-        canRemove: true,
-      }),
-    ]);
   });
 
   it("returns explicit sync and settings patches", () => {

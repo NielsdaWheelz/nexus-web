@@ -18,6 +18,12 @@ import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import {
+  addMediaToLibrary,
+  fetchMediaLibraryMemberships,
+  patchLibraryMembership,
+  removeMediaFromLibrary,
+} from "@/lib/media/mediaLibraries";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import {
   SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
@@ -56,7 +62,6 @@ import {
   type PodcastDetailResponse,
   type PodcastLibraryMembership,
   unsubscribeFromPodcast,
-  updatePodcastLibraryMemberships,
 } from "../podcastSubscriptions";
 import {
   TRANSCRIPT_FORECAST_BATCH_SIZE,
@@ -266,26 +271,10 @@ export default function PodcastDetailPaneBody() {
       }
       setLoadingEpisodeLibraryMediaIds((prev) => new Set(prev).add(mediaId));
       try {
-        const response = await apiFetch<{
-          data: Array<{
-            id: string;
-            name: string;
-            color: string | null;
-            is_in_library: boolean;
-            can_add: boolean;
-            can_remove: boolean;
-          }>;
-        }>(`/api/media/${mediaId}/libraries`);
+        const libraries = await fetchMediaLibraryMemberships(mediaId);
         setEpisodeLibrariesById((prev) => ({
           ...prev,
-          [mediaId]: response.data.map((library) => ({
-            id: library.id,
-            name: library.name,
-            color: library.color,
-            isInLibrary: library.is_in_library,
-            canAdd: library.can_add,
-            canRemove: library.can_remove,
-          })),
+          [mediaId]: libraries,
         }));
       } catch (loadError) {
         setError(
@@ -430,21 +419,13 @@ export default function PodcastDetailPaneBody() {
       setBusyMediaIds((prev) => new Set(prev).add(mediaId));
       setError(null);
       try {
-        await apiFetch(`/api/libraries/${libraryId}/media`, {
-          method: "POST",
-          body: JSON.stringify({ media_id: mediaId }),
-        });
+        await addMediaToLibrary(mediaId, libraryId);
         setEpisodeLibrariesById((prev) => ({
           ...prev,
-          [mediaId]: (prev[mediaId] ?? []).map((library) =>
-            library.id === libraryId
-              ? {
-                  ...library,
-                  isInLibrary: true,
-                  canAdd: false,
-                  canRemove: true,
-                }
-              : library,
+          [mediaId]: patchLibraryMembership(
+            prev[mediaId] ?? [],
+            libraryId,
+            true,
           ),
         }));
       } catch (mutationError) {
@@ -469,23 +450,13 @@ export default function PodcastDetailPaneBody() {
       setBusyMediaIds((prev) => new Set(prev).add(mediaId));
       setError(null);
       try {
-        await apiFetch(
-          `/api/media/${mediaId}?library_id=${encodeURIComponent(libraryId)}`,
-          {
-            method: "DELETE",
-          },
-        );
+        await removeMediaFromLibrary(mediaId, libraryId);
         setEpisodeLibrariesById((prev) => ({
           ...prev,
-          [mediaId]: (prev[mediaId] ?? []).map((library) =>
-            library.id === libraryId
-              ? {
-                  ...library,
-                  isInLibrary: false,
-                  canAdd: true,
-                  canRemove: false,
-                }
-              : library,
+          [mediaId]: patchLibraryMembership(
+            prev[mediaId] ?? [],
+            libraryId,
+            false,
           ),
         }));
       } catch (mutationError) {
@@ -588,10 +559,7 @@ export default function PodcastDetailPaneBody() {
       try {
         await addPodcastToLibrary(podcastId, libraryId);
         setPodcastLibraries((prev) =>
-          updatePodcastLibraryMemberships(prev, {
-            libraryId,
-            isInLibrary: true,
-          }),
+          patchLibraryMembership(prev, libraryId, true),
         );
       } catch (mutationError) {
         setError(
@@ -621,10 +589,7 @@ export default function PodcastDetailPaneBody() {
       try {
         await removePodcastFromLibrary(podcastId, libraryId);
         setPodcastLibraries((prev) =>
-          updatePodcastLibraryMemberships(prev, {
-            libraryId,
-            isInLibrary: false,
-          }),
+          patchLibraryMembership(prev, libraryId, false),
         );
       } catch (mutationError) {
         setError(

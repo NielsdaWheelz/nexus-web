@@ -194,28 +194,6 @@ export async function fetchPodcastLibraries(
   return response.data.map(toPodcastLibraryMembership);
 }
 
-export function updatePodcastLibraryMemberships(
-  libraries: PodcastLibraryMembership[],
-  {
-    libraryId,
-    isInLibrary,
-  }: {
-    libraryId: string;
-    isInLibrary: boolean;
-  },
-): PodcastLibraryMembership[] {
-  return libraries.map((library) =>
-    library.id === libraryId
-      ? {
-          ...library,
-          isInLibrary,
-          canAdd: !isInLibrary,
-          canRemove: isInLibrary,
-        }
-      : library,
-  );
-}
-
 export function getPodcastSubscriptionSettingsDraft(
   subscription: PodcastSubscriptionSettingsFields | null | undefined,
 ): PodcastSubscriptionSettingsDraft {

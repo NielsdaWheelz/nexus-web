@@ -32,6 +32,13 @@ import {
   Video,
 } from "lucide-react";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
+import {
+  addMediaToLibrary,
+  fetchMediaLibraryMemberships,
+  patchLibraryMembership,
+  removeMediaFromLibrary,
+} from "@/lib/media/mediaLibraries";
+import { fetchPodcastLibraries } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import LibraryIntelligenceView from "./LibraryIntelligenceView";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -309,36 +316,16 @@ export default function LibraryPaneBody() {
       setLibraryPanelError(null);
 
       try {
-        const path =
+        const libraries =
           entry.kind === "podcast"
-            ? `/api/podcasts/${entry.podcast.id}/libraries`
-            : `/api/media/${entry.media.id}/libraries`;
-        const response = await apiFetch<{
-          data: Array<{
-            id: string;
-            name: string;
-            color: string | null;
-            is_default?: boolean;
-            is_in_library: boolean;
-            can_add: boolean;
-            can_remove: boolean;
-          }>;
-        }>(path);
+            ? await fetchPodcastLibraries(entry.podcast.id)
+            : await fetchMediaLibraryMemberships(entry.media.id, {
+                excludeDefault: true,
+              });
         if (libraryPanelRequestIdRef.current !== requestId) {
           return;
         }
-        setLibraryPanelLibraries(
-          response.data
-            .filter((library) => !library.is_default)
-            .map((library) => ({
-              id: library.id,
-              name: library.name,
-              color: library.color,
-              isInLibrary: library.is_in_library,
-              canAdd: library.can_add,
-              canRemove: library.can_remove,
-            })),
-        );
+        setLibraryPanelLibraries(libraries);
       } catch (err) {
         if (libraryPanelRequestIdRef.current !== requestId) {
           return;
@@ -369,24 +356,12 @@ export default function LibraryPaneBody() {
             body: JSON.stringify({ podcast_id: libraryPanelEntry.podcast.id }),
           });
         } else {
-          await apiFetch(`/api/libraries/${libraryId}/media`, {
-            method: "POST",
-            body: JSON.stringify({ media_id: libraryPanelEntry.media.id }),
-          });
+          await addMediaToLibrary(libraryPanelEntry.media.id, libraryId);
         }
 
         if (libraryPanelEntryIdRef.current === libraryPanelEntry.id) {
           setLibraryPanelLibraries((current) =>
-            current.map((library) =>
-              library.id === libraryId
-                ? {
-                    ...library,
-                    isInLibrary: true,
-                    canAdd: false,
-                    canRemove: true,
-                  }
-                : library,
-            ),
+            patchLibraryMembership(current, libraryId, true),
           );
         }
       } catch (err) {
@@ -454,10 +429,7 @@ export default function LibraryPaneBody() {
             },
           );
         } else {
-          await apiFetch(
-            `/api/media/${entry.media.id}?library_id=${encodeURIComponent(libraryId)}`,
-            { method: "DELETE" },
-          );
+          await removeMediaFromLibrary(entry.media.id, libraryId);
         }
 
         if (removingCurrentEntry) {
@@ -466,16 +438,7 @@ export default function LibraryPaneBody() {
 
         if (libraryPanelEntryIdRef.current === entry.id) {
           setLibraryPanelLibraries((current) =>
-            current.map((library) =>
-              library.id === libraryId
-                ? {
-                    ...library,
-                    isInLibrary: false,
-                    canAdd: true,
-                    canRemove: false,
-                  }
-                : library,
-            ),
+            patchLibraryMembership(current, libraryId, false),
           );
         }
       } catch (err) {

@@ -38,8 +38,8 @@ import {
   refreshPodcastSubscriptionSync,
   savePodcastSubscriptionSettings,
   unsubscribeFromPodcast,
-  updatePodcastLibraryMemberships,
 } from "./podcastSubscriptions";
+import { patchLibraryMembership } from "@/lib/media/mediaLibraries";
 import styles from "./page.module.css";
 
 const PAGE_SIZE = 100;
@@ -205,10 +205,11 @@ export default function PodcastsPaneBody() {
         await addPodcastToLibrary(podcastId, libraryId);
         setLibrariesByPodcastId((prev) => ({
           ...prev,
-          [podcastId]: updatePodcastLibraryMemberships(prev[podcastId] ?? [], {
+          [podcastId]: patchLibraryMembership(
+            prev[podcastId] ?? [],
             libraryId,
-            isInLibrary: true,
-          }),
+            true,
+          ),
         }));
         setRows((prev) =>
           prev.map((row) => {
@@ -257,10 +258,11 @@ export default function PodcastsPaneBody() {
         await removePodcastFromLibrary(podcastId, libraryId);
         setLibrariesByPodcastId((prev) => ({
           ...prev,
-          [podcastId]: updatePodcastLibraryMemberships(prev[podcastId] ?? [], {
+          [podcastId]: patchLibraryMembership(
+            prev[podcastId] ?? [],
             libraryId,
-            isInLibrary: false,
-          }),
+            false,
+          ),
         }));
         setRows((prev) =>
           prev.map((row) =>

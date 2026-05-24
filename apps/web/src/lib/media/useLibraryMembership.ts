@@ -1,22 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "@/lib/api/client";
 import { toFeedback } from "@/components/feedback/Feedback";
 import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
+import {
+  addMediaToLibrary,
+  fetchMediaLibraryMemberships,
+  patchLibraryMembership,
+  removeMediaFromLibrary,
+} from "@/lib/media/mediaLibraries";
 import { usePaneRouter } from "@/lib/panes/paneRuntime";
-
-interface LibrariesForMediaResponse {
-  data: Array<{
-    id: string;
-    name: string;
-    color: string | null;
-    is_default?: boolean;
-    is_in_library: boolean;
-    can_add: boolean;
-    can_remove: boolean;
-  }>;
-}
 
 export interface LibraryMembership {
   libraries: LibraryTargetPickerItem[];
@@ -59,20 +52,8 @@ export function useLibraryMembership(
     setLoading(true);
     setError(null);
     try {
-      const response = await apiFetch<LibrariesForMediaResponse>(
-        `/api/media/${mediaId}/libraries`,
-      );
       setLibraries(
-        response.data
-          .filter((library) => !library.is_default)
-          .map((library) => ({
-            id: library.id,
-            name: library.name,
-            color: library.color,
-            isInLibrary: library.is_in_library,
-            canAdd: library.can_add,
-            canRemove: library.can_remove,
-          })),
+        await fetchMediaLibraryMemberships(mediaId, { excludeDefault: true }),
       );
     } catch (err) {
       setLibraries([]);
@@ -90,21 +71,9 @@ export function useLibraryMembership(
       setBusy(true);
       setError(null);
       try {
-        await apiFetch(`/api/libraries/${libraryId}/media`, {
-          method: "POST",
-          body: JSON.stringify({ media_id: mediaId }),
-        });
+        await addMediaToLibrary(mediaId, libraryId);
         setLibraries((current) =>
-          current.map((library) =>
-            library.id === libraryId
-              ? {
-                  ...library,
-                  isInLibrary: true,
-                  canAdd: false,
-                  canRemove: true,
-                }
-              : library,
-          ),
+          patchLibraryMembership(current, libraryId, true),
         );
       } catch (err) {
         setError(
@@ -125,25 +94,16 @@ export function useLibraryMembership(
       setBusy(true);
       setError(null);
       try {
-        const response = await apiFetch<{ data: { hard_deleted: boolean } }>(
-          `/api/media/${mediaId}?library_id=${encodeURIComponent(libraryId)}`,
-          { method: "DELETE" },
+        const { hardDeleted } = await removeMediaFromLibrary(
+          mediaId,
+          libraryId,
         );
-        if (response.data.hard_deleted) {
+        if (hardDeleted) {
           router.push("/libraries");
           return;
         }
         setLibraries((current) =>
-          current.map((library) =>
-            library.id === libraryId
-              ? {
-                  ...library,
-                  isInLibrary: false,
-                  canAdd: true,
-                  canRemove: false,
-                }
-              : library,
-          ),
+          patchLibraryMembership(current, libraryId, false),
         );
       } catch (err) {
         setError(
