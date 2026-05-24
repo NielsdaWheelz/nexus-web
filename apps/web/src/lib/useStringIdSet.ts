@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 
-export interface StringIdSet {
+interface StringIdSet {
   ids: Set<string>;
   /**
    * Synchronous membership check that reads from the live ref, not the React

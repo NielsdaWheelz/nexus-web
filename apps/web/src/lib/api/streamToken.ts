@@ -9,7 +9,7 @@
 
 import { apiFetch } from "@/lib/api/client";
 
-export interface StreamTokenResponse {
+interface StreamTokenResponse {
   token: string;
   stream_base_url: string;
   expires_at: string;

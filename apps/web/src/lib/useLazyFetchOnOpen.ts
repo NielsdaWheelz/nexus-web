@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-export interface LazyFetchOnOpenState<T> {
+interface LazyFetchOnOpenState<T> {
   data: T | null;
   loading: boolean;
   loaded: boolean;

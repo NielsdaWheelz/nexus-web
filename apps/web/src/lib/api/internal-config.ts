@@ -1,4 +1,4 @@
-export interface InternalApiConfig {
+interface InternalApiConfig {
   fastApiBaseUrl: string;
   internalSecret: string;
 }
