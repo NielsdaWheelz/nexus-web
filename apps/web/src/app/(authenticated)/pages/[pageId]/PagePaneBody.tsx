@@ -81,9 +81,7 @@ export default function PagePaneBody({
   const fallbackTitle = focusBlockId ? "Note" : "Page";
   useSetPaneTitle(page ? page.title || fallbackTitle : feedback ? fallbackTitle : null);
 
-  useEffect(() => {
-    currentSaveScopeRef.current = saveScope;
-  }, [saveScope]);
+  currentSaveScopeRef.current = saveScope;
 
   const saveDoc = useCallback(
     async (doc: ProseMirrorNode, { clientMutationId }: { clientMutationId: string }) => {

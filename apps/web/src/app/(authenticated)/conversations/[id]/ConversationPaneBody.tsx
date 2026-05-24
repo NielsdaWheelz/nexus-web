@@ -271,9 +271,7 @@ function ChatView({
       : `branch:${branchDraft.parentMessageId}:message`
     : `path:${activeLeafMessageId ?? activeReplyParentMessageId ?? id}`;
 
-  useEffect(() => {
-    selectedPathIdsRef.current = selectedPathIds;
-  }, [selectedPathIds]);
+  selectedPathIdsRef.current = selectedPathIds;
 
   useEffect(() => {
     if (!activeLeafMessageId || messages.length === 0) return;

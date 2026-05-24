@@ -738,9 +738,7 @@ export default function MediaPaneBody() {
     [clearPendingMobileSelectionPublish, publishSelection],
   );
 
-  useEffect(() => {
-    selectionVisibleRef.current = selection !== null;
-  }, [selection]);
+  selectionVisibleRef.current = selection !== null;
 
   useEffect(() => {
     return () => {
@@ -797,9 +795,7 @@ export default function MediaPaneBody() {
     }
   }, [activeTranscriptFragmentId, activeTranscriptFragment, isTranscriptMedia]);
 
-  useEffect(() => {
-    focusedHighlightIdRef.current = focusState.focusedId;
-  }, [focusState.focusedId]);
+  focusedHighlightIdRef.current = focusState.focusedId;
 
   const applyEpubNavigationResponse = useCallback(
     (navResp: EpubNavigationResponse): EpubNavigationSection[] => {
