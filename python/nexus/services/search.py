@@ -3440,13 +3440,13 @@ def _search_evidence_spans(
                 evidence_span_id=row[0],
             )
             _require_resolved_evidence(resolution)
-            locator = _locator_from_resolved_evidence(
-                resolution,
-                media_id=row[1],
-                media_kind=str(row[5]),
-            )
-        except (AssertionError, NotFoundError, ValueError):
+        except NotFoundError:
             continue
+        locator = _locator_from_resolved_evidence(
+            resolution,
+            media_id=row[1],
+            media_kind=str(row[5]),
+        )
         results.append(
             _RankedEvidenceSpanResult(
                 id=row[0],
