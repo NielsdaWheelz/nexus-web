@@ -49,6 +49,7 @@ import {
 } from "@/lib/highlights/pdfPageViewport";
 import { clamp } from "@/lib/clamp";
 import { createRandomId } from "@/lib/createRandomId";
+import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import type { QuoteSelector } from "@/lib/api/sse/locators";
 import {
   buildQuoteSelector,
@@ -230,6 +231,7 @@ const PDF_TEXT_LAYER_REFRESH_FRAME_BUDGET = 12;
 const PDF_HIGHLIGHT_SCROLL_TARGET_FRACTION = 0.35;
 const PDF_PULSE_DURATION_MS = 1200;
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
+const PDF_SELECTION_POLL_INTERVAL_MS = 150;
 const OVERLAY_COLOR_MAP: Record<HighlightColor, string> = {
   yellow: "rgba(255, 235, 59, 0.35)",
   green: "rgba(76, 175, 80, 0.3)",
@@ -2040,21 +2042,15 @@ export default function PdfReader({
     };
   }, [syncSelectionFromWindow]);
 
-  useEffect(() => {
-    if (!textLayerUsable) {
-      return;
-    }
-    const pollId = window.setInterval(() => {
+  useIntervalPoll({
+    enabled: textLayerUsable,
+    onPoll: () => {
       const sel = getPdfSelection();
-      if (!sel || sel.toString().trim().length === 0) {
-        return;
-      }
+      if (!sel || sel.toString().trim().length === 0) return;
       syncSelectionFromWindow();
-    }, 150);
-    return () => {
-      window.clearInterval(pollId);
-    };
-  }, [syncSelectionFromWindow, textLayerUsable]);
+    },
+    pollIntervalMs: PDF_SELECTION_POLL_INTERVAL_MS,
+  });
 
   const projectedHighlightRects = useMemo(() => {
     const activeScale = pageScale <= 0 ? activePageScaleRef.current : pageScale;

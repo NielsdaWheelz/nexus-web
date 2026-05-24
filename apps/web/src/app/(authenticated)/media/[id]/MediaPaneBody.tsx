@@ -54,6 +54,7 @@ import {
 import { mediaResourceOptions } from "@/lib/actions/resourceActions";
 import type { ContextItem } from "@/lib/api/sse/requests";
 import { createRandomId } from "@/lib/createRandomId";
+import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import {
   applyHighlightsToHtml,
   type HighlightInput,
@@ -331,44 +332,6 @@ function textQuoteField(
   }
   const value = (textQuote as Record<string, unknown>)[key];
   return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function useIntervalPoll({
-  enabled,
-  onPoll,
-  pollIntervalMs,
-}: {
-  enabled: boolean;
-  onPoll: () => Promise<void> | void;
-  pollIntervalMs: number;
-}): void {
-  useEffect(() => {
-    if (!enabled || pollIntervalMs <= 0) {
-      return;
-    }
-
-    let cancelled = false;
-    let inFlight = false;
-    const runPoll = () => {
-      if (cancelled || inFlight) {
-        return;
-      }
-      inFlight = true;
-      void Promise.resolve(onPoll())
-        .catch(() => {
-          console.error("media_route_poll_failed");
-        })
-        .finally(() => {
-          inFlight = false;
-        });
-    };
-
-    const timer = setInterval(runPoll, pollIntervalMs);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [enabled, onPoll, pollIntervalMs]);
 }
 
 function shouldPollDocumentProcessing(

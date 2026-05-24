@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { apiFetch } from "@/lib/api/client";
+import { useIntervalPoll } from "@/lib/useIntervalPoll";
 
 const SYNC_INTERVAL_MS = 15_000;
 
@@ -92,15 +93,13 @@ export function useListeningStatePersistence(args: {
     [audioElementRef, playbackRateRef],
   );
 
-  useEffect(() => {
-    if (!track || !isPlaying) return;
-    const intervalId = window.setInterval(() => {
-      persistForMediaId(track.media_id);
-    }, SYNC_INTERVAL_MS);
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [isPlaying, persistForMediaId, track]);
+  useIntervalPoll({
+    enabled: Boolean(track) && isPlaying,
+    onPoll: () => {
+      if (track) persistForMediaId(track.media_id);
+    },
+    pollIntervalMs: SYNC_INTERVAL_MS,
+  });
 
   useEffect(() => {
     if (wasPlayingRef.current && !isPlaying && track) {
