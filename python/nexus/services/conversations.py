@@ -2217,91 +2217,95 @@ def _message_ids_for_conversation(db: Session, conversation_id: UUID) -> list[UU
     )
 
 
+def _query_uuid_ids(db: Session, sql: str, params: dict[str, object]) -> list[UUID]:
+    """Execute a SELECT id query and return the IDs as a list."""
+    rows = db.execute(text(sql), params)
+    return [row[0] for row in rows]
+
+
 def _message_subtree_ids(db: Session, conversation_id: UUID, message_id: UUID) -> list[UUID]:
-    rows = db.execute(
-        text(
-            """
-            WITH RECURSIVE subtree AS (
-                SELECT id
-                FROM messages
-                WHERE conversation_id = :conversation_id
-                  AND id = :message_id
-                UNION ALL
-                SELECT child.id
-                FROM messages child
-                JOIN subtree parent ON parent.id = child.parent_message_id
-                WHERE child.conversation_id = :conversation_id
-            )
-            SELECT id FROM subtree
-            """
-        ),
+    return _query_uuid_ids(
+        db,
+        """
+        WITH RECURSIVE subtree AS (
+            SELECT id
+            FROM messages
+            WHERE conversation_id = :conversation_id
+              AND id = :message_id
+            UNION ALL
+            SELECT child.id
+            FROM messages child
+            JOIN subtree parent ON parent.id = child.parent_message_id
+            WHERE child.conversation_id = :conversation_id
+        )
+        SELECT id FROM subtree
+        """,
         {"conversation_id": conversation_id, "message_id": message_id},
     )
-    return [row[0] for row in rows]
 
 
 def _conversation_memory_item_ids(db: Session, conversation_id: UUID) -> list[UUID]:
-    rows = db.execute(
-        text("""
-            SELECT id
-            FROM conversation_memory_items
-            WHERE conversation_id = :conversation_id
-            ORDER BY created_at ASC, id ASC
-        """),
+    return _query_uuid_ids(
+        db,
+        """
+        SELECT id
+        FROM conversation_memory_items
+        WHERE conversation_id = :conversation_id
+        ORDER BY created_at ASC, id ASC
+        """,
         {"conversation_id": conversation_id},
     )
-    return [row[0] for row in rows]
 
 
 def _chat_run_ids_for_messages(db: Session, message_ids: Sequence[UUID]) -> list[UUID]:
-    rows = db.execute(
-        text("""
-            SELECT id
-            FROM chat_runs
-            WHERE user_message_id = ANY(:message_ids)
-               OR assistant_message_id = ANY(:message_ids)
-            ORDER BY created_at ASC, id ASC
-        """),
+    return _query_uuid_ids(
+        db,
+        """
+        SELECT id
+        FROM chat_runs
+        WHERE user_message_id = ANY(:message_ids)
+           OR assistant_message_id = ANY(:message_ids)
+        ORDER BY created_at ASC, id ASC
+        """,
         {"message_ids": list(message_ids)},
     )
-    return [row[0] for row in rows]
 
 
 def _assistant_claim_ids_for_messages(db: Session, message_ids: Sequence[UUID]) -> list[UUID]:
-    rows = db.execute(
-        text("""
-            SELECT id
-            FROM assistant_message_claims
-            WHERE message_id = ANY(:message_ids)
-            ORDER BY ordinal ASC, id ASC
-        """),
+    return _query_uuid_ids(
+        db,
+        """
+        SELECT id
+        FROM assistant_message_claims
+        WHERE message_id = ANY(:message_ids)
+        ORDER BY ordinal ASC, id ASC
+        """,
         {"message_ids": list(message_ids)},
     )
-    return [row[0] for row in rows]
 
 
 def _message_tool_call_ids_for_messages(db: Session, message_ids: Sequence[UUID]) -> list[UUID]:
-    rows = db.execute(
-        text("""
-            SELECT id
-            FROM message_tool_calls
-            WHERE user_message_id = ANY(:message_ids)
-               OR assistant_message_id = ANY(:message_ids)
-            ORDER BY tool_call_index ASC, id ASC
-        """),
+    return _query_uuid_ids(
+        db,
+        """
+        SELECT id
+        FROM message_tool_calls
+        WHERE user_message_id = ANY(:message_ids)
+           OR assistant_message_id = ANY(:message_ids)
+        ORDER BY tool_call_index ASC, id ASC
+        """,
         {"message_ids": list(message_ids)},
     )
-    return [row[0] for row in rows]
 
 
 def _message_artifact_ids_for_messages(db: Session, message_ids: Sequence[UUID]) -> list[UUID]:
-    rows = db.execute(
-        text("""
-            SELECT id
-            FROM message_artifacts
-            WHERE message_id = ANY(:message_ids)
-            ORDER BY created_at ASC, id ASC
-        """),
+    return _query_uuid_ids(
+        db,
+        """
+        SELECT id
+        FROM message_artifacts
+        WHERE message_id = ANY(:message_ids)
+        ORDER BY created_at ASC, id ASC
+        """,
         {"message_ids": list(message_ids)},
     )
-    return [row[0] for row in rows]
