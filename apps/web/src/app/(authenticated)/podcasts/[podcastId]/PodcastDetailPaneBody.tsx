@@ -62,6 +62,7 @@ import {
   unsubscribeFromPodcast,
 } from "../podcastSubscriptions";
 import { usePodcastSubscriptionSettingsModal } from "../usePodcastSubscriptionSettingsModal";
+import { formatContributorCreditSummary } from "@/lib/contributors/formatting";
 import {
   TRANSCRIPT_FORECAST_BATCH_SIZE,
   TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
@@ -69,7 +70,6 @@ import {
   canRequestTranscriptForEpisode,
   deriveEpisodeState,
   episodeMatchesFilter,
-  formatAuthorSummary,
   getEpisodeProgressPercent,
   shouldPollTranscriptProvisioningForEpisode,
   summarizeBatchTranscriptResults,
@@ -1522,7 +1522,10 @@ export default function PodcastDetailPaneBody() {
             const inQueue = queueMediaIds.has(episode.id);
             const showNotesText = episode.description_text?.trim() ?? "";
             const showNotesExpanded = expandedShowNotesMediaIds.has(episode.id);
-            const authorSummary = formatAuthorSummary(episode.contributors);
+            const authorSummary = formatContributorCreditSummary(
+              episode.contributors,
+              1,
+            );
             const paneTitleHint =
               authorSummary &&
               `${episode.title} · ${authorSummary}`.length <= 56

@@ -6,7 +6,6 @@
  */
 
 import type { ContributorCredit } from "@/lib/contributors/types";
-import { formatContributorCreditSummary } from "@/lib/contributors/formatting";
 
 export const TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS = 3000;
 export const TRANSCRIPT_FORECAST_BATCH_SIZE = 100;
@@ -170,13 +169,6 @@ export function getEpisodeProgressPercent(episode: PodcastEpisodeMedia): number 
     (listeningState.position_ms / listeningState.duration_ms) * 100,
   );
   return Math.max(0, Math.min(100, rawPercent));
-}
-
-export function formatAuthorSummary(
-  contributors: ContributorCredit[] | null | undefined,
-  maxNames: number = 1,
-): string | null {
-  return formatContributorCreditSummary(contributors, maxNames);
 }
 
 export function canRequestTranscriptForEpisode(
