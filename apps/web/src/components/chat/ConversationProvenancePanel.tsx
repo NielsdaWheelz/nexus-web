@@ -250,11 +250,19 @@ export default function ConversationProvenancePanel({
           </div>
           <div className={styles.artifactList}>
             {model.artifacts.slice(0, 6).map((artifact) => (
-              <ArtifactRow
+              <ArtifactLinkOrDiv
                 key={artifact.key}
                 artifact={artifact}
                 conversationId={conversationId}
-              />
+                className={styles.artifactRow}
+              >
+                <FileText size={14} aria-hidden="true" />
+                <span>{artifact.title}</span>
+                <small>{artifact.kind}</small>
+                <em>
+                  {artifact.citedPartCount}/{artifact.partCount} cited
+                </em>
+              </ArtifactLinkOrDiv>
             ))}
           </div>
         </section>
@@ -429,11 +437,19 @@ function LineageGraph({
         <LineageColumn label="Artifacts">
           {artifactNodes.length > 0 ? (
             artifactNodes.map((artifact) => (
-              <ArtifactLineageNode
+              <ArtifactLinkOrDiv
                 key={artifact.key}
                 artifact={artifact}
                 conversationId={conversationId}
-              />
+                className={styles.lineageNode}
+                dataKind="artifact"
+              >
+                <strong>{artifact.title}</strong>
+                <span>
+                  {artifact.kind} - {artifact.citedPartCount}/
+                  {artifact.partCount} cited
+                </span>
+              </ArtifactLinkOrDiv>
             ))
           ) : (
             <div className={styles.lineageEmptyNode}>No artifacts yet.</div>
@@ -459,35 +475,39 @@ function LineageColumn({
   );
 }
 
-function ArtifactLineageNode({
+/**
+ * Render `children` inside an `<a>` when the artifact has a resolvable
+ * pane-deeplink (or external href), otherwise inside a `<div>`. Owns the
+ * conversation-pane → artifact href computation so both the lineage and the
+ * artifact-chain views share one implementation.
+ */
+function ArtifactLinkOrDiv({
   artifact,
   conversationId,
+  className,
+  dataKind,
+  children,
 }: {
   artifact: ProvenanceArtifact;
-  conversationId?: string;
+  conversationId: string | undefined;
+  className: string;
+  dataKind?: string;
+  children: ReactNode;
 }) {
   const href =
     conversationId && artifact.id
       ? buildArtifactHref({ conversationId, artifactId: artifact.id })
       : artifact.href;
-  const content = (
-    <>
-      <strong>{artifact.title}</strong>
-      <span>
-        {artifact.kind} - {artifact.citedPartCount}/{artifact.partCount} cited
-      </span>
-    </>
-  );
   if (href) {
     return (
-      <a className={styles.lineageNode} data-kind="artifact" href={href}>
-        {content}
+      <a className={className} data-kind={dataKind} href={href}>
+        {children}
       </a>
     );
   }
   return (
-    <div className={styles.lineageNode} data-kind="artifact">
-      {content}
+    <div className={className} data-kind={dataKind}>
+      {children}
     </div>
   );
 }
@@ -658,31 +678,3 @@ function SourceDossier({ source }: { source: ProvenanceSource }) {
   );
 }
 
-function ArtifactRow({
-  artifact,
-  conversationId,
-}: {
-  artifact: ProvenanceArtifact;
-  conversationId?: string;
-}) {
-  const href =
-    conversationId && artifact.id
-      ? buildArtifactHref({ conversationId, artifactId: artifact.id })
-      : artifact.href;
-  const body = (
-    <>
-      <FileText size={14} aria-hidden="true" />
-      <span>{artifact.title}</span>
-      <small>{artifact.kind}</small>
-      <em>{artifact.citedPartCount}/{artifact.partCount} cited</em>
-    </>
-  );
-  if (href) {
-    return (
-      <a className={styles.artifactRow} href={href}>
-        {body}
-      </a>
-    );
-  }
-  return <div className={styles.artifactRow}>{body}</div>;
-}
