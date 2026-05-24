@@ -69,13 +69,13 @@ def discover_podcasts(
     for row in rows:
         feed_url = row["feed_url"]
         try:
-            feed_url = _validate_and_normalize_feed_url(feed_url)
+            feed_url = validate_and_normalize_feed_url(feed_url)
         except InvalidRequestError:
             pass
 
-        podcast_id = _select_podcast_id_by_provider_id(db, row["provider_podcast_id"])
+        podcast_id = select_podcast_id_by_provider_id(db, row["provider_podcast_id"])
         if podcast_id is None:
-            podcast_id = _select_podcast_id_by_feed_url(db, feed_url)
+            podcast_id = select_podcast_id_by_feed_url(db, feed_url)
 
         contributors = []
         raw_author = str(row.get("author") or "").strip()
@@ -106,14 +106,14 @@ def ensure_podcast(
     db: Session,
     body: PodcastEnsureRequest,
 ) -> PodcastEnsureOut:
-    normalized_feed_url = _validate_and_normalize_feed_url(body.feed_url)
+    normalized_feed_url = validate_and_normalize_feed_url(body.feed_url)
     normalized_body = body.model_copy(update={"feed_url": normalized_feed_url})
     now = datetime.now(UTC)
 
     with transaction(db):
-        podcast_id = _select_podcast_id_by_provider_id(db, normalized_body.provider_podcast_id)
+        podcast_id = select_podcast_id_by_provider_id(db, normalized_body.provider_podcast_id)
         if podcast_id is not None:
-            feed_url_owner_id = _select_podcast_id_by_feed_url(db, normalized_body.feed_url)
+            feed_url_owner_id = select_podcast_id_by_feed_url(db, normalized_body.feed_url)
             if feed_url_owner_id is not None and feed_url_owner_id != podcast_id:
                 update_podcast_metadata(
                     db, podcast_id=podcast_id, body=normalized_body, now=now
@@ -121,10 +121,10 @@ def ensure_podcast(
                 replace_podcast_contributors_from_body(db, podcast_id, normalized_body)
                 return PodcastEnsureOut(podcast_id=podcast_id)
 
-            podcast_id = _upsert_podcast(db, normalized_body, now=now)
+            podcast_id = upsert_podcast(db, normalized_body, now=now)
             return PodcastEnsureOut(podcast_id=podcast_id)
 
-        podcast_id = _select_podcast_id_by_feed_url(db, normalized_body.feed_url)
+        podcast_id = select_podcast_id_by_feed_url(db, normalized_body.feed_url)
         if podcast_id is not None:
             update_podcast_metadata(
                 db,
@@ -137,7 +137,7 @@ def ensure_podcast(
             replace_podcast_contributors_from_body(db, podcast_id, normalized_body)
             return PodcastEnsureOut(podcast_id=podcast_id)
 
-        podcast_id = _upsert_podcast(db, normalized_body, now=now)
+        podcast_id = upsert_podcast(db, normalized_body, now=now)
 
     return PodcastEnsureOut(podcast_id=podcast_id)
 
@@ -603,15 +603,15 @@ def list_podcast_episodes_for_viewer(
     return episodes
 
 
-def _upsert_podcast(
+def upsert_podcast(
     db: Session,
     body: PodcastSubscribeRequest | PodcastEnsureRequest,
     *,
     now: datetime,
 ) -> UUID:
-    existing_id = _select_podcast_id_by_provider_id(db, body.provider_podcast_id)
+    existing_id = select_podcast_id_by_provider_id(db, body.provider_podcast_id)
     if existing_id is not None:
-        feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
+        feed_owner_id = select_podcast_id_by_feed_url(db, body.feed_url)
         if feed_owner_id is not None and feed_owner_id != existing_id:
             update_podcast_metadata(db, podcast_id=existing_id, body=body, now=now)
             replace_podcast_contributors_from_body(db, existing_id, body)
@@ -623,7 +623,7 @@ def _upsert_podcast(
         replace_podcast_contributors_from_body(db, existing_id, body)
         return existing_id
 
-    feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
+    feed_owner_id = select_podcast_id_by_feed_url(db, body.feed_url)
     if feed_owner_id is not None:
         update_podcast_metadata(
             db,
@@ -679,11 +679,11 @@ def _upsert_podcast(
                 },
             ).fetchone()
     except IntegrityError as exc:
-        if not _is_podcast_identity_conflict(exc):
+        if not is_podcast_identity_conflict(exc):
             raise
-        existing_id = _select_podcast_id_by_provider_id(db, body.provider_podcast_id)
+        existing_id = select_podcast_id_by_provider_id(db, body.provider_podcast_id)
         if existing_id is not None:
-            feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
+            feed_owner_id = select_podcast_id_by_feed_url(db, body.feed_url)
             set_feed_url = not (feed_owner_id is not None and feed_owner_id != existing_id)
             update_podcast_metadata(
                 db, podcast_id=existing_id, body=body, now=now, set_feed_url=set_feed_url
@@ -691,7 +691,7 @@ def _upsert_podcast(
             replace_podcast_contributors_from_body(db, existing_id, body)
             return existing_id
 
-        feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
+        feed_owner_id = select_podcast_id_by_feed_url(db, body.feed_url)
         if feed_owner_id is None:
             raise
         update_podcast_metadata(
@@ -709,7 +709,7 @@ def _upsert_podcast(
     return row[0]
 
 
-def _select_podcast_id_by_provider_id(db: Session, provider_podcast_id: str) -> UUID | None:
+def select_podcast_id_by_provider_id(db: Session, provider_podcast_id: str) -> UUID | None:
     row = db.execute(
         text(
             """
@@ -729,7 +729,7 @@ def _select_podcast_id_by_provider_id(db: Session, provider_podcast_id: str) -> 
     return row[0]
 
 
-def _select_podcast_id_by_feed_url(db: Session, normalized_feed_url: str) -> UUID | None:
+def select_podcast_id_by_feed_url(db: Session, normalized_feed_url: str) -> UUID | None:
     row = db.execute(
         text(
             """
@@ -745,7 +745,7 @@ def _select_podcast_id_by_feed_url(db: Session, normalized_feed_url: str) -> UUI
     return row[0]
 
 
-def _is_podcast_identity_conflict(exc: IntegrityError) -> bool:
+def is_podcast_identity_conflict(exc: IntegrityError) -> bool:
     orig = getattr(exc, "orig", None)
     constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
     if constraint_name:
@@ -759,7 +759,7 @@ def _is_podcast_identity_conflict(exc: IntegrityError) -> bool:
     )
 
 
-def _validate_and_normalize_feed_url(feed_url: str) -> str:
+def validate_and_normalize_feed_url(feed_url: str) -> str:
     validate_requested_url(feed_url)
     normalized = normalize_url_for_display(feed_url)
     split = urlsplit(normalized)

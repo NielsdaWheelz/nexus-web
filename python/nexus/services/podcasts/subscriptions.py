@@ -35,11 +35,11 @@ from nexus.services.url_normalize import normalize_url_for_display, validate_req
 
 from ._writes import replace_podcast_contributors_from_body, update_podcast_metadata
 from .catalog import (
-    _is_podcast_identity_conflict,
-    _select_podcast_id_by_feed_url,
-    _select_podcast_id_by_provider_id,
-    _upsert_podcast,
-    _validate_and_normalize_feed_url,
+    is_podcast_identity_conflict,
+    select_podcast_id_by_feed_url,
+    select_podcast_id_by_provider_id,
+    upsert_podcast,
+    validate_and_normalize_feed_url,
 )
 from .provider import PODCAST_PROVIDER, get_podcast_index_client
 from .sync import _enqueue_podcast_subscription_sync, _get_subscription_sync_snapshot
@@ -88,7 +88,7 @@ def import_subscriptions_from_opml(
             continue
 
         try:
-            normalized_feed_url = _validate_and_normalize_feed_url(raw_feed_url)
+            normalized_feed_url = validate_and_normalize_feed_url(raw_feed_url)
         except InvalidRequestError as exc:
             summary.skipped_invalid += 1
             summary.errors.append(
@@ -113,7 +113,7 @@ def import_subscriptions_from_opml(
         try:
             with transaction(db):
                 now = datetime.now(UTC)
-                podcast_id = _select_podcast_id_by_feed_url(db, normalized_feed_url)
+                podcast_id = select_podcast_id_by_feed_url(db, normalized_feed_url)
                 if podcast_id is None:
                     provider_row: dict[str, Any] | None = None
                     try:
@@ -240,7 +240,7 @@ def subscribe_to_podcast(
     viewer_id: UUID,
     body: PodcastSubscribeRequest,
 ) -> PodcastSubscribeOut:
-    normalized_feed_url = _validate_and_normalize_feed_url(body.feed_url)
+    normalized_feed_url = validate_and_normalize_feed_url(body.feed_url)
     normalized_body = body.model_copy(update={"feed_url": normalized_feed_url})
     now = datetime.now(UTC)
 
@@ -267,7 +267,7 @@ def subscribe_to_podcast(
                     "Podcasts cannot be added to the default library",
                 )
 
-        podcast_id = _upsert_podcast(db, normalized_body, now=now)
+        podcast_id = upsert_podcast(db, normalized_body, now=now)
         subscription_created = _upsert_subscription(
             db,
             viewer_id,
@@ -663,9 +663,9 @@ def _upsert_podcast_from_opml(
     *,
     now: datetime,
 ) -> UUID:
-    feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
+    feed_owner_id = select_podcast_id_by_feed_url(db, body.feed_url)
     if feed_owner_id is not None:
-        provider_owner_id = _select_podcast_id_by_provider_id(db, body.provider_podcast_id)
+        provider_owner_id = select_podcast_id_by_provider_id(db, body.provider_podcast_id)
         set_provider_podcast_id = not (
             provider_owner_id is not None and provider_owner_id != feed_owner_id
         )
@@ -679,7 +679,7 @@ def _upsert_podcast_from_opml(
         replace_podcast_contributors_from_body(db, feed_owner_id, body)
         return feed_owner_id
 
-    provider_owner_id = _select_podcast_id_by_provider_id(db, body.provider_podcast_id)
+    provider_owner_id = select_podcast_id_by_provider_id(db, body.provider_podcast_id)
     if provider_owner_id is not None:
         update_podcast_metadata(
             db,
@@ -734,11 +734,11 @@ def _upsert_podcast_from_opml(
                 },
             ).fetchone()
     except IntegrityError as exc:
-        if not _is_podcast_identity_conflict(exc):
+        if not is_podcast_identity_conflict(exc):
             raise
-        feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
+        feed_owner_id = select_podcast_id_by_feed_url(db, body.feed_url)
         if feed_owner_id is not None:
-            provider_owner_id = _select_podcast_id_by_provider_id(db, body.provider_podcast_id)
+            provider_owner_id = select_podcast_id_by_provider_id(db, body.provider_podcast_id)
             set_provider_podcast_id = not (
                 provider_owner_id is not None and provider_owner_id != feed_owner_id
             )
@@ -752,7 +752,7 @@ def _upsert_podcast_from_opml(
             replace_podcast_contributors_from_body(db, feed_owner_id, body)
             return feed_owner_id
 
-        provider_owner_id = _select_podcast_id_by_provider_id(db, body.provider_podcast_id)
+        provider_owner_id = select_podcast_id_by_provider_id(db, body.provider_podcast_id)
         if provider_owner_id is None:
             raise
         update_podcast_metadata(
