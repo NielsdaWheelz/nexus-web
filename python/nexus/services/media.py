@@ -40,6 +40,7 @@ from nexus.db.models import (
     ProcessingStatus,
 )
 from nexus.db.session import get_session_factory
+from nexus.db.sql_patterns import escape_ilike_pattern
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
@@ -841,11 +842,6 @@ def _parse_kind_filter(kind: str | None) -> list[str] | None:
     return parsed
 
 
-def _escape_ilike_pattern(value: str) -> str:
-    """Escape wildcard metacharacters for ILIKE pattern matching."""
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 def _reset_media_for_reingest(media: Media) -> None:
     """Clear failure metadata and mark a media row ready for re-ingestion."""
     now = datetime.now(UTC)
@@ -902,7 +898,7 @@ def list_visible_media(
 
     if normalized_search:
         where_clauses.append(r"m.title ILIKE :search_pattern ESCAPE '\'")
-        params["search_pattern"] = f"%{_escape_ilike_pattern(normalized_search)}%"
+        params["search_pattern"] = f"%{escape_ilike_pattern(normalized_search)}%"
 
     if cursor:
         cursor_updated_at, cursor_id = _decode_media_cursor(cursor)

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.session import transaction
+from nexus.db.sql_patterns import escape_ilike_pattern
 from nexus.errors import (
     ApiErrorCode,
     InvalidRequestError,
@@ -508,10 +509,6 @@ def get_podcast_detail_for_viewer(
     return PodcastDetailOut(podcast=podcast, subscription=subscription)
 
 
-def _escape_ilike_pattern(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 def list_podcast_episodes_for_viewer(
     db: Session,
     viewer_id: UUID,
@@ -575,7 +572,7 @@ def list_podcast_episodes_for_viewer(
     }
     if normalized_query:
         where_clauses.append(r"m.title ILIKE :query_pattern ESCAPE '\'")
-        params["query_pattern"] = f"%{_escape_ilike_pattern(normalized_query)}%"
+        params["query_pattern"] = f"%{escape_ilike_pattern(normalized_query)}%"
 
     episode_rows = (
         db.execute(
