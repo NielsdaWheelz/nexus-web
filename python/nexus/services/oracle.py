@@ -618,9 +618,7 @@ async def execute_reading(
     llm_router: LLMRouter,
 ) -> dict[str, Any]:
     """Worker job body: pick plate, retrieve passages, call LLM, persist, stream."""
-    reading = _get_reading(db, reading_id)
-    if reading is None:
-        raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found")
+    reading = _get_reading_or_fail(db, reading_id)
     if reading.status != "pending":
         # Replay of an already-claimed job; refuse rather than emit twice.
         status = reading.status
@@ -725,9 +723,7 @@ async def execute_reading(
             _fail(db, reading, code=exc.code.value)
             return {"status": "failed", "error_code": exc.code.value}
 
-        reading = _get_reading(db, reading_id)
-        if reading is None:
-            raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found")
+        reading = _get_reading_or_fail(db, reading_id)
         if reading.status != "pending":
             status = reading.status
             db.commit()
@@ -772,9 +768,7 @@ async def execute_reading(
                 reading_id=str(reading_id),
                 output_preview=response.text[:200],
             )
-            reading = _get_reading(db, reading_id)
-            if reading is None:
-                raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found")
+            reading = _get_reading_or_fail(db, reading_id)
             _fail(
                 db,
                 reading,
@@ -785,9 +779,7 @@ async def execute_reading(
         argument, motto, gloss, theme, by_phase, interpretation, omens = parsed
         if requires_user_media and not _selected_user_media(candidates, by_phase):
             logger.warning("oracle.llm_missing_user_media", reading_id=str(reading_id))
-            reading = _get_reading(db, reading_id)
-            if reading is None:
-                raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found")
+            reading = _get_reading_or_fail(db, reading_id)
             _fail(
                 db,
                 reading,
@@ -795,9 +787,7 @@ async def execute_reading(
             )
             return {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
 
-        reading = _get_reading(db, reading_id)
-        if reading is None:
-            raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found")
+        reading = _get_reading_or_fail(db, reading_id)
         if reading.status != "streaming":
             status = reading.status
             db.commit()
@@ -868,9 +858,7 @@ async def execute_reading(
         _append_event(db, reading_id, "omens", {"lines": omens})
         db.commit()
 
-        reading = _get_reading(db, reading_id)
-        if reading is None:
-            raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found")
+        reading = _get_reading_or_fail(db, reading_id)
         if reading.status != "streaming":
             status = reading.status
             db.commit()
@@ -911,6 +899,14 @@ def _get_reading_owned_by(db: Session, *, viewer_id: UUID, reading_id: UUID) -> 
 
 def _get_reading(db: Session, reading_id: UUID) -> OracleReading | None:
     return db.get(OracleReading, reading_id, populate_existing=True)
+
+
+def _get_reading_or_fail(db: Session, reading_id: UUID) -> OracleReading:
+    """Load a reading or raise E_NOT_FOUND; the worker form that defects on missing rows."""
+    reading = _get_reading(db, reading_id)
+    if reading is None:
+        raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found")
+    return reading
 
 
 def _candidate_set_includes_user_media(candidates: Sequence[_Candidate]) -> bool:
