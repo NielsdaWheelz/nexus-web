@@ -567,7 +567,8 @@ def run_podcast_subscription_sync_now(
         )
         selected_episodes = sorted(
             episode_candidates,
-            key=lambda ep: _published_sort_key(ep.get("published_at")),
+            key=lambda ep: parse_iso_datetime(ep.get("published_at"))
+            or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )[:window_size]
         selected_episodes = _hydrate_selected_episode_chapters_from_feed(
@@ -2330,12 +2331,5 @@ def _episode_match_keys(episode: dict[str, Any]) -> list[str]:
         keys.append(f"title_published:{title}|{normalized_published_at.lower()}")
 
     return keys
-
-
-def _published_sort_key(raw_value: Any) -> datetime:
-    parsed = parse_iso_datetime(raw_value)
-    if parsed is None:
-        return datetime.min.replace(tzinfo=UTC)
-    return parsed
 
 
