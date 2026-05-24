@@ -70,4 +70,3 @@ const Pill = forwardRef<HTMLSpanElement, PillProps>(function Pill(
 });
 
 export default Pill;
-export type { PillProps, PillTone, PillShape, PillSize };

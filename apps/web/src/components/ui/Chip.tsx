@@ -68,4 +68,3 @@ const Chip = forwardRef<HTMLDivElement, ChipProps>(function Chip(
 });
 
 export default Chip;
-export type { ChipProps, ChipSize };

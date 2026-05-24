@@ -4,7 +4,7 @@ import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { cx } from "@/lib/ui/cx";
 import styles from "./HighlightSnippet.module.css";
 
-export type HighlightSnippetColor = HighlightColor | "neutral";
+type HighlightSnippetColor = HighlightColor | "neutral";
 
 interface HighlightSnippetProps {
   exact: string;

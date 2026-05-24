@@ -181,4 +181,3 @@ export function TabsContent({
   );
 }
 
-export type { TabsProps, TabsListProps, TabsTriggerProps, TabsContentProps, TabsVariant };

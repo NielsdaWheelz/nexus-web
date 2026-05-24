@@ -18,7 +18,7 @@ import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
 import Button from "@/components/ui/Button";
 import styles from "./SelectionPopover.module.css";
 
-export interface SelectionPopoverProps {
+interface SelectionPopoverProps {
   selectionRect: DOMRect;
   selectionLineRects?: DOMRect[];
   containerRef: React.RefObject<HTMLElement | null>;

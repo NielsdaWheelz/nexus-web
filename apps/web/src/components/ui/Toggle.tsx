@@ -51,4 +51,3 @@ export default function Toggle({
   );
 }
 
-export type { ToggleProps, ToggleSize };

@@ -39,7 +39,7 @@ import styles from "./ChatComposer.module.css";
 // Types
 // ============================================================================
 
-export interface ChatComposerProps {
+interface ChatComposerProps {
   /** Existing conversation ID (null for new conversation). */
   conversationId: string | null;
   /** Persistent scope for a new scoped draft or loaded scoped conversation. */

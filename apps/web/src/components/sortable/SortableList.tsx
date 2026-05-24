@@ -25,12 +25,12 @@ import styles from "./SortableList.module.css";
 
 type SortableHookResult = ReturnType<typeof useSortable>;
 
-export interface SortableHandleProps {
+interface SortableHandleProps {
   attributes: SortableHookResult["attributes"];
   listeners: SortableHookResult["listeners"];
 }
 
-export interface SortableListRenderItemProps<T> {
+interface SortableListRenderItemProps<T> {
   item: T;
   isDragging: boolean;
   isOver: boolean;

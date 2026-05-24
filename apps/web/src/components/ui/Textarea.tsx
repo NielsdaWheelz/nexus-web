@@ -85,4 +85,3 @@ const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textare
 });
 
 export default Textarea;
-export type { TextareaProps, TextareaVariant, TextareaSize };

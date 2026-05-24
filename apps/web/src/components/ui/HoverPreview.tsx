@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { createPortal } from "react-dom";
 import styles from "./HoverPreview.module.css";
 
-export interface HoverPreviewAnchor {
+interface HoverPreviewAnchor {
   x: number;
   y: number;
 }
