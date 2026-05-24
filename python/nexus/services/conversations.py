@@ -1262,20 +1262,6 @@ def _artifact_part_evidence_span_ids(part: MessageArtifactPartCreateRequest) -> 
     return evidence_span_ids
 
 
-def get_message_artifact(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    message_id: UUID,
-    artifact_id: UUID,
-) -> MessageArtifactOut:
-    artifacts = list_message_artifacts(db, viewer_id=viewer_id, message_id=message_id)
-    for artifact in artifacts:
-        if artifact.id == artifact_id:
-            return artifact
-    raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Artifact not found")
-
-
 def get_artifact(
     db: Session,
     *,
@@ -1298,23 +1284,20 @@ def get_artifact(
     return _artifact_to_out(artifact)
 
 
-def export_message_artifact(
+ARTIFACT_EXPORT_FORMATS = ("markdown", "json", "html", "pdf", "csv")
+
+
+def export_artifact(
     db: Session,
     *,
     viewer_id: UUID,
-    message_id: UUID,
     artifact_id: UUID,
     export_format: str,
 ) -> MessageArtifactExportOut:
-    if export_format not in {"markdown", "json", "html", "pdf", "csv"}:
+    if export_format not in ARTIFACT_EXPORT_FORMATS:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid artifact export format")
 
-    artifact = get_message_artifact(
-        db,
-        viewer_id=viewer_id,
-        message_id=message_id,
-        artifact_id=artifact_id,
-    )
+    artifact = get_artifact(db, viewer_id=viewer_id, artifact_id=artifact_id)
     manifest = _artifact_citation_manifest(artifact)
     content: str | dict[str, Any]
     if export_format == "markdown":
@@ -1371,23 +1354,6 @@ def export_message_artifact(
         manifest_sha256=manifest_sha256,
         exported_at=ledger.created_at,
         content=content,
-    )
-
-
-def export_artifact(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    artifact_id: UUID,
-    export_format: str,
-) -> MessageArtifactExportOut:
-    artifact = get_artifact(db, viewer_id=viewer_id, artifact_id=artifact_id)
-    return export_message_artifact(
-        db,
-        viewer_id=viewer_id,
-        message_id=artifact.message_id,
-        artifact_id=artifact_id,
-        export_format=export_format,
     )
 
 
