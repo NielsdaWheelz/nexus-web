@@ -787,6 +787,35 @@ def _get_subscription_status_value(db: Session, viewer_id: UUID, podcast_id: UUI
     return str(row[0] or "")
 
 
+def _reactivate_subscription(
+    db: Session, *, user_id: UUID, podcast_id: UUID, auto_queue: bool, now: datetime
+) -> None:
+    db.execute(
+        text(
+            """
+            UPDATE podcast_subscriptions
+            SET
+                status = 'active',
+                auto_queue = :auto_queue,
+                sync_status = 'pending',
+                sync_error_code = NULL,
+                sync_error_message = NULL,
+                sync_started_at = NULL,
+                sync_completed_at = NULL,
+                updated_at = :updated_at
+            WHERE user_id = :user_id
+              AND podcast_id = :podcast_id
+            """
+        ),
+        {
+            "user_id": user_id,
+            "podcast_id": podcast_id,
+            "auto_queue": auto_queue,
+            "updated_at": now,
+        },
+    )
+
+
 def _upsert_subscription(
     db: Session,
     user_id: UUID,
@@ -806,29 +835,8 @@ def _upsert_subscription(
     ).fetchone()
 
     if existing is not None:
-        db.execute(
-            text(
-                """
-                UPDATE podcast_subscriptions
-                SET
-                    status = 'active',
-                    auto_queue = :auto_queue,
-                    sync_status = 'pending',
-                    sync_error_code = NULL,
-                    sync_error_message = NULL,
-                    sync_started_at = NULL,
-                    sync_completed_at = NULL,
-                    updated_at = :updated_at
-                WHERE user_id = :user_id
-                  AND podcast_id = :podcast_id
-                """
-            ),
-            {
-                "user_id": user_id,
-                "podcast_id": podcast_id,
-                "auto_queue": auto_queue,
-                "updated_at": now,
-            },
+        _reactivate_subscription(
+            db, user_id=user_id, podcast_id=podcast_id, auto_queue=auto_queue, now=now
         )
         return False
 
@@ -868,29 +876,8 @@ def _upsert_subscription(
     except IntegrityError as exc:
         if not _is_subscription_identity_conflict(exc):
             raise
-        db.execute(
-            text(
-                """
-                UPDATE podcast_subscriptions
-                SET
-                    status = 'active',
-                    auto_queue = :auto_queue,
-                    sync_status = 'pending',
-                    sync_error_code = NULL,
-                    sync_error_message = NULL,
-                    sync_started_at = NULL,
-                    sync_completed_at = NULL,
-                    updated_at = :updated_at
-                WHERE user_id = :user_id
-                  AND podcast_id = :podcast_id
-                """
-            ),
-            {
-                "user_id": user_id,
-                "podcast_id": podcast_id,
-                "auto_queue": auto_queue,
-                "updated_at": now,
-            },
+        _reactivate_subscription(
+            db, user_id=user_id, podcast_id=podcast_id, auto_queue=auto_queue, now=now
         )
         return False
     return True
