@@ -151,10 +151,7 @@ def _reader_selection_snapshot_required_string(
     snapshot: Mapping[str, object],
     key: str,
 ) -> str:
-    return _reader_selection_snapshot_string(snapshot[key])
-
-
-def _reader_selection_snapshot_string(value: object) -> str:
+    value = snapshot[key]
     if isinstance(value, str) and value.strip():
         return value
     raise ValueError("reader_selection snapshot field is missing")
