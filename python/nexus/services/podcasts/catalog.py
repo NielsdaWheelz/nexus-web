@@ -40,6 +40,7 @@ from nexus.services.contributor_credits import (
 )
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
+from ._writes import update_podcast_metadata
 from .provider import PODCAST_PROVIDER, get_podcast_index_client
 
 logger = get_logger(__name__)
@@ -115,7 +116,7 @@ def ensure_podcast(
         if podcast_id is not None:
             feed_url_owner_id = _select_podcast_id_by_feed_url(db, normalized_body.feed_url)
             if feed_url_owner_id is not None and feed_url_owner_id != podcast_id:
-                _update_podcast_metadata(
+                update_podcast_metadata(
                     db, podcast_id=podcast_id, body=normalized_body, now=now
                 )
                 _replace_podcast_contributors_from_body(db, podcast_id, normalized_body)
@@ -126,7 +127,7 @@ def ensure_podcast(
 
         podcast_id = _select_podcast_id_by_feed_url(db, normalized_body.feed_url)
         if podcast_id is not None:
-            _update_podcast_metadata(
+            update_podcast_metadata(
                 db,
                 podcast_id=podcast_id,
                 body=normalized_body,
@@ -613,11 +614,11 @@ def _upsert_podcast(
     if existing_id is not None:
         feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
         if feed_owner_id is not None and feed_owner_id != existing_id:
-            _update_podcast_metadata(db, podcast_id=existing_id, body=body, now=now)
+            update_podcast_metadata(db, podcast_id=existing_id, body=body, now=now)
             _replace_podcast_contributors_from_body(db, existing_id, body)
             return existing_id
 
-        _update_podcast_metadata(
+        update_podcast_metadata(
             db, podcast_id=existing_id, body=body, now=now, set_feed_url=True
         )
         _replace_podcast_contributors_from_body(db, existing_id, body)
@@ -625,7 +626,7 @@ def _upsert_podcast(
 
     feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
     if feed_owner_id is not None:
-        _update_podcast_metadata(
+        update_podcast_metadata(
             db,
             podcast_id=feed_owner_id,
             body=body,
@@ -685,7 +686,7 @@ def _upsert_podcast(
         if existing_id is not None:
             feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
             set_feed_url = not (feed_owner_id is not None and feed_owner_id != existing_id)
-            _update_podcast_metadata(
+            update_podcast_metadata(
                 db, podcast_id=existing_id, body=body, now=now, set_feed_url=set_feed_url
             )
             _replace_podcast_contributors_from_body(db, existing_id, body)
@@ -694,7 +695,7 @@ def _upsert_podcast(
         feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
         if feed_owner_id is None:
             raise
-        _update_podcast_metadata(
+        update_podcast_metadata(
             db,
             podcast_id=feed_owner_id,
             body=body,
@@ -707,42 +708,6 @@ def _upsert_podcast(
 
     _replace_podcast_contributors_from_body(db, row[0], body)
     return row[0]
-
-
-def _update_podcast_metadata(
-    db: Session,
-    *,
-    podcast_id: UUID,
-    body: PodcastSubscribeRequest | PodcastEnsureRequest,
-    now: datetime,
-    set_feed_url: bool = False,
-    set_provider_podcast_id: bool = False,
-) -> None:
-    set_clauses = [
-        "title = :title",
-        "website_url = COALESCE(:website_url, website_url)",
-        "image_url = COALESCE(:image_url, image_url)",
-        "description = COALESCE(:description, description)",
-        "updated_at = :updated_at",
-    ]
-    params: dict[str, Any] = {
-        "podcast_id": podcast_id,
-        "title": body.title,
-        "website_url": body.website_url,
-        "image_url": body.image_url,
-        "description": body.description,
-        "updated_at": now,
-    }
-    if set_feed_url:
-        set_clauses.append("feed_url = :feed_url")
-        params["feed_url"] = body.feed_url
-    if set_provider_podcast_id:
-        set_clauses.append("provider_podcast_id = :provider_podcast_id")
-        params["provider_podcast_id"] = body.provider_podcast_id
-    db.execute(
-        text("UPDATE podcasts SET " + ", ".join(set_clauses) + " WHERE id = :podcast_id"),
-        params,
-    )
 
 
 def _replace_podcast_contributors_from_body(

@@ -34,6 +34,7 @@ from nexus.schemas.podcast import (
 from nexus.services.contributor_credits import replace_podcast_contributor_credits
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
+from ._writes import update_podcast_metadata
 from .catalog import (
     _is_podcast_identity_conflict,
     _select_podcast_id_by_feed_url,
@@ -666,93 +667,30 @@ def _upsert_podcast_from_opml(
     feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
     if feed_owner_id is not None:
         provider_owner_id = _select_podcast_id_by_provider_id(db, body.provider_podcast_id)
-        if provider_owner_id is not None and provider_owner_id != feed_owner_id:
-            row = db.execute(
-                text(
-                    """
-                    UPDATE podcasts
-                    SET
-                        title = :title,
-                        website_url = COALESCE(:website_url, website_url),
-                        image_url = COALESCE(:image_url, image_url),
-                        description = COALESCE(:description, description),
-                        updated_at = :updated_at
-                    WHERE id = :podcast_id
-                    RETURNING id
-                    """
-                ),
-                {
-                    "podcast_id": feed_owner_id,
-                    "title": body.title,
-                    "website_url": body.website_url,
-                    "image_url": body.image_url,
-                    "description": body.description,
-                    "updated_at": now,
-                },
-            ).fetchone()
-            podcast_id = row[0]
-            _replace_opml_podcast_contributors(db, podcast_id, body)
-            return podcast_id
-
-        row = db.execute(
-            text(
-                """
-                UPDATE podcasts
-                SET
-                    provider_podcast_id = :provider_podcast_id,
-                    title = :title,
-                    website_url = COALESCE(:website_url, website_url),
-                    image_url = COALESCE(:image_url, image_url),
-                    description = COALESCE(:description, description),
-                    updated_at = :updated_at
-                WHERE id = :podcast_id
-                RETURNING id
-                """
-            ),
-            {
-                "podcast_id": feed_owner_id,
-                "provider_podcast_id": body.provider_podcast_id,
-                "title": body.title,
-                "website_url": body.website_url,
-                "image_url": body.image_url,
-                "description": body.description,
-                "updated_at": now,
-            },
-        ).fetchone()
-        podcast_id = row[0]
-        _replace_opml_podcast_contributors(db, podcast_id, body)
-        return podcast_id
+        set_provider_podcast_id = not (
+            provider_owner_id is not None and provider_owner_id != feed_owner_id
+        )
+        update_podcast_metadata(
+            db,
+            podcast_id=feed_owner_id,
+            body=body,
+            now=now,
+            set_provider_podcast_id=set_provider_podcast_id,
+        )
+        _replace_opml_podcast_contributors(db, feed_owner_id, body)
+        return feed_owner_id
 
     provider_owner_id = _select_podcast_id_by_provider_id(db, body.provider_podcast_id)
     if provider_owner_id is not None:
-        row = db.execute(
-            text(
-                """
-                UPDATE podcasts
-                SET
-                    title = :title,
-                    feed_url = :feed_url,
-                    website_url = COALESCE(:website_url, website_url),
-                    image_url = COALESCE(:image_url, image_url),
-                    description = COALESCE(:description, description),
-                    updated_at = :updated_at
-                WHERE id = :podcast_id
-                RETURNING id
-                """
-            ),
-            {
-                "podcast_id": provider_owner_id,
-                "title": body.title,
-                "feed_url": body.feed_url,
-                "website_url": body.website_url,
-                "image_url": body.image_url,
-                "description": body.description,
-                "updated_at": now,
-            },
-        ).fetchone()
-        podcast_id = row[0]
-        _replace_opml_podcast_contributors(db, podcast_id, body)
-        return podcast_id
+        update_podcast_metadata(
+            db,
+            podcast_id=provider_owner_id,
+            body=body,
+            now=now,
+            set_feed_url=True,
+        )
+        _replace_opml_podcast_contributors(db, provider_owner_id, body)
+        return provider_owner_id
 
     try:
         with db.begin_nested():
@@ -802,91 +740,31 @@ def _upsert_podcast_from_opml(
         feed_owner_id = _select_podcast_id_by_feed_url(db, body.feed_url)
         if feed_owner_id is not None:
             provider_owner_id = _select_podcast_id_by_provider_id(db, body.provider_podcast_id)
-            if provider_owner_id is not None and provider_owner_id != feed_owner_id:
-                row = db.execute(
-                    text(
-                        """
-                        UPDATE podcasts
-                        SET
-                            title = :title,
-                            website_url = COALESCE(:website_url, website_url),
-                            image_url = COALESCE(:image_url, image_url),
-                            description = COALESCE(:description, description),
-                            updated_at = :updated_at
-                        WHERE id = :podcast_id
-                        RETURNING id
-                        """
-                    ),
-                    {
-                        "podcast_id": feed_owner_id,
-                        "title": body.title,
-                        "website_url": body.website_url,
-                        "image_url": body.image_url,
-                        "description": body.description,
-                        "updated_at": now,
-                    },
-                ).fetchone()
-            else:
-                row = db.execute(
-                    text(
-                        """
-                        UPDATE podcasts
-                        SET
-                            provider_podcast_id = :provider_podcast_id,
-                            title = :title,
-                            website_url = COALESCE(:website_url, website_url),
-                            image_url = COALESCE(:image_url, image_url),
-                            description = COALESCE(:description, description),
-                            updated_at = :updated_at
-                        WHERE id = :podcast_id
-                        RETURNING id
-                        """
-                    ),
-                    {
-                        "podcast_id": feed_owner_id,
-                        "provider_podcast_id": body.provider_podcast_id,
-                        "title": body.title,
-                        "website_url": body.website_url,
-                        "image_url": body.image_url,
-                        "description": body.description,
-                        "updated_at": now,
-                    },
-                ).fetchone()
-            podcast_id = row[0]
-            _replace_opml_podcast_contributors(db, podcast_id, body)
-            return podcast_id
+            set_provider_podcast_id = not (
+                provider_owner_id is not None and provider_owner_id != feed_owner_id
+            )
+            update_podcast_metadata(
+                db,
+                podcast_id=feed_owner_id,
+                body=body,
+                now=now,
+                set_provider_podcast_id=set_provider_podcast_id,
+            )
+            _replace_opml_podcast_contributors(db, feed_owner_id, body)
+            return feed_owner_id
 
         provider_owner_id = _select_podcast_id_by_provider_id(db, body.provider_podcast_id)
         if provider_owner_id is None:
             raise
-        row = db.execute(
-            text(
-                """
-                UPDATE podcasts
-                SET
-                    title = :title,
-                    feed_url = :feed_url,
-                    website_url = COALESCE(:website_url, website_url),
-                    image_url = COALESCE(:image_url, image_url),
-                    description = COALESCE(:description, description),
-                    updated_at = :updated_at
-                WHERE id = :podcast_id
-                RETURNING id
-                """
-            ),
-            {
-                "podcast_id": provider_owner_id,
-                "title": body.title,
-                "feed_url": body.feed_url,
-                "website_url": body.website_url,
-                "image_url": body.image_url,
-                "description": body.description,
-                "updated_at": now,
-            },
-        ).fetchone()
-        podcast_id = row[0]
-        _replace_opml_podcast_contributors(db, podcast_id, body)
-        return podcast_id
+        update_podcast_metadata(
+            db,
+            podcast_id=provider_owner_id,
+            body=body,
+            now=now,
+            set_feed_url=True,
+        )
+        _replace_opml_podcast_contributors(db, provider_owner_id, body)
+        return provider_owner_id
 
     podcast_id = row[0]
     _replace_opml_podcast_contributors(db, podcast_id, body)
