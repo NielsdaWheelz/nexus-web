@@ -48,6 +48,7 @@ import {
   normalizeTrackChapters,
   type GlobalPlayerChapter,
 } from "@/lib/player/chapters";
+import { useMediaSessionAdapter } from "@/lib/player/mediaSession";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 
 const LISTENING_STATE_SYNC_INTERVAL_MS = 15_000;
@@ -59,16 +60,6 @@ const DEFAULT_VOLUME = 1.0;
 const VOLUME_STORAGE_KEY = "nexus.globalPlayer.volume";
 const SPEED_MIN = 0.25;
 const SPEED_MAX = 3.0;
-const MEDIA_SESSION_POSITION_UPDATE_INTERVAL_MS = 1_000;
-const MEDIA_SESSION_ACTIONS: MediaSessionAction[] = [
-  "play",
-  "pause",
-  "seekbackward",
-  "seekforward",
-  "previoustrack",
-  "nexttrack",
-  "seekto",
-];
 
 export interface GlobalPlayerPlaybackError {
   code: number;
@@ -173,36 +164,6 @@ function normalizeTrackText(value: string | null | undefined): string | undefine
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function getMediaSession(): MediaSession | null {
-  if (typeof navigator === "undefined" || !("mediaSession" in navigator)) {
-    return null;
-  }
-  return navigator.mediaSession ?? null;
-}
-
-function setMediaSessionActionHandler(
-  mediaSession: MediaSession,
-  action: MediaSessionAction,
-  handler: MediaSessionActionHandler | null
-): void {
-  try {
-    mediaSession.setActionHandler(action, handler);
-  } catch {
-    // Some browsers only support a subset of actions.
-  }
-}
-
-function setMediaSessionPlaybackState(
-  mediaSession: MediaSession,
-  state: MediaSessionPlaybackState
-): void {
-  try {
-    mediaSession.playbackState = state;
-  } catch {
-    // Ignore browsers that reject playbackState updates.
-  }
-}
-
 function mapPlaybackErrorMessage(code: number): string {
   if (code === 1) {
     return "Playback was interrupted.";
@@ -239,7 +200,6 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const pendingTrackOptionsRef = useRef<SetTrackOptions>({});
   const wasPlayingRef = useRef(false);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
-  const lastMediaSessionPositionUpdateAtRef = useRef(0);
   const userPlaybackRateRef = useRef(DEFAULT_PLAYBACK_RATE);
   const audioEffectsRef = useRef<AudioEffectsState>(AUDIO_EFFECTS_DEFAULTS);
   const isPlayingRef = useRef(false);
@@ -553,40 +513,6 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     []
   );
 
-  const updateMediaSessionPositionState = useCallback(
-    (force = false) => {
-      const mediaSession = getMediaSession();
-      const snapshotAudio = audioElementRef.current;
-      if (!mediaSession || !snapshotAudio || !track || !("setPositionState" in mediaSession)) {
-        return;
-      }
-      const now = Date.now();
-      if (
-        !force &&
-        now - lastMediaSessionPositionUpdateAtRef.current < MEDIA_SESSION_POSITION_UPDATE_INTERVAL_MS
-      ) {
-        return;
-      }
-      const duration = Number.isFinite(snapshotAudio.duration) ? snapshotAudio.duration : null;
-      const position = Number.isFinite(snapshotAudio.currentTime) ? snapshotAudio.currentTime : null;
-      const playbackRate = userPlaybackRateRef.current > 0 ? userPlaybackRateRef.current : 1;
-      if (duration == null || duration <= 0 || position == null || position < 0) {
-        return;
-      }
-      try {
-        mediaSession.setPositionState({
-          duration,
-          playbackRate,
-          position: Math.min(position, duration),
-        });
-        lastMediaSessionPositionUpdateAtRef.current = now;
-      } catch {
-        // Some browsers throw when duration/position are temporarily unavailable.
-      }
-    },
-    [track]
-  );
-
   const bindAudioElement = useCallback(
     (node: HTMLAudioElement | null) => {
       const previousNode = audioElementRef.current;
@@ -627,7 +553,6 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       pendingTrackOptionsRef.current = options;
       setPlaybackError(null);
       setIsBuffering(false);
-      lastMediaSessionPositionUpdateAtRef.current = 0;
       setTrackState((prev) => {
         if (
           prev &&
@@ -664,7 +589,6 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     setDurationSeconds(0);
     setBufferedSeconds(0);
     setSilenceTimeSavedSeconds(0);
-    lastMediaSessionPositionUpdateAtRef.current = 0;
   }, [audioElement, persistListeningState, stopSilenceTrimming, track]);
 
   const play = useCallback(() => {
@@ -743,17 +667,6 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       }
     },
     [audioElement]
-  );
-
-  const setPlaybackRate = useCallback(
-    (nextRate: number) => {
-      const normalized = normalizePlaybackRate(nextRate);
-      userPlaybackRateRef.current = normalized;
-      setPlaybackRateState(normalized);
-      applyUserPlaybackRateToAudio();
-      updateMediaSessionPositionState(true);
-    },
-    [applyUserPlaybackRateToAudio, updateMediaSessionPositionState]
   );
 
   const setVolume = useCallback(
@@ -983,6 +896,40 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   }, [currentQueueIndex, queueItems.length, track]);
 
   const hasPreviousInQueue = useMemo(() => currentQueueIndex > 0, [currentQueueIndex]);
+
+  const { updatePositionState: updateMediaSessionPositionState } =
+    useMediaSessionAdapter({
+      track,
+      isPlaying,
+      audioElement,
+      playbackRateRef: userPlaybackRateRef,
+      handlers: {
+        play,
+        pause,
+        skipBackward: () => {
+          skipBySeconds(-PLAYER_SKIP_BACK_SECONDS);
+        },
+        skipForward: () => {
+          skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS);
+        },
+        previous: playPreviousInQueue,
+        next: playNextInQueue,
+        seekToSeconds: (seconds) => {
+          seekToMs(seconds * 1000);
+        },
+      },
+    });
+
+  const setPlaybackRate = useCallback(
+    (nextRate: number) => {
+      const normalized = normalizePlaybackRate(nextRate);
+      userPlaybackRateRef.current = normalized;
+      setPlaybackRateState(normalized);
+      applyUserPlaybackRateToAudio();
+      updateMediaSessionPositionState(true);
+    },
+    [applyUserPlaybackRateToAudio, updateMediaSessionPositionState]
+  );
 
   useEffect(() => {
     try {
@@ -1304,94 +1251,6 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [isPlaying, pause, play, skipBySeconds, track]);
-
-  useEffect(() => {
-    const mediaSession = getMediaSession();
-    if (!mediaSession) {
-      return;
-    }
-    if (!track) {
-      try {
-        mediaSession.metadata = null;
-      } catch {
-        // Ignore metadata assignment failures on unsupported clients.
-      }
-      return;
-    }
-    const artist = normalizeTrackText(track?.podcast_title);
-    const metadataInit: MediaMetadataInit = {
-      title: track.title,
-      artist,
-      album: artist,
-      artwork: track.image_url
-        ? [{ src: `/api/media/image?url=${encodeURIComponent(track.image_url)}` }]
-        : [],
-    };
-    try {
-      if (typeof window.MediaMetadata === "function") {
-        mediaSession.metadata = new window.MediaMetadata(metadataInit);
-      } else {
-        mediaSession.metadata = metadataInit as unknown as MediaMetadata;
-      }
-    } catch {
-      // Ignore metadata assignment failures on unsupported clients.
-    }
-  }, [track]);
-
-  useEffect(() => {
-    const mediaSession = getMediaSession();
-    if (!mediaSession) {
-      return;
-    }
-    const playbackState: MediaSessionPlaybackState = !track
-      ? "none"
-      : isPlaying
-        ? "playing"
-        : "paused";
-    setMediaSessionPlaybackState(mediaSession, playbackState);
-  }, [isPlaying, track]);
-
-  useEffect(() => {
-    const mediaSession = getMediaSession();
-    if (!mediaSession) {
-      return;
-    }
-    if (!track) {
-      for (const action of MEDIA_SESSION_ACTIONS) {
-        setMediaSessionActionHandler(mediaSession, action, null);
-      }
-      return;
-    }
-    setMediaSessionActionHandler(mediaSession, "play", () => {
-      play();
-    });
-    setMediaSessionActionHandler(mediaSession, "pause", () => {
-      pause();
-    });
-    setMediaSessionActionHandler(mediaSession, "seekbackward", () => {
-      skipBySeconds(-PLAYER_SKIP_BACK_SECONDS);
-    });
-    setMediaSessionActionHandler(mediaSession, "seekforward", () => {
-      skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS);
-    });
-    setMediaSessionActionHandler(mediaSession, "previoustrack", () => {
-      void playPreviousInQueue();
-    });
-    setMediaSessionActionHandler(mediaSession, "nexttrack", () => {
-      void playNextInQueue();
-    });
-    setMediaSessionActionHandler(mediaSession, "seekto", (details) => {
-      if (typeof details?.seekTime !== "number" || !Number.isFinite(details.seekTime)) {
-        return;
-      }
-      seekToMs(details.seekTime * 1000);
-    });
-    return () => {
-      for (const action of MEDIA_SESSION_ACTIONS) {
-        setMediaSessionActionHandler(mediaSession, action, null);
-      }
-    };
-  }, [pause, play, playNextInQueue, playPreviousInQueue, seekToMs, skipBySeconds, track]);
 
   const value = useMemo<GlobalPlayerContextValue>(
     () => ({
