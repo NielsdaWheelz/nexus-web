@@ -49,7 +49,7 @@ import {
 } from "@/lib/player/chapters";
 import { useListeningStatePersistence } from "@/lib/player/listeningState";
 import { useMediaSessionAdapter } from "@/lib/player/mediaSession";
-import { isEditableTarget } from "@/lib/ui/isEditableTarget";
+import { usePlayerKeyboardShortcuts } from "@/lib/player/usePlayerKeyboardShortcuts";
 
 const PREVIOUS_RESTART_THRESHOLD_SECONDS = 3;
 export const PLAYER_SKIP_BACK_SECONDS = 15;
@@ -1156,40 +1156,18 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     };
   }, [playbackError?.code, retryPlayback]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target)) {
-        return;
-      }
-      if (!track) {
-        return;
-      }
-      const key = event.key;
-      const isSpaceKey = key === " " || key === "Spacebar" || event.code === "Space";
-      if (isSpaceKey) {
-        event.preventDefault();
-        if (isPlaying) {
-          pause();
-        } else {
-          play();
-        }
-        return;
-      }
-      if (key === "ArrowLeft") {
-        event.preventDefault();
-        skipBySeconds(-PLAYER_SKIP_BACK_SECONDS);
-        return;
-      }
-      if (key === "ArrowRight") {
-        event.preventDefault();
-        skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS);
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [isPlaying, pause, play, skipBySeconds, track]);
+  usePlayerKeyboardShortcuts({
+    enabled: !!track,
+    isPlaying,
+    play,
+    pause,
+    onSkipBackward: () => {
+      skipBySeconds(-PLAYER_SKIP_BACK_SECONDS);
+    },
+    onSkipForward: () => {
+      skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS);
+    },
+  });
 
   const value = useMemo<GlobalPlayerContextValue>(
     () => ({
