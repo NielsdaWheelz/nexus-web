@@ -140,7 +140,7 @@ export type ConversationSourceRefType =
   | "app_context_ref"
   | "web_result";
 
-export interface ConversationSourceRefLocation {
+interface ConversationSourceRefLocation {
   page?: number | null;
   fragment_id?: string | null;
   t_start_ms?: number | null;
@@ -282,7 +282,7 @@ type ConversationMemoryKind =
   | "user_preference"
   | "source_claim";
 
-export type ConversationMemoryStatus = "active" | "superseded" | "invalid";
+type ConversationMemoryStatus = "active" | "superseded" | "invalid";
 
 export type ConversationMemoryEvidenceRole =
   | "supports"
@@ -483,7 +483,7 @@ export interface MessageArtifact {
   updated_at: string;
 }
 
-export interface MessageArtifactCitationEntry {
+interface MessageArtifactCitationEntry {
   artifact_part_id: string;
   ordinal: number;
   part_key?: string | null;
@@ -642,7 +642,7 @@ export interface ConversationMessagesResponse {
   page: { next_cursor: string | null };
 }
 
-export type BranchAnchorKind =
+type BranchAnchorKind =
   | "none"
   | "assistant_message"
   | "assistant_selection"
@@ -734,7 +734,7 @@ export interface BranchGraphNode {
   created_at: string;
 }
 
-export interface BranchGraphEdge {
+interface BranchGraphEdge {
   from: string;
   to: string;
 }
