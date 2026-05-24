@@ -1637,73 +1637,64 @@ function ArtifactInspector({
   );
 }
 
+type ArtifactPartLike = {
+  id?: string | null;
+  part_key?: string | null;
+  part_type?: string | null;
+  text?: string | null;
+};
+
+function partKey(part: ArtifactPartLike, index: number): string {
+  return part.id ?? `${part.part_key ?? "part"}-${index}`;
+}
+
+function partLabel(
+  part: ArtifactPartLike,
+  index: number,
+  fallback: string,
+): string {
+  return part.part_key || part.part_type || `${fallback} ${index + 1}`;
+}
+
+const SECTION_KINDS = new Set([
+  "briefing_document",
+  "study_guide",
+  "outline",
+  "audio_overview_script",
+  "audio_overview",
+  "contradiction_report",
+]);
+
+const TABLE_KINDS = new Set([
+  "table",
+  "comparison_table",
+  "extraction_table",
+  "claim_table",
+]);
+
 function ArtifactKindView({
   artifactKind,
   parts,
 }: {
   artifactKind: string;
-  parts: Array<{
-    id?: string | null;
-    part_key?: string | null;
-    part_type?: string | null;
-    text?: string | null;
-  }>;
+  parts: ArtifactPartLike[];
 }) {
   if (!parts.length) return null;
-  if (
-    artifactKind === "briefing_document" ||
-    artifactKind === "study_guide" ||
-    artifactKind === "outline" ||
-    artifactKind === "audio_overview_script" ||
-    artifactKind === "audio_overview" ||
-    artifactKind === "contradiction_report"
-  ) {
+
+  if (SECTION_KINDS.has(artifactKind)) {
     return (
       <section className={styles.artifactJsonBlock}>
         {parts.map((part, index) => (
-          <div
-            key={part.id ?? `${part.part_key ?? "part"}-${index}`}
-            className={styles.artifactSection}
-          >
-            <h4>{part.part_key || part.part_type || `Section ${index + 1}`}</h4>
+          <div key={partKey(part, index)} className={styles.artifactSection}>
+            <h4>{partLabel(part, index, "Section")}</h4>
             <p>{part.text || ""}</p>
           </div>
         ))}
       </section>
     );
   }
-  if (artifactKind === "faq") {
-    return (
-      <dl className={styles.artifactJsonBlock}>
-        {parts.map((part, index) => (
-          <Fragment key={part.id ?? `${part.part_key ?? "part"}-${index}`}>
-            <dt>{part.part_key || `Question ${index + 1}`}</dt>
-            <dd>{part.text || ""}</dd>
-          </Fragment>
-        ))}
-      </dl>
-    );
-  }
-  if (artifactKind === "timeline") {
-    return (
-      <ol className={styles.artifactJsonBlock}>
-        {parts.map((part, index) => (
-          <li key={part.id ?? `${part.part_key ?? "part"}-${index}`}>
-            <strong>
-              {part.part_key || part.part_type || `Event ${index + 1}`}
-            </strong>
-            {part.text ? <span> {part.text}</span> : null}
-          </li>
-        ))}
-      </ol>
-    );
-  }
-  if (
-    artifactKind === "table" ||
-    artifactKind === "comparison_table" ||
-    artifactKind === "extraction_table" ||
-    artifactKind === "claim_table"
-  ) {
+
+  if (TABLE_KINDS.has(artifactKind)) {
     return (
       <table className={styles.artifactJsonBlock}>
         <thead>
@@ -1715,7 +1706,7 @@ function ArtifactKindView({
         </thead>
         <tbody>
           {parts.map((part, index) => (
-            <tr key={part.id ?? `${part.part_key ?? "part"}-${index}`}>
+            <tr key={partKey(part, index)}>
               <td>{part.part_key || `Row ${index + 1}`}</td>
               <td>{part.part_type || ""}</td>
               <td>{part.text || ""}</td>
@@ -1725,37 +1716,64 @@ function ArtifactKindView({
       </table>
     );
   }
-  if (artifactKind === "source_map" || artifactKind === "concept_map") {
-    return (
-      <ul className={styles.artifactJsonBlock}>
-        {parts.map((part, index) => (
-          <li key={part.id ?? `${part.part_key ?? "part"}-${index}`}>
-            <strong>
-              {part.part_key || part.part_type || `Node ${index + 1}`}
-            </strong>
-            {part.text ? <span> {part.text}</span> : null}
-          </li>
-        ))}
-      </ul>
-    );
-  }
-  if (artifactKind === "flashcards" || artifactKind === "quiz") {
+
+  if (artifactKind === "faq") {
     return (
       <dl className={styles.artifactJsonBlock}>
         {parts.map((part, index) => (
-          <Fragment key={part.id ?? `${part.part_key ?? "part"}-${index}`}>
-            <dt>{part.part_key || part.part_type || `Prompt ${index + 1}`}</dt>
+          <Fragment key={partKey(part, index)}>
+            <dt>{part.part_key || `Question ${index + 1}`}</dt>
             <dd>{part.text || ""}</dd>
           </Fragment>
         ))}
       </dl>
     );
   }
+
+  if (artifactKind === "flashcards" || artifactKind === "quiz") {
+    return (
+      <dl className={styles.artifactJsonBlock}>
+        {parts.map((part, index) => (
+          <Fragment key={partKey(part, index)}>
+            <dt>{partLabel(part, index, "Prompt")}</dt>
+            <dd>{part.text || ""}</dd>
+          </Fragment>
+        ))}
+      </dl>
+    );
+  }
+
+  if (artifactKind === "timeline") {
+    return (
+      <ol className={styles.artifactJsonBlock}>
+        {parts.map((part, index) => (
+          <li key={partKey(part, index)}>
+            <strong>{partLabel(part, index, "Event")}</strong>
+            {part.text ? <span> {part.text}</span> : null}
+          </li>
+        ))}
+      </ol>
+    );
+  }
+
+  if (artifactKind === "source_map" || artifactKind === "concept_map") {
+    return (
+      <ul className={styles.artifactJsonBlock}>
+        {parts.map((part, index) => (
+          <li key={partKey(part, index)}>
+            <strong>{partLabel(part, index, "Node")}</strong>
+            {part.text ? <span> {part.text}</span> : null}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
   if (artifactKind === "video_slide_overview_manifest") {
     return (
       <ol className={styles.artifactJsonBlock}>
         {parts.map((part, index) => (
-          <li key={part.id ?? `${part.part_key ?? "part"}-${index}`}>
+          <li key={partKey(part, index)}>
             <strong>{part.part_key || `Slide ${index + 1}`}</strong>
             {part.part_type ? <span> [{part.part_type}]</span> : null}
             {part.text ? <p>{part.text}</p> : null}
@@ -1764,29 +1782,31 @@ function ArtifactKindView({
       </ol>
     );
   }
+
   if (artifactKind === "bibliography") {
     return (
       <ol className={styles.artifactJsonBlock}>
         {parts.map((part, index) => (
-          <li key={part.id ?? `${part.part_key ?? "part"}-${index}`}>
+          <li key={partKey(part, index)}>
             {part.text || part.part_key || `Source ${index + 1}`}
           </li>
         ))}
       </ol>
     );
   }
+
   if (artifactKind === "citation_audit") {
     return (
       <ul className={styles.artifactJsonBlock}>
         {parts.map((part, index) => (
-          <li key={part.id ?? `${part.part_key ?? "part"}-${index}`}>
-            {part.part_key || part.part_type || `Finding ${index + 1}`}:{" "}
-            {part.text || ""}
+          <li key={partKey(part, index)}>
+            {partLabel(part, index, "Finding")}: {part.text || ""}
           </li>
         ))}
       </ul>
     );
   }
+
   return null;
 }
 
