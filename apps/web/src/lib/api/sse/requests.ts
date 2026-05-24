@@ -71,10 +71,6 @@ export type ArtifactIntentKind =
   | "bibliography"
   | "citation_audit";
 
-interface ArtifactIntentOptions {
-  kind: ArtifactIntentKind;
-}
-
 type ChatRunContext =
   | {
       kind: "object_ref";
@@ -153,5 +149,5 @@ export interface ChatRunCreateRequest {
     allowed_domains?: string[];
     blocked_domains?: string[];
   };
-  artifact_intent: ArtifactIntentOptions;
+  artifact_intent: { kind: ArtifactIntentKind };
 }
