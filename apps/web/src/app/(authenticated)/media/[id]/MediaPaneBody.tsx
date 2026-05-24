@@ -252,6 +252,16 @@ interface PdfHighlightsPaneState {
   version: number;
 }
 
+/**
+ * Rank-2 polymorphic shape so one helper can drive `Highlight[]`,
+ * `PdfHighlightOut[]`, and `MediaHighlight[]` slots with the same transform.
+ */
+type HighlightNoteBlockTransform = <
+  T extends { id: string; linked_note_blocks?: HighlightLinkedNoteBlock[] },
+>(
+  list: T[],
+) => T[];
+
 interface EvidenceResolutionResponse {
   data: {
     evidence_span_id: string;
@@ -2781,53 +2791,19 @@ export default function MediaPaneBody() {
     [activeContent, clearFocus, isPdf, refreshMediaHighlights],
   );
 
-  const patchLocalHighlightNote = useCallback(
-    (highlightId: string, linkedNoteBlock: HighlightLinkedNoteBlock) => {
+  const applyToAllHighlightSlots = useCallback(
+    (transform: HighlightNoteBlockTransform) => {
       if (isPdf) {
         setPdfHighlightsPaneState((current) => {
-          const nextHighlights = patchHighlightLinkedNoteBlock(
-            current.highlights,
-            highlightId,
-            linkedNoteBlock,
-          );
-          return nextHighlights === current.highlights
+          const next = transform(current.highlights);
+          return next === current.highlights
             ? current
-            : { ...current, highlights: nextHighlights };
+            : { ...current, highlights: next };
         });
-        setPdfDocumentHighlights((current) =>
-          patchHighlightLinkedNoteBlock(current, highlightId, linkedNoteBlock),
-        );
+        setPdfDocumentHighlights((current) => transform(current));
         return;
       }
-
-      setHighlights((current) =>
-        patchHighlightLinkedNoteBlock(current, highlightId, linkedNoteBlock),
-      );
-    },
-    [isPdf],
-  );
-
-  const removeLocalHighlightNote = useCallback(
-    (noteBlockId: string) => {
-      if (isPdf) {
-        setPdfHighlightsPaneState((current) => {
-          const nextHighlights = removeHighlightLinkedNoteBlock(
-            current.highlights,
-            noteBlockId,
-          );
-          return nextHighlights === current.highlights
-            ? current
-            : { ...current, highlights: nextHighlights };
-        });
-        setPdfDocumentHighlights((current) =>
-          removeHighlightLinkedNoteBlock(current, noteBlockId),
-        );
-        return;
-      }
-
-      setHighlights((current) =>
-        removeHighlightLinkedNoteBlock(current, noteBlockId),
-      );
+      setHighlights((current) => transform(current));
     },
     [isPdf],
   );
@@ -2847,10 +2823,12 @@ export default function MediaPaneBody() {
         bodyPmJson,
         baseRevision,
       );
-      patchLocalHighlightNote(highlightId, linkedNoteBlock);
+      applyToAllHighlightSlots((list) =>
+        patchHighlightLinkedNoteBlock(list, highlightId, linkedNoteBlock),
+      );
       return linkedNoteBlock;
     },
-    [patchLocalHighlightNote],
+    [applyToAllHighlightSlots],
   );
 
   const handleNoteDelete = useCallback(
@@ -2861,10 +2839,12 @@ export default function MediaPaneBody() {
     ) => {
       await deleteHighlightNote(noteBlockId, baseRevision);
       if (shouldApply()) {
-        removeLocalHighlightNote(noteBlockId);
+        applyToAllHighlightSlots((list) =>
+          removeHighlightLinkedNoteBlock(list, noteBlockId),
+        );
       }
     },
-    [removeLocalHighlightNote],
+    [applyToAllHighlightSlots],
   );
 
   // ==========================================================================
