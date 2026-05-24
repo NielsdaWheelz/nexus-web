@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { formatClock } from "@/lib/formatClock";
 import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
+import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { isPositiveFinite } from "@/lib/validation";
 import {
@@ -153,30 +154,13 @@ export default function GlobalPlayerFooter() {
 
   useBodyOverflowLock(mobileExpanded && isMobile);
 
-  useEffect(() => {
-    if (!moreOpen) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (
-        morePopoverRef.current &&
-        !morePopoverRef.current.contains(event.target as Node) &&
-        moreButtonRef.current &&
-        !moreButtonRef.current.contains(event.target as Node)
-      ) {
-        setMoreOpen(false);
-      }
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setMoreOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [moreOpen]);
+  useDismissOnOutsideOrEscape({
+    enabled: moreOpen,
+    refs: [morePopoverRef, moreButtonRef],
+    onDismiss: () => {
+      setMoreOpen(false);
+    },
+  });
 
   if (!track) {
     return null;
