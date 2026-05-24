@@ -750,21 +750,12 @@ async def execute_chat_run(
             error=str(exc),
         )
         try:
-            _finalize_run(
+            _finalize_error(
                 db,
                 run_id=run_id,
-                assistant_content=ERROR_CODE_TO_MESSAGE.get(exc.code.value, exc.message),
-                assistant_status="error",
-                run_status="error",
-                done_status="error",
                 error_code=exc.code.value,
-                model=None,
-                resolved_key=None,
-                key_mode="auto",
-                latency_ms=0,
-                usage=None,
-                provider_request_id=None,
                 viewer_id=None,
+                assistant_content=ERROR_CODE_TO_MESSAGE.get(exc.code.value, exc.message),
             )
             return {"status": "error", "error_code": exc.code.value}
         except Exception:
@@ -773,20 +764,10 @@ async def execute_chat_run(
     except Exception as exc:
         logger.exception("chat_run.unhandled_error", run_id=str(run_id), error=str(exc))
         try:
-            _finalize_run(
+            _finalize_error(
                 db,
                 run_id=run_id,
-                assistant_content="An unexpected error occurred. Please try again.",
-                assistant_status="error",
-                run_status="error",
-                done_status="error",
                 error_code=ApiErrorCode.E_INTERNAL.value,
-                model=None,
-                resolved_key=None,
-                key_mode="auto",
-                latency_ms=0,
-                usage=None,
-                provider_request_id=None,
                 viewer_id=None,
             )
             return {"status": "error", "error_code": ApiErrorCode.E_INTERNAL.value}
@@ -819,21 +800,12 @@ async def _execute_chat_run(
 
     model = db.get(Model, run.model_id)
     if model is None:
-        _finalize_run(
+        _finalize_error(
             db,
             run_id=run.id,
-            assistant_content=ERROR_CODE_TO_MESSAGE["E_MODEL_NOT_AVAILABLE"],
-            assistant_status="error",
-            run_status="error",
-            done_status="error",
             error_code=ApiErrorCode.E_MODEL_NOT_AVAILABLE.value,
-            model=None,
-            resolved_key=None,
-            key_mode=run.key_mode,
-            latency_ms=0,
-            usage=None,
-            provider_request_id=None,
             viewer_id=run.owner_user_id,
+            key_mode=run.key_mode,
         )
         return {"status": "error", "error_code": ApiErrorCode.E_MODEL_NOT_AVAILABLE.value}
 
@@ -849,21 +821,15 @@ async def _execute_chat_run(
         resolved_key = resolve_api_key(db, run.owner_user_id, model.provider, run.key_mode)
     except LLMError as exc:
         error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
-        _finalize_run(
+        _finalize_error(
             db,
             run_id=run.id,
-            assistant_content=ERROR_CODE_TO_MESSAGE["E_LLM_INVALID_KEY"],
-            assistant_status="error",
-            run_status="error",
-            done_status="error",
             error_code=error_code,
+            viewer_id=run.owner_user_id,
             model=model,
             resolved_key=_dummy_resolved_key(model),
             key_mode=run.key_mode,
-            latency_ms=0,
-            usage=None,
-            provider_request_id=None,
-            viewer_id=run.owner_user_id,
+            assistant_content=ERROR_CODE_TO_MESSAGE["E_LLM_INVALID_KEY"],
         )
         return {"status": "error", "error_code": error_code}
 
@@ -883,21 +849,16 @@ async def _execute_chat_run(
         conversation = db.get(Conversation, run.conversation_id)
         user_message = db.get(Message, run.user_message_id)
         if conversation is None or user_message is None:
-            _finalize_run(
+            _finalize_error(
                 db,
                 run_id=run.id,
-                assistant_content="Conversation not found.",
-                assistant_status="error",
-                run_status="error",
-                done_status="error",
                 error_code=ApiErrorCode.E_CONVERSATION_NOT_FOUND.value,
+                viewer_id=run.owner_user_id,
                 model=model,
                 resolved_key=resolved_key,
                 key_mode=run.key_mode,
                 latency_ms=int((time.monotonic() - start_time) * 1000),
-                usage=None,
-                provider_request_id=None,
-                viewer_id=run.owner_user_id,
+                assistant_content="Conversation not found.",
             )
             return {"status": "error", "error_code": ApiErrorCode.E_CONVERSATION_NOT_FOUND.value}
 
@@ -1018,24 +979,19 @@ async def _execute_chat_run(
             }:
                 error_code = app_search_run.error_code or ApiErrorCode.E_APP_SEARCH_FAILED.value
                 latency_ms = int((time.monotonic() - start_time) * 1000)
-                _finalize_run(
+                _finalize_error(
                     db,
                     run_id=run.id,
-                    assistant_content=ERROR_CODE_TO_MESSAGE.get(
-                        error_code,
-                        ERROR_CODE_TO_MESSAGE[ApiErrorCode.E_APP_SEARCH_FAILED.value],
-                    ),
-                    assistant_status="error",
-                    run_status="error",
-                    done_status="error",
                     error_code=error_code,
+                    viewer_id=run.owner_user_id,
                     model=model,
                     resolved_key=resolved_key,
                     key_mode=run.key_mode,
                     latency_ms=latency_ms,
-                    usage=None,
-                    provider_request_id=None,
-                    viewer_id=run.owner_user_id,
+                    assistant_content=ERROR_CODE_TO_MESSAGE.get(
+                        error_code,
+                        ERROR_CODE_TO_MESSAGE[ApiErrorCode.E_APP_SEARCH_FAILED.value],
+                    ),
                 )
                 return {
                     "status": "error",
@@ -1153,21 +1109,15 @@ async def _execute_chat_run(
                 remaining_tokens=exc.remaining_tokens,
             )
             error_code = exc.api_error_code.value
-            _finalize_run(
+            _finalize_error(
                 db,
                 run_id=run.id,
-                assistant_content=ERROR_CODE_TO_MESSAGE[error_code],
-                assistant_status="error",
-                run_status="error",
-                done_status="error",
                 error_code=error_code,
+                viewer_id=run.owner_user_id,
                 model=model,
                 resolved_key=resolved_key,
                 key_mode=run.key_mode,
                 latency_ms=int((time.monotonic() - start_time) * 1000),
-                usage=None,
-                provider_request_id=None,
-                viewer_id=run.owner_user_id,
             )
             return {"status": "error", "error_code": error_code}
         except ContextLookupError as exc:
@@ -1179,21 +1129,15 @@ async def _execute_chat_run(
                 failure_message=failure.message if failure is not None else str(exc),
             )
             error_code = ApiErrorCode.E_CONTEXT_TOO_LARGE.value
-            _finalize_run(
+            _finalize_error(
                 db,
                 run_id=run.id,
-                assistant_content=ERROR_CODE_TO_MESSAGE[error_code],
-                assistant_status="error",
-                run_status="error",
-                done_status="error",
                 error_code=error_code,
+                viewer_id=run.owner_user_id,
                 model=model,
                 resolved_key=resolved_key,
                 key_mode=run.key_mode,
                 latency_ms=int((time.monotonic() - start_time) * 1000),
-                usage=None,
-                provider_request_id=None,
-                viewer_id=run.owner_user_id,
             )
             return {"status": "error", "error_code": error_code}
 
@@ -1320,44 +1264,33 @@ async def _execute_chat_run(
                     latency_ms=int((time.monotonic() - llm_start) * 1000),
                 ),
             )
-            _finalize_run(
+            _finalize_error(
                 db,
                 run_id=run.id,
-                assistant_content=ERROR_CODE_TO_MESSAGE.get(
-                    error_code,
-                    "An unexpected error occurred. Please try again.",
-                ),
-                assistant_status="error",
-                run_status="error",
-                done_status="error",
                 error_code=error_code,
+                viewer_id=run.owner_user_id,
                 model=model,
                 resolved_key=resolved_key,
                 key_mode=run.key_mode,
                 latency_ms=latency_ms,
                 usage=usage,
                 provider_request_id=provider_request_id,
-                viewer_id=run.owner_user_id,
             )
             return {"status": "error", "error_code": error_code}
 
         if not terminal_seen and not locally_truncated:
             latency_ms = int((time.monotonic() - start_time) * 1000)
-            _finalize_run(
+            _finalize_error(
                 db,
                 run_id=run.id,
-                assistant_content=ERROR_CODE_TO_MESSAGE["E_LLM_INTERRUPTED"],
-                assistant_status="error",
-                run_status="error",
-                done_status="error",
                 error_code=ApiErrorCode.E_LLM_INTERRUPTED.value,
+                viewer_id=run.owner_user_id,
                 model=model,
                 resolved_key=resolved_key,
                 key_mode=run.key_mode,
                 latency_ms=latency_ms,
                 usage=usage,
                 provider_request_id=provider_request_id,
-                viewer_id=run.owner_user_id,
             )
             return {"status": "error", "error_code": ApiErrorCode.E_LLM_INTERRUPTED.value}
 
@@ -1375,21 +1308,17 @@ async def _execute_chat_run(
                     provider_request_id=provider_request_id,
                 ),
             )
-            _finalize_run(
+            _finalize_error(
                 db,
                 run_id=run.id,
-                assistant_content=ERROR_CODE_TO_MESSAGE[LLM_INCOMPLETE_ERROR_CODE],
-                assistant_status="error",
-                run_status="error",
-                done_status="error",
                 error_code=LLM_INCOMPLETE_ERROR_CODE,
+                viewer_id=run.owner_user_id,
                 model=model,
                 resolved_key=resolved_key,
                 key_mode=run.key_mode,
                 latency_ms=latency_ms,
                 usage=usage,
                 provider_request_id=provider_request_id,
-                viewer_id=run.owner_user_id,
             )
             return {"status": "error", "error_code": LLM_INCOMPLETE_ERROR_CODE}
 
@@ -1407,21 +1336,17 @@ async def _execute_chat_run(
                     provider_request_id=provider_request_id,
                 ),
             )
-            _finalize_run(
+            _finalize_error(
                 db,
                 run_id=run.id,
-                assistant_content=ERROR_CODE_TO_MESSAGE[error_code],
-                assistant_status="error",
-                run_status="error",
-                done_status="error",
                 error_code=error_code,
+                viewer_id=run.owner_user_id,
                 model=model,
                 resolved_key=resolved_key,
                 key_mode=run.key_mode,
                 latency_ms=latency_ms,
                 usage=usage,
                 provider_request_id=provider_request_id,
-                viewer_id=run.owner_user_id,
             )
             return {"status": "error", "error_code": error_code}
 
@@ -3326,23 +3251,60 @@ def _has_delta_without_terminal(db: Session, run_id: UUID) -> bool:
     return "delta" in event_types and "done" not in event_types
 
 
-def _finalize_interrupted(db: Session, run: ChatRun) -> None:
-    model = db.get(Model, run.model_id)
+def _finalize_error(
+    db: Session,
+    *,
+    run_id: UUID,
+    error_code: str,
+    viewer_id: UUID | None,
+    model: Model | None = None,
+    resolved_key: ResolvedKey | None = None,
+    key_mode: str = "auto",
+    latency_ms: int = 0,
+    usage: LLMUsage | None = None,
+    provider_request_id: str | None = None,
+    assistant_content: str | None = None,
+) -> None:
+    """Finalize a run as an error using the standard error/error/error status shape.
+
+    Defaults `assistant_content` to `ERROR_CODE_TO_MESSAGE[error_code]` with a
+    generic fallback when the code is unknown.
+    """
+    content = (
+        assistant_content
+        if assistant_content is not None
+        else ERROR_CODE_TO_MESSAGE.get(
+            error_code, "An unexpected error occurred. Please try again."
+        )
+    )
     _finalize_run(
         db,
-        run_id=run.id,
-        assistant_content=ERROR_CODE_TO_MESSAGE["E_LLM_INTERRUPTED"],
+        run_id=run_id,
+        assistant_content=content,
         assistant_status="error",
         run_status="error",
         done_status="error",
+        error_code=error_code,
+        model=model,
+        resolved_key=resolved_key,
+        key_mode=key_mode,
+        latency_ms=latency_ms,
+        usage=usage,
+        provider_request_id=provider_request_id,
+        viewer_id=viewer_id,
+    )
+
+
+def _finalize_interrupted(db: Session, run: ChatRun) -> None:
+    model = db.get(Model, run.model_id)
+    _finalize_error(
+        db,
+        run_id=run.id,
         error_code=ApiErrorCode.E_LLM_INTERRUPTED.value,
+        viewer_id=run.owner_user_id,
         model=model,
         resolved_key=_dummy_resolved_key(model) if model is not None else None,
         key_mode=run.key_mode,
-        latency_ms=0,
-        usage=None,
-        provider_request_id=None,
-        viewer_id=run.owner_user_id,
     )
 
 
