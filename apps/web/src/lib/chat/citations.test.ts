@@ -1,16 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { isSearchCitation, isWebCitation } from "./citations";
-import type { SearchCitationEventData } from "@/lib/api/sse/citations";
+import {
+  isSearchCitationEventData,
+  isWebCitationEventData,
+  type SearchCitationEventData,
+} from "@/lib/api/sse/citations";
 import type { MessageRetrievalResultRef } from "@/lib/conversations/types";
 
 describe("citation guards", () => {
   it("rejects partial web citations", () => {
-    expect(isWebCitation({ url: "https://bad.example" })).toBe(false);
+    expect(isWebCitationEventData({ url: "https://bad.example" })).toBe(false);
   });
 
   it("rejects unknown web citation variants", () => {
     expect(
-      isWebCitation({
+      isWebCitationEventData({
         result_type: "social",
         title: "Result",
         url: "https://example.com",
@@ -20,7 +23,7 @@ describe("citation guards", () => {
 
   it("accepts valid web citations", () => {
     expect(
-      isWebCitation({
+      isWebCitationEventData({
         type: "web_result",
         id: "web-1",
         result_type: "web_result",
@@ -43,7 +46,7 @@ describe("citation guards", () => {
 
   it("rejects web citations without backend locators", () => {
     expect(
-      isWebCitation({
+      isWebCitationEventData({
         title: "Result",
         url: "https://example.com",
       }),
@@ -52,7 +55,7 @@ describe("citation guards", () => {
 
   it("rejects web citations whose locator points somewhere else", () => {
     expect(
-      isWebCitation({
+      isWebCitationEventData({
         title: "Result",
         url: "https://example.com",
         locator: { type: "external_url", url: "https://other.example" },
@@ -62,7 +65,7 @@ describe("citation guards", () => {
 
   it("rejects partial search citations", () => {
     expect(
-      isSearchCitation({
+      isSearchCitationEventData({
         source_id: "bad-source",
         deep_link: "/bad",
       }),
@@ -71,7 +74,7 @@ describe("citation guards", () => {
 
   it("rejects unknown search citation variants", () => {
     expect(
-      isSearchCitation({
+      isSearchCitationEventData({
         result_type: "unknown",
         source_id: "fragment-1",
         title: "Source",
@@ -96,7 +99,7 @@ describe("citation guards", () => {
 
   it("rejects status refs as search citations", () => {
     expect(
-      isSearchCitation({
+      isSearchCitationEventData({
         result_type: "status",
         source_id: "no_results",
         title: "No results",
@@ -121,7 +124,7 @@ describe("citation guards", () => {
 
   it("rejects mismatched search citation context variants", () => {
     expect(
-      isSearchCitation({
+      isSearchCitationEventData({
         type: "fragment",
         id: "fragment-1",
         result_type: "fragment",
@@ -148,7 +151,7 @@ describe("citation guards", () => {
 
   it("accepts valid search citations", () => {
     expect(
-      isSearchCitation({
+      isSearchCitationEventData({
         type: "fragment",
         id: "fragment-1",
         result_type: "fragment",
@@ -176,7 +179,7 @@ describe("citation guards", () => {
 
   it("rejects search citations without valid locators", () => {
     expect(
-      isSearchCitation({
+      isSearchCitationEventData({
         result_type: "fragment",
         source_id: "fragment-1",
         title: "Source",
@@ -191,7 +194,7 @@ describe("citation guards", () => {
       }),
     ).toBe(false);
     expect(
-      isSearchCitation({
+      isSearchCitationEventData({
         result_type: "fragment",
         source_id: "fragment-1",
         title: "Source",

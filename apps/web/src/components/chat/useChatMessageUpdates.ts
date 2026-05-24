@@ -8,9 +8,11 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
-import type {
-  SearchCitationEventData,
-  WebCitationEventData,
+import {
+  isSearchCitationEventData,
+  isWebCitationEventData,
+  type SearchCitationEventData,
+  type WebCitationEventData,
 } from "@/lib/api/sse/citations";
 import type {
   SSEArtifactDeltaEvent,
@@ -21,10 +23,6 @@ import type {
   SSEToolCallEvent,
 } from "@/lib/api/sse/events";
 import { isRetrievalLocator } from "@/lib/api/sse/locators";
-import {
-  isSearchCitation,
-  isWebCitation,
-} from "@/lib/chat/citations";
 import { conversationMessageText } from "@/lib/conversations/types";
 import type {
   ConversationMessage,
@@ -333,10 +331,10 @@ export function useChatMessageUpdates({
       const results = Array.isArray(data.results) ? data.results : [];
       const retrievals: MessageRetrieval[] = results.flatMap(
         (citation, index) => {
-          if (isWebCitation(citation)) {
+          if (isWebCitationEventData(citation)) {
             return [retrievalFromWebCitation(citation, data, index)];
           }
-          if (!isSearchCitation(citation)) return [];
+          if (!isSearchCitationEventData(citation)) return [];
           return [retrievalFromSearchCitation(citation, data, index)];
         },
       );
