@@ -163,10 +163,7 @@ export default function ReaderAssistantPane({
     [conversationScope.type, pendingContexts],
   );
   const telemetryBaseRef = useRef(telemetryBase());
-
-  useEffect(() => {
-    telemetryBaseRef.current = telemetryBase();
-  }, [telemetryBase]);
+  telemetryBaseRef.current = telemetryBase();
 
   useEffect(() => {
     const startedAtMs = openedAtMsRef.current;
@@ -225,9 +222,7 @@ export default function ReaderAssistantPane({
     },
   });
 
-  useEffect(() => {
-    activeConversationIdRef.current = activeConversationId;
-  }, [activeConversationId]);
+  activeConversationIdRef.current = activeConversationId;
 
   useEffect(() => {
     setPendingContexts((prev) => mergeContextItems(prev, contexts));

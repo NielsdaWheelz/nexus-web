@@ -81,23 +81,14 @@ export default function ProseMirrorOutlineEditor({
     initialDocRef.current = initialDoc;
   }
 
-  useEffect(() => {
-    onDocChangeRef.current = onDocChange;
-  }, [onDocChange]);
-
-  useEffect(() => {
-    onFocusChangeRef.current = onFocusChange;
-    onBlurFlushRef.current = onBlurFlush;
-  }, [onBlurFlush, onFocusChange]);
-
-  useEffect(() => {
-    onOpenBlockRef.current = onOpenBlock;
-    onOpenObjectRef.current = onOpenObject;
-  }, [onOpenBlock, onOpenObject]);
-
-  useEffect(() => {
-    searchObjectsRef.current = searchObjects;
-  }, [searchObjects]);
+  // Latest-value refs read by ProseMirror plugins / view callbacks.
+  onDocChangeRef.current = onDocChange;
+  onFocusChangeRef.current = onFocusChange;
+  onBlurFlushRef.current = onBlurFlush;
+  onOpenBlockRef.current = onOpenBlock;
+  onOpenObjectRef.current = onOpenObject;
+  searchObjectsRef.current = searchObjects;
+  objectRefMenuRef.current = objectRefMenu;
 
   useEffect(() => {
     editableRef.current = editable;
@@ -107,10 +98,6 @@ export default function ProseMirrorOutlineEditor({
       setObjectRefMenu(null);
     }
   }, [editable]);
-
-  useEffect(() => {
-    objectRefMenuRef.current = objectRefMenu;
-  }, [objectRefMenu]);
 
   function insertObjectRef(object: HydratedObjectRef) {
     const view = viewRef.current;
