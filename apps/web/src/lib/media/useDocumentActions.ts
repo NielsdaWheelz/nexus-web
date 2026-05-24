@@ -15,7 +15,7 @@ interface DocumentDeleteResponse {
   };
 }
 
-export interface DocumentActionTarget {
+interface DocumentActionTarget {
   id: string;
   title: string;
   capabilities?: {
@@ -24,7 +24,7 @@ export interface DocumentActionTarget {
   };
 }
 
-export interface DocumentActions {
+interface DocumentActions {
   deleteBusy: boolean;
   retryBusy: boolean;
   refreshBusy: boolean;
@@ -33,7 +33,7 @@ export interface DocumentActions {
   handleRefresh: () => Promise<void>;
 }
 
-export interface UseDocumentActionsOptions {
+interface UseDocumentActionsOptions {
   media: DocumentActionTarget | null;
   /** Called after a retry/refresh API call succeeds; component resets its local content state. */
   onProcessingRestarted: (options: { resetRefreshSource: boolean }) => void;

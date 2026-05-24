@@ -8,7 +8,7 @@ import {
 } from "@/components/feedback/Feedback";
 import { fetchNonDefaultLibraries } from "@/lib/media/mediaLibraries";
 
-export interface NonDefaultLibraries {
+interface NonDefaultLibraries {
   libraries: LibraryTargetPickerItem[];
   loading: boolean;
   loaded: boolean;

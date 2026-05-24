@@ -15,7 +15,7 @@ export interface OpenInAppPaneDetail {
   titleHint?: string;
 }
 
-export interface OpenInAppPaneMessage extends OpenInAppPaneDetail {
+interface OpenInAppPaneMessage extends OpenInAppPaneDetail {
   type: typeof NEXUS_OPEN_PANE_MESSAGE_TYPE;
 }
 

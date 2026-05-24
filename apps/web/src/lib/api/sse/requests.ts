@@ -71,11 +71,11 @@ export type ArtifactIntentKind =
   | "bibliography"
   | "citation_audit";
 
-export interface ArtifactIntentOptions {
+interface ArtifactIntentOptions {
   kind: ArtifactIntentKind;
 }
 
-export type ChatRunContext =
+type ChatRunContext =
   | {
       kind: "object_ref";
       type: ContextItemType;
