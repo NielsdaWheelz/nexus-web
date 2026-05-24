@@ -18,7 +18,7 @@ from urllib.parse import quote
 from uuid import UUID
 
 import httpx
-from llm_calling.errors import LLMError, LLMErrorCode
+from llm_calling.errors import LLMError
 from llm_calling.router import LLMRouter
 from llm_calling.types import LLMRequest, Turn
 from sqlalchemy import desc, func, select, text
@@ -36,7 +36,7 @@ from nexus.db.models import (
     OracleReadingEvent,
     OracleReadingPassage,
 )
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas.oracle import (
@@ -139,24 +139,6 @@ ORACLE_CITATION_MARKER_RE = re.compile(
     r"|\b\d+:\d+(?:[-–]\d+)?\b)",
     re.IGNORECASE,
 )
-
-
-def _api_error_code_for_llm_error(error_code: LLMErrorCode) -> ApiErrorCode:
-    if error_code == LLMErrorCode.INVALID_KEY:
-        return ApiErrorCode.E_LLM_INVALID_KEY
-    if error_code == LLMErrorCode.RATE_LIMIT:
-        return ApiErrorCode.E_LLM_RATE_LIMIT
-    if error_code == LLMErrorCode.CONTEXT_TOO_LARGE:
-        return ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE
-    if error_code == LLMErrorCode.TIMEOUT:
-        return ApiErrorCode.E_LLM_TIMEOUT
-    if error_code == LLMErrorCode.PROVIDER_DOWN:
-        return ApiErrorCode.E_LLM_PROVIDER_DOWN
-    if error_code == LLMErrorCode.BAD_REQUEST:
-        return ApiErrorCode.E_LLM_BAD_REQUEST
-    if error_code == LLMErrorCode.MODEL_NOT_AVAILABLE:
-        return ApiErrorCode.E_MODEL_NOT_AVAILABLE
-    raise AssertionError(f"Unhandled LLM error code: {error_code!r}")
 
 
 # ---------- create / fetch / list -------------------------------------------
@@ -770,7 +752,7 @@ async def execute_reading(
                 timeout_s=ORACLE_LLM_TIMEOUT_SECONDS,
             )
         except LLMError as exc:
-            error_code = _api_error_code_for_llm_error(exc.error_code).value
+            error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
             logger.warning(
                 "oracle.llm_error",
                 reading_id=str(reading_id),

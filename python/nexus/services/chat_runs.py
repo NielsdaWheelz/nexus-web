@@ -46,6 +46,7 @@ from nexus.db.models import (
 )
 from nexus.errors import (
     CHAT_RESPONSE_RETRYABLE_ERROR_CODES,
+    LLM_ERROR_CODE_TO_API_ERROR_CODE,
     ApiError,
     ApiErrorCode,
     NotFoundError,
@@ -203,16 +204,6 @@ LLM_INCOMPLETE_ERROR_CODE = ApiErrorCode.E_LLM_INCOMPLETE.value
 REASONING_OUTPUT_TOKENS = 25000
 DEFAULT_OUTPUT_TOKENS = 4096
 
-LLM_ERROR_CODE_TO_API_ERROR_CODE = {
-    LLMErrorCode.INVALID_KEY: ApiErrorCode.E_LLM_INVALID_KEY,
-    LLMErrorCode.RATE_LIMIT: ApiErrorCode.E_LLM_RATE_LIMIT,
-    LLMErrorCode.CONTEXT_TOO_LARGE: ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE,
-    LLMErrorCode.TIMEOUT: ApiErrorCode.E_LLM_TIMEOUT,
-    LLMErrorCode.PROVIDER_DOWN: ApiErrorCode.E_LLM_PROVIDER_DOWN,
-    LLMErrorCode.BAD_REQUEST: ApiErrorCode.E_LLM_BAD_REQUEST,
-    LLMErrorCode.MODEL_NOT_AVAILABLE: ApiErrorCode.E_MODEL_NOT_AVAILABLE,
-}
-
 VERIFICATION_FAILURE_CONTENT = (
     "I could not verify enough of the drafted answer against the available evidence."
 )
@@ -272,14 +263,6 @@ class ChatRunLLMRouter(Protocol):
         *,
         timeout_s: int,
     ) -> AsyncIterator[LLMChunk]: ...
-
-
-def _api_error_code_for_llm_error(error_code: LLMErrorCode) -> ApiErrorCode:
-    return LLM_ERROR_CODE_TO_API_ERROR_CODE[error_code]
-
-
-def _llm_error_code_value(exc: LLMError) -> str:
-    return _api_error_code_for_llm_error(exc.error_code).value
 
 
 def _llm_error_from_unread_stream_response(
@@ -865,7 +848,7 @@ async def _execute_chat_run(
     try:
         resolved_key = resolve_api_key(db, run.owner_user_id, model.provider, run.key_mode)
     except LLMError as exc:
-        error_code = _llm_error_code_value(exc)
+        error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
         _finalize_run(
             db,
             run_id=run.id,
@@ -1327,7 +1310,7 @@ async def _execute_chat_run(
                 else exc
             )
             latency_ms = int((time.monotonic() - start_time) * 1000)
-            error_code = _llm_error_code_value(llm_error)
+            error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[llm_error.error_code].value
             logger.error(
                 "llm.request.failed",
                 **safe_kv(

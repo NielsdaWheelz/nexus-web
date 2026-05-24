@@ -5,6 +5,8 @@ All API errors are defined here with their corresponding HTTP status codes.
 
 from enum import Enum
 
+from llm_calling.errors import LLMErrorCode
+
 
 class ApiErrorCode(str, Enum):
     """Standardized error codes for the API.
@@ -269,6 +271,17 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_STORAGE_ERROR: 500,
     ApiErrorCode.E_SANITIZATION_FAILED: 500,
     ApiErrorCode.E_BILLING_NOT_CONFIGURED: 500,
+}
+
+
+LLM_ERROR_CODE_TO_API_ERROR_CODE: dict[LLMErrorCode, ApiErrorCode] = {
+    LLMErrorCode.INVALID_KEY: ApiErrorCode.E_LLM_INVALID_KEY,
+    LLMErrorCode.RATE_LIMIT: ApiErrorCode.E_LLM_RATE_LIMIT,
+    LLMErrorCode.CONTEXT_TOO_LARGE: ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE,
+    LLMErrorCode.TIMEOUT: ApiErrorCode.E_LLM_TIMEOUT,
+    LLMErrorCode.PROVIDER_DOWN: ApiErrorCode.E_LLM_PROVIDER_DOWN,
+    LLMErrorCode.BAD_REQUEST: ApiErrorCode.E_LLM_BAD_REQUEST,
+    LLMErrorCode.MODEL_NOT_AVAILABLE: ApiErrorCode.E_MODEL_NOT_AVAILABLE,
 }
 
 

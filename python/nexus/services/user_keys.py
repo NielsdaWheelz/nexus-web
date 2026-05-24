@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.models import UserApiKey
-from nexus.errors import ApiError, ApiErrorCode
+from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.schemas.keys import KeyProviderStateStatus, UserApiKeyOut
 from nexus.services.crypto import decrypt_api_key, encrypt_api_key
@@ -55,17 +55,6 @@ KEY_TEST_MODELS = {
     "gemini": "gemini-3-flash-preview",
     "deepseek": "deepseek-v4-flash",
 }
-
-LLM_ERROR_CODE_TO_API_ERROR_CODE = {
-    LLMErrorCode.INVALID_KEY: ApiErrorCode.E_LLM_INVALID_KEY,
-    LLMErrorCode.RATE_LIMIT: ApiErrorCode.E_LLM_RATE_LIMIT,
-    LLMErrorCode.CONTEXT_TOO_LARGE: ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE,
-    LLMErrorCode.TIMEOUT: ApiErrorCode.E_LLM_TIMEOUT,
-    LLMErrorCode.PROVIDER_DOWN: ApiErrorCode.E_LLM_PROVIDER_DOWN,
-    LLMErrorCode.BAD_REQUEST: ApiErrorCode.E_LLM_BAD_REQUEST,
-    LLMErrorCode.MODEL_NOT_AVAILABLE: ApiErrorCode.E_MODEL_NOT_AVAILABLE,
-}
-
 
 def _enabled_providers() -> tuple[str, ...]:
     settings = get_settings()
