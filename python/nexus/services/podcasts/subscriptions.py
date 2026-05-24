@@ -124,7 +124,7 @@ def import_subscriptions_from_opml(
                             feed_url=normalized_feed_url,
                             error=provider_exc.message,
                         )
-                    except Exception as provider_exc:  # pragma: no cover - defensive
+                    except Exception as provider_exc:  # justify-ignore-error: provider enrichment is best-effort; OPML import proceeds without it
                         logger.warning(
                             "podcast_opml_provider_lookup_unexpected_error",
                             feed_url=normalized_feed_url,
@@ -171,7 +171,7 @@ def import_subscriptions_from_opml(
                     error=_truncate_opml_error(exc.message),
                 )
             )
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # justify-ignore-error: per-row OPML import boundary; one bad row must not fail the whole import
             logger.exception(
                 "podcast_opml_import_unexpected_error",
                 feed_url=normalized_feed_url,
@@ -545,7 +545,7 @@ def _parse_opml_rss_outlines(payload: bytes) -> list[dict[str, str]]:
     try:
         parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=False)
         root = etree.fromstring(payload, parser=parser)
-    except Exception as exc:
+    except etree.XMLSyntaxError as exc:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "Invalid XML file. Please upload a valid OPML document.",
