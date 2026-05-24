@@ -363,7 +363,6 @@ def reconcile_stale_ingest_media_job(
                     db,
                     media_id=media_id,
                     request_reason="operator_requeue",
-                    request_id=request_id,
                 )
                 status = str(result.get("status") or "")
                 if status == "completed":

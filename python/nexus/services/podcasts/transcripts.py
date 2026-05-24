@@ -632,7 +632,6 @@ def request_podcast_transcripts_batch_for_viewer(
                 )
                 continue
             raise
-            continue
 
         status = _batch_transcript_status_from_admission(admission)
         required_minutes = coerce_non_negative_int(admission.get("required_minutes"))
@@ -1166,7 +1165,6 @@ def run_podcast_transcription_now(
     requested_by_user_id: UUID | None,
     request_id: str | None = None,
 ) -> dict[str, Any]:
-    _ = request_id
     claim_now = datetime.now(UTC)
     stale_extracting_seconds = get_settings().ingest_stale_extracting_seconds
     # Allow recovery workers to reclaim stale running jobs. We intentionally
@@ -1495,9 +1493,7 @@ def repair_podcast_transcript_semantic_index_now(
     *,
     media_id: UUID,
     request_reason: str = "operator_requeue",
-    request_id: str | None = None,
 ) -> dict[str, Any]:
-    _ = request_id
     now = datetime.now(UTC)
     normalized_reason = (
         request_reason
