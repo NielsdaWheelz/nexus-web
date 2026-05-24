@@ -6,6 +6,7 @@ import ConversationContextPane from "@/components/ConversationContextPane";
 import Button from "@/components/ui/Button";
 import type { ContextItem } from "@/lib/api/sse/requests";
 import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
+import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import type {
   ConversationMemoryInspection,
   ConversationScope,
@@ -57,35 +58,15 @@ export default function ChatContextDrawer({
   const drawerRef = useRef<HTMLElement>(null);
 
   useBodyOverflowLock(open);
+  useFocusTrap(drawerRef, open);
 
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const focusable = Array.from(
-        drawerRef.current?.querySelectorAll<HTMLElement>(
-          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ) ?? [],
-      );
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
+      if (event.key === "Escape") setOpen(false);
     };
     document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-    };
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [open]);
 
   return (
