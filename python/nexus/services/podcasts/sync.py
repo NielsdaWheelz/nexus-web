@@ -1827,7 +1827,7 @@ def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str |
         else:
             logger.warning("podcast_feed_page_too_many_redirects", page_url=page_url)
             return [], None
-    except Exception as exc:
+    except httpx.HTTPError as exc:
         logger.warning("podcast_feed_page_fetch_failed", page_url=page_url, error=str(exc))
         return [], None
 
@@ -1843,7 +1843,7 @@ def _parse_feed_episode_page(
     try:
         parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=True)
         root = etree.fromstring(content, parser=parser)
-    except Exception as exc:
+    except etree.XMLSyntaxError as exc:
         logger.warning("podcast_feed_page_parse_failed", page_url=page_url, error=str(exc))
         return [], None
 
@@ -2000,7 +2000,7 @@ def _extract_plain_text_from_html_fragment(raw_value: str) -> str:
             return ""
         text_tokens = [str(token).strip() for token in root.xpath("//text()")]
         return re.sub(r"\s+", " ", " ".join(token for token in text_tokens if token)).strip()
-    except Exception:
+    except etree.XMLSyntaxError:
         stripped = re.sub(r"<[^>]+>", " ", raw_value)
         return re.sub(r"\s+", " ", stripped).strip()
 
@@ -2088,7 +2088,7 @@ def _fetch_podcasting20_chapters(chapters_url: str) -> list[dict[str, Any]] | No
             timeout=15.0,
         )
         response.raise_for_status()
-    except Exception as exc:
+    except httpx.HTTPError as exc:
         logger.warning(
             "podcast_chapters_json_fetch_failed",
             chapters_url=chapters_url,

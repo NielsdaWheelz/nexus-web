@@ -129,7 +129,7 @@ class PodcastIndexClient:
                     time.sleep(delay_seconds)
                     continue
                 break
-            except Exception as exc:
+            except Exception as exc:  # justify-ignore-error: HTTP-client boundary; non-retryable provider errors all surface as E_PODCAST_PROVIDER_UNAVAILABLE
                 last_exc = exc
                 break
 
