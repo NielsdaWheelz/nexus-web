@@ -217,25 +217,15 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const silenceBelowThresholdMsRef = useRef(0);
   const silenceAnalyserBufferRef = useRef<Float32Array | null>(null);
 
-  useEffect(() => {
-    userPlaybackRateRef.current = playbackRate;
-  }, [playbackRate]);
-
-  useEffect(() => {
-    audioEffectsRef.current = audioEffects;
-  }, [audioEffects]);
-
-  useEffect(() => {
-    isPlayingRef.current = isPlaying;
-  }, [isPlaying]);
-
-  useEffect(() => {
-    isSilenceTrimmingRef.current = isSilenceTrimming;
-  }, [isSilenceTrimming]);
-
-  useEffect(() => {
-    audioEffectsAvailableRef.current = audioEffectsAvailable;
-  }, [audioEffectsAvailable]);
+  // Mirror state into refs so async callbacks (audio events, RAF loops) read
+  // the latest values without re-binding listeners on every render. Direct
+  // render-phase assignment matches the codebase's other latest-ref sites
+  // (e.g. useDismissOnOutsideOrEscape).
+  userPlaybackRateRef.current = playbackRate;
+  audioEffectsRef.current = audioEffects;
+  isPlayingRef.current = isPlaying;
+  isSilenceTrimmingRef.current = isSilenceTrimming;
+  audioEffectsAvailableRef.current = audioEffectsAvailable;
 
   const resetAudioGraphNodes = useCallback(() => {
     sourceNodeRef.current = null;
