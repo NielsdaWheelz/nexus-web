@@ -416,6 +416,8 @@ def create_chat_run(
             raise
         use_platform_key = False
     except LLMError:
+        # justify-ignore-error: BYOK probe may fail when the user has no key
+        # yet; treat as "no platform key in use" and continue pre-validation.
         use_platform_key = False
 
     validate_pre_phase(
@@ -2930,6 +2932,8 @@ def _payload_uuid(value: object) -> UUID | None:
     try:
         return UUID(value)
     except ValueError:
+        # justify-ignore-error: non-UUID payload string is malformed input; the
+        # caller treats None as "no parseable id".
         return None
 
 
@@ -4531,6 +4535,9 @@ def _message_prompt_evidence_rows(
             result_ref = retrieval_result_ref_json(row[5])
             locator = retrieval_locator_json(row[13]) if isinstance(row[13], dict) else None
         except ValidationError:
+            # justify-ignore-error: persisted retrieval row failed schema
+            # validation (stale/legacy shape); skip it rather than fail the
+            # whole document rebuild.
             continue
         if result_ref.get("type") != row[1]:
             continue
@@ -4627,6 +4634,8 @@ def _message_prompt_evidence_rows(
         try:
             snapshot = trusted_context_snapshot(row[6])
         except ValueError:
+            # justify-ignore-error: persisted snapshot column has an invalid
+            # shape (legacy/corrupted); skip the row rather than fail.
             continue
         locator = row[5] if isinstance(row[5], dict) else snapshot.get("locator")
         if not isinstance(locator, dict):
@@ -4634,6 +4643,8 @@ def _message_prompt_evidence_rows(
         try:
             locator = retrieval_locator_json(locator)
         except ValidationError:
+            # justify-ignore-error: persisted locator failed schema validation;
+            # skip this evidence row.
             continue
         if locator is None:
             continue
@@ -4673,6 +4684,8 @@ def _message_prompt_evidence_rows(
         try:
             context_ref = retrieval_context_ref_json(context_ref)
         except ValidationError:
+            # justify-ignore-error: reconstructed context_ref failed schema
+            # validation; skip this evidence row.
             continue
         evidence_span_id = evidence_span_ids[0] if evidence_span_ids else None
         if (
