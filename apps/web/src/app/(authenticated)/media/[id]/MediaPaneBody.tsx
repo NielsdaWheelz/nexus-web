@@ -75,7 +75,6 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Pill from "@/components/ui/Pill";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
-import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
 import {
   usePaneParam,
   usePaneRouter,
@@ -127,6 +126,7 @@ import {
   type NormalizedNavigationTocNode,
 } from "@/lib/media/epubReader";
 import { useDocumentActions } from "@/lib/media/useDocumentActions";
+import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
 import { useFocusModeTracking } from "@/lib/reader/useFocusModeTracking";
 import EpubContentPane from "./EpubContentPane";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
@@ -3351,67 +3351,20 @@ export default function MediaPaneBody() {
   const [libraryPanelOpen, setLibraryPanelOpen] = useState(false);
   const [libraryPanelAnchorEl, setLibraryPanelAnchorEl] =
     useState<HTMLElement | null>(null);
-  const [libraryPickerLibraries, setLibraryPickerLibraries] = useState<
-    LibraryTargetPickerItem[]
-  >([]);
-  const [libraryPickerLoading, setLibraryPickerLoading] = useState(false);
-  const [libraryPickerError, setLibraryPickerError] = useState<string | null>(
-    null,
-  );
-  const [libraryMembershipBusy, setLibraryMembershipBusy] = useState(false);
   const [videoSeekTargetMs, setVideoSeekTargetMs] = useState<number | null>(
     null,
   );
   usePodcastTrackSeeding(media);
 
-  useEffect(() => {
-    if (!media?.id) {
-      setLibraryPickerLibraries([]);
-      setLibraryPickerError(null);
-    }
-  }, [media?.id]);
-
-  const loadLibraryPickerLibraries = useCallback(async () => {
-    if (!media?.id) {
-      setLibraryPickerLibraries([]);
-      setLibraryPickerError(null);
-      return;
-    }
-    setLibraryPickerLoading(true);
-    setLibraryPickerError(null);
-    try {
-      const response = await apiFetch<{
-        data: Array<{
-          id: string;
-          name: string;
-          color: string | null;
-          is_default?: boolean;
-          is_in_library: boolean;
-          can_add: boolean;
-          can_remove: boolean;
-        }>;
-      }>(`/api/media/${media.id}/libraries`);
-      setLibraryPickerLibraries(
-        response.data
-          .filter((library) => !library.is_default)
-          .map((library) => ({
-            id: library.id,
-            name: library.name,
-            color: library.color,
-            isInLibrary: library.is_in_library,
-            canAdd: library.can_add,
-            canRemove: library.can_remove,
-          })),
-      );
-    } catch (err) {
-      setLibraryPickerLibraries([]);
-      setLibraryPickerError(
-        toFeedback(err, { fallback: "Failed to load libraries" }).title,
-      );
-    } finally {
-      setLibraryPickerLoading(false);
-    }
-  }, [media?.id]);
+  const {
+    libraries: libraryPickerLibraries,
+    loading: libraryPickerLoading,
+    error: libraryPickerError,
+    busy: libraryMembershipBusy,
+    loadLibraries: loadLibraryPickerLibraries,
+    addToLibrary: handleAddToLibrary,
+    removeFromLibrary: handleRemoveFromLibrary,
+  } = useLibraryMembership(media?.id);
 
   useEffect(() => {
     if (!readerAssistantState || !media?.id) {
@@ -3419,83 +3372,6 @@ export default function MediaPaneBody() {
     }
     void loadLibraryPickerLibraries();
   }, [loadLibraryPickerLibraries, media?.id, readerAssistantState]);
-
-  const handleAddToLibrary = useCallback(
-    async (libraryId: string) => {
-      if (!media?.id || libraryMembershipBusy) {
-        return;
-      }
-      setLibraryMembershipBusy(true);
-      setLibraryPickerError(null);
-      try {
-        await apiFetch(`/api/libraries/${libraryId}/media`, {
-          method: "POST",
-          body: JSON.stringify({ media_id: media.id }),
-        });
-        setLibraryPickerLibraries((current) =>
-          current.map((library) =>
-            library.id === libraryId
-              ? {
-                  ...library,
-                  isInLibrary: true,
-                  canAdd: false,
-                  canRemove: true,
-                }
-              : library,
-          ),
-        );
-      } catch (err) {
-        setLibraryPickerError(
-          toFeedback(err, { fallback: "Failed to add media to library" }).title,
-        );
-      } finally {
-        setLibraryMembershipBusy(false);
-      }
-    },
-    [libraryMembershipBusy, media?.id],
-  );
-
-  const handleRemoveFromLibrary = useCallback(
-    async (libraryId: string) => {
-      if (!media?.id || libraryMembershipBusy) {
-        return;
-      }
-      setLibraryMembershipBusy(true);
-      setLibraryPickerError(null);
-      try {
-        const response = await apiFetch<{ data: { hard_deleted: boolean } }>(
-          `/api/media/${media.id}?library_id=${encodeURIComponent(libraryId)}`,
-          {
-            method: "DELETE",
-          },
-        );
-        if (response.data.hard_deleted) {
-          router.push("/libraries");
-          return;
-        }
-        setLibraryPickerLibraries((current) =>
-          current.map((library) =>
-            library.id === libraryId
-              ? {
-                  ...library,
-                  isInLibrary: false,
-                  canAdd: true,
-                  canRemove: false,
-                }
-              : library,
-          ),
-        );
-      } catch (err) {
-        setLibraryPickerError(
-          toFeedback(err, { fallback: "Failed to remove media from library" })
-            .title,
-        );
-      } finally {
-        setLibraryMembershipBusy(false);
-      }
-    },
-    [libraryMembershipBusy, media?.id, router],
-  );
 
   const handleProcessingRestarted = useCallback(
     ({ resetRefreshSource }: { resetRefreshSource: boolean }) => {
