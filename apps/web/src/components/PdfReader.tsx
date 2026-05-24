@@ -35,10 +35,15 @@ import SelectionPopover from "./SelectionPopover";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 import {
-  normalizeQuarterTurnRotation,
+  PDF_QUAD_EPSILON,
   projectPdfQuadToViewportRect,
-  type PdfPageViewportTransform,
 } from "@/lib/highlights/coordinateTransforms";
+import {
+  computePageLayerAlignmentDelta,
+  deriveScaleFromPageView,
+  deriveViewportTransformFromPageView,
+} from "@/lib/highlights/pdfPageViewport";
+import { clamp } from "@/lib/clamp";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { isPositiveFinite } from "@/lib/validation";
 import styles from "./PdfReader.module.css";
@@ -246,7 +251,6 @@ const SIGNED_URL_REFRESH_SKEW_MS = 2_000;
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 2;
 const ZOOM_STEP = 0.25;
-const PDF_QUAD_EPSILON = 0.001;
 const PDF_VIEWER_TEXT_LAYER_MODE_ENABLE = 1;
 const PDF_LINK_TARGET_BLANK = 2;
 const PDF_GEOMETRY_ALIGNMENT_DELTA_THRESHOLD = 0.02;
@@ -377,20 +381,6 @@ function isSelectionRangeInTextLayer(
 
 function toCanonicalPoint(value: number): number {
   return Math.round(value * 1000) / 1000;
-}
-
-function clampZoom(value: number): number {
-  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value));
-}
-
-function projectQuadToRect(
-  quad: PdfHighlightQuad,
-  transform: PdfPageViewportTransform,
-): Omit<
-  ProjectedHighlightRect,
-  "highlightId" | "color" | "index" | "isTemporary"
-> {
-  return projectPdfQuadToViewportRect(quad, transform);
 }
 
 function readPageNumberFromTextLayer(
@@ -542,62 +532,6 @@ function destroyPdfLoadingTask(task: PdfDocumentLoadingTaskLike | null): void {
   }
 }
 
-function deriveScaleFromPageView(
-  pageView: PdfPageViewLike | undefined,
-): number | null {
-  if (!pageView?.viewport) {
-    return null;
-  }
-  const viewport = pageView.viewport;
-  if (typeof viewport.scale === "number" && viewport.scale > 0) {
-    return viewport.scale;
-  }
-  if (pageView.pdfPage?.getViewport) {
-    const baseViewport = pageView.pdfPage.getViewport({
-      scale: 1,
-      rotation: viewport.rotation,
-    });
-    if (baseViewport.width > 0) {
-      const scale = viewport.width / baseViewport.width;
-      if (isPositiveFinite(scale)) {
-        return scale;
-      }
-    }
-  }
-  return null;
-}
-
-function deriveViewportTransformFromPageView(
-  pageView: PdfPageViewLike | undefined,
-  fallbackScale: number,
-): PdfPageViewportTransform | null {
-  const viewport = pageView?.viewport;
-  if (!viewport || viewport.width <= 0 || viewport.height <= 0) {
-    return null;
-  }
-  const scale = deriveScaleFromPageView(pageView) ?? fallbackScale;
-  if (!Number.isFinite(scale) || scale <= 0) {
-    return null;
-  }
-  const rotation = normalizeQuarterTurnRotation(viewport.rotation ?? 0);
-  const pageWidthPoints =
-    rotation === 90 || rotation === 270
-      ? viewport.height / scale
-      : viewport.width / scale;
-  const pageHeightPoints =
-    rotation === 90 || rotation === 270
-      ? viewport.width / scale
-      : viewport.height / scale;
-
-  return {
-    scale,
-    rotation,
-    pageWidthPoints,
-    pageHeightPoints,
-    dpiScale: 1,
-  };
-}
-
 function toViewerLifecycleError(context: string, error: unknown): Error {
   const detail = error instanceof Error ? error.message : String(error);
   return new Error(`PDF viewer lifecycle failure (${context}): ${detail}`);
@@ -626,47 +560,6 @@ function applyViewerPageNumber(
   } catch (error) {
     throw toViewerLifecycleError(context, error);
   }
-}
-
-function computePageLayerAlignmentDelta(
-  pageElement: HTMLElement,
-): number | null {
-  const textLayer = pageElement.querySelector<HTMLElement>(".textLayer");
-  const canvasSurface =
-    pageElement.querySelector<HTMLElement>(".canvasWrapper") ??
-    pageElement.querySelector<HTMLElement>("canvas");
-  if (!textLayer || !canvasSurface) {
-    return null;
-  }
-  const textRect = textLayer.getBoundingClientRect();
-  const canvasRect = canvasSurface.getBoundingClientRect();
-  if (
-    textRect.width <= PDF_QUAD_EPSILON ||
-    textRect.height <= PDF_QUAD_EPSILON ||
-    canvasRect.width <= PDF_QUAD_EPSILON ||
-    canvasRect.height <= PDF_QUAD_EPSILON
-  ) {
-    return null;
-  }
-
-  const widthScaleDrift = Math.abs(textRect.width / canvasRect.width - 1);
-  const heightScaleDrift = Math.abs(textRect.height / canvasRect.height - 1);
-  const leftOffsetDrift =
-    Math.abs(textRect.left - canvasRect.left) / canvasRect.width;
-  const topOffsetDrift =
-    Math.abs(textRect.top - canvasRect.top) / canvasRect.height;
-  const rightOffsetDrift =
-    Math.abs(textRect.right - canvasRect.right) / canvasRect.width;
-  const bottomOffsetDrift =
-    Math.abs(textRect.bottom - canvasRect.bottom) / canvasRect.height;
-  return Math.max(
-    widthScaleDrift,
-    heightScaleDrift,
-    leftOffsetDrift,
-    topOffsetDrift,
-    rightOffsetDrift,
-    bottomOffsetDrift,
-  );
 }
 
 export default function PdfReader({
@@ -2096,7 +1989,10 @@ export default function PdfReader({
         pageHeightPoints: 0,
         dpiScale: 1,
       };
-      const projectedRect = projectQuadToRect(quads[0], viewportTransform);
+      const projectedRect = projectPdfQuadToViewportRect(
+        quads[0],
+        viewportTransform,
+      );
       const targetTop =
         pageElement.offsetTop +
         projectedRect.top +
@@ -2479,7 +2375,7 @@ export default function PdfReader({
           color: highlight.color,
           index,
           isTemporary: false,
-          ...projectQuadToRect(quad, viewportTransform),
+          ...projectPdfQuadToViewportRect(quad, viewportTransform),
         });
       });
     }
@@ -2490,7 +2386,7 @@ export default function PdfReader({
           color: temporaryHighlight.color,
           index,
           isTemporary: true,
-          ...projectQuadToRect(quad, viewportTransform),
+          ...projectPdfQuadToViewportRect(quad, viewportTransform),
         });
       });
     }
@@ -2598,10 +2494,10 @@ export default function PdfReader({
     void goToPage(pageNumberRef.current + 1);
   }, [goToPage]);
   const zoomOut = useCallback(() => {
-    setZoom((value) => clampZoom(value - ZOOM_STEP));
+    setZoom((value) => clamp(value - ZOOM_STEP, MIN_ZOOM, MAX_ZOOM));
   }, []);
   const zoomIn = useCallback(() => {
-    setZoom((value) => clampZoom(value + ZOOM_STEP));
+    setZoom((value) => clamp(value + ZOOM_STEP, MIN_ZOOM, MAX_ZOOM));
   }, []);
   const createHighlight = useCallback(
     (color: HighlightColor = "yellow") => {

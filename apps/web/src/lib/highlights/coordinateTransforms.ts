@@ -27,6 +27,9 @@ export interface PdfViewportRect {
 
 const MIN_RECT_SIZE = 1;
 
+/** Sub-point threshold below which PDF geometry dimensions are treated as zero. */
+export const PDF_QUAD_EPSILON = 0.001;
+
 function toPageSpaceX(value: number): PageSpaceX {
   return value as PageSpaceX;
 }
