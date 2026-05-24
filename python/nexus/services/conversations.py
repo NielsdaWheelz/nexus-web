@@ -1112,15 +1112,6 @@ def list_message_artifacts(
     return load_message_artifacts_for_message_ids(db, [message_id]).get(message_id, [])
 
 
-def list_artifacts(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    message_id: UUID,
-) -> list[MessageArtifactOut]:
-    return list_message_artifacts(db, viewer_id=viewer_id, message_id=message_id)
-
-
 def _assert_artifact_part_refs_readable(
     db: Session,
     *,

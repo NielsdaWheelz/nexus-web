@@ -400,7 +400,7 @@ def list_artifacts(
         Query(description="Message whose durable artifacts should be listed"),
     ],
 ) -> dict:
-    artifacts = conversations_service.list_artifacts(
+    artifacts = conversations_service.list_message_artifacts(
         db=db,
         viewer_id=viewer.user_id,
         message_id=message_id,
