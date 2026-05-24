@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import date, datetime
 from typing import Any, cast
@@ -261,17 +262,9 @@ def patch_page_document(
     page_id: UUID,
     request: PatchPageDocumentRequest,
 ) -> PatchPageDocumentResponse:
-    for attempt in range(3):
-        _use_serializable_if_available(db)
-        try:
-            return _patch_page_document_once(db, viewer_id, page_id, request)
-        except OperationalError as exc:
-            db.rollback()
-            if not _is_serialization_failure(exc):
-                raise
-            if attempt == 2:
-                raise AssertionError("Note document retry loop exhausted") from exc
-    raise AssertionError("Note document retry loop exhausted")
+    return _with_serialization_retry(
+        db, "Note document", lambda: _patch_page_document_once(db, viewer_id, page_id, request)
+    )
 
 
 def _patch_page_document_once(
@@ -750,17 +743,11 @@ def update_note_block(
     block_id: UUID,
     request: UpdateNoteBlockRequest,
 ) -> NoteBlockOut:
-    for attempt in range(3):
-        _use_serializable_if_available(db)
-        try:
-            return _update_note_block_once(db, viewer_id, block_id, request)
-        except OperationalError as exc:
-            db.rollback()
-            if not _is_serialization_failure(exc):
-                raise
-            if attempt == 2:
-                raise AssertionError("Note block update retry loop exhausted") from exc
-    raise AssertionError("Note block update retry loop exhausted")
+    return _with_serialization_retry(
+        db,
+        "Note block update",
+        lambda: _update_note_block_once(db, viewer_id, block_id, request),
+    )
 
 
 def _update_note_block_once(
@@ -926,7 +913,7 @@ def merge_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockO
     )
     _bump_block_revision(previous)
     previous.updated_at = func.now()
-    for child in _children(db, page_id, block.id):
+    for child in _siblings(db, page_id, block.id):
         child.parent_block_id = previous.id
     _transfer_note_block_relationships(
         db,
@@ -952,18 +939,11 @@ def merge_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockO
 
 
 def delete_note_block(db: Session, viewer_id: UUID, block_id: UUID, base_revision: int) -> None:
-    for attempt in range(3):
-        _use_serializable_if_available(db)
-        try:
-            _delete_note_block_once(db, viewer_id, block_id, base_revision)
-            return
-        except OperationalError as exc:
-            db.rollback()
-            if not _is_serialization_failure(exc):
-                raise
-            if attempt == 2:
-                raise AssertionError("Note block delete retry loop exhausted") from exc
-    raise AssertionError("Note block delete retry loop exhausted")
+    _with_serialization_retry(
+        db,
+        "Note block delete",
+        lambda: _delete_note_block_once(db, viewer_id, block_id, base_revision),
+    )
 
 
 def _delete_note_block_once(
@@ -1249,6 +1229,21 @@ def _resolve_daily_page_with_retry(
             if not _is_daily_unique_conflict(exc) or attempt == 2:
                 raise
     raise AssertionError("Daily note retry loop exhausted")
+
+
+def _with_serialization_retry[T](db: Session, label: str, op: Callable[[], T]) -> T:
+    """Run op() under SERIALIZABLE isolation, retrying up to 3 times on serialization failure."""
+    for attempt in range(3):
+        _use_serializable_if_available(db)
+        try:
+            return op()
+        except OperationalError as exc:
+            db.rollback()
+            if not _is_serialization_failure(exc):
+                raise
+            if attempt == 2:
+                raise AssertionError(f"{label} retry loop exhausted") from exc
+    raise AssertionError(f"{label} retry loop exhausted")
 
 
 def _use_serializable_if_available(db: Session) -> None:
@@ -1755,10 +1750,6 @@ def _child_tree(db: Session, page_id: UUID, parent_id: UUID | None) -> list[Note
         _block_out(block, _child_tree(db, page_id, block.id))
         for block in _siblings(db, page_id, parent_id)
     ]
-
-
-def _children(db: Session, page_id: UUID, parent_id: UUID | None) -> list[NoteBlock]:
-    return _siblings(db, page_id, parent_id)
 
 
 def _siblings(db: Session, page_id: UUID, parent_id: UUID | None) -> list[NoteBlock]:
