@@ -20,6 +20,8 @@ from nexus.errors import (
 )
 from nexus.logging import get_logger
 
+from ._normalize import normalize_provider_published_at
+
 logger = get_logger(__name__)
 
 PODCAST_PROVIDER = "podcast_index"
@@ -291,7 +293,7 @@ class PodcastIndexClient:
             guid_raw = item.get("guid")
             guid = str(guid_raw).strip() if guid_raw is not None and str(guid_raw).strip() else None
 
-            published_at = _normalize_provider_published_at(item.get("datePublished"))
+            published_at = normalize_provider_published_at(item.get("datePublished"))
             duration_seconds = coerce_positive_int(item.get("duration"))
             audio_url = str(item.get("enclosureUrl") or item.get("enclosure_url") or "").strip()
             if not audio_url:
@@ -373,34 +375,5 @@ def _read_real_media_json_fixture(
     return raw["payload"]
 
 
-def _normalize_provider_published_at(raw_value: Any) -> str | None:
-    if raw_value is None:
-        return None
-    if isinstance(raw_value, (int, float)):
-        if raw_value <= 0:
-            return None
-        return datetime.fromtimestamp(raw_value, UTC).isoformat().replace("+00:00", "Z")
-    raw_text = str(raw_value).strip()
-    if not raw_text:
-        return None
-    parsed = _parse_iso_datetime(raw_text)
-    if parsed is None:
-        return None
-    return parsed.isoformat().replace("+00:00", "Z")
-
-
-def _parse_iso_datetime(raw_value: Any) -> datetime | None:
-    if raw_value is None:
-        return None
-    value = str(raw_value).strip()
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
 
 

@@ -50,6 +50,7 @@ from nexus.services.transcript_segments import (
 from nexus.services.upload import _ensure_in_default_library
 from nexus.services.url_normalize import validate_requested_url
 
+from ._normalize import normalize_provider_published_at, parse_iso_datetime
 from .provider import (
     PODCAST_INDEX_EPISODE_PAGE_SIZE,
     PODCAST_PROVIDER,
@@ -672,7 +673,7 @@ def _sync_subscription_ingest(
         description_html = _normalize_optional_text(episode.get("description_html"))
         description_text = _normalize_optional_text(episode.get("description_text"))
         description = description_text[:2000] if description_text else None
-        published_at = _parse_iso_datetime(episode.get("published_at"))
+        published_at = parse_iso_datetime(episode.get("published_at"))
         published_date = str(episode.get("published_at") or "").strip()[:64] or None
         language = _normalize_language_tag(episode.get("language")) or _normalize_language_tag(
             episode.get("feed_language")
@@ -2257,7 +2258,7 @@ def _normalize_feed_published_at(raw_value: Any) -> str | None:
     try:
         parsed = parsedate_to_datetime(raw_text)
     except (TypeError, ValueError):
-        parsed = _parse_iso_datetime(raw_text)
+        parsed = parse_iso_datetime(raw_text)
 
     if parsed is None:
         return None
@@ -2319,7 +2320,7 @@ def _episode_match_keys(episode: dict[str, Any]) -> list[str]:
         keys.append(f"provider:{provider_episode_id}")
 
     title = str(episode.get("title") or "").strip().lower()
-    normalized_published_at = _normalize_provider_published_at(episode.get("published_at")) or ""
+    normalized_published_at = normalize_provider_published_at(episode.get("published_at")) or ""
     if title and normalized_published_at:
         keys.append(f"title_published:{title}|{normalized_published_at.lower()}")
 
@@ -2340,39 +2341,8 @@ def _normalize_language_tag(value: Any) -> str | None:
     return normalized.lower().replace("_", "-")
 
 
-def _normalize_provider_published_at(raw_value: Any) -> str | None:
-    if raw_value is None:
-        return None
-    if isinstance(raw_value, (int, float)):
-        if raw_value <= 0:
-            return None
-        return datetime.fromtimestamp(raw_value, UTC).isoformat().replace("+00:00", "Z")
-    raw_text = str(raw_value).strip()
-    if not raw_text:
-        return None
-    parsed = _parse_iso_datetime(raw_text)
-    if parsed is None:
-        return None
-    return parsed.isoformat().replace("+00:00", "Z")
-
-
-def _parse_iso_datetime(raw_value: Any) -> datetime | None:
-    if raw_value is None:
-        return None
-    value = str(raw_value).strip()
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
-
-
 def _published_sort_key(raw_value: Any) -> datetime:
-    parsed = _parse_iso_datetime(raw_value)
+    parsed = parse_iso_datetime(raw_value)
     if parsed is None:
         return datetime.min.replace(tzinfo=UTC)
     return parsed
