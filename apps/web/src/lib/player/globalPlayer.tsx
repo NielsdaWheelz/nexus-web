@@ -10,7 +10,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { apiFetch } from "@/lib/api/client";
 import { clamp } from "@/lib/clamp";
 import {
   PLAYBACK_QUEUE_UPDATED_EVENT,
@@ -48,10 +47,10 @@ import {
   normalizeTrackChapters,
   type GlobalPlayerChapter,
 } from "@/lib/player/chapters";
+import { useListeningStatePersistence } from "@/lib/player/listeningState";
 import { useMediaSessionAdapter } from "@/lib/player/mediaSession";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 
-const LISTENING_STATE_SYNC_INTERVAL_MS = 15_000;
 const PREVIOUS_RESTART_THRESHOLD_SECONDS = 3;
 export const PLAYER_SKIP_BACK_SECONDS = 15;
 export const PLAYER_SKIP_FORWARD_SECONDS = 30;
@@ -198,7 +197,6 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   const [queueItems, setQueueItems] = useState<PlaybackQueueItem[]>([]);
   const [requestVersion, setRequestVersion] = useState(0);
   const pendingTrackOptionsRef = useRef<SetTrackOptions>({});
-  const wasPlayingRef = useRef(false);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const userPlaybackRateRef = useRef(DEFAULT_PLAYBACK_RATE);
   const audioEffectsRef = useRef<AudioEffectsState>(AUDIO_EFFECTS_DEFAULTS);
@@ -478,40 +476,13 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     silenceTrimFrameIdRef.current = window.requestAnimationFrame(step);
   }, [applyUserPlaybackRateToAudio, stopSilenceTrimming]);
 
-  const persistListeningState = useCallback(
-    async (mediaId: string, keepalive = false) => {
-      const snapshotAudio = audioElementRef.current;
-      if (!snapshotAudio) {
-        return;
-      }
-      const durationValue = Number.isFinite(snapshotAudio.duration) ? snapshotAudio.duration : null;
-      const payload = {
-        position_ms: Math.max(0, Math.floor((snapshotAudio.currentTime || 0) * 1000)),
-        duration_ms:
-          durationValue !== null && durationValue >= 0 ? Math.floor(durationValue * 1000) : null,
-        playback_speed: userPlaybackRateRef.current,
-      };
-      const endpoint = `/api/media/${mediaId}/listening-state`;
-      try {
-        if (keepalive) {
-          await fetch(endpoint, {
-            method: "PUT",
-            keepalive: true,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-          return;
-        }
-        await apiFetch(endpoint, {
-          method: "PUT",
-          body: JSON.stringify(payload),
-        });
-      } catch {
-        // Non-fatal: persistence should not block playback.
-      }
-    },
-    []
-  );
+  const { persistForMediaId: persistListeningState } =
+    useListeningStatePersistence({
+      track,
+      isPlaying,
+      audioElementRef,
+      playbackRateRef: userPlaybackRateRef,
+    });
 
   const bindAudioElement = useCallback(
     (node: HTMLAudioElement | null) => {
@@ -1155,38 +1126,6 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     startSilenceTrimming,
     track,
   ]);
-
-  useEffect(() => {
-    if (!track || !isPlaying) {
-      return;
-    }
-    const intervalId = window.setInterval(() => {
-      void persistListeningState(track.media_id);
-    }, LISTENING_STATE_SYNC_INTERVAL_MS);
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [isPlaying, persistListeningState, track]);
-
-  useEffect(() => {
-    if (wasPlayingRef.current && !isPlaying && track) {
-      void persistListeningState(track.media_id);
-    }
-    wasPlayingRef.current = isPlaying;
-  }, [isPlaying, persistListeningState, track]);
-
-  useEffect(() => {
-    const onBeforeUnload = () => {
-      if (!track) {
-        return;
-      }
-      void persistListeningState(track.media_id, true);
-    };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => {
-      window.removeEventListener("beforeunload", onBeforeUnload);
-    };
-  }, [persistListeningState, track]);
 
   useEffect(() => {
     if (!track) {
