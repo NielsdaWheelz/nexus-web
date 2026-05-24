@@ -39,6 +39,7 @@ import type {
 import { apiFetch } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
+import { useLazyFetchOnOpen } from "@/lib/useLazyFetchOnOpen";
 import type {
   AssistantVerifierRun,
   ChatRunResponse,
@@ -367,13 +368,6 @@ function AssistantSourceManifest({
   manifestDeltas: MessageSourceManifestDelta[];
 }) {
   const [open, setOpen] = useState(false);
-  const [candidateLedgers, setCandidateLedgers] = useState<
-    MessageRetrievalCandidateLedger[]
-  >([]);
-  const [rerankLedgers, setRerankLedgers] = useState<MessageRerankLedger[]>([]);
-  const [ledgersLoaded, setLedgersLoaded] = useState(false);
-  const [ledgersLoading, setLedgersLoading] = useState(false);
-  const [ledgerError, setLedgerError] = useState<string | null>(null);
   const panelId = useId();
 
   const searchedTypes = [
@@ -400,42 +394,33 @@ function AssistantSourceManifest({
     )
     .join("|");
 
-  useEffect(() => {
-    setCandidateLedgers([]);
-    setRerankLedgers([]);
-    setLedgersLoaded(false);
-    setLedgerError(null);
-  }, [ledgerSignature]);
-
-  useEffect(() => {
-    if (!open || ledgersLoaded) return;
-    let cancelled = false;
-    setLedgersLoading(true);
-    setLedgerError(null);
-    Promise.all([
-      apiFetch<{ data: MessageRetrievalCandidateLedger[] }>(
-        `/api/messages/${messageId}/retrieval-candidate-ledgers`,
-      ),
-      apiFetch<{ data: MessageRerankLedger[] }>(
-        `/api/messages/${messageId}/rerank-ledgers`,
-      ),
-    ])
-      .then(([candidateResponse, rerankResponse]) => {
-        if (cancelled) return;
-        setCandidateLedgers(candidateResponse.data);
-        setRerankLedgers(rerankResponse.data);
-        setLedgersLoaded(true);
-      })
-      .catch(() => {
-        if (!cancelled) setLedgerError("Audit ledger is unavailable.");
-      })
-      .finally(() => {
-        if (!cancelled) setLedgersLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [ledgersLoaded, messageId, open]);
+  const ledgers = useLazyFetchOnOpen<{
+    candidate: MessageRetrievalCandidateLedger[];
+    rerank: MessageRerankLedger[];
+  }>({
+    open,
+    cacheKey: `${messageId}|${ledgerSignature}`,
+    load: async () => {
+      const [candidateResponse, rerankResponse] = await Promise.all([
+        apiFetch<{ data: MessageRetrievalCandidateLedger[] }>(
+          `/api/messages/${messageId}/retrieval-candidate-ledgers`,
+        ),
+        apiFetch<{ data: MessageRerankLedger[] }>(
+          `/api/messages/${messageId}/rerank-ledgers`,
+        ),
+      ]);
+      return {
+        candidate: candidateResponse.data,
+        rerank: rerankResponse.data,
+      };
+    },
+    errorMessage: "Audit ledger is unavailable.",
+  });
+  const candidateLedgers = ledgers.data?.candidate ?? [];
+  const rerankLedgers = ledgers.data?.rerank ?? [];
+  const ledgersLoaded = ledgers.loaded;
+  const ledgersLoading = ledgers.loading;
+  const ledgerError = ledgers.error;
 
   if (manifestRows.length === 0) {
     return null;
@@ -2191,35 +2176,24 @@ function EvidenceSummary({ summary }: { summary: MessageEvidenceSummary }) {
 
 function VerifierRunLedger({ messageId }: { messageId: string }) {
   const [open, setOpen] = useState(false);
-  const [runs, setRuns] = useState<AssistantVerifierRun[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const panelId = useId();
-
-  useEffect(() => {
-    if (!open || loaded) return;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    apiFetch<{ data: AssistantVerifierRun[] }>(
-      `/api/messages/${messageId}/verifier-runs`,
-    )
-      .then((response) => {
-        if (cancelled) return;
-        setRuns(response.data);
-        setLoaded(true);
-      })
-      .catch(() => {
-        if (!cancelled) setError("Verifier ledger is unavailable.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [loaded, messageId, open]);
+  const {
+    data: runs,
+    loaded,
+    loading,
+    error,
+  } = useLazyFetchOnOpen<AssistantVerifierRun[]>({
+    open,
+    cacheKey: messageId,
+    load: async () => {
+      const response = await apiFetch<{ data: AssistantVerifierRun[] }>(
+        `/api/messages/${messageId}/verifier-runs`,
+      );
+      return response.data;
+    },
+    errorMessage: "Verifier ledger is unavailable.",
+  });
+  const runList = runs ?? [];
 
   return (
     <div className={styles.evidenceSummary}>
@@ -2239,13 +2213,13 @@ function VerifierRunLedger({ messageId }: { messageId: string }) {
             {loading ? <span>loading</span> : null}
             {error ? <span>unavailable</span> : null}
             {loaded && !loading && !error ? (
-              <span>{runs.length} runs</span>
+              <span>{runList.length} runs</span>
             ) : null}
           </div>
           {error ? (
             <div className={styles.sourceManifestFilters}>{error}</div>
           ) : null}
-          {runs.map((run) => (
+          {runList.map((run) => (
             <DiagnosticsDisclosure
               key={run.id}
               label={`${run.verifier_name} ${run.verifier_status.replaceAll("_", " ")}`}
@@ -2266,7 +2240,7 @@ function VerifierRunLedger({ messageId }: { messageId: string }) {
               <span>Created: {new Date(run.created_at).toLocaleString()}</span>
             </DiagnosticsDisclosure>
           ))}
-          {loaded && !loading && !error && runs.length === 0 ? (
+          {loaded && !loading && !error && runList.length === 0 ? (
             <div className={styles.sourceManifestFilters}>
               No verifier runs.
             </div>
