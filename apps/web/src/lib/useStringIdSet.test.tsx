@@ -49,4 +49,15 @@ describe("useStringIdSet", () => {
     act(() => result.current.clear());
     expect(result.current.ids).toBe(initial);
   });
+
+  it("has() sees mutations synchronously inside the same tick", () => {
+    const { result } = renderHook(() => useStringIdSet());
+    let observedAfterAdd: boolean | null = null;
+    act(() => {
+      result.current.add("a");
+      observedAfterAdd = result.current.has("a");
+    });
+    expect(observedAfterAdd).toBe(true);
+    expect(result.current.has("a")).toBe(true);
+  });
 });

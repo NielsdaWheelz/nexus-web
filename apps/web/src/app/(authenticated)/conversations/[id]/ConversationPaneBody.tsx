@@ -53,6 +53,7 @@ import {
   selectedPathMessageIds,
 } from "@/lib/conversations/branching";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
   usePaneParam,
   usePaneRouter,
@@ -187,8 +188,7 @@ function ChatView({
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [retryingAssistantMessageIds, setRetryingAssistantMessageIds] =
-    useState<Set<string>>(new Set());
+  const retryingAssistantMessageIds = useStringIdSet();
   const [contextRailExpanded, setContextRailExpanded] = useState(true);
   const conversationScope = conversation?.scope ?? { type: "general" as const };
   useSetPaneTitle(
@@ -212,7 +212,6 @@ function ChatView({
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
-  const retryingAssistantMessageIdsRef = useRef<Set<string>>(new Set());
   const messageIdsForPath = useCallback(
     (path: ConversationMessage[], leafMessageId: string | null = null) => {
       const ids = selectedPathMessageIds(path);
@@ -523,14 +522,9 @@ function ChatView({
 
   const handleRetryAssistantResponse = useCallback(
     async (assistantMessageId: string) => {
-      if (retryingAssistantMessageIdsRef.current.has(assistantMessageId))
-        return;
+      if (retryingAssistantMessageIds.has(assistantMessageId)) return;
 
-      retryingAssistantMessageIdsRef.current = new Set([
-        ...retryingAssistantMessageIdsRef.current,
-        assistantMessageId,
-      ]);
-      setRetryingAssistantMessageIds(retryingAssistantMessageIdsRef.current);
+      retryingAssistantMessageIds.add(assistantMessageId);
       setError(null);
 
       try {
@@ -545,13 +539,10 @@ function ChatView({
       } catch (err) {
         setError(toFeedback(err, { fallback: "Failed to retry response" }));
       } finally {
-        const next = new Set(retryingAssistantMessageIdsRef.current);
-        next.delete(assistantMessageId);
-        retryingAssistantMessageIdsRef.current = next;
-        setRetryingAssistantMessageIds(next);
+        retryingAssistantMessageIds.remove(assistantMessageId);
       }
     },
-    [handleChatRunCreated],
+    [handleChatRunCreated, retryingAssistantMessageIds],
   );
 
   const jumpToMessage = useCallback((messageId: string) => {
@@ -843,7 +834,7 @@ function ChatView({
               }}
               onReplyToAssistant={handleReplyToAssistant}
               onRetryAssistantResponse={handleRetryAssistantResponse}
-              retryingAssistantMessageIds={retryingAssistantMessageIds}
+              retryingAssistantMessageIds={retryingAssistantMessageIds.ids}
               scrollportRef={scrollportRef}
               onScroll={handleChatScroll}
               olderCursor={olderCursor}
