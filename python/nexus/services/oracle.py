@@ -682,16 +682,23 @@ async def execute_reading(
                     question,
                     embedding_model=current_transcript_embedding_model(),
                 )
-            candidates = _retrieve_candidates(
+            candidates = _retrieve_corpus_passages(
                 db,
-                viewer_id=viewer_id,
                 corpus_set_version_id=corpus_set_version_id,
                 question=question,
-                corpus_query_embedding_model=corpus_query_embedding_model,
-                corpus_query_embedding=corpus_query_embedding,
-                user_query_embedding_model=user_query_embedding_model,
-                user_query_embedding=user_query_embedding,
+                query_embedding_model=corpus_query_embedding_model,
+                query_embedding=corpus_query_embedding,
             )
+            if user_query_embedding_model is not None and user_query_embedding is not None:
+                candidates = [
+                    *candidates,
+                    *_retrieve_user_library_passages(
+                        db,
+                        viewer_id=viewer_id,
+                        query_embedding_model=user_query_embedding_model,
+                        query_embedding=user_query_embedding,
+                    ),
+                ]
         except ApiError as exc:
             _fail(db, reading, code=exc.code.value)
             return {"status": "failed", "error_code": exc.code.value}
@@ -1122,35 +1129,6 @@ def _test_hash_embedding(text_value: str, dimensions: int) -> list[float]:
     if norm <= 0.0:
         return vector
     return [component / norm for component in vector]
-
-
-def _retrieve_candidates(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    corpus_set_version_id: UUID,
-    question: str,
-    corpus_query_embedding_model: str,
-    corpus_query_embedding: list[float],
-    user_query_embedding_model: str | None,
-    user_query_embedding: list[float] | None,
-) -> list[_Candidate]:
-    public_domain = _retrieve_corpus_passages(
-        db,
-        corpus_set_version_id=corpus_set_version_id,
-        question=question,
-        query_embedding_model=corpus_query_embedding_model,
-        query_embedding=corpus_query_embedding,
-    )
-    if user_query_embedding_model is None or user_query_embedding is None:
-        return public_domain
-    user_library = _retrieve_user_library_passages(
-        db,
-        viewer_id=viewer_id,
-        query_embedding_model=user_query_embedding_model,
-        query_embedding=user_query_embedding,
-    )
-    return [*public_domain, *user_library]
 
 
 def _retrieve_corpus_passages(
