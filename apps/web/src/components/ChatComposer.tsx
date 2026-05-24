@@ -246,6 +246,9 @@ export default function ChatComposer({
     useState<ArtifactIntentKind>("off");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const isMobile = useIsMobileViewport();
+  const closeSettingsOnDesktop = useCallback(() => {
+    if (!isMobile) setSettingsOpen(false);
+  }, [isMobile]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const settingsPanelRef = useRef<HTMLDivElement>(null);
@@ -666,7 +669,7 @@ export default function ChatComposer({
                   value={selectedProvider}
                   onChange={(e) => {
                     handleProviderChange(e.target.value);
-                    if (!isMobile) setSettingsOpen(false);
+                    closeSettingsOnDesktop();
                   }}
                   disabled={composerDisabled || providerOptions.length === 0}
                 >
@@ -690,7 +693,7 @@ export default function ChatComposer({
                   value={selectedModelId}
                   onChange={(e) => {
                     handleModelChange(e.target.value);
-                    if (!isMobile) setSettingsOpen(false);
+                    closeSettingsOnDesktop();
                   }}
                   disabled={composerDisabled || availableModels.length === 0}
                 >
@@ -712,7 +715,7 @@ export default function ChatComposer({
                   value={selectedReasoning}
                   onChange={(e) => {
                     setSelectedReasoning(e.target.value as ReasoningMode);
-                    if (!isMobile) setSettingsOpen(false);
+                    closeSettingsOnDesktop();
                   }}
                   disabled={composerDisabled || !selectedModel}
                 >
@@ -729,7 +732,7 @@ export default function ChatComposer({
                 checked={onlyUseMyKeys}
                 onCheckedChange={(next) => {
                   setOnlyUseMyKeys(next);
-                  if (!isMobile) setSettingsOpen(false);
+                  closeSettingsOnDesktop();
                 }}
                 disabled={composerDisabled}
                 label="Use my keys only"
