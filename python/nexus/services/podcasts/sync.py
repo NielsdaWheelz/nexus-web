@@ -666,7 +666,7 @@ def _sync_subscription_ingest(
     ]
 
     for episode in selected_episodes:
-        guid = _normalize_guid(episode.get("guid"))
+        guid = _normalize_optional_text(episode.get("guid"))
         fallback_identity = _compute_fallback_identity(podcast_id, episode)
         description_html = _normalize_optional_text(episode.get("description_html"))
         description_text = _normalize_optional_text(episode.get("description_text"))
@@ -1866,7 +1866,7 @@ def _episode_from_feed_item(
     feed_language: str | None = None,
 ) -> dict[str, Any] | None:
     title = str(item.xpath("string(./title)")).strip() or "Untitled Episode"
-    guid = _normalize_guid(item.xpath("string(./guid)") or item.xpath("string(./id)"))
+    guid = _normalize_optional_text(item.xpath("string(./guid)") or item.xpath("string(./id)"))
 
     audio_url = str(item.xpath("string(./enclosure/@url)")).strip()
     if not audio_url:
@@ -2296,7 +2296,7 @@ def _parse_feed_duration_seconds(raw_value: Any) -> int | None:
 
 
 def _episode_dedupe_key(episode: dict[str, Any]) -> tuple[str, str, str, str]:
-    guid = _normalize_guid(episode.get("guid")) or ""
+    guid = _normalize_optional_text(episode.get("guid")) or ""
     audio_url = str(episode.get("audio_url") or "").strip().lower()
     title = str(episode.get("title") or "").strip().lower()
     published_at = str(episode.get("published_at") or "").strip().lower()
@@ -2305,7 +2305,7 @@ def _episode_dedupe_key(episode: dict[str, Any]) -> tuple[str, str, str, str]:
 
 def _episode_match_keys(episode: dict[str, Any]) -> list[str]:
     keys: list[str] = []
-    guid = _normalize_guid(episode.get("guid"))
+    guid = _normalize_optional_text(episode.get("guid"))
     if guid:
         keys.append(f"guid:{guid.lower()}")
 
@@ -2323,13 +2323,6 @@ def _episode_match_keys(episode: dict[str, Any]) -> list[str]:
         keys.append(f"title_published:{title}|{normalized_published_at.lower()}")
 
     return keys
-
-
-def _normalize_guid(value: Any) -> str | None:
-    if value is None:
-        return None
-    normalized = str(value).strip()
-    return normalized or None
 
 
 def _normalize_optional_text(value: Any) -> str | None:
