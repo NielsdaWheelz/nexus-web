@@ -31,7 +31,7 @@ import {
 import { isRetrievalLocator } from "./locators";
 
 /** Meta event: initial IDs and model info. */
-export interface SSEMetaEvent {
+interface SSEMetaEvent {
   type: "meta";
   data: {
     conversation_id: string;
@@ -43,7 +43,7 @@ export interface SSEMetaEvent {
 }
 
 /** Delta event: incremental content chunk. */
-export interface SSEDeltaEvent {
+interface SSEDeltaEvent {
   type: "delta";
   data: {
     delta: string;
@@ -51,7 +51,7 @@ export interface SSEDeltaEvent {
 }
 
 /** Done event: stream completion. */
-export interface SSEDoneEvent {
+interface SSEDoneEvent {
   type: "done";
   data: {
     status: "complete" | "error" | "cancelled";
