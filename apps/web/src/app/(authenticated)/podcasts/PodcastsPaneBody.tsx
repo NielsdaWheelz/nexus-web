@@ -27,18 +27,16 @@ import {
   buildPodcastUnsubscribeConfirmation,
   fetchNonDefaultLibraries,
   fetchPodcastLibraries,
-  getPodcastSubscriptionSettingsDraft,
   getPodcastSubscriptionSettingsPatch,
   getPodcastSubscriptionSyncPatch,
-  parsePodcastSubscriptionDefaultPlaybackSpeed,
   type LibrarySummary,
   type PodcastLibraryMembership,
   type PodcastSubscriptionListItem,
   removePodcastFromLibrary,
   refreshPodcastSubscriptionSync,
-  savePodcastSubscriptionSettings,
   unsubscribeFromPodcast,
 } from "./podcastSubscriptions";
+import { usePodcastSubscriptionSettingsModal } from "./usePodcastSubscriptionSettingsModal";
 import { patchLibraryMembership } from "@/lib/media/mediaLibraries";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import styles from "./page.module.css";
@@ -94,11 +92,23 @@ export default function PodcastsPaneBody() {
   const [membershipPanelTriggerEl, setMembershipPanelTriggerEl] = useState<HTMLElement | null>(
     null
   );
-  const [settingsPodcastId, setSettingsPodcastId] = useState<string | null>(null);
-  const [settingsDefaultSpeed, setSettingsDefaultSpeed] = useState("default");
-  const [settingsAutoQueue, setSettingsAutoQueue] = useState(false);
-  const [settingsBusy, setSettingsBusy] = useState(false);
-  const [settingsError, setSettingsError] = useState<FeedbackContent | null>(null);
+  const settingsModal = usePodcastSubscriptionSettingsModal({
+    onSaved: (response) => {
+      setRows((prev) =>
+        prev.map((row) =>
+          row.podcast_id === response.podcast_id
+            ? {
+                ...row,
+                ...getPodcastSubscriptionSettingsPatch({
+                  response,
+                  updatedAt: row.updated_at,
+                }),
+              }
+            : row,
+        ),
+      );
+    },
+  });
 
   const loadLibraries = useCallback(async () => {
     if (librariesLoading) {
@@ -334,60 +344,11 @@ export default function PodcastsPaneBody() {
     }
   }, [refreshingPodcastIds]);
 
-  const openSettingsModal = useCallback((row: PodcastSubscriptionListItem) => {
-    const draft = getPodcastSubscriptionSettingsDraft(row);
-    setSettingsPodcastId(row.podcast_id);
-    setSettingsDefaultSpeed(draft.defaultSpeed);
-    setSettingsAutoQueue(draft.autoQueue);
-    setSettingsError(null);
-  }, []);
-
-  const closeSettingsModal = useCallback(() => {
-    setSettingsPodcastId(null);
-    setSettingsError(null);
-    setSettingsBusy(false);
-  }, []);
-
-  const handleSaveSettings = useCallback(async () => {
-    const settingsRow = rows.find((row) => row.podcast_id === settingsPodcastId) ?? null;
-    if (!settingsRow) {
-      return;
-    }
-    setSettingsBusy(true);
-    setSettingsError(null);
-    setError(null);
-    try {
-      const response = await savePodcastSubscriptionSettings(settingsRow.podcast_id, {
-        defaultPlaybackSpeed: parsePodcastSubscriptionDefaultPlaybackSpeed(
-          settingsDefaultSpeed
-        ),
-        autoQueue: settingsAutoQueue,
-      });
-      setRows((prev) =>
-        prev.map((row) =>
-          row.podcast_id === settingsRow.podcast_id
-            ? {
-                ...row,
-                ...getPodcastSubscriptionSettingsPatch({
-                  response,
-                  updatedAt: row.updated_at,
-                }),
-              }
-            : row
-        )
-      );
-      setSettingsPodcastId(null);
-    } catch (settingsUpdateError) {
-      setSettingsError(
-        toFeedback(settingsUpdateError, { fallback: "Failed to save subscription settings" })
-      );
-    } finally {
-      setSettingsBusy(false);
-    }
-  }, [rows, settingsAutoQueue, settingsDefaultSpeed, settingsPodcastId]);
-
   const activeCount = rows.length;
-  const settingsRow = rows.find((row) => row.podcast_id === settingsPodcastId) ?? null;
+  const settingsRow =
+    settingsModal.podcastId !== null
+      ? (rows.find((row) => row.podcast_id === settingsModal.podcastId) ?? null)
+      : null;
   const hasActiveFilters =
     appliedSearch.length > 0 || subscriptionFilter !== "all" || selectedLibraryId.length > 0;
   const membershipPanelBusy = membershipPanelPodcastId
@@ -651,7 +612,7 @@ export default function PodcastsPaneBody() {
                         setMembershipPanelTriggerEl(triggerEl);
                         void loadPodcastLibraries(row.podcast_id);
                       },
-                      onOpenSettings: () => openSettingsModal(row),
+                      onOpenSettings: () => settingsModal.open(row),
                       onRefreshSync: () => {
                         void handleRefreshSync(row.podcast_id);
                       },
@@ -711,7 +672,7 @@ export default function PodcastsPaneBody() {
       />
 
       {settingsRow ? (
-        <div className={styles.modalBackdrop} role="presentation" onClick={closeSettingsModal}>
+        <div className={styles.modalBackdrop} role="presentation" onClick={settingsModal.close}>
           <div
             className={styles.modalCard}
             role="dialog"
@@ -724,8 +685,8 @@ export default function PodcastsPaneBody() {
             <label className={styles.settingsFieldLabel}>
               Default playback speed
               <Select
-                value={settingsDefaultSpeed}
-                onChange={(event) => setSettingsDefaultSpeed(event.target.value)}
+                value={settingsModal.defaultSpeed}
+                onChange={(event) => settingsModal.setDefaultSpeed(event.target.value)}
                 aria-label="Default playback speed"
               >
                 <option value="default">Use player default</option>
@@ -739,29 +700,29 @@ export default function PodcastsPaneBody() {
             <label className={styles.settingsToggleLabel}>
               <input
                 type="checkbox"
-                checked={settingsAutoQueue}
-                onChange={(event) => setSettingsAutoQueue(event.target.checked)}
+                checked={settingsModal.autoQueue}
+                onChange={(event) => settingsModal.setAutoQueue(event.target.checked)}
                 aria-label="Automatically add new episodes to my queue"
               />
               Automatically add new episodes to my queue
             </label>
-            {settingsError ? <FeedbackNotice feedback={settingsError} /> : null}
+            {settingsModal.error ? <FeedbackNotice feedback={settingsModal.error} /> : null}
             <div className={styles.modalActions}>
               <Button
                 variant="primary"
                 size="md"
                 onClick={() => {
-                  void handleSaveSettings();
+                  void settingsModal.save();
                 }}
-                disabled={settingsBusy}
+                disabled={settingsModal.busy}
               >
-                {settingsBusy ? "Saving..." : "Save subscription settings"}
+                {settingsModal.busy ? "Saving..." : "Save subscription settings"}
               </Button>
               <Button
                 variant="secondary"
                 size="md"
-                onClick={closeSettingsModal}
-                disabled={settingsBusy}
+                onClick={settingsModal.close}
+                disabled={settingsModal.busy}
               >
                 Cancel
               </Button>
