@@ -22,7 +22,7 @@ import html
 import io
 import json
 import textwrap
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
@@ -121,86 +121,58 @@ MAX_CONVERSATION_TITLE_LENGTH = 120
 # =============================================================================
 
 
-def encode_conversation_cursor(updated_at: datetime, id: UUID) -> str:
-    """Encode a cursor for conversation pagination.
-
-    Cursor payload: {"updated_at": "<iso>", "id": "<uuid>"}
-    Encoding: base64url without padding
-    """
-    payload = {"updated_at": updated_at.isoformat(), "id": str(id)}
+def _encode_cursor(payload: dict[str, object]) -> str:
+    """Encode a cursor payload as base64url without padding."""
     json_bytes = json.dumps(payload).encode("utf-8")
     return base64.urlsafe_b64encode(json_bytes).decode("ascii").rstrip("=")
+
+
+def _decode_cursor[T](cursor: str, extract: Callable[[dict[str, Any]], T]) -> T:
+    """Decode a base64url cursor and project it with `extract`.
+
+    Raises InvalidRequestError on any decode/projection failure.
+    """
+    try:
+        padding = 4 - len(cursor) % 4
+        if padding != 4:
+            cursor += "=" * padding
+        json_bytes = base64.urlsafe_b64decode(cursor)
+        payload = json.loads(json_bytes.decode("utf-8"))
+        return extract(payload)
+    except (ValueError, KeyError, TypeError):
+        # justify-ignore-error: expected malformed-cursor failures from the
+        # base64url/JSON decode path and from `extract` parsing primitive
+        # fields (int/UUID/datetime). Other exceptions propagate.
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+
+
+def encode_conversation_cursor(updated_at: datetime, id: UUID) -> str:
+    return _encode_cursor({"updated_at": updated_at.isoformat(), "id": str(id)})
 
 
 def decode_conversation_cursor(cursor: str) -> tuple[datetime, UUID]:
-    """Decode a cursor for conversation pagination.
-
-    Returns:
-        Tuple of (updated_at, id)
-
-    Raises:
-        InvalidRequestError: If cursor is malformed or unparseable.
-    """
-    try:
-        # Add padding if needed
-        padding = 4 - len(cursor) % 4
-        if padding != 4:
-            cursor += "=" * padding
-
-        json_bytes = base64.urlsafe_b64decode(cursor)
-        payload = json.loads(json_bytes.decode("utf-8"))
-
-        updated_at = datetime.fromisoformat(payload["updated_at"])
-        id = UUID(payload["id"])
-        return updated_at, id
-    except (ValueError, KeyError, TypeError):
-        # justify-ignore-error: expected malformed-cursor failures from the
-        # base64url/JSON/datetime/UUID decode path. ValueError covers
-        # binascii.Error, UnicodeDecodeError, JSONDecodeError, bad ISO
-        # datetime, and bad UUID; KeyError a missing payload field;
-        # TypeError a non-object JSON payload. Other exceptions propagate.
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+    return _decode_cursor(
+        cursor, lambda p: (datetime.fromisoformat(p["updated_at"]), UUID(p["id"]))
+    )
 
 
 def encode_message_cursor(seq: int, id: UUID) -> str:
-    """Encode a cursor for message pagination.
-
-    Cursor payload: {"seq": <int>, "id": "<uuid>"}
-    Encoding: base64url without padding
-    """
-    payload = {"seq": seq, "id": str(id)}
-    json_bytes = json.dumps(payload).encode("utf-8")
-    return base64.urlsafe_b64encode(json_bytes).decode("ascii").rstrip("=")
+    return _encode_cursor({"seq": seq, "id": str(id)})
 
 
 def decode_message_cursor(cursor: str) -> tuple[int, UUID]:
-    """Decode a cursor for message pagination.
+    return _decode_cursor(cursor, lambda p: (int(p["seq"]), UUID(p["id"])))
 
-    Returns:
-        Tuple of (seq, id)
 
-    Raises:
-        InvalidRequestError: If cursor is malformed or unparseable.
-    """
-    try:
-        # Add padding if needed
-        padding = 4 - len(cursor) % 4
-        if padding != 4:
-            cursor += "=" * padding
-
-        json_bytes = base64.urlsafe_b64decode(cursor)
-        payload = json.loads(json_bytes.decode("utf-8"))
-
-        seq = int(payload["seq"])
-        id = UUID(payload["id"])
-        return seq, id
-    except (ValueError, KeyError, TypeError):
-        # justify-ignore-error: expected malformed-cursor failures from the
-        # base64url/JSON/int/UUID decode path. ValueError covers
-        # binascii.Error, UnicodeDecodeError, JSONDecodeError, non-numeric
-        # seq, and bad UUID; KeyError a missing payload field; TypeError a
-        # non-object JSON payload. Other exceptions propagate.
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+def _conversation_cursor_clause(cursor: str | None) -> tuple[str, dict[str, object]]:
+    """SQL fragment + bound params for conversation pagination, or empty when no cursor."""
+    if not cursor:
+        return "", {}
+    updated_at, conversation_id = decode_conversation_cursor(cursor)
+    return (
+        "AND (c.updated_at, c.id) < (:cursor_updated_at, :cursor_id)",
+        {"cursor_updated_at": updated_at, "cursor_id": conversation_id},
+    )
 
 
 # =============================================================================
@@ -904,13 +876,8 @@ def _list_conversations_mine(
 ) -> tuple[list[ConversationOut], PageInfo]:
     """List only conversations owned by viewer (scope=mine)."""
     params: dict = {"viewer_id": viewer_id, "limit": limit + 1}
-
-    cursor_clause = ""
-    if cursor:
-        cursor_updated_at, cursor_id = decode_conversation_cursor(cursor)
-        cursor_clause = "AND (c.updated_at, c.id) < (:cursor_updated_at, :cursor_id)"
-        params["cursor_updated_at"] = cursor_updated_at
-        params["cursor_id"] = cursor_id
+    cursor_clause, cursor_params = _conversation_cursor_clause(cursor)
+    params.update(cursor_params)
 
     result = db.execute(
         text(f"""
@@ -946,13 +913,8 @@ def _list_conversations_visible(
     correct global cursor ordering.
     """
     params: dict = {"viewer_id": viewer_id, "limit": limit + 1}
-
-    cursor_clause = ""
-    if cursor:
-        cursor_updated_at, cursor_id = decode_conversation_cursor(cursor)
-        cursor_clause = "AND (c.updated_at, c.id) < (:cursor_updated_at, :cursor_id)"
-        params["cursor_updated_at"] = cursor_updated_at
-        params["cursor_id"] = cursor_id
+    cursor_clause, cursor_params = _conversation_cursor_clause(cursor)
+    params.update(cursor_params)
 
     scope_filter = ""
     if scope == "shared":
