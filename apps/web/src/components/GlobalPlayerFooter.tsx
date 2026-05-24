@@ -105,6 +105,59 @@ function EffectsPanel({
   );
 }
 
+function PlaybackErrorOrTimecode({
+  playbackError,
+  retryPlayback,
+  sourceUrl,
+  isBuffering,
+  currentSafe,
+  durationSafe,
+}: {
+  playbackError: { message: string } | null;
+  retryPlayback: () => void;
+  sourceUrl: string;
+  isBuffering: boolean;
+  currentSafe: number;
+  durationSafe: number;
+}) {
+  if (playbackError) {
+    return (
+      <div className={styles.playbackErrorArea} role="status" aria-live="polite">
+        <span className={styles.playbackErrorMessage}>{playbackError.message}</span>
+        <Button
+          variant="secondary"
+          size="sm"
+          className={styles.playbackErrorAction}
+          onClick={retryPlayback}
+          aria-label="Retry playback"
+        >
+          Retry
+        </Button>
+        <a
+          href={sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={styles.playbackErrorLink}
+          aria-label="Open source audio"
+        >
+          Open source
+        </a>
+      </div>
+    );
+  }
+  return (
+    <span className={styles.timecode}>
+      {isBuffering && (
+        <span className={styles.bufferingIndicator} role="status" aria-live="polite">
+          <span className={styles.bufferingDot} aria-hidden="true" />
+          Buffering...
+        </span>
+      )}
+      {formatClock(currentSafe)} / {formatClock(durationSafe)}
+    </span>
+  );
+}
+
 export default function GlobalPlayerFooter() {
   const isMobile = useIsMobileViewport();
   const [queueOpen, setQueueOpen] = useState(false);
@@ -327,39 +380,14 @@ export default function GlobalPlayerFooter() {
                   />
                 </div>
 
-                {playbackError ? (
-                  <div className={styles.playbackErrorArea} role="status" aria-live="polite">
-                    <span className={styles.playbackErrorMessage}>{playbackError.message}</span>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className={styles.playbackErrorAction}
-                      onClick={retryPlayback}
-                      aria-label="Retry playback"
-                    >
-                      Retry
-                    </Button>
-                    <a
-                      href={track.source_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={styles.playbackErrorLink}
-                      aria-label="Open source audio"
-                    >
-                      Open source
-                    </a>
-                  </div>
-                ) : (
-                  <span className={styles.timecode}>
-                    {isBuffering && (
-                      <span className={styles.bufferingIndicator} role="status" aria-live="polite">
-                        <span className={styles.bufferingDot} aria-hidden="true" />
-                        Buffering...
-                      </span>
-                    )}
-                    {formatClock(currentSafe)} / {formatClock(durationSafe)}
-                  </span>
-                )}
+                <PlaybackErrorOrTimecode
+                  playbackError={playbackError}
+                  retryPlayback={retryPlayback}
+                  sourceUrl={track.source_url}
+                  isBuffering={isBuffering}
+                  currentSafe={currentSafe}
+                  durationSafe={durationSafe}
+                />
 
                 <div className={styles.expandedTransport}>
                   <Button
@@ -555,39 +583,14 @@ export default function GlobalPlayerFooter() {
               />
             </div>
 
-            {playbackError ? (
-              <div className={styles.playbackErrorArea} role="status" aria-live="polite">
-                <span className={styles.playbackErrorMessage}>{playbackError.message}</span>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className={styles.playbackErrorAction}
-                  onClick={retryPlayback}
-                  aria-label="Retry playback"
-                >
-                  Retry
-                </Button>
-                <a
-                  href={track.source_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={styles.playbackErrorLink}
-                  aria-label="Open source audio"
-                >
-                  Open source
-                </a>
-              </div>
-            ) : (
-              <span className={styles.timecode}>
-                {isBuffering && (
-                  <span className={styles.bufferingIndicator} role="status" aria-live="polite">
-                    <span className={styles.bufferingDot} aria-hidden="true" />
-                    Buffering...
-                  </span>
-                )}
-                {formatClock(currentSafe)} / {formatClock(durationSafe)}
-              </span>
-            )}
+            <PlaybackErrorOrTimecode
+              playbackError={playbackError}
+              retryPlayback={retryPlayback}
+              sourceUrl={track.source_url}
+              isBuffering={isBuffering}
+              currentSafe={currentSafe}
+              durationSafe={durationSafe}
+            />
 
             <Button
               ref={moreButtonRef}
