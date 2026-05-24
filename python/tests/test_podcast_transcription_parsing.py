@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.services.podcasts.transcripts import (
-    _canonicalize_transcript_segment_text,
-    _extract_deepgram_segments,
-    _normalize_transcript_segments,
+from nexus.services.podcasts.transcripts import _extract_deepgram_segments
+from nexus.services.transcript_segments import (
+    canonicalize_transcript_segment_text,
+    normalize_transcript_segments,
 )
 
 pytestmark = pytest.mark.unit
@@ -112,7 +112,7 @@ def test_normalize_transcript_segments_enforces_canonicalization_and_strict_timi
         {"text": " later  segment ", "t_start_ms": 500, "t_end_ms": 800, "speaker_label": ""},
     ]
 
-    normalized = _normalize_transcript_segments(raw_segments)
+    normalized = normalize_transcript_segments(raw_segments)
 
     assert normalized == [
         {"text": "Café story", "t_start_ms": 100, "t_end_ms": 300, "speaker_label": "Host"},
@@ -121,5 +121,5 @@ def test_normalize_transcript_segments_enforces_canonicalization_and_strict_timi
 
 
 def test_canonicalize_transcript_segment_text_handles_empty_and_whitespace_only():
-    assert _canonicalize_transcript_segment_text(None) == ""
-    assert _canonicalize_transcript_segment_text(" \t\n\u00a0 ") == ""
+    assert canonicalize_transcript_segment_text(None) == ""
+    assert canonicalize_transcript_segment_text(" \t\n\u00a0 ") == ""

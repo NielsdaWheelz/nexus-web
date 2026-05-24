@@ -38,13 +38,9 @@ from nexus.services.semantic_chunks import (
     transcript_embedding_dimensions,
 )
 from nexus.services.transcript_segments import (
-    canonicalize_transcript_segment_text as _shared_canonicalize_transcript_segment_text,
-)
-from nexus.services.transcript_segments import (
-    insert_transcript_fragments as _shared_insert_transcript_fragments,
-)
-from nexus.services.transcript_segments import (
-    normalize_transcript_segments as _shared_normalize_transcript_segments,
+    canonicalize_transcript_segment_text,
+    insert_transcript_fragments,
+    normalize_transcript_segments,
 )
 from nexus.services.url_normalize import validate_requested_url
 
@@ -1344,7 +1340,7 @@ def run_podcast_transcription_now(
     finally:
         _stop_transcription_job_heartbeat(heartbeat)
     transcription_status = str(transcription_result.get("status") or "failed")
-    transcript_segments = _normalize_transcript_segments(transcription_result.get("segments"))
+    transcript_segments = normalize_transcript_segments(transcription_result.get("segments"))
     transcription_error_code = _normalize_terminal_transcription_error_code(
         transcription_result.get("error_code")
     )
@@ -1378,7 +1374,7 @@ def run_podcast_transcription_now(
             ),
             {"media_id": media_id},
         )
-        _insert_transcript_fragments(
+        insert_transcript_fragments(
             db,
             media_id,
             transcript_segments,
@@ -1672,23 +1668,6 @@ def repair_podcast_transcript_semantic_index_now(
             now=now,
         )
         return {"status": "failed", "error_code": error_code}
-
-
-def _insert_transcript_fragments(
-    db: Session,
-    media_id: UUID,
-    transcript_segments: list[dict[str, Any]],
-    *,
-    now: datetime,
-    transcript_version_id: UUID | None = None,
-) -> None:
-    _shared_insert_transcript_fragments(
-        db,
-        media_id,
-        transcript_segments,
-        now=now,
-        transcript_version_id=transcript_version_id,
-    )
 
 
 def _ensure_media_transcript_state_row(
@@ -2649,9 +2628,3 @@ def _word_range_end_ms(raw_words: Any) -> int | None:
     return max_end_ms
 
 
-def _normalize_transcript_segments(raw_segments: Any) -> list[dict[str, Any]]:
-    return _shared_normalize_transcript_segments(raw_segments)
-
-
-def _canonicalize_transcript_segment_text(raw_value: Any) -> str:
-    return _shared_canonicalize_transcript_segment_text(raw_value)
