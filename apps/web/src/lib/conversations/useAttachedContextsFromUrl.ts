@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ContextItem } from "@/lib/api/sse";
+import type { ContextItem } from "@/lib/api/sse/requests";
 import {
   getPendingContextSignature,
   parseConversationScopeFromUrl,

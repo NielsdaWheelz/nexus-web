@@ -3,7 +3,7 @@ import {
   isWebCitationEventData,
   type SearchCitationEventData,
   type WebCitationEventData,
-} from "@/lib/api/sse";
+} from "@/lib/api/sse/citations";
 
 export function isWebCitation(
   citation: unknown,

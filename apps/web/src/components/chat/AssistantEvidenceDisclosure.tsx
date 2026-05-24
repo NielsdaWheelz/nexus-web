@@ -28,11 +28,11 @@ import type {
   ReaderCitationPreview,
 } from "@/components/ui/ReaderCitation";
 import Button from "@/components/ui/Button";
-import {
-  isRetrievalLocator,
-  type ChatRunCreateRequest,
-  type ContextItem,
-} from "@/lib/api/sse";
+import { isRetrievalLocator } from "@/lib/api/sse/locators";
+import type {
+  ChatRunCreateRequest,
+  ContextItem,
+} from "@/lib/api/sse/requests";
 import { apiFetch } from "@/lib/api/client";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
 import type {

@@ -13,9 +13,9 @@ import { apiFetch } from "@/lib/api/client";
 import { toFeedback } from "@/components/feedback/Feedback";
 import {
   toWireContextItem,
-  type ContextItem,
   type ChatRunCreateRequest,
-} from "@/lib/api/sse";
+  type ContextItem,
+} from "@/lib/api/sse/requests";
 import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
 import ComposerContextRail from "@/components/chat/ComposerContextRail";
 import Button from "@/components/ui/Button";

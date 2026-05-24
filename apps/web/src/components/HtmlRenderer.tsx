@@ -16,7 +16,7 @@
 
 import { memo, useCallback, useEffect, useRef } from "react";
 import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
-import type { RetrievalLocator } from "@/lib/api/sse";
+import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import styles from "./HtmlRenderer.module.css";
 
 interface HtmlRendererProps {

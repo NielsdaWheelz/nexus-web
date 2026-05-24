@@ -21,7 +21,7 @@ import {
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import { apiFetch, isApiError } from "@/lib/api/client";
-import { type ContextItem } from "@/lib/api/sse";
+import { type ContextItem } from "@/lib/api/sse/requests";
 import {
   getContextIdentityKey,
   getConversationScopeSignature,

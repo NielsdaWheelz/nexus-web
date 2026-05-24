@@ -20,7 +20,7 @@ import {
 import { PanelRightOpen } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { conversationResourceOptions } from "@/lib/actions/resourceActions";
-import { type ContextItem } from "@/lib/api/sse";
+import { type ContextItem } from "@/lib/api/sse/requests";
 import { mergeContextItems } from "@/lib/conversations/attachedContext";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
 import ChatComposer from "@/components/ChatComposer";

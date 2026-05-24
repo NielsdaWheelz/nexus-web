@@ -1,13 +1,15 @@
 import type {
-  ContextItemColor,
-  ContextItemType,
-  ChatToolStatus,
   RetrievalContextRef,
-  RetrievalLocator,
   SearchCitationEventData,
   SearchCitationResultType,
   WebCitationEventData,
-} from "@/lib/api/sse";
+} from "@/lib/api/sse/citations";
+import type { ChatToolStatus } from "@/lib/api/sse/events";
+import type { RetrievalLocator } from "@/lib/api/sse/locators";
+import type {
+  ContextItemColor,
+  ContextItemType,
+} from "@/lib/api/sse/requests";
 import type { ContributorCredit } from "@/lib/contributors/types";
 
 export type ConversationScope =

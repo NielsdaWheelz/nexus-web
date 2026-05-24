@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
-import type { ChatRunCreateRequest } from "@/lib/api/sse";
+import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import ConversationNewPaneBody from "./ConversationNewPaneBody";
 
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";

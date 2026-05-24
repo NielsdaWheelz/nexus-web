@@ -1,4 +1,7 @@
-import { isRetrievalLocator, type RetrievalLocator } from "@/lib/api/sse";
+import {
+  isRetrievalLocator,
+  type RetrievalLocator,
+} from "@/lib/api/sse/locators";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { isRecord } from "@/lib/validation";
 import {

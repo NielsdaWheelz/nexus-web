@@ -1,4 +1,4 @@
-import type { RetrievalLocator } from "@/lib/api/sse";
+import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type { ContributorCredit } from "@/lib/contributors/types";
 
 export const ALL_SEARCH_TYPES = [

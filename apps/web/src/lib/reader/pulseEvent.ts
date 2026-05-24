@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import type { RetrievalLocator } from "@/lib/api/sse";
+import type { RetrievalLocator } from "@/lib/api/sse/locators";
 
 export const READER_PULSE_HIGHLIGHT = "nexus:reader-pulse-highlight";
 

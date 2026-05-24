@@ -1,5 +1,9 @@
 import { FileText, Globe, Library, type LucideIcon } from "lucide-react";
-import type { ContextItem, ContextItemColor, ContextItemType } from "@/lib/api/sse";
+import type {
+  ContextItem,
+  ContextItemColor,
+  ContextItemType,
+} from "@/lib/api/sse/requests";
 import type {
   ConversationScope,
   MessageContextSnapshot,

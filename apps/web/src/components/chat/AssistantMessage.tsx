@@ -8,7 +8,7 @@ import {
   assistantSelectionAnchor,
   mapAssistantSelectionToSource,
 } from "@/lib/conversations/assistantSelection";
-import type { ContextItem } from "@/lib/api/sse";
+import type { ContextItem } from "@/lib/api/sse/requests";
 import type {
   BranchDraft,
   ChatRunResponse,

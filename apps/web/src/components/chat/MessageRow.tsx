@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
-import type { ContextItem } from "@/lib/api/sse";
+import type { ContextItem } from "@/lib/api/sse/requests";
 import type {
   BranchDraft,
   ChatRunResponse,

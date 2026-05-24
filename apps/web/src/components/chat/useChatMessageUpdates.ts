@@ -9,16 +9,18 @@ import {
   type SetStateAction,
 } from "react";
 import type {
-  SSEArtifactDeltaEvent,
-  SSEClaimEvidenceEvent,
-  SSEClaimEvent,
   SearchCitationEventData,
+  WebCitationEventData,
+} from "@/lib/api/sse/citations";
+import type {
+  SSEArtifactDeltaEvent,
+  SSEClaimEvent,
+  SSEClaimEvidenceEvent,
+  SSERetrievalResultEvent,
   SSESourceManifestDeltaEvent,
   SSEToolCallEvent,
-  SSERetrievalResultEvent,
-  WebCitationEventData,
-} from "@/lib/api/sse";
-import { isRetrievalLocator } from "@/lib/api/sse";
+} from "@/lib/api/sse/events";
+import { isRetrievalLocator } from "@/lib/api/sse/locators";
 import {
   isSearchCitation,
   isWebCitation,

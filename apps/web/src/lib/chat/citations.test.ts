@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isSearchCitation, isWebCitation } from "./citations";
-import type { SearchCitationEventData } from "@/lib/api/sse";
+import type { SearchCitationEventData } from "@/lib/api/sse/citations";
 import type { MessageRetrievalResultRef } from "@/lib/conversations/types";
 
 describe("citation guards", () => {

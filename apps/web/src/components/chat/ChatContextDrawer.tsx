@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { PanelRight, X } from "lucide-react";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import Button from "@/components/ui/Button";
-import type { ContextItem } from "@/lib/api/sse";
+import type { ContextItem } from "@/lib/api/sse/requests";
 import type {
   ConversationMemoryInspection,
   ConversationScope,

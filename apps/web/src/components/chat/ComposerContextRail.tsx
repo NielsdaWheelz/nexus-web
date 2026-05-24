@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import Chip from "@/components/ui/Chip";
-import type { ContextItem, ContextItemColor } from "@/lib/api/sse";
+import type { ContextItem, ContextItemColor } from "@/lib/api/sse/requests";
 import {
   CONVERSATION_SCOPE_ICONS,
   formatConversationScopeLabel,

@@ -1,8 +1,8 @@
-import {
-  isRetrievalLocator,
-  type ContextItem,
-  type ObjectRefContextItem,
-} from "@/lib/api/sse";
+import { isRetrievalLocator } from "@/lib/api/sse/locators";
+import type {
+  ContextItem,
+  ObjectRefContextItem,
+} from "@/lib/api/sse/requests";
 import type { ConversationScope } from "@/lib/conversations/types";
 import { isObjectType } from "@/lib/objectRefs";
 import { isRecord, isUuid } from "@/lib/validation";

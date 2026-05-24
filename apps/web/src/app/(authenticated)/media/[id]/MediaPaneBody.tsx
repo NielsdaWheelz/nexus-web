@@ -48,7 +48,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { mediaResourceOptions } from "@/lib/actions/resourceActions";
-import type { ContextItem } from "@/lib/api/sse";
+import type { ContextItem } from "@/lib/api/sse/requests";
 import {
   applyHighlightsToHtml,
   type HighlightInput,

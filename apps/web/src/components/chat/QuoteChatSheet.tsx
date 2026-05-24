@@ -11,7 +11,7 @@ import ReaderAssistantPane, {
   type ReaderAssistantScopeOption,
 } from "@/components/chat/ReaderAssistantPane";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
-import { type ContextItem } from "@/lib/api/sse";
+import { type ContextItem } from "@/lib/api/sse/requests";
 import type { ConversationScope } from "@/lib/conversations/types";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import styles from "./QuoteChatSheet.module.css";

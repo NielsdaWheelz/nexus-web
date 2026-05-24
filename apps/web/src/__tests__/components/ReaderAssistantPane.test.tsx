@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import ReaderAssistantPane from "@/components/chat/ReaderAssistantPane";
-import type { ChatRunCreateRequest } from "@/lib/api/sse";
+import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 
 function pathOf(input: RequestInfo | URL): string {
   if (input instanceof Request) {

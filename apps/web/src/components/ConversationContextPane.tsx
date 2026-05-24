@@ -11,7 +11,11 @@ import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
 import ConversationProvenancePanel from "@/components/chat/ConversationProvenancePanel";
 import { countProvenanceSignals } from "@/lib/conversations/provenance/buildModel";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
-import type { ContextItem, ContextItemColor, ContextItemType } from "@/lib/api/sse";
+import type {
+  ContextItem,
+  ContextItemColor,
+  ContextItemType,
+} from "@/lib/api/sse/requests";
 import {
   formatContextMeta,
   formatSelectionContext,

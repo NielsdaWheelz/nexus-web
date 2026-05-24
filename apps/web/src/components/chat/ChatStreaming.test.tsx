@@ -17,8 +17,8 @@ vi.mock("@/lib/api/streamToken", () => ({
   fetchStreamToken: streamMocks.fetchStreamToken,
 }));
 
-vi.mock("@/lib/api/sse", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/api/sse")>()),
+vi.mock("@/lib/api/sse-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/sse-client")>()),
   sseClientDirect: streamMocks.sseClientDirect,
 }));
 

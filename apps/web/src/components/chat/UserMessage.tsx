@@ -11,7 +11,7 @@ import type {
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
 import { conversationMessageText } from "@/lib/conversations/types";
-import { isRetrievalLocator } from "@/lib/api/sse";
+import { isRetrievalLocator } from "@/lib/api/sse/locators";
 import type { ReaderSourceTarget } from "./MessageRow";
 import styles from "./MessageRow.module.css";
 
