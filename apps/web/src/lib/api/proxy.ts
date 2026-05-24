@@ -167,6 +167,64 @@ function setBodyContentLength(headers: Headers, body: string | ArrayBuffer) {
   headers.set("content-length", String(byteLength));
 }
 
+type TimedFetchController = {
+  signal: AbortSignal;
+  timedOut: () => boolean;
+  cleanup: () => void;
+};
+
+function createTimedFetchController(
+  clientSignal: AbortSignal,
+  timeoutMs: number
+): TimedFetchController {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const abortFromClient = () => controller.abort();
+  if (clientSignal.aborted) {
+    controller.abort();
+  } else {
+    clientSignal.addEventListener("abort", abortFromClient, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    cleanup: () => {
+      clearTimeout(timeout);
+      clientSignal.removeEventListener("abort", abortFromClient);
+    },
+  };
+}
+
+function upstreamTimeoutResponse(requestId: string): NextResponse {
+  return NextResponse.json(
+    {
+      error: {
+        code: "E_UPSTREAM_TIMEOUT",
+        message: "Backend service timed out",
+        request_id: requestId,
+      },
+    },
+    { status: 504, headers: { [REQUEST_ID_HEADER]: requestId } }
+  );
+}
+
+function upstreamUnavailableResponse(requestId: string): NextResponse {
+  return NextResponse.json(
+    {
+      error: {
+        code: "E_UPSTREAM",
+        message: "Backend service unavailable",
+        request_id: requestId,
+      },
+    },
+    { status: 502, headers: { [REQUEST_ID_HEADER]: requestId } }
+  );
+}
+
 async function createDefaultDeps(): Promise<ProxyDeps> {
   return {
     readSession: (request) =>
@@ -338,25 +396,17 @@ export async function proxyToFastAPIWithDeps(
     body = await request.arrayBuffer();
   }
 
-  const controller = new AbortController();
-  let timedOut = false;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, FASTAPI_FETCH_TIMEOUT_MS);
-  const abortFromClient = () => controller.abort();
-  if (request.signal.aborted) {
-    controller.abort();
-  } else {
-    request.signal.addEventListener("abort", abortFromClient, { once: true });
-  }
+  const ctl = createTimedFetchController(
+    request.signal,
+    FASTAPI_FETCH_TIMEOUT_MS
+  );
 
   try {
     const response = await deps.fetch(url, {
       method: request.method,
       headers,
       body,
-      signal: controller.signal,
+      signal: ctl.signal,
     });
 
     // Build filtered response headers (non-streaming path)
@@ -419,45 +469,16 @@ export async function proxyToFastAPIWithDeps(
     return proxied;
   } catch (error) {
     if (isAbortError(error)) {
-      if (timedOut) {
-        return NextResponse.json(
-          {
-            error: {
-              code: "E_UPSTREAM_TIMEOUT",
-              message: "Backend service timed out",
-              request_id: requestId,
-            },
-          },
-          {
-            status: 504,
-            headers: {
-              [REQUEST_ID_HEADER]: requestId,
-            },
-          }
-        );
+      if (ctl.timedOut()) {
+        return upstreamTimeoutResponse(requestId);
       }
       return new Response(null, { status: 499 });
     }
 
     console.error("FastAPI proxy error:", error);
-    return NextResponse.json(
-      {
-        error: {
-          code: "E_UPSTREAM",
-          message: "Backend service unavailable",
-          request_id: requestId,
-        },
-      },
-      {
-        status: 502,
-        headers: {
-          [REQUEST_ID_HEADER]: requestId,
-        },
-      }
-    );
+    return upstreamUnavailableResponse(requestId);
   } finally {
-    clearTimeout(timeout);
-    request.signal.removeEventListener("abort", abortFromClient);
+    ctl.cleanup();
   }
 }
 
@@ -540,25 +561,17 @@ export async function proxyExtensionToFastAPI(
     body = await request.arrayBuffer();
   }
 
-  const controller = new AbortController();
-  let timedOut = false;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, FASTAPI_FETCH_TIMEOUT_MS);
-  const abortFromClient = () => controller.abort();
-  if (request.signal.aborted) {
-    controller.abort();
-  } else {
-    request.signal.addEventListener("abort", abortFromClient, { once: true });
-  }
+  const ctl = createTimedFetchController(
+    request.signal,
+    FASTAPI_FETCH_TIMEOUT_MS
+  );
 
   try {
     const response = await fetch(`${fastApiBaseUrl}${path}`, {
       method: request.method,
       headers,
       body,
-      signal: controller.signal,
+      signal: ctl.signal,
     });
     const backendRequestId = response.headers.get(REQUEST_ID_HEADER);
     const responseHeaders = new Headers({
@@ -600,40 +613,15 @@ export async function proxyExtensionToFastAPI(
     });
   } catch (error) {
     if (isAbortError(error)) {
-      if (timedOut) {
-        return NextResponse.json(
-          {
-            error: {
-              code: "E_UPSTREAM_TIMEOUT",
-              message: "Backend service timed out",
-              request_id: requestId,
-            },
-          },
-          {
-            status: 504,
-            headers: { [REQUEST_ID_HEADER]: requestId },
-          }
-        );
+      if (ctl.timedOut()) {
+        return upstreamTimeoutResponse(requestId);
       }
       return new Response(null, { status: 499 });
     }
 
     console.error("Extension proxy error:", error);
-    return NextResponse.json(
-      {
-        error: {
-          code: "E_UPSTREAM",
-          message: "Backend service unavailable",
-          request_id: requestId,
-        },
-      },
-      {
-        status: 502,
-        headers: { [REQUEST_ID_HEADER]: requestId },
-      }
-    );
+    return upstreamUnavailableResponse(requestId);
   } finally {
-    clearTimeout(timeout);
-    request.signal.removeEventListener("abort", abortFromClient);
+    ctl.cleanup();
   }
 }
