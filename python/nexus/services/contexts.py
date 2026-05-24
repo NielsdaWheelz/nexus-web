@@ -916,7 +916,7 @@ def _insert_object_ref_context(
         existing_link.b_order_key = context_order_key
 
     if media_id is not None:
-        upsert_conversation_media(db, message.conversation_id, media_id)
+        _upsert_conversation_media(db, message.conversation_id, media_id)
     return row
 
 
@@ -990,7 +990,7 @@ def _insert_reader_selection_context(
             },
         )
     )
-    upsert_conversation_media(db, message.conversation_id, media.id)
+    _upsert_conversation_media(db, message.conversation_id, media.id)
     return row
 
 
@@ -1286,7 +1286,7 @@ def insert_contexts_batch(
     ]
 
 
-def upsert_conversation_media(
+def _upsert_conversation_media(
     db: Session,
     conversation_id: UUID,
     media_id: UUID,
