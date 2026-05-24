@@ -24,6 +24,10 @@ import { type ContextItem } from "@/lib/api/sse/requests";
 import { createRandomId } from "@/lib/createRandomId";
 import { mergeContextItems } from "@/lib/conversations/attachedContext";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
+import {
+  buildQuoteSelector,
+  getLocatorQuoteParts,
+} from "@/lib/highlights/quoteText";
 import ChatComposer from "@/components/ChatComposer";
 import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
@@ -693,6 +697,10 @@ function ChatView({
         return;
       }
       const locator = target.locator;
+      const selector = buildQuoteSelector({
+        exact,
+        ...getLocatorQuoteParts(locator),
+      });
       setAttachedContexts((current) =>
         mergeContextItems(current, [
           {
@@ -708,17 +716,7 @@ function ChatView({
                     ? "epub"
                     : "web_article",
             media_title: target.label ?? "Source",
-            exact,
-            ...("prefix" in locator &&
-            typeof locator.prefix === "string" &&
-            locator.prefix
-              ? { prefix: locator.prefix }
-              : {}),
-            ...("suffix" in locator &&
-            typeof locator.suffix === "string" &&
-            locator.suffix
-              ? { suffix: locator.suffix }
-              : {}),
+            ...selector,
             preview: exact.slice(0, 120),
             locator: target.locator,
             source_version: target.source_version,

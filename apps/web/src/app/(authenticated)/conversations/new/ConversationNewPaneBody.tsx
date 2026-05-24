@@ -39,6 +39,10 @@ import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
 import Button from "@/components/ui/Button";
 import { apiFetch } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
+import {
+  buildQuoteSelector,
+  getLocatorQuoteParts,
+} from "@/lib/highlights/quoteText";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   usePaneRouter,
@@ -244,6 +248,10 @@ export default function ConversationNewPaneBody() {
         return;
       }
       const locator = target.locator;
+      const selector = buildQuoteSelector({
+        exact,
+        ...getLocatorQuoteParts(locator),
+      });
       setAttachedContexts((current) =>
         mergeContextItems(current, [
           {
@@ -259,17 +267,7 @@ export default function ConversationNewPaneBody() {
                     ? "epub"
                     : "web_article",
             media_title: target.label ?? "Source",
-            exact,
-            ...("prefix" in locator &&
-            typeof locator.prefix === "string" &&
-            locator.prefix
-              ? { prefix: locator.prefix }
-              : {}),
-            ...("suffix" in locator &&
-            typeof locator.suffix === "string" &&
-            locator.suffix
-              ? { suffix: locator.suffix }
-              : {}),
+            ...selector,
             preview: exact.slice(0, 120),
             locator: target.locator,
             source_version: target.source_version,

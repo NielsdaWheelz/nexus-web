@@ -81,4 +81,42 @@ describe("retrieval locator contract", () => {
       "fragment-1",
     );
   });
+
+  it("accepts a structured text_quote_selector", () => {
+    expect(
+      isRetrievalLocator({
+        type: "web_text_offsets",
+        media_id: "media-1",
+        fragment_id: "fragment-1",
+        start_offset: 4,
+        end_offset: 12,
+        text_quote_selector: { exact: "hi", prefix: "be", suffix: "fore" },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a text_quote_selector missing exact", () => {
+    expect(
+      isRetrievalLocator({
+        type: "web_text_offsets",
+        media_id: "media-1",
+        fragment_id: "fragment-1",
+        start_offset: 4,
+        end_offset: 12,
+        text_quote_selector: { prefix: "be" },
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects a text_quote_selector with non-string prefix", () => {
+    expect(
+      isRetrievalLocator({
+        type: "transcript_time_range",
+        media_id: "media-1",
+        t_start_ms: 1,
+        t_end_ms: 2,
+        text_quote_selector: { exact: "hi", prefix: 5 },
+      }),
+    ).toBe(false);
+  });
 });

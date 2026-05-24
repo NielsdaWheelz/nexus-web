@@ -30,6 +30,14 @@ const MIN_RECT_SIZE = 1;
 /** Sub-point threshold below which PDF geometry dimensions are treated as zero. */
 export const PDF_QUAD_EPSILON = 0.001;
 
+/** True when both dimensions are above the sub-point treat-as-zero threshold. */
+export function isValidPdfRect(rect: {
+  width: number;
+  height: number;
+}): boolean {
+  return rect.width > PDF_QUAD_EPSILON && rect.height > PDF_QUAD_EPSILON;
+}
+
 function toPageSpaceX(value: number): PageSpaceX {
   return value as PageSpaceX;
 }

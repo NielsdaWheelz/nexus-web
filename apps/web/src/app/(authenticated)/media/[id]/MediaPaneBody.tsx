@@ -65,6 +65,10 @@ import {
 } from "@/lib/highlights/canonicalCursor";
 import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
 import { parseRawPdfQuads } from "@/lib/highlights/pdfTypes";
+import {
+  buildQuoteSelector,
+  getLocatorQuoteParts,
+} from "@/lib/highlights/quoteText";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { selectionToOffsets } from "@/lib/highlights/selectionToOffsets";
 import {
@@ -2081,24 +2085,14 @@ export default function MediaPaneBody() {
     if (type !== "transcript_time_range") {
       return null;
     }
-    const textQuoteSelector =
-      "text_quote_selector" in locator ? locator.text_quote_selector : null;
     const quoteSelector =
-      typeof textQuoteSelector === "object" &&
-      textQuoteSelector !== null &&
-      !Array.isArray(textQuoteSelector)
-        ? (textQuoteSelector as Record<string, unknown>)
-        : null;
-    const exact =
-      readerSourceTarget.snippet ||
-      (typeof quoteSelector?.exact === "string" ? quoteSelector.exact : null);
+      "text_quote_selector" in locator ? locator.text_quote_selector : null;
+    const exact = readerSourceTarget.snippet || quoteSelector?.exact || null;
     if (!exact) {
       return null;
     }
-    const prefix =
-      typeof quoteSelector?.prefix === "string" ? quoteSelector.prefix : null;
-    const suffix =
-      typeof quoteSelector?.suffix === "string" ? quoteSelector.suffix : null;
+    const prefix = quoteSelector?.prefix ?? null;
+    const suffix = quoteSelector?.suffix ?? null;
     const matchedOffset = findCanonicalOffsetFromQuote(
       activeContent.canonicalText,
       exact,
@@ -3395,6 +3389,8 @@ export default function MediaPaneBody() {
         )
         .join("");
 
+      const selector = buildQuoteSelector({ exact, prefix, suffix });
+
       if (isTranscriptMedia) {
         const startMs = activeTranscriptFragment?.t_start_ms;
         const endMs = activeTranscriptFragment?.t_end_ms;
@@ -3427,9 +3423,7 @@ export default function MediaPaneBody() {
             media_id: media.id,
             media_kind: media.kind,
             media_title: media.title,
-            exact,
-            ...(prefix ? { prefix } : {}),
-            ...(suffix ? { suffix } : {}),
+            ...selector,
             preview: exact.slice(0, 120),
             source_version: sourceVersion,
             locator: {
@@ -3437,11 +3431,7 @@ export default function MediaPaneBody() {
               media_id: media.id,
               t_start_ms: startMs,
               t_end_ms: endMs,
-              text_quote_selector: {
-                exact,
-                ...(prefix ? { prefix } : {}),
-                ...(suffix ? { suffix } : {}),
-              },
+              text_quote_selector: selector,
             },
             color,
           },
@@ -3465,9 +3455,7 @@ export default function MediaPaneBody() {
           media_id: media.id,
           media_kind: media.kind,
           media_title: media.title,
-          exact,
-          ...(prefix ? { prefix } : {}),
-          ...(suffix ? { suffix } : {}),
+          ...selector,
           preview: exact.slice(0, 120),
           source_version: activeContent.sourceVersion,
           locator: {
@@ -3480,11 +3468,7 @@ export default function MediaPaneBody() {
             fragment_id: activeSelection.fragmentId,
             start_offset: activeSelection.startOffset,
             end_offset: activeSelection.endOffset,
-            text_quote_selector: {
-              exact,
-              ...(prefix ? { prefix } : {}),
-              ...(suffix ? { suffix } : {}),
-            },
+            text_quote_selector: selector,
           },
           color,
         },
@@ -3757,19 +3741,6 @@ export default function MediaPaneBody() {
               pdfControlsState.isCreating
             }
             aria-label="Highlight selection"
-            data-create-attempts={pdfControlsState.createTelemetry.attempts}
-            data-create-post-requests={
-              pdfControlsState.createTelemetry.postRequests
-            }
-            data-create-patch-requests={
-              pdfControlsState.createTelemetry.patchRequests
-            }
-            data-create-successes={pdfControlsState.createTelemetry.successes}
-            data-create-errors={pdfControlsState.createTelemetry.errors}
-            data-create-last-outcome={
-              pdfControlsState.createTelemetry.lastOutcome
-            }
-            data-page-render-epoch={pdfControlsState.pageRenderEpoch}
             data-selection-popover-ignore-outside="true"
           >
             Highlight
@@ -4049,10 +4020,15 @@ export default function MediaPaneBody() {
           ? locator.exact
           : "") ||
         "";
-      if (!exact.trim()) {
+      const trimmed = exact.trim();
+      if (!trimmed) {
         handleReaderSourceActivate(target);
         return;
       }
+      const selector = buildQuoteSelector({
+        exact: trimmed,
+        ...getLocatorQuoteParts(locator),
+      });
       openReaderAssistant([
         {
           kind: "reader_selection",
@@ -4060,18 +4036,8 @@ export default function MediaPaneBody() {
           media_id: media.id,
           media_kind: media.kind,
           media_title: media.title,
-          exact: exact.trim(),
-          ...("prefix" in locator &&
-          typeof locator.prefix === "string" &&
-          locator.prefix
-            ? { prefix: locator.prefix }
-            : {}),
-          ...("suffix" in locator &&
-          typeof locator.suffix === "string" &&
-          locator.suffix
-            ? { suffix: locator.suffix }
-            : {}),
-          preview: exact.trim().slice(0, 120),
+          ...selector,
+          preview: trimmed.slice(0, 120),
           locator,
           source_version: target.source_version,
           color: "yellow",
@@ -4329,6 +4295,7 @@ export default function MediaPaneBody() {
 
       const fragmentId = anchor.fragment_id;
       const fragment = fragments.find((item) => item.id === fragmentId);
+      const selector = buildQuoteSelector(highlight);
       const target: ReaderPulseTarget = isTranscriptMedia
         ? {
             mediaId: id,
@@ -4338,11 +4305,7 @@ export default function MediaPaneBody() {
               media_id: id,
               t_start_ms: fragment?.t_start_ms ?? 0,
               t_end_ms: fragment?.t_end_ms ?? 0,
-              text_quote_selector: {
-                exact: highlight.exact,
-                ...(highlight.prefix ? { prefix: highlight.prefix } : {}),
-                ...(highlight.suffix ? { suffix: highlight.suffix } : {}),
-              },
+              text_quote_selector: selector,
             },
             snippet: highlight.exact,
             sourceVersion:
@@ -4359,11 +4322,7 @@ export default function MediaPaneBody() {
               fragment_id: fragmentId,
               start_offset: anchor.start_offset,
               end_offset: anchor.end_offset,
-              text_quote_selector: {
-                exact: highlight.exact,
-                ...(highlight.prefix ? { prefix: highlight.prefix } : {}),
-                ...(highlight.suffix ? { suffix: highlight.suffix } : {}),
-              },
+              text_quote_selector: selector,
             },
             snippet: highlight.exact,
             sourceVersion:

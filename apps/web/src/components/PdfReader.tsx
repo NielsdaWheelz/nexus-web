@@ -39,7 +39,7 @@ import {
 } from "@/lib/highlights/pdfTypes";
 import { usePdfScrollToTarget } from "@/lib/highlights/usePdfScrollToTarget";
 import {
-  PDF_QUAD_EPSILON,
+  isValidPdfRect,
   projectPdfQuadToViewportRect,
 } from "@/lib/highlights/coordinateTransforms";
 import {
@@ -48,8 +48,12 @@ import {
   deriveViewportTransformFromPageView,
 } from "@/lib/highlights/pdfPageViewport";
 import { clamp } from "@/lib/clamp";
-import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { createRandomId } from "@/lib/createRandomId";
+import type { QuoteSelector } from "@/lib/api/sse/locators";
+import {
+  buildQuoteSelector,
+  readPdfQuoteTextWindow,
+} from "@/lib/highlights/quoteText";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { isPositiveFinite } from "@/lib/validation";
 import styles from "./PdfReader.module.css";
@@ -117,40 +121,22 @@ export interface PdfReaderControlsState {
   canCreateHighlight: boolean;
   highlightLabel: string;
   isCreating: boolean;
-  createTelemetry: {
-    attempts: number;
-    postRequests: number;
-    patchRequests: number;
-    successes: number;
-    errors: number;
-    lastOutcome: CreateTelemetryOutcome;
-  };
   pageRenderEpoch: number;
   isBusy: boolean;
 }
 
-export interface PdfReaderSelectionQuote {
+export interface PdfReaderSelectionQuote extends QuoteSelector {
   kind: "reader_selection";
   client_context_id: string;
   media_id: string;
   color: HighlightColor;
-  exact: string;
-  prefix?: string;
-  suffix?: string;
   preview: string;
-  locator: {
+  locator: QuoteSelector & {
     type: "pdf_page_geometry";
     media_id: string;
     page_number: number;
     quads: PdfHighlightQuad[];
-    exact: string;
-    prefix?: string;
-    suffix?: string;
-    text_quote_selector: {
-      exact: string;
-      prefix?: string;
-      suffix?: string;
-    };
+    text_quote_selector: QuoteSelector;
   };
 }
 
@@ -225,26 +211,6 @@ interface ProjectedHighlightRect {
   height: number;
 }
 
-type CreateTelemetryOutcome =
-  | "idle"
-  | "attempted"
-  | "skipped_not_usable_or_creating"
-  | "skipped_no_selection"
-  | "skipped_no_geometry"
-  | "request_patch"
-  | "request_post"
-  | "success"
-  | "error";
-
-interface CreateTelemetryState {
-  attempts: number;
-  postRequests: number;
-  patchRequests: number;
-  successes: number;
-  errors: number;
-  lastOutcome: CreateTelemetryOutcome;
-}
-
 interface ViewerEventHandlers {
   pagechanging: (event: unknown) => void;
   pagesloaded: (event: unknown) => void;
@@ -264,7 +230,6 @@ const PDF_TEXT_LAYER_REFRESH_FRAME_BUDGET = 12;
 const PDF_HIGHLIGHT_SCROLL_TARGET_FRACTION = 0.35;
 const PDF_PULSE_DURATION_MS = 1200;
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
-const PDF_QUOTE_CONTEXT_TEXT_RADIUS = 160;
 const OVERLAY_COLOR_MAP: Record<HighlightColor, string> = {
   yellow: "rgba(255, 235, 59, 0.35)",
   green: "rgba(76, 175, 80, 0.3)",
@@ -370,10 +335,7 @@ function isSelectionRangeInTextLayer(
   }
 
   const selectionRect = range.getBoundingClientRect();
-  if (
-    selectionRect.width <= PDF_QUAD_EPSILON ||
-    selectionRect.height <= PDF_QUAD_EPSILON
-  ) {
+  if (!isValidPdfRect(selectionRect)) {
     return false;
   }
   const layerRect = textLayerRoot.getBoundingClientRect();
@@ -429,73 +391,6 @@ function buildSelectionSnapshotKey(selection: SelectionState): string {
     width.toFixed(1),
     height.toFixed(1),
   ].join("::");
-}
-
-function clipQuotePrefix(value: string): string {
-  return collapseWhitespace(value).slice(-PDF_QUOTE_CONTEXT_TEXT_RADIUS);
-}
-
-function clipQuoteSuffix(value: string): string {
-  return collapseWhitespace(value).slice(0, PDF_QUOTE_CONTEXT_TEXT_RADIUS);
-}
-
-function readPdfQuoteTextWindow(
-  range: Range,
-  textLayerRoot: HTMLElement | null,
-): {
-  exact: string;
-  prefix?: string;
-  suffix?: string;
-  pageTextStartOffset?: number;
-  pageTextEndOffset?: number;
-} {
-  const rawExact = range.toString();
-  const exact = collapseWhitespace(rawExact);
-  if (!textLayerRoot) {
-    return { exact };
-  }
-
-  const prefixRange = document.createRange();
-  const suffixRange = document.createRange();
-  try {
-    prefixRange.selectNodeContents(textLayerRoot);
-    prefixRange.setEnd(range.startContainer, range.startOffset);
-    suffixRange.selectNodeContents(textLayerRoot);
-    suffixRange.setStart(range.endContainer, range.endOffset);
-
-    const rawPrefix = prefixRange.toString();
-    const rawSuffix = suffixRange.toString();
-    const rawTrimmedExact = rawExact.trim();
-    const leadingTrimmedLength = rawExact.length - rawExact.trimStart().length;
-    const pageTextStartOffset = rawPrefix.length + leadingTrimmedLength;
-    const pageTextEndOffset = pageTextStartOffset + rawTrimmedExact.length;
-    const prefix = clipQuotePrefix(rawPrefix);
-    const suffix = clipQuoteSuffix(rawSuffix);
-
-    return {
-      exact,
-      ...(prefix ? { prefix } : {}),
-      ...(suffix ? { suffix } : {}),
-      pageTextStartOffset,
-      pageTextEndOffset,
-    };
-  } catch {
-    return { exact };
-  } finally {
-    prefixRange.detach();
-    suffixRange.detach();
-  }
-}
-
-function createInitialCreateTelemetry(): CreateTelemetryState {
-  return {
-    attempts: 0,
-    postRequests: 0,
-    patchRequests: 0,
-    successes: 0,
-    errors: 0,
-    lastOutcome: "idle",
-  };
 }
 
 async function destroyPdfDocument(doc: PdfDocumentLike | null): Promise<void> {
@@ -595,9 +490,6 @@ export default function PdfReader({
   const [pageHighlights, setPageHighlights] = useState<PdfHighlightOut[]>([]);
   const [pulsingHighlightId, setPulsingHighlightId] = useState<string | null>(
     null,
-  );
-  const [createTelemetry, setCreateTelemetry] = useState<CreateTelemetryState>(
-    createInitialCreateTelemetry,
   );
 
   const viewerContainerRef = useRef<HTMLDivElement>(null);
@@ -1090,13 +982,6 @@ export default function PdfReader({
       clearPendingMobileSelectionPublish();
     };
   }, [clearPendingMobileSelectionPublish]);
-
-  const updateCreateTelemetry = useCallback(
-    (updater: (prev: CreateTelemetryState) => CreateTelemetryState) => {
-      setCreateTelemetry((prev) => updater(prev));
-    },
-    [],
-  );
 
   const fetchSignedUrl = useCallback(async () => {
     const response = await apiFetch<PdfFileAccessResponse>(
@@ -1593,18 +1478,15 @@ export default function PdfReader({
       }
 
       const rectsFromRange = Array.from(range.getClientRects()).filter(
-        (rect) =>
-          rect.width > PDF_QUAD_EPSILON && rect.height > PDF_QUAD_EPSILON,
+        isValidPdfRect,
       );
       const fallbackRect = range.getBoundingClientRect();
       const rects =
         rectsFromRange.length > 0
           ? rectsFromRange
-          : fallbackRect.width > PDF_QUAD_EPSILON &&
-              fallbackRect.height > PDF_QUAD_EPSILON
+          : isValidPdfRect(fallbackRect)
             ? [fallbackRect]
-            : layerRect.width > PDF_QUAD_EPSILON &&
-                layerRect.height > PDF_QUAD_EPSILON
+            : isValidPdfRect(layerRect)
               ? [layerRect]
               : [];
 
@@ -1624,27 +1506,25 @@ export default function PdfReader({
       }
 
       const pageRect = pageElement.getBoundingClientRect();
-      if (
-        pageRect.width <= PDF_QUAD_EPSILON ||
-        pageRect.height <= PDF_QUAD_EPSILON
-      ) {
+      if (!isValidPdfRect(pageRect)) {
         return [];
       }
 
       const selectedRect = targetSelection.rect;
-      const clippedRect = {
-        left: Math.max(pageRect.left, selectedRect.left),
-        right: Math.min(pageRect.right, selectedRect.right),
-        top: Math.max(pageRect.top, selectedRect.top),
-        bottom: Math.min(pageRect.bottom, selectedRect.bottom),
-      };
-      if (
-        clippedRect.right - clippedRect.left <= PDF_QUAD_EPSILON ||
-        clippedRect.bottom - clippedRect.top <= PDF_QUAD_EPSILON
-      ) {
+      const left = Math.max(pageRect.left, selectedRect.left);
+      const right = Math.min(pageRect.right, selectedRect.right);
+      const top = Math.max(pageRect.top, selectedRect.top);
+      const bottom = Math.min(pageRect.bottom, selectedRect.bottom);
+      if (!isValidPdfRect({ width: right - left, height: bottom - top })) {
         return [];
       }
-      return [rectToCanonicalQuad(clippedRect, pageRect, pageScaleValue)];
+      return [
+        rectToCanonicalQuad(
+          { left, right, top, bottom },
+          pageRect,
+          pageScaleValue,
+        ),
+      ];
     },
     [getPageElement, readPageScale],
   );
@@ -1718,11 +1598,6 @@ export default function PdfReader({
 
   const handleCreateHighlight = useCallback(
     async (color: HighlightColor): Promise<string | null> => {
-      updateCreateTelemetry((prev) => ({
-        ...prev,
-        attempts: prev.attempts + 1,
-        lastOutcome: "attempted",
-      }));
       const shouldUseAreaFallback = !textGeometryReliable;
       const fallbackSelection: SelectionState | null = (() => {
         const sel = getPdfSelection();
@@ -1751,18 +1626,10 @@ export default function PdfReader({
         !(textLayerUsable || shouldUseAreaFallback || activeSelection) ||
         isCreating
       ) {
-        updateCreateTelemetry((prev) => ({
-          ...prev,
-          lastOutcome: "skipped_not_usable_or_creating",
-        }));
         return null;
       }
 
       if (!activeSelection) {
-        updateCreateTelemetry((prev) => ({
-          ...prev,
-          lastOutcome: "skipped_no_selection",
-        }));
         return null;
       }
 
@@ -1776,10 +1643,6 @@ export default function PdfReader({
             activeSelection.pageNumber,
           );
       if (quads.length === 0) {
-        updateCreateTelemetry((prev) => ({
-          ...prev,
-          lastOutcome: "skipped_no_geometry",
-        }));
         setSelectionError(
           shouldUseAreaFallback
             ? "No selectable area geometry was found for this selection."
@@ -1794,11 +1657,6 @@ export default function PdfReader({
       try {
         let createdHighlightId: string | null = editingHighlightId;
         if (editingHighlightId) {
-          updateCreateTelemetry((prev) => ({
-            ...prev,
-            patchRequests: prev.patchRequests + 1,
-            lastOutcome: "request_patch",
-          }));
           await apiFetch(`/api/highlights/${editingHighlightId}`, {
             method: "PATCH",
             body: JSON.stringify({
@@ -1811,11 +1669,6 @@ export default function PdfReader({
             }),
           });
         } else {
-          updateCreateTelemetry((prev) => ({
-            ...prev,
-            postRequests: prev.postRequests + 1,
-            lastOutcome: "request_post",
-          }));
           const response = await apiFetch<PdfHighlightCreateResponse>(
             `/api/media/${mediaId}/pdf-highlights`,
             {
@@ -1831,21 +1684,11 @@ export default function PdfReader({
           createdHighlightId = response.data.id;
         }
 
-        updateCreateTelemetry((prev) => ({
-          ...prev,
-          successes: prev.successes + 1,
-          lastOutcome: "success",
-        }));
         await refreshPageHighlights(activeSelection.pageNumber, runRef.current);
         onHighlightsMutated?.();
         clearSelection();
         return createdHighlightId;
       } catch (err) {
-        updateCreateTelemetry((prev) => ({
-          ...prev,
-          errors: prev.errors + 1,
-          lastOutcome: "error",
-        }));
         setSelectionError(toUserFacingError(err));
         return null;
       } finally {
@@ -1864,7 +1707,6 @@ export default function PdfReader({
       selection,
       textGeometryReliable,
       textLayerUsable,
-      updateCreateTelemetry,
       onHighlightsMutated,
     ],
   );
@@ -2088,7 +1930,6 @@ export default function PdfReader({
     setPageHighlights([]);
     setTextLayerUsable(false);
     setTextGeometryReliable(true);
-    setCreateTelemetry(createInitialCreateTelemetry());
     pageNumberRef.current = startPage;
     zoomRef.current = startZoomLevel;
     pendingStartPageProgressionRef.current = startPageProgress;
@@ -2415,30 +2256,22 @@ export default function PdfReader({
         return;
       }
 
-      const textQuoteSelector = {
-        exact: quoteText.exact,
-        ...(quoteText.prefix ? { prefix: quoteText.prefix } : {}),
-        ...(quoteText.suffix ? { suffix: quoteText.suffix } : {}),
-      };
+      const selector = buildQuoteSelector(quoteText);
 
       onAskSelection({
         kind: "reader_selection",
         client_context_id: createRandomId("pdf-selection"),
         media_id: mediaId,
         color,
-        exact: quoteText.exact,
-        ...(quoteText.prefix ? { prefix: quoteText.prefix } : {}),
-        ...(quoteText.suffix ? { suffix: quoteText.suffix } : {}),
+        ...selector,
         preview: quoteText.exact.slice(0, 120),
         locator: {
           type: "pdf_page_geometry",
           media_id: mediaId,
           page_number: activeSelection.pageNumber,
           quads,
-          exact: quoteText.exact,
-          ...(quoteText.prefix ? { prefix: quoteText.prefix } : {}),
-          ...(quoteText.suffix ? { suffix: quoteText.suffix } : {}),
-          text_quote_selector: textQuoteSelector,
+          ...selector,
+          text_quote_selector: selector,
         },
       });
       clearSelection();
@@ -2498,14 +2331,6 @@ export default function PdfReader({
         ? "Highlight area"
         : "Highlight selection",
       isCreating,
-      createTelemetry: {
-        attempts: createTelemetry.attempts,
-        postRequests: createTelemetry.postRequests,
-        patchRequests: createTelemetry.patchRequests,
-        successes: createTelemetry.successes,
-        errors: createTelemetry.errors,
-        lastOutcome: createTelemetry.lastOutcome,
-      },
       pageRenderEpoch,
       isBusy: showBusy,
     });
@@ -2515,12 +2340,6 @@ export default function PdfReader({
     canGoPrev,
     canZoomIn,
     canZoomOut,
-    createTelemetry.attempts,
-    createTelemetry.errors,
-    createTelemetry.lastOutcome,
-    createTelemetry.patchRequests,
-    createTelemetry.postRequests,
-    createTelemetry.successes,
     isCreating,
     numPages,
     onControlsStateChange,

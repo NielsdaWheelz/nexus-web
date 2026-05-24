@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isValidPdfRect,
   normalizeQuarterTurnRotation,
   pagePointToViewportPoint,
   projectPdfQuadToViewportRect,
@@ -54,6 +55,14 @@ describe("coordinateTransforms", () => {
     expectClose(rectA.top, rectB.top);
     expectClose(rectA.width, rectB.width);
     expectClose(rectA.height, rectB.height);
+  });
+
+  it("treats sub-epsilon rects as invalid", () => {
+    expect(isValidPdfRect({ width: 1, height: 1 })).toBe(true);
+    expect(isValidPdfRect({ width: 0, height: 1 })).toBe(false);
+    expect(isValidPdfRect({ width: 1, height: 0 })).toBe(false);
+    expect(isValidPdfRect({ width: 0.001, height: 0.001 })).toBe(false);
+    expect(isValidPdfRect({ width: 0.002, height: 0.002 })).toBe(true);
   });
 
   it("projects page points for all rotations", () => {

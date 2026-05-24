@@ -1,7 +1,7 @@
 import type { PdfPageViewLike } from "@/components/pdfReaderRuntime";
 import { isPositiveFinite } from "@/lib/validation";
 import {
-  PDF_QUAD_EPSILON,
+  isValidPdfRect,
   normalizeQuarterTurnRotation,
   type PdfPageViewportTransform,
 } from "./coordinateTransforms";
@@ -80,12 +80,7 @@ export function computePageLayerAlignmentDelta(
   }
   const textRect = textLayer.getBoundingClientRect();
   const canvasRect = canvasSurface.getBoundingClientRect();
-  if (
-    textRect.width <= PDF_QUAD_EPSILON ||
-    textRect.height <= PDF_QUAD_EPSILON ||
-    canvasRect.width <= PDF_QUAD_EPSILON ||
-    canvasRect.height <= PDF_QUAD_EPSILON
-  ) {
+  if (!isValidPdfRect(textRect) || !isValidPdfRect(canvasRect)) {
     return null;
   }
 

@@ -1,11 +1,17 @@
 import { isRecord } from "@/lib/validation";
 import {
   hasOnlyKeys,
-  isOptionalRecord,
   isOptionalString,
   isValidOffsetRange,
   isValidTimeRange,
 } from "./guards";
+
+/** Structured selector for a text quote: the exact text plus optional surrounding context. */
+export interface QuoteSelector {
+  exact: string;
+  prefix?: string;
+  suffix?: string;
+}
 
 export type RetrievalLocator =
   | {
@@ -15,7 +21,7 @@ export type RetrievalLocator =
       start_offset: number;
       end_offset: number;
       media_kind?: string | null;
-      text_quote_selector?: Record<string, unknown> | null;
+      text_quote_selector?: QuoteSelector | null;
     }
   | {
       type: "epub_fragment_offsets";
@@ -25,7 +31,7 @@ export type RetrievalLocator =
       start_offset: number;
       end_offset: number;
       media_kind?: string | null;
-      text_quote_selector?: Record<string, unknown> | null;
+      text_quote_selector?: QuoteSelector | null;
     }
   | {
       type: "pdf_page_geometry";
@@ -35,7 +41,7 @@ export type RetrievalLocator =
       exact: string;
       prefix?: string | null;
       suffix?: string | null;
-      text_quote_selector?: Record<string, unknown> | null;
+      text_quote_selector?: QuoteSelector | null;
     }
   | {
       type: "audio_time_range" | "video_time_range";
@@ -50,7 +56,7 @@ export type RetrievalLocator =
       transcript_version_id?: string | null;
       t_start_ms: number;
       t_end_ms: number;
-      text_quote_selector?: Record<string, unknown> | null;
+      text_quote_selector?: QuoteSelector | null;
     }
   | {
       type: "note_block_offsets";
@@ -132,7 +138,7 @@ export function isRetrievalLocator(value: unknown): value is RetrievalLocator {
         typeof value.fragment_id === "string" &&
         isValidOffsetRange(value) &&
         isOptionalString(value.media_kind) &&
-        isOptionalRecord(value.text_quote_selector)
+        isOptionalQuoteSelector(value.text_quote_selector)
       );
     case "epub_fragment_offsets":
       return (
@@ -151,7 +157,7 @@ export function isRetrievalLocator(value: unknown): value is RetrievalLocator {
         typeof value.fragment_id === "string" &&
         isValidOffsetRange(value) &&
         isOptionalString(value.media_kind) &&
-        isOptionalRecord(value.text_quote_selector)
+        isOptionalQuoteSelector(value.text_quote_selector)
       );
     case "pdf_page_geometry":
       return (
@@ -175,7 +181,7 @@ export function isRetrievalLocator(value: unknown): value is RetrievalLocator {
         typeof value.exact === "string" &&
         isOptionalString(value.prefix) &&
         isOptionalString(value.suffix) &&
-        isOptionalRecord(value.text_quote_selector)
+        isOptionalQuoteSelector(value.text_quote_selector)
       );
     case "transcript_time_range":
       return (
@@ -190,7 +196,7 @@ export function isRetrievalLocator(value: unknown): value is RetrievalLocator {
         typeof value.media_id === "string" &&
         isValidTimeRange(value) &&
         isOptionalString(value.transcript_version_id) &&
-        isOptionalRecord(value.text_quote_selector)
+        isOptionalQuoteSelector(value.text_quote_selector)
       );
     case "audio_time_range":
     case "video_time_range":
@@ -271,6 +277,19 @@ export function isRetrievalLocator(value: unknown): value is RetrievalLocator {
     default:
       return false;
   }
+}
+
+function isOptionalQuoteSelector(value: unknown): value is QuoteSelector | null | undefined {
+  if (value === null || value === undefined) return true;
+  if (!isRecord(value)) return false;
+  if (typeof value.exact !== "string") return false;
+  if (value.prefix !== undefined && typeof value.prefix !== "string") {
+    return false;
+  }
+  if (value.suffix !== undefined && typeof value.suffix !== "string") {
+    return false;
+  }
+  return true;
 }
 
 function isPdfGeometryQuad(value: unknown): value is Record<string, number> {
