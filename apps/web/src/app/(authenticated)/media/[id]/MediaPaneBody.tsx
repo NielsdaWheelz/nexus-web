@@ -140,8 +140,8 @@ import {
   type TranscriptPlaybackSource,
   type TranscriptState,
   resolveActiveTranscriptFragment,
-  normalizeTranscriptChapters,
 } from "./transcriptView";
+import { normalizeTrackChapters } from "@/lib/player/chapters";
 import {
   type Highlight,
   type MediaHighlight,
@@ -4487,7 +4487,7 @@ export default function MediaPaneBody() {
         source_url: playbackSource.source_url,
         podcast_title: media.podcast_title ?? undefined,
         image_url: media.podcast_image_url ?? undefined,
-        chapters: normalizeTranscriptChapters(media.chapters),
+        chapters: normalizeTrackChapters(media.chapters),
       },
       trackOptions,
     );

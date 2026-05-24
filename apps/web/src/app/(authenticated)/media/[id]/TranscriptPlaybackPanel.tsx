@@ -5,10 +5,12 @@ import Image from "next/image";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
-import type { GlobalPlayerChapter } from "@/lib/player/chapters";
+import {
+  normalizeTrackChapters,
+  type GlobalPlayerChapter,
+} from "@/lib/player/chapters";
 import {
   formatTranscriptTimestampMs,
-  normalizeTranscriptChapters,
   type TranscriptChapter,
   type TranscriptPlaybackSource,
 } from "./transcriptView";
@@ -251,7 +253,7 @@ export default function TranscriptPlaybackPanel({
   const [playbackError, setPlaybackError] = useState(false);
 
   const normalizedChapters = useMemo(
-    () => normalizeTranscriptChapters(chapters),
+    () => normalizeTrackChapters(chapters),
     [chapters]
   );
   const activeChapter = useMemo(

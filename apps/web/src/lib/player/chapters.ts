@@ -15,8 +15,17 @@ export interface GlobalPlayerChapter {
   image_url: string | null;
 }
 
+export interface ChapterInput {
+  chapter_idx: number;
+  title: string;
+  t_start_ms: number;
+  t_end_ms?: number | null;
+  url?: string | null;
+  image_url?: string | null;
+}
+
 export function normalizeTrackChapters(
-  chapters: GlobalPlayerChapter[] | null | undefined,
+  chapters: ReadonlyArray<ChapterInput> | null | undefined,
 ): GlobalPlayerChapter[] {
   if (!Array.isArray(chapters)) {
     return [];

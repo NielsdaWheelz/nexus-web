@@ -4,9 +4,9 @@ import type { CSSProperties, MouseEvent, RefObject } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
+import { normalizeTrackChapters } from "@/lib/player/chapters";
 import {
   formatTranscriptTimestampMs,
-  normalizeTranscriptChapters,
   type TranscriptChapter,
   type TranscriptCoverage,
   type TranscriptFragment,
@@ -61,7 +61,7 @@ export default function TranscriptContentPanel({
   const readerSurfaceClassName = `${styles.readerContentRoot} ${
     profile.theme === "dark" ? styles.readerThemeDark : styles.readerThemeLight
   }`;
-  const normalizedChapters = normalizeTranscriptChapters(chapters);
+  const normalizedChapters = normalizeTrackChapters(chapters);
   const isReadablePartialTranscript =
     transcriptState === "partial" || transcriptCoverage === "partial";
   const timeline: Array<

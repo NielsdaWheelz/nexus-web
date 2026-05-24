@@ -1,7 +1,5 @@
 "use client";
 
-import { type GlobalPlayerChapter } from "@/lib/player/chapters";
-
 export interface TranscriptPlaybackSource {
   kind: "external_audio" | "external_video";
   stream_url: string;
@@ -197,37 +195,3 @@ export function resolveActiveTranscriptFragment(
   return fragments[0] ?? null;
 }
 
-export function normalizeTranscriptChapters(
-  chapters: TranscriptChapter[] | null | undefined
-): GlobalPlayerChapter[] {
-  if (!Array.isArray(chapters)) {
-    return [];
-  }
-
-  return chapters
-    .filter(
-      (chapter) =>
-        chapter != null &&
-        Number.isFinite(chapter.chapter_idx) &&
-        typeof chapter.title === "string" &&
-        chapter.title.trim().length > 0 &&
-        Number.isFinite(chapter.t_start_ms) &&
-        chapter.t_start_ms >= 0
-    )
-    .map((chapter) => ({
-      chapter_idx: Math.max(0, Math.floor(chapter.chapter_idx)),
-      title: chapter.title.trim(),
-      t_start_ms: Math.max(0, Math.floor(chapter.t_start_ms)),
-      t_end_ms:
-        typeof chapter.t_end_ms === "number" && Number.isFinite(chapter.t_end_ms)
-          ? Math.max(0, Math.floor(chapter.t_end_ms))
-          : null,
-      url: chapter.url ?? null,
-      image_url: chapter.image_url ?? null,
-    }))
-    .sort((lhs, rhs) =>
-      lhs.t_start_ms === rhs.t_start_ms
-        ? lhs.chapter_idx - rhs.chapter_idx
-        : lhs.t_start_ms - rhs.t_start_ms
-    );
-}
