@@ -60,6 +60,7 @@ import {
   type CanonicalCursorResult,
 } from "@/lib/highlights/canonicalCursor";
 import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
+import { parseRawPdfQuads } from "@/lib/highlights/pdfTypes";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { selectionToOffsets } from "@/lib/highlights/selectionToOffsets";
 import {
@@ -263,13 +264,11 @@ const READER_POSITION_BUCKET_CP = 1024;
 const DOCUMENT_PROCESSING_POLL_INTERVAL_MS = 3000;
 const READER_SELECTION_CONTEXT_CP = 160;
 
-function createEmptyPdfHighlightsPaneState(): PdfHighlightsPaneState {
-  return {
-    activePage: 1,
-    highlights: [],
-    version: 0,
-  };
-}
+const EMPTY_PDF_HIGHLIGHTS_PANE_STATE: PdfHighlightsPaneState = {
+  activePage: 1,
+  highlights: [],
+  version: 0,
+};
 
 function buildSelectionSnapshotKey(selection: SelectionState): string {
   const { left, top, width, height } = selection.rect;
@@ -521,7 +520,7 @@ export default function MediaPaneBody() {
   // distinct from the per-fragment `highlights` above.
   const [mediaHighlights, setMediaHighlights] = useState<MediaHighlight[]>([]);
   const [pdfHighlightsPaneState, setPdfHighlightsPaneState] =
-    useState<PdfHighlightsPaneState>(createEmptyPdfHighlightsPaneState);
+    useState<PdfHighlightsPaneState>(EMPTY_PDF_HIGHLIGHTS_PANE_STATE);
   // Accumulated PDF highlights across rendered pages. The reader streams page
   // highlights into us via `onPageHighlightsChange`; the gutter projects only
   // highlights whose page geometry is currently visible.
@@ -996,7 +995,7 @@ export default function MediaPaneBody() {
   useEffect(() => {
     // Reset PDF-specific pane state whenever media identity/type changes.
     // This prevents stale cross-document rows from flashing during navigation.
-    setPdfHighlightsPaneState(createEmptyPdfHighlightsPaneState());
+    setPdfHighlightsPaneState(EMPTY_PDF_HIGHLIGHTS_PANE_STATE);
     setPdfDocumentHighlights([]);
     setPdfRefreshToken(0);
     setReaderSourceTarget(null);
@@ -2134,43 +2133,9 @@ export default function MediaPaneBody() {
       ) {
         return null;
       }
-
-      const rawQuads = (geometry as Record<string, unknown>).quads;
-      if (!Array.isArray(rawQuads)) {
-        return null;
-      }
-
-      const quads = rawQuads.flatMap((rawQuad) => {
-        if (
-          typeof rawQuad !== "object" ||
-          rawQuad === null ||
-          Array.isArray(rawQuad)
-        ) {
-          return [];
-        }
-        const quad = rawQuad as Record<string, unknown>;
-        const x1 = quad.x1;
-        const y1 = quad.y1;
-        const x2 = quad.x2;
-        const y2 = quad.y2;
-        const x3 = quad.x3;
-        const y3 = quad.y3;
-        const x4 = quad.x4;
-        const y4 = quad.y4;
-        if (
-          typeof x1 !== "number" ||
-          typeof y1 !== "number" ||
-          typeof x2 !== "number" ||
-          typeof y2 !== "number" ||
-          typeof x3 !== "number" ||
-          typeof y3 !== "number" ||
-          typeof x4 !== "number" ||
-          typeof y4 !== "number"
-        ) {
-          return [];
-        }
-        return [{ x1, y1, x2, y2, x3, y3, x4, y4 }];
-      });
+      const quads = parseRawPdfQuads(
+        (geometry as Record<string, unknown>).quads,
+      );
       if (quads.length === 0) {
         return null;
       }
@@ -2193,51 +2158,18 @@ export default function MediaPaneBody() {
     ) {
       return null;
     }
-    const type = locator.type;
-    if (type !== "pdf_page_geometry") {
+    if (locator.type !== "pdf_page_geometry") {
       return null;
     }
     const pageNumber = locator.page_number;
-    const rawQuads = locator.quads;
     if (
       typeof pageNumber !== "number" ||
       !Number.isInteger(pageNumber) ||
-      pageNumber < 1 ||
-      !Array.isArray(rawQuads)
+      pageNumber < 1
     ) {
       return null;
     }
-    const quads = rawQuads.flatMap((rawQuad) => {
-      if (
-        typeof rawQuad !== "object" ||
-        rawQuad === null ||
-        Array.isArray(rawQuad)
-      ) {
-        return [];
-      }
-      const quad = rawQuad as Record<string, unknown>;
-      const x1 = quad.x1;
-      const y1 = quad.y1;
-      const x2 = quad.x2;
-      const y2 = quad.y2;
-      const x3 = quad.x3;
-      const y3 = quad.y3;
-      const x4 = quad.x4;
-      const y4 = quad.y4;
-      if (
-        typeof x1 !== "number" ||
-        typeof y1 !== "number" ||
-        typeof x2 !== "number" ||
-        typeof y2 !== "number" ||
-        typeof x3 !== "number" ||
-        typeof y3 !== "number" ||
-        typeof x4 !== "number" ||
-        typeof y4 !== "number"
-      ) {
-        return [];
-      }
-      return [{ x1, y1, x2, y2, x3, y3, x4, y4 }];
-    });
+    const quads = parseRawPdfQuads(locator.quads);
     if (quads.length === 0) {
       return null;
     }
