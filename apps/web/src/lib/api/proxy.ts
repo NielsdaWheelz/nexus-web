@@ -225,6 +225,30 @@ function upstreamUnavailableResponse(requestId: string): NextResponse {
   );
 }
 
+/**
+ * Read the backend response body in the right shape for the request:
+ * - null for HEAD/204/205/304 (body forbidden)
+ * - text for JSON/text content types (preserves encoding)
+ * - ArrayBuffer for everything else (preserves bytes)
+ */
+async function readProxiedBody(
+  response: Response,
+  request: Request
+): Promise<string | ArrayBuffer | null> {
+  if (
+    request.method === "HEAD" ||
+    response.status === 204 ||
+    response.status === 205 ||
+    response.status === 304
+  ) {
+    return null;
+  }
+  if (isTextContentType(response.headers.get("content-type"))) {
+    return await response.text();
+  }
+  return await response.arrayBuffer();
+}
+
 async function createDefaultDeps(): Promise<ProxyDeps> {
   return {
     readSession: (request) =>
@@ -429,39 +453,15 @@ export async function proxyToFastAPIWithDeps(
       responseHeaders.set("cache-control", "no-store");
     }
 
-    // 204/205/304 and HEAD responses must not include a body.
-    // Creating a Response with body bytes for these statuses throws.
-    let proxied: NextResponse;
-    if (
-      request.method === "HEAD" ||
-      response.status === 204 ||
-      response.status === 205 ||
-      response.status === 304
-    ) {
-      proxied = new NextResponse(null, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: responseHeaders,
-      });
-    } else if (isTextContentType(response.headers.get("content-type"))) {
-      // Text/JSON response - use text() to preserve encoding
-      const text = await response.text();
-      setBodyContentLength(responseHeaders, text);
-      proxied = new NextResponse(text, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: responseHeaders,
-      });
-    } else {
-      // Binary response - use arrayBuffer() to preserve bytes
-      const buffer = await response.arrayBuffer();
-      setBodyContentLength(responseHeaders, buffer);
-      proxied = new NextResponse(buffer, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: responseHeaders,
-      });
+    const responseBody = await readProxiedBody(response, request);
+    if (responseBody !== null) {
+      setBodyContentLength(responseHeaders, responseBody);
     }
+    const proxied = new NextResponse(responseBody, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
+    });
 
     for (const { name, value, options } of rotatedCookies) {
       proxied.cookies.set(name, value, options);
@@ -580,33 +580,11 @@ export async function proxyExtensionToFastAPI(
         : requestId,
     });
     const responseContentType = response.headers.get("content-type");
-
     if (responseContentType) {
       responseHeaders.set("Content-Type", responseContentType);
     }
 
-    if (
-      request.method === "HEAD" ||
-      response.status === 204 ||
-      response.status === 205 ||
-      response.status === 304
-    ) {
-      return new Response(null, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: responseHeaders,
-      });
-    }
-
-    if (isTextContentType(responseContentType)) {
-      return new Response(await response.text(), {
-        status: response.status,
-        statusText: response.statusText,
-        headers: responseHeaders,
-      });
-    }
-
-    return new Response(await response.arrayBuffer(), {
+    return new Response(await readProxiedBody(response, request), {
       status: response.status,
       statusText: response.statusText,
       headers: responseHeaders,
