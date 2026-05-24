@@ -155,12 +155,8 @@ export default function PodcastDetailPaneBody() {
   const [batchTranscriptSummary, setBatchTranscriptSummary] = useState<
     string | null
   >(null);
-  const [expandedShowNotesMediaIds, setExpandedShowNotesMediaIds] = useState<
-    Set<string>
-  >(new Set());
-  const [expandedTranscriptMediaIds, setExpandedTranscriptMediaIds] = useState<
-    Set<string>
-  >(new Set());
+  const expandedShowNotesMediaIds = useStringIdSet();
+  const expandedTranscriptMediaIds = useStringIdSet();
   const requestingTranscriptMediaIds = useStringIdSet();
   const forecastingTranscriptMediaIdsRef = useRef<Set<string>>(new Set());
   const [
@@ -297,7 +293,7 @@ export default function PodcastDetailPaneBody() {
       ]);
       setDetail(detailResp.data);
       setEpisodes(episodesResp.data);
-      setExpandedShowNotesMediaIds(new Set());
+      expandedShowNotesMediaIds.clear();
       setHasMoreEpisodes(episodesResp.data.length === EPISODES_PAGE_SIZE);
       forecastingTranscriptMediaIdsRef.current.clear();
       setTranscriptRequestForecastByMediaId({});
@@ -328,6 +324,7 @@ export default function PodcastDetailPaneBody() {
     episodeSearchQuery,
     episodeSort,
     episodeStateFilter,
+    expandedShowNotesMediaIds,
     podcastId,
   ]);
 
@@ -925,17 +922,16 @@ export default function PodcastDetailPaneBody() {
     [episodes, transcriptionAllowed],
   );
 
-  const toggleEpisodeShowNotesExpansion = useCallback((mediaId: string) => {
-    setExpandedShowNotesMediaIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(mediaId)) {
-        next.delete(mediaId);
+  const toggleEpisodeShowNotesExpansion = useCallback(
+    (mediaId: string) => {
+      if (expandedShowNotesMediaIds.has(mediaId)) {
+        expandedShowNotesMediaIds.remove(mediaId);
       } else {
-        next.add(mediaId);
+        expandedShowNotesMediaIds.add(mediaId);
       }
-      return next;
-    });
-  }, []);
+    },
+    [expandedShowNotesMediaIds],
+  );
 
   const handleMarkAllVisibleUnplayedAsPlayed = useCallback(async () => {
     if (visibleUnplayedEpisodeIds.length === 0) {
@@ -1490,7 +1486,9 @@ export default function PodcastDetailPaneBody() {
                 : false);
             const inQueue = queueMediaIds.has(episode.id);
             const showNotesText = episode.description_text?.trim() ?? "";
-            const showNotesExpanded = expandedShowNotesMediaIds.has(episode.id);
+            const showNotesExpanded = expandedShowNotesMediaIds.ids.has(
+              episode.id,
+            );
             const authorSummary = formatContributorCreditSummary(
               episode.contributors,
               1,
@@ -1659,16 +1657,14 @@ export default function PodcastDetailPaneBody() {
                       <span className={styles.queueBadge}>In Queue</span>
                     )}
                     {canRequestTranscript &&
-                      !expandedTranscriptMediaIds.has(episode.id) && (
+                      !expandedTranscriptMediaIds.ids.has(episode.id) && (
                         <Button
                           variant="secondary"
                           size="sm"
                           onClick={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
-                            setExpandedTranscriptMediaIds((prev) =>
-                              new Set(prev).add(episode.id),
-                            );
+                            expandedTranscriptMediaIds.add(episode.id);
                           }}
                           aria-label={`Request transcript for ${episode.title}`}
                         >
@@ -1676,7 +1672,7 @@ export default function PodcastDetailPaneBody() {
                         </Button>
                       )}
                     {canRequestTranscript &&
-                      expandedTranscriptMediaIds.has(episode.id) && (
+                      expandedTranscriptMediaIds.ids.has(episode.id) && (
                         <>
                           <label className={styles.reasonLabel}>
                             Transcript reason
