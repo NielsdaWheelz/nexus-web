@@ -12,7 +12,7 @@ import {
   toPublicAuthErrorMessage,
 } from "./messages";
 
-export interface AuthCallbackDeps {
+interface AuthCallbackDeps {
   exchangeCodeForSession: (code: string) => Promise<{
     data: { session: { access_token: string; refresh_token: string } | null };
     error: { message: string } | null;

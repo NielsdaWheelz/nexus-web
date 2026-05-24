@@ -5,7 +5,7 @@ import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 
 const SCROLL_RETRY_ATTEMPTS = 8;
 
-export interface PdfScrollTarget {
+interface PdfScrollTarget {
   /** Idempotency key — repeated effects with the same key are ignored. */
   key: string;
   pageNumber: number;

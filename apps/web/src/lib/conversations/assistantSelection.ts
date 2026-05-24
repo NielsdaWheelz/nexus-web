@@ -1,8 +1,8 @@
 import type { BranchAnchor } from "@/lib/conversations/types";
 
-export type AssistantSelectionOffsetStatus = "mapped" | "unmapped";
+type AssistantSelectionOffsetStatus = "mapped" | "unmapped";
 
-export interface AssistantSelectionMapping {
+interface AssistantSelectionMapping {
   offset_status: AssistantSelectionOffsetStatus;
   start_offset: number | null;
   end_offset: number | null;

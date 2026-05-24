@@ -5,7 +5,7 @@ export const DEFAULT_AUTH_REDIRECT = "/libraries";
 const LOGIN_PATH = "/login";
 const AUTH_PATH_PREFIX = "/auth/";
 
-export type AuthSearchParam = string | string[] | undefined;
+type AuthSearchParam = string | string[] | undefined;
 
 export function getFirstSearchParamValue(value: AuthSearchParam): string | null {
   if (typeof value === "string") {

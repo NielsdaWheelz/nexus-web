@@ -55,13 +55,13 @@ function normalize(value: string | null | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export interface MediaSessionTrack {
+interface MediaSessionTrack {
   title: string;
   podcast_title?: string | null;
   image_url?: string | null;
 }
 
-export interface MediaSessionHandlers {
+interface MediaSessionHandlers {
   play: () => void;
   pause: () => void;
   skipBackward: () => void;

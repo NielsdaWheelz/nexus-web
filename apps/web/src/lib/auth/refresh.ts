@@ -15,7 +15,7 @@ import { type CookieToSet } from "@/lib/supabase/types";
 // reports a re-presented just-rotated token with this exact REST error code.
 const REFRESH_TOKEN_ALREADY_USED_CODE = "refresh_token_already_used";
 
-export type RefreshResult =
+type RefreshResult =
   | { status: "refreshed"; cookiesToSet: CookieToSet[] }
   | { status: "failed"; reason: "timeout" | "auth_error" | "no_session" };
 

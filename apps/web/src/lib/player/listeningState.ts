@@ -6,7 +6,7 @@ import { useIntervalPoll } from "@/lib/useIntervalPoll";
 
 const SYNC_INTERVAL_MS = 15_000;
 
-export interface ListeningStatePayload {
+interface ListeningStatePayload {
   position_ms: number;
   duration_ms: number | null;
   playback_speed: number;

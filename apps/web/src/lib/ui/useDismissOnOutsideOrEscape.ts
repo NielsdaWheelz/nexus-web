@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, type RefObject } from "react";
 
-export type DismissReason = "outside-click" | "escape";
+type DismissReason = "outside-click" | "escape";
 
 /**
  * While `enabled`, dismiss a panel / menu / popover when the user either:

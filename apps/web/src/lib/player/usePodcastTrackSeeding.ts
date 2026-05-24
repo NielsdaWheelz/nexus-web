@@ -10,7 +10,7 @@ import {
   type GlobalPlayerChapter,
 } from "@/lib/player/chapters";
 
-export interface PodcastSeedingTarget {
+interface PodcastSeedingTarget {
   id: string;
   kind: string;
   title: string;

@@ -19,7 +19,7 @@ const VERIFY_DEADLINE_MS = 2_000;
 
 // The verified viewer for the current request. Authentication only — resource
 // ownership is checked by each caller against this identity.
-export interface Viewer {
+interface Viewer {
   userId: string;
   email: string | null;
 }

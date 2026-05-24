@@ -11,7 +11,7 @@ import {
 } from "@/lib/media/mediaLibraries";
 import { usePaneRouter } from "@/lib/panes/paneRuntime";
 
-export interface LibraryMembership {
+interface LibraryMembership {
   libraries: LibraryTargetPickerItem[];
   loading: boolean;
   error: string | null;
