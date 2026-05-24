@@ -15,6 +15,7 @@ import {
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
@@ -365,22 +366,19 @@ export default function PodcastDetailPaneBody() {
     podcastId,
   ]);
 
+  useBodyOverflowLock(episodesDrawerOpen);
+
   useEffect(() => {
     if (!episodesDrawerOpen) {
       return;
     }
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setEpisodesDrawerOpen(false);
       }
     };
     document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", handleEscape);
-    };
+    return () => document.removeEventListener("keydown", handleEscape);
   }, [episodesDrawerOpen]);
 
   useEffect(() => {
