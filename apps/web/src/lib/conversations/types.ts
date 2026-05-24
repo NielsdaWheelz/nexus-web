@@ -115,7 +115,7 @@ export interface MessageRetrieval {
   result_ref: MessageRetrievalResultRef;
   deep_link: string | null;
   citation_label?: string | null;
-  locator?: MessageRetrievalLocator | null;
+  locator?: RetrievalLocator | null;
   score: number | null;
   selected: boolean;
   source_title?: string | null;
@@ -132,8 +132,6 @@ export interface MessageRetrieval {
 export type MessageRetrievalResultRef =
   | SearchCitationEventData
   | WebCitationEventData;
-
-export type MessageRetrievalLocator = RetrievalLocator;
 
 export type ConversationSourceRefType =
   | "message"
@@ -273,7 +271,7 @@ export interface MessageClaimEvidence {
   created_at: string;
 }
 
-export type ConversationMemoryKind =
+type ConversationMemoryKind =
   | "goal"
   | "constraint"
   | "decision"
