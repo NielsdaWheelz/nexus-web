@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useStringIdSet } from "@/lib/useStringIdSet";
+
 const PANE_CANVAS_DRAG_THRESHOLD_PX = 4;
 
 export function usePaneCanvas({
@@ -15,7 +17,8 @@ export function usePaneCanvas({
   const cleanupRef = useRef<(() => void) | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const [edges, setEdges] = useState({ atStart: false, atEnd: false });
-  const [inViewPaneIds, setInViewPaneIds] = useState<Set<string>>(new Set());
+  const inViewPaneIds = useStringIdSet();
+  const { add: markPaneInView, remove: markPaneOutOfView } = inViewPaneIds;
 
   const paneIdsKey = paneIds.join(",");
 
@@ -166,21 +169,17 @@ export function usePaneCanvas({
     }
     const observer = new IntersectionObserver(
       (entries) => {
-        setInViewPaneIds((prev) => {
-          const next = new Set(prev);
-          for (const entry of entries) {
-            const id = entry.target.getAttribute("data-pane-id");
-            if (!id) {
-              continue;
-            }
-            if (entry.isIntersecting) {
-              next.add(id);
-            } else {
-              next.delete(id);
-            }
+        for (const entry of entries) {
+          const id = entry.target.getAttribute("data-pane-id");
+          if (!id) {
+            continue;
           }
-          return next;
-        });
+          if (entry.isIntersecting) {
+            markPaneInView(id);
+          } else {
+            markPaneOutOfView(id);
+          }
+        }
       },
       { root: canvas, threshold: 0 }
     );
@@ -188,7 +187,7 @@ export function usePaneCanvas({
       observer.observe(wrap);
     }
     return () => observer.disconnect();
-  }, [enabled, paneIdsKey]);
+  }, [enabled, paneIdsKey, markPaneInView, markPaneOutOfView]);
 
   const scrollPaneIntoView = useCallback((paneId: string) => {
     const behavior = window.matchMedia("(prefers-reduced-motion: reduce)")
@@ -204,7 +203,7 @@ export function usePaneCanvas({
     canvasRef,
     onWheel,
     edges,
-    inViewPaneIds,
+    inViewPaneIds: inViewPaneIds.ids,
     handleChromeMouseDown,
     scrollPaneIntoView,
   };
