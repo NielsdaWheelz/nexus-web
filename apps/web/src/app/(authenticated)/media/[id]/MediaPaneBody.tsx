@@ -2741,48 +2741,48 @@ export default function MediaPaneBody() {
   // Highlight Editing Callbacks
   // ==========================================================================
 
-  const handleColorChange = useCallback(
-    async (highlightId: string, color: HighlightColor) => {
+  /**
+   * Apply a backend mutation against the active highlight and refresh local
+   * state. The PDF path re-runs page rendering via `pdfRefreshToken`; the
+   * fragment/transcript path re-fetches highlights with a stale-response
+   * guard. Returns `false` when the request was discarded as stale or no
+   * fragment is active — callers gate post-mutation side effects on this.
+   */
+  const applyHighlightMutation = useCallback(
+    async (mutation: () => Promise<unknown>): Promise<boolean> => {
       if (isPdf) {
-        await updateHighlight(highlightId, { color });
+        await mutation();
         setPdfRefreshToken((v) => v + 1);
         refreshMediaHighlights();
-        return;
+        return true;
       }
-      if (!activeContent) return;
+      if (!activeContent) return false;
       const requestVersion = ++highlightVersionRef.current;
-      await updateHighlight(highlightId, { color });
+      await mutation();
       const newHighlights = await fetchHighlights(activeContent.fragmentId);
-      if (requestVersion !== highlightVersionRef.current) {
-        return;
-      }
+      if (requestVersion !== highlightVersionRef.current) return false;
       setHighlights(newHighlights);
       refreshMediaHighlights();
+      return true;
     },
     [activeContent, isPdf, refreshMediaHighlights],
   );
 
+  const handleColorChange = useCallback(
+    async (highlightId: string, color: HighlightColor) => {
+      await applyHighlightMutation(() => updateHighlight(highlightId, { color }));
+    },
+    [applyHighlightMutation],
+  );
+
   const handleDelete = useCallback(
     async (highlightId: string) => {
-      if (isPdf) {
-        await deleteHighlight(highlightId);
-        setPdfRefreshToken((v) => v + 1);
-        refreshMediaHighlights();
-        clearFocus();
-        return;
-      }
-      if (!activeContent) return;
-      const requestVersion = ++highlightVersionRef.current;
-      await deleteHighlight(highlightId);
-      const newHighlights = await fetchHighlights(activeContent.fragmentId);
-      if (requestVersion !== highlightVersionRef.current) {
-        return;
-      }
-      setHighlights(newHighlights);
-      refreshMediaHighlights();
-      clearFocus();
+      const applied = await applyHighlightMutation(() =>
+        deleteHighlight(highlightId),
+      );
+      if (applied) clearFocus();
     },
-    [activeContent, clearFocus, isPdf, refreshMediaHighlights],
+    [applyHighlightMutation, clearFocus],
   );
 
   const applyToAllHighlightSlots = useCallback(
