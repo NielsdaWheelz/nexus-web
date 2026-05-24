@@ -159,7 +159,7 @@ def run_scheduled_active_subscription_poll(
             limit=effective_limit,
             sync_lease_seconds=sync_lease_seconds,
         )
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: scheduled-poll boundary; record run failure for ops visibility before re-raising
         with transaction(db):
             _mark_subscription_poll_run_failed(
                 db,
@@ -291,7 +291,7 @@ def poll_active_subscriptions_once(
                 failure_code_breakdown[error_code] = failure_code_breakdown.get(error_code, 0) + 1
             else:
                 processed_count += 1
-        except Exception as exc:
+        except Exception as exc:  # justify-ignore-error: per-subscription poll boundary; one failing sub must not abort the poll batch
             logger.exception(
                 "podcast_active_poll_sync_failed",
                 user_id=str(user_id),
@@ -619,7 +619,7 @@ def run_podcast_subscription_sync_now(
     except ApiError as exc:
         error_code = exc.code.value
         error_message = exc.message
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: per-subscription sync boundary; record failure code for ops without aborting upstream poll
         logger.exception(
             "podcast_sync_unexpected_error",
             user_id=str(user_id),
@@ -1044,7 +1044,7 @@ def _sync_subscription_ingest(
                 transcript_segments=transcript_segments,
                 reason="rss_feed",
             )
-        except Exception as exc:
+        except Exception as exc:  # justify-ignore-error: semantic index is non-fatal; transcript stays usable on failure
             semantic_status = "failed"
             error_code = (
                 exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INTERNAL.value
@@ -1383,7 +1383,7 @@ def _enqueue_podcast_subscription_sync(
             },
         )
         return True
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: enqueue boundary; re-raise as ApiError so callers see a typed failure
         logger.error(
             "podcast_sync_enqueue_failed",
             user_id=str(user_id),
