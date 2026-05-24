@@ -15,6 +15,7 @@ import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import HoverPreview, {
   HOVER_PREVIEW_DELAY_MS,
 } from "@/components/ui/HoverPreview";
+import { clamp } from "@/lib/clamp";
 import { cx } from "@/lib/ui/cx";
 import { type PositionedHighlight } from "./overviewPositions";
 import { findScrollParent } from "./useAnchoredHighlightProjection";
@@ -29,10 +30,6 @@ interface ReaderOverviewRulerProps {
   documentSpan: { start: number; end: number };
   onActivateHighlight: (highlightId: string) => void;
   onOpenHighlights: () => void;
-}
-
-function clampFraction(value: number): number {
-  return Math.min(1, Math.max(0, value));
 }
 
 interface Cluster {
@@ -154,8 +151,8 @@ export default function ReaderOverviewRuler({
     const endFrac =
       scrollHeight > 0 ? (scrollTop + clientHeight) / scrollHeight : 1;
     return {
-      start: clampFraction(documentSpan.start + startFrac * range),
-      end: clampFraction(documentSpan.start + endFrac * range),
+      start: clamp(documentSpan.start + startFrac * range, 0, 1),
+      end: clamp(documentSpan.start + endFrac * range, 0, 1),
     };
   }, [scrollState, documentSpan]);
 
