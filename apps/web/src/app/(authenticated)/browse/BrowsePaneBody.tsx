@@ -51,6 +51,7 @@ import {
   type BrowseSectionType,
   type BrowseVideoResult,
 } from "./browseState";
+import { useStringIdSet } from "@/lib/useStringIdSet";
 import styles from "./page.module.css";
 
 type LibrarySummary = {
@@ -73,7 +74,7 @@ export default function BrowsePaneBody() {
   const [loadingMoreTypes, setLoadingMoreTypes] = useState<
     Set<BrowseSectionType>
   >(new Set());
-  const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
+  const busyKeys = useStringIdSet();
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [hasSearched, setHasSearched] = useState(Boolean(appliedQuery));
   const [libraries, setLibraries] = useState<LibraryTargetPickerItem[]>([]);
@@ -171,7 +172,7 @@ export default function BrowsePaneBody() {
     }
 
     const busyKey = `podcast:${result.provider_podcast_id}`;
-    setBusyKeys((current) => new Set(current).add(busyKey));
+    busyKeys.add(busyKey);
     setError(null);
     try {
       const response = await apiFetch<{ data: { podcast_id: string } }>(
@@ -220,11 +221,7 @@ export default function BrowsePaneBody() {
     } catch (openError) {
       setError(toFeedback(openError, { fallback: "Failed to open podcast" }));
     } finally {
-      setBusyKeys((current) => {
-        const next = new Set(current);
-        next.delete(busyKey);
-        return next;
-      });
+      busyKeys.remove(busyKey);
     }
   }
 
@@ -233,7 +230,7 @@ export default function BrowsePaneBody() {
     libraryId: string | null = null,
   ) {
     const busyKey = `podcast:${result.provider_podcast_id}`;
-    setBusyKeys((current) => new Set(current).add(busyKey));
+    busyKeys.add(busyKey);
     setError(null);
     try {
       const response = await subscribeToPodcast({
@@ -260,11 +257,7 @@ export default function BrowsePaneBody() {
         toFeedback(followError, { fallback: "Failed to follow podcast" }),
       );
     } finally {
-      setBusyKeys((current) => {
-        const next = new Set(current);
-        next.delete(busyKey);
-        return next;
-      });
+      busyKeys.remove(busyKey);
     }
   }
 
@@ -281,7 +274,7 @@ export default function BrowsePaneBody() {
       result.type === "documents"
         ? `document:${result.url}`
         : `video:${result.provider_video_id}`;
-    setBusyKeys((current) => new Set(current).add(busyKey));
+    busyKeys.add(busyKey);
     setError(null);
     try {
       const added = await addMediaFromUrl({
@@ -308,11 +301,7 @@ export default function BrowsePaneBody() {
     } catch (addError) {
       setError(toFeedback(addError, { fallback: "Failed to add result" }));
     } finally {
-      setBusyKeys((current) => {
-        const next = new Set(current);
-        next.delete(busyKey);
-        return next;
-      });
+      busyKeys.remove(busyKey);
     }
   }
 
@@ -454,7 +443,7 @@ export default function BrowsePaneBody() {
             <div className={styles.resultRows}>
               {sections[sectionType].results.map((result) => {
                 if (result.type === "documents") {
-                  const busy = busyKeys.has(`document:${result.url}`);
+                  const busy = busyKeys.ids.has(`document:${result.url}`);
                   const sourceLabel = getDocumentSourceLabel(result);
                   return (
                     <div key={result.url} className={styles.row}>
@@ -537,7 +526,7 @@ export default function BrowsePaneBody() {
                 }
 
                 if (result.type === "videos") {
-                  const busy = busyKeys.has(
+                  const busy = busyKeys.ids.has(
                     `video:${result.provider_video_id}`,
                   );
                   return (
@@ -630,7 +619,7 @@ export default function BrowsePaneBody() {
                 }
 
                 if (result.type === "podcasts") {
-                  const busy = busyKeys.has(
+                  const busy = busyKeys.ids.has(
                     `podcast:${result.provider_podcast_id}`,
                   );
                   return (
@@ -732,7 +721,7 @@ export default function BrowsePaneBody() {
                   );
                 }
 
-                const busy = busyKeys.has(
+                const busy = busyKeys.ids.has(
                   `podcast:${result.provider_podcast_id}`,
                 );
                 return (

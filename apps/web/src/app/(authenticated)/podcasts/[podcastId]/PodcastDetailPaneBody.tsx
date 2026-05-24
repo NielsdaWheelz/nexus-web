@@ -24,6 +24,7 @@ import {
   patchLibraryMembership,
   removeMediaFromLibrary,
 } from "@/lib/media/mediaLibraries";
+import { useStringIdSet } from "@/lib/useStringIdSet";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import {
   SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
@@ -145,12 +146,9 @@ export default function PodcastDetailPaneBody() {
   const [episodeLibrariesById, setEpisodeLibrariesById] = useState<
     Record<string, LibraryTargetPickerItem[]>
   >({});
-  const [loadingEpisodeLibraryMediaIds, setLoadingEpisodeLibraryMediaIds] =
-    useState<Set<string>>(new Set());
-  const [busyMediaIds, setBusyMediaIds] = useState<Set<string>>(new Set());
-  const [busyPodcastLibraryKeys, setBusyPodcastLibraryKeys] = useState<
-    Set<string>
-  >(new Set());
+  const loadingEpisodeLibraryMediaIds = useStringIdSet();
+  const busyMediaIds = useStringIdSet();
+  const busyPodcastLibraryKeys = useStringIdSet();
   const [podcastMembershipPanelOpen, setPodcastMembershipPanelOpen] =
     useState(false);
   const [podcastMembershipPanelTriggerEl, setPodcastMembershipPanelTriggerEl] =
@@ -159,9 +157,7 @@ export default function PodcastDetailPaneBody() {
     useState<string | null>(null);
   const [episodeMembershipPanelTriggerEl, setEpisodeMembershipPanelTriggerEl] =
     useState<HTMLElement | null>(null);
-  const [markingEpisodeIds, setMarkingEpisodeIds] = useState<Set<string>>(
-    new Set(),
-  );
+  const markingEpisodeIds = useStringIdSet();
   const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
   const [batchTranscriptBusy, setBatchTranscriptBusy] = useState(false);
   const [batchTranscriptSummary, setBatchTranscriptSummary] = useState<
@@ -173,8 +169,7 @@ export default function PodcastDetailPaneBody() {
   const [expandedTranscriptMediaIds, setExpandedTranscriptMediaIds] = useState<
     Set<string>
   >(new Set());
-  const [requestingTranscriptMediaIds, setRequestingTranscriptMediaIds] =
-    useState<Set<string>>(new Set());
+  const requestingTranscriptMediaIds = useStringIdSet();
   const forecastingTranscriptMediaIdsRef = useRef<Set<string>>(new Set());
   const [
     transcriptRequestForecastByMediaId,
@@ -264,12 +259,12 @@ export default function PodcastDetailPaneBody() {
   const loadEpisodeLibraries = useCallback(
     async (mediaId: string) => {
       if (
-        loadingEpisodeLibraryMediaIds.has(mediaId) ||
+        loadingEpisodeLibraryMediaIds.ids.has(mediaId) ||
         episodeLibrariesById[mediaId]
       ) {
         return;
       }
-      setLoadingEpisodeLibraryMediaIds((prev) => new Set(prev).add(mediaId));
+      loadingEpisodeLibraryMediaIds.add(mediaId);
       try {
         const libraries = await fetchMediaLibraryMemberships(mediaId);
         setEpisodeLibrariesById((prev) => ({
@@ -283,16 +278,14 @@ export default function PodcastDetailPaneBody() {
           }),
         );
       } finally {
-        setLoadingEpisodeLibraryMediaIds((prev) => {
-          const next = new Set(prev);
-          next.delete(mediaId);
-          return next;
-        });
+        loadingEpisodeLibraryMediaIds.remove(mediaId);
       }
     },
     [episodeLibrariesById, loadingEpisodeLibraryMediaIds],
   );
 
+  const { clear: clearLoadingEpisodeLibraryMediaIds } =
+    loadingEpisodeLibraryMediaIds;
   const load = useCallback(async () => {
     if (!podcastId) {
       setLoading(false);
@@ -339,11 +332,11 @@ export default function PodcastDetailPaneBody() {
             : [],
         );
         setEpisodeLibrariesById({});
-        setLoadingEpisodeLibraryMediaIds(new Set());
+        clearLoadingEpisodeLibraryMediaIds();
       } catch {
         setPodcastLibraries([]);
         setEpisodeLibrariesById({});
-        setLoadingEpisodeLibraryMediaIds(new Set());
+        clearLoadingEpisodeLibraryMediaIds();
       }
     } catch (loadError) {
       setError(
@@ -352,7 +345,13 @@ export default function PodcastDetailPaneBody() {
     } finally {
       setLoading(false);
     }
-  }, [episodeSearchQuery, episodeSort, episodeStateFilter, podcastId]);
+  }, [
+    clearLoadingEpisodeLibraryMediaIds,
+    episodeSearchQuery,
+    episodeSort,
+    episodeStateFilter,
+    podcastId,
+  ]);
 
   useEffect(() => {
     void load();
@@ -416,7 +415,7 @@ export default function PodcastDetailPaneBody() {
 
   const handleAddToLibrary = useCallback(
     async (mediaId: string, libraryId: string) => {
-      setBusyMediaIds((prev) => new Set(prev).add(mediaId));
+      busyMediaIds.add(mediaId);
       setError(null);
       try {
         await addMediaToLibrary(mediaId, libraryId);
@@ -435,19 +434,15 @@ export default function PodcastDetailPaneBody() {
           }),
         );
       } finally {
-        setBusyMediaIds((prev) => {
-          const next = new Set(prev);
-          next.delete(mediaId);
-          return next;
-        });
+        busyMediaIds.remove(mediaId);
       }
     },
-    [],
+    [busyMediaIds],
   );
 
   const handleRemoveFromLibrary = useCallback(
     async (mediaId: string, libraryId: string) => {
-      setBusyMediaIds((prev) => new Set(prev).add(mediaId));
+      busyMediaIds.add(mediaId);
       setError(null);
       try {
         await removeMediaFromLibrary(mediaId, libraryId);
@@ -466,14 +461,10 @@ export default function PodcastDetailPaneBody() {
           }),
         );
       } finally {
-        setBusyMediaIds((prev) => {
-          const next = new Set(prev);
-          next.delete(mediaId);
-          return next;
-        });
+        busyMediaIds.remove(mediaId);
       }
     },
-    [],
+    [busyMediaIds],
   );
 
   const handleLoadMoreEpisodes = useCallback(async () => {
@@ -554,7 +545,7 @@ export default function PodcastDetailPaneBody() {
         return;
       }
       const busyKey = `${libraryId}:${podcastId}`;
-      setBusyPodcastLibraryKeys((prev) => new Set(prev).add(busyKey));
+      busyPodcastLibraryKeys.add(busyKey);
       setError(null);
       try {
         await addPodcastToLibrary(podcastId, libraryId);
@@ -568,14 +559,10 @@ export default function PodcastDetailPaneBody() {
           }),
         );
       } finally {
-        setBusyPodcastLibraryKeys((prev) => {
-          const next = new Set(prev);
-          next.delete(busyKey);
-          return next;
-        });
+        busyPodcastLibraryKeys.remove(busyKey);
       }
     },
-    [podcastId],
+    [busyPodcastLibraryKeys, podcastId],
   );
 
   const handleRemovePodcastFromLibrary = useCallback(
@@ -584,7 +571,7 @@ export default function PodcastDetailPaneBody() {
         return;
       }
       const busyKey = `${libraryId}:${podcastId}`;
-      setBusyPodcastLibraryKeys((prev) => new Set(prev).add(busyKey));
+      busyPodcastLibraryKeys.add(busyKey);
       setError(null);
       try {
         await removePodcastFromLibrary(podcastId, libraryId);
@@ -598,14 +585,10 @@ export default function PodcastDetailPaneBody() {
           }),
         );
       } finally {
-        setBusyPodcastLibraryKeys((prev) => {
-          const next = new Set(prev);
-          next.delete(busyKey);
-          return next;
-        });
+        busyPodcastLibraryKeys.remove(busyKey);
       }
     },
-    [podcastId],
+    [busyPodcastLibraryKeys, podcastId],
   );
 
   const handleRefreshSync = useCallback(async () => {
@@ -818,74 +801,72 @@ export default function PodcastDetailPaneBody() {
     [paneRouter],
   );
 
-  const handleRetryEpisodeProcessing = useCallback(async (mediaId: string) => {
-    setBusyMediaIds((prev) => new Set(prev).add(mediaId));
-    setError(null);
-    try {
-      const response = await apiFetch<{ data: PodcastEpisodeMedia }>(
-        `/api/media/${mediaId}/retry`,
-        { method: "POST" },
-      );
-      setEpisodes((prev) =>
-        prev.map((episode) =>
-          episode.id === mediaId ? { ...episode, ...response.data } : episode,
-        ),
-      );
-    } catch (retryError) {
-      setError(
-        toFeedback(retryError, {
-          fallback: "Failed to retry episode processing",
-        }),
-      );
-    } finally {
-      setBusyMediaIds((prev) => {
-        const next = new Set(prev);
-        next.delete(mediaId);
-        return next;
-      });
-    }
-  }, []);
+  const handleRetryEpisodeProcessing = useCallback(
+    async (mediaId: string) => {
+      busyMediaIds.add(mediaId);
+      setError(null);
+      try {
+        const response = await apiFetch<{ data: PodcastEpisodeMedia }>(
+          `/api/media/${mediaId}/retry`,
+          { method: "POST" },
+        );
+        setEpisodes((prev) =>
+          prev.map((episode) =>
+            episode.id === mediaId ? { ...episode, ...response.data } : episode,
+          ),
+        );
+      } catch (retryError) {
+        setError(
+          toFeedback(retryError, {
+            fallback: "Failed to retry episode processing",
+          }),
+        );
+      } finally {
+        busyMediaIds.remove(mediaId);
+      }
+    },
+    [busyMediaIds],
+  );
 
-  const handleRefreshEpisodeSource = useCallback(async (mediaId: string) => {
-    setBusyMediaIds((prev) => new Set(prev).add(mediaId));
-    setError(null);
-    try {
-      await apiFetch(`/api/media/${mediaId}/refresh`, { method: "POST" });
-      setEpisodes((prev) =>
-        prev.map((episode) =>
-          episode.id === mediaId
-            ? {
-                ...episode,
-                processing_status: "extracting",
-                transcript_state: "queued",
-                transcript_coverage: "none",
-                capabilities: {
-                  ...episode.capabilities,
-                  can_read: false,
-                  can_highlight: false,
-                  can_quote: false,
-                  can_search: false,
-                  can_retry: false,
-                  can_refresh_source: false,
-                },
-              }
-            : episode,
-        ),
-      );
-    } catch (refreshError) {
-      setError(
-        toFeedback(refreshError, {
-          fallback: "Failed to refresh episode source",
-        }),
-      );
-    } finally {
-      setBusyMediaIds((prev) => {
-        const next = new Set(prev);
-        next.delete(mediaId);
-        return next;
-      });
-    }
-  }, []);
+  const handleRefreshEpisodeSource = useCallback(
+    async (mediaId: string) => {
+      busyMediaIds.add(mediaId);
+      setError(null);
+      try {
+        await apiFetch(`/api/media/${mediaId}/refresh`, { method: "POST" });
+        setEpisodes((prev) =>
+          prev.map((episode) =>
+            episode.id === mediaId
+              ? {
+                  ...episode,
+                  processing_status: "extracting",
+                  transcript_state: "queued",
+                  transcript_coverage: "none",
+                  capabilities: {
+                    ...episode.capabilities,
+                    can_read: false,
+                    can_highlight: false,
+                    can_quote: false,
+                    can_search: false,
+                    can_retry: false,
+                    can_refresh_source: false,
+                  },
+                }
+              : episode,
+          ),
+        );
+      } catch (refreshError) {
+        setError(
+          toFeedback(refreshError, {
+            fallback: "Failed to refresh episode source",
+          }),
+        );
+      } finally {
+        busyMediaIds.remove(mediaId);
+      }
+    },
+    [busyMediaIds],
+  );
 
   const handleDeleteEpisode = useCallback(
     async (episode: PodcastEpisodeMedia) => {
@@ -897,7 +878,7 @@ export default function PodcastDetailPaneBody() {
         return;
       }
 
-      setBusyMediaIds((prev) => new Set(prev).add(episode.id));
+      busyMediaIds.add(episode.id);
       setError(null);
       try {
         await apiFetch(`/api/media/${episode.id}`, { method: "DELETE" });
@@ -914,14 +895,10 @@ export default function PodcastDetailPaneBody() {
           toFeedback(deleteError, { fallback: "Failed to delete episode" }),
         );
       } finally {
-        setBusyMediaIds((prev) => {
-          const next = new Set(prev);
-          next.delete(episode.id);
-          return next;
-        });
+        busyMediaIds.remove(episode.id);
       }
     },
-    [],
+    [busyMediaIds],
   );
 
   const applyEpisodeCompletionState = useCallback(
@@ -955,7 +932,7 @@ export default function PodcastDetailPaneBody() {
   const handleMarkEpisodeCompletion = useCallback(
     async (episode: PodcastEpisodeMedia, isCompleted: boolean) => {
       const mediaId = episode.id;
-      setMarkingEpisodeIds((prev) => new Set(prev).add(mediaId));
+      markingEpisodeIds.add(mediaId);
       setError(null);
       const previousEpisodes = episodes;
       setEpisodes((prev) =>
@@ -1002,14 +979,10 @@ export default function PodcastDetailPaneBody() {
           }),
         );
       } finally {
-        setMarkingEpisodeIds((prev) => {
-          const next = new Set(prev);
-          next.delete(mediaId);
-          return next;
-        });
+        markingEpisodeIds.remove(mediaId);
       }
     },
-    [applyEpisodeCompletionState, episodeStateFilter, episodes],
+    [applyEpisodeCompletionState, episodeStateFilter, episodes, markingEpisodeIds],
   );
 
   const visibleUnplayedEpisodeIds = useMemo(
@@ -1276,7 +1249,7 @@ export default function PodcastDetailPaneBody() {
     const pendingForecastEpisodes = episodes
       .filter((episode) => canRequestTranscriptForEpisode(episode))
       .filter((episode) => {
-        if (requestingTranscriptMediaIds.has(episode.id)) {
+        if (requestingTranscriptMediaIds.ids.has(episode.id)) {
           return false;
         }
         if (forecastingTranscriptMediaIdsRef.current.has(episode.id)) {
@@ -1337,7 +1310,7 @@ export default function PodcastDetailPaneBody() {
   const handleRequestTranscript = useCallback(
     async (mediaId: string) => {
       const reason = transcriptReasonByMediaId[mediaId] ?? "search";
-      setRequestingTranscriptMediaIds((prev) => new Set(prev).add(mediaId));
+      requestingTranscriptMediaIds.add(mediaId);
       setError(null);
       try {
         let forecast = transcriptRequestForecastByMediaId[mediaId];
@@ -1402,17 +1375,14 @@ export default function PodcastDetailPaneBody() {
           }),
         );
       } finally {
-        setRequestingTranscriptMediaIds((prev) => {
-          const next = new Set(prev);
-          next.delete(mediaId);
-          return next;
-        });
+        requestingTranscriptMediaIds.remove(mediaId);
       }
     },
     [
       applyTranscriptForecasts,
       fetchTranscriptForecasts,
       refreshEpisodeState,
+      requestingTranscriptMediaIds,
       transcriptReasonByMediaId,
       transcriptRequestForecastByMediaId,
     ],
@@ -1423,14 +1393,14 @@ export default function PodcastDetailPaneBody() {
     return new Set(queueItems.map((item) => item.media_id));
   }, [queueItems]);
   const activeSubscription = detail?.subscription ?? null;
-  const podcastMembershipBusy = busyPodcastLibraryKeys.size > 0;
+  const podcastMembershipBusy = busyPodcastLibraryKeys.ids.size > 0;
   const podcastMembershipLibraries = podcastLibraries.map((library) => ({
     ...library,
     canAdd: podcastMembershipBusy ? false : library.canAdd,
     canRemove: podcastMembershipBusy ? false : library.canRemove,
   }));
   const episodeMembershipBusy = episodeMembershipPanelMediaId
-    ? busyMediaIds.has(episodeMembershipPanelMediaId)
+    ? busyMediaIds.ids.has(episodeMembershipPanelMediaId)
     : false;
   const episodeMembershipLibraries = episodeMembershipPanelMediaId
     ? (episodeLibrariesById[episodeMembershipPanelMediaId] ?? []).map(
@@ -1578,7 +1548,7 @@ export default function PodcastDetailPaneBody() {
       {episodes.length > 0 && (
         <AppList>
           {episodes.map((episode) => {
-            const busy = busyMediaIds.has(episode.id);
+            const busy = busyMediaIds.ids.has(episode.id);
             const episodeState = deriveEpisodeState(episode);
             const episodeProgressPercent = getEpisodeProgressPercent(episode);
             const canRequestTranscript =
@@ -1595,7 +1565,7 @@ export default function PodcastDetailPaneBody() {
                 ? transcriptRequestForecast
                 : null;
             const transcriptRequestDisabled =
-              requestingTranscriptMediaIds.has(episode.id) ||
+              requestingTranscriptMediaIds.ids.has(episode.id) ||
               (forecastForSelectedReason
                 ? !forecastForSelectedReason.fits_budget
                 : false);
@@ -1615,7 +1585,7 @@ export default function PodcastDetailPaneBody() {
               refreshBusy: busy,
               deleteBusy: busy,
               played: episodeState === "played",
-              markingBusy: markingEpisodeIds.has(episode.id),
+              markingBusy: markingEpisodeIds.ids.has(episode.id),
               onManageLibraries: ({ triggerEl }) => {
                 setPodcastMembershipPanelOpen(false);
                 setPodcastMembershipPanelTriggerEl(null);
@@ -1814,7 +1784,7 @@ export default function PodcastDetailPaneBody() {
                               void handleRequestTranscript(episode.id)
                             }
                           >
-                            {requestingTranscriptMediaIds.has(episode.id)
+                            {requestingTranscriptMediaIds.ids.has(episode.id)
                               ? "Requesting..."
                               : "Request transcript"}
                           </Button>
@@ -2086,7 +2056,7 @@ export default function PodcastDetailPaneBody() {
         libraries={episodeMembershipLibraries}
         loading={
           episodeMembershipPanelMediaId
-            ? loadingEpisodeLibraryMediaIds.has(episodeMembershipPanelMediaId)
+            ? loadingEpisodeLibraryMediaIds.ids.has(episodeMembershipPanelMediaId)
             : false
         }
         busy={episodeMembershipBusy}

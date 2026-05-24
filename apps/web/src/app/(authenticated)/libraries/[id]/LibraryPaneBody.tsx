@@ -38,6 +38,7 @@ import {
   patchLibraryMembership,
   removeMediaFromLibrary,
 } from "@/lib/media/mediaLibraries";
+import { useStringIdSet } from "@/lib/useStringIdSet";
 import { fetchPodcastLibraries } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import LibraryIntelligenceView from "./LibraryIntelligenceView";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
@@ -174,15 +175,9 @@ export default function LibraryPaneBody() {
   const feedback = useFeedback();
   const [library, setLibrary] = useState<Library | null>(null);
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
-  const [removedEntryIds, setRemovedEntryIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const [retryingMediaIds, setRetryingMediaIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const [refreshingMediaIds, setRefreshingMediaIds] = useState<Set<string>>(
-    new Set(),
-  );
+  const removedEntryIds = useStringIdSet();
+  const retryingMediaIds = useStringIdSet();
+  const refreshingMediaIds = useStringIdSet();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
@@ -219,6 +214,7 @@ export default function LibraryPaneBody() {
   }, [paneSearchParams]);
   const libraryPanelEntryIdRef = useRef<string | null>(null);
 
+  const { clear: clearRemovedEntryIds } = removedEntryIds;
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -228,7 +224,7 @@ export default function LibraryPaneBody() {
         ]);
         setLibrary(libraryResp.data);
         setEntries(entriesResp.data);
-        setRemovedEntryIds(new Set());
+        clearRemovedEntryIds();
         setError(null);
       } catch (err) {
         if (isApiError(err) && err.status === 404) {
@@ -242,7 +238,7 @@ export default function LibraryPaneBody() {
     };
 
     void fetchData();
-  }, [id, router]);
+  }, [clearRemovedEntryIds, id, router]);
 
   const closeLibraryPanel = useCallback(() => {
     libraryPanelRequestIdRef.current += 1;
@@ -383,16 +379,11 @@ export default function LibraryPaneBody() {
       const entry = libraryPanelEntry;
       const removingCurrentEntry = libraryId === id;
       const previousEntries = entries;
-      const previousRemovedEntryIds = removedEntryIds;
       setLibraryPanelBusy(true);
       setLibraryPanelError(null);
 
       if (removingCurrentEntry) {
-        setRemovedEntryIds((current) => {
-          const next = new Set(current);
-          next.add(entry.id);
-          return next;
-        });
+        removedEntryIds.add(entry.id);
         flushSync(() => {
           setEntries((current) =>
             current.filter((candidate) => {
@@ -444,7 +435,7 @@ export default function LibraryPaneBody() {
       } catch (err) {
         if (removingCurrentEntry) {
           setEntries(previousEntries);
-          setRemovedEntryIds(previousRemovedEntryIds);
+          removedEntryIds.remove(entry.id);
         }
         setLibraryPanelError(
           toFeedback(err, { fallback: "Failed to remove item from library" })
@@ -466,11 +457,11 @@ export default function LibraryPaneBody() {
 
   const handleRetryProcessing = useCallback(
     async (mediaId: string) => {
-      if (retryingMediaIds.has(mediaId)) {
+      if (retryingMediaIds.ids.has(mediaId)) {
         return;
       }
 
-      setRetryingMediaIds((current) => new Set(current).add(mediaId));
+      retryingMediaIds.add(mediaId);
       try {
         await apiFetch(`/api/media/${mediaId}/retry`, { method: "POST" });
         setEntries((current) =>
@@ -501,11 +492,7 @@ export default function LibraryPaneBody() {
           }),
         });
       } finally {
-        setRetryingMediaIds((current) => {
-          const next = new Set(current);
-          next.delete(mediaId);
-          return next;
-        });
+        retryingMediaIds.remove(mediaId);
       }
     },
     [feedback, retryingMediaIds],
@@ -513,11 +500,11 @@ export default function LibraryPaneBody() {
 
   const handleRefreshSource = useCallback(
     async (mediaId: string) => {
-      if (refreshingMediaIds.has(mediaId)) {
+      if (refreshingMediaIds.ids.has(mediaId)) {
         return;
       }
 
-      setRefreshingMediaIds((current) => new Set(current).add(mediaId));
+      refreshingMediaIds.add(mediaId);
       try {
         await apiFetch(`/api/media/${mediaId}/refresh`, { method: "POST" });
         setEntries((current) =>
@@ -549,11 +536,7 @@ export default function LibraryPaneBody() {
           }),
         });
       } finally {
-        setRefreshingMediaIds((current) => {
-          const next = new Set(current);
-          next.delete(mediaId);
-          return next;
-        });
+        refreshingMediaIds.remove(mediaId);
       }
     },
     [feedback, refreshingMediaIds],
@@ -866,7 +849,7 @@ export default function LibraryPaneBody() {
     owner_user_id: library.owner_user_id,
   };
   const visibleEntries = entries.filter(
-    (entry) => !removedEntryIds.has(entry.id),
+    (entry) => !removedEntryIds.ids.has(entry.id),
   );
 
   return (
@@ -1031,8 +1014,8 @@ export default function LibraryPaneBody() {
                 }
 
                 const Icon = MEDIA_KIND_ICONS[item.media.kind] ?? Globe;
-                const retryProcessingBusy = retryingMediaIds.has(item.media.id);
-                const refreshSourceBusy = refreshingMediaIds.has(item.media.id);
+                const retryProcessingBusy = retryingMediaIds.ids.has(item.media.id);
+                const refreshSourceBusy = refreshingMediaIds.ids.has(item.media.id);
                 const rowOptions = mediaResourceOptions({
                   media: item.media,
                   canManageLibraries: true,

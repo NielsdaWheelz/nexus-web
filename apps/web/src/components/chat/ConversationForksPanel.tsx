@@ -5,6 +5,7 @@ import type { CSSProperties, KeyboardEvent } from "react";
 import { Check, ChevronRight, GitBranch, Pencil, Search, Trash2, X } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { truncateText } from "@/lib/conversations/display";
+import { useStringIdSet } from "@/lib/useStringIdSet";
 import type {
   BranchGraph,
   ConversationForksResponse,
@@ -54,7 +55,7 @@ export default function ConversationForksPanel({
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<"tree" | "graph">("tree");
   const [focusedId, setFocusedId] = useState<string | null>(null);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const expandedIds = useStringIdSet();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -64,9 +65,10 @@ export default function ConversationForksPanel({
     setNodes(fallbackNodes);
   }, [fallbackNodes]);
 
+  const { replace: replaceExpandedIds } = expandedIds;
   useEffect(() => {
-    setExpandedIds(new Set(collectExpandableIds(nodes)));
-  }, [nodes]);
+    replaceExpandedIds(collectExpandableIds(nodes));
+  }, [nodes, replaceExpandedIds]);
 
   const loadForks = useCallback(async () => {
     const loadSeq = loadSeqRef.current + 1;
@@ -152,8 +154,8 @@ export default function ConversationForksPanel({
     ? filterNodes(nodes, query.trim().toLowerCase())
     : nodes;
   const visibleRows = useMemo(
-    () => flattenVisibleRows(visibleNodes, expandedIds),
-    [expandedIds, visibleNodes],
+    () => flattenVisibleRows(visibleNodes, expandedIds.ids),
+    [expandedIds.ids, visibleNodes],
   );
   const visibleCount = visibleRows.length;
 
@@ -202,8 +204,8 @@ export default function ConversationForksPanel({
         case "ArrowRight":
           event.preventDefault();
           event.stopPropagation();
-          if (row.node.children.length > 0 && !expandedIds.has(row.node.id)) {
-            setExpandedIds((prev) => new Set(prev).add(row.node.id));
+          if (row.node.children.length > 0 && !expandedIds.ids.has(row.node.id)) {
+            expandedIds.add(row.node.id);
           } else if (row.node.children.length > 0) {
             focusRow(visibleRows[index + 1]);
           }
@@ -211,12 +213,8 @@ export default function ConversationForksPanel({
         case "ArrowLeft":
           event.preventDefault();
           event.stopPropagation();
-          if (row.node.children.length > 0 && expandedIds.has(row.node.id)) {
-            setExpandedIds((prev) => {
-              const next = new Set(prev);
-              next.delete(row.node.id);
-              return next;
-            });
+          if (row.node.children.length > 0 && expandedIds.ids.has(row.node.id)) {
+            expandedIds.remove(row.node.id);
           } else if (row.parentId) {
             focusRow(visibleRows.find((item) => item.node.id === row.parentId));
           }
@@ -333,7 +331,7 @@ export default function ConversationForksPanel({
               node={node}
               depth={0}
               focusedId={focusedId}
-              expandedIds={expandedIds}
+              expandedIds={expandedIds.ids}
               switchableLeafIds={switchableLeafIds}
               activeLeafMessageId={activeLeafMessageId}
               selectedPathMessageIds={selectedPathMessageIds}
