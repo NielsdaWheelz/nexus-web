@@ -34,6 +34,7 @@ import {
 import SelectionPopover from "./SelectionPopover";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
+import { usePdfScrollToTarget } from "@/lib/highlights/usePdfScrollToTarget";
 import {
   PDF_QUAD_EPSILON,
   projectPdfQuadToViewportRect,
@@ -624,8 +625,6 @@ export default function PdfReader({
   const pendingViewerPageRef = useRef<number | null>(null);
   const pendingViewerScaleRef = useRef<string | number | null>(null);
   const recoveringFromRenderErrorRef = useRef(false);
-  const processedNavigationKeyRef = useRef<string | null>(null);
-  const processedTemporaryHighlightKeyRef = useRef<string | null>(null);
   const onPageHighlightsChangeRef = useRef(onPageHighlightsChange);
   const onHighlightTapRef = useRef(onHighlightTap);
   const hasHighlightTapHandler = Boolean(onHighlightTap);
@@ -1992,115 +1991,42 @@ export default function PdfReader({
     [getPageElement, readPageScale],
   );
 
-  useEffect(() => {
-    if (!navigateToHighlight) {
-      processedNavigationKeyRef.current = null;
-      return;
-    }
-
-    const navigationKey = `${navigateToHighlight.highlightId}:${navigateToHighlight.pageNumber}`;
-    if (processedNavigationKeyRef.current === navigationKey) {
-      return;
-    }
-    processedNavigationKeyRef.current = navigationKey;
-
-    let cancelled = false;
-    const currentRun = runRef.current;
-
-    const complete = () => {
-      if (!cancelled) {
-        onHighlightNavigationComplete?.();
-      }
-    };
-
-    const tryScrollWithRetries = (remainingAttempts: number) => {
-      if (cancelled || currentRun !== runRef.current) {
-        return;
-      }
-      if (
-        scrollToProjectedHighlight(
-          navigateToHighlight.pageNumber,
-          navigateToHighlight.quads,
-        ) ||
-        remainingAttempts <= 0
-      ) {
-        complete();
-        return;
-      }
-      window.requestAnimationFrame(() => {
-        tryScrollWithRetries(remainingAttempts - 1);
-      });
-    };
-
-    const runNavigation = async () => {
-      try {
-        if (navigateToHighlight.pageNumber !== pageNumberRef.current) {
-          await goToPage(navigateToHighlight.pageNumber);
-        }
-        tryScrollWithRetries(8);
-      } catch {
-        complete();
-      }
-    };
-
-    void runNavigation();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
+  usePdfScrollToTarget({
+    target: useMemo(
+      () =>
+        navigateToHighlight
+          ? {
+              key: `${navigateToHighlight.highlightId}:${navigateToHighlight.pageNumber}`,
+              pageNumber: navigateToHighlight.pageNumber,
+              quads: navigateToHighlight.quads,
+            }
+          : null,
+      [navigateToHighlight],
+    ),
+    runRef,
+    pageNumberRef,
     goToPage,
-    navigateToHighlight,
-    onHighlightNavigationComplete,
     scrollToProjectedHighlight,
-  ]);
+    onSettle: onHighlightNavigationComplete,
+  });
 
-  useEffect(() => {
-    if (!temporaryHighlight || temporaryHighlight.quads.length === 0) {
-      processedTemporaryHighlightKeyRef.current = null;
-      return;
-    }
-
-    const navigationKey = `${temporaryHighlight.id}:${temporaryHighlight.pageNumber}`;
-    if (processedTemporaryHighlightKeyRef.current === navigationKey) {
-      return;
-    }
-    processedTemporaryHighlightKeyRef.current = navigationKey;
-
-    let cancelled = false;
-    const currentRun = runRef.current;
-
-    const tryScrollWithRetries = (remainingAttempts: number) => {
-      if (cancelled || currentRun !== runRef.current) {
-        return;
-      }
-      if (
-        scrollToProjectedHighlight(
-          temporaryHighlight.pageNumber,
-          temporaryHighlight.quads,
-        ) ||
-        remainingAttempts <= 0
-      ) {
-        return;
-      }
-      window.requestAnimationFrame(() => {
-        tryScrollWithRetries(remainingAttempts - 1);
-      });
-    };
-
-    const runNavigation = async () => {
-      if (temporaryHighlight.pageNumber !== pageNumberRef.current) {
-        await goToPage(temporaryHighlight.pageNumber);
-      }
-      tryScrollWithRetries(8);
-    };
-
-    void runNavigation();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [goToPage, scrollToProjectedHighlight, temporaryHighlight]);
+  usePdfScrollToTarget({
+    target: useMemo(
+      () =>
+        temporaryHighlight
+          ? {
+              key: `${temporaryHighlight.id}:${temporaryHighlight.pageNumber}`,
+              pageNumber: temporaryHighlight.pageNumber,
+              quads: temporaryHighlight.quads,
+            }
+          : null,
+      [temporaryHighlight],
+    ),
+    runRef,
+    pageNumberRef,
+    goToPage,
+    scrollToProjectedHighlight,
+  });
 
   useReaderPulseHighlight(
     useCallback(
