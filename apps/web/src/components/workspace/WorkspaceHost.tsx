@@ -247,6 +247,28 @@ const PaneContent = memo(function PaneContent({
 // buildHostPane - builds the pane record consumed by the host layout.
 // ---------------------------------------------------------------------------
 
+/**
+ * Identity-preserving upsert for a paneId → width map. When `value` is null
+ * the entry is deleted; otherwise it's set. Returns the same Map reference
+ * when nothing changes so the React setter can short-circuit re-renders.
+ */
+function upsertOrDeletePaneWidth(
+  current: Map<string, number>,
+  paneId: string,
+  value: number | null,
+): Map<string, number> {
+  if (value === null) {
+    if (!current.has(paneId)) return current;
+    const next = new Map(current);
+    next.delete(paneId);
+    return next;
+  }
+  if (current.get(paneId) === value) return current;
+  const next = new Map(current);
+  next.set(paneId, value);
+  return next;
+}
+
 function buildHostPane(input: {
   pane: WorkspacePaneStateV4;
   descriptor: WorkspacePaneTitleDescriptor;
@@ -346,43 +368,21 @@ export default function WorkspaceHost() {
   );
 
   const publishPaneMinWidth = useCallback((paneId: string, widthPx: number | null) => {
-    setRuntimeMinWidthByPaneId((current) => {
-      if (widthPx === null || !Number.isFinite(widthPx) || widthPx <= 0) {
-        if (!current.has(paneId)) {
-          return current;
-        }
-        const next = new Map(current);
-        next.delete(paneId);
-        return next;
-      }
-
-      const roundedWidthPx = Math.ceil(widthPx);
-      if (current.get(paneId) === roundedWidthPx) {
-        return current;
-      }
-      const next = new Map(current);
-      next.set(paneId, roundedWidthPx);
-      return next;
-    });
+    setRuntimeMinWidthByPaneId((current) =>
+      upsertOrDeletePaneWidth(
+        current,
+        paneId,
+        widthPx !== null && Number.isFinite(widthPx) && widthPx > 0
+          ? Math.ceil(widthPx)
+          : null,
+      ),
+    );
   }, []);
 
   const publishPaneExtraWidth = useCallback((paneId: string, widthPx: number) => {
-    setRuntimeExtraWidthByPaneId((current) => {
-      if (widthPx <= 0) {
-        if (!current.has(paneId)) {
-          return current;
-        }
-        const next = new Map(current);
-        next.delete(paneId);
-        return next;
-      }
-      if (current.get(paneId) === widthPx) {
-        return current;
-      }
-      const next = new Map(current);
-      next.set(paneId, widthPx);
-      return next;
-    });
+    setRuntimeExtraWidthByPaneId((current) =>
+      upsertOrDeletePaneWidth(current, paneId, widthPx > 0 ? widthPx : null),
+    );
   }, []);
 
   useEffect(() => {
