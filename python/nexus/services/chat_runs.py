@@ -25,14 +25,12 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
 
-from nexus.auth.permissions import can_read_highlight, can_read_media
 from nexus.coerce import parse_uuid
 from nexus.config import get_settings
 from nexus.db.models import (
     ChatRun,
     ChatRunEvent,
     Conversation,
-    Media,
     Message,
     MessageLLM,
     MessageToolCall,
@@ -48,8 +46,6 @@ from nexus.evidence_span_ids import canonical_evidence_span_ids
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.conversation import (
-    MAX_CONTEXTS,
-    MAX_MESSAGE_CONTENT_LENGTH,
     ArtifactIntentOptions,
     AssistantMessageBranchAnchorRequest,
     BranchAnchorRequest,
@@ -61,7 +57,6 @@ from nexus.schemas.conversation import (
     WebSearchOptions,
     chat_run_event_payload_json,
 )
-from nexus.schemas.notes import ObjectRef
 from nexus.schemas.retrieval import (
     retrieval_context_ref_json,
     retrieval_locator_json,
@@ -76,7 +71,6 @@ from nexus.services.agent_tools.web_search import (
 from nexus.services.api_key_resolver import (
     ResolvedKey,
     get_model_by_id,
-    is_provider_enabled,
     resolve_api_key,
     update_user_key_status,
 )
@@ -127,6 +121,7 @@ from nexus.services.chat_run_message_blocks import (
     source_manifest_blocks_for_run,
 )
 from nexus.services.chat_run_usage import usage_log_fields, usage_provider_json, usage_tokens
+from nexus.services.chat_run_validation import load_valid_parent_for_send, validate_pre_phase
 from nexus.services.context_assembler import (
     assemble_chat_context,
     load_message_context_refs,
@@ -141,7 +136,6 @@ from nexus.services.context_lookup import (
 from nexus.services.context_rendering import PROMPT_VERSION
 from nexus.services.contexts import (
     insert_contexts_batch,
-    validate_content_chunk_evidence_span_ids,
 )
 from nexus.services.conversation_branches import (
     active_leaf_for_viewer,
@@ -158,7 +152,6 @@ from nexus.services.conversation_memory import (
 )
 from nexus.services.conversations import (
     DEFAULT_CONVERSATION_TITLE,
-    authorize_conversation_scope,
     conversation_scope_metadata,
     conversation_to_out,
     derive_conversation_title,
@@ -173,8 +166,6 @@ from nexus.services.message_context_snapshots import (
     context_evidence_span_ids,
     trusted_context_snapshot,
 )
-from nexus.services.models import get_model_catalog_metadata
-from nexus.services.object_refs import hydrate_object_ref
 from nexus.services.prompt_budget import ContextBudgetError
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.redact import safe_kv
@@ -1354,78 +1345,6 @@ async def _execute_chat_run(
         rate_limiter.release_inflight_slot(run.owner_user_id)
 
 
-def validate_pre_phase(
-    db: Session,
-    viewer_id: UUID,
-    conversation_id: UUID | None,
-    conversation_scope: ConversationScopeRequest | None,
-    parent_message_id: UUID | None,
-    branch_anchor: BranchAnchorRequest,
-    content: str,
-    model_id: UUID,
-    reasoning: str,
-    key_mode: str,
-    contexts: Sequence[ContextItem],
-    use_platform_key: bool,
-) -> Model:
-    if len(content) > MAX_MESSAGE_CONTENT_LENGTH:
-        raise ApiError(
-            ApiErrorCode.E_MESSAGE_TOO_LONG,
-            f"Message exceeds {MAX_MESSAGE_CONTENT_LENGTH} character limit",
-        )
-    if len(contexts) > MAX_CONTEXTS:
-        raise ApiError(
-            ApiErrorCode.E_CONTEXT_TOO_LARGE,
-            f"Maximum {MAX_CONTEXTS} context items allowed",
-        )
-
-    model = get_model_by_id(db, model_id)
-    if model is None or not model.is_available:
-        raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model not found or not available")
-    metadata = get_model_catalog_metadata(model.provider, model.model_name)
-    if metadata is None:
-        raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model is outside the curated catalog")
-    if not is_provider_enabled(model.provider):
-        raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model provider is disabled")
-    _, _, _, reasoning_modes = metadata
-    if reasoning not in reasoning_modes:
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Reasoning mode '{reasoning}' is not supported for {model.provider}/{model.model_name}",
-        )
-
-    try:
-        resolve_api_key(db, viewer_id, model.provider, key_mode)
-    except LLMError as exc:
-        raise ApiError(ApiErrorCode.E_LLM_NO_KEY, str(exc.message)) from exc
-
-    for ctx in contexts:
-        _validate_context_visibility(db, viewer_id, ctx)
-
-    rate_limiter = get_rate_limiter()
-    rate_limiter.check_rpm_limit(viewer_id)
-    rate_limiter.check_concurrent_limit(viewer_id)
-    if use_platform_key:
-        rate_limiter.check_token_budget(viewer_id)
-    if conversation_id is not None:
-        _validate_parent_anchor_for_existing_conversation(
-            db,
-            viewer_id,
-            conversation_id,
-            parent_message_id,
-            branch_anchor,
-        )
-    elif conversation_scope is not None:
-        if parent_message_id is not None or branch_anchor.kind != "none":
-            raise ApiError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "conversation_scope sends cannot include a branch parent",
-            )
-        authorize_conversation_scope(db, viewer_id, conversation_scope)
-
-    return model
-
-
 def prepare_messages(
     db: Session,
     viewer_id: UUID,
@@ -1465,7 +1384,7 @@ def prepare_messages(
         conversation = db.get(Conversation, conversation_id)
         if conversation is None or conversation.owner_user_id != viewer_id:
             raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
-        parent_message = _load_valid_parent_for_send(
+        parent_message = load_valid_parent_for_send(
             db,
             conversation_id=conversation.id,
             parent_message_id=parent_message_id,
@@ -4296,66 +4215,3 @@ def _persist_message_citation_audit(
 
 def _dummy_resolved_key(model: Model) -> ResolvedKey:
     return ResolvedKey(api_key="", mode="platform", provider=model.provider, user_key_id=None)
-
-
-def _validate_context_visibility(db: Session, viewer_id: UUID, ctx: ContextItem) -> None:
-    if ctx.kind == "reader_selection":
-        media = db.get(Media, ctx.media_id)
-        if media is None or not can_read_media(db, viewer_id, ctx.media_id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        return
-
-    if ctx.type == "media":
-        media = db.get(Media, ctx.id)
-        if media is None or not can_read_media(db, viewer_id, ctx.id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        return
-
-    if ctx.type == "highlight":
-        if not can_read_highlight(db, viewer_id, ctx.id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Context not found")
-        return
-
-    hydrate_object_ref(db, viewer_id, ObjectRef(object_type=ctx.type, object_id=ctx.id))
-    if ctx.type == "content_chunk" and ctx.evidence_span_ids:
-        validate_content_chunk_evidence_span_ids(db, ctx.id, ctx.evidence_span_ids)
-
-
-def _validate_parent_anchor_for_existing_conversation(
-    db: Session,
-    viewer_id: UUID,
-    conversation_id: UUID,
-    parent_message_id: UUID | None,
-    branch_anchor: BranchAnchorRequest,
-) -> None:
-    conversation = db.get(Conversation, conversation_id)
-    if conversation is None or conversation.owner_user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
-    parent = _load_valid_parent_for_send(
-        db,
-        conversation_id=conversation_id,
-        parent_message_id=parent_message_id,
-    )
-    branch_anchor_for_message(parent, branch_anchor)
-
-
-def _load_valid_parent_for_send(
-    db: Session,
-    *,
-    conversation_id: UUID,
-    parent_message_id: UUID | None,
-) -> Message | None:
-    if parent_message_id is None:
-        raise ApiError(
-            ApiErrorCode.E_BRANCH_PATH_INVALID,
-            "Existing conversations require parent_message_id",
-        )
-    parent = db.get(Message, parent_message_id)
-    if parent is None or parent.conversation_id != conversation_id:
-        raise ApiError(ApiErrorCode.E_BRANCH_PATH_INVALID, "Parent message not found")
-    if parent.role != "assistant" or parent.status != "complete":
-        raise ApiError(
-            ApiErrorCode.E_BRANCH_PATH_INVALID,
-            "parent_message_id must point to a complete assistant message",
-        )
-    return parent
