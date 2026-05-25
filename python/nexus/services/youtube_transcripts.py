@@ -89,7 +89,7 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
                 http_client=_TimeoutSession(settings.youtube_transcript_timeout_seconds)
             ).fetch(video_id)
         )
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: dispatch on exc class name to avoid coupling to YouTubeTranscriptApi internals
         class_name = exc.__class__.__name__
         if class_name in {
             "TranscriptsDisabled",
