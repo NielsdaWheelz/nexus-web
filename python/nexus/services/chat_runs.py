@@ -40,7 +40,6 @@ from nexus.schemas.conversation import (
     ArtifactIntentOptions,
     BranchAnchorRequest,
     ChatRunEventOut,
-    ChatRunOut,
     ChatRunResponse,
     ContextItem,
     ConversationScopeRequest,
@@ -100,6 +99,7 @@ from nexus.services.chat_run_message_prep import prepare_messages
 from nexus.services.chat_run_prompt_tracking import (
     reconcile_prompt_retrievals,
 )
+from nexus.services.chat_run_response import build_chat_run_response
 from nexus.services.chat_run_scope import is_source_backed_run
 from nexus.services.chat_run_usage import usage_log_fields, usage_tokens
 from nexus.services.chat_run_validation import validate_pre_phase
@@ -131,12 +131,6 @@ from nexus.services.conversation_memory import (
 )
 from nexus.services.conversations import (
     conversation_scope_metadata,
-    conversation_to_out,
-    get_message_count,
-    load_message_artifacts_for_message_ids,
-    load_message_context_snapshots_for_message_ids,
-    message_to_out,
-    retryable_assistant_message_ids,
 )
 from nexus.services.prompt_budget import ContextBudgetError
 from nexus.services.rate_limit import get_rate_limiter
@@ -1225,43 +1219,3 @@ async def _execute_chat_run(
         if budget_reserved:
             rate_limiter.release_token_budget(run.owner_user_id, run.assistant_message_id)
         rate_limiter.release_inflight_slot(run.owner_user_id)
-
-
-def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatRunResponse:
-    conversation = db.get(Conversation, run.conversation_id)
-    user_message = db.get(Message, run.user_message_id)
-    assistant_message = db.get(Message, run.assistant_message_id)
-    if conversation is None or user_message is None or assistant_message is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Chat run not found")
-
-    message_ids = [user_message.id, assistant_message.id]
-    contexts_by_message_id = load_message_context_snapshots_for_message_ids(db, message_ids)
-    artifacts_by_message_id = load_message_artifacts_for_message_ids(db, message_ids)
-    retryable_message_ids = retryable_assistant_message_ids(
-        db,
-        viewer_id=viewer_id,
-        assistant_message_ids=message_ids,
-    )
-    user_message_out = message_to_out(
-        user_message,
-        contexts_by_message_id.get(user_message.id, []),
-        artifacts_by_message_id.get(user_message.id, []),
-        can_retry_response=user_message.id in retryable_message_ids,
-    )
-    assistant_message_out = message_to_out(
-        assistant_message,
-        contexts_by_message_id.get(assistant_message.id, []),
-        artifacts_by_message_id.get(assistant_message.id, []),
-        can_retry_response=assistant_message.id in retryable_message_ids,
-    )
-    return ChatRunResponse(
-        run=ChatRunOut.model_validate(run),
-        conversation=conversation_to_out(
-            db,
-            conversation,
-            get_message_count(db, conversation.id),
-            viewer_id=viewer_id,
-        ),
-        user_message=user_message_out,
-        assistant_message=assistant_message_out,
-    )
