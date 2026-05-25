@@ -1,6 +1,6 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { Command } from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -128,6 +128,7 @@ interface PaneShellProps {
   onChromeMouseDown?: (event: React.MouseEvent<HTMLElement>) => void;
   isActive?: boolean;
   isMobile?: boolean;
+  mobileCommandPalettePaneCount?: number;
   children: React.ReactNode;
 }
 
@@ -150,6 +151,7 @@ export default function PaneShell({
   onChromeMouseDown,
   isActive = false,
   isMobile = false,
+  mobileCommandPalettePaneCount,
   children,
 }: PaneShellProps) {
   const { handleResizeMouseDown, handleResizeKeyDown } = useResizeHandle({
@@ -185,6 +187,14 @@ export default function PaneShell({
     mobileChromeHidden &&
     mobileChromeVisibleLockCount === 0 &&
     !prefersReducedMotion;
+  const showMobileCommandPalettePaneCount =
+    typeof mobileCommandPalettePaneCount === "number" &&
+    mobileCommandPalettePaneCount > 0;
+  const mobileCommandPaletteLabel = showMobileCommandPalettePaneCount
+    ? `Open command palette (${mobileCommandPalettePaneCount} open ${
+        mobileCommandPalettePaneCount === 1 ? "tab" : "tabs"
+      })`
+    : "Open command palette";
 
   const showMobileChromeNow = useCallback(() => {
     setMobileChromeHidden(false);
@@ -459,16 +469,26 @@ export default function PaneShell({
                   variant="secondary"
                   size="md"
                   iconOnly
-                  className={styles.mobileSearchButton}
+                  className={styles.mobileCommandPaletteButton}
                   onClick={() =>
                     window.dispatchEvent(
                       new CustomEvent(OPEN_COMMAND_PALETTE_EVENT)
                     )
                   }
-                  aria-label="Open command palette"
+                  aria-label={mobileCommandPaletteLabel}
                   aria-haspopup="dialog"
                 >
-                  <Search size={16} aria-hidden="true" />
+                  <span className={styles.mobileCommandPaletteIcon}>
+                    <Command size={16} aria-hidden="true" />
+                    {showMobileCommandPalettePaneCount ? (
+                      <span
+                        className={styles.mobileCommandPaletteBadge}
+                        aria-hidden="true"
+                      >
+                        {mobileCommandPalettePaneCount}
+                      </span>
+                    ) : null}
+                  </span>
                 </Button>
               </>
             ) : (

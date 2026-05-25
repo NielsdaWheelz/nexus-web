@@ -456,7 +456,7 @@ describe("PaneShell", () => {
     expect(screen.getByRole("button", { name: "Options" })).toBeInTheDocument();
   });
 
-  it("renders an icon-only command palette trigger on mobile and dispatches the open event", () => {
+  it("renders a command palette trigger with an optional pane count on mobile", () => {
     const onOpen = vi.fn();
     window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen as EventListener);
 
@@ -471,13 +471,16 @@ describe("PaneShell", () => {
         bodyMode="standard"
         onResizePane={() => {}}
         isMobile
+        mobileCommandPalettePaneCount={3}
       >
         <div>Body content</div>
       </PaneShell>
     );
 
-    const trigger = screen.getByRole("button", { name: "Open command palette" });
-    expect(trigger).not.toHaveTextContent(/\S/);
+    const trigger = screen.getByRole("button", {
+      name: "Open command palette (3 open tabs)",
+    });
+    expect(trigger).toHaveTextContent("3");
 
     fireEvent.click(trigger);
 

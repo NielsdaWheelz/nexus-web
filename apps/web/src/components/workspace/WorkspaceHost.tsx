@@ -612,6 +612,7 @@ export default function WorkspaceHost() {
                 onChromeMouseDown={handleChromeMouseDown}
                 isActive={pane.isActive}
                 isMobile={isMobile}
+                mobileCommandPalettePaneCount={state.panes.length}
               >
                 {pane.content}
               </PaneShell>

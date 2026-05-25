@@ -92,7 +92,8 @@
   padding-top: calc(var(--space-2) + var(--mobile-pane-chrome-height));
 }
 
-.mobileSearchButton {
+.mobileCommandPaletteButton {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -107,18 +108,45 @@
   transition: background var(--duration-fast) var(--ease-glide), color var(--duration-fast) var(--ease-glide);
 }
 
-.mobileSearchButton:hover {
+.mobileCommandPaletteButton:hover {
   background: var(--surface-hover);
   color: var(--ink);
 }
 
-.mobileSearchButton:active {
+.mobileCommandPaletteButton:active {
   background: var(--surface-active);
+}
+
+.mobileCommandPaletteIcon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mobileCommandPaletteBadge {
+  position: absolute;
+  top: -9px;
+  right: -10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--surface-canvas);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--ink-on-accent);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  pointer-events: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .paneShell[data-mobile="true"] .chrome,
-  .mobileSearchButton {
+  .mobileCommandPaletteButton {
     transition: none;
   }
 }
