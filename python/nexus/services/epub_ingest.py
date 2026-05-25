@@ -42,6 +42,7 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.html_tree import remove_element, unwrap_element
 from nexus.storage.client import StorageError
 from nexus.storage.paths import build_epub_asset_storage_path
 
@@ -1409,11 +1410,11 @@ def _sanitize_epub_element(element: HtmlElement) -> None:
         "feimage",
     }
     if tag in blocked_tags:
-        _remove_element(element)
+        remove_element(element)
         return
 
     if tag not in _EPUB_ALLOWED_HTML_TAGS and tag not in _EPUB_ALLOWED_SVG_TAGS:
-        _unwrap_element(element)
+        unwrap_element(element)
         return
 
     _sanitize_epub_attributes(element, tag)
@@ -1551,40 +1552,6 @@ def _local_name(name: str | None) -> str:
     return name.lower()
 
 
-def _remove_element(element: HtmlElement) -> None:
-    parent = element.getparent()
-    if parent is not None:
-        parent.remove(element)
-
-
-def _unwrap_element(element: HtmlElement) -> None:
-    parent = element.getparent()
-    if parent is None:
-        return
-
-    index = list(parent).index(element)
-    tail = element.tail or ""
-
-    for i, child in enumerate(element):
-        parent.insert(index + i, child)
-
-    text = element.text or ""
-    if index > 0:
-        prev = parent[index - 1]
-        prev.tail = (prev.tail or "") + text
-    else:
-        parent.text = (parent.text or "") + text
-
-    if len(element) > 0:
-        last_child = element[-1]
-        last_child.tail = (last_child.tail or "") + tail
-    elif index > 0:
-        prev = parent[index - 1]
-        prev.tail = (prev.tail or "") + tail
-    else:
-        parent.text = (parent.text or "") + tail
-
-    parent.remove(element)
 
 
 # ---------------------------------------------------------------------------

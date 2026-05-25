@@ -17,6 +17,8 @@ from urllib.parse import quote, urljoin, urlparse
 
 from lxml.html import HtmlElement, document_fromstring, tostring
 
+from nexus.services.html_tree import remove_element, unwrap_element
+
 # Allowed tags per s2_spec.md §5.2
 ALLOWED_TAGS = frozenset(
     {
@@ -182,12 +184,12 @@ def _sanitize_element(
         "base",
     ):
         # Remove these elements entirely (including content)
-        _remove_element(element)
+        remove_element(element)
         return
 
     if tag not in ALLOWED_TAGS:
         # Unwrap element (keep children, remove tag)
-        _unwrap_element(element)
+        unwrap_element(element)
         return
 
     # Sanitize attributes
@@ -316,51 +318,3 @@ def _sanitize_image(element: HtmlElement, base_url: str) -> None:
     element.set("src", proxy_url)
 
 
-def _remove_element(element: HtmlElement) -> None:
-    """Remove an element entirely from the tree."""
-    parent = element.getparent()
-    if parent is not None:
-        parent.remove(element)
-
-
-def _unwrap_element(element: HtmlElement) -> None:
-    """Remove element tag but keep its children and text."""
-    parent = element.getparent()
-    if parent is None:
-        return
-
-    # Get index of element in parent
-    index = list(parent).index(element)
-
-    # Preserve tail text (text after closing tag)
-    tail = element.tail or ""
-
-    # Move children before this element
-    for i, child in enumerate(element):
-        parent.insert(index + i, child)
-
-    # Handle text content
-    text = element.text or ""
-    if index > 0:
-        # Append to previous sibling's tail
-        prev = parent[index - 1] if index > 0 else None
-        if prev is not None:
-            prev.tail = (prev.tail or "") + text
-        else:
-            parent.text = (parent.text or "") + text
-    else:
-        # Prepend to parent's text
-        parent.text = (parent.text or "") + text
-
-    # Append tail to last child or previous sibling
-    if len(element) > 0:
-        last_child = element[-1]
-        last_child.tail = (last_child.tail or "") + tail
-    elif index > 0:
-        prev = parent[index - 1 + len(element)]
-        prev.tail = (prev.tail or "") + tail
-    else:
-        parent.text = (parent.text or "") + tail
-
-    # Remove the element
-    parent.remove(element)
