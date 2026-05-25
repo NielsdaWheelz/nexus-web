@@ -59,15 +59,15 @@ from nexus.services.chat_run_claim_parsing import (
     parse_claim_extractor_response,
     parse_claim_verifier_response,
 )
+from nexus.services.chat_run_event_store import append_run_event
 from nexus.services.chat_run_message_blocks import message_document_with_run_components
+from nexus.services.chat_run_prompt_tracking import reconcile_prompt_retrievals
 from nexus.services.chat_runs import (
     VERIFICATION_FAILURE_CONTENT,
     _finalize_message_evidence,
     _finalize_run,
     _message_prompt_evidence_rows,
-    _reconcile_prompt_retrievals,
     _verified_assistant_content,
-    append_run_event,
 )
 from nexus.services.conversations import load_message_artifacts_for_message_ids, message_to_out
 from tests.factories import (
@@ -1720,7 +1720,7 @@ def test_reconcile_prompt_retrievals_preserves_empty_manifest_metadata(
     run.next_event_seq = 2
     db_session.commit()
 
-    _reconcile_prompt_retrievals(
+    reconcile_prompt_retrievals(
         db_session,
         run=run,
         assembly=SimpleNamespace(
@@ -1871,7 +1871,7 @@ def test_reconcile_prompt_retrievals_updates_current_source_manifest_snapshot(
     )
     assert initial_manifest_id is not None
 
-    _reconcile_prompt_retrievals(
+    reconcile_prompt_retrievals(
         db_session,
         run=run,
         assembly=SimpleNamespace(
@@ -1996,7 +1996,7 @@ def test_reconcile_prompt_retrievals_marks_dropped_web_evidence_by_budget(
     retrieval_id = retrieval.id
     db_session.commit()
 
-    _reconcile_prompt_retrievals(
+    reconcile_prompt_retrievals(
         db_session,
         run=run,
         assembly=SimpleNamespace(
