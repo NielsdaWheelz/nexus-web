@@ -35,7 +35,7 @@ from nexus.db.models import UserApiKey
 from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.schemas.keys import KeyProviderStateStatus, UserApiKeyOut
-from nexus.services.crypto import decrypt_api_key, encrypt_api_key
+from nexus.services.crypto import CryptoError, decrypt_api_key, encrypt_api_key
 from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
@@ -260,7 +260,7 @@ async def test_user_key(
             key.key_nonce,
             key.master_key_version or 1,
         )
-    except Exception as e:
+    except (CryptoError, UnicodeDecodeError) as e:
         logger.warning(
             "user_key_decrypt_failed",
             user_id=str(user_id),

@@ -17,6 +17,7 @@ from typing import Literal
 from uuid import UUID
 
 from llm_calling.errors import LLMError, LLMErrorCode
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
@@ -24,7 +25,7 @@ from nexus.db.models import Model, UserApiKey
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.billing import get_entitlements
-from nexus.services.crypto import decrypt_api_key
+from nexus.services.crypto import CryptoError, decrypt_api_key
 
 logger = get_logger(__name__)
 
@@ -118,7 +119,7 @@ def resolve_api_key(
                 user_key_row.master_key_version or 1,
             )
             user_key_id = str(user_key_row.id)
-        except Exception as e:
+        except (CryptoError, UnicodeDecodeError) as e:
             logger.warning(
                 "user_key_decrypt_failed",
                 user_id=str(user_id),
@@ -217,7 +218,7 @@ def update_user_key_status(
             key.last_tested_at = now
             key.last_used_at = now
             db.flush()
-    except Exception as e:
+    except (SQLAlchemyError, ValueError) as e:
         logger.warning(
             "key_status_update_failed",
             user_key_id=user_key_id,

@@ -18,9 +18,11 @@ Security invariants:
 """
 
 import base64
+import binascii
 import os
 from functools import lru_cache
 
+from nacl.exceptions import CryptoError as NaclCryptoError
 from nacl.secret import SecretBox
 
 from nexus.logging import get_logger
@@ -59,7 +61,7 @@ def _get_master_key() -> bytes:
 
     try:
         key = base64.b64decode(key_b64)
-    except Exception as e:
+    except binascii.Error as e:
         raise CryptoError(f"NEXUS_KEY_ENCRYPTION_KEY is not valid base64: {e}") from e
 
     if len(key) != MASTER_KEY_SIZE:
@@ -123,7 +125,7 @@ def encrypt_secretbox(plaintext: bytes, nonce: bytes) -> bytes:
         return ciphertext.ciphertext
     except CryptoError:
         raise
-    except Exception as e:
+    except NaclCryptoError as e:
         logger.error("encryption_failed", error=str(e))
         raise CryptoError(f"Encryption failed: {e}") from e
 
@@ -152,7 +154,7 @@ def decrypt_secretbox(ciphertext: bytes, nonce: bytes) -> bytes:
         return plaintext
     except CryptoError:
         raise
-    except Exception as e:
+    except NaclCryptoError as e:
         logger.error("decryption_failed", error=str(e))
         raise CryptoError(f"Decryption failed: {e}") from e
 
