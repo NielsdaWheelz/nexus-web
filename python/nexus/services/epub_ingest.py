@@ -431,7 +431,7 @@ def extract_epub_artifacts(
     # ---- read bytes from storage -------------------------------------------
     try:
         epub_bytes = b"".join(storage_client.stream_object(media_file.storage_path))
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: storage boundary; surface as typed extraction error
         return EpubExtractionError(
             error_code=ApiErrorCode.E_INGEST_FAILED.value,
             error_message=f"Failed to read EPUB from storage: {exc}",
@@ -447,7 +447,7 @@ def extract_epub_artifacts(
     uploaded_asset_paths: list[str] = []
     try:
         zf = zipfile.ZipFile(io.BytesIO(epub_bytes))
-    except (zipfile.BadZipFile, Exception) as exc:
+    except zipfile.BadZipFile as exc:
         return EpubExtractionError(
             error_code=ApiErrorCode.E_INGEST_FAILED.value,
             error_message=f"Invalid ZIP: {exc}",
@@ -514,7 +514,7 @@ def extract_epub_artifacts(
         for ch in chapter_specs:
             try:
                 html_sanitized = _epub_sanitize(ch.raw_html)
-            except Exception as exc:
+            except Exception as exc:  # justify-ignore-error: sanitizer boundary; surface as typed sanitization failure
                 return EpubExtractionError(
                     error_code=ApiErrorCode.E_SANITIZATION_FAILED.value,
                     error_message=f"Sanitization failed for spine item {ch.spine_idx}: {exc}",
@@ -522,7 +522,7 @@ def extract_epub_artifacts(
 
             try:
                 canonical_text = generate_canonical_text(html_sanitized)
-            except Exception as exc:
+            except Exception as exc:  # justify-ignore-error: canonicalizer boundary; surface as typed sanitization failure
                 return EpubExtractionError(
                     error_code=ApiErrorCode.E_SANITIZATION_FAILED.value,
                     error_message=f"Canonicalization failed for spine item {ch.spine_idx}: {exc}",
@@ -570,7 +570,7 @@ def extract_epub_artifacts(
             try:
                 storage_client.put_object(asset_storage_key, ae.content, ae.content_type)
                 uploaded_asset_paths.append(asset_storage_key)
-            except Exception as exc:
+            except Exception as exc:  # justify-ignore-error: storage upload boundary; cleanup partial uploads and surface as typed error
                 for path in uploaded_asset_paths:
                     try:
                         storage_client.delete_object(path)
@@ -677,7 +677,7 @@ def extract_epub_artifacts(
             language=media.language,
         )
 
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: ingest boundary; rollback, clean uploaded assets, and surface as typed error
         db.rollback()
         for path in uploaded_asset_paths:
             try:
@@ -1055,7 +1055,7 @@ def _rewrite_chapter_resources(
     chapter_dir = posixpath.dirname(chapter_href)
     try:
         doc = _parse_epub_html_document(html)
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: HTML parser boundary; re-raise as ValueError to mark a chapter-resource parse failure
         raise ValueError(f"Failed to parse EPUB chapter resources: {chapter_href}") from exc
 
     for element in doc.iter():
@@ -1362,7 +1362,7 @@ def _epub_sanitize(html: str) -> str:
 
     try:
         doc = _parse_epub_html_document(html)
-    except Exception as exc:
+    except Exception as exc:  # justify-ignore-error: HTML parser boundary; re-raise as ValueError to mark an EPUB-HTML parse failure
         raise ValueError(f"Failed to parse EPUB HTML: {exc}") from exc
 
     body = doc.body
