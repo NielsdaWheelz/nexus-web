@@ -19,7 +19,7 @@ from typing import Any, Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.engine import CursorResult, Row
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from nexus.config import Environment, get_settings
@@ -405,7 +405,16 @@ def claim_backfill_job_pending(
     row = result.fetchone()
     if row is None:
         return None
-    return _backfill_row_to_dict(row)
+    return {
+        "default_library_id": row[0],
+        "source_library_id": row[1],
+        "user_id": row[2],
+        "status": row[3],
+        "attempts": row[4],
+        "last_error_code": row[5],
+        "updated_at": row[7],
+        "finished_at": row[8],
+    }
 
 
 def mark_backfill_job_completed(
@@ -562,7 +571,18 @@ def _requeue_backfill_job_state(
 
     # Running -> idempotent no-op
     if current_status == "running":
-        return _backfill_row_to_requeue_result(row, idempotent=True)
+        return BackfillRequeueResult(
+            default_library_id=row[0],
+            source_library_id=row[1],
+            user_id=row[2],
+            status=cast(BackfillJobStatus, row[3]),
+            attempts=row[4],
+            last_error_code=row[5],
+            updated_at=row[7],
+            finished_at=row[8],
+            idempotent=True,
+            enqueue_dispatched=False,
+        )
 
     # Reset to pending
     now = datetime.now(UTC)
@@ -787,31 +807,3 @@ def get_backfill_backlog_health(db: Session) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _backfill_row_to_dict(row: Row[Any]) -> dict:
-    """Convert a backfill job query row to dict."""
-    return {
-        "default_library_id": row[0],
-        "source_library_id": row[1],
-        "user_id": row[2],
-        "status": row[3],
-        "attempts": row[4],
-        "last_error_code": row[5],
-        "updated_at": row[7],
-        "finished_at": row[8],
-    }
-
-
-def _backfill_row_to_requeue_result(row: Row[Any], idempotent: bool) -> BackfillRequeueResult:
-    """Convert a locked backfill job row to the operator requeue result."""
-    return BackfillRequeueResult(
-        default_library_id=row[0],
-        source_library_id=row[1],
-        user_id=row[2],
-        status=cast(BackfillJobStatus, row[3]),
-        attempts=row[4],
-        last_error_code=row[5],
-        updated_at=row[7],
-        finished_at=row[8],
-        idempotent=idempotent,
-        enqueue_dispatched=False,
-    )
