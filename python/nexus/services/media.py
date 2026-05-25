@@ -1632,7 +1632,7 @@ def create_or_reuse_x_oembed_article(
     try:
         html_sanitized = sanitize_html(content_html, identity.canonical_url)
         canonical_text = generate_canonical_text(html_sanitized)
-    except Exception as exc:
+    except ValueError as exc:
         raise ApiError(ApiErrorCode.E_SANITIZATION_FAILED, "X post could not be sanitized") from exc
 
     if not canonical_text.strip():
