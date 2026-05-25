@@ -37,7 +37,6 @@ from nexus.db.models import (
     MessageLLM,
     MessageToolCall,
     Model,
-    SourceManifest,
 )
 from nexus.errors import (
     LLM_ERROR_CODE_TO_API_ERROR_CODE,
@@ -104,6 +103,14 @@ from nexus.services.chat_run_claim_parsing import (
     failed_verifier_hint,
     parse_claim_extractor_response,
     parse_claim_verifier_response,
+)
+from nexus.services.chat_run_event_store import (
+    TERMINAL_RUN_STATUSES,
+    append_and_commit,
+    append_run_event,
+    has_delta_without_terminal,
+    is_cancel_requested,
+    mark_running,
 )
 from nexus.services.chat_run_evidence_locators import canonical_evidence_span_matches
 from nexus.services.chat_run_idempotency import (
@@ -176,7 +183,6 @@ from nexus.services.seq import assign_next_message_seq
 
 logger = get_logger(__name__)
 
-TERMINAL_RUN_STATUSES = frozenset({"complete", "error", "cancelled"})
 MAX_ASSISTANT_CONTENT_LENGTH = 50000
 TRUNCATION_NOTICE = "\n\n[Response truncated due to length]"
 LLM_TIMEOUT_SECONDS = 45.0
@@ -732,7 +738,7 @@ async def _execute_chat_run(
     if run.status in TERMINAL_RUN_STATUSES:
         return {"status": "skipped", "reason": "terminal"}
 
-    if _has_delta_without_terminal(db, run.id):
+    if has_delta_without_terminal(db, run.id):
         _finalize_interrupted(db, run)
         return {"status": "error", "error_code": ApiErrorCode.E_LLM_INTERRUPTED.value}
 
@@ -747,7 +753,7 @@ async def _execute_chat_run(
         )
         return {"status": "error", "error_code": ApiErrorCode.E_MODEL_NOT_AVAILABLE.value}
 
-    _mark_running(db, run.id)
+    mark_running(db, run.id)
     run = db.get(ChatRun, run.id)
     if run is None or run.status in TERMINAL_RUN_STATUSES:
         return {"status": "skipped", "reason": "terminal"}
@@ -849,7 +855,7 @@ async def _execute_chat_run(
             planned_query = retrieval_plan.app_search.query
             if planned_query is None:
                 raise AssertionError("enabled app-search plan is missing a query")
-            _append_and_commit(
+            append_and_commit(
                 db,
                 run.id,
                 "tool_call",
@@ -877,8 +883,8 @@ async def _execute_chat_run(
                 planned_filters=retrieval_plan.app_search.filters,
             )
             app_result_event = app_search_run.retrieval_result_event()
-            _append_and_commit(db, run.id, "retrieval_result", app_result_event)
-            _append_and_commit(
+            append_and_commit(db, run.id, "retrieval_result", app_result_event)
+            append_and_commit(
                 db,
                 run.id,
                 "source_manifest_delta",
@@ -936,7 +942,7 @@ async def _execute_chat_run(
                     "error_code": error_code,
                 }
 
-        if _is_cancel_requested(db, run.id):
+        if is_cancel_requested(db, run.id):
             _finalize_cancelled(
                 db, run, model, resolved_key, int((time.monotonic() - start_time) * 1000)
             )
@@ -944,7 +950,7 @@ async def _execute_chat_run(
 
         web_search = WebSearchOptions.model_validate(run.web_search)
         if retrieval_plan.web_search.enabled:
-            _append_and_commit(
+            append_and_commit(
                 db,
                 run.id,
                 "tool_call",
@@ -979,8 +985,8 @@ async def _execute_chat_run(
             )
             if web_search_run is not None:
                 web_result_event = web_search_run.retrieval_result_event()
-                _append_and_commit(db, run.id, "retrieval_result", web_result_event)
-                _append_and_commit(
+                append_and_commit(db, run.id, "retrieval_result", web_result_event)
+                append_and_commit(
                     db,
                     run.id,
                     "source_manifest_delta",
@@ -1018,7 +1024,7 @@ async def _execute_chat_run(
                         "status": web_search_run.status,
                     },
                 )
-        if _is_cancel_requested(db, run.id):
+        if is_cancel_requested(db, run.id):
             _finalize_cancelled(
                 db, run, model, resolved_key, int((time.monotonic() - start_time) * 1000)
             )
@@ -1113,7 +1119,7 @@ async def _execute_chat_run(
                 evidence_rows=prompt_evidence_rows,
                 source_backed=buffer_provider_deltas,
             )
-            if _is_cancel_requested(db, run.id):
+            if is_cancel_requested(db, run.id):
                 _finalize_cancelled(
                     db,
                     run,
@@ -1172,11 +1178,11 @@ async def _execute_chat_run(
                     if delta:
                         full_content += delta
                         if not buffer_provider_deltas:
-                            _append_and_commit(db, run.id, "delta", {"delta": delta})
+                            append_and_commit(db, run.id, "delta", {"delta": delta})
                     if len(full_content) >= MAX_ASSISTANT_CONTENT_LENGTH:
                         locally_truncated = True
                         break
-                if _is_cancel_requested(db, run.id):
+                if is_cancel_requested(db, run.id):
                     _finalize_cancelled(
                         db,
                         run,
@@ -1308,7 +1314,7 @@ async def _execute_chat_run(
             assistant_content=full_content,
         )
         if buffer_provider_deltas and verified_content:
-            _append_and_commit(db, run.id, "delta", {"delta": verified_content})
+            append_and_commit(db, run.id, "delta", {"delta": verified_content})
 
         latency_ms = int((time.monotonic() - start_time) * 1000)
         _finalize_run(
@@ -1567,7 +1573,7 @@ async def _append_generated_artifact_delta(
         return
 
     if source_backed and not evidence_rows:
-        _append_and_commit(
+        append_and_commit(
             db,
             run.id,
             "artifact_delta",
@@ -1581,7 +1587,7 @@ async def _append_generated_artifact_delta(
 
     generate = getattr(llm_router, "generate", None)
     if not callable(generate):
-        _append_and_commit(
+        append_and_commit(
             db,
             run.id,
             "artifact_delta",
@@ -1671,7 +1677,7 @@ async def _append_generated_artifact_delta(
             detail="Artifact generation failed before returning a valid artifact.",
         )
 
-    _append_and_commit(db, run.id, "artifact_delta", payload)
+    append_and_commit(db, run.id, "artifact_delta", payload)
 
 
 def _artifact_error_delta(
@@ -2162,76 +2168,6 @@ def _selected_path_reply_parent(
     return None
 
 
-def append_run_event(db: Session, run: ChatRun, event_type: str, payload: dict[str, Any]) -> None:
-    seq = run.next_event_seq
-    payload = chat_run_event_payload_json(event_type, payload)
-    db.add(ChatRunEvent(run_id=run.id, seq=seq, event_type=event_type, payload=payload))
-    if event_type == "source_manifest_delta":
-        _persist_source_manifest_delta(db, run=run, payload=payload)
-    run.next_event_seq = seq + 1
-    run.updated_at = datetime.now(UTC)
-    db.flush()
-
-
-def _persist_source_manifest_delta(
-    db: Session,
-    *,
-    run: ChatRun,
-    payload: dict[str, Any],
-) -> None:
-    assistant_message_id = UUID(str(payload["assistant_message_id"]))
-    tool_call_index = int(payload["tool_call_index"])
-    tool_call_id = parse_uuid(payload.get("tool_call_id"))
-    latency_ms = payload["latency_ms"]
-    manifest = (
-        db.execute(
-            select(SourceManifest)
-            .where(
-                SourceManifest.chat_run_id == run.id,
-                SourceManifest.tool_call_index == tool_call_index,
-            )
-            .order_by(SourceManifest.created_at.desc(), SourceManifest.id.desc())
-            .limit(1)
-        )
-        .scalars()
-        .first()
-    )
-    if manifest is None:
-        manifest = SourceManifest(
-            conversation_id=run.conversation_id,
-            assistant_message_id=assistant_message_id,
-            chat_run_id=run.id,
-            tool_call_id=tool_call_id,
-            tool_call_index=tool_call_index,
-            tool_name=str(payload["tool_name"]),
-        )
-        db.add(manifest)
-    manifest.conversation_id = run.conversation_id
-    manifest.assistant_message_id = assistant_message_id
-    manifest.chat_run_id = run.id
-    manifest.tool_call_id = tool_call_id
-    manifest.tool_call_index = tool_call_index
-    manifest.tool_name = str(payload["tool_name"])
-    manifest.query_hash = payload["query_hash"]
-    manifest.scope = str(payload["scope"])
-    manifest.filters = dict(payload["filters"])
-    manifest.requested_types = list(payload["requested_types"])
-    manifest.candidate_count = int(payload["candidate_count"])
-    manifest.result_count = int(payload["result_count"])
-    manifest.selected_count = int(payload["selected_count"])
-    manifest.included_in_prompt_count = int(payload["included_in_prompt_count"])
-    manifest.excluded_by_budget_count = int(payload["excluded_by_budget_count"])
-    manifest.excluded_by_scope_count = int(payload["excluded_by_scope_count"])
-    manifest.stale_count = int(payload["stale_count"])
-    manifest.unreadable_count = int(payload["unreadable_count"])
-    manifest.web_search_mode = payload["web_search_mode"]
-    manifest.index_versions = list(payload["index_versions"])
-    manifest.metadata_json = dict(payload["metadata"])
-    manifest.latency_ms = latency_ms if isinstance(latency_ms, int) else None
-    manifest.status = str(payload["status"])
-    manifest.updated_at = datetime.now(UTC)
-
-
 def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatRunResponse:
     conversation = db.get(Conversation, run.conversation_id)
     user_message = db.get(Message, run.user_message_id)
@@ -2270,45 +2206,6 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
         user_message=user_message_out,
         assistant_message=assistant_message_out,
     )
-
-
-def _append_and_commit(db: Session, run_id: UUID, event_type: str, payload: dict[str, Any]) -> None:
-    run = db.execute(select(ChatRun).where(ChatRun.id == run_id).with_for_update()).scalars().one()
-    if run.status in TERMINAL_RUN_STATUSES:
-        db.commit()
-        return
-    append_run_event(db, run, event_type, payload)
-    db.commit()
-
-
-def _mark_running(db: Session, run_id: UUID) -> None:
-    run = db.execute(select(ChatRun).where(ChatRun.id == run_id).with_for_update()).scalars().one()
-    if run.status == "queued":
-        run.status = "running"
-        run.started_at = run.started_at or datetime.now(UTC)
-        run.updated_at = datetime.now(UTC)
-    db.commit()
-
-
-def _is_cancel_requested(db: Session, run_id: UUID) -> bool:
-    run = db.get(ChatRun, run_id)
-    return run is not None and run.cancel_requested_at is not None
-
-
-def _has_delta_without_terminal(db: Session, run_id: UUID) -> bool:
-    rows = db.execute(
-        text(
-            """
-            SELECT event_type
-            FROM chat_run_events
-            WHERE run_id = :run_id
-              AND event_type IN ('delta', 'done')
-            """
-        ),
-        {"run_id": run_id},
-    ).fetchall()
-    event_types = {row[0] for row in rows}
-    return "delta" in event_types and "done" not in event_types
 
 
 def _finalize_error(
