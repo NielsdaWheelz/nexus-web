@@ -54,6 +54,7 @@ from nexus.services.pdf_quote_match_policy import (
 )
 from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 from nexus.services.quote_context_errors import QuoteContextBlockingError
+from nexus.timestamps import format_timestamp_ms
 
 logger = get_logger(__name__)
 
@@ -66,11 +67,6 @@ MAX_CONTEXT_CHARS = 25000
 _PDF_CONTEXT_RENDER_PATH = "pdf_quote_context_render"
 
 
-def _format_timestamp_ms(timestamp_ms: int) -> str:
-    total_seconds = max(0, timestamp_ms // 1000)
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 def _append_source_metadata_xml(
@@ -387,7 +383,7 @@ def _render_fragment_highlight_context(
     if media.canonical_source_url:
         lines.append(f"<url>{xml_escape(media.canonical_source_url)}</url>")
     if fragment.t_start_ms is not None:
-        lines.append(f"<timestamp>{_format_timestamp_ms(fragment.t_start_ms)}</timestamp>")
+        lines.append(f"<timestamp>{format_timestamp_ms(fragment.t_start_ms)}</timestamp>")
     if fragment.speaker_label:
         lines.append(f"<speaker>{xml_escape(fragment.speaker_label)}</speaker>")
     lines.append(f"<quote>{xml_escape(highlight.exact)}</quote>")

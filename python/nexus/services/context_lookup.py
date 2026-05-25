@@ -36,6 +36,7 @@ from nexus.services.message_context_snapshots import (
 from nexus.services.object_refs import render_object_context
 from nexus.services.prompt_budget import estimate_tokens
 from nexus.services.quote_context_errors import QuoteContextBlockingError
+from nexus.timestamps import format_timestamp_ms
 
 LookupFailureCode = Literal[
     "invalid",
@@ -719,7 +720,7 @@ def _render_content_chunk_context(
     if row[5]:
         lines.append(f"<url>{xml_escape(row[5])}</url>")
     locator = dict(row[2] or {})
-    timestamp = _format_timestamp_ms(locator.get("t_start_ms"))
+    timestamp = format_timestamp_ms(locator.get("t_start_ms"))
     if timestamp:
         lines.append(f"<timestamp>{timestamp}</timestamp>")
     if row[3]:
@@ -999,15 +1000,6 @@ def _render_web_result(result_ref: Mapping[str, object]) -> str:
                 lines.append(f"<excerpt>{xml_escape(extra_snippet)}</excerpt>")
     lines.append("</web_search_result>")
     return "\n".join(lines)
-
-
-def _format_timestamp_ms(timestamp_ms: int | None) -> str | None:
-    if timestamp_ms is None:
-        return None
-    total_seconds = max(0, int(timestamp_ms) // 1000)
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 def _parse_uuid(value: Any) -> UUID | None:

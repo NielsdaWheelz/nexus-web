@@ -39,6 +39,7 @@ from nexus.services.contexts import load_artifact_part_context_ref
 from nexus.services.contributor_credits import normalize_contributor_role
 from nexus.services.contributors import get_contributor_by_handle
 from nexus.services.search import hash_query, parse_scope, search
+from nexus.timestamps import format_timestamp_ms
 
 logger = get_logger(__name__)
 
@@ -1135,13 +1136,6 @@ def _parse_uuid(value: Any) -> UUID | None:
         return None
 
 
-def _format_timestamp_ms(timestamp_ms: int | None) -> str | None:
-    if timestamp_ms is None:
-        return None
-    total_seconds = max(0, int(timestamp_ms) // 1000)
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 def _append_citation_source_xml(lines: list[str], citation: AppSearchCitation) -> None:
@@ -1197,7 +1191,7 @@ def _render_content_chunk_context(
     if row[5]:
         lines.append(f"<url>{xml_escape(row[5])}</url>")
     locator = dict(row[2] or {})
-    timestamp = _format_timestamp_ms(locator.get("t_start_ms"))
+    timestamp = format_timestamp_ms(locator.get("t_start_ms"))
     if timestamp:
         lines.append(f"<timestamp>{timestamp}</timestamp>")
     if row[3]:
@@ -1234,7 +1228,7 @@ def _render_fragment_context(
         f"<fragment_id>{fragment_id}</fragment_id>",
         f"<fragment_index>{row[1]}</fragment_index>",
     ]
-    timestamp = _format_timestamp_ms(row[3])
+    timestamp = format_timestamp_ms(row[3])
     if timestamp:
         lines.append(f"<timestamp>{timestamp}</timestamp>")
     _append_contributors_xml(lines, citation.contributors)
