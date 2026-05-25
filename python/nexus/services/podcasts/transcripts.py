@@ -1113,7 +1113,7 @@ def _run_transcription_job_heartbeat(
                     {"media_id": media_id, "now": heartbeat_now},
                 )
                 heartbeat_db.commit()
-        except Exception:  # justify-ignore-error: heartbeat is best-effort; transcription job continues on heartbeat failure
+        except SQLAlchemyError:
             logger.warning(
                 "podcast_transcription_heartbeat_failed",
                 media_id=str(media_id),
