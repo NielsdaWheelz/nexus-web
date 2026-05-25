@@ -33,7 +33,6 @@ from nexus.db.models import (
     Conversation,
     Message,
     MessageLLM,
-    MessageToolCall,
     Model,
 )
 from nexus.errors import (
@@ -124,6 +123,7 @@ from nexus.services.chat_run_prompt_tracking import (
     prompt_assembly_metadata,
     reconcile_prompt_retrievals,
 )
+from nexus.services.chat_run_scope import is_source_backed_run, scope_constraints_for_run
 from nexus.services.chat_run_usage import usage_log_fields, usage_provider_json, usage_tokens
 from nexus.services.chat_run_validation import load_valid_parent_for_send, validate_pre_phase
 from nexus.services.context_assembler import (
@@ -1092,7 +1092,7 @@ async def _execute_chat_run(
             else (None, [])
         )
         buffer_provider_deltas = (
-            _is_source_backed_run(
+            is_source_backed_run(
                 db,
                 run=run,
                 assistant_message=assistant_message,
@@ -2213,39 +2213,6 @@ def _finalize_cancelled(
     )
 
 
-def _is_source_backed_run(
-    db: Session,
-    *,
-    run: ChatRun,
-    assistant_message: Message | None,
-    evidence_rows: list[dict[str, Any]],
-) -> bool:
-    if evidence_rows:
-        return True
-    conversation = db.get(Conversation, run.conversation_id)
-    if conversation is not None and conversation.scope_type in {"media", "library"}:
-        return True
-    if assistant_message is None:
-        return False
-    tool_call_count = db.execute(
-        select(func.count(MessageToolCall.id)).where(
-            MessageToolCall.assistant_message_id == assistant_message.id
-        )
-    ).scalar_one()
-    return bool(tool_call_count)
-
-
-def _scope_constraints_for_run(db: Session, run: ChatRun) -> dict[str, object]:
-    conversation = db.get(Conversation, run.conversation_id)
-    if conversation is None:
-        return {"type": "general"}
-    if conversation.scope_type == "media" and conversation.scope_media_id is not None:
-        return {"type": "media", "media_id": str(conversation.scope_media_id)}
-    if conversation.scope_type == "library" and conversation.scope_library_id is not None:
-        return {"type": "library", "library_id": str(conversation.scope_library_id)}
-    return {"type": conversation.scope_type}
-
-
 async def _verified_assistant_content(
     db: Session,
     *,
@@ -2265,7 +2232,7 @@ async def _verified_assistant_content(
         assistant_message,
         reconcile_inclusion=False,
     )
-    source_backed = _is_source_backed_run(
+    source_backed = is_source_backed_run(
         db,
         run=run,
         assistant_message=assistant_message,
@@ -2387,7 +2354,7 @@ async def _verified_assistant_content(
                 "evidence_count_sent": 0,
                 "source_backed": False,
                 "source_manifest": source_manifest_blocks_for_run(db, run.id),
-                "scope_constraints": _scope_constraints_for_run(db, run),
+                "scope_constraints": scope_constraints_for_run(db, run),
                 "claim_statuses": claim_statuses,
                 "answer_claim_statuses": claim_statuses,
                 "draft_claim_statuses": [dict(item) for item in claim_statuses],
@@ -2453,7 +2420,7 @@ async def _verified_assistant_content(
         "claims": claim_payload,
         "selected_evidence": evidence_payload,
         "source_manifest": source_manifest_blocks_for_run(db, run.id),
-        "scope_constraints": _scope_constraints_for_run(db, run),
+        "scope_constraints": scope_constraints_for_run(db, run),
     }
     try:
         response = await cast(Any, generate)(
@@ -3183,7 +3150,7 @@ def _finalize_message_evidence(
 
     answer = assistant_message.content.strip()
     source_backed = (
-        _is_source_backed_run(
+        is_source_backed_run(
             db,
             run=run,
             assistant_message=assistant_message,
