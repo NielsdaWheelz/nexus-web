@@ -7,7 +7,6 @@ events.
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -17,8 +16,7 @@ from uuid import UUID
 
 import httpx
 from llm_calling.errors import LLMError, LLMErrorCode, classify_provider_error
-from llm_calling.types import LLMRequest, LLMUsage, Turn
-from pydantic import ValidationError
+from llm_calling.types import LLMUsage
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
@@ -57,7 +55,6 @@ from nexus.services.agent_tools.web_search import (
     execute_web_search,
 )
 from nexus.services.api_key_resolver import (
-    ResolvedKey,
     get_model_by_id,
     resolve_api_key,
 )
@@ -68,10 +65,7 @@ from nexus.services.chat_run_access import (
     load_retryable_failed_assistant_message,
     load_source_run_for_retry,
 )
-from nexus.services.chat_run_artifact_persistence import (
-    artifact_delta_from_model_response,
-    artifact_error_delta,
-)
+from nexus.services.chat_run_artifact_persistence import append_generated_artifact_delta
 from nexus.services.chat_run_event_store import (
     TERMINAL_RUN_STATUSES,
     append_and_commit,
@@ -161,29 +155,6 @@ from nexus.services.retrieval_planner import build_retrieval_plan
 from nexus.services.seq import assign_next_message_seq
 
 logger = get_logger(__name__)
-
-ARTIFACT_OUTPUT_KINDS = frozenset(
-    {
-        "briefing_document",
-        "study_guide",
-        "faq",
-        "timeline",
-        "comparison_table",
-        "extraction_table",
-        "claim_table",
-        "contradiction_report",
-        "source_map",
-        "concept_map",
-        "outline",
-        "flashcards",
-        "quiz",
-        "audio_overview_script",
-        "audio_overview",
-        "video_slide_overview_manifest",
-        "bibliography",
-        "citation_audit",
-    }
-)
 
 REASONING_OUTPUT_TOKENS = 25000
 DEFAULT_OUTPUT_TOKENS = 4096
@@ -1027,7 +998,7 @@ async def _execute_chat_run(
         )
         artifact_intent = ArtifactIntentOptions.model_validate(run.artifact_intent)
         if artifact_intent.kind != "off" and assistant_message is not None:
-            await _append_generated_artifact_delta(
+            await append_generated_artifact_delta(
                 db,
                 run=run,
                 user_message=user_message,
@@ -1384,147 +1355,6 @@ def prepare_messages(
         user_message=user_message,
         assistant_message=assistant_message,
     )
-
-
-async def _append_generated_artifact_delta(
-    db: Session,
-    *,
-    run: ChatRun,
-    user_message: Message,
-    model: Model,
-    resolved_key: ResolvedKey,
-    llm_router: ChatRunLLMRouter,
-    artifact_intent: ArtifactIntentOptions,
-    evidence_rows: list[dict[str, Any]],
-    source_backed: bool,
-) -> None:
-    artifact_kind = artifact_intent.kind
-    if artifact_kind == "auto":
-        prompt = user_message.content.lower()
-        if "timeline" in prompt:
-            artifact_kind = "timeline"
-        elif "table" in prompt or "compare" in prompt:
-            artifact_kind = "comparison_table"
-        elif "flashcard" in prompt:
-            artifact_kind = "flashcards"
-        elif "quiz" in prompt:
-            artifact_kind = "quiz"
-        elif "bibliography" in prompt or "sources" in prompt:
-            artifact_kind = "bibliography"
-        elif "citation" in prompt or "audit" in prompt:
-            artifact_kind = "citation_audit"
-        else:
-            artifact_kind = "briefing_document"
-
-    if artifact_kind not in ARTIFACT_OUTPUT_KINDS:
-        return
-
-    if source_backed and not evidence_rows:
-        append_and_commit(
-            db,
-            run.id,
-            "artifact_delta",
-            artifact_error_delta(
-                artifact_kind=artifact_kind,
-                title="Artifact unavailable",
-                detail="No prompt-included source evidence was available for this artifact.",
-            ),
-        )
-        return
-
-    generate = getattr(llm_router, "generate", None)
-    if not callable(generate):
-        append_and_commit(
-            db,
-            run.id,
-            "artifact_delta",
-            artifact_error_delta(
-                artifact_kind=artifact_kind,
-                title="Artifact unavailable",
-                detail="The configured model adapter cannot generate structured artifacts.",
-            ),
-        )
-        return
-
-    selected_evidence = []
-    for ordinal, row in enumerate(evidence_rows[:12]):
-        selected_evidence.append(
-            {
-                "ordinal": ordinal,
-                "label": (
-                    row["source_ref"].get("label")
-                    if isinstance(row.get("source_ref"), dict)
-                    else None
-                ),
-                "exact_snippet": row.get("exact_snippet"),
-                "source_version": row.get("source_version"),
-                "locator": row.get("locator"),
-            }
-        )
-
-    request_payload = {
-        "requested_artifact_kind": artifact_kind,
-        "user_request": user_message.content,
-        "source_backed": source_backed,
-        "selected_evidence": selected_evidence,
-    }
-    try:
-        response = await cast(Any, generate)(
-            model.provider,
-            LLMRequest(
-                model_name=model.model_name,
-                messages=[
-                    Turn(
-                        role="system",
-                        content=(
-                            "Generate one concise artifact for the user. Return only JSON with "
-                            "artifact_kind, title, preview_text, and parts. artifact_kind must "
-                            "match requested_artifact_kind. parts must be an array of objects "
-                            "with part_key, part_type, text, evidence_ordinals, and support_state. "
-                            "Use evidence_ordinals from selected_evidence for every source-backed "
-                            "factual part. Do not emit source refs, locators, or source versions; "
-                            "the application will attach them. If a part is not source grounded, "
-                            "use support_state=not_source_grounded and no evidence_ordinals."
-                        ),
-                    ),
-                    Turn(
-                        role="user",
-                        content=json.dumps(request_payload, ensure_ascii=True),
-                    ),
-                ],
-                max_tokens=5000,
-                temperature=0,
-                reasoning_effort="none",
-                prompt_cache_key=None,
-            ),
-            resolved_key.api_key,
-            timeout_s=int(LLM_TIMEOUT_SECONDS),
-        )
-        payload = artifact_delta_from_model_response(
-            response.text,
-            artifact_kind=artifact_kind,
-            run=run,
-            user_message=user_message,
-            evidence_rows=evidence_rows[:12],
-            source_backed=source_backed,
-        )
-    except (LLMError, ValidationError, ValueError) as exc:
-        logger.warning(
-            "chat.artifact_generation.failed",
-            **safe_kv(
-                chat_run_id=str(run.id),
-                assistant_message_id=str(run.assistant_message_id),
-                artifact_kind=artifact_kind,
-                error_class=exc.__class__.__name__,
-            ),
-        )
-        payload = artifact_error_delta(
-            artifact_kind=artifact_kind,
-            title="Artifact unavailable",
-            detail="Artifact generation failed before returning a valid artifact.",
-        )
-
-    append_and_commit(db, run.id, "artifact_delta", payload)
 
 
 def _selected_path_reply_parent(
