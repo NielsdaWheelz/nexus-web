@@ -12,7 +12,7 @@ from uuid import UUID
 
 import httpx
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.coerce import coerce_non_negative_int, coerce_positive_int
@@ -862,7 +862,7 @@ def _enqueue_podcast_transcription_job(
             },
         )
         return True
-    except Exception as exc:  # justify-ignore-error: enqueue boundary; degrade gracefully so callers can decide
+    except SQLAlchemyError as exc:
         logger.warning(
             "podcast_transcription_enqueue_failed",
             media_id=str(media_id),
@@ -902,7 +902,7 @@ def _enqueue_podcast_semantic_repair_job(
             },
         )
         return True
-    except Exception as exc:  # justify-ignore-error: enqueue boundary; degrade gracefully so callers can decide
+    except SQLAlchemyError as exc:
         logger.warning(
             "podcast_semantic_repair_enqueue_failed",
             media_id=str(media_id),
@@ -936,7 +936,7 @@ def _try_enqueue_metadata_enrichment(
             max_attempts=1,
         )
         return True
-    except Exception as exc:  # justify-ignore-error: enqueue boundary; metadata enrichment is best-effort
+    except SQLAlchemyError as exc:
         logger.warning(
             "metadata_enrichment_enqueue_failed",
             media_id=str(media_id),
@@ -964,7 +964,7 @@ def _enqueue_video_transcription_retry(
             },
         )
         return True
-    except Exception as exc:  # justify-ignore-error: enqueue boundary; degrade gracefully so callers can decide
+    except SQLAlchemyError as exc:
         logger.warning(
             "video_transcription_retry_enqueue_failed",
             media_id=str(media_id),
