@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Literal, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
@@ -13,6 +13,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_conversation, can_read_highlight, can_read_media
+from nexus.coerce import parse_uuid
 from nexus.db.models import Contributor, MessageContextItem, MessageRetrieval
 from nexus.errors import NotFoundError
 from nexus.schemas.conversation import MessageContextRef
@@ -114,7 +115,7 @@ def hydrate_context_ref(
     """Hydrate an app context_ref into bounded evidence text."""
 
     context_type = context_ref.get("type")
-    context_id = _parse_uuid(context_ref.get("id"))
+    context_id = parse_uuid(context_ref.get("id"))
     source_ref = {"type": "app_context_ref", "context_ref": dict(context_ref)}
     if not isinstance(context_type, str) or context_type not in SUPPORTED_CONTEXT_REF_TYPES:
         return _failed(source_ref, context_ref, "unsupported", "Unsupported context_ref type")
@@ -374,7 +375,7 @@ def hydrate_source_ref(
         return _failed(source_ref, None, "unsupported", "Unsupported source_ref type")
 
     if source_type == "message":
-        message_id = _parse_uuid(source_ref.get("message_id") or source_ref.get("id"))
+        message_id = parse_uuid(source_ref.get("message_id") or source_ref.get("id"))
         if message_id is None:
             return _failed(source_ref, None, "invalid", "message source_ref id is invalid")
         return _resolve_text_result(
@@ -385,7 +386,7 @@ def hydrate_source_ref(
         )
 
     if source_type == "message_context":
-        context_row_id = _parse_uuid(source_ref.get("message_context_id") or source_ref.get("id"))
+        context_row_id = parse_uuid(source_ref.get("message_context_id") or source_ref.get("id"))
         if context_row_id is None:
             return _failed(source_ref, None, "invalid", "message_context source_ref id is invalid")
         context_ref = _context_ref_from_message_context(db, viewer_id, context_row_id)
@@ -400,7 +401,7 @@ def hydrate_source_ref(
         return _with_source_ref(nested, source_ref)
 
     if source_type == "message_retrieval":
-        retrieval_id = _parse_uuid(source_ref.get("retrieval_id") or source_ref.get("id"))
+        retrieval_id = parse_uuid(source_ref.get("retrieval_id") or source_ref.get("id"))
         if retrieval_id is None:
             return _failed(source_ref, None, "invalid", "message_retrieval id is invalid")
         return _hydrate_message_retrieval(
@@ -847,7 +848,7 @@ def _index_run_id_from_content_chunk_context_ref(
 ) -> UUID | None:
     if context_ref.get("type") != "content_chunk":
         return None
-    chunk_id = _parse_uuid(context_ref.get("id"))
+    chunk_id = parse_uuid(context_ref.get("id"))
     if chunk_id is None:
         return None
     return db.execute(
@@ -947,7 +948,7 @@ def _render_contributor_context(
     ref_text = str(contributor_ref or "").strip()
     if not ref_text:
         return ContextLookupFailure(code="invalid", message="Contributor handle is invalid")
-    contributor_id = _parse_uuid(ref_text)
+    contributor_id = parse_uuid(ref_text)
     if contributor_id is not None:
         try:
             contributor = get_contributor_by_id(db, contributor_id, viewer_id=viewer_id)
@@ -1002,8 +1003,3 @@ def _render_web_result(result_ref: Mapping[str, object]) -> str:
     return "\n".join(lines)
 
 
-def _parse_uuid(value: Any) -> UUID | None:
-    try:
-        return UUID(str(value))
-    except (TypeError, ValueError):
-        return None

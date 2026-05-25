@@ -25,6 +25,7 @@ from nexus.auth.permissions import (
     can_read_media,
     visible_media_ids_cte_sql,
 )
+from nexus.coerce import parse_uuid
 from nexus.errors import ApiError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.conversation import MessageContextRef
@@ -1041,7 +1042,7 @@ def _render_single_retrieved_context(
             citation.result_ref.get("contributor_handle") or citation.context_ref.get("id"),
         )
 
-    context_id = _parse_uuid(citation.context_ref.get("id"))
+    context_id = parse_uuid(citation.context_ref.get("id"))
     if context_id is None:
         return None
 
@@ -1078,7 +1079,7 @@ def _render_single_retrieved_context(
         return _render_fragment_context(db, viewer_id, context_id, citation)
 
     if context_type == "content_chunk":
-        evidence_span_id = _parse_uuid(citation.evidence_span_id)
+        evidence_span_id = parse_uuid(citation.evidence_span_id)
         if evidence_span_id is None:
             return None
         return _render_content_chunk_context(db, viewer_id, context_id, evidence_span_id, citation)
@@ -1129,11 +1130,6 @@ def _render_single_retrieved_context(
     return None
 
 
-def _parse_uuid(value: Any) -> UUID | None:
-    try:
-        return UUID(str(value))
-    except (TypeError, ValueError):
-        return None
 
 
 

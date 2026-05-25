@@ -1,6 +1,7 @@
-"""Numeric coercion helpers shared across services."""
+"""Lossy-input coercion helpers shared across services."""
 
 from typing import Any
+from uuid import UUID
 
 
 def coerce_positive_int(raw_value: Any) -> int | None:
@@ -25,3 +26,10 @@ def coerce_non_negative_int(raw_value: Any) -> int | None:
     if value < 0:
         return None
     return value
+
+
+def parse_uuid(value: Any) -> UUID | None:
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
