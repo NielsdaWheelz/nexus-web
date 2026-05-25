@@ -9,6 +9,7 @@ from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.errors import ApiError, ApiErrorCode
@@ -651,7 +652,7 @@ class RateLimiter:
         try:
             with self._session() as db:
                 yield db
-        except Exception as exc:
+        except SQLAlchemyError as exc:
             logger.warning(warn_msg, error=str(exc), **warn_kw)
 
     @contextmanager
@@ -664,7 +665,7 @@ class RateLimiter:
                 yield db
         except ApiError:
             raise
-        except Exception as exc:
+        except SQLAlchemyError as exc:
             logger.warning(warn_msg, error=str(exc), **warn_kw)
             raise ApiError(raise_code, raise_msg) from exc
 

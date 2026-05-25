@@ -257,10 +257,7 @@ def validate_url(url: str) -> tuple[str, str, int | None]:
     Raises:
         ApiError: If URL is invalid or violates SSRF rules.
     """
-    try:
-        parsed = urlparse(url)
-    except Exception as e:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid URL: {e}") from e
+    parsed = urlparse(url)
 
     # Check scheme
     scheme = parsed.scheme.lower()
@@ -458,7 +455,7 @@ def validate_and_decode_image(data: bytes, upstream_content_type: str | None) ->
         raise ApiError(ApiErrorCode.E_IMAGE_TOO_LARGE, "Image exceeds dimension limits") from e
     except ApiError:
         raise
-    except Exception as e:
+    except OSError as e:
         logger.warning("Image decode failed: %s", e)
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Content is not a valid image") from e
 
@@ -539,7 +536,7 @@ def _fetch_url(url: str, client: httpx.Client) -> tuple[bytes, str | None]:
         raise ApiError(ApiErrorCode.E_IMAGE_FETCH_FAILED, f"Failed to fetch image: {e}") from e
     except ApiError:
         raise
-    except Exception as e:
+    except httpx.HTTPError as e:
         raise ApiError(ApiErrorCode.E_IMAGE_FETCH_FAILED, f"Failed to fetch image: {e}") from e
 
 
@@ -625,7 +622,7 @@ def fetch_with_redirect(
         raise ApiError(ApiErrorCode.E_IMAGE_FETCH_FAILED, f"Failed to fetch image: {e}") from e
     except ApiError:
         raise
-    except Exception as e:
+    except httpx.HTTPError as e:
         raise ApiError(ApiErrorCode.E_IMAGE_FETCH_FAILED, f"Failed to fetch image: {e}") from e
 
 
