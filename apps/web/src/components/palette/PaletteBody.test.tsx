@@ -50,16 +50,12 @@ const queryingView: PaletteView = {
 
 function Harness({
   view,
-  scopeLabel = null,
   activeCommandId = null,
   onSelect = vi.fn(),
-  onClearScope = vi.fn(),
 }: {
   view: PaletteView;
-  scopeLabel?: string | null;
   activeCommandId?: string | null;
   onSelect?: (command: PaletteCommand) => void;
-  onClearScope?: () => void;
 }) {
   const [query, setQuery] = useState(view.state === "querying" ? "li" : "");
   const [active, setActive] = useState<string | null>(activeCommandId);
@@ -69,12 +65,10 @@ function Harness({
       view={view}
       query={query}
       searchLoading={false}
-      scopeLabel={scopeLabel}
       activeCommandId={active}
       showShortcuts
       autoFocusInput={false}
       onQueryChange={setQuery}
-      onClearScope={onClearScope}
       onSelect={onSelect}
       onActiveCommandChange={setActive}
     />
@@ -135,22 +129,11 @@ describe("PaletteBody", () => {
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: "tab-oracle" }));
   });
 
-  it("shows the scope row and clears the scope when its button is pressed", async () => {
-    const user = userEvent.setup();
-    const onClearScope = vi.fn();
-    render(<Harness view={restingView} scopeLabel="In this article" onClearScope={onClearScope} />);
-
-    const scopeRow = screen.getByTestId("palette-scope-chip");
-    expect(within(scopeRow).getByText("In this article")).toBeInTheDocument();
-
-    await user.click(within(scopeRow).getByRole("button", { name: "Clear scope" }));
-    expect(onClearScope).toHaveBeenCalledTimes(1);
-  });
-
-  it("omits the scope row when there is no scope label", () => {
+  it("does not render scope controls", () => {
     render(<Harness view={restingView} />);
 
     expect(screen.queryByTestId("palette-scope-chip")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear scope" })).not.toBeInTheDocument();
   });
 
   it("shows a no-matches status when every querying result is pinned", () => {

@@ -20,7 +20,6 @@ const SECTION_TAGS: Record<string, string> = {
   create: "Create",
   navigate: "Go to",
   settings: "Settings",
-  "in-this-pane": "This pane",
 };
 
 function tagFor(command: PaletteCommand): string | null {

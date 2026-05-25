@@ -23,18 +23,20 @@ describe("buildPaletteView", () => {
         command({ id: "go-libraries", title: "Libraries", sectionId: "navigate" }),
         command({ id: "settings-account", title: "Account", sectionId: "settings" }),
         command({ id: "tab-reader", title: "The reader tab", sectionId: "open-tabs" }),
+        command({ id: "recent-page", title: "Recent page", sectionId: "recent" }),
+        command({ id: "recent-folio", title: "Recent folio", sectionId: "recent-folios" }),
         command({ id: "create-note", title: "New note", sectionId: "create" }),
       ],
       frecencyBoosts: new Map(),
       currentWorkspaceHref: null,
-      scopeFilter: null,
-      inThisPaneLabel: null,
     });
 
     expect(view.state).toBe("resting");
     if (view.state !== "resting") throw new Error("expected resting view");
     expect(view.groups.map((group) => group.sectionId)).toEqual([
       "open-tabs",
+      "recent",
+      "recent-folios",
       "create",
       "navigate",
       "settings",
@@ -47,8 +49,6 @@ describe("buildPaletteView", () => {
       commands: [command({ id: "go-libraries", title: "Libraries", sectionId: "navigate" })],
       frecencyBoosts: new Map(),
       currentWorkspaceHref: null,
-      scopeFilter: null,
-      inThisPaneLabel: null,
     });
 
     if (view.state !== "resting") throw new Error("expected resting view");
@@ -74,45 +74,11 @@ describe("buildPaletteView", () => {
       ],
       frecencyBoosts: new Map(),
       currentWorkspaceHref: null,
-      scopeFilter: null,
-      inThisPaneLabel: null,
     });
 
     if (view.state !== "resting") throw new Error("expected resting view");
     const recent = view.groups.find((group) => group.sectionId === "recent");
     expect(recent?.commands.map((cmd) => cmd.id)).toEqual(["recent-high", "recent-low"]);
-  });
-
-  it("labels the in-this-pane group with inThisPaneLabel when provided", () => {
-    const view = buildPaletteView({
-      query: "",
-      commands: [
-        command({ id: "pane-chat", title: "Open chat about this", sectionId: "in-this-pane" }),
-      ],
-      frecencyBoosts: new Map(),
-      currentWorkspaceHref: null,
-      scopeFilter: null,
-      inThisPaneLabel: "In this article",
-    });
-
-    if (view.state !== "resting") throw new Error("expected resting view");
-    expect(view.groups[0]).toMatchObject({ sectionId: "in-this-pane", label: "In this article" });
-  });
-
-  it("falls back to the default in-this-pane label when none is provided", () => {
-    const view = buildPaletteView({
-      query: "",
-      commands: [
-        command({ id: "pane-chat", title: "Open chat about this", sectionId: "in-this-pane" }),
-      ],
-      frecencyBoosts: new Map(),
-      currentWorkspaceHref: null,
-      scopeFilter: null,
-      inThisPaneLabel: null,
-    });
-
-    if (view.state !== "resting") throw new Error("expected resting view");
-    expect(view.groups[0]).toMatchObject({ sectionId: "in-this-pane", label: "In this pane" });
   });
 
   it("queries with a flat list ranked by score, best match first", () => {
@@ -136,8 +102,6 @@ describe("buildPaletteView", () => {
       ],
       frecencyBoosts: new Map(),
       currentWorkspaceHref: "/libraries",
-      scopeFilter: null,
-      inThisPaneLabel: null,
     });
 
     expect(view.state).toBe("querying");
@@ -171,8 +135,6 @@ describe("buildPaletteView", () => {
       ],
       frecencyBoosts: new Map([["settings-keybindings", 120]]),
       currentWorkspaceHref: "/libraries",
-      scopeFilter: null,
-      inThisPaneLabel: null,
     });
 
     if (view.state !== "querying") throw new Error("expected querying view");
@@ -188,8 +150,6 @@ describe("buildPaletteView", () => {
       ],
       frecencyBoosts: new Map(),
       currentWorkspaceHref: null,
-      scopeFilter: null,
-      inThisPaneLabel: null,
     });
 
     if (view.state !== "querying") throw new Error("expected querying view");
@@ -214,8 +174,6 @@ describe("buildPaletteView", () => {
       ],
       frecencyBoosts: new Map(),
       currentWorkspaceHref: "/libraries",
-      scopeFilter: null,
-      inThisPaneLabel: null,
     });
 
     if (view.state !== "querying") throw new Error("expected querying view");
@@ -242,8 +200,6 @@ describe("buildPaletteView", () => {
       ],
       frecencyBoosts: new Map(),
       currentWorkspaceHref: null,
-      scopeFilter: null,
-      inThisPaneLabel: null,
     });
 
     if (view.state !== "querying") throw new Error("expected querying view");
@@ -254,45 +210,7 @@ describe("buildPaletteView", () => {
     ]);
   });
 
-  it("drops commands without scopeAffinity for the filter and boosts those that match", () => {
-    const view = buildPaletteView({
-      query: "",
-      commands: [
-        command({ id: "no-affinity", title: "Open libraries", sectionId: "navigate" }),
-        command({
-          id: "wrong-affinity",
-          title: "Pin current note",
-          sectionId: "create",
-          scopeAffinity: ["note"],
-        }),
-        command({
-          id: "media-affinity",
-          title: "Open chat about this",
-          sectionId: "in-this-pane",
-          scopeAffinity: ["media"],
-        }),
-        command({
-          id: "media-and-other-affinity",
-          title: "Add content",
-          sectionId: "create",
-          scopeAffinity: ["media", "library"],
-        }),
-      ],
-      frecencyBoosts: new Map(),
-      currentWorkspaceHref: null,
-      scopeFilter: "media",
-      inThisPaneLabel: null,
-    });
-
-    if (view.state !== "resting") throw new Error("expected resting view");
-    const ids = view.groups.flatMap((group) => group.commands.map((cmd) => cmd.id));
-    expect(ids).toContain("media-affinity");
-    expect(ids).toContain("media-and-other-affinity");
-    expect(ids).not.toContain("no-affinity");
-    expect(ids).not.toContain("wrong-affinity");
-  });
-
-  it("preserves existing scopeBoost when no scope filter is set", () => {
+  it("uses existing scopeBoost as a global ranking signal", () => {
     const view = buildPaletteView({
       query: "",
       commands: [
@@ -306,8 +224,6 @@ describe("buildPaletteView", () => {
       ],
       frecencyBoosts: new Map(),
       currentWorkspaceHref: null,
-      scopeFilter: null,
-      inThisPaneLabel: null,
     });
 
     if (view.state !== "resting") throw new Error("expected resting view");

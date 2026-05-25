@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
@@ -126,13 +126,7 @@ describe("CommandPalette android shell gating", () => {
     openPalette();
 
     expect(await screen.findByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
-    const scopeChip = screen.queryByTestId("palette-scope-chip");
-    if (scopeChip) {
-      fireEvent.click(within(scopeChip).getByRole("button", { name: "Clear scope" }));
-      await waitFor(() => {
-        expect(screen.queryByTestId("palette-scope-chip")).not.toBeInTheDocument();
-      });
-    }
+    expect(screen.queryByRole("button", { name: "Clear scope" })).not.toBeInTheDocument();
     expect(screen.getAllByText("Billing").length).toBeGreaterThan(0);
     expect(screen.queryByText("Local Vault")).not.toBeInTheDocument();
     expect(screen.getAllByText("Libraries").length).toBeGreaterThan(0);

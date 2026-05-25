@@ -9,6 +9,7 @@ import {
   type MouseEvent,
 } from "react";
 import { flushSync } from "react-dom";
+import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import { apiFetch, isApiError } from "@/lib/api/client";
 import {
   FeedbackNotice,
@@ -804,15 +805,25 @@ export default function LibraryPaneBody() {
       });
   };
 
-  const paneOptions = libraryResourceOptions({
-    library,
-    onOpenChat: () => void handleOpenLibraryChat(),
-    onViewIntelligence: () => setActiveView("intelligence"),
-    onEdit: () => void openEditDialog(),
-    onDelete: () => {
-      void handleDeleteLibrary();
-    },
-  });
+  const paneOptions = library
+    ? [
+        {
+          id: "add-content",
+          label: "Add content",
+          restoreFocusOnClose: false,
+          onSelect: () => dispatchOpenAddContent("content"),
+        },
+        ...libraryResourceOptions({
+          library,
+          onOpenChat: () => void handleOpenLibraryChat(),
+          onViewIntelligence: () => setActiveView("intelligence"),
+          onEdit: () => void openEditDialog(),
+          onDelete: () => {
+            void handleDeleteLibrary();
+          },
+        }),
+      ]
+    : [];
 
   usePaneChromeOverride({ options: paneOptions });
 

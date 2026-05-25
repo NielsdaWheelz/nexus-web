@@ -1,8 +1,9 @@
-# Command Palette — Two-State Redesign
+# Command Palette — Global Two-State Surface
 
 Status: Implemented. Hard cutover complete: no legacy code, no fallbacks, no flags.
 Scope owner: command palette surface (`apps/web`).
-Date: 2026-05-18.
+Date: 2026-05-25.
+Related hard-cutover spec: `docs/command-palette-global-cutover.md`.
 
 ## 1. Problem
 
@@ -38,13 +39,12 @@ It is restructured around **two states**, shared by desktop and mobile:
 
 A launchpad. Sectioned, in this fixed order (empty sections omitted):
 
-1. `in-this-pane` — "In this <pane>" — scoped commands; only when a pane scope is captured.
-2. `open-tabs` — "Open tabs".
-3. `recent` — "Recent".
-4. `recent-folios` — "Recent folios" (Oracle).
-5. `create` — "Create".
-6. `navigate` — "Go to".
-7. `settings` — "Settings".
+1. `open-tabs` — "Open tabs".
+2. `recent` — "Recent".
+3. `recent-folios` — "Recent folios" (Oracle).
+4. `create` — "Create".
+5. `navigate` — "Go to".
+6. `settings` — "Settings".
 
 Within a section, rows are ordered by resting score (frecency + recency); static
 create/navigate rows have no score and fall back to declaration order.
@@ -81,7 +81,7 @@ The seam runs **below the UI**, not down the middle of it. There is no
 
 ```
 CommandPalette.tsx                 controller — sourcing, data, ranking call,
-  │                                execution, open/close, scope, keybindings.
+  │                                execution, open/close, keybindings.
   │                                Calls useIsMobileViewport(); renders one shell.
   ├── PaletteDesktopShell.tsx       <dialog> centered card; autofocus; keyboard-nav
   │     │                          state; Esc / backdrop dismiss.
@@ -90,7 +90,7 @@ CommandPalette.tsx                 controller — sourcing, data, ranking call,
         │                      │    sizing; back-button history entry; swipe-down
         └── PaletteBody.tsx ───┤    dismiss; entrance animation.
                                │
-              PaletteBody  ────┘    SHARED. Input + scope chip + listbox; renders
+              PaletteBody  ────┘    SHARED. Input + listbox; renders
                 └── PaletteRow         the resting groups or the querying list
                                        inline, one PaletteRow per command.
 ```
@@ -124,7 +124,7 @@ The command palette is a single global surface mounted once
 (`AuthenticatedShell`). Its contract:
 
 - **Inputs:** workspace state (panes, active pane, runtime titles); the user's
-  query string; an optional captured pane scope; palette history + frecency
+  query string; palette history + frecency
   boosts; live search results; Oracle readings; keybindings; Android-shell flag.
 - **Output:** a `PaletteView` (resting groups or querying results) for rendering,
   and — on selection — exactly one `executeCommand` effect.
@@ -134,6 +134,7 @@ The command palette is a single global surface mounted once
   - No command appears twice in a view.
   - Selecting a command records one `POST /api/me/palette-selections`, performs
     the target, and closes the palette.
+  - Pane-local commands live in pane Options menus, not in the command palette.
   - On mobile the input is never focused programmatically; the soft keyboard
     appears only on user tap.
   - Android-shell-restricted routes (Local Vault) never appear and never execute.
@@ -173,16 +174,14 @@ export function buildPaletteView(input: {
   commands: PaletteCommand[];
   frecencyBoosts: Map<string, number>;
   currentWorkspaceHref: string | null;
-  scopeFilter: string | null;
-  inThisPaneLabel: string | null;
 }): PaletteView;
 ```
 
 - Scoring tiers and boosts are **unchanged** (exact/prefix/keyword/subsequence,
-  frecency, recency, scope, current-href, danger, disabled).
+  frecency, recency, current-href, danger, disabled).
 - Empty query ⇒ `state: "resting"`: score by resting signals, group by
   `sectionId`, order groups by section order, order rows within a group by score
-  descending (stable). The `in-this-pane` group uses `inThisPaneLabel`.
+  descending (stable).
 - Non-empty query ⇒ `state: "querying"`: one flat list sorted by score
   descending (stable by source index), then `pin: "last"` commands
   stable-partitioned to the bottom. Each command appears at most once.
@@ -201,9 +200,9 @@ is ≥ 2 chars, else `null`.
 
 ### 5.4 Component props
 
-`PaletteBody` (shared): `view`, `query`, `searchLoading`, `scopeLabel`,
-`activeCommandId` (`string | null`), `showShortcuts`, `autoFocusInput`,
-`onQueryChange`, `onClearScope`, `onSelect`, `onActiveCommandChange?` (omitted by mobile).
+`PaletteBody` (shared): `view`, `query`, `searchLoading`, `activeCommandId`
+(`string | null`), `showShortcuts`, `autoFocusInput`, `onQueryChange`,
+`onSelect`, `onActiveCommandChange?` (omitted by mobile).
 `PaletteBody` owns the input and its full keydown: Enter selects the active
 command (or the first command in the view when none is active); Arrow/Home/End
 move the active command when `onActiveCommandChange` is supplied (desktop only);
@@ -215,7 +214,7 @@ shortcut hint (desktop only), disabled reason. When `selected` becomes true the
 row scrolls itself into view.
 
 `PaletteDesktopShell` / `PaletteMobileShell`: `query`, `view`, `searchLoading`,
-`scopeLabel`, `onQueryChange`, `onClearScope`, `onSelect`, `onClose`.
+`onQueryChange`, `onSelect`, `onClose`.
 `PaletteDesktopShell` additionally takes `initialActiveCommandId` (mobile has no
 keyboard-nav highlight).
 
@@ -224,8 +223,8 @@ keyboard-nav highlight).
 - **Desktop** (`PaletteDesktopShell`): a native `<dialog>` opened with
   `showModal()`, autofocused. Holds `activeCommandId` state, seeded from
   `initialActiveCommandId`; an effect re-points it to the first command when the
-  view changes and the active command is no longer present. Esc clears the scope
-  if set, otherwise closes; backdrop click closes.
+  view changes and the active command is no longer present. Esc and backdrop
+  click close.
 - **Mobile** (`PaletteMobileShell`): a native `<dialog>` opened with
   `showModal()`, full-screen, not autofocused. One effect tracks
   `window.visualViewport.height` (on `resize`/`scroll`) and applies it as the
@@ -239,7 +238,7 @@ keyboard-nav highlight).
 
 | System | Touchpoint |
 |---|---|
-| Workspace store | Reads panes/active pane for `open-tabs`; `activatePane`/`closePane`/`restorePane`; scope capture. |
+| Workspace store | Reads panes/active pane for `open-tabs`; `activatePane`/`closePane`/`restorePane`. |
 | Search | `fetchSearchResultPage` (top 5) in the querying state; "See all results in Search" → `/search?q=`. |
 | Palette history API | `GET /api/me/palette-history` (recents + frecency); `POST /api/me/palette-selections` on every selection. Backend unchanged. |
 | Oracle | `GET /api/oracle/readings` → `recent-folios`. |
@@ -266,8 +265,7 @@ filterable, paginated). They are not redundant.
 - **One owner.** Ranking and sectioning live only in `commandRanking.ts`. The
   controller no longer builds a `sections` array.
 - **Touch targets ≥ 44×44px** for every interactive element, both platforms
-  (`--size-xl`). The mobile close button and scope-chip remove button both
-  expose a 44px square target.
+  (`--size-xl`). The mobile close button exposes a 44px square target.
 - **Input font-size ≥ 16px** on both platforms (prevents iOS Safari
   zoom-on-focus; the `--text-base` token is 15px, so the body CSS sets 16px).
 - **Mobile input attributes:** `enterKeyHint="search"`, `autoCapitalize="off"`,
@@ -288,7 +286,7 @@ filterable, paginated). They are not redundant.
 After the cutover:
 
 - `CommandPalette.tsx` is a thin controller: it sources commands, computes
-  `view` via `buildPaletteView`, owns `open`/`query`/`scope`, runs the keybinding
+  `view` via `buildPaletteView`, owns `open`/`query`, runs the keybinding
   and `OPEN_COMMAND_PALETTE_EVENT` listeners and the URL-param open path, and
   renders exactly one shell chosen by `useIsMobileViewport()`. It no longer owns
   `activeCommandId`, builds no `sections` literal, and passes `?cmd=` through as
@@ -307,7 +305,7 @@ After the cutover:
 ## 9. Implemented behavior checklist
 
 Resting state:
-- Opening with no query shows sections in order: In this pane (if scoped),
+- Opening with no query shows sections in order:
       Open tabs, Recent, Recent folios, Create, Go to, Settings.
 - Empty sections are omitted; no section renders with zero rows.
 - Rows within a section are ordered by frecency/recency descending.
@@ -335,7 +333,7 @@ Desktop shell:
 - Centered card, unchanged dimensions and position.
 - Arrow/Home/End move the highlight; Enter runs it; `aria-activedescendant`
       tracks it; the active row scrolls into view.
-- Esc clears the scope if set, otherwise closes; backdrop click closes.
+- Esc closes; backdrop click closes.
 - Shortcut hints render on rows that have a keybinding.
 
 Cross-cutting:
@@ -350,13 +348,13 @@ Cross-cutting:
 
 - `commandRanking.test.ts` — `buildPaletteView`: resting grouping
   and order; querying flat ranking; `pin: "last"` ordering; one result per
-  command; scope filtering; the `in-this-pane` label.
+  command.
 - `commandProviders.test.ts` — `pin: "last"` and `getSeeAllInSearchCommand`
   cases.
 - `PaletteBody.test.tsx` — resting vs querying rendering; combobox/listbox
-  roles; Enter selects active-or-first; scope chip; empty state.
+  roles; Enter selects active-or-first; empty state.
 - `PaletteDesktopShell.test.tsx` — keyboard nav, Enter select, Esc
-  scope-then-close, autofocus, shortcut hints.
+  close, autofocus, shortcut hints.
 - `PaletteMobileShell.test.tsx` — no autofocus, no shortcut hints, the
   `popstate` close, the close button.
 - `CommandPalette.test.tsx` — querying shows a flat list; resting shows sections.

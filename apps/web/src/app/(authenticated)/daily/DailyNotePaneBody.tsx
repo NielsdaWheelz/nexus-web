@@ -2,18 +2,36 @@
 
 import { useEffect, useState } from "react";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
-import { isLocalDate, todayLocalDate } from "@/lib/localDate";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { formatLocalDate, isLocalDate, todayLocalDate } from "@/lib/localDate";
 import { fetchDailyNotePage, type NotePage } from "@/lib/notes/api";
-import { usePaneParam, useSetPaneTitle } from "@/lib/panes/paneRuntime";
+import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { usePaneParam, usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import PagePaneBody from "../pages/[pageId]/PagePaneBody";
 
 export default function DailyNotePaneBody() {
+  const router = usePaneRouter();
   const routeLocalDate = usePaneParam("localDate");
   const localDate = routeLocalDate ?? todayLocalDate();
   const [page, setPage] = useState<NotePage | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const paneOptions = [
+    {
+      id: "daily-open-yesterday",
+      label: "Open yesterday",
+      onSelect: () => {
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const href = `/daily/${formatLocalDate(yesterday)}`;
+        if (!requestOpenInAppPane(href, { titleHint: "Yesterday" })) {
+          router.push(href);
+        }
+      },
+    },
+  ];
 
   useSetPaneTitle(routeLocalDate ? (feedback ? "Daily note" : null) : "Today");
+  usePaneChromeOverride({ options: paneOptions });
 
   useEffect(() => {
     let cancelled = false;

@@ -1,30 +1,21 @@
 /**
  * Static palette command catalog.
  *
- * Owns the global navigation/create commands (STATIC_COMMANDS), the
- * pane-scoped commands switch (commandsForPaneType), the pane-type
- * display labels (PANE_TYPE_LABELS), and the query<->command match
- * predicate (matchesCommand). These are all pure data + pure-fn
- * primitives consumed by the CommandPalette component.
+ * Owns the global navigation/create commands and the query<->command match
+ * predicate consumed by the CommandPalette component.
  */
 
 import {
-  CalendarDays,
   FileText,
   FolderPlus,
   Link,
   MessageSquarePlus,
   Plus,
   Sparkles,
-  Type,
   Upload,
 } from "lucide-react";
 import type { PaletteCommand } from "@/components/palette/types";
-import { formatLocalDate, todayLocalDate } from "@/lib/localDate";
-import {
-  getPaneRouteIcon,
-  type PaneRouteId,
-} from "@/lib/panes/paneRouteRegistry";
+import { getPaneRouteIcon } from "@/lib/panes/paneRouteRegistry";
 
 export const STATIC_COMMANDS: PaletteCommand[] = [
   {
@@ -176,7 +167,6 @@ export const STATIC_COMMANDS: PaletteCommand[] = [
     target: { kind: "action", actionId: "new-conversation" },
     source: "static",
     rank: {},
-    scopeAffinity: ["conversation", "conversations", "conversationNew", "media"],
   },
   {
     id: "create-page",
@@ -187,7 +177,6 @@ export const STATIC_COMMANDS: PaletteCommand[] = [
     target: { kind: "action", actionId: "create-page" },
     source: "static",
     rank: {},
-    scopeAffinity: ["note", "page", "notes"],
   },
   {
     id: "quick-note-today",
@@ -198,7 +187,6 @@ export const STATIC_COMMANDS: PaletteCommand[] = [
     target: { kind: "action", actionId: "quick-note" },
     source: "static",
     rank: {},
-    scopeAffinity: ["daily", "dailyDate", "note", "page", "notes"],
   },
   {
     id: "create-library",
@@ -209,7 +197,6 @@ export const STATIC_COMMANDS: PaletteCommand[] = [
     target: { kind: "href", href: "/libraries", externalShell: false },
     source: "static",
     rank: {},
-    scopeAffinity: ["library", "libraries"],
   },
   {
     id: "create-upload",
@@ -220,7 +207,6 @@ export const STATIC_COMMANDS: PaletteCommand[] = [
     target: { kind: "action", actionId: "add-content" },
     source: "static",
     rank: {},
-    scopeAffinity: ["library", "libraries", "media"],
   },
   {
     id: "create-url",
@@ -231,7 +217,6 @@ export const STATIC_COMMANDS: PaletteCommand[] = [
     target: { kind: "action", actionId: "add-content" },
     source: "static",
     rank: {},
-    scopeAffinity: ["library", "libraries", "media"],
   },
   {
     id: "create-opml",
@@ -242,189 +227,8 @@ export const STATIC_COMMANDS: PaletteCommand[] = [
     target: { kind: "action", actionId: "add-opml" },
     source: "static",
     rank: {},
-    scopeAffinity: ["library", "libraries", "podcasts", "podcastDetail"],
   },
 ];
-
-export const PANE_TYPE_LABELS = {
-  libraries: "Libraries",
-  library: "Library",
-  media: "Media",
-  conversations: "Chats",
-  conversationNew: "New chat",
-  conversation: "Chat",
-  browse: "Browse",
-  podcasts: "Podcasts",
-  podcastDetail: "Podcast",
-  search: "Search",
-  author: "Author",
-  notes: "Notes",
-  page: "Page",
-  note: "Note",
-  daily: "Daily note",
-  dailyDate: "Daily note",
-  settings: "Settings",
-  settingsBilling: "Billing",
-  settingsReader: "Reader settings",
-  settingsAppearance: "Appearance",
-  settingsKeys: "API keys",
-  settingsLocalVault: "Local vault",
-  settingsIdentities: "Linked identities",
-  settingsKeybindings: "Keybindings",
-} as const satisfies Record<PaneRouteId, string>;
-
-export function commandsForPaneType(
-  paneRouteId: PaneRouteId,
-  paneRouteParams: Record<string, string>,
-): PaletteCommand[] {
-  switch (paneRouteId) {
-    case "media": {
-      const mediaId = paneRouteParams.id;
-      if (!mediaId) return [];
-      return [
-        {
-          id: "pane-media-open-chat",
-          title: "Open chat about this",
-          keywords: ["chat", "ask", "discuss"],
-          sectionId: "in-this-pane",
-          icon: MessageSquarePlus,
-          target: {
-            kind: "href",
-            href: `/conversations/new?scope=media%3A${encodeURIComponent(mediaId)}`,
-            externalShell: false,
-          },
-          source: "static",
-          rank: {},
-          scopeAffinity: ["media"],
-        },
-        {
-          id: "pane-media-reader-settings",
-          title: "Reader settings",
-          keywords: ["typography", "font", "focus", "hyphenation"],
-          sectionId: "in-this-pane",
-          icon: Type,
-          target: { kind: "href", href: "/settings/reader", externalShell: false },
-          source: "static",
-          rank: {},
-          scopeAffinity: ["media"],
-        },
-      ];
-    }
-    case "library": {
-      return [
-        {
-          id: "pane-library-add-content",
-          title: "Add content",
-          keywords: ["upload", "import", "add"],
-          sectionId: "in-this-pane",
-          icon: Upload,
-          target: { kind: "action", actionId: "add-content" },
-          source: "static",
-          rank: {},
-          scopeAffinity: ["library"],
-        },
-      ];
-    }
-    case "daily":
-    case "dailyDate": {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      return [
-        {
-          id: "pane-daily-open-today",
-          title: "Open today",
-          keywords: ["daily", "today"],
-          sectionId: "in-this-pane",
-          icon: CalendarDays,
-          target: { kind: "href", href: "/daily", externalShell: false },
-          source: "static",
-          rank: {},
-          scopeAffinity: ["daily", "dailyDate"],
-        },
-        {
-          id: "pane-daily-open-yesterday",
-          title: "Open yesterday",
-          keywords: ["daily", "yesterday"],
-          sectionId: "in-this-pane",
-          icon: CalendarDays,
-          target: {
-            kind: "href",
-            href: `/daily/${formatLocalDate(yesterday)}`,
-            externalShell: false,
-          },
-          source: "static",
-          rank: {},
-          scopeAffinity: ["daily", "dailyDate"],
-        },
-      ];
-    }
-    case "conversation":
-    case "conversationNew": {
-      const todayHref = `/daily/${todayLocalDate()}`;
-      return [
-        {
-          id: "pane-conversation-quick-note-today",
-          title: "Save snippet to today's note",
-          keywords: ["capture", "journal"],
-          sectionId: "in-this-pane",
-          icon: FileText,
-          target: { kind: "action", actionId: "quick-note" },
-          source: "static",
-          rank: {},
-          scopeAffinity: ["conversation", "conversationNew"],
-        },
-        {
-          id: "pane-conversation-open-today",
-          title: "Open today's note",
-          keywords: ["daily", "today"],
-          sectionId: "in-this-pane",
-          icon: CalendarDays,
-          target: { kind: "href", href: todayHref, externalShell: false },
-          source: "static",
-          rank: {},
-          scopeAffinity: ["conversation", "conversationNew"],
-        },
-      ];
-    }
-    case "page":
-    case "note": {
-      return [
-        {
-          id: "pane-note-open-today",
-          title: "Open today's note",
-          keywords: ["daily", "today"],
-          sectionId: "in-this-pane",
-          icon: CalendarDays,
-          target: {
-            kind: "href",
-            href: `/daily/${todayLocalDate()}`,
-            externalShell: false,
-          },
-          source: "static",
-          rank: {},
-          scopeAffinity: ["page", "note"],
-        },
-      ];
-    }
-    case "libraries":
-    case "conversations":
-    case "browse":
-    case "podcasts":
-    case "podcastDetail":
-    case "search":
-    case "author":
-    case "notes":
-    case "settings":
-    case "settingsBilling":
-    case "settingsReader":
-    case "settingsAppearance":
-    case "settingsKeys":
-    case "settingsLocalVault":
-    case "settingsIdentities":
-    case "settingsKeybindings":
-      return [];
-  }
-}
 
 export function matchesCommand(command: PaletteCommand, query: string): boolean {
   const normalized = query.trim().toLowerCase();

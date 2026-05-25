@@ -12,13 +12,6 @@ function paletteListbox(root: Page | Locator): Locator {
   return root.getByRole("listbox");
 }
 
-async function clearCapturedScope(dialog: Locator): Promise<void> {
-  const clearScopeButton = dialog.getByRole("button", { name: "Clear scope" });
-  if (await clearScopeButton.isVisible()) {
-    await clearScopeButton.click();
-  }
-}
-
 test.describe("command palette", () => {
   test("desktop: open with a query, arrow + Enter run a command", async ({
     page,
@@ -28,9 +21,9 @@ test.describe("command palette", () => {
 
     const dialog = paletteDialog(page);
     await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Clear scope" })).toHaveCount(0);
     const input = paletteInput(dialog);
     await expect(input).toBeFocused();
-    await clearCapturedScope(dialog);
     await input.click();
 
     await input.fill("keyboard shortcuts");
@@ -71,7 +64,7 @@ test.describe("command palette mobile", () => {
 
     const dialog = paletteDialog(page);
     await expect(dialog).toBeVisible();
-    await clearCapturedScope(dialog);
+    await expect(dialog.getByRole("button", { name: "Clear scope" })).toHaveCount(0);
 
     const input = paletteInput(dialog);
     await input.fill("keyboard shortcuts");

@@ -11,9 +11,7 @@ interface PaletteMobileShellProps {
   query: string;
   view: PaletteView;
   searchLoading: boolean;
-  scopeLabel: string | null;
   onQueryChange(query: string): void;
-  onClearScope(): void;
   onSelect(command: PaletteCommand): void;
   onClose(): void;
 }
@@ -35,9 +33,7 @@ export default function PaletteMobileShell({
   query,
   view,
   searchLoading,
-  scopeLabel,
   onQueryChange,
-  onClearScope,
   onSelect,
   onClose,
 }: PaletteMobileShellProps) {
@@ -171,12 +167,10 @@ export default function PaletteMobileShell({
           view={view}
           query={query}
           searchLoading={searchLoading}
-          scopeLabel={scopeLabel}
           activeCommandId={null}
           showShortcuts={false}
           autoFocusInput={false}
           onQueryChange={onQueryChange}
-          onClearScope={onClearScope}
           onSelect={selectFromUi}
         />
       </div>

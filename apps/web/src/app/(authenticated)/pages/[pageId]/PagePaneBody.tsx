@@ -2,13 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
-import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import {
+  FeedbackNotice,
+  toFeedback,
+  useFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import NoteBacklinks from "@/components/notes/NoteBacklinks";
 import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
 import Button from "@/components/ui/Button";
+import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { usePaneParam, usePaneRuntime, useSetPaneTitle } from "@/lib/panes/paneRuntime";
 import { createRandomId } from "@/lib/createRandomId";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
+import { pinObjectToNavbar } from "@/lib/pinnedObjects";
 import {
   createEmptyOutlineDoc,
   noteBlocksToOutlineDoc,
@@ -59,8 +66,10 @@ export default function PagePaneBody({
 }) {
   const routePageId = usePaneParam("pageId");
   const paneRuntime = usePaneRuntime();
+  const toast = useFeedback();
   const pageId = pageIdOverride ?? routePageId;
   if (!pageId) throw new Error("page route requires a page id");
+  const pinPageId = pageId;
 
   const [page, setPage] = useState<NotePage | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
@@ -398,6 +407,35 @@ export default function PagePaneBody({
     },
     [paneRuntime]
   );
+
+  async function pinCurrentObject() {
+    try {
+      if (focusBlockId) {
+        await pinObjectToNavbar("note_block", focusBlockId);
+        toast.show({ severity: "success", title: "Note pinned to navbar." });
+        return;
+      }
+      await pinObjectToNavbar("page", pinPageId);
+      toast.show({ severity: "success", title: "Page pinned to navbar." });
+    } catch (error: unknown) {
+      toast.show(
+        toFeedback(error, {
+          fallback: focusBlockId ? "Note could not be pinned." : "Page could not be pinned.",
+        })
+      );
+    }
+  }
+
+  const paneOptions = [
+    {
+      id: focusBlockId ? "pin-current-note" : "pin-current-page",
+      label: focusBlockId ? "Pin current note" : "Pin current page",
+      onSelect: () => {
+        void pinCurrentObject();
+      },
+    },
+  ];
+  usePaneChromeOverride({ options: paneOptions });
 
   if (feedback && !initialDoc) return <FeedbackNotice {...feedback} />;
   if (!page || !initialDoc) return <FeedbackNotice severity="info" title="Loading note..." />;

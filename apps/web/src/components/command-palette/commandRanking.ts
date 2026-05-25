@@ -1,7 +1,6 @@
 import type { PaletteCommand, PaletteGroup, PaletteView } from "@/components/palette/types";
 
 const RESTING_SECTIONS: { id: string; label: string }[] = [
-  { id: "in-this-pane", label: "In this pane" },
   { id: "open-tabs", label: "Open tabs" },
   { id: "recent", label: "Recent" },
   { id: "recent-folios", label: "Recent folios" },
@@ -10,30 +9,19 @@ const RESTING_SECTIONS: { id: string; label: string }[] = [
   { id: "settings", label: "Settings" },
 ];
 
-const SCOPE_FILTER_AFFINITY_BOOST = 1500;
-
 export function buildPaletteView({
   query,
   commands,
   frecencyBoosts,
   currentWorkspaceHref,
-  scopeFilter,
-  inThisPaneLabel,
 }: {
   query: string;
   commands: PaletteCommand[];
   frecencyBoosts: Map<string, number>;
   currentWorkspaceHref: string | null;
-  scopeFilter: string | null;
-  inThisPaneLabel: string | null;
 }): PaletteView {
   const normalizedQuery = query.trim().toLowerCase();
-  const filteredCommands =
-    scopeFilter === null
-      ? commands
-      : commands.filter((command) => command.scopeAffinity?.includes(scopeFilter) ?? false);
-
-  const scored = filteredCommands
+  const scored = commands
     .map((command, index) => {
       const title = command.title.toLowerCase();
       const words = title.split(/\s+/);
@@ -62,11 +50,7 @@ export function buildPaletteView({
       score += command.rank.searchScore ? command.rank.searchScore * 1000 : 0;
       score += frecencyBoosts.get(command.id) ?? command.rank.frecencyBoost ?? 0;
       score += command.rank.recencyBoost ?? 0;
-      if (scopeFilter === null) {
-        score += command.rank.scopeBoost ?? 0;
-      } else if (command.scopeAffinity?.includes(scopeFilter)) {
-        score += SCOPE_FILTER_AFFINITY_BOOST;
-      }
+      score += command.rank.scopeBoost ?? 0;
 
       if (currentWorkspaceHref && command.target.kind === "href" && command.target.href === currentWorkspaceHref) {
         score += 250;
@@ -85,9 +69,7 @@ export function buildPaletteView({
         .filter((item) => item.command.sectionId === section.id)
         .map((item) => item.command);
       if (commandsInSection.length === 0) continue;
-      const label =
-        section.id === "in-this-pane" && inThisPaneLabel !== null ? inThisPaneLabel : section.label;
-      groups.push({ sectionId: section.id, label, commands: commandsInSection });
+      groups.push({ sectionId: section.id, label: section.label, commands: commandsInSection });
     }
     return { state: "resting", groups };
   }

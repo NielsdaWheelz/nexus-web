@@ -11,10 +11,8 @@ interface PaletteDesktopShellProps {
   query: string;
   view: PaletteView;
   searchLoading: boolean;
-  scopeLabel: string | null;
   initialActiveCommandId: string | null;
   onQueryChange(query: string): void;
-  onClearScope(): void;
   onSelect(command: PaletteCommand): void;
   onClose(): void;
 }
@@ -23,10 +21,8 @@ export default function PaletteDesktopShell({
   query,
   view,
   searchLoading,
-  scopeLabel,
   initialActiveCommandId,
   onQueryChange,
-  onClearScope,
   onSelect,
   onClose,
 }: PaletteDesktopShellProps) {
@@ -56,8 +52,7 @@ export default function PaletteDesktopShell({
       aria-labelledby="palette-title"
       onCancel={(event) => {
         event.preventDefault();
-        if (scopeLabel !== null) onClearScope();
-        else onClose();
+        onClose();
       }}
       onClick={(event) => {
         if (event.target === dialogRef.current) onClose();
@@ -84,12 +79,10 @@ export default function PaletteDesktopShell({
           view={view}
           query={query}
           searchLoading={searchLoading}
-          scopeLabel={scopeLabel}
           activeCommandId={activeCommandId}
           showShortcuts
           autoFocusInput
           onQueryChange={onQueryChange}
-          onClearScope={onClearScope}
           onSelect={onSelect}
           onActiveCommandChange={setActiveCommandId}
         />

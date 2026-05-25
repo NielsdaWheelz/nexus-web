@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { X } from "lucide-react";
-import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import PaletteRow from "./PaletteRow";
 import type { PaletteCommand, PaletteView } from "./types";
@@ -12,12 +10,10 @@ interface PaletteBodyProps {
   view: PaletteView;
   query: string;
   searchLoading: boolean;
-  scopeLabel: string | null;
   activeCommandId: string | null;
   showShortcuts: boolean;
   autoFocusInput: boolean;
   onQueryChange(query: string): void;
-  onClearScope(): void;
   onSelect(command: PaletteCommand): void;
   onActiveCommandChange?(commandId: string): void;
 }
@@ -32,12 +28,10 @@ export default function PaletteBody({
   view,
   query,
   searchLoading,
-  scopeLabel,
   activeCommandId,
   showShortcuts,
   autoFocusInput,
   onQueryChange,
-  onClearScope,
   onSelect,
   onActiveCommandChange,
 }: PaletteBodyProps) {
@@ -92,22 +86,6 @@ export default function PaletteBody({
 
   return (
     <>
-      {scopeLabel !== null ? (
-        <div className={styles.scopeRow} data-testid="palette-scope-chip">
-          <span className={styles.scopeLabel}>{scopeLabel}</span>
-          <Button
-            iconOnly
-            variant="ghost"
-            size="lg"
-            type="button"
-            aria-label="Clear scope"
-            onClick={onClearScope}
-          >
-            <X size={16} aria-hidden="true" />
-          </Button>
-        </div>
-      ) : null}
-
       <div className={styles.inputRow}>
         <Input
           ref={inputRef}

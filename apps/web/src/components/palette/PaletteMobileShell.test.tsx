@@ -36,9 +36,7 @@ function renderShell(overrides: { onClose?: () => void } = {}) {
       query=""
       view={restingView}
       searchLoading={false}
-      scopeLabel={null}
       onQueryChange={vi.fn()}
-      onClearScope={vi.fn()}
       onSelect={vi.fn()}
       onClose={overrides.onClose ?? vi.fn()}
     />,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PanelLeft, Pin, Sparkles, X } from "lucide-react";
+import { PanelLeft, Sparkles, X } from "lucide-react";
 import PaletteDesktopShell from "@/components/palette/PaletteDesktopShell";
 import PaletteMobileShell from "@/components/palette/PaletteMobileShell";
 import type { PaletteCommand } from "@/components/palette/types";
@@ -22,9 +22,7 @@ import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import {
   getPaneRouteIcon,
   resolvePaneRoute,
-  type PaneRouteId,
 } from "@/lib/panes/paneRouteRegistry";
-import { pinObjectToNavbar } from "@/lib/pinnedObjects";
 import { toRoman } from "@/lib/toRoman";
 import { fetchSearchResultPage } from "@/lib/search/resultRowAdapter";
 import {
@@ -38,9 +36,7 @@ import {
   useWorkspaceStore,
 } from "@/lib/workspace/store";
 import {
-  PANE_TYPE_LABELS,
   STATIC_COMMANDS,
-  commandsForPaneType,
   matchesCommand,
 } from "@/components/command-palette/staticCommands";
 
@@ -66,13 +62,6 @@ interface OracleReadingSummary {
   status: string;
 }
 
-
-interface PaletteScope {
-  paneRouteId: PaneRouteId;
-  paneTitle: string;
-  paneRouteParams: Record<string, string>;
-}
-
 const PALETTE_HISTORY_DEBOUNCE_MS = 200;
 const PALETTE_SEARCH_DEBOUNCE_MS = 200;
 const PALETTE_ORACLE_TTL_MS = 5 * 60_000;
@@ -82,7 +71,6 @@ export default function CommandPalette() {
   const feedback = useFeedback();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [scope, setScope] = useState<PaletteScope | null>(null);
   const [initialActiveCommandId, setInitialActiveCommandId] = useState<string | null>(null);
   const [keybindings, setKeybindings] = useState<Record<string, string>>({});
   const [historyRows, setHistoryRows] = useState<PaletteHistoryResponse["data"]["recent"]>([]);
@@ -99,17 +87,6 @@ export default function CommandPalette() {
     restorePane,
   } = useWorkspaceStore();
 
-  const captureScope = useCallback((): PaletteScope | null => {
-    const activePane = workspaceState.panes.find(
-      (pane) => pane.id === workspaceState.activePaneId,
-    );
-    if (!activePane) return null;
-    const route = resolvePaneRoute(activePane.href);
-    if (route.id === "unsupported") return null;
-    const { title } = resolveWorkspacePaneTitle(activePane, runtimeTitleByPaneId);
-    return { paneRouteId: route.id, paneTitle: title, paneRouteParams: route.params };
-  }, [runtimeTitleByPaneId, workspaceState.activePaneId, workspaceState.panes]);
-
   useEffect(() => {
     setKeybindings(loadKeybindings());
   }, []);
@@ -122,7 +99,6 @@ export default function CommandPalette() {
 
     setQuery(params.get("q") ?? "");
     setInitialActiveCommandId(commandId);
-    setScope(captureScope());
     setOpen(true);
 
     params.delete("palette");
@@ -131,18 +107,17 @@ export default function CommandPalette() {
     const nextQuery = params.toString();
     const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
     window.history.replaceState({}, "", nextUrl);
-  }, [captureScope]);
+  }, []);
 
   useEffect(() => {
     const handler = () => {
       setQuery("");
       setInitialActiveCommandId(null);
-      setScope(captureScope());
       setOpen(true);
     };
     window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, handler);
     return () => window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, handler);
-  }, [captureScope]);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -267,7 +242,6 @@ export default function CommandPalette() {
       if (openPaneHrefs.has(row.target_href)) continue;
       const resolved = resolvePaneRoute(row.target_href);
       if (androidShell && isAndroidShellRestrictedRouteId(resolved.id)) continue;
-      const affinity = resolved.id === "unsupported" ? undefined : [resolved.id];
       commands.push({
         id: `recent-${row.target_key}`,
         title: row.title_snapshot,
@@ -278,7 +252,6 @@ export default function CommandPalette() {
         target: { kind: "href", href: row.target_href, externalShell: false },
         source: "recent",
         rank: { frecencyBoost: frecencyBoosts.get(row.target_key) ?? 0 },
-        scopeAffinity: affinity,
       });
     }
 
@@ -314,42 +287,6 @@ export default function CommandPalette() {
       });
     }
 
-    const activePane =
-      workspaceState.panes.find((pane) => pane.id === workspaceState.activePaneId) ?? null;
-    const route = activePane ? resolvePaneRoute(activePane.href) : null;
-    if (route?.id === "page" && route.params.pageId) {
-      commands.push({
-        id: "pin-current-page",
-        title: "Pin current page",
-        keywords: ["pin", "navbar", "notes"],
-        sectionId: "create",
-        icon: Pin,
-        target: { kind: "action", actionId: `pin-page:${route.params.pageId}` },
-        source: "workspace",
-        rank: {},
-        scopeAffinity: ["page"],
-      });
-    }
-    if (route?.id === "note" && route.params.blockId) {
-      commands.push({
-        id: "pin-current-note",
-        title: "Pin current note",
-        keywords: ["pin", "navbar", "notes"],
-        sectionId: "create",
-        icon: Pin,
-        target: { kind: "action", actionId: `pin-note:${route.params.blockId}` },
-        source: "workspace",
-        rank: {},
-        scopeAffinity: ["note"],
-      });
-    }
-
-    if (scope) {
-      for (const command of commandsForPaneType(scope.paneRouteId, scope.paneRouteParams)) {
-        commands.push(command);
-      }
-    }
-
     for (const result of searchResults) {
       const route = resolvePaneRoute(result.href);
       if (androidShell && isAndroidShellRestrictedRouteId(route.id)) continue;
@@ -376,7 +313,6 @@ export default function CommandPalette() {
     oracleRows,
     query,
     runtimeTitleByPaneId,
-    scope,
     searchResults,
     workspaceState.activePaneId,
     workspaceState.panes,
@@ -388,13 +324,6 @@ export default function CommandPalette() {
     canOpenConversation: true,
   });
   const seeAllCommand = getSeeAllInSearchCommand({ query });
-
-  const scopeLabel = scope
-    ? `In: ${PANE_TYPE_LABELS[scope.paneRouteId]} — ${scope.paneTitle}`
-    : null;
-  const inThisPaneLabel = scope
-    ? `In this ${PANE_TYPE_LABELS[scope.paneRouteId].toLowerCase()}`
-    : null;
 
   const view = useMemo(
     () =>
@@ -408,16 +337,12 @@ export default function CommandPalette() {
         frecencyBoosts,
         currentWorkspaceHref:
           workspaceState.panes.find((p) => p.id === workspaceState.activePaneId)?.href ?? null,
-        scopeFilter: scope?.paneRouteId ?? null,
-        inThisPaneLabel,
       }),
     [
       askAiCommand,
       commandsBeforeAi,
       frecencyBoosts,
-      inThisPaneLabel,
       query,
-      scope,
       seeAllCommand,
       workspaceState.activePaneId,
       workspaceState.panes,
@@ -426,9 +351,7 @@ export default function CommandPalette() {
 
   const closePalette = useCallback(() => {
     setOpen(false);
-    setScope(null);
   }, []);
-  const clearScope = useCallback(() => setScope(null), []);
 
   const executeCommand = useCallback(
     async (command: PaletteCommand) => {
@@ -534,14 +457,6 @@ export default function CommandPalette() {
           closePane(actionId.slice("pane-close:".length));
           return;
         }
-        if (actionId.startsWith("pin-page:")) {
-          await pinObjectToNavbar("page", actionId.slice("pin-page:".length));
-          return;
-        }
-        if (actionId.startsWith("pin-note:")) {
-          await pinObjectToNavbar("note_block", actionId.slice("pin-note:".length));
-          return;
-        }
 
         throw new Error(`Unknown command action: ${actionId}`);
       } catch (error) {
@@ -559,10 +474,8 @@ export default function CommandPalette() {
         setQuery("");
         setInitialActiveCommandId(null);
         if (open) {
-          setScope(null);
           setOpen(false);
         } else {
-          setScope(captureScope());
           setOpen(true);
         }
         return;
@@ -581,7 +494,7 @@ export default function CommandPalette() {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [captureScope, executeCommand, keybindings, open]);
+  }, [executeCommand, keybindings, open]);
 
   const isMobile = useIsMobileViewport();
 
@@ -593,9 +506,7 @@ export default function CommandPalette() {
         query={query}
         view={view}
         searchLoading={searchLoading}
-        scopeLabel={scopeLabel}
         onQueryChange={setQuery}
-        onClearScope={clearScope}
         onSelect={executeCommand}
         onClose={closePalette}
       />
@@ -607,10 +518,8 @@ export default function CommandPalette() {
       query={query}
       view={view}
       searchLoading={searchLoading}
-      scopeLabel={scopeLabel}
       initialActiveCommandId={initialActiveCommandId}
       onQueryChange={setQuery}
-      onClearScope={clearScope}
       onSelect={executeCommand}
       onClose={closePalette}
     />

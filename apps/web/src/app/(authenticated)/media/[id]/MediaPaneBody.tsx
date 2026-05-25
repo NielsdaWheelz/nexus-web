@@ -3604,6 +3604,18 @@ export default function MediaPaneBody() {
   });
   const mediaReaderOptions: ActionMenuOption[] = [];
 
+  mediaReaderOptions.push({
+    id: "reader-settings",
+    label: "Reader settings",
+    restoreFocusOnClose: false,
+    onSelect: () => {
+      const route = "/settings/reader";
+      if (!requestOpenInAppPane(route, { titleHint: "Reader settings" })) {
+        router.push(route);
+      }
+    },
+  });
+
   if (isEpub && canRead && (hasEpubToc || tocWarning)) {
     mediaReaderOptions.push({
       id: "toggle-epub-toc",

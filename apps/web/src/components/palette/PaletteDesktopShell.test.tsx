@@ -42,10 +42,8 @@ function renderShell(
       query=""
       view={restingView}
       searchLoading={false}
-      scopeLabel={null}
       initialActiveCommandId={null}
       onQueryChange={vi.fn()}
-      onClearScope={vi.fn()}
       onSelect={vi.fn()}
       onClose={vi.fn()}
       {...props}
@@ -84,30 +82,15 @@ describe("PaletteDesktopShell", () => {
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: "nav-oracle" }));
   });
 
-  it("closes when Escape is pressed with no scope", async () => {
+  it("closes when Escape is pressed", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
-    const onClearScope = vi.fn();
-    renderShell({ onClose, onClearScope });
+    renderShell({ onClose });
 
     await user.click(screen.getByRole("combobox", { name: /search commands/i }));
     await user.keyboard("{Escape}");
 
     expect(onClose).toHaveBeenCalledTimes(1);
-    expect(onClearScope).not.toHaveBeenCalled();
-  });
-
-  it("clears the scope instead of closing when Escape is pressed with a scope", async () => {
-    const user = userEvent.setup();
-    const onClose = vi.fn();
-    const onClearScope = vi.fn();
-    renderShell({ scopeLabel: "In this article", onClose, onClearScope });
-
-    await user.click(screen.getByRole("combobox", { name: /search commands/i }));
-    await user.keyboard("{Escape}");
-
-    expect(onClearScope).toHaveBeenCalledTimes(1);
-    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("closes when the close button is pressed", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useRef, type ReactNode } from "react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
 import PaneShell, {
@@ -64,18 +64,29 @@ describe("PaneShell", () => {
     expect(onResizePane).toHaveBeenCalledWith("pane-a", 320);
   });
 
-  it("renders standard pane options in every header", async () => {
+  it("keeps Copy pane link first and renders pane options after separators", async () => {
     render(
       <PaneShell
         paneId="pane-a"
-        href="/settings/keys"
-        title="API Keys"
+        href="/media/media-1"
+        title="Designing Data-Intensive Applications"
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
         extraWidthPx={0}
         bodyMode="standard"
         onResizePane={() => {}}
+        options={[
+          { id: "chat", label: "Chat about this document", onSelect: () => {} },
+          { id: "reader-settings", label: "Reader settings", href: "/settings/reader" },
+          {
+            id: "delete",
+            label: "Delete document",
+            tone: "danger",
+            separatorBefore: true,
+            onSelect: () => {},
+          },
+        ]}
       >
         <div>Body content</div>
       </PaneShell>
@@ -83,9 +94,19 @@ describe("PaneShell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Options" }));
 
+    const menu = await screen.findByRole("menu");
     await waitFor(() => {
-      expect(screen.getByRole("menuitem", { name: "Copy pane link" })).toBeInTheDocument();
+      expect(within(menu).getByRole("menuitem", { name: "Copy pane link" })).toBeInTheDocument();
     });
+    expect(
+      within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim())
+    ).toEqual([
+      "Copy pane link",
+      "Chat about this document",
+      "Reader settings",
+      "Delete document",
+    ]);
+    expect(within(menu).getAllByRole("separator")).toHaveLength(2);
   });
 
   it("keeps mobile chrome visible while a standard-pane body scrolls", async () => {
