@@ -55,14 +55,16 @@ from nexus.services.agent_tools.app_search import (
     render_retrieved_context_blocks,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.chat_run_claim_parsing import (
+    parse_claim_extractor_response,
+    parse_claim_verifier_response,
+)
 from nexus.services.chat_run_message_blocks import message_document_with_run_components
 from nexus.services.chat_runs import (
     VERIFICATION_FAILURE_CONTENT,
     _finalize_message_evidence,
     _finalize_run,
     _message_prompt_evidence_rows,
-    _parse_claim_extractor_response,
-    _parse_claim_verifier_response,
     _reconcile_prompt_retrievals,
     _verified_assistant_content,
     append_run_event,
@@ -2031,7 +2033,7 @@ def test_reconcile_prompt_retrievals_marks_dropped_web_evidence_by_budget(
 
 
 def test_claim_verifier_response_preserves_status_reason_and_confidence():
-    claims = _parse_claim_verifier_response(
+    claims = parse_claim_verifier_response(
         (
             '{"claims": ['
             '{"ordinal": 0, "answer_start_offset": 0, "answer_end_offset": 12, '
@@ -2075,7 +2077,7 @@ def test_claim_verifier_response_preserves_status_reason_and_confidence():
 
 
 def test_claim_verifier_response_accepts_not_source_grounded_without_evidence():
-    claims = _parse_claim_verifier_response(
+    claims = parse_claim_verifier_response(
         (
             '{"claims": ['
             '{"ordinal": 0, "answer_start_offset": 0, "answer_end_offset": 12, '
@@ -2323,7 +2325,7 @@ def test_chat_run_event_payloads_are_strict():
 
 def test_claim_verifier_response_requires_contradiction_roles():
     with pytest.raises(ValueError, match="contradicted item missing support or conflict evidence"):
-        _parse_claim_verifier_response(
+        parse_claim_verifier_response(
             (
                 '{"claims": ['
                 '{"ordinal": 0, "answer_start_offset": 0, "answer_end_offset": 12, '
@@ -2334,7 +2336,7 @@ def test_claim_verifier_response_requires_contradiction_roles():
             evidence_count=1,
         )
 
-    claims = _parse_claim_verifier_response(
+    claims = parse_claim_verifier_response(
         (
             '{"claims": ['
             '{"ordinal": 0, "answer_start_offset": 0, "answer_end_offset": 12, '
@@ -2358,7 +2360,7 @@ def test_claim_extractor_response_requires_exact_offsets():
         "the appendix cites ammonia."
     )
 
-    claims = _parse_claim_extractor_response(
+    claims = parse_claim_extractor_response(
         json.dumps(
             {
                 "claims": [
@@ -2391,7 +2393,7 @@ def test_claim_extractor_response_requires_exact_offsets():
     ]
 
     with pytest.raises(ValueError, match="offsets do not match"):
-        _parse_claim_extractor_response(
+        parse_claim_extractor_response(
             json.dumps(
                 {
                     "claims": [
