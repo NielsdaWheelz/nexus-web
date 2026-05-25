@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID
@@ -17,7 +16,7 @@ from uuid import UUID
 import httpx
 from llm_calling.errors import LLMError, LLMErrorCode, classify_provider_error
 from llm_calling.types import LLMUsage
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
 
@@ -39,7 +38,6 @@ from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.conversation import (
     ArtifactIntentOptions,
-    AssistantMessageBranchAnchorRequest,
     BranchAnchorRequest,
     ChatRunEventOut,
     ChatRunOut,
@@ -98,12 +96,13 @@ from nexus.services.chat_run_idempotency import (
 from nexus.services.chat_run_message_blocks import (
     message_document,
 )
+from nexus.services.chat_run_message_prep import prepare_messages
 from nexus.services.chat_run_prompt_tracking import (
     reconcile_prompt_retrievals,
 )
 from nexus.services.chat_run_scope import is_source_backed_run
 from nexus.services.chat_run_usage import usage_log_fields, usage_tokens
-from nexus.services.chat_run_validation import load_valid_parent_for_send, validate_pre_phase
+from nexus.services.chat_run_validation import validate_pre_phase
 from nexus.services.chat_run_verification import (
     LLM_TIMEOUT_SECONDS,
     ChatRunLLMRouter,
@@ -120,14 +119,8 @@ from nexus.services.context_lookup import (
     ContextLookupError,
 )
 from nexus.services.context_rendering import PROMPT_VERSION
-from nexus.services.contexts import (
-    insert_contexts_batch,
-)
 from nexus.services.conversation_branches import (
-    active_leaf_for_viewer,
-    branch_anchor_for_message,
     ensure_branch_metadata,
-    load_leaf_message_path,
     load_message_path,
     persist_active_leaf,
 )
@@ -137,15 +130,12 @@ from nexus.services.conversation_memory import (
     refresh_conversation_memory,
 )
 from nexus.services.conversations import (
-    DEFAULT_CONVERSATION_TITLE,
     conversation_scope_metadata,
     conversation_to_out,
-    derive_conversation_title,
     get_message_count,
     load_message_artifacts_for_message_ids,
     load_message_context_snapshots_for_message_ids,
     message_to_out,
-    resolve_conversation_for_scope,
     retryable_assistant_message_ids,
 )
 from nexus.services.prompt_budget import ContextBudgetError
@@ -158,13 +148,6 @@ logger = get_logger(__name__)
 
 REASONING_OUTPUT_TOKENS = 25000
 DEFAULT_OUTPUT_TOKENS = 4096
-
-
-@dataclass
-class PreparedMessages:
-    conversation: Conversation
-    user_message: Message
-    assistant_message: Message
 
 
 def _llm_error_from_unread_stream_response(
@@ -1244,156 +1227,6 @@ async def _execute_chat_run(
         rate_limiter.release_inflight_slot(run.owner_user_id)
 
 
-def prepare_messages(
-    db: Session,
-    viewer_id: UUID,
-    conversation_id: UUID | None,
-    conversation_scope: ConversationScopeRequest | None,
-    parent_message_id: UUID | None,
-    branch_anchor: BranchAnchorRequest,
-    content: str,
-    model_id: UUID,
-    contexts: Sequence[ContextItem],
-) -> PreparedMessages:
-    if conversation_id is None and conversation_scope is not None:
-        conversation = resolve_conversation_for_scope(db, viewer_id, conversation_scope, content)
-        existing_message_count = db.scalar(
-            select(func.count())
-            .select_from(Message)
-            .where(Message.conversation_id == conversation.id)
-        )
-        if existing_message_count:
-            parent_message = _selected_path_reply_parent(
-                db,
-                viewer_id=viewer_id,
-                conversation_id=conversation.id,
-            )
-            if parent_message is None:
-                raise ApiError(
-                    ApiErrorCode.E_BRANCH_PATH_INVALID,
-                    "Existing scoped conversation has no complete assistant parent",
-                )
-            branch_anchor = AssistantMessageBranchAnchorRequest(
-                kind="assistant_message",
-                message_id=parent_message.id,
-            )
-        else:
-            parent_message = None
-    elif conversation_id is not None and conversation_scope is None:
-        conversation = db.get(Conversation, conversation_id)
-        if conversation is None or conversation.owner_user_id != viewer_id:
-            raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
-        parent_message = load_valid_parent_for_send(
-            db,
-            conversation_id=conversation.id,
-            parent_message_id=parent_message_id,
-        )
-    else:
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Exactly one of conversation_id or conversation_scope is required",
-        )
-
-    user_seq = assign_next_message_seq(db, conversation.id)
-    if user_seq == 1 and conversation.title == DEFAULT_CONVERSATION_TITLE:
-        conversation.title = derive_conversation_title(content)
-    branch_anchor_kind, branch_anchor_payload = branch_anchor_for_message(
-        parent_message,
-        branch_anchor,
-    )
-    branch_root_message_id = parent_message.id if parent_message is not None else None
-
-    user_message = Message(
-        conversation_id=conversation.id,
-        seq=user_seq,
-        role="user",
-        content=content,
-        message_document=message_document("user", content),
-        status="complete",
-        model_id=None,
-        parent_message_id=parent_message.id if parent_message is not None else None,
-        branch_root_message_id=branch_root_message_id,
-        branch_anchor_kind=branch_anchor_kind,
-        branch_anchor=branch_anchor_payload,
-    )
-    db.add(user_message)
-    db.flush()
-
-    insert_contexts_batch(db=db, message_id=user_message.id, contexts=contexts)
-    db.flush()
-    if parent_message is not None:
-        ensure_branch_metadata(
-            db,
-            conversation_id=conversation.id,
-            branch_user_message_id=user_message.id,
-        )
-
-    assistant_message = Message(
-        conversation_id=conversation.id,
-        seq=assign_next_message_seq(db, conversation.id),
-        role="assistant",
-        content="",
-        message_document=message_document("assistant", ""),
-        status="pending",
-        model_id=model_id,
-        parent_message_id=user_message.id,
-        branch_root_message_id=branch_root_message_id,
-        branch_anchor_kind="none",
-        branch_anchor={},
-    )
-    db.add(assistant_message)
-    db.flush()
-    persist_active_leaf(
-        db,
-        viewer_id=viewer_id,
-        conversation_id=conversation.id,
-        active_leaf_message_id=assistant_message.id,
-    )
-
-    return PreparedMessages(
-        conversation=conversation,
-        user_message=user_message,
-        assistant_message=assistant_message,
-    )
-
-
-def _selected_path_reply_parent(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    conversation_id: UUID,
-) -> Message | None:
-    active_leaf_id = active_leaf_for_viewer(
-        db,
-        viewer_id=viewer_id,
-        conversation_id=conversation_id,
-    )
-    if active_leaf_id is None:
-        return None
-    active_leaf = db.get(Message, active_leaf_id)
-    if active_leaf is not None and active_leaf.role == "assistant":
-        if active_leaf.status == "pending":
-            raise ApiError(
-                ApiErrorCode.E_CONVERSATION_BUSY,
-                "Conversation already has a pending assistant response",
-            )
-        if active_leaf.status not in {"complete", "error"}:
-            raise ApiError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                f"Unsupported assistant message status: {active_leaf.status}",
-            )
-
-    path = load_leaf_message_path(
-        db,
-        conversation_id=conversation_id,
-        leaf_message_id=active_leaf_id,
-    )
-    for message in reversed(path):
-        if message.role == "assistant" and message.status == "complete":
-            return message
-    return None
-
-
 def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatRunResponse:
     conversation = db.get(Conversation, run.conversation_id)
     user_message = db.get(Message, run.user_message_id)
@@ -1432,5 +1265,3 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
         user_message=user_message_out,
         assistant_message=assistant_message_out,
     )
-
-
