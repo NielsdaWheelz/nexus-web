@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { BRAND_BG_DARK } from "@/lib/brand";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -7,8 +8,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "A reading and notes platform",
     start_url: "/",
     display: "standalone",
-    background_color: "#15140f",
-    theme_color: "#15140f",
+    background_color: BRAND_BG_DARK,
+    theme_color: BRAND_BG_DARK,
     icons: [
       {
         src: "/icon.svg",

@@ -11,6 +11,7 @@ import "pdfjs-dist/web/pdf_viewer.css";
 import "@/lib/highlights/highlights.css";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { readThemeCookie } from "@/lib/theme/cookie";
+import { BRAND_BG_DARK, BRAND_BG_LIGHT } from "@/lib/brand";
 
 export const metadata: Metadata = {
   title: "Nexus",
@@ -34,8 +35,8 @@ export const viewport: Viewport = {
   initialScale: 1,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#faf8f3" },
-    { media: "(prefers-color-scheme: dark)", color: "#15140f" },
+    { media: "(prefers-color-scheme: light)", color: BRAND_BG_LIGHT },
+    { media: "(prefers-color-scheme: dark)", color: BRAND_BG_DARK },
   ],
 };
 

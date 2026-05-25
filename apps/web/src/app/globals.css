@@ -1,3 +1,5 @@
+@import "./brand.css";
+
 /* === Scale tokens — theme-invariant === */
 :root {
   /* Type families */
@@ -123,7 +125,7 @@
   --edge: #2c2c30;
   --edge-subtle: #1f1f23;
   --edge-strong: #44444a;
-  --accent: #c4a472;
+  --accent: var(--brand-fg-on-dark);
   --accent-hover: #d4b687;
   --accent-active: #b8965f;
   --accent-muted: rgba(196, 164, 114, 0.16);
@@ -155,7 +157,7 @@
   --edge: #d4d4cf;
   --edge-subtle: #e8e8e3;
   --edge-strong: #87878d;
-  --accent: #7d5e35;
+  --accent: var(--brand-fg-on-light);
   --accent-hover: #634a29;
   --accent-active: #4a371d;
   --accent-muted: rgba(125, 94, 53, 0.12);
@@ -188,7 +190,7 @@
     --edge: #d4d4cf;
     --edge-subtle: #e8e8e3;
     --edge-strong: #87878d;
-    --accent: #7d5e35;
+    --accent: var(--brand-fg-on-light);
     --accent-hover: #634a29;
     --accent-active: #4a371d;
     --accent-muted: rgba(125, 94, 53, 0.12);
