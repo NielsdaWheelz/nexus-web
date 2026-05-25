@@ -7,7 +7,6 @@ events.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import time
@@ -90,6 +89,14 @@ from nexus.services.api_key_resolver import (
     is_provider_enabled,
     resolve_api_key,
     update_user_key_status,
+)
+from nexus.services.chat_run_idempotency import (
+    compute_payload_hash,
+    compute_retry_payload_hash,
+    get_run_by_idempotency_key,
+    lock_idempotency_key,
+    normalize_idempotency_key,
+    raise_if_payload_mismatch,
 )
 from nexus.services.chat_run_message_blocks import (
     message_document,
@@ -293,76 +300,6 @@ def _max_output_tokens_for_reasoning(model: Model, reasoning: str) -> int:
     return min(DEFAULT_OUTPUT_TOKENS, model.max_context_tokens)
 
 
-def compute_payload_hash(
-    content: str,
-    model_id: UUID,
-    reasoning: str,
-    key_mode: str,
-    contexts: Sequence[ContextItem],
-    web_search: WebSearchOptions,
-    artifact_intent: ArtifactIntentOptions,
-    conversation_id: UUID | None,
-    conversation_scope: ConversationScopeRequest | None,
-    parent_message_id: UUID | None,
-    branch_anchor: BranchAnchorRequest,
-) -> str:
-    sorted_contexts = sorted(
-        (ctx.model_dump(mode="json") for ctx in contexts),
-        key=lambda payload: json.dumps(payload, sort_keys=True, separators=(",", ":")),
-    )
-    payload_scope = conversation_scope.model_dump(mode="json") if conversation_scope else None
-    payload_anchor = branch_anchor.model_dump(mode="json")
-    payload = (
-        f"{conversation_id}|{parent_message_id}|{payload_anchor}|{content}|{model_id}|{reasoning}|{key_mode}|"
-        f"{payload_scope}|{sorted_contexts}|{web_search.model_dump(mode='json')}|"
-        f"{artifact_intent.model_dump(mode='json')}"
-    )
-    return hashlib.sha256(payload.encode()).hexdigest()
-
-
-def compute_retry_payload_hash(
-    *,
-    failed_assistant_message_id: UUID,
-    source_run: ChatRun,
-    source_user_message: Message,
-    context_rows: Sequence[MessageContextItem],
-) -> str:
-    contexts = [
-        {
-            "id": str(row.id),
-            "ordinal": row.ordinal,
-            "context_kind": row.context_kind,
-            "object_type": row.object_type,
-            "object_id": str(row.object_id) if row.object_id is not None else None,
-            "source_media_id": str(row.source_media_id) if row.source_media_id else None,
-            "locator_json": row.locator_json,
-            "context_snapshot": row.context_snapshot_json,
-        }
-        for row in context_rows
-    ]
-    payload = {
-        "operation": "chat_response_retry",
-        "failed_assistant_message_id": str(failed_assistant_message_id),
-        "source_run_id": str(source_run.id),
-        "source_conversation_id": str(source_run.conversation_id),
-        "source_user_message_id": str(source_user_message.id),
-        "source_user_parent_message_id": (
-            str(source_user_message.parent_message_id)
-            if source_user_message.parent_message_id is not None
-            else None
-        ),
-        "source_prompt_content": source_user_message.content,
-        "source_model_id": str(source_run.model_id),
-        "source_reasoning": source_run.reasoning,
-        "source_key_mode": source_run.key_mode,
-        "source_web_search": source_run.web_search,
-        "source_artifact_intent": source_run.artifact_intent,
-        "source_contexts": contexts,
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(encoded.encode()).hexdigest()
-
-
 def create_chat_run(
     db: Session,
     *,
@@ -386,7 +323,7 @@ def create_chat_run(
             ApiErrorCode.E_INVALID_REQUEST,
             "Exactly one of conversation_id or conversation_scope is required",
         )
-    normalized_key = _normalize_idempotency_key(idempotency_key)
+    normalized_key = normalize_idempotency_key(idempotency_key)
 
     payload_hash = compute_payload_hash(
         content,
@@ -402,9 +339,9 @@ def create_chat_run(
         branch_anchor,
     )
 
-    existing = _get_run_by_idempotency_key(db, viewer_id, normalized_key)
+    existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
     if existing is not None:
-        _raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
+        raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
         return build_chat_run_response(db, viewer_id, existing)
 
     model = get_model_by_id(db, model_id)
@@ -439,10 +376,10 @@ def create_chat_run(
     )
 
     try:
-        _lock_idempotency_key(db, viewer_id, normalized_key)
-        existing = _get_run_by_idempotency_key(db, viewer_id, normalized_key)
+        lock_idempotency_key(db, viewer_id, normalized_key)
+        existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
         if existing is not None:
-            _raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
+            raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
             db.commit()
             return build_chat_run_response(db, viewer_id, existing)
 
@@ -510,9 +447,9 @@ def retry_failed_assistant_response(
     assistant_message_id: UUID,
     idempotency_key: str | None,
 ) -> ChatRunResponse:
-    normalized_key = _normalize_idempotency_key(idempotency_key)
+    normalized_key = normalize_idempotency_key(idempotency_key)
     try:
-        _lock_idempotency_key(db, viewer_id, normalized_key)
+        lock_idempotency_key(db, viewer_id, normalized_key)
         assistant_message = _load_retryable_failed_assistant_message(
             db,
             viewer_id=viewer_id,
@@ -534,9 +471,9 @@ def retry_failed_assistant_response(
             context_rows=context_rows,
         )
 
-        existing = _get_run_by_idempotency_key(db, viewer_id, normalized_key)
+        existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
         if existing is not None:
-            _raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
+            raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
             db.commit()
             return build_chat_run_response(db, viewer_id, existing)
 
@@ -2468,15 +2405,6 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
     )
 
 
-def _normalize_idempotency_key(idempotency_key: str | None) -> str:
-    normalized_key = (idempotency_key or "").strip()
-    if not normalized_key:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key is required")
-    if len(normalized_key) > 128:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Idempotency-Key is too long")
-    return normalized_key
-
-
 def _get_run_for_owner(db: Session, viewer_id: UUID, run_id: UUID) -> ChatRun:
     run = db.get(ChatRun, run_id)
     if run is None or run.owner_user_id != viewer_id:
@@ -2602,46 +2530,6 @@ def _copy_context_rows(
             )
         )
     db.flush()
-
-
-def _get_run_by_idempotency_key(
-    db: Session, viewer_id: UUID, idempotency_key: str
-) -> ChatRun | None:
-    return (
-        db.execute(
-            select(ChatRun).where(
-                ChatRun.owner_user_id == viewer_id,
-                ChatRun.idempotency_key == idempotency_key,
-            )
-        )
-        .scalars()
-        .first()
-    )
-
-
-def _raise_if_payload_mismatch(
-    run: ChatRun,
-    payload_hash: str,
-    viewer_id: UUID,
-    idempotency_key: str,
-) -> None:
-    if run.payload_hash == payload_hash:
-        return
-    logger.warning(
-        "chat_run.idempotency_mismatch",
-        **safe_kv(idempotency_key=idempotency_key, viewer_id=str(viewer_id)),
-    )
-    raise ApiError(
-        ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH,
-        "Idempotency key reused with different payload",
-    )
-
-
-def _lock_idempotency_key(db: Session, viewer_id: UUID, idempotency_key: str) -> None:
-    db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
-        {"lock_key": f"chat_run:{viewer_id}:{idempotency_key}"},
-    )
 
 
 def _append_and_commit(db: Session, run_id: UUID, event_type: str, payload: dict[str, Any]) -> None:
