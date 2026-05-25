@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol, cast
@@ -26,12 +26,12 @@ from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
 
 from nexus.auth.permissions import can_read_highlight, can_read_media
+from nexus.coerce import parse_uuid
 from nexus.config import get_settings
 from nexus.db.models import (
     ChatRun,
     ChatRunEvent,
     Conversation,
-    EvidenceSpan,
     Media,
     Message,
     MessageContextItem,
@@ -48,15 +48,9 @@ from nexus.errors import (
     ApiErrorCode,
     NotFoundError,
 )
-from nexus.evidence_span_ids import (
-    EvidenceSpanIdError,
-    EvidenceSpanIdsDuplicateError,
-    canonical_evidence_span_ids,
-    trusted_evidence_span_ids,
-)
+from nexus.evidence_span_ids import canonical_evidence_span_ids
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger, set_flow_id
-from nexus.schemas.context_memory import SourceRef
 from nexus.schemas.conversation import (
     MAX_CONTEXTS,
     MAX_MESSAGE_CONTENT_LENGTH,
@@ -90,6 +84,14 @@ from nexus.services.api_key_resolver import (
     resolve_api_key,
     update_user_key_status,
 )
+from nexus.services.chat_run_artifact_refs import (
+    artifact_context_ref_json,
+    artifact_delta_evidence_span_ids,
+    artifact_part_has_evidence,
+    artifact_result_ref_json,
+    artifact_source_ref_json,
+    validate_artifact_part_refs_readable,
+)
 from nexus.services.chat_run_claim_parsing import (
     ClaimCandidate,
     VerifiedClaim,
@@ -122,7 +124,6 @@ from nexus.services.context_assembler import (
 from nexus.services.context_lookup import (
     ContextLookupError,
     hydrate_context_ref,
-    hydrate_source_ref,
 )
 from nexus.services.context_rendering import PROMPT_VERSION
 from nexus.services.contexts import (
@@ -1791,124 +1792,6 @@ def _artifact_delta_from_model_response(
     )
 
 
-def _artifact_ref_or_die(
-    value: object,
-    field_name: str,
-    validator: Callable[[dict[str, Any]], dict[str, Any] | None],
-) -> dict[str, Any] | None:
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise ValueError(f"artifact_delta {field_name} must be an object")
-    try:
-        return validator(value)
-    except ValidationError as exc:
-        raise ValueError(f"artifact_delta {field_name} is invalid") from exc
-
-
-def _artifact_source_ref_json(value: object, field_name: str) -> dict[str, Any] | None:
-    return _artifact_ref_or_die(
-        value,
-        field_name,
-        lambda v: SourceRef.model_validate(v).model_dump(
-            mode="json", exclude_none=True, exclude_defaults=True
-        ),
-    )
-
-
-def _artifact_context_ref_json(value: object) -> dict[str, Any] | None:
-    return _artifact_ref_or_die(value, "context_ref", retrieval_context_ref_json)
-
-
-def _artifact_result_ref_json(value: object) -> dict[str, Any] | None:
-    return _artifact_ref_or_die(value, "result_ref", retrieval_result_ref_json)
-
-
-def _artifact_part_has_evidence(
-    *,
-    source_ref: dict[str, Any] | None,
-    context_ref: dict[str, Any] | None,
-    result_ref: dict[str, Any] | None,
-    evidence_span_id: UUID | None,
-    evidence_span_ids: list[str],
-    source_refs: list[dict[str, Any]],
-    metadata: object,
-) -> bool:
-    if (
-        source_ref is not None
-        or context_ref is not None
-        or result_ref is not None
-        or evidence_span_id is not None
-        or evidence_span_ids
-        or source_refs
-    ):
-        return True
-    return isinstance(metadata, dict) and metadata.get("support_state") == "not_source_grounded"
-
-
-def _validate_artifact_part_refs_readable(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    source_ref: dict[str, Any] | None,
-    context_ref: dict[str, Any] | None,
-    result_ref: dict[str, Any] | None,
-    evidence_span_ids: list[str],
-    source_refs: list[dict[str, Any]],
-) -> None:
-    for ref in ([source_ref] if source_ref is not None else []) + source_refs:
-        result = hydrate_source_ref(db, viewer_id=viewer_id, source_ref=ref)
-        if not result.resolved:
-            raise ValueError("artifact_delta source_ref is not readable")
-
-    if context_ref is not None:
-        result = hydrate_context_ref(db, viewer_id=viewer_id, context_ref=context_ref)
-        if not result.resolved:
-            raise ValueError("artifact_delta context_ref is not readable")
-
-    if result_ref is not None:
-        nested_context_ref = result_ref.get("context_ref")
-        if isinstance(nested_context_ref, dict) and nested_context_ref.get("type") != "web_result":
-            result = hydrate_context_ref(db, viewer_id=viewer_id, context_ref=nested_context_ref)
-            if not result.resolved:
-                raise ValueError("artifact_delta result_ref context is not readable")
-
-    for raw_id in evidence_span_ids:
-        parsed = _payload_uuid(raw_id)
-        if parsed is None:
-            raise ValueError("artifact_delta evidence_span_ids must be UUID strings")
-        media_id = db.scalar(select(EvidenceSpan.media_id).where(EvidenceSpan.id == parsed))
-        if media_id is None or not can_read_media(db, viewer_id, media_id):
-            raise ValueError("artifact_delta evidence_span_id is not readable")
-
-
-def _artifact_delta_evidence_span_ids(
-    *,
-    evidence_span_id: UUID | None,
-    raw_evidence_span_ids: object,
-) -> list[str]:
-    if raw_evidence_span_ids is None:
-        raw_evidence_span_ids = []
-    if not isinstance(raw_evidence_span_ids, list):
-        raise ValueError("artifact_delta evidence_span_ids must be an array")
-    values: list[UUID | str] = []
-    for value in raw_evidence_span_ids:
-        if not isinstance(value, str) or not value:
-            raise ValueError("artifact_delta evidence_span_ids must be UUID strings")
-        values.append(value)
-    try:
-        evidence_span_ids = trusted_evidence_span_ids(values)
-    except EvidenceSpanIdsDuplicateError as exc:
-        raise ValueError("artifact_delta evidence_span_ids must not contain duplicates") from exc
-    except EvidenceSpanIdError as exc:
-        raise ValueError("artifact_delta evidence_span_ids must be UUID strings") from exc
-    if evidence_span_id is not None:
-        if evidence_span_id in evidence_span_ids:
-            raise ValueError("artifact_delta evidence_span_id must not duplicate evidence_span_ids")
-        evidence_span_ids.append(evidence_span_id)
-    return [str(evidence_span_id) for evidence_span_id in evidence_span_ids]
-
-
 def _persist_artifact_deltas_for_message(
     db: Session,
     *,
@@ -2120,8 +2003,8 @@ def _persist_artifact_deltas_for_message(
         for ordinal, part in enumerate(artifact["parts"]):
             if not isinstance(part, dict):
                 raise ValueError("artifact_delta part must be an object")
-            evidence_span_id = _payload_uuid(part.get("evidence_span_id"))
-            evidence_span_ids = _artifact_delta_evidence_span_ids(
+            evidence_span_id = parse_uuid(part.get("evidence_span_id"))
+            evidence_span_ids = artifact_delta_evidence_span_ids(
                 evidence_span_id=evidence_span_id,
                 raw_evidence_span_ids=part.get("evidence_span_ids"),
             )
@@ -2133,13 +2016,13 @@ def _persist_artifact_deltas_for_message(
                 raise ValueError("artifact_delta source_refs must be an array of objects")
             source_refs: list[dict[str, Any]] = []
             for value in raw_source_refs:
-                source_ref_json = _artifact_source_ref_json(value, "source_refs")
+                source_ref_json = artifact_source_ref_json(value, "source_refs")
                 if source_ref_json is not None:
                     source_refs.append(source_ref_json)
 
-            source_ref = _artifact_source_ref_json(part.get("source_ref"), "source_ref")
-            context_ref = _artifact_context_ref_json(part.get("context_ref"))
-            result_ref = _artifact_result_ref_json(part.get("result_ref"))
+            source_ref = artifact_source_ref_json(part.get("source_ref"), "source_ref")
+            context_ref = artifact_context_ref_json(part.get("context_ref"))
+            result_ref = artifact_result_ref_json(part.get("result_ref"))
 
             part_key = part.get("part_key")
             if part_key is None and isinstance(part.get("id"), str):
@@ -2155,7 +2038,7 @@ def _persist_artifact_deltas_for_message(
             raw_metadata = part.get("metadata")
             if raw_metadata is not None and not isinstance(raw_metadata, dict):
                 raise ValueError("artifact_delta metadata must be an object")
-            if not _artifact_part_has_evidence(
+            if not artifact_part_has_evidence(
                 source_ref=source_ref,
                 context_ref=context_ref,
                 result_ref=result_ref,
@@ -2165,7 +2048,7 @@ def _persist_artifact_deltas_for_message(
                 metadata=raw_metadata,
             ):
                 raise ValueError("artifact_delta factual parts require evidence refs")
-            _validate_artifact_part_refs_readable(
+            validate_artifact_part_refs_readable(
                 db,
                 viewer_id=run.owner_user_id,
                 source_ref=source_ref,
@@ -2285,17 +2168,6 @@ def append_run_event(db: Session, run: ChatRun, event_type: str, payload: dict[s
     db.flush()
 
 
-def _payload_uuid(value: object) -> UUID | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return UUID(value)
-    except ValueError:
-        # justify-ignore-error: non-UUID payload string is malformed input; the
-        # caller treats None as "no parseable id".
-        return None
-
-
 def _persist_source_manifest_delta(
     db: Session,
     *,
@@ -2304,7 +2176,7 @@ def _persist_source_manifest_delta(
 ) -> None:
     assistant_message_id = UUID(str(payload["assistant_message_id"]))
     tool_call_index = int(payload["tool_call_index"])
-    tool_call_id = _payload_uuid(payload.get("tool_call_id"))
+    tool_call_id = parse_uuid(payload.get("tool_call_id"))
     latency_ms = payload["latency_ms"]
     manifest = (
         db.execute(
