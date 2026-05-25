@@ -20,7 +20,7 @@ import httpx
 from llm_calling.errors import LLMError, LLMErrorCode, classify_provider_error
 from llm_calling.types import LLMChunk, LLMRequest, LLMUsage, Turn
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import bindparam, func, or_, select, text
+from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
@@ -34,15 +34,12 @@ from nexus.db.models import (
     Conversation,
     Media,
     Message,
-    MessageContextItem,
     MessageLLM,
     MessageToolCall,
     Model,
-    ObjectLink,
     SourceManifest,
 )
 from nexus.errors import (
-    CHAT_RESPONSE_RETRYABLE_ERROR_CODES,
     LLM_ERROR_CODE_TO_API_ERROR_CODE,
     ApiError,
     ApiErrorCode,
@@ -83,6 +80,13 @@ from nexus.services.api_key_resolver import (
     is_provider_enabled,
     resolve_api_key,
     update_user_key_status,
+)
+from nexus.services.chat_run_access import (
+    copy_context_rows,
+    get_run_for_owner,
+    load_context_rows_for_message,
+    load_retryable_failed_assistant_message,
+    load_source_run_for_retry,
 )
 from nexus.services.chat_run_artifact_refs import (
     artifact_context_ref_json,
@@ -442,12 +446,12 @@ def retry_failed_assistant_response(
     normalized_key = normalize_idempotency_key(idempotency_key)
     try:
         lock_idempotency_key(db, viewer_id, normalized_key)
-        assistant_message = _load_retryable_failed_assistant_message(
+        assistant_message = load_retryable_failed_assistant_message(
             db,
             viewer_id=viewer_id,
             assistant_message_id=assistant_message_id,
         )
-        source_run = _load_source_run_for_retry(
+        source_run = load_source_run_for_retry(
             db,
             viewer_id=viewer_id,
             assistant_message=assistant_message,
@@ -455,7 +459,7 @@ def retry_failed_assistant_response(
         source_user_message = db.get(Message, source_run.user_message_id)
         if source_user_message is None or source_user_message.role != "user":
             raise ApiError(ApiErrorCode.E_RETRY_INVALID_STATE, "Retry source prompt not found")
-        context_rows = _load_context_rows_for_message(db, source_user_message.id)
+        context_rows = load_context_rows_for_message(db, source_user_message.id)
         payload_hash = compute_retry_payload_hash(
             failed_assistant_message_id=assistant_message_id,
             source_run=source_run,
@@ -487,7 +491,7 @@ def retry_failed_assistant_response(
         )
         db.add(user_message)
         db.flush()
-        _copy_context_rows(
+        copy_context_rows(
             db,
             viewer_id=viewer_id,
             source_message_id=source_user_message.id,
@@ -570,7 +574,7 @@ def retry_failed_assistant_response(
 
 
 def get_chat_run(db: Session, *, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
-    run = _get_run_for_owner(db, viewer_id, run_id)
+    run = get_run_for_owner(db, viewer_id, run_id)
     return build_chat_run_response(db, viewer_id, run)
 
 
@@ -609,7 +613,7 @@ def list_chat_runs_for_conversation(
 
 
 def cancel_chat_run(db: Session, *, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:
-    run = _get_run_for_owner(db, viewer_id, run_id)
+    run = get_run_for_owner(db, viewer_id, run_id)
     if run.status not in TERMINAL_RUN_STATUSES and run.cancel_requested_at is None:
         run.cancel_requested_at = datetime.now(UTC)
         run.updated_at = datetime.now(UTC)
@@ -624,7 +628,7 @@ def get_chat_run_events(
     run_id: UUID,
     after: int,
 ) -> list[ChatRunEventOut]:
-    _get_run_for_owner(db, viewer_id, run_id)
+    get_run_for_owner(db, viewer_id, run_id)
     rows = (
         db.execute(
             select(ChatRunEvent)
@@ -646,12 +650,12 @@ def get_chat_run_events(
 
 
 def is_chat_run_terminal(db: Session, *, viewer_id: UUID, run_id: UUID) -> bool:
-    run = _get_run_for_owner(db, viewer_id, run_id)
+    run = get_run_for_owner(db, viewer_id, run_id)
     return run.status in TERMINAL_RUN_STATUSES
 
 
 def assert_chat_run_owner(db: Session, *, viewer_id: UUID, run_id: UUID) -> None:
-    _get_run_for_owner(db, viewer_id, run_id)
+    get_run_for_owner(db, viewer_id, run_id)
 
 
 async def execute_chat_run(
@@ -2266,133 +2270,6 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
         user_message=user_message_out,
         assistant_message=assistant_message_out,
     )
-
-
-def _get_run_for_owner(db: Session, viewer_id: UUID, run_id: UUID) -> ChatRun:
-    run = db.get(ChatRun, run_id)
-    if run is None or run.owner_user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Chat run not found")
-    return run
-
-
-def _load_retryable_failed_assistant_message(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    assistant_message_id: UUID,
-) -> Message:
-    message = db.get(Message, assistant_message_id)
-    if message is None:
-        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-    conversation = db.get(Conversation, message.conversation_id)
-    if conversation is None or conversation.owner_user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-    if message.role != "assistant" or message.status != "error":
-        raise ApiError(
-            ApiErrorCode.E_RETRY_INVALID_STATE,
-            "Only failed assistant messages can be retried",
-        )
-    return message
-
-
-def _load_source_run_for_retry(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    assistant_message: Message,
-) -> ChatRun:
-    run = (
-        db.execute(
-            select(ChatRun)
-            .where(
-                ChatRun.owner_user_id == viewer_id,
-                ChatRun.assistant_message_id == assistant_message.id,
-            )
-            .order_by(ChatRun.created_at.desc(), ChatRun.id.desc())
-        )
-        .scalars()
-        .first()
-    )
-    if run is None:
-        raise ApiError(ApiErrorCode.E_RETRY_INVALID_STATE, "Retry source run not found")
-    if run.conversation_id != assistant_message.conversation_id:
-        raise ApiError(ApiErrorCode.E_RETRY_INVALID_STATE, "Retry source run is invalid")
-    if run.status != "error":
-        raise ApiError(ApiErrorCode.E_RETRY_INVALID_STATE, "Retry source run is not failed")
-    if run.error_code not in CHAT_RESPONSE_RETRYABLE_ERROR_CODES:
-        raise ApiError(ApiErrorCode.E_RETRY_NOT_ALLOWED, "Assistant response is not retryable")
-    return run
-
-
-def _load_context_rows_for_message(db: Session, message_id: UUID) -> list[MessageContextItem]:
-    return list(
-        db.execute(
-            select(MessageContextItem)
-            .where(MessageContextItem.message_id == message_id)
-            .order_by(MessageContextItem.ordinal.asc(), MessageContextItem.id.asc())
-        )
-        .scalars()
-        .all()
-    )
-
-
-def _copy_context_rows(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    source_message_id: UUID,
-    target_message_id: UUID,
-    rows: Sequence[MessageContextItem],
-) -> None:
-    for row in rows:
-        db.add(
-            MessageContextItem(
-                message_id=target_message_id,
-                user_id=viewer_id,
-                context_kind=row.context_kind,
-                object_type=row.object_type,
-                object_id=row.object_id,
-                source_media_id=row.source_media_id,
-                locator_json=row.locator_json,
-                ordinal=row.ordinal,
-                context_snapshot_json=row.context_snapshot_json,
-            )
-        )
-    links = db.scalars(
-        select(ObjectLink).where(
-            ObjectLink.user_id == viewer_id,
-            ObjectLink.relation_type == "used_as_context",
-            or_(
-                (ObjectLink.a_type == "message") & (ObjectLink.a_id == source_message_id),
-                (ObjectLink.b_type == "message") & (ObjectLink.b_id == source_message_id),
-            ),
-        )
-    ).all()
-    for link in links:
-        db.add(
-            ObjectLink(
-                user_id=viewer_id,
-                relation_type=link.relation_type,
-                a_type=link.a_type,
-                a_id=target_message_id
-                if link.a_type == "message" and link.a_id == source_message_id
-                else link.a_id,
-                b_type=link.b_type,
-                b_id=target_message_id
-                if link.b_type == "message" and link.b_id == source_message_id
-                else link.b_id,
-                a_order_key=link.a_order_key,
-                b_order_key=link.b_order_key,
-                a_locator_json=(
-                    dict(link.a_locator_json) if link.a_locator_json is not None else None
-                ),
-                b_locator_json=(
-                    dict(link.b_locator_json) if link.b_locator_json is not None else None
-                ),
-                metadata_json=dict(link.metadata_json or {}),
-            )
-        )
-    db.flush()
 
 
 def _append_and_commit(db: Session, run_id: UUID, event_type: str, payload: dict[str, Any]) -> None:
