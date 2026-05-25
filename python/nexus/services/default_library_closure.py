@@ -59,6 +59,57 @@ BACKFILL_PENDING_COUNT_GUARDRAIL: int = 500
 # ---------------------------------------------------------------------------
 
 
+def _ensure_library_entry_for_media(
+    db: Session, library_id: UUID, media_id: UUID
+) -> None:
+    """Append a media row to library_entries at the next position if absent."""
+    entry_exists = db.execute(
+        text(
+            "SELECT 1 FROM library_entries WHERE library_id = :lib AND media_id = :media"
+        ),
+        {"lib": library_id, "media": media_id},
+    ).fetchone()
+    if entry_exists is not None:
+        return
+    next_position = db.execute(
+        text("SELECT COALESCE(MAX(position), -1) + 1 FROM library_entries WHERE library_id = :lib"),
+        {"lib": library_id},
+    ).scalar()
+    db.execute(
+        text(
+            "INSERT INTO library_entries (library_id, media_id, podcast_id, position) "
+            "VALUES (:lib, :media, NULL, :position)"
+        ),
+        {"lib": library_id, "media": media_id, "position": int(next_position or 0)},
+    )
+
+
+def _ensure_closure_edge(
+    db: Session,
+    default_library_id: UUID,
+    media_id: UUID,
+    source_library_id: UUID,
+) -> bool:
+    """Insert default_library_closure_edges row if absent; return True if inserted."""
+    edge_exists = db.execute(
+        text(
+            "SELECT 1 FROM default_library_closure_edges "
+            "WHERE default_library_id = :dl AND media_id = :media AND source_library_id = :source"
+        ),
+        {"dl": default_library_id, "media": media_id, "source": source_library_id},
+    ).fetchone()
+    if edge_exists is not None:
+        return False
+    db.execute(
+        text(
+            "INSERT INTO default_library_closure_edges "
+            "(default_library_id, media_id, source_library_id) VALUES (:dl, :media, :source)"
+        ),
+        {"dl": default_library_id, "media": media_id, "source": source_library_id},
+    )
+    return True
+
+
 def ensure_default_intrinsic(
     db: Session,
     default_library_id: UUID,
@@ -69,35 +120,7 @@ def ensure_default_intrinsic(
     Used by all default-library direct writer paths (upload, from_url, etc.).
     Never writes closure edges.
     """
-    entry_exists = db.execute(
-        text("""
-            SELECT 1
-            FROM library_entries
-            WHERE library_id = :lib
-              AND media_id = :media
-        """),
-        {"lib": default_library_id, "media": media_id},
-    ).fetchone()
-    if entry_exists is None:
-        next_position = db.execute(
-            text("""
-                SELECT COALESCE(MAX(position), -1) + 1
-                FROM library_entries
-                WHERE library_id = :lib
-            """),
-            {"lib": default_library_id},
-        ).scalar()
-        db.execute(
-            text("""
-                INSERT INTO library_entries (library_id, media_id, podcast_id, position)
-                VALUES (:lib, :media, NULL, :position)
-            """),
-            {
-                "lib": default_library_id,
-                "media": media_id,
-                "position": int(next_position or 0),
-            },
-        )
+    _ensure_library_entry_for_media(db, default_library_id, media_id)
 
     intrinsic_exists = db.execute(
         text("""
@@ -142,55 +165,8 @@ def add_media_to_non_default_closure(
         {"source": source_library_id},
     ).fetchall()
     for (default_library_id,) in default_library_rows:
-        edge_exists = db.execute(
-            text("""
-                SELECT 1
-                FROM default_library_closure_edges
-                WHERE default_library_id = :dl
-                  AND media_id = :media
-                  AND source_library_id = :source
-            """),
-            {"dl": default_library_id, "media": media_id, "source": source_library_id},
-        ).fetchone()
-        if edge_exists is None:
-            db.execute(
-                text("""
-                    INSERT INTO default_library_closure_edges
-                        (default_library_id, media_id, source_library_id)
-                    VALUES (:dl, :media, :source)
-                """),
-                {"dl": default_library_id, "media": media_id, "source": source_library_id},
-            )
-
-        entry_exists = db.execute(
-            text("""
-                SELECT 1
-                FROM library_entries
-                WHERE library_id = :dl
-                  AND media_id = :media
-            """),
-            {"dl": default_library_id, "media": media_id},
-        ).fetchone()
-        if entry_exists is None:
-            next_position = db.execute(
-                text("""
-                    SELECT COALESCE(MAX(position), -1) + 1
-                    FROM library_entries
-                    WHERE library_id = :dl
-                """),
-                {"dl": default_library_id},
-            ).scalar()
-            db.execute(
-                text("""
-                    INSERT INTO library_entries (library_id, media_id, podcast_id, position)
-                    VALUES (:dl, :media, NULL, :position)
-                """),
-                {
-                    "dl": default_library_id,
-                    "media": media_id,
-                    "position": int(next_position or 0),
-                },
-            )
+        _ensure_closure_edge(db, default_library_id, media_id, source_library_id)
+        _ensure_library_entry_for_media(db, default_library_id, media_id)
 
 
 def remove_media_from_non_default_closure(
@@ -637,56 +613,9 @@ def materialize_closure_for_source(
 
     edges_count = 0
     for media_id in source_media_ids:
-        edge_exists = db.execute(
-            text("""
-                SELECT 1
-                FROM default_library_closure_edges
-                WHERE default_library_id = :dl
-                  AND media_id = :media
-                  AND source_library_id = :source
-            """),
-            {"dl": default_library_id, "media": media_id, "source": source_library_id},
-        ).fetchone()
-        if edge_exists is None:
-            db.execute(
-                text("""
-                    INSERT INTO default_library_closure_edges
-                        (default_library_id, media_id, source_library_id)
-                    VALUES (:dl, :media, :source)
-                """),
-                {"dl": default_library_id, "media": media_id, "source": source_library_id},
-            )
+        if _ensure_closure_edge(db, default_library_id, media_id, source_library_id):
             edges_count += 1
-
-        entry_exists = db.execute(
-            text("""
-                SELECT 1
-                FROM library_entries
-                WHERE library_id = :dl
-                  AND media_id = :media
-            """),
-            {"dl": default_library_id, "media": media_id},
-        ).fetchone()
-        if entry_exists is None:
-            next_position = db.execute(
-                text("""
-                    SELECT COALESCE(MAX(position), -1) + 1
-                    FROM library_entries
-                    WHERE library_id = :dl
-                """),
-                {"dl": default_library_id},
-            ).scalar()
-            db.execute(
-                text("""
-                    INSERT INTO library_entries (library_id, media_id, podcast_id, position)
-                    VALUES (:dl, :media, NULL, :position)
-                """),
-                {
-                    "dl": default_library_id,
-                    "media": media_id,
-                    "position": int(next_position or 0),
-                },
-            )
+        _ensure_library_entry_for_media(db, default_library_id, media_id)
 
     return edges_count
 
