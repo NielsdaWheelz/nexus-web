@@ -193,7 +193,7 @@ Rationale for join table over JSONB column: matches every other N:M relation in 
 
 ### 6.3. Migration
 
-`migrations/alembic/versions/0111_podcast_subscription_libraries.py`:
+`migrations/alembic/versions/0113_podcast_subscription_libraries.py`:
 
 - `upgrade()`: create table + index.
 - `downgrade()`: drop index, drop table.
@@ -373,7 +373,7 @@ No new capabilities. No changes to `CapabilitiesOut`. Library accessibility is c
   - `test_sync_new_episodes_inherit_subscription_libraries`.
   - `test_opml_import_per_feed_override_wins_over_default`.
 - `test_migrations.py`:
-  - Migration `0111` upgrade + downgrade reversibility.
+  - Migration `0113` upgrade + downgrade reversibility.
   - Constraint and index assertions.
 
 ### 13.2. Frontend (`apps/web/src/...`)
@@ -399,7 +399,7 @@ No new capabilities. No changes to `CapabilitiesOut`. Library accessibility is c
 
 One PR (or one stack), merged together. Order of changes within the PR:
 
-1. Migration `0111_podcast_subscription_libraries.py`.
+1. Migration `0113_podcast_subscription_libraries.py`.
 2. Schemas updated (`python/nexus/schemas/media.py`, `schemas/podcasts.py`, `schemas/libraries.py` as relevant): `library_ids: list[UUID]` everywhere.
 3. Service layer: signatures changed, `assign_libraries_for_media` + `add_media_to_libraries` + `set_subscription_libraries` added.
 4. Route layer: request models updated, new `POST /media/{id}/libraries` route, `E_LIBRARY_FORBIDDEN` wired in.

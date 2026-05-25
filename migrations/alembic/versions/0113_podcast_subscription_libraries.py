@@ -1,7 +1,7 @@
 """Add podcast subscription libraries join table.
 
-Revision ID: 0111
-Revises: 0110
+Revision ID: 0113
+Revises: 0112
 Create Date: 2026-05-25
 """
 
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0111"
-down_revision: str | None = "0110"
+revision: str = "0113"
+down_revision: str | None = "0112"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

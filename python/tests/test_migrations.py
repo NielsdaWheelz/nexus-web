@@ -7078,10 +7078,10 @@ class TestEpubNavSourceCutoverMigration:
         assert source == "fragment_fallback"
 
 
-class TestPodcastSubscriptionLibrariesMigration0111:
-    """Schema assertions for migration 0111 (podcast_subscription_libraries)."""
+class TestPodcastSubscriptionLibrariesMigration0113:
+    """Schema assertions for migration 0113 (podcast_subscription_libraries)."""
 
-    def test_migration_0111_creates_podcast_subscription_libraries(self, migrated_engine):
+    def test_migration_0113_creates_podcast_subscription_libraries(self, migrated_engine):
         """Head migration must materialize the table, composite PK, FK cascade, and index."""
         with Session(migrated_engine) as session:
             columns = session.execute(
@@ -7177,7 +7177,7 @@ class TestPodcastSubscriptionLibrariesMigration0111:
             f"got {delete_actions['libraries']}"
         )
 
-    def test_migration_0111_pk_rejects_duplicate_composite(self, migrated_engine):
+    def test_migration_0113_pk_rejects_duplicate_composite(self, migrated_engine):
         """The composite primary key prevents inserting the same triple twice."""
         with Session(migrated_engine) as session:
             user_id = uuid4()
@@ -7261,7 +7261,7 @@ class TestPodcastSubscriptionLibrariesMigration0111:
                 session.commit()
             session.rollback()
 
-    def test_migration_0111_subscription_delete_cascades_to_join_table(self, migrated_engine):
+    def test_migration_0113_subscription_delete_cascades_to_join_table(self, migrated_engine):
         """Deleting a podcast_subscription must remove its podcast_subscription_libraries rows."""
         with Session(migrated_engine) as session:
             user_id = uuid4()
@@ -7353,7 +7353,7 @@ class TestPodcastSubscriptionLibrariesMigration0111:
             f"got {remaining}"
         )
 
-    def test_migration_0111_library_delete_cascades_to_join_table(self, migrated_engine):
+    def test_migration_0113_library_delete_cascades_to_join_table(self, migrated_engine):
         """Deleting a library must remove its podcast_subscription_libraries rows."""
         with Session(migrated_engine) as session:
             user_id = uuid4()
