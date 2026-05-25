@@ -24,6 +24,7 @@ export interface PaletteCommand {
   disabled?: { reason: string };
   danger?: boolean;
   pin?: "last";
+  trailingAction?: { actionId: string; ariaLabel: string };
 }
 
 export interface PaletteGroup {

@@ -13,6 +13,7 @@ interface PaletteMobileShellProps {
   searchLoading: boolean;
   onQueryChange(query: string): void;
   onSelect(command: PaletteCommand): void;
+  onTrailingAction(command: PaletteCommand): void;
   onClose(): void;
 }
 
@@ -35,6 +36,7 @@ export default function PaletteMobileShell({
   searchLoading,
   onQueryChange,
   onSelect,
+  onTrailingAction,
   onClose,
 }: PaletteMobileShellProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -172,6 +174,7 @@ export default function PaletteMobileShell({
           autoFocusInput={false}
           onQueryChange={onQueryChange}
           onSelect={selectFromUi}
+          onTrailingAction={onTrailingAction}
         />
       </div>
     </dialog>

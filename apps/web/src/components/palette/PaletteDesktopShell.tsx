@@ -14,6 +14,7 @@ interface PaletteDesktopShellProps {
   initialActiveCommandId: string | null;
   onQueryChange(query: string): void;
   onSelect(command: PaletteCommand): void;
+  onTrailingAction(command: PaletteCommand): void;
   onClose(): void;
 }
 
@@ -24,6 +25,7 @@ export default function PaletteDesktopShell({
   initialActiveCommandId,
   onQueryChange,
   onSelect,
+  onTrailingAction,
   onClose,
 }: PaletteDesktopShellProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -84,6 +86,7 @@ export default function PaletteDesktopShell({
           autoFocusInput
           onQueryChange={onQueryChange}
           onSelect={onSelect}
+          onTrailingAction={onTrailingAction}
           onActiveCommandChange={setActiveCommandId}
         />
       </div>

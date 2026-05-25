@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CommandPalette from "@/components/CommandPalette";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
@@ -204,21 +204,56 @@ describe("CommandPalette", () => {
     expect(screen.queryByRole("group")).not.toBeInTheDocument();
   });
 
-  it("represents open tabs as global commands", async () => {
+  it("renders one open-tab row per pane with an inline close button", async () => {
     renderCommandPalette();
     expect(await screen.findByTestId("workspace-ready")).toBeInTheDocument();
 
     openPane("/media/media-1");
     openPalette();
 
-    expect(await screen.findByRole("option", { name: /Media.*Switch to open tab/ })).toBeInTheDocument();
-    const closeCommand = screen.getByRole("option", { name: /Close Media/ });
+    const tabRow = await screen.findByRole("option", { name: /Media.*Switch to open tab/ });
+    expect(screen.queryByRole("option", { name: /^Close / })).not.toBeInTheDocument();
+    expect(within(tabRow).getByRole("button", { name: /^Close / })).toBeInTheDocument();
+  });
 
-    fireEvent.click(closeCommand);
+  it("activates the pane and closes the palette on row-body click", async () => {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    renderCommandPalette();
+    expect(await screen.findByTestId("workspace-ready")).toBeInTheDocument();
+
+    openPane("/media/media-1");
+    openPalette();
+
+    fireEvent.click(await screen.findByRole("option", { name: /Media.*Switch to open tab/ }));
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
     });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/me/palette-selections",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("closes the pane and keeps the palette open on inline close click", async () => {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    renderCommandPalette();
+    expect(await screen.findByTestId("workspace-ready")).toBeInTheDocument();
+
+    openPane("/media/media-1");
+    openPalette();
+
+    const tabRow = await screen.findByRole("option", { name: /Media.*Switch to open tab/ });
+    fireEvent.click(within(tabRow).getByRole("button", { name: /^Close / }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("option", { name: /Media.*Switch to open tab/ })).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/me/palette-selections",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
   it("executes create commands and records the selection first", async () => {

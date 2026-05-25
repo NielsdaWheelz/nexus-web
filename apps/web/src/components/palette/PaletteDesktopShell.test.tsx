@@ -45,6 +45,7 @@ function renderShell(
       initialActiveCommandId={null}
       onQueryChange={vi.fn()}
       onSelect={vi.fn()}
+      onTrailingAction={vi.fn()}
       onClose={vi.fn()}
       {...props}
     />,
@@ -108,5 +109,32 @@ describe("PaletteDesktopShell", () => {
 
     const row = await screen.findByRole("option", { name: /Library/i });
     expect(row).toHaveTextContent("Ctrl L");
+  });
+
+  it("invokes onTrailingAction when the inline close button is clicked", async () => {
+    const user = userEvent.setup();
+    const onTrailingAction = vi.fn();
+    const view: PaletteView = {
+      state: "resting",
+      groups: [
+        {
+          sectionId: "open-tabs",
+          label: "Open tabs",
+          commands: [
+            command({
+              id: "pane-open-1",
+              title: "My Doc",
+              sectionId: "open-tabs",
+              trailingAction: { actionId: "pane-close:1", ariaLabel: "Close My Doc" },
+            }),
+          ],
+        },
+      ],
+    };
+    renderShell({ view, onTrailingAction });
+
+    await user.click(screen.getByRole("button", { name: "Close My Doc" }));
+
+    expect(onTrailingAction).toHaveBeenCalledWith(expect.objectContaining({ id: "pane-open-1" }));
   });
 });

@@ -106,6 +106,20 @@
   white-space: nowrap;
 }
 
+.trailingButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-xl);
+  height: var(--size-xl);
+  justify-self: end;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
 .loading,
 .empty {
   padding: var(--space-3) var(--space-4);
@@ -119,5 +133,16 @@
   .option:hover {
     color: var(--ink);
     background: var(--surface-2);
+  }
+
+  .trailingButton {
+    opacity: 0.4;
+    transition: opacity var(--duration-fast) var(--ease-glide);
+  }
+
+  .option:hover .trailingButton,
+  .option:focus-within .trailingButton,
+  .option[data-active="true"] .trailingButton {
+    opacity: 1;
   }
 }

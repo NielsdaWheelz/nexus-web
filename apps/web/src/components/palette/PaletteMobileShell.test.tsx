@@ -30,14 +30,21 @@ const restingView: PaletteView = {
   ],
 };
 
-function renderShell(overrides: { onClose?: () => void } = {}) {
+function renderShell(
+  overrides: {
+    onClose?: () => void;
+    onTrailingAction?: (command: PaletteCommand) => void;
+    view?: PaletteView;
+  } = {},
+) {
   return render(
     <PaletteMobileShell
       query=""
-      view={restingView}
+      view={overrides.view ?? restingView}
       searchLoading={false}
       onQueryChange={vi.fn()}
       onSelect={vi.fn()}
+      onTrailingAction={overrides.onTrailingAction ?? vi.fn()}
       onClose={overrides.onClose ?? vi.fn()}
     />,
   );
@@ -103,5 +110,37 @@ describe("PaletteMobileShell", () => {
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(history.back).not.toHaveBeenCalled();
+  });
+
+  it("invokes onTrailingAction when the inline close button is tapped", async () => {
+    const user = userEvent.setup();
+    const onTrailingAction = vi.fn();
+    const view: PaletteView = {
+      state: "resting",
+      groups: [
+        {
+          sectionId: "open-tabs",
+          label: "Open tabs",
+          commands: [
+            {
+              id: "pane-open-1",
+              title: "My Doc",
+              keywords: [],
+              sectionId: "open-tabs",
+              icon: TestIcon,
+              target: { kind: "action", actionId: "pane-open:1" },
+              source: "workspace",
+              rank: {},
+              trailingAction: { actionId: "pane-close:1", ariaLabel: "Close My Doc" },
+            },
+          ],
+        },
+      ],
+    };
+    renderShell({ view, onTrailingAction });
+
+    await user.click(screen.getByRole("button", { name: "Close My Doc" }));
+
+    expect(onTrailingAction).toHaveBeenCalledWith(expect.objectContaining({ id: "pane-open-1" }));
   });
 });

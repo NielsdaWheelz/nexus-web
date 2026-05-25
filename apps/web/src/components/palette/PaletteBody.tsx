@@ -15,6 +15,7 @@ interface PaletteBodyProps {
   autoFocusInput: boolean;
   onQueryChange(query: string): void;
   onSelect(command: PaletteCommand): void;
+  onTrailingAction(command: PaletteCommand): void;
   onActiveCommandChange?(commandId: string): void;
 }
 
@@ -33,6 +34,7 @@ export default function PaletteBody({
   autoFocusInput,
   onQueryChange,
   onSelect,
+  onTrailingAction,
   onActiveCommandChange,
 }: PaletteBodyProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -55,6 +57,15 @@ export default function PaletteBody({
         commands.find((command) => command.id === activeCommandId) ?? commands[0];
       if (target && !target.disabled) onSelect(target);
       return;
+    }
+
+    if (event.key === "Delete" && query === "" && activeCommandId) {
+      const active = flattenView(view).find((command) => command.id === activeCommandId);
+      if (active?.trailingAction) {
+        event.preventDefault();
+        onTrailingAction(active);
+        return;
+      }
     }
 
     if (!onActiveCommandChange) return;
@@ -122,7 +133,7 @@ export default function PaletteBody({
         role="listbox"
         aria-busy={searchLoading || undefined}
       >
-        {renderView(view, searchLoading, activeCommandId, showShortcuts, onSelect, onActiveCommandChange)}
+        {renderView(view, searchLoading, activeCommandId, showShortcuts, onSelect, onTrailingAction, onActiveCommandChange)}
       </div>
     </>
   );
@@ -134,6 +145,7 @@ function renderView(
   activeCommandId: string | null,
   showShortcuts: boolean,
   onSelect: (command: PaletteCommand) => void,
+  onTrailingAction: (command: PaletteCommand) => void,
   onActiveCommandChange: ((commandId: string) => void) | undefined,
 ) {
   switch (view.state) {
@@ -154,6 +166,7 @@ function renderView(
                   showTag={false}
                   showShortcut={showShortcuts}
                   onSelect={onSelect}
+                  onTrailingAction={onTrailingAction}
                   onHover={onActiveCommandChange}
                 />
               ))}
@@ -185,6 +198,7 @@ function renderView(
               showTag
               showShortcut={showShortcuts}
               onSelect={onSelect}
+              onTrailingAction={onTrailingAction}
               onHover={onActiveCommandChange}
             />
           ))}

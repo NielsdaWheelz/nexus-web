@@ -12,6 +12,24 @@ function paletteListbox(root: Page | Locator): Locator {
   return root.getByRole("listbox");
 }
 
+// Seeds the workspace with a second open pane (/search → "Search") on top of
+// the visited route, so the palette's open-tabs section contains a Search row.
+// Mirrors the encoding used by workspace-tabs.spec.ts.
+function workspaceWithSearchPane(): string {
+  const state = {
+    schemaVersion: 4,
+    activePaneId: "pane-libraries",
+    panes: [
+      { id: "pane-libraries", href: "/libraries", widthPx: 560, visibility: "visible" },
+      { id: "pane-search", href: "/search", widthPx: 560, visibility: "visible" },
+    ],
+  };
+  return btoa(JSON.stringify(state))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
 test.describe("command palette", () => {
   test("desktop: open with a query, arrow + Enter run a command", async ({
     page,
@@ -52,6 +70,35 @@ test.describe("command palette", () => {
       page.getByRole("heading", { name: "Keyboard Shortcuts" }),
     ).toBeVisible({ timeout: 15_000 });
   });
+
+  test("desktop: inline close button removes the open-tab row without dismissing the palette", async ({
+    page,
+  }) => {
+    // Seed two panes so the open-tabs section is populated; the palette opens
+    // immediately via ?palette=1 alongside the workspace-state deep link.
+    await page.goto(`/libraries?wsv=4&ws=${workspaceWithSearchPane()}&palette=1`);
+
+    const dialog = paletteDialog(page);
+    await expect(dialog).toBeVisible();
+
+    const listbox = paletteListbox(dialog);
+    const searchTab = listbox.getByRole("option", { name: /Search.*Switch to open tab/i });
+    await expect(searchTab).toHaveCount(1);
+
+    // The deleted close-row pattern must not return: no row's accessible name
+    // should start with "Close " (close lives only on the inline button).
+    await expect(listbox.getByRole("option", { name: /^Close / })).toHaveCount(0);
+
+    // The inline close button lives inside the row and carries its own aria-label.
+    const closeButton = searchTab.getByRole("button", { name: /^Close / });
+    await expect(closeButton).toBeVisible();
+
+    await closeButton.click();
+
+    // Trailing action keeps the palette open and removes the row from the list.
+    await expect(dialog).toBeVisible();
+    await expect(searchTab).toHaveCount(0);
+  });
 });
 
 test.describe("command palette mobile", () => {
@@ -80,5 +127,26 @@ test.describe("command palette mobile", () => {
     await expect(
       page.getByRole("heading", { name: "Keyboard Shortcuts" }),
     ).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("mobile: tapping the inline close button removes the open-tab row without dismissing the palette", async ({
+    page,
+  }) => {
+    await page.goto(`/libraries?wsv=4&ws=${workspaceWithSearchPane()}&palette=1`);
+
+    const dialog = paletteDialog(page);
+    await expect(dialog).toBeVisible();
+
+    const listbox = paletteListbox(dialog);
+    const searchTab = listbox.getByRole("option", { name: /Search.*Switch to open tab/i });
+    await expect(searchTab).toHaveCount(1);
+    await expect(listbox.getByRole("option", { name: /^Close / })).toHaveCount(0);
+
+    const closeButton = searchTab.getByRole("button", { name: /^Close / });
+    await expect(closeButton).toBeVisible();
+    await closeButton.tap();
+
+    await expect(dialog).toBeVisible();
+    await expect(searchTab).toHaveCount(0);
   });
 });

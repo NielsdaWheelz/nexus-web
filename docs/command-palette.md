@@ -3,7 +3,7 @@
 Status: Implemented. Hard cutover complete: no legacy code, no fallbacks, no flags.
 Scope owner: command palette surface (`apps/web`).
 Date: 2026-05-25.
-Related hard-cutover spec: `docs/command-palette-global-cutover.md`.
+Related hard-cutover spec: `docs/command-palette-global-cutover.md`, `docs/command-palette-inline-tab-close.md`.
 
 ## 1. Problem
 
@@ -99,6 +99,8 @@ CommandPalette.tsx                 controller — sourcing, data, ranking call,
 `buildPaletteView`, the `PaletteView` model, `PaletteBody`, `PaletteRow`, and the
 combobox/listbox/option accessibility semantics. `PaletteBody` renders the resting
 groups and the querying list inline — there are no separate list components.
+`PaletteRow` renders one listbox option per command, including the inline trailing
+button when `command.trailingAction` is present.
 
 **Platform implementations (thin):** `PaletteDesktopShell` and `PaletteMobileShell`.
 Each owns its container CSS, autofocus, dismiss, animation, and platform behavior —
@@ -147,8 +149,11 @@ The command palette is a single global surface mounted once
 ### 5.1 Types — `palette/types.ts`
 
 `PaletteCommand` gains one optional field, `pin?: "last"` (pins the command to the
-bottom of the querying list, after ranked results). The dead `shortcutActionId`
-field is removed. New view model — a discriminated union, `state` is the discriminant:
+bottom of the querying list, after ranked results), and one optional field,
+`trailingAction?: { actionId: string; ariaLabel: string }` (a secondary action
+rendered as an inline button in the row's trailing slot; see §7). The dead
+`shortcutActionId` field is removed. New view model — a discriminated union,
+`state` is the discriminant:
 
 ```ts
 export interface PaletteGroup {
@@ -202,21 +207,42 @@ is ≥ 2 chars, else `null`.
 
 `PaletteBody` (shared): `view`, `query`, `searchLoading`, `activeCommandId`
 (`string | null`), `showShortcuts`, `autoFocusInput`, `onQueryChange`,
-`onSelect`, `onActiveCommandChange?` (omitted by mobile).
+`onSelect`, `onTrailingAction(command: PaletteCommand): void`,
+`onActiveCommandChange?` (omitted by mobile).
 `PaletteBody` owns the input and its full keydown: Enter selects the active
 command (or the first command in the view when none is active); Arrow/Home/End
 move the active command when `onActiveCommandChange` is supplied (desktop only);
-IME composition is guarded.
+IME composition is guarded. On desktop, `Delete` with an empty input fires
+`onTrailingAction` against the active command when it has a `trailingAction`;
+`Backspace` is reserved for input editing and never triggers the trailing action.
 
 `PaletteRow` (shared): `command`, `selected`, `showTag`, `showShortcut`,
-`onSelect`, `onHover?`. Renders icon, title, subtitle, type tag (querying only),
-shortcut hint (desktop only), disabled reason. When `selected` becomes true the
+`onSelect`, `onTrailingAction`, `onHover?`. Renders icon, title, subtitle, type
+tag (querying only), shortcut hint (desktop only), disabled reason. When the
+command carries a `trailingAction`, the trailing slot renders an inline
+`<button type="button" tabIndex={-1}>` with the supplied `ariaLabel` and the
+lucide `X` icon; its `onClick` stops propagation and invokes `onTrailingAction`
+so the row body's `onSelect` does not fire. When `selected` becomes true the
 row scrolls itself into view.
 
 `PaletteDesktopShell` / `PaletteMobileShell`: `query`, `view`, `searchLoading`,
-`onQueryChange`, `onSelect`, `onClose`.
+`onQueryChange`, `onSelect`, `onTrailingAction(command: PaletteCommand): void`,
+`onClose`. Each shell passes `onTrailingAction` through to `PaletteBody`.
 `PaletteDesktopShell` additionally takes `initialActiveCommandId` (mobile has no
 keyboard-nav highlight).
+
+**Open-tab row anatomy.** Each open pane is represented by exactly one listbox
+row (no separate close row). The row carries an inline trailing close button
+(`<button tabIndex={-1}>` with `aria-label="Close <title>"`, rendering the
+lucide `X` icon). Tapping the row body activates the pane, closes the palette,
+and records `palette-selections`. Tapping the trailing button closes the pane,
+keeps the palette open, and does **not** record `palette-selections`. On
+desktop, the trailing button is dimmed (~0.4 opacity) at rest and at full
+opacity on hover, focus-within, or when the row is the active option, gated by
+`@media (hover: hover) and (pointer: fine)`. On mobile/touch the trailing
+button is always at full opacity. Desktop keyboard close: pressing `Delete`
+while the active row has a `trailingAction` and the input is empty fires the
+trailing action; `Backspace` is not used.
 
 ### 5.5 Platform behavior (inlined into the shells)
 
@@ -280,6 +306,10 @@ filterable, paginated). They are not redundant.
 - **Accessibility preserved.** Input is `role="combobox"`; results container is
   `role="listbox"` of `role="option"`. `aria-activedescendant` is set on desktop
   only; mobile relies on direct tap (`onClick`), which screen readers activate.
+- **Trailing actions are scoped and silent.** A row with `trailingAction`
+  renders one inline button and suppresses the section "Tab" tag in querying.
+  The trailing action never closes the palette and is never recorded to
+  `palette-selections`.
 
 ## 8. Final state
 
@@ -339,6 +369,9 @@ Desktop shell:
 Cross-cutting:
 - Selecting any command posts `/api/me/palette-selections`, performs the
       target, and closes the palette.
+- Each open-tab row renders an inline close button; clicking it closes the
+      pane without dismissing the palette.
+- Querying does not surface a separate per-pane close row.
 - Local Vault stays filtered/blocked under the Android shell.
 - `OPEN_COMMAND_PALETTE_EVENT`, `?palette=1`, `?cmd=`, `?q=` still open it.
 - No file named `Palette.tsx`/`Palette.module.css` exists; no

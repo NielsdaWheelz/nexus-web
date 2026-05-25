@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PanelLeft, Sparkles, X } from "lucide-react";
+import { PanelLeft, Sparkles } from "lucide-react";
 import PaletteDesktopShell from "@/components/palette/PaletteDesktopShell";
 import PaletteMobileShell from "@/components/palette/PaletteMobileShell";
 import type { PaletteCommand } from "@/components/palette/types";
@@ -225,16 +225,7 @@ export default function CommandPalette() {
         target: { kind: "action", actionId: `pane-open:${pane.id}` },
         source: "workspace",
         rank: { scopeBoost: pane.id === workspaceState.activePaneId ? 300 : 0 },
-      });
-      commands.push({
-        id: `pane-close-${pane.id}`,
-        title: `Close ${title}`,
-        keywords: ["tab", "pane", "close", pane.href],
-        sectionId: "open-tabs",
-        icon: X,
-        target: { kind: "action", actionId: `pane-close:${pane.id}` },
-        source: "workspace",
-        rank: {},
+        trailingAction: { actionId: `pane-close:${pane.id}`, ariaLabel: `Close ${title}` },
       });
     }
 
@@ -453,17 +444,26 @@ export default function CommandPalette() {
           }
           return;
         }
-        if (actionId.startsWith("pane-close:")) {
-          closePane(actionId.slice("pane-close:".length));
-          return;
-        }
 
         throw new Error(`Unknown command action: ${actionId}`);
       } catch (error) {
         feedback.show(toFeedback(error, { fallback: "Command failed" }));
       }
     },
-    [activatePane, androidShell, closePane, feedback, query, restorePane, workspaceState.panes],
+    [activatePane, androidShell, feedback, query, restorePane, workspaceState.panes],
+  );
+
+  const onTrailingAction = useCallback(
+    (command: PaletteCommand) => {
+      if (!command.trailingAction) return;
+      const actionId = command.trailingAction.actionId;
+      if (actionId.startsWith("pane-close:")) {
+        closePane(actionId.slice("pane-close:".length));
+        return;
+      }
+      throw new Error(`Unknown trailing action: ${actionId}`);
+    },
+    [closePane],
   );
 
   useEffect(() => {
@@ -508,6 +508,7 @@ export default function CommandPalette() {
         searchLoading={searchLoading}
         onQueryChange={setQuery}
         onSelect={executeCommand}
+        onTrailingAction={onTrailingAction}
         onClose={closePalette}
       />
     );
@@ -521,6 +522,7 @@ export default function CommandPalette() {
       initialActiveCommandId={initialActiveCommandId}
       onQueryChange={setQuery}
       onSelect={executeCommand}
+      onTrailingAction={onTrailingAction}
       onClose={closePalette}
     />
   );

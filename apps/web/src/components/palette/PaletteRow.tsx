@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { X } from "lucide-react";
 import type { PaletteCommand } from "./types";
 import styles from "./PaletteBody.module.css";
 
@@ -10,6 +11,7 @@ interface PaletteRowProps {
   showTag: boolean;
   showShortcut: boolean;
   onSelect(command: PaletteCommand): void;
+  onTrailingAction(command: PaletteCommand): void;
   onHover?(commandId: string): void;
 }
 
@@ -35,11 +37,12 @@ export default function PaletteRow({
   showTag,
   showShortcut,
   onSelect,
+  onTrailingAction,
   onHover,
 }: PaletteRowProps) {
   const rowRef = useRef<HTMLDivElement>(null);
   const Icon = command.icon;
-  const tag = showTag ? tagFor(command) : null;
+  const tag = showTag && !command.trailingAction ? tagFor(command) : null;
   const optionName = [
     command.title,
     command.subtitle,
@@ -79,6 +82,19 @@ export default function PaletteRow({
       </span>
       {command.disabled ? (
         <span className={styles.optionMeta}>{command.disabled.reason}</span>
+      ) : command.trailingAction ? (
+        <button
+          type="button"
+          tabIndex={-1}
+          className={styles.trailingButton}
+          aria-label={command.trailingAction.ariaLabel}
+          onClick={(event) => {
+            event.stopPropagation();
+            onTrailingAction(command);
+          }}
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
       ) : tag ? (
         <span className={styles.tag}>{tag}</span>
       ) : showShortcut && command.shortcutLabel ? (

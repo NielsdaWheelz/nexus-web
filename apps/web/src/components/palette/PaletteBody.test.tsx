@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+
 import { userEvent } from "vitest/browser";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -51,13 +52,19 @@ const queryingView: PaletteView = {
 function Harness({
   view,
   activeCommandId = null,
+  initialQuery,
   onSelect = vi.fn(),
+  onTrailingAction = vi.fn(),
 }: {
   view: PaletteView;
   activeCommandId?: string | null;
+  initialQuery?: string;
   onSelect?: (command: PaletteCommand) => void;
+  onTrailingAction?: (command: PaletteCommand) => void;
 }) {
-  const [query, setQuery] = useState(view.state === "querying" ? "li" : "");
+  const [query, setQuery] = useState(
+    initialQuery ?? (view.state === "querying" ? "li" : ""),
+  );
   const [active, setActive] = useState<string | null>(activeCommandId);
 
   return (
@@ -70,6 +77,7 @@ function Harness({
       autoFocusInput={false}
       onQueryChange={setQuery}
       onSelect={onSelect}
+      onTrailingAction={onTrailingAction}
       onActiveCommandChange={setActive}
     />
   );
@@ -146,5 +154,169 @@ describe("PaletteBody", () => {
     render(<Harness view={emptyResults} />);
 
     expect(screen.getByRole("status")).toHaveTextContent("No matches");
+  });
+
+  it("renders an inline close button when a command has a trailingAction", () => {
+    const view: PaletteView = {
+      state: "resting",
+      groups: [
+        {
+          sectionId: "open-tabs",
+          label: "Open tabs",
+          commands: [
+            command({
+              id: "pane-open-1",
+              title: "My Doc",
+              sectionId: "open-tabs",
+              trailingAction: { actionId: "pane-close:1", ariaLabel: "Close My Doc" },
+            }),
+          ],
+        },
+      ],
+    };
+    render(<Harness view={view} />);
+
+    const row = screen.getByRole("option", { name: /My Doc/ });
+    const button = within(row).getByRole("button", { name: "Close My Doc" });
+    expect(button).toHaveAttribute("tabindex", "-1");
+  });
+
+  it("calls onTrailingAction and not onSelect when the inline close button is clicked", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const onTrailingAction = vi.fn();
+    const view: PaletteView = {
+      state: "resting",
+      groups: [
+        {
+          sectionId: "open-tabs",
+          label: "Open tabs",
+          commands: [
+            command({
+              id: "pane-open-1",
+              title: "My Doc",
+              sectionId: "open-tabs",
+              trailingAction: { actionId: "pane-close:1", ariaLabel: "Close My Doc" },
+            }),
+          ],
+        },
+      ],
+    };
+    render(<Harness view={view} onSelect={onSelect} onTrailingAction={onTrailingAction} />);
+
+    await user.click(screen.getByRole("button", { name: "Close My Doc" }));
+
+    expect(onTrailingAction).toHaveBeenCalledWith(expect.objectContaining({ id: "pane-open-1" }));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("invokes onTrailingAction when Delete is pressed with empty input and an active trailingAction row", async () => {
+    const user = userEvent.setup();
+    const onTrailingAction = vi.fn();
+    const view: PaletteView = {
+      state: "resting",
+      groups: [
+        {
+          sectionId: "open-tabs",
+          label: "Open tabs",
+          commands: [
+            command({
+              id: "pane-open-1",
+              title: "My Doc",
+              sectionId: "open-tabs",
+              trailingAction: { actionId: "pane-close:1", ariaLabel: "Close My Doc" },
+            }),
+          ],
+        },
+      ],
+    };
+    render(<Harness view={view} activeCommandId="pane-open-1" onTrailingAction={onTrailingAction} />);
+
+    await user.click(screen.getByRole("combobox", { name: /search commands/i }));
+    await user.keyboard("{Delete}");
+
+    expect(onTrailingAction).toHaveBeenCalledWith(expect.objectContaining({ id: "pane-open-1" }));
+  });
+
+  it("does not invoke onTrailingAction on Delete when the input is non-empty", async () => {
+    const user = userEvent.setup();
+    const onTrailingAction = vi.fn();
+    const view: PaletteView = {
+      state: "resting",
+      groups: [
+        {
+          sectionId: "open-tabs",
+          label: "Open tabs",
+          commands: [
+            command({
+              id: "pane-open-1",
+              title: "My Doc",
+              sectionId: "open-tabs",
+              trailingAction: { actionId: "pane-close:1", ariaLabel: "Close My Doc" },
+            }),
+          ],
+        },
+      ],
+    };
+    render(
+      <Harness
+        view={view}
+        activeCommandId="pane-open-1"
+        initialQuery="x"
+        onTrailingAction={onTrailingAction}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: /search commands/i }));
+    await user.keyboard("{Delete}");
+
+    expect(onTrailingAction).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke onTrailingAction on Backspace", async () => {
+    const user = userEvent.setup();
+    const onTrailingAction = vi.fn();
+    const view: PaletteView = {
+      state: "resting",
+      groups: [
+        {
+          sectionId: "open-tabs",
+          label: "Open tabs",
+          commands: [
+            command({
+              id: "pane-open-1",
+              title: "My Doc",
+              sectionId: "open-tabs",
+              trailingAction: { actionId: "pane-close:1", ariaLabel: "Close My Doc" },
+            }),
+          ],
+        },
+      ],
+    };
+    render(<Harness view={view} activeCommandId="pane-open-1" onTrailingAction={onTrailingAction} />);
+
+    await user.click(screen.getByRole("combobox", { name: /search commands/i }));
+    await user.keyboard("{Backspace}");
+
+    expect(onTrailingAction).not.toHaveBeenCalled();
+  });
+
+  it("suppresses the section tag on a querying row that has a trailingAction", () => {
+    const view: PaletteView = {
+      state: "querying",
+      results: [
+        command({
+          id: "pane-open-1",
+          title: "My Doc",
+          sectionId: "open-tabs",
+          trailingAction: { actionId: "pane-close:1", ariaLabel: "Close My Doc" },
+        }),
+      ],
+    };
+    render(<Harness view={view} />);
+
+    const row = screen.getByRole("option", { name: /My Doc/ });
+    expect(within(row).queryByText("Tab")).not.toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: "Close My Doc" })).toBeInTheDocument();
   });
 });
