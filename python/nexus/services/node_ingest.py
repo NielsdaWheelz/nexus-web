@@ -183,7 +183,7 @@ def run_node_ingest(
             error_code=ApiErrorCode.E_INGEST_FAILED,
             message="Node.js not found. Ensure Node.js is installed.",
         )
-    except Exception as e:
+    except OSError as e:
         return IngestError(
             error_code=ApiErrorCode.E_INGEST_FAILED,
             message=f"Subprocess error: {e}",

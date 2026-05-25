@@ -132,14 +132,7 @@ def validate_requested_url(url: str) -> None:
             f"URL exceeds maximum length of {MAX_URL_LENGTH} characters",
         )
 
-    # Parse URL
-    try:
-        parsed = urlparse(url)
-    except Exception as e:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Invalid URL format: {e}",
-        ) from e
+    parsed = urlparse(url)
 
     # Check scheme
     scheme = parsed.scheme.lower()

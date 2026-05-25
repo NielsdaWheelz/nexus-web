@@ -82,7 +82,7 @@ def download_project_gutenberg_catalog_feed(
                 response = client.get(source_url)
                 response.raise_for_status()
                 return source_url, response.content
-        except Exception as exc:  # pragma: no cover - fallback path asserted at API level
+        except httpx.HTTPError as exc:  # pragma: no cover - fallback path asserted at API level
             last_error = exc
 
     assert last_error is not None
