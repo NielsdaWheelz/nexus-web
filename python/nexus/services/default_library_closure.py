@@ -20,6 +20,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.engine import CursorResult
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.config import Environment, get_settings
@@ -675,7 +676,7 @@ def enqueue_backfill_task(
             countdown,
         )
         return True
-    except Exception:  # justify-ignore-error: best-effort enqueue boundary; rollback + log + return False
+    except SQLAlchemyError:
         db.rollback()
         logger.exception(
             "backfill_enqueue_failed: dl=%s src=%s user=%s",
