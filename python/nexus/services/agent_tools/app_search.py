@@ -1116,7 +1116,7 @@ def _render_single_retrieved_context(
     if context_type == "artifact_part":
         try:
             context = load_artifact_part_context_ref(db, context_id)
-        except (ApiError, NotFoundError, ValueError):
+        except (ApiError, NotFoundError, ValueError):  # justify-ignore-error: skip retrieved context block when artifact_part is missing, inaccessible, or malformed
             return None
         provenance = context.artifact_part_provenance
         if provenance is None or provenance.conversation_id is None:
