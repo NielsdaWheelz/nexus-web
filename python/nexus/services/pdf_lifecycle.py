@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -143,7 +144,7 @@ def confirm_pdf_ingest(
                 "embedding_only": False,
             },
         )
-    except Exception as exc:
+    except SQLAlchemyError as exc:
         db.rollback()
         logger.error(
             "pdf_dispatch_failed media_id=%s error=%s",
@@ -261,7 +262,7 @@ def _retry_pdf_embedding_only(
                 "embedding_only": True,
             },
         )
-    except Exception as exc:
+    except SQLAlchemyError as exc:
         db.rollback()
         logger.error("pdf_embed_retry_dispatch_failed media_id=%s error=%s", media.id, exc)
         raise ApiError(
@@ -324,7 +325,7 @@ def _retry_pdf_text_rebuild(
                 "embedding_only": False,
             },
         )
-    except Exception as exc:
+    except SQLAlchemyError as exc:
         db.rollback()
         logger.error("pdf_text_rebuild_dispatch_failed media_id=%s error=%s", media.id, exc)
         raise ApiError(
