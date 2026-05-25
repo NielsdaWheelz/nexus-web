@@ -30,7 +30,8 @@ from nexus.db.models import ChatRun, MessageRetrieval, MessageToolCall
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.middleware.stream_cors import StreamCORSMiddleware
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.chat_runs import VERIFICATION_FAILURE_CONTENT, execute_chat_run
+from nexus.services.chat_run_verification import VERIFICATION_FAILURE_CONTENT
+from nexus.services.chat_runs import execute_chat_run
 from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 from nexus.services.search import get_search_result
 from tests.factories import (

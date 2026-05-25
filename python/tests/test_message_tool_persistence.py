@@ -67,9 +67,9 @@ from nexus.services.chat_run_evidence import (
 from nexus.services.chat_run_finalize import finalize_run
 from nexus.services.chat_run_message_blocks import message_document_with_run_components
 from nexus.services.chat_run_prompt_tracking import reconcile_prompt_retrievals
-from nexus.services.chat_runs import (
+from nexus.services.chat_run_verification import (
     VERIFICATION_FAILURE_CONTENT,
-    _verified_assistant_content,
+    verified_assistant_content,
 )
 from nexus.services.conversations import load_message_artifacts_for_message_ids, message_to_out
 from tests.factories import (
@@ -2467,7 +2467,7 @@ async def test_verified_assistant_content_extracts_general_answer_claims_as_not_
             )
         )
 
-    verified_content, verifier_hint = await _verified_assistant_content(
+    verified_content, verifier_hint = await verified_assistant_content(
         db_session,
         run=run,
         model=model,
@@ -2685,7 +2685,7 @@ async def test_verified_assistant_content_removes_unsupported_claim_before_final
             )
         )
 
-    verified_content, verifier_hint = await _verified_assistant_content(
+    verified_content, verifier_hint = await verified_assistant_content(
         db_session,
         run=run,
         model=model,
@@ -2909,7 +2909,7 @@ async def test_verified_assistant_content_persists_all_contradicted_claims(
             )
         )
 
-    verified_content, verifier_hint = await _verified_assistant_content(
+    verified_content, verifier_hint = await verified_assistant_content(
         db_session,
         run=run,
         model=model,
@@ -3086,7 +3086,7 @@ async def test_verified_assistant_content_drops_unextracted_factual_text(
             )
         )
 
-    verified_content, verifier_hint = await _verified_assistant_content(
+    verified_content, verifier_hint = await verified_assistant_content(
         db_session,
         run=run,
         model=model,
@@ -3184,7 +3184,7 @@ async def test_verified_assistant_content_fails_closed_when_verifier_generate_fa
     async def generate(*_args, **_kwargs):
         raise LLMError(LLMErrorCode.PROVIDER_DOWN, "verifier unavailable")
 
-    verified_content, verifier_hint = await _verified_assistant_content(
+    verified_content, verifier_hint = await verified_assistant_content(
         db_session,
         run=run,
         model=model,
