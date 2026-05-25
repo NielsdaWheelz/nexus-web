@@ -85,13 +85,16 @@ class ProcessingStatus(str, PyEnum):
 class FailureStage(str, PyEnum):
     """Stage at which processing failed.
 
-    Used to determine reset behavior on retry.
+    Used to determine reset behavior on retry. `metadata` is a soft warning
+    set by enrich_metadata; it coexists with processing_status='ready'
+    rather than implying a terminal failure.
     """
 
     upload = "upload"
     extract = "extract"
     transcribe = "transcribe"
     embed = "embed"
+    metadata = "metadata"
     other = "other"
 
 

@@ -211,6 +211,7 @@ interface Media {
     can_delete?: boolean;
     can_retry?: boolean;
     can_refresh_source?: boolean;
+    can_retry_metadata?: boolean;
   };
   playback_source?: TranscriptPlaybackSource | null;
   chapters?: TranscriptChapter[];
@@ -3263,9 +3264,11 @@ export default function MediaPaneBody() {
     deleteBusy: documentDeleteBusy,
     retryBusy: retryProcessingBusy,
     refreshBusy: refreshSourceBusy,
+    retryMetadataBusy,
     handleDelete: handleDeleteDocument,
     handleRetry: handleRetryProcessing,
     handleRefresh: handleRefreshSource,
+    handleRetryMetadata,
   } = useDocumentActions({
     media,
     onProcessingRestarted: handleProcessingRestarted,
@@ -3567,6 +3570,28 @@ export default function MediaPaneBody() {
           View Source ↗
         </a>
       ) : null}
+      {media?.processing_status === "ready" &&
+      media?.failure_stage === "metadata" ? (
+        <button
+          type="button"
+          onClick={() => {
+            void handleRetryMetadata();
+          }}
+          disabled={retryMetadataBusy}
+          style={{
+            background: "none",
+            border: "none",
+            padding: 0,
+            cursor: retryMetadataBusy ? "default" : "pointer",
+          }}
+        >
+          <Pill tone="warning">
+            {retryMetadataBusy
+              ? "Re-enriching metadata..."
+              : "Metadata enrichment failed — Re-enrich?"}
+          </Pill>
+        </button>
+      ) : null}
     </div>
   );
 
@@ -3576,6 +3601,7 @@ export default function MediaPaneBody() {
     retryBusy: retryProcessingBusy,
     refreshBusy: refreshSourceBusy,
     deleteBusy: documentDeleteBusy,
+    retryMetadataBusy,
     onRetry: media?.capabilities?.can_retry
       ? () => {
           void handleRetryProcessing();
@@ -3584,6 +3610,11 @@ export default function MediaPaneBody() {
     onRefreshSource: media?.capabilities?.can_refresh_source
       ? () => {
           void handleRefreshSource();
+        }
+      : undefined,
+    onRetryMetadata: media?.capabilities?.can_retry_metadata
+      ? () => {
+          void handleRetryMetadata();
         }
       : undefined,
     onOpenChat: media

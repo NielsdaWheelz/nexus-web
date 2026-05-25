@@ -25,6 +25,7 @@ from nexus.schemas.media import (
     ListeningStateBatchUpsertRequest,
     ListeningStateUpsertRequest,
     MediaEvidenceResponse,
+    RetryRequest,
     TranscriptForecastBatchRequest,
     TranscriptRequestBatchRequest,
     TranscriptRequestBatchResponse,
@@ -425,32 +426,33 @@ def confirm_ingest(
 @router.post("/media/{media_id}/retry", status_code=202)
 def retry_ingest(
     media_id: UUID,
+    body: RetryRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     request: Request,
 ) -> dict:
-    """Retry failed ingest/transcription for supported media kinds.
-
-    Routes by media kind:
-    - `pdf` -> PDF retry lifecycle
-    - `epub` -> EPUB retry lifecycle
-    - `podcast_episode` / `video` -> transcription retry lifecycle
-
-    Returns 202 with:
-        - media_id: UUID of the media
-        - processing_status: 'extracting'
-        - retry_enqueued: True if a retry task was dispatched
-    """
+    """Retry processing or re-enrich metadata for a viewer's media."""
+    from nexus.services.metadata_lifecycle import retry_metadata_for_viewer
     from nexus.services.pdf_lifecycle import retry_for_viewer_unified
 
     request_id = getattr(request.state, "request_id", None)
-    result = retry_for_viewer_unified(
-        db=db,
-        viewer_id=viewer.user_id,
-        media_id=media_id,
-        request_id=request_id,
+    if body.from_stage == "source":
+        return success_response(
+            retry_for_viewer_unified(
+                db=db,
+                viewer_id=viewer.user_id,
+                media_id=media_id,
+                request_id=request_id,
+            )
+        )
+    return success_response(
+        retry_metadata_for_viewer(
+            db=db,
+            viewer_id=viewer.user_id,
+            media_id=media_id,
+            request_id=request_id,
+        )
     )
-    return success_response(result)
 
 
 @router.post("/media/{media_id}/refresh", status_code=202)

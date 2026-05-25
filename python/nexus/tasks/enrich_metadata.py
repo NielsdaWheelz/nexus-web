@@ -1,7 +1,8 @@
 """Worker job handler for LLM-based metadata enrichment.
 
-Best-effort background task that runs after ingest completes.
-Never fails the media — if the LLM call fails, logs a warning and returns.
+Best-effort background task that runs after ingest completes. LLM/parse
+failures are recorded as `failure_stage='metadata'` on the media row
+(soft warning) without touching `processing_status`.
 """
 
 import asyncio
@@ -14,10 +15,11 @@ from llm_calling.router import LLMRouter
 from llm_calling.types import LLMRequest, Turn
 
 from nexus.config import get_settings
-from nexus.db.models import Media, ProcessingStatus
+from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
 from nexus.services.metadata_enrichment import (
+    MetadataGaps,
     build_enrichment_prompt,
     detect_metadata_gaps,
     get_content_sample,
@@ -30,6 +32,8 @@ from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
 
+_MAX_ERROR_MSG_LEN = 1000
+
 _READY_STATES = frozenset(
     {
         ProcessingStatus.pending,
@@ -41,17 +45,29 @@ _READY_STATES = frozenset(
 )
 
 
+def _record_metadata_failure(media: Media, error_code: str, error_message: str) -> None:
+    """Write failure_stage=metadata + last_error_* without touching processing_status."""
+    media.failure_stage = FailureStage.metadata
+    media.last_error_code = error_code
+    media.last_error_message = error_message[:_MAX_ERROR_MSG_LEN]
+
+
 def enrich_metadata(
     media_id: str,
     request_id: str | None = None,
+    *,
+    force: bool = False,
 ) -> dict:
     """Enrich media metadata using a cheap LLM call.
 
     Skips silently if:
     - Media is still actively extracting
-    - No metadata gaps detected
+    - No metadata gaps detected (unless force=True)
     - No LLM provider configured
-    - LLM call fails (best-effort)
+
+    On LLM/parse failure records failure_stage=metadata + last_error_* on
+    the media row without touching processing_status, then returns
+    {"status": "failed", ...}.
     """
     media_uuid = UUID(media_id)
     settings = get_settings()
@@ -60,6 +76,7 @@ def enrich_metadata(
         "enrich_metadata_started",
         media_id=media_id,
         request_id=request_id,
+        force=force,
     )
 
     session_factory = get_session_factory()
@@ -74,10 +91,19 @@ def enrich_metadata(
         if media.processing_status not in _READY_STATES:
             return {"status": "skipped", "reason": "not_ready"}
 
-        # Detect gaps
-        gaps = detect_metadata_gaps(media)
-        if not has_any_gaps(gaps):
-            return {"status": "skipped", "reason": "no_gaps"}
+        if force:
+            gaps = MetadataGaps(
+                title_looks_like_filename=True,
+                authors_missing=True,
+                publisher_missing=True,
+                description_missing=True,
+                published_date_missing=True,
+                language_missing=True,
+            )
+        else:
+            gaps = detect_metadata_gaps(media)
+            if not has_any_gaps(gaps):
+                return {"status": "skipped", "reason": "no_gaps"}
 
         # Select provider
         provider_info = select_enrichment_provider(settings)
@@ -149,7 +175,13 @@ def enrich_metadata(
                 provider=provider,
                 error=str(exc),
             )
-            return {"status": "skipped", "reason": "llm_failed"}
+            _record_metadata_failure(
+                media,
+                error_code or "E_METADATA_LLM_FAILED",
+                str(exc),
+            )
+            db.commit()
+            return {"status": "failed", "reason": "llm_failed"}
 
         if response.status == "incomplete":
             usage = response.usage
@@ -168,7 +200,13 @@ def enrich_metadata(
                     provider_request_id=response.provider_request_id,
                 ),
             )
-            return {"status": "skipped", "reason": "llm_incomplete"}
+            _record_metadata_failure(
+                media,
+                "E_METADATA_LLM_INCOMPLETE",
+                str(response.incomplete_details or "llm response incomplete"),
+            )
+            db.commit()
+            return {"status": "failed", "reason": "llm_incomplete"}
 
         usage = response.usage if hasattr(response, "usage") else None
         logger.info(
@@ -192,9 +230,19 @@ def enrich_metadata(
                 media_id=media_id,
                 raw_text=response.text[:200],
             )
-            return {"status": "skipped", "reason": "parse_failed"}
+            _record_metadata_failure(
+                media,
+                "E_METADATA_PARSE_FAILED",
+                f"failed to parse LLM response as JSON: {response.text[:200]}",
+            )
+            db.commit()
+            return {"status": "failed", "reason": "parse_failed"}
 
-        merge_enrichment(db, media, enrichment, gaps)
+        merge_enrichment(db, media, enrichment, gaps, force_overwrite=force)
+        if media.failure_stage == FailureStage.metadata:
+            media.failure_stage = None
+            media.last_error_code = None
+            media.last_error_message = None
         db.commit()
 
         logger.info(
@@ -213,6 +261,10 @@ def enrich_metadata(
             media_id=media_id,
             error=str(exc),
         )
-        return {"status": "skipped", "reason": "unexpected_error"}
+        media = db.get(Media, media_uuid)
+        if media is not None:
+            _record_metadata_failure(media, "E_METADATA_UNEXPECTED", str(exc))
+            db.commit()
+        return {"status": "failed", "reason": "unexpected_error"}
     finally:
         db.close()

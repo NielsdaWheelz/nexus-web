@@ -36,6 +36,7 @@ export interface MediaCapabilities {
   can_delete?: boolean;
   can_retry?: boolean;
   can_refresh_source?: boolean;
+  can_retry_metadata?: boolean;
 }
 
 export interface PodcastEpisodeMedia {

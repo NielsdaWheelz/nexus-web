@@ -462,3 +462,169 @@ class TestProcessingStatusProgression:
         )
 
         assert caps.can_retry is False
+
+
+class TestSourceRefreshUploadedFiles:
+    """Tests for can_refresh_source on uploaded pdf/epub media (spec section 4.3)."""
+
+    @pytest.mark.parametrize("status", ["ready", "ready_for_reading"])
+    def test_pdf_creator_can_refresh_source_when_file_exists_and_ready(self, status):
+        """PDF creator can refresh source when file present and status is ready-like."""
+        caps = derive_capabilities(
+            kind="pdf",
+            processing_status=status,
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            is_creator=True,
+        )
+
+        assert caps.can_refresh_source is True, (
+            f"Expected can_refresh_source=True for pdf creator with file in status={status}"
+        )
+
+    def test_pdf_can_refresh_source_when_failed(self):
+        """PDF can be refreshed when failed (failed is in _REFRESHABLE_PROCESSING_STATUSES)."""
+        caps = derive_capabilities(
+            kind="pdf",
+            processing_status="failed",
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            is_creator=True,
+        )
+
+        assert caps.can_refresh_source is True
+
+    def test_pdf_cannot_refresh_source_when_file_missing(self):
+        """PDF cannot refresh source without the underlying file."""
+        caps = derive_capabilities(
+            kind="pdf",
+            processing_status="ready",
+            last_error_code=None,
+            media_file_exists=False,
+            external_playback_url_exists=False,
+            is_creator=True,
+        )
+
+        assert caps.can_refresh_source is False
+
+    def test_pdf_cannot_refresh_source_when_not_creator(self):
+        """Non-creator viewers never get the refresh capability."""
+        caps = derive_capabilities(
+            kind="pdf",
+            processing_status="ready",
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            is_creator=False,
+        )
+
+        assert caps.can_refresh_source is False
+
+    def test_epub_can_refresh_source_when_file_exists(self):
+        """EPUB creator can refresh source when file present."""
+        caps = derive_capabilities(
+            kind="epub",
+            processing_status="ready",
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            is_creator=True,
+        )
+
+        assert caps.can_refresh_source is True
+
+    def test_epub_cannot_refresh_source_when_file_missing(self):
+        """EPUB cannot refresh source without the underlying file."""
+        caps = derive_capabilities(
+            kind="epub",
+            processing_status="ready",
+            last_error_code=None,
+            media_file_exists=False,
+            external_playback_url_exists=False,
+            is_creator=True,
+        )
+
+        assert caps.can_refresh_source is False
+
+
+class TestCanRetryMetadata:
+    """Tests for can_retry_metadata capability (spec section 4.3)."""
+
+    @pytest.mark.parametrize("kind", ["pdf", "epub"])
+    def test_can_retry_metadata_true_when_ready_and_creator(self, kind):
+        """can_retry_metadata is true for any ready document kind when viewer is creator."""
+        caps = derive_capabilities(
+            kind=kind,
+            processing_status="ready",
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            is_creator=True,
+        )
+
+        assert caps.can_retry_metadata is True, (
+            f"Expected can_retry_metadata=True for creator on ready {kind}"
+        )
+
+    def test_can_retry_metadata_false_when_not_creator(self):
+        """can_retry_metadata is false for non-creator viewers."""
+        caps = derive_capabilities(
+            kind="pdf",
+            processing_status="ready",
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            is_creator=False,
+        )
+
+        assert caps.can_retry_metadata is False
+
+    def test_can_retry_metadata_false_when_failed(self):
+        """can_retry_metadata is false for failed docs (status must be ready-like)."""
+        caps = derive_capabilities(
+            kind="pdf",
+            processing_status="failed",
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            is_creator=True,
+        )
+
+        assert caps.can_retry_metadata is False
+
+    def test_can_retry_metadata_false_when_extracting(self):
+        """can_retry_metadata is false during extraction (not yet ready)."""
+        caps = derive_capabilities(
+            kind="pdf",
+            processing_status="extracting",
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            is_creator=True,
+        )
+
+        assert caps.can_retry_metadata is False
+
+    @pytest.mark.parametrize(
+        "status",
+        ["ready", "ready_for_reading", "embedding", "failed"],
+    )
+    @pytest.mark.parametrize("kind", ["pdf", "epub", "web_article"])
+    def test_can_retry_metadata_and_can_retry_mutually_exclusive(self, status, kind):
+        """Invariant I6: can_retry and can_retry_metadata are never both true."""
+        caps = derive_capabilities(
+            kind=kind,
+            processing_status=status,
+            last_error_code=None,
+            media_file_exists=True,
+            external_playback_url_exists=False,
+            is_creator=True,
+            requested_url_exists=True,
+        )
+
+        assert not (caps.can_retry and caps.can_retry_metadata), (
+            f"Mutual exclusion violated for kind={kind} status={status}: "
+            f"can_retry={caps.can_retry}, can_retry_metadata={caps.can_retry_metadata}"
+        )

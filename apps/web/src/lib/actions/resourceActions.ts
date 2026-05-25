@@ -15,11 +15,13 @@ export function mediaResourceOptions(input: {
   retryBusy?: boolean;
   refreshBusy?: boolean;
   deleteBusy?: boolean;
+  retryMetadataBusy?: boolean;
   onOpenChat?: () => void;
   onManageLibraries?: (detail: MenuSelectDetail) => void;
   onRetry?: () => void;
   onRefreshSource?: () => void;
   onDelete?: () => void;
+  onRetryMetadata?: () => void;
 }): ActionMenuOption[] {
   const media = input.media;
   if (!media) return [];
@@ -28,6 +30,7 @@ export function mediaResourceOptions(input: {
     can_delete?: unknown;
     can_retry?: unknown;
     can_refresh_source?: unknown;
+    can_retry_metadata?: unknown;
   } | null | undefined;
   const options: ActionMenuOption[] = [];
 
@@ -54,6 +57,15 @@ export function mediaResourceOptions(input: {
       label: input.refreshBusy ? "Refreshing..." : "Refresh source",
       disabled: input.refreshBusy,
       onSelect: input.onRefreshSource,
+    });
+  }
+
+  if (capabilities?.can_retry_metadata === true && input.onRetryMetadata) {
+    options.push({
+      id: "re-enrich-metadata",
+      label: input.retryMetadataBusy ? "Re-enriching..." : "Re-enrich metadata",
+      disabled: input.retryMetadataBusy,
+      onSelect: input.onRetryMetadata,
     });
   }
 
@@ -199,6 +211,7 @@ export function episodeResourceOptions(input: {
   retryBusy?: boolean;
   refreshBusy?: boolean;
   deleteBusy?: boolean;
+  retryMetadataBusy?: boolean;
   played: boolean;
   markingBusy?: boolean;
   onManageLibraries: (detail: MenuSelectDetail) => void;
@@ -206,6 +219,7 @@ export function episodeResourceOptions(input: {
   onRetry?: () => void;
   onRefreshSource?: () => void;
   onDelete?: () => void;
+  onRetryMetadata?: () => void;
   onTogglePlayed: () => void;
 }): ActionMenuOption[] {
   const options = mediaResourceOptions({
@@ -214,11 +228,13 @@ export function episodeResourceOptions(input: {
     retryBusy: input.retryBusy,
     refreshBusy: input.refreshBusy,
     deleteBusy: input.deleteBusy,
+    retryMetadataBusy: input.retryMetadataBusy,
     onOpenChat: input.onOpenChat,
     onManageLibraries: input.onManageLibraries,
     onRetry: input.onRetry,
     onRefreshSource: input.onRefreshSource,
     onDelete: input.onDelete,
+    onRetryMetadata: input.onRetryMetadata,
   }).map((option) =>
     option.id === "manage-media-libraries"
       ? { ...option, disabled: input.busy }

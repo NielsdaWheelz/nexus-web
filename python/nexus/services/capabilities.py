@@ -27,6 +27,8 @@ _SOURCE_REFRESH_MEDIA_KINDS = {
     MediaKind.web_article.value,
     MediaKind.video.value,
     MediaKind.podcast_episode.value,
+    MediaKind.pdf.value,
+    MediaKind.epub.value,
 }
 _RETRYABLE_DOCUMENT_MEDIA_KINDS = {
     MediaKind.epub.value,
@@ -144,8 +146,10 @@ def derive_capabilities(
         and retry_source_available
         and not terminal_retry_error
     )
-    source_refresh_available = requested_url_exists or (
-        kind in _TRANSCRIPT_MEDIA_KINDS and external_playback_url_exists
+    source_refresh_available = (
+        requested_url_exists
+        or (kind in _TRANSCRIPT_MEDIA_KINDS and external_playback_url_exists)
+        or (kind in {MediaKind.pdf.value, MediaKind.epub.value} and media_file_exists)
     )
     can_refresh_source = (
         is_creator
@@ -153,6 +157,7 @@ def derive_capabilities(
         and source_refresh_available
         and processing_status in _REFRESHABLE_PROCESSING_STATUSES
     )
+    can_retry_metadata = is_creator and processing_status in _READY_PROCESSING_STATUSES
 
     return CapabilitiesOut(
         can_read=can_read,
@@ -164,4 +169,5 @@ def derive_capabilities(
         can_delete=can_delete,
         can_retry=can_retry,
         can_refresh_source=can_refresh_source,
+        can_retry_metadata=can_retry_metadata,
     )

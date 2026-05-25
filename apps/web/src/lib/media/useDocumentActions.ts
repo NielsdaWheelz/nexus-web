@@ -21,6 +21,7 @@ interface DocumentActionTarget {
   capabilities?: {
     can_retry?: boolean;
     can_refresh_source?: boolean;
+    can_retry_metadata?: boolean;
   };
 }
 
@@ -28,9 +29,11 @@ interface DocumentActions {
   deleteBusy: boolean;
   retryBusy: boolean;
   refreshBusy: boolean;
+  retryMetadataBusy: boolean;
   handleDelete: () => Promise<void>;
   handleRetry: () => Promise<void>;
   handleRefresh: () => Promise<void>;
+  handleRetryMetadata: () => Promise<void>;
 }
 
 interface UseDocumentActionsOptions {
@@ -48,6 +51,7 @@ export function useDocumentActions({
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [retryBusy, setRetryBusy] = useState(false);
   const [refreshBusy, setRefreshBusy] = useState(false);
+  const [retryMetadataBusy, setRetryMetadataBusy] = useState(false);
 
   const handleDelete = useCallback(async () => {
     if (!media || deleteBusy) {
@@ -81,7 +85,10 @@ export function useDocumentActions({
     }
     setRetryBusy(true);
     try {
-      await apiFetch(`/api/media/${media.id}/retry`, { method: "POST" });
+      await apiFetch(`/api/media/${media.id}/retry`, {
+        method: "POST",
+        body: JSON.stringify({ from_stage: "source" }),
+      });
       onProcessingRestarted({ resetRefreshSource: false });
       feedback.show({
         severity: "success",
@@ -114,12 +121,37 @@ export function useDocumentActions({
     }
   }, [feedback, media, onProcessingRestarted, refreshBusy]);
 
+  const handleRetryMetadata = useCallback(async () => {
+    if (!media || retryMetadataBusy || !media.capabilities?.can_retry_metadata) {
+      return;
+    }
+    setRetryMetadataBusy(true);
+    try {
+      await apiFetch(`/api/media/${media.id}/retry`, {
+        method: "POST",
+        body: JSON.stringify({ from_stage: "metadata" }),
+      });
+      feedback.show({
+        severity: "success",
+        title: "Metadata re-enrichment started.",
+      });
+    } catch (err) {
+      feedback.show({
+        ...toFeedback(err, { fallback: "Failed to re-enrich metadata" }),
+      });
+    } finally {
+      setRetryMetadataBusy(false);
+    }
+  }, [feedback, media, retryMetadataBusy]);
+
   return {
     deleteBusy,
     retryBusy,
     refreshBusy,
+    retryMetadataBusy,
     handleDelete,
     handleRetry,
     handleRefresh,
+    handleRetryMetadata,
   };
 }

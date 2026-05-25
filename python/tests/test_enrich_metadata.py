@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from llm_calling.errors import LLMError, LLMErrorCode
 from sqlalchemy import text
 
 from tests.helpers import create_test_user_id
@@ -294,3 +295,398 @@ class TestEnrichMetadata:
 
         assert media_row == ("Analytical Engine Notes", "Nexus Archive")
         assert [row[0] for row in author_rows] == ["Ada Lovelace"]
+
+    def test_force_bypasses_no_gaps(self, direct_db: DirectSessionManager, monkeypatch):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("users", "id", user_id)
+
+        with direct_db.session() as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        created_by_user_id, publisher, description, language,
+                        published_date
+                    ) VALUES (
+                        :id, 'web_article', 'Real Article Title',
+                        'https://example.com/a', 'ready_for_reading',
+                        :user_id, 'Example Co', 'A summary.', 'en', '2026-01-01'
+                    )
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.commit()
+
+        enrich_module = _enrich_metadata_module()
+        # Force the no-gaps short-circuit to fire without force=True so the
+        # test isolates the force=True bypass.
+        monkeypatch.setattr(enrich_module, "has_any_gaps", lambda _g: False)
+        monkeypatch.setattr(
+            enrich_module,
+            "select_enrichment_provider",
+            lambda _s: ("openai", "gpt-test", "sk-test"),
+        )
+
+        async def _fake_generate(self, provider, req, api_key, timeout_s):
+            _ = self, provider, req, api_key, timeout_s
+            return SimpleNamespace(
+                status="completed",
+                text=json.dumps({"language": "en"}),
+            )
+
+        monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
+
+        # Sanity check: without force, the no_gaps short-circuit should fire.
+        no_force = enrich_module.enrich_metadata(str(media_id))
+        assert no_force == {"status": "skipped", "reason": "no_gaps"}, (
+            f"Expected no_gaps skip without force, got {no_force}"
+        )
+
+        result = enrich_module.enrich_metadata(str(media_id), force=True)
+        assert result["status"] == "success", (
+            f"Expected force=True to bypass no_gaps short-circuit, got {result}"
+        )
+
+    def test_force_overwrites_populated_fields(self, direct_db: DirectSessionManager, monkeypatch):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("users", "id", user_id)
+
+        with direct_db.session() as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        created_by_user_id, publisher, description
+                    ) VALUES (
+                        :id, 'web_article', 'Old Title', 'https://example.com/a',
+                        'ready_for_reading', :user_id, 'Old Publisher', 'Old description.'
+                    )
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.commit()
+
+        enrich_module = _enrich_metadata_module()
+        monkeypatch.setattr(
+            enrich_module,
+            "select_enrichment_provider",
+            lambda _s: ("openai", "gpt-test", "sk-test"),
+        )
+
+        async def _fake_generate(self, provider, req, api_key, timeout_s):
+            _ = self, provider, req, api_key, timeout_s
+            return SimpleNamespace(
+                status="completed",
+                text=json.dumps(
+                    {
+                        "title": "New Title",
+                        "publisher": "New Publisher",
+                        "description": "New description.",
+                    }
+                ),
+            )
+
+        monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
+
+        result = enrich_module.enrich_metadata(str(media_id), force=True)
+        assert result["status"] == "success", f"Expected success, got {result}"
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text("SELECT title, publisher, description FROM media WHERE id = :id"),
+                {"id": media_id},
+            ).fetchone()
+
+        assert row == ("New Title", "New Publisher", "New description."), (
+            f"Expected force=True to overwrite populated fields, got {row}"
+        )
+
+    def test_llm_failure_records_metadata_failure(
+        self, direct_db: DirectSessionManager, monkeypatch
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("users", "id", user_id)
+
+        with direct_db.session() as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        created_by_user_id
+                    ) VALUES (
+                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
+                        'ready', :user_id
+                    )
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.commit()
+
+        enrich_module = _enrich_metadata_module()
+        monkeypatch.setattr(
+            enrich_module,
+            "select_enrichment_provider",
+            lambda _s: ("openai", "gpt-test", "sk-test"),
+        )
+
+        async def _fake_generate(self, provider, req, api_key, timeout_s):
+            _ = self, provider, req, api_key, timeout_s
+            raise LLMError(
+                LLMErrorCode.PROVIDER_DOWN,
+                "x" * 1500,
+                provider="openai",
+            )
+
+        monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
+
+        result = enrich_module.enrich_metadata(str(media_id))
+
+        assert result == {"status": "failed", "reason": "llm_failed"}, (
+            f"Expected llm_failed result, got {result}"
+        )
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT failure_stage, last_error_code, last_error_message,
+                           processing_status
+                    FROM media WHERE id = :id
+                    """
+                ),
+                {"id": media_id},
+            ).fetchone()
+
+        assert row is not None
+        failure_stage, last_error_code, last_error_message, processing_status = row
+        assert failure_stage == "metadata", (
+            f"Expected failure_stage='metadata', got {failure_stage!r}"
+        )
+        assert last_error_code == LLMErrorCode.PROVIDER_DOWN.value, (
+            f"Expected LLMError's error_code, got {last_error_code!r}"
+        )
+        assert last_error_message is not None
+        assert len(last_error_message) <= 1000, (
+            f"Expected message capped at 1000 chars, got len={len(last_error_message)}"
+        )
+        assert processing_status == "ready", (
+            f"Expected processing_status unchanged='ready', got {processing_status!r}"
+        )
+
+    def test_parse_failure_records_metadata_failure(
+        self, direct_db: DirectSessionManager, monkeypatch
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("users", "id", user_id)
+
+        with direct_db.session() as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        created_by_user_id
+                    ) VALUES (
+                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
+                        'ready', :user_id
+                    )
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.commit()
+
+        enrich_module = _enrich_metadata_module()
+        monkeypatch.setattr(
+            enrich_module,
+            "select_enrichment_provider",
+            lambda _s: ("openai", "gpt-test", "sk-test"),
+        )
+
+        async def _fake_generate(self, provider, req, api_key, timeout_s):
+            _ = self, provider, req, api_key, timeout_s
+            return SimpleNamespace(status="completed", text="this is not json")
+
+        monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
+
+        result = enrich_module.enrich_metadata(str(media_id))
+
+        assert result == {"status": "failed", "reason": "parse_failed"}, (
+            f"Expected parse_failed result, got {result}"
+        )
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT failure_stage, last_error_code, processing_status
+                    FROM media WHERE id = :id
+                    """
+                ),
+                {"id": media_id},
+            ).fetchone()
+
+        assert row == ("metadata", "E_METADATA_PARSE_FAILED", "ready"), (
+            f"Expected metadata failure recorded with parse-failed code, got {row}"
+        )
+
+    def test_successful_run_clears_prior_metadata_failure(
+        self, direct_db: DirectSessionManager, monkeypatch
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("users", "id", user_id)
+
+        with direct_db.session() as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        created_by_user_id, failure_stage, last_error_code,
+                        last_error_message
+                    ) VALUES (
+                        :id, 'web_article', 'Real Title', 'https://example.com/a',
+                        'ready', :user_id, 'metadata', 'E_FOO', 'prior'
+                    )
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            session.commit()
+
+        enrich_module = _enrich_metadata_module()
+        monkeypatch.setattr(
+            enrich_module,
+            "select_enrichment_provider",
+            lambda _s: ("openai", "gpt-test", "sk-test"),
+        )
+
+        async def _fake_generate(self, provider, req, api_key, timeout_s):
+            _ = self, provider, req, api_key, timeout_s
+            return SimpleNamespace(
+                status="completed",
+                text=json.dumps({"publisher": "Recovered Publisher"}),
+            )
+
+        monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
+
+        result = enrich_module.enrich_metadata(str(media_id), force=True)
+        assert result["status"] == "success", f"Expected success, got {result}"
+
+        with direct_db.session() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT failure_stage, last_error_code, last_error_message,
+                           processing_status
+                    FROM media WHERE id = :id
+                    """
+                ),
+                {"id": media_id},
+            ).fetchone()
+
+        assert row == (None, None, None, "ready"), (
+            f"Expected prior metadata failure cleared (status unchanged), got {row}"
+        )
+
+    def test_skip_paths_do_not_write_failure_stage(
+        self, direct_db: DirectSessionManager, monkeypatch
+    ):
+        user_id = create_test_user_id()
+        media_no_provider = uuid4()
+        media_extracting = uuid4()
+        media_missing = uuid4()
+
+        direct_db.register_cleanup("media", "id", media_no_provider)
+        direct_db.register_cleanup("media", "id", media_extracting)
+        direct_db.register_cleanup("users", "id", user_id)
+
+        with direct_db.session() as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            # has gaps but no provider configured
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        created_by_user_id
+                    ) VALUES (
+                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
+                        'ready', :user_id
+                    )
+                    """
+                ),
+                {"id": media_no_provider, "user_id": user_id},
+            )
+            # not_ready: still extracting
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        created_by_user_id
+                    ) VALUES (
+                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
+                        'extracting', :user_id
+                    )
+                    """
+                ),
+                {"id": media_extracting, "user_id": user_id},
+            )
+            session.commit()
+
+        enrich_module = _enrich_metadata_module()
+        monkeypatch.setattr(enrich_module, "select_enrichment_provider", lambda _s: None)
+
+        no_provider_result = enrich_module.enrich_metadata(str(media_no_provider))
+        assert no_provider_result == {"status": "skipped", "reason": "no_provider"}
+
+        not_ready_result = enrich_module.enrich_metadata(str(media_extracting))
+        assert not_ready_result == {"status": "skipped", "reason": "not_ready"}
+
+        not_found_result = enrich_module.enrich_metadata(str(media_missing))
+        assert not_found_result == {"status": "skipped", "reason": "media_not_found"}
+
+        with direct_db.session() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT id, failure_stage, last_error_code, last_error_message
+                    FROM media WHERE id = ANY(:ids)
+                    """
+                ),
+                {"ids": [media_no_provider, media_extracting]},
+            ).fetchall()
+
+        assert all(
+            row.failure_stage is None
+            and row.last_error_code is None
+            and row.last_error_message is None
+            for row in rows
+        ), f"Skip paths should not write failure_stage; got {[tuple(r) for r in rows]}"

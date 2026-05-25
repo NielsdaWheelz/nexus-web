@@ -73,7 +73,12 @@ from nexus.services.contributor_credits import (
     load_contributor_credits_for_media,
     replace_media_contributor_credits,
 )
+from nexus.services.epub_lifecycle import delete_extraction_artifacts
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.pdf_ingest import (
+    delete_pdf_text_artifacts,
+    invalidate_pdf_quote_match_metadata,
+)
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.sanitize_html import sanitize_html
@@ -464,16 +469,6 @@ def refresh_source_for_viewer(
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
-    if media.kind not in {
-        MediaKind.web_article.value,
-        MediaKind.video.value,
-        MediaKind.podcast_episode.value,
-    }:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND,
-            "Source refresh is only supported for web articles, videos, and podcast episodes.",
-        )
-
     if media.created_by_user_id != viewer_id:
         raise ForbiddenError(
             ApiErrorCode.E_FORBIDDEN,
@@ -513,12 +508,44 @@ def refresh_source_for_viewer(
             "Source refresh is not available because the episode audio source is missing.",
         )
 
+    if media.kind in {MediaKind.pdf.value, MediaKind.epub.value} and media.media_file is None:
+        raise ConflictError(
+            ApiErrorCode.E_RETRY_NOT_ALLOWED,
+            "Source file is missing.",
+        )
+
+    epub_storage_paths_to_delete: list[str] = []
+
     if media.kind == MediaKind.web_article.value:
         _reset_media_for_reingest(media)
         _enqueue_ingest_task(db, media.id, viewer_id, request_id)
     elif media.kind == MediaKind.video.value:
         _reset_media_for_reingest(media)
         _enqueue_youtube_ingest_task(db, media.id, viewer_id, request_id)
+    elif media.kind == MediaKind.pdf.value:
+        invalidate_pdf_quote_match_metadata(db, media.id)
+        delete_pdf_text_artifacts(db, media.id)
+        _reset_media_for_reingest(media)
+        enqueue_job(
+            db,
+            kind="ingest_pdf",
+            payload={
+                "media_id": str(media.id),
+                "request_id": request_id,
+                "embedding_only": False,
+            },
+        )
+    elif media.kind == MediaKind.epub.value:
+        epub_storage_paths_to_delete = delete_extraction_artifacts(db, media.id)
+        _reset_media_for_reingest(media)
+        enqueue_job(
+            db,
+            kind="ingest_epub",
+            payload={
+                "media_id": str(media.id),
+                "request_id": request_id,
+            },
+        )
     else:
         now = datetime.now(UTC)
         db.execute(
@@ -630,6 +657,23 @@ def refresh_source_for_viewer(
         )
 
     db.commit()
+
+    if epub_storage_paths_to_delete:
+        storage_client = get_storage_client()
+        for path in epub_storage_paths_to_delete:
+            try:
+                storage_client.delete_object(path)
+            except StorageError as exc:
+                # justify-ignore-error: refresh committed the DB artifact reset first,
+                # so stale extraction objects are now unreachable and can be removed
+                # by operational cleanup without corrupting DB/storage references.
+                logger.warning(
+                    "epub_refresh_artifact_storage_delete_failed media_id=%s storage_path=%s error=%s",
+                    media.id,
+                    path,
+                    exc.message,
+                )
+
     return {
         "media_id": str(media.id),
         "processing_status": "extracting",

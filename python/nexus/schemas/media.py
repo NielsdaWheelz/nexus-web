@@ -29,6 +29,7 @@ class CapabilitiesOut(BaseModel):
     can_delete: bool = False
     can_retry: bool = False
     can_refresh_source: bool = False
+    can_retry_metadata: bool = False
 
 
 class PlaybackSourceOut(BaseModel):
@@ -162,6 +163,14 @@ class ArticleCaptureResponse(BaseModel):
 
     media_id: UUID
     processing_status: str
+
+
+class RetryRequest(BaseModel):
+    """Body for POST /media/{id}/retry."""
+
+    from_stage: Literal["source", "metadata"]
+
+    model_config = ConfigDict(extra="forbid")
 
 
 TranscriptRequestReason = Literal[

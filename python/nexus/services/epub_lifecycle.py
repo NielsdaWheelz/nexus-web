@@ -291,7 +291,7 @@ def retry_epub_ingest_for_viewer(
         expected_sha256=media.file_sha256,
     )
 
-    storage_paths_to_delete = _delete_extraction_artifacts(db, media_id)
+    storage_paths_to_delete = delete_extraction_artifacts(db, media_id)
 
     now = datetime.now(UTC)
     media.processing_status = ProcessingStatus.extracting
@@ -348,7 +348,7 @@ def retry_epub_ingest_for_viewer(
     }
 
 
-def _delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:
+def delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:
     """Delete all extraction and chunk/embedding artifacts for a media row."""
     storage_paths = (
         db.execute(select(EpubResource.storage_path).where(EpubResource.media_id == media_id))

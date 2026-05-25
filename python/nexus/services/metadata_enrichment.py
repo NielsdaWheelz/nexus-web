@@ -239,14 +239,21 @@ def merge_enrichment(
     media: Media,
     enrichment: dict,
     gaps: MetadataGaps,
+    *,
+    force_overwrite: bool = False,
 ) -> None:
-    """Merge LLM enrichment into media, only filling null/malformed fields."""
-    if gaps.title_looks_like_filename and "title" in enrichment:
+    """Merge LLM enrichment into media.
+
+    By default only fills null/malformed fields (gap-driven). When
+    `force_overwrite=True`, the LLM-provided value replaces existing data
+    on each branch (length caps and type checks still enforced).
+    """
+    if (force_overwrite or gaps.title_looks_like_filename) and "title" in enrichment:
         title = enrichment["title"]
         if isinstance(title, str) and title.strip():
             media.title = title.strip()[:255]
 
-    if gaps.authors_missing and "authors" in enrichment:
+    if (force_overwrite or gaps.authors_missing) and "authors" in enrichment:
         authors = enrichment["authors"]
         if isinstance(authors, list):
             replace_media_contributor_credits(
@@ -265,22 +272,22 @@ def merge_enrichment(
                 ],
             )
 
-    if gaps.publisher_missing and "publisher" in enrichment:
+    if (force_overwrite or gaps.publisher_missing) and "publisher" in enrichment:
         publisher = enrichment["publisher"]
         if isinstance(publisher, str) and publisher.strip():
             media.publisher = publisher.strip()[:255]
 
-    if gaps.description_missing and "description" in enrichment:
+    if (force_overwrite or gaps.description_missing) and "description" in enrichment:
         desc = enrichment["description"]
         if isinstance(desc, str) and desc.strip():
             media.description = desc.strip()[:2000]
 
-    if gaps.published_date_missing and "published_date" in enrichment:
+    if (force_overwrite or gaps.published_date_missing) and "published_date" in enrichment:
         date = enrichment["published_date"]
         if isinstance(date, str) and date.strip():
             media.published_date = date.strip()[:64]
 
-    if gaps.language_missing and "language" in enrichment:
+    if (force_overwrite or gaps.language_missing) and "language" in enrichment:
         lang = enrichment["language"]
         if isinstance(lang, str) and lang.strip():
             media.language = lang.strip()[:32]
