@@ -153,6 +153,17 @@ class Settings(BaseSettings):
         default="https://www.googleapis.com/youtube/v3",
         alias="YOUTUBE_DATA_BASE_URL",
     )
+    x_api_bearer_token: str | None = Field(default=None, alias="X_API_BEARER_TOKEN")
+    x_api_base_url: str = Field(default="https://api.x.com/2", alias="X_API_BASE_URL")
+    x_api_timeout_seconds: float = Field(default=10.0, alias="X_API_TIMEOUT_SECONDS")
+    x_api_author_thread_max_posts: int = Field(
+        default=1000,
+        alias="X_API_AUTHOR_THREAD_MAX_POSTS",
+    )
+    x_api_include_user_expansions: bool = Field(
+        default=False,
+        alias="X_API_INCLUDE_USER_EXPANSIONS",
+    )
     youtube_transcript_timeout_seconds: float = Field(
         default=30.0,
         alias="YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS",
@@ -499,6 +510,10 @@ class Settings(BaseSettings):
             raise ValueError("PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS must be > 0.")
         if self.youtube_transcript_timeout_seconds <= 0:
             raise ValueError("YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS must be > 0.")
+        if self.x_api_timeout_seconds <= 0:
+            raise ValueError("X_API_TIMEOUT_SECONDS must be > 0.")
+        if self.x_api_author_thread_max_posts < 1:
+            raise ValueError("X_API_AUTHOR_THREAD_MAX_POSTS must be >= 1.")
         if self.real_media_provider_fixtures:
             if self.nexus_env in (Environment.STAGING, Environment.PROD):
                 raise ValueError("REAL_MEDIA_PROVIDER_FIXTURES is not allowed in staging or prod.")
@@ -548,6 +563,8 @@ class Settings(BaseSettings):
             missing_browse_provider_settings: list[str] = []
             if not self.youtube_data_api_key:
                 missing_browse_provider_settings.append("YOUTUBE_DATA_API_KEY")
+            if not self.x_api_bearer_token:
+                missing_browse_provider_settings.append("X_API_BEARER_TOKEN")
             if missing_browse_provider_settings:
                 raise ValueError(
                     "Browse providers are missing required credentials: "

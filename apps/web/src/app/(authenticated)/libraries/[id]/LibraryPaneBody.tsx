@@ -48,7 +48,7 @@ import Button from "@/components/ui/Button";
 import SectionCard from "@/components/ui/SectionCard";
 import SortableList from "@/components/sortable/SortableList";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
-import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
+import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
 import type {
   LibraryForEdit,
   LibraryMember,

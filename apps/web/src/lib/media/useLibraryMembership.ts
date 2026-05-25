@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toFeedback } from "@/components/feedback/Feedback";
-import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
 import {
   addMediaToLibrary,
   fetchMediaLibraryMemberships,
   patchLibraryMembership,
   removeMediaFromLibrary,
+  type LibraryTargetPickerItem,
 } from "@/lib/media/mediaLibraries";
 import { usePaneRouter } from "@/lib/panes/paneRuntime";
 

@@ -7076,3 +7076,374 @@ class TestEpubNavSourceCutoverMigration:
             ).scalar_one()
 
         assert source == "fragment_fallback"
+
+
+class TestPodcastSubscriptionLibrariesMigration0111:
+    """Schema assertions for migration 0111 (podcast_subscription_libraries)."""
+
+    def test_migration_0111_creates_podcast_subscription_libraries(self, migrated_engine):
+        """Head migration must materialize the table, composite PK, FK cascade, and index."""
+        with Session(migrated_engine) as session:
+            columns = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name = 'podcast_subscription_libraries'
+                    ORDER BY ordinal_position
+                    """
+                )
+            ).fetchall()
+            constraints = session.execute(
+                text(
+                    """
+                    SELECT conname, contype
+                    FROM pg_constraint
+                    WHERE conrelid = 'podcast_subscription_libraries'::regclass
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+            indexes = session.execute(
+                text(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE tablename = 'podcast_subscription_libraries'
+                    ORDER BY indexname
+                    """
+                )
+            ).fetchall()
+            fk_actions = session.execute(
+                text(
+                    """
+                    SELECT confrelid::regclass::text AS referenced_table,
+                           confdeltype
+                    FROM pg_constraint
+                    WHERE conrelid = 'podcast_subscription_libraries'::regclass
+                      AND contype = 'f'
+                    ORDER BY confrelid::regclass::text
+                    """
+                )
+            ).fetchall()
+
+        column_by_name = {row[0]: (row[1], row[2]) for row in columns}
+        assert {
+            "subscription_user_id",
+            "subscription_podcast_id",
+            "library_id",
+            "created_at",
+        }.issubset(column_by_name.keys()), (
+            "podcast_subscription_libraries must contain composite-key + library_id + created_at; "
+            f"got {set(column_by_name)}"
+        )
+        assert column_by_name["subscription_user_id"][0] == "uuid"
+        assert column_by_name["subscription_podcast_id"][0] == "uuid"
+        assert column_by_name["library_id"][0] == "uuid"
+        # All key columns must be NOT NULL.
+        for col_name in (
+            "subscription_user_id",
+            "subscription_podcast_id",
+            "library_id",
+        ):
+            assert column_by_name[col_name][1] == "NO", (
+                f"{col_name} must be NOT NULL, got nullable={column_by_name[col_name][1]}"
+            )
+
+        constraint_names = {row[0] for row in constraints}
+        assert "pk_podcast_subscription_libraries" in constraint_names, (
+            "composite PK must be named pk_podcast_subscription_libraries, "
+            f"got {constraint_names}"
+        )
+
+        index_names = {row[0] for row in indexes}
+        assert "ix_podcast_subscription_libraries_library_id" in index_names, (
+            "secondary index for library_id reverse lookups is required, "
+            f"got {index_names}"
+        )
+
+        # Both FKs must cascade-delete.
+        delete_actions = {row[0]: row[1] for row in fk_actions}
+        assert "podcast_subscriptions" in delete_actions, (
+            "FK to podcast_subscriptions (composite) is required"
+        )
+        assert "libraries" in delete_actions, "FK to libraries is required"
+        assert delete_actions["podcast_subscriptions"] == "c", (
+            "FK to podcast_subscriptions must cascade-delete, "
+            f"got {delete_actions['podcast_subscriptions']}"
+        )
+        assert delete_actions["libraries"] == "c", (
+            "FK to libraries must cascade-delete, "
+            f"got {delete_actions['libraries']}"
+        )
+
+    def test_migration_0111_pk_rejects_duplicate_composite(self, migrated_engine):
+        """The composite primary key prevents inserting the same triple twice."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            podcast_id = uuid4()
+            library_id = uuid4()
+
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO libraries (id, owner_user_id, name, is_default)
+                    VALUES (:id, :owner_id, 'PK Subscription Lib', false)
+                    """
+                ),
+                {"id": library_id, "owner_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:library_id, :user_id, 'admin')
+                    """
+                ),
+                {"library_id": library_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (
+                        id, provider, provider_podcast_id, title, feed_url
+                    ) VALUES (
+                        :id, 'podcast_index', :provider_id, 'PK Podcast',
+                        'https://feeds.example.com/pk-test.xml'
+                    )
+                    """
+                ),
+                {"id": podcast_id, "provider_id": f"pk-{podcast_id}"},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_subscriptions (user_id, podcast_id, status)
+                    VALUES (:user_id, :podcast_id, 'active')
+                    """
+                ),
+                {"user_id": user_id, "podcast_id": podcast_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_subscription_libraries (
+                        subscription_user_id, subscription_podcast_id, library_id
+                    )
+                    VALUES (:user_id, :podcast_id, :library_id)
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "podcast_id": podcast_id,
+                    "library_id": library_id,
+                },
+            )
+            session.commit()
+
+            with pytest.raises(IntegrityError):
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO podcast_subscription_libraries (
+                            subscription_user_id, subscription_podcast_id, library_id
+                        )
+                        VALUES (:user_id, :podcast_id, :library_id)
+                        """
+                    ),
+                    {
+                        "user_id": user_id,
+                        "podcast_id": podcast_id,
+                        "library_id": library_id,
+                    },
+                )
+                session.commit()
+            session.rollback()
+
+    def test_migration_0111_subscription_delete_cascades_to_join_table(self, migrated_engine):
+        """Deleting a podcast_subscription must remove its podcast_subscription_libraries rows."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            podcast_id = uuid4()
+            library_id = uuid4()
+
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO libraries (id, owner_user_id, name, is_default)
+                    VALUES (:id, :owner_id, 'Cascade Lib', false)
+                    """
+                ),
+                {"id": library_id, "owner_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:library_id, :user_id, 'admin')
+                    """
+                ),
+                {"library_id": library_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (
+                        id, provider, provider_podcast_id, title, feed_url
+                    ) VALUES (
+                        :id, 'podcast_index', :provider_id, 'Cascade Podcast',
+                        'https://feeds.example.com/cascade-test.xml'
+                    )
+                    """
+                ),
+                {"id": podcast_id, "provider_id": f"cascade-{podcast_id}"},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_subscriptions (user_id, podcast_id, status)
+                    VALUES (:user_id, :podcast_id, 'active')
+                    """
+                ),
+                {"user_id": user_id, "podcast_id": podcast_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_subscription_libraries (
+                        subscription_user_id, subscription_podcast_id, library_id
+                    )
+                    VALUES (:user_id, :podcast_id, :library_id)
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "podcast_id": podcast_id,
+                    "library_id": library_id,
+                },
+            )
+            session.commit()
+
+            session.execute(
+                text(
+                    """
+                    DELETE FROM podcast_subscriptions
+                    WHERE user_id = :user_id AND podcast_id = :podcast_id
+                    """
+                ),
+                {"user_id": user_id, "podcast_id": podcast_id},
+            )
+            session.commit()
+
+            remaining = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM podcast_subscription_libraries
+                    WHERE subscription_user_id = :user_id
+                      AND subscription_podcast_id = :podcast_id
+                    """
+                ),
+                {"user_id": user_id, "podcast_id": podcast_id},
+            ).scalar_one()
+        assert remaining == 0, (
+            "deleting a podcast_subscription must cascade-delete join rows; "
+            f"got {remaining}"
+        )
+
+    def test_migration_0111_library_delete_cascades_to_join_table(self, migrated_engine):
+        """Deleting a library must remove its podcast_subscription_libraries rows."""
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            podcast_id = uuid4()
+            library_id = uuid4()
+
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO libraries (id, owner_user_id, name, is_default)
+                    VALUES (:id, :owner_id, 'Lib Cascade', false)
+                    """
+                ),
+                {"id": library_id, "owner_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:library_id, :user_id, 'admin')
+                    """
+                ),
+                {"library_id": library_id, "user_id": user_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (
+                        id, provider, provider_podcast_id, title, feed_url
+                    ) VALUES (
+                        :id, 'podcast_index', :provider_id, 'Lib Cascade Podcast',
+                        'https://feeds.example.com/lib-cascade.xml'
+                    )
+                    """
+                ),
+                {"id": podcast_id, "provider_id": f"libcasc-{podcast_id}"},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_subscriptions (user_id, podcast_id, status)
+                    VALUES (:user_id, :podcast_id, 'active')
+                    """
+                ),
+                {"user_id": user_id, "podcast_id": podcast_id},
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_subscription_libraries (
+                        subscription_user_id, subscription_podcast_id, library_id
+                    )
+                    VALUES (:user_id, :podcast_id, :library_id)
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "podcast_id": podcast_id,
+                    "library_id": library_id,
+                },
+            )
+            session.commit()
+
+            session.execute(
+                text(
+                    """
+                    DELETE FROM memberships
+                    WHERE library_id = :library_id
+                    """
+                ),
+                {"library_id": library_id},
+            )
+            session.execute(
+                text("DELETE FROM libraries WHERE id = :library_id"),
+                {"library_id": library_id},
+            )
+            session.commit()
+
+            remaining = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM podcast_subscription_libraries
+                    WHERE library_id = :library_id
+                    """
+                ),
+                {"library_id": library_id},
+            ).scalar_one()
+        assert remaining == 0, (
+            "deleting a library must cascade-delete join rows; "
+            f"got {remaining}"
+        )

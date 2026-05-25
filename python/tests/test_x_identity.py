@@ -15,6 +15,7 @@ class TestClassifyXUrl:
         assert identity.provider == "x"
         assert identity.provider_id == "1234567890"
         assert identity.canonical_url == "https://x.com/i/status/1234567890"
+        assert identity.username == "user"
 
     def test_twitter_statuses_url_strips_query_and_fragment(self):
         identity = classify_x_url(
@@ -25,6 +26,7 @@ class TestClassifyXUrl:
         assert identity.provider == "x"
         assert identity.provider_id == "9876543210"
         assert identity.canonical_url == "https://x.com/i/status/9876543210"
+        assert identity.username == "user"
 
     def test_non_x_host_returns_none(self):
         assert classify_x_url("https://example.com/user/status/1234567890") is None
@@ -38,6 +40,21 @@ class TestClassifyXUrl:
         assert identity is not None
         assert identity.provider_id == "1234567890"
         assert identity.canonical_url == "https://x.com/i/status/1234567890"
+        assert identity.username == "user"
+
+    def test_handleless_status_url_has_no_username_hint(self):
+        identity = classify_x_url("https://x.com/i/status/1234567890")
+
+        assert identity is not None
+        assert identity.provider_id == "1234567890"
+        assert identity.username is None
+
+    def test_invalid_username_segment_is_not_used_as_hint(self):
+        identity = classify_x_url("https://x.com/bad-handle/status/1234567890")
+
+        assert identity is not None
+        assert identity.provider_id == "1234567890"
+        assert identity.username is None
 
     def test_is_x_url_matches_supported_hosts_only(self):
         assert is_x_url("https://twitter.com/user/status/1234567890") is True

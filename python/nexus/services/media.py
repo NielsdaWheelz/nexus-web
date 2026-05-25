@@ -66,6 +66,7 @@ from nexus.services import libraries as libraries_service
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.content_indexing import (
+    delete_media_content_index,
     mark_content_index_failed,
     rebuild_fragment_content_index,
 )
@@ -83,6 +84,19 @@ from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.sanitize_html import sanitize_html
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
+from nexus.services.x_api import (
+    XAuthorThreadSnapshot,
+    XPostSnapshot,
+    canonical_x_post_url,
+    fetch_author_thread_snapshot,
+    post_description,
+    post_title,
+    render_author_thread_fragment_html,
+    render_single_post_html,
+    thread_description,
+    thread_title,
+    x_author_thread_provider_id,
+)
 from nexus.services.x_identity import classify_x_url, is_x_url
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
 from nexus.storage.client import StorageError, get_storage_client
@@ -515,6 +529,18 @@ def refresh_source_for_viewer(
         )
 
     epub_storage_paths_to_delete: list[str] = []
+
+    x_refresh_identity = _x_refresh_identity(media)
+    if media.kind == MediaKind.web_article.value and x_refresh_identity is not None:
+        x_refresh_post_id, x_refresh_username_hint = x_refresh_identity
+        return _refresh_x_author_thread_media_for_viewer(
+            db,
+            viewer_id,
+            media=media,
+            post_id=x_refresh_post_id,
+            username_hint=x_refresh_username_hint,
+            request_id=request_id,
+        )
 
     if media.kind == MediaKind.web_article.value:
         _reset_media_for_reingest(media)
@@ -1170,6 +1196,7 @@ def _create_file_media_from_remote_url(
         db=db,
         viewer_id=viewer_id,
         media_id=media_id,
+        library_ids=[],
         request_id=request_id,
     )
 
@@ -1187,6 +1214,7 @@ def create_captured_web_article(
     *,
     url: str,
     content_html: str,
+    library_ids: list[UUID],
     title: str | None = None,
     byline: str | None = None,
     excerpt: str | None = None,
@@ -1196,6 +1224,7 @@ def create_captured_web_article(
     """Persist a browser-rendered article capture as readable media."""
     from nexus.services.upload import _ensure_in_default_library
 
+    libraries_service.validate_libraries_accessible(db, viewer_id, library_ids)
     validate_requested_url(url)
 
     if len(content_html.encode("utf-8")) > _CAPTURED_ARTICLE_HTML_MAX_BYTES:
@@ -1318,6 +1347,8 @@ def create_captured_web_article(
 
     _try_enrich_dispatch(str(media.id), None)
 
+    libraries_service.assign_libraries_for_media(db, viewer_id, media_id, library_ids)
+
     return ArticleCaptureResponse(
         media_id=media.id,
         processing_status=ProcessingStatus.ready_for_reading.value,
@@ -1331,6 +1362,7 @@ def create_captured_file(
     payload: bytes,
     filename: str,
     content_type: str,
+    library_ids: list[UUID],
     source_url: str | None = None,
     request_id: str | None = None,
 ) -> FromUrlResponse:
@@ -1342,6 +1374,7 @@ def create_captured_file(
         _validate_upload_request,
     )
 
+    libraries_service.validate_libraries_accessible(db, viewer_id, library_ids)
     cleaned_filename = (filename or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
     normalized_content_type = (content_type or "").split(";", 1)[0].strip().lower()
     lower_filename = cleaned_filename.lower()
@@ -1436,10 +1469,13 @@ def create_captured_file(
         db=db,
         viewer_id=viewer_id,
         media_id=media_id,
+        library_ids=[],
         request_id=request_id,
     )
+    resolved_media_id = UUID(result["media_id"])
+    libraries_service.assign_libraries_for_media(db, viewer_id, resolved_media_id, library_ids)
     return FromUrlResponse(
-        media_id=UUID(result["media_id"]),
+        media_id=resolved_media_id,
         idempotency_outcome="reused" if result["duplicate"] else "created",
         processing_status=str(result["processing_status"]),
         ingest_enqueued=bool(result["ingest_enqueued"]),
@@ -1534,7 +1570,7 @@ def enqueue_media_from_url(
     db: Session,
     viewer_id: UUID,
     url: str,
-    library_id: UUID | None = None,
+    library_ids: list[UUID],
     request_id: str | None = None,
 ) -> FromUrlResponse:
     """Create media from URL with kind classification and enqueue ingestion.
@@ -1543,9 +1579,8 @@ def enqueue_media_from_url(
     - YouTube variants -> shared `video` row (create-or-reuse by canonical video identity)
     - all other URLs -> provisional `web_article`
     """
+    libraries_service.validate_libraries_accessible(db, viewer_id, library_ids)
     validate_requested_url(url)
-    if library_id is not None:
-        libraries_service.ensure_writable_non_default_library(db, viewer_id, library_id)
 
     youtube_identity = classify_youtube_url(url)
     if youtube_identity is not None:
@@ -1556,8 +1591,7 @@ def enqueue_media_from_url(
             enqueue_task=True,
             request_id=request_id,
         )
-        if library_id is not None:
-            libraries_service.add_media_to_library(db, viewer_id, library_id, result.media_id)
+        libraries_service.assign_libraries_for_media(db, viewer_id, result.media_id, library_ids)
         return result
 
     if is_youtube_url(url):
@@ -1568,14 +1602,12 @@ def enqueue_media_from_url(
 
     x_identity = classify_x_url(url)
     if x_identity is not None:
-        result = create_or_reuse_x_oembed_article(
+        return create_or_reuse_x_author_thread_article(
             db=db,
             viewer_id=viewer_id,
             url=url,
+            library_ids=library_ids,
         )
-        if library_id is not None:
-            libraries_service.add_media_to_library(db, viewer_id, library_id, result.media_id)
-        return result
     if is_x_url(url):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
@@ -1591,8 +1623,7 @@ def enqueue_media_from_url(
             kind=remote_file_kind,
             request_id=request_id,
         )
-        if library_id is not None:
-            libraries_service.add_media_to_library(db, viewer_id, library_id, result.media_id)
+        libraries_service.assign_libraries_for_media(db, viewer_id, result.media_id, library_ids)
         return result
 
     result = create_provisional_web_article(
@@ -1602,9 +1633,550 @@ def enqueue_media_from_url(
         enqueue_task=True,
         request_id=request_id,
     )
-    if library_id is not None:
-        libraries_service.add_media_to_library(db, viewer_id, library_id, result.media_id)
+    libraries_service.assign_libraries_for_media(db, viewer_id, result.media_id, library_ids)
     return result
+
+
+def create_or_reuse_x_author_thread_article(
+    db: Session,
+    viewer_id: UUID,
+    url: str,
+    *,
+    library_ids: list[UUID],
+) -> FromUrlResponse:
+    """Create-or-reuse an archival same-author X thread snapshot."""
+    validate_requested_url(url)
+    identity = classify_x_url(url)
+    if identity is None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "URL is not a supported X post URL",
+        )
+
+    provider_id = x_author_thread_provider_id(identity.provider_id)
+    media = (
+        db.query(Media)
+        .filter(Media.provider == identity.provider, Media.provider_id == provider_id)
+        .limit(1)
+        .one_or_none()
+    )
+    if media is not None:
+        libraries_service.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
+        db.commit()
+        return FromUrlResponse(
+            media_id=media.id,
+            idempotency_outcome="reused",
+            processing_status=_status_to_str(media.processing_status),
+            ingest_enqueued=False,
+        )
+
+    snapshot = fetch_author_thread_snapshot(
+        identity.provider_id,
+        username_hint=identity.username,
+    )
+    if not snapshot.posts:
+        raise ApiError(ApiErrorCode.E_INGEST_FAILED, "X API returned no thread posts.")
+
+    now = datetime.now(UTC)
+    created_index_targets: list[tuple[UUID, UUID, Fragment, str, str | None]] = []
+    quoted_media_ids: dict[str, UUID] = {}
+    for quoted_id, quoted_post in snapshot.quoted_posts.items():
+        quote_media, quote_fragment, quote_created = _create_or_reuse_x_snapshot_post_media(
+            db,
+            viewer_id,
+            post=quoted_post,
+            snapshot=snapshot,
+            library_ids=library_ids,
+            now=now,
+        )
+        quoted_media_ids[quoted_id] = quote_media.id
+        if quote_created and quote_fragment is not None:
+            created_index_targets.append(
+                (
+                    quote_media.id,
+                    quote_fragment.id,
+                    quote_fragment,
+                    "x_api_quoted_post",
+                    quote_media.language,
+                )
+            )
+
+    rendered_fragments = render_author_thread_fragment_html(
+        snapshot,
+        quoted_media_ids=quoted_media_ids,
+        app_public_url=get_settings().app_public_url,
+    )
+    fragments: list[Fragment] = []
+    for idx, (post, fragment_html) in enumerate(rendered_fragments):
+        fragment = _build_x_fragment(
+            media_id=None,
+            idx=idx,
+            html=fragment_html,
+            base_url=post.permalink,
+            created_at=now,
+        )
+        fragments.append(fragment)
+
+    canonical_text = "\n\n".join(fragment.canonical_text for fragment in fragments)
+    if not canonical_text.strip():
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "X thread has no readable text")
+
+    media = Media(
+        kind=MediaKind.web_article.value,
+        title=thread_title(snapshot)[:255],
+        requested_url=url,
+        canonical_url=None,
+        canonical_source_url=identity.canonical_url,
+        provider=identity.provider,
+        provider_id=provider_id,
+        processing_status=ProcessingStatus.ready_for_reading,
+        processing_completed_at=now,
+        created_by_user_id=viewer_id,
+        created_at=now,
+        updated_at=now,
+        publisher="X",
+        description=thread_description(snapshot),
+    )
+
+    created = False
+    try:
+        db.add(media)
+        db.flush()
+        created = True
+        for fragment in fragments:
+            fragment.media_id = media.id
+            db.add(fragment)
+        db.flush()
+        for fragment in fragments:
+            insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(fragment.canonical_text))
+        replace_media_contributor_credits(
+            db,
+            media_id=media.id,
+            credits=[
+                {
+                    "name": snapshot.author.name[:255],
+                    "handle": snapshot.author.username[:255],
+                    "role": "author",
+                    "source": "x_api_author_thread",
+                    "source_ref": {"media_id": str(media.id), "x_user_id": snapshot.author.id},
+                }
+            ],
+        )
+        libraries_service.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
+        db.commit()
+    except IntegrityError as exc:
+        if not _is_media_provider_conflict(exc):
+            db.rollback()
+            raise
+        db.rollback()
+        created = False
+        media = (
+            db.query(Media)
+            .filter(Media.provider == identity.provider, Media.provider_id == provider_id)
+            .limit(1)
+            .one_or_none()
+        )
+        if media is None:
+            raise ApiError(ApiErrorCode.E_INTERNAL, "Unable to resolve canonical X thread") from exc
+        libraries_service.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    if created:
+        fragment_ids = [fragment.id for fragment in fragments]
+        if fragment_ids:
+            created_index_targets.append(
+                (
+                    media.id,
+                    fragment_ids[0],
+                    fragments[0],
+                    "x_api_author_thread",
+                    media.language,
+                )
+            )
+        for target_media_id, fragment_id, fragment, reason, language in created_index_targets:
+            _rebuild_web_article_index_or_mark_failed(
+                db,
+                media_id=target_media_id,
+                fragment_id=fragment_id,
+                fragments=[fragment] if target_media_id != media.id else fragments,
+                reason=reason,
+                language=language,
+                log_event=f"{reason}_content_index_failed",
+            )
+            _try_enrich_dispatch_with_session(db, str(target_media_id), None)
+
+    return FromUrlResponse(
+        media_id=media.id,
+        idempotency_outcome="created" if created else "reused",
+        processing_status=ProcessingStatus.ready_for_reading.value,
+        ingest_enqueued=False,
+    )
+
+
+def _x_refresh_identity(media: Media) -> tuple[str, str | None] | None:
+    username_hint = _x_username_hint(media)
+    if media.provider == "x":
+        provider_id = str(media.provider_id or "").strip()
+        if provider_id.startswith("thread:"):
+            post_id = provider_id.removeprefix("thread:")
+            if post_id:
+                return post_id, username_hint
+        elif provider_id:
+            return provider_id, username_hint
+
+    for candidate_url in (media.requested_url, media.canonical_source_url, media.canonical_url):
+        if not candidate_url:
+            continue
+        identity = classify_x_url(candidate_url)
+        if identity is not None:
+            return identity.provider_id, identity.username
+    return None
+
+
+def _x_username_hint(media: Media) -> str | None:
+    for candidate_url in (media.requested_url, media.canonical_source_url, media.canonical_url):
+        if not candidate_url:
+            continue
+        identity = classify_x_url(candidate_url)
+        if identity is not None and identity.username:
+            return identity.username
+    return None
+
+
+def _refresh_x_author_thread_media_for_viewer(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    media: Media,
+    post_id: str,
+    username_hint: str | None,
+    request_id: str | None,
+) -> dict[str, object]:
+    provider_id = x_author_thread_provider_id(post_id)
+    existing_thread_media = (
+        db.query(Media)
+        .filter(Media.provider == "x", Media.provider_id == provider_id, Media.id != media.id)
+        .limit(1)
+        .one_or_none()
+    )
+    source_library_ids = _attached_library_ids(db, media.id)
+    if existing_thread_media is not None:
+        libraries_service.assign_libraries_for_media(
+            db,
+            viewer_id,
+            existing_thread_media.id,
+            source_library_ids,
+        )
+        db.commit()
+        return {
+            "media_id": str(existing_thread_media.id),
+            "processing_status": _status_to_str(existing_thread_media.processing_status),
+            "refresh_enqueued": False,
+            "idempotency_outcome": "reused",
+        }
+
+    snapshot = fetch_author_thread_snapshot(post_id, username_hint=username_hint)
+    if not snapshot.posts:
+        raise ApiError(ApiErrorCode.E_INGEST_FAILED, "X API returned no thread posts.")
+
+    now = datetime.now(UTC)
+    created_index_targets: list[tuple[UUID, UUID, Fragment, str, str | None]] = []
+    quoted_media_ids: dict[str, UUID] = {}
+    for quoted_id, quoted_post in snapshot.quoted_posts.items():
+        quote_media, quote_fragment, quote_created = _create_or_reuse_x_snapshot_post_media(
+            db,
+            viewer_id,
+            post=quoted_post,
+            snapshot=snapshot,
+            library_ids=source_library_ids,
+            now=now,
+        )
+        quoted_media_ids[quoted_id] = quote_media.id
+        if quote_created and quote_fragment is not None:
+            created_index_targets.append(
+                (
+                    quote_media.id,
+                    quote_fragment.id,
+                    quote_fragment,
+                    "x_api_quoted_post",
+                    quote_media.language,
+                )
+            )
+
+    fragments: list[Fragment] = []
+    for idx, (post, fragment_html) in enumerate(
+        render_author_thread_fragment_html(
+            snapshot,
+            quoted_media_ids=quoted_media_ids,
+            app_public_url=get_settings().app_public_url,
+        )
+    ):
+        fragments.append(
+            _build_x_fragment(
+                media_id=media.id,
+                idx=idx,
+                html=fragment_html,
+                base_url=post.permalink,
+                created_at=now,
+            )
+        )
+
+    canonical_text = "\n\n".join(fragment.canonical_text for fragment in fragments)
+    if not canonical_text.strip():
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "X thread has no readable text")
+
+    _delete_web_article_refresh_artifacts(db, media.id)
+    media.title = thread_title(snapshot)[:255]
+    media.canonical_url = None
+    media.canonical_source_url = canonical_x_post_url(snapshot.root_post_id)
+    media.provider = "x"
+    media.provider_id = provider_id
+    media.processing_status = ProcessingStatus.ready_for_reading
+    media.processing_attempts = (media.processing_attempts or 0) + 1
+    media.processing_started_at = now
+    media.processing_completed_at = now
+    media.failure_stage = None
+    media.last_error_code = None
+    media.last_error_message = None
+    media.failed_at = None
+    media.updated_at = now
+    media.publisher = "X"
+    media.description = thread_description(snapshot)
+
+    for fragment in fragments:
+        db.add(fragment)
+    db.flush()
+    for fragment in fragments:
+        insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(fragment.canonical_text))
+    replace_media_contributor_credits(
+        db,
+        media_id=media.id,
+        credits=[
+            {
+                "name": snapshot.author.name[:255],
+                "handle": snapshot.author.username[:255],
+                "role": "author",
+                "source": "x_api_author_thread",
+                "source_ref": {"media_id": str(media.id), "x_user_id": snapshot.author.id},
+            }
+        ],
+    )
+    db.commit()
+
+    created_index_targets.append(
+        (
+            media.id,
+            fragments[0].id,
+            fragments[0],
+            "x_api_author_thread_refresh",
+            media.language,
+        )
+    )
+    for target_media_id, fragment_id, fragment, reason, language in created_index_targets:
+        _rebuild_web_article_index_or_mark_failed(
+            db,
+            media_id=target_media_id,
+            fragment_id=fragment_id,
+            fragments=[fragment] if target_media_id != media.id else fragments,
+            reason=reason,
+            language=language,
+            log_event=f"{reason}_content_index_failed",
+        )
+        _try_enrich_dispatch_with_session(db, str(target_media_id), request_id)
+
+    return {
+        "media_id": str(media.id),
+        "processing_status": ProcessingStatus.ready_for_reading.value,
+        "refresh_enqueued": False,
+        "idempotency_outcome": "refreshed",
+    }
+
+
+def _attached_library_ids(db: Session, media_id: UUID) -> list[UUID]:
+    return [
+        UUID(str(row[0]))
+        for row in db.execute(
+            text("SELECT library_id FROM library_entries WHERE media_id = :media_id"),
+            {"media_id": media_id},
+        ).fetchall()
+    ]
+
+
+def _delete_web_article_refresh_artifacts(db: Session, media_id: UUID) -> None:
+    delete_media_content_index(db, media_id=media_id)
+    db.execute(
+        text(
+            """
+            DELETE FROM highlights AS h
+            USING highlight_fragment_anchors AS hfa
+            JOIN fragments AS f ON f.id = hfa.fragment_id
+            WHERE h.id = hfa.highlight_id
+              AND f.media_id = :media_id
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM fragment_blocks
+            WHERE fragment_id IN (
+                SELECT id
+                FROM fragments
+                WHERE media_id = :media_id
+            )
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(text("DELETE FROM fragments WHERE media_id = :media_id"), {"media_id": media_id})
+    db.execute(
+        text("DELETE FROM contributor_credits WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.flush()
+
+
+def _create_or_reuse_x_snapshot_post_media(
+    db: Session,
+    viewer_id: UUID,
+    *,
+    post: XPostSnapshot,
+    snapshot: XAuthorThreadSnapshot,
+    library_ids: list[UUID],
+    now: datetime,
+) -> tuple[Media, Fragment | None, bool]:
+    media = (
+        db.query(Media)
+        .filter(Media.provider == "x", Media.provider_id == post.id)
+        .limit(1)
+        .one_or_none()
+    )
+    if media is not None:
+        libraries_service.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
+        return media, None, False
+
+    fragment = _build_x_fragment(
+        media_id=None,
+        idx=0,
+        html=render_single_post_html(post, users=snapshot.users, media=snapshot.media),
+        base_url=canonical_x_post_url(post.id),
+        created_at=now,
+    )
+    media = Media(
+        kind=MediaKind.web_article.value,
+        title=post_title(post, snapshot.users)[:255],
+        requested_url=canonical_x_post_url(post.id),
+        canonical_url=canonical_x_post_url(post.id),
+        canonical_source_url=canonical_x_post_url(post.id),
+        provider="x",
+        provider_id=post.id,
+        processing_status=ProcessingStatus.ready_for_reading,
+        processing_completed_at=now,
+        created_by_user_id=viewer_id,
+        created_at=now,
+        updated_at=now,
+        publisher="X",
+        description=post_description(post),
+    )
+    db.add(media)
+    db.flush()
+    fragment.media_id = media.id
+    db.add(fragment)
+    db.flush()
+    insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(fragment.canonical_text))
+    author = snapshot.users.get(post.author_id)
+    if author is not None:
+        replace_media_contributor_credits(
+            db,
+            media_id=media.id,
+            credits=[
+                {
+                    "name": author.name[:255],
+                    "handle": author.username[:255],
+                    "role": "author",
+                    "source": "x_api_quoted_post",
+                    "source_ref": {"media_id": str(media.id), "x_user_id": author.id},
+                }
+            ],
+        )
+    libraries_service.assign_libraries_for_media(db, viewer_id, media.id, library_ids)
+    return media, fragment, True
+
+
+def _build_x_fragment(
+    *,
+    media_id: UUID | None,
+    idx: int,
+    html: str,
+    base_url: str,
+    created_at: datetime,
+) -> Fragment:
+    if len(html.encode("utf-8")) > _CAPTURED_ARTICLE_HTML_MAX_BYTES:
+        raise InvalidRequestError(ApiErrorCode.E_CAPTURE_TOO_LARGE, "X thread HTML is too large")
+    try:
+        html_sanitized = sanitize_html(html, base_url)
+        canonical_text = generate_canonical_text(html_sanitized)
+    except ValueError as exc:
+        raise ApiError(
+            ApiErrorCode.E_SANITIZATION_FAILED, "X thread could not be sanitized"
+        ) from exc
+    if not canonical_text.strip():
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "X post has no readable text")
+    return Fragment(
+        media_id=media_id,
+        idx=idx,
+        html_sanitized=html_sanitized,
+        canonical_text=canonical_text,
+        created_at=created_at,
+    )
+
+
+def _rebuild_web_article_index_or_mark_failed(
+    db: Session,
+    *,
+    media_id: UUID,
+    fragment_id: UUID,
+    fragments: list[Fragment],
+    reason: str,
+    language: str | None,
+    log_event: str,
+) -> None:
+    try:
+        rebuild_fragment_content_index(
+            db,
+            media_id=media_id,
+            source_kind="web_article",
+            artifact_ref=f"fragments:{fragment_id}",
+            fragments=fragments,
+            reason=reason,
+            language=language,
+        )
+        db.commit()
+    except (SQLAlchemyError, ApiError) as exc:
+        db.rollback()
+        logger.exception(log_event, media_id=str(media_id), error=str(exc))
+        media = db.get(Media, media_id)
+        if media is not None:
+            now = datetime.now(UTC)
+            error_code = (
+                exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INGEST_FAILED.value
+            )
+            media.failure_stage = FailureStage.embed
+            media.last_error_code = error_code
+            media.last_error_message = f"Web article evidence index failed: {exc}"[:1000]
+            media.failed_at = now
+            media.updated_at = now
+            mark_content_index_failed(
+                db,
+                media_id=media_id,
+                failure_code=error_code,
+                failure_message=media.last_error_message,
+            )
+            db.commit()
 
 
 def create_or_reuse_x_oembed_article(
@@ -1953,6 +2525,24 @@ def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
         logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
     finally:
         db.close()
+
+
+def _try_enrich_dispatch_with_session(
+    db: Session,
+    media_id: str,
+    request_id: str | None,
+) -> None:
+    try:
+        enqueue_job(
+            db,
+            kind="enrich_metadata",
+            payload={"media_id": media_id, "request_id": request_id},
+            max_attempts=1,
+        )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
 
 
 def _enqueue_youtube_ingest_task(

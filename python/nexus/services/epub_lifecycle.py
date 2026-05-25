@@ -36,6 +36,7 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.jobs.queue import enqueue_job
+from nexus.services import libraries as libraries_service
 from nexus.services.epub_ingest import check_archive_safety
 from nexus.services.upload import (
     confirm_ingest as _base_confirm_ingest,
@@ -52,6 +53,7 @@ def confirm_ingest_for_viewer(
     db: Session,
     viewer_id: UUID,
     media_id: UUID,
+    library_ids: list[UUID],
     *,
     request_id: str | None = None,
 ) -> dict:
@@ -61,11 +63,24 @@ def confirm_ingest_for_viewer(
     runs preflight archive safety and dispatches extraction.
     For PDF: delegates to the PDF lifecycle module.
     For non-EPUB/non-PDF: delegates to base confirm_ingest.
+
+    Library assignment is applied once here at the top-level. It is additive +
+    idempotent — even if init_upload already attached the same set, re-applying
+    is safe. Raises ForbiddenError(E_LIBRARY_FORBIDDEN) if any id is inaccessible
+    to the viewer.
     """
     media = db.execute(select(Media).where(Media.id == media_id)).scalar()
 
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    if media.created_by_user_id is None or media.created_by_user_id != viewer_id:
+        raise ForbiddenError(
+            ApiErrorCode.E_FORBIDDEN,
+            "Only the creator can confirm upload",
+        )
+
+    libraries_service.assign_libraries_for_media(db, viewer_id, media_id, library_ids)
 
     if media.kind == "pdf":
         from nexus.services.pdf_lifecycle import confirm_pdf_ingest

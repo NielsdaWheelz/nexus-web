@@ -32,9 +32,8 @@ import {
   formatPlaybackSpeedLabel,
   formatSubscriptionPlaybackSummary,
 } from "@/lib/player/subscriptionPlaybackSpeed";
-import LibraryTargetPicker, {
-  type LibraryTargetPickerItem,
-} from "@/components/LibraryTargetPicker";
+import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
+import LibraryMultiSelectPicker from "@/components/LibraryMultiSelectPicker";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import SectionCard from "@/components/ui/SectionCard";
 import {
@@ -170,6 +169,7 @@ export default function PodcastDetailPaneBody() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [subscribeBusy, setSubscribeBusy] = useState(false);
+  const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
   const [unsubscribeBusy, setUnsubscribeBusy] = useState(false);
   const [refreshSyncBusy, setRefreshSyncBusy] = useState(false);
   const settingsModal = usePodcastSubscriptionSettingsModal({
@@ -480,37 +480,35 @@ export default function PodcastDetailPaneBody() {
     podcastId,
   ]);
 
-  const handleSubscribe = useCallback(
-    async (libraryId: string | null = null) => {
-      if (!detail) {
-        return;
-      }
-      setSubscribeBusy(true);
-      setError(null);
-      try {
-        await subscribeToPodcast({
-          provider_podcast_id: detail.podcast.provider_podcast_id,
-          title: detail.podcast.title,
-          contributors: detail.podcast.contributors,
-          feed_url: detail.podcast.feed_url,
-          website_url: detail.podcast.website_url,
-          image_url: detail.podcast.image_url,
-          description: detail.podcast.description,
-          library_id: libraryId,
-        });
-        await load();
-      } catch (subscribeError) {
-        setError(
-          toFeedback(subscribeError, {
-            fallback: "Failed to subscribe to podcast",
-          }),
-        );
-      } finally {
-        setSubscribeBusy(false);
-      }
-    },
-    [detail, load],
-  );
+  const handleSubscribe = useCallback(async () => {
+    if (!detail) {
+      return;
+    }
+    setSubscribeBusy(true);
+    setError(null);
+    try {
+      await subscribeToPodcast({
+        provider_podcast_id: detail.podcast.provider_podcast_id,
+        title: detail.podcast.title,
+        contributors: detail.podcast.contributors,
+        feed_url: detail.podcast.feed_url,
+        website_url: detail.podcast.website_url,
+        image_url: detail.podcast.image_url,
+        description: detail.podcast.description,
+        library_ids: selectedLibraryIds,
+      });
+      setSelectedLibraryIds([]);
+      await load();
+    } catch (subscribeError) {
+      setError(
+        toFeedback(subscribeError, {
+          fallback: "Failed to subscribe to podcast",
+        }),
+      );
+    } finally {
+      setSubscribeBusy(false);
+    }
+  }, [detail, load, selectedLibraryIds]);
 
   const handleAddPodcastToLibrary = useCallback(
     async (libraryId: string) => {
@@ -1791,6 +1789,16 @@ export default function PodcastDetailPaneBody() {
               <div className={styles.headerButtons}>
                 {activeSubscription ? null : (
                   <div className={styles.subscriptionActions}>
+                    <LibraryMultiSelectPicker
+                      mode="dropdown"
+                      selectedLibraryIds={selectedLibraryIds}
+                      onChange={setSelectedLibraryIds}
+                      libraries={availableLibraries.libraries.map((library) => ({
+                        id: library.id,
+                        name: library.name,
+                        color: library.color,
+                      }))}
+                    />
                     <Button
                       variant="primary"
                       size="sm"
@@ -1799,19 +1807,6 @@ export default function PodcastDetailPaneBody() {
                     >
                       {subscribeBusy ? "Subscribing..." : "Subscribe"}
                     </Button>
-                    <LibraryTargetPicker
-                      label="Subscribe + library"
-                      libraries={availableLibraries.libraries}
-                      loading={availableLibraries.loading}
-                      disabled={subscribeBusy}
-                      onOpen={() => {
-                        void loadAvailableLibraries();
-                      }}
-                      onSelectLibrary={(libraryId) => {
-                        void handleSubscribe(libraryId);
-                      }}
-                      emptyMessage="No non-default libraries available."
-                    />
                   </div>
                 )}
               </div>

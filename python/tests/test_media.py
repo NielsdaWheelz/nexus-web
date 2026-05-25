@@ -4024,3 +4024,657 @@ class TestPdfRetry:
 
         count = invalidate_pdf_quote_match_metadata(db_session, media_id)
         assert count >= 0
+
+
+# =============================================================================
+# Multi-library ingest tests (docs/multi-library-assignment.md §13.1)
+# =============================================================================
+
+
+def _bootstrap_user_default_library(auth_client, user_id: UUID) -> UUID:
+    """Bootstrap the user and return their default library id."""
+    response = auth_client.get("/me", headers=auth_headers(user_id))
+    assert response.status_code == 200, (
+        f"bootstrap failed for {user_id}: {response.status_code} {response.text}"
+    )
+    return UUID(response.json()["data"]["default_library_id"])
+
+
+def _library_entries_for_media(
+    direct_db: DirectSessionManager, media_id: UUID
+) -> set[UUID]:
+    with direct_db.session() as session:
+        rows = session.execute(
+            text(
+                """
+                SELECT library_id
+                FROM library_entries
+                WHERE media_id = :media_id
+                """
+            ),
+            {"media_id": media_id},
+        ).fetchall()
+    return {UUID(str(row[0])) for row in rows}
+
+
+def _create_extension_token(auth_client, user_id: UUID) -> tuple[UUID, str]:
+    response = auth_client.post(
+        "/auth/extension-sessions", headers=auth_headers(user_id)
+    )
+    assert response.status_code == 201, (
+        f"extension session creation failed: {response.status_code} {response.text}"
+    )
+    data = response.json()["data"]
+    return UUID(data["id"]), data["token"]
+
+
+class TestFromUrlLibraryIds:
+    """`POST /media/from_url` with `library_ids` per spec §13.1."""
+
+    @pytest.mark.parametrize(
+        "library_count",
+        [0, 1, 2],
+        ids=["empty", "one", "many"],
+    )
+    def test_from_url_with_library_ids(
+        self, auth_client, direct_db: DirectSessionManager, library_count: int
+    ):
+        """library_ids list is honored: each id (plus default) is in library_entries."""
+        from tests.factories import create_test_library
+
+        user_id = create_test_user_id()
+        default_library_id = _bootstrap_user_default_library(auth_client, user_id)
+
+        extra_library_ids: list[UUID] = []
+        with direct_db.session() as session:
+            for idx in range(library_count):
+                lib_id = create_test_library(session, user_id, f"From URL Lib {idx}")
+                extra_library_ids.append(lib_id)
+
+        for lib_id in extra_library_ids:
+            direct_db.register_cleanup("memberships", "library_id", lib_id)
+            direct_db.register_cleanup("libraries", "id", lib_id)
+
+        url = f"https://example.com/article-{uuid4().hex[:8]}"
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": url, "library_ids": [str(lid) for lid in extra_library_ids]},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 202, (
+            f"from_url with library_ids should succeed, got {response.status_code}: {response.text}"
+        )
+        data = response.json()["data"]
+        media_id = UUID(data["media_id"])
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        memberships = _library_entries_for_media(direct_db, media_id)
+        expected = {default_library_id, *extra_library_ids}
+        assert memberships == expected, (
+            "library_entries for new media must equal {default} + library_ids, "
+            f"got {memberships}, expected {expected}"
+        )
+
+    def test_from_url_rejects_inaccessible_library(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """An inaccessible library id triggers 403 `E_LIBRARY_FORBIDDEN` with no media row."""
+        from tests.factories import create_test_library
+
+        user_id = create_test_user_id()
+        _bootstrap_user_default_library(auth_client, user_id)
+        other_owner_id = create_test_user_id()
+        _bootstrap_user_default_library(auth_client, other_owner_id)
+
+        with direct_db.session() as session:
+            other_lib = create_test_library(session, other_owner_id, "Other Owner Lib")
+
+        direct_db.register_cleanup("memberships", "library_id", other_lib)
+        direct_db.register_cleanup("libraries", "id", other_lib)
+
+        url = f"https://example.com/forbidden-{uuid4().hex[:8]}"
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": url, "library_ids": [str(other_lib)]},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 403, (
+            "inaccessible library id must yield 403, "
+            f"got {response.status_code}: {response.text}"
+        )
+        assert response.json()["error"]["code"] == "E_LIBRARY_FORBIDDEN"
+
+        # Atomic: no partial media row should have been created.
+        with direct_db.session() as session:
+            count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM media
+                    WHERE created_by_user_id = :user_id
+                      AND requested_url = :url
+                    """
+                ),
+                {"user_id": user_id, "url": url},
+            ).scalar_one()
+        assert count == 0, (
+            "atomic rejection: no media row should exist after E_LIBRARY_FORBIDDEN"
+        )
+
+    def test_from_url_default_library_in_list_dedupes(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Default library id in library_ids is silently deduplicated."""
+        user_id = create_test_user_id()
+        default_library_id = _bootstrap_user_default_library(auth_client, user_id)
+
+        url = f"https://example.com/dedupe-{uuid4().hex[:8]}"
+        response = auth_client.post(
+            "/media/from_url",
+            json={"url": url, "library_ids": [str(default_library_id)]},
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 202, (
+            "default library id is silently deduped, never an error, "
+            f"got {response.status_code}: {response.text}"
+        )
+        media_id = UUID(response.json()["data"]["media_id"])
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        with direct_db.session() as session:
+            default_entry_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM library_entries
+                    WHERE media_id = :media_id
+                      AND library_id = :library_id
+                    """
+                ),
+                {"media_id": media_id, "library_id": default_library_id},
+            ).scalar_one()
+        assert default_entry_count == 1, (
+            "default library entry must appear exactly once, "
+            f"got {default_entry_count}"
+        )
+
+        memberships = _library_entries_for_media(direct_db, media_id)
+        assert memberships == {default_library_id}, (
+            f"only default library expected; got {memberships}"
+        )
+
+    def test_reshare_adds_libraries_to_existing_media(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Re-sharing the same URL reuses the existing media and adds new library_ids additively."""
+        from tests.factories import create_test_library
+
+        user_id = create_test_user_id()
+        default_library_id = _bootstrap_user_default_library(auth_client, user_id)
+
+        with direct_db.session() as session:
+            lib_a = create_test_library(session, user_id, "Reshare Lib A")
+            lib_b = create_test_library(session, user_id, "Reshare Lib B")
+
+        direct_db.register_cleanup("memberships", "library_id", lib_a)
+        direct_db.register_cleanup("libraries", "id", lib_a)
+        direct_db.register_cleanup("memberships", "library_id", lib_b)
+        direct_db.register_cleanup("libraries", "id", lib_b)
+
+        # Use a YouTube URL — `enqueue_media_from_url` dedupes by canonical video identity.
+        video_id = uuid4().hex[:11]
+        url = f"https://www.youtube.com/watch?v={video_id}"
+
+        first = auth_client.post(
+            "/media/from_url",
+            json={"url": url, "library_ids": [str(lib_a)]},
+            headers=auth_headers(user_id),
+        )
+        assert first.status_code == 202, f"first share failed: {first.status_code} {first.text}"
+        first_data = first.json()["data"]
+        media_id = UUID(first_data["media_id"])
+        assert first_data["idempotency_outcome"] == "created"
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        second = auth_client.post(
+            "/media/from_url",
+            json={"url": url, "library_ids": [str(lib_b)]},
+            headers=auth_headers(user_id),
+        )
+        assert second.status_code == 202, (
+            f"re-share must succeed and reuse media: {second.status_code} {second.text}"
+        )
+        second_data = second.json()["data"]
+        assert UUID(second_data["media_id"]) == media_id, (
+            "re-share must return the existing media_id (canonical dedup)"
+        )
+        assert second_data["idempotency_outcome"] == "reused"
+
+        memberships = _library_entries_for_media(direct_db, media_id)
+        assert memberships == {default_library_id, lib_a, lib_b}, (
+            "additive: default + lib_a (from first call) + lib_b (from second call); "
+            f"got {memberships}"
+        )
+
+
+class TestCaptureLibraryIds:
+    """`POST /media/capture/*` endpoints with `library_ids` per spec §13.1."""
+
+    def test_capture_article_library_ids(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """`POST /media/capture/article` honors `library_ids` in the body."""
+        from tests.factories import create_test_library
+
+        user_id = create_test_user_id()
+        default_library_id = _bootstrap_user_default_library(auth_client, user_id)
+        session_id, token = _create_extension_token(auth_client, user_id)
+        direct_db.register_cleanup("extension_sessions", "id", session_id)
+
+        with direct_db.session() as session:
+            lib_a = create_test_library(session, user_id, "Capture Article Lib A")
+            lib_b = create_test_library(session, user_id, "Capture Article Lib B")
+
+        direct_db.register_cleanup("memberships", "library_id", lib_a)
+        direct_db.register_cleanup("libraries", "id", lib_a)
+        direct_db.register_cleanup("memberships", "library_id", lib_b)
+        direct_db.register_cleanup("libraries", "id", lib_b)
+
+        url = f"https://example.com/capture-{uuid4().hex[:8]}"
+        response = auth_client.post(
+            "/media/capture/article",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "url": url,
+                "title": "Captured Article",
+                "content_html": "<article><p>Readable body.</p></article>",
+                "library_ids": [str(lib_a), str(lib_b)],
+            },
+        )
+
+        assert response.status_code == 201, (
+            f"capture/article should succeed, got {response.status_code}: {response.text}"
+        )
+        media_id = UUID(response.json()["data"]["media_id"])
+
+        direct_db.register_cleanup("fragment_blocks", "fragment_id", media_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        memberships = _library_entries_for_media(direct_db, media_id)
+        assert memberships == {default_library_id, lib_a, lib_b}, (
+            f"capture/article memberships should equal default + library_ids; got {memberships}"
+        )
+
+    def test_capture_file_header_library_ids(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch,
+    ):
+        """`POST /media/capture/file` parses `x-nexus-library-ids` header values."""
+        from tests.factories import create_test_library
+        from tests.support.storage import FakeStorageClient
+
+        # ---- Empty header → default-only.
+        user_a = create_test_user_id()
+        default_library_a = _bootstrap_user_default_library(auth_client, user_a)
+        session_a_id, token_a = _create_extension_token(auth_client, user_a)
+        direct_db.register_cleanup("extension_sessions", "id", session_a_id)
+
+        fake_storage = FakeStorageClient()
+        monkeypatch.setattr("nexus.services.media.get_storage_client", lambda: fake_storage)
+        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
+
+        pdf_bytes = b"%PDF-1.4\ncaptured pdf bytes for header empty"
+        empty_response = auth_client.post(
+            "/media/capture/file",
+            headers={
+                "Authorization": f"Bearer {token_a}",
+                "Content-Type": "application/pdf",
+                "X-Nexus-Filename": "empty-header.pdf",
+                "x-nexus-library-ids": "",
+            },
+            content=pdf_bytes,
+        )
+        assert empty_response.status_code == 202, (
+            "empty x-nexus-library-ids header is valid (default-only), "
+            f"got {empty_response.status_code}: {empty_response.text}"
+        )
+        empty_media_id = UUID(empty_response.json()["data"]["media_id"])
+        direct_db.register_cleanup("library_entries", "media_id", empty_media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", empty_media_id)
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", empty_media_id)
+        direct_db.register_cleanup("media_file", "media_id", empty_media_id)
+        direct_db.register_cleanup("media", "id", empty_media_id)
+
+        empty_memberships = _library_entries_for_media(direct_db, empty_media_id)
+        assert empty_memberships == {default_library_a}, (
+            f"empty header → default library only; got {empty_memberships}"
+        )
+
+        # ---- Single UUID header → default + lib.
+        user_b = create_test_user_id()
+        default_library_b = _bootstrap_user_default_library(auth_client, user_b)
+        session_b_id, token_b = _create_extension_token(auth_client, user_b)
+        direct_db.register_cleanup("extension_sessions", "id", session_b_id)
+
+        with direct_db.session() as session:
+            single_lib = create_test_library(session, user_b, "Header Single Lib")
+        direct_db.register_cleanup("memberships", "library_id", single_lib)
+        direct_db.register_cleanup("libraries", "id", single_lib)
+
+        single_response = auth_client.post(
+            "/media/capture/file",
+            headers={
+                "Authorization": f"Bearer {token_b}",
+                "Content-Type": "application/pdf",
+                "X-Nexus-Filename": "single.pdf",
+                "x-nexus-library-ids": str(single_lib),
+            },
+            content=b"%PDF-1.4\nbytes-single",
+        )
+        assert single_response.status_code == 202, (
+            f"single-UUID header should succeed, got {single_response.status_code}: "
+            f"{single_response.text}"
+        )
+        single_media_id = UUID(single_response.json()["data"]["media_id"])
+        direct_db.register_cleanup("library_entries", "media_id", single_media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", single_media_id)
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", single_media_id)
+        direct_db.register_cleanup("media_file", "media_id", single_media_id)
+        direct_db.register_cleanup("media", "id", single_media_id)
+
+        single_memberships = _library_entries_for_media(direct_db, single_media_id)
+        assert single_memberships == {default_library_b, single_lib}, (
+            f"single header → default + lib; got {single_memberships}"
+        )
+
+        # ---- Comma-joined UUIDs header → default + both libs.
+        user_c = create_test_user_id()
+        default_library_c = _bootstrap_user_default_library(auth_client, user_c)
+        session_c_id, token_c = _create_extension_token(auth_client, user_c)
+        direct_db.register_cleanup("extension_sessions", "id", session_c_id)
+
+        with direct_db.session() as session:
+            lib_x = create_test_library(session, user_c, "Header Comma X")
+            lib_y = create_test_library(session, user_c, "Header Comma Y")
+        for lib in (lib_x, lib_y):
+            direct_db.register_cleanup("memberships", "library_id", lib)
+            direct_db.register_cleanup("libraries", "id", lib)
+
+        comma_response = auth_client.post(
+            "/media/capture/file",
+            headers={
+                "Authorization": f"Bearer {token_c}",
+                "Content-Type": "application/pdf",
+                "X-Nexus-Filename": "comma.pdf",
+                "x-nexus-library-ids": f"{lib_x},{lib_y}",
+            },
+            content=b"%PDF-1.4\nbytes-comma",
+        )
+        assert comma_response.status_code == 202, (
+            f"comma-joined header should succeed, got {comma_response.status_code}: "
+            f"{comma_response.text}"
+        )
+        comma_media_id = UUID(comma_response.json()["data"]["media_id"])
+        direct_db.register_cleanup("library_entries", "media_id", comma_media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", comma_media_id)
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", comma_media_id)
+        direct_db.register_cleanup("media_file", "media_id", comma_media_id)
+        direct_db.register_cleanup("media", "id", comma_media_id)
+
+        comma_memberships = _library_entries_for_media(direct_db, comma_media_id)
+        assert comma_memberships == {default_library_c, lib_x, lib_y}, (
+            f"comma-joined header → default + lib_x + lib_y; got {comma_memberships}"
+        )
+
+    def test_capture_url_library_ids(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """`POST /media/capture/url` honors `library_ids` body field."""
+        from tests.factories import create_test_library
+
+        user_id = create_test_user_id()
+        default_library_id = _bootstrap_user_default_library(auth_client, user_id)
+        session_id, token = _create_extension_token(auth_client, user_id)
+        direct_db.register_cleanup("extension_sessions", "id", session_id)
+
+        with direct_db.session() as session:
+            lib_a = create_test_library(session, user_id, "Capture URL Lib A")
+            lib_b = create_test_library(session, user_id, "Capture URL Lib B")
+
+        direct_db.register_cleanup("memberships", "library_id", lib_a)
+        direct_db.register_cleanup("libraries", "id", lib_a)
+        direct_db.register_cleanup("memberships", "library_id", lib_b)
+        direct_db.register_cleanup("libraries", "id", lib_b)
+
+        url = f"https://example.com/capture-url-{uuid4().hex[:8]}"
+        response = auth_client.post(
+            "/media/capture/url",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "url": url,
+                "library_ids": [str(lib_a), str(lib_b)],
+            },
+        )
+
+        assert response.status_code == 202, (
+            f"capture/url should succeed, got {response.status_code}: {response.text}"
+        )
+        media_id = UUID(response.json()["data"]["media_id"])
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        memberships = _library_entries_for_media(direct_db, media_id)
+        assert memberships == {default_library_id, lib_a, lib_b}, (
+            f"capture/url memberships should equal default + library_ids; got {memberships}"
+        )
+
+
+class TestUploadInitLibraryIds:
+    """`POST /media/upload/init` + `POST /media/{id}/ingest` with `library_ids`."""
+
+    def test_upload_init_with_library_ids(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch,
+    ):
+        """init_upload + confirm_ingest_for_viewer attach the media to default + library_ids.
+
+        Covers both the PDF and EPUB confirm paths (which dispatch differently),
+        verifying that `library_ids` flows from init → confirm uniformly.
+        """
+        from tests.factories import create_test_library
+        from tests.support.storage import FakeStorageClient
+
+        fake_storage = FakeStorageClient()
+        monkeypatch.setattr("nexus.services.media.get_storage_client", lambda: fake_storage)
+        monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: fake_storage)
+        monkeypatch.setattr(
+            "nexus.services.epub_lifecycle.get_storage_client", lambda: fake_storage
+        )
+        monkeypatch.setattr(
+            "nexus.services.epub_lifecycle.check_archive_safety", lambda data: None
+        )
+
+        # ---- PDF path
+        user_id = create_test_user_id()
+        default_library_id = _bootstrap_user_default_library(auth_client, user_id)
+
+        with direct_db.session() as session:
+            pdf_lib_a = create_test_library(session, user_id, "Upload PDF Lib A")
+            pdf_lib_b = create_test_library(session, user_id, "Upload PDF Lib B")
+
+        for lib in (pdf_lib_a, pdf_lib_b):
+            direct_db.register_cleanup("memberships", "library_id", lib)
+            direct_db.register_cleanup("libraries", "id", lib)
+
+        pdf_bytes = b"%PDF-1.4" + b"pdf payload " * 64
+        pdf_init = auth_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "pdf",
+                "filename": "upload-with-libs.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": len(pdf_bytes),
+                "library_ids": [str(pdf_lib_a), str(pdf_lib_b)],
+            },
+            headers=auth_headers(user_id),
+        )
+        assert pdf_init.status_code == 200, (
+            f"upload init (pdf) should succeed, got {pdf_init.status_code}: {pdf_init.text}"
+        )
+        pdf_media_id = UUID(pdf_init.json()["data"]["media_id"])
+        direct_db.register_cleanup("library_entries", "media_id", pdf_media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", pdf_media_id)
+        direct_db.register_cleanup(
+            "default_library_closure_edges", "media_id", pdf_media_id
+        )
+        direct_db.register_cleanup("media_file", "media_id", pdf_media_id)
+        direct_db.register_cleanup("media", "id", pdf_media_id)
+
+        # init_upload alone already calls assign_libraries_for_media, so memberships
+        # should be present even before ingest confirms.
+        memberships_after_init = _library_entries_for_media(direct_db, pdf_media_id)
+        assert memberships_after_init == {default_library_id, pdf_lib_a, pdf_lib_b}, (
+            "init_upload must attach media to default + library_ids; "
+            f"got {memberships_after_init}"
+        )
+
+        # Put bytes into staging and confirm ingest with the same library_ids.
+        from nexus.storage.paths import (
+            build_upload_staging_storage_path,
+            get_file_extension,
+        )
+
+        pdf_staging_path = build_upload_staging_storage_path(
+            pdf_media_id, get_file_extension("pdf")
+        )
+        fake_storage.put_object(pdf_staging_path, pdf_bytes, "application/pdf")
+
+        confirm = auth_client.post(
+            f"/media/{pdf_media_id}/ingest",
+            json={"library_ids": [str(pdf_lib_a), str(pdf_lib_b)]},
+            headers=auth_headers(user_id),
+        )
+        assert confirm.status_code == 200, (
+            f"PDF ingest confirm should succeed, got {confirm.status_code}: {confirm.text}"
+        )
+
+        with direct_db.session() as session:
+            jobs = session.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM background_jobs
+                    WHERE payload->>'media_id' = :media_id
+                    """
+                ),
+                {"media_id": str(pdf_media_id)},
+            ).fetchall()
+        for job_row in jobs:
+            direct_db.register_cleanup("background_jobs", "id", job_row[0])
+
+        memberships_after_confirm = _library_entries_for_media(direct_db, pdf_media_id)
+        assert memberships_after_confirm == {default_library_id, pdf_lib_a, pdf_lib_b}, (
+            "confirm_ingest_for_viewer is additive + idempotent on library_ids; "
+            f"got {memberships_after_confirm}"
+        )
+
+        # ---- EPUB path
+        epub_user = create_test_user_id()
+        epub_default_library = _bootstrap_user_default_library(auth_client, epub_user)
+        with direct_db.session() as session:
+            epub_lib = create_test_library(session, epub_user, "Upload EPUB Lib")
+        direct_db.register_cleanup("memberships", "library_id", epub_lib)
+        direct_db.register_cleanup("libraries", "id", epub_lib)
+
+        # Minimal-but-valid EPUB magic bytes for upload-time magic-byte validation.
+        epub_bytes = b"PK\x03\x04" + b"epub payload " * 64
+        epub_init = auth_client.post(
+            "/media/upload/init",
+            json={
+                "kind": "epub",
+                "filename": "upload-with-libs.epub",
+                "content_type": "application/epub+zip",
+                "size_bytes": len(epub_bytes),
+                "library_ids": [str(epub_lib)],
+            },
+            headers=auth_headers(epub_user),
+        )
+        assert epub_init.status_code == 200, (
+            f"upload init (epub) should succeed, got {epub_init.status_code}: {epub_init.text}"
+        )
+        epub_media_id = UUID(epub_init.json()["data"]["media_id"])
+        direct_db.register_cleanup("epub_toc_nodes", "media_id", epub_media_id)
+        direct_db.register_cleanup("library_entries", "media_id", epub_media_id)
+        direct_db.register_cleanup(
+            "default_library_intrinsics", "media_id", epub_media_id
+        )
+        direct_db.register_cleanup(
+            "default_library_closure_edges", "media_id", epub_media_id
+        )
+        direct_db.register_cleanup("fragments", "media_id", epub_media_id)
+        direct_db.register_cleanup("media_file", "media_id", epub_media_id)
+        direct_db.register_cleanup("media", "id", epub_media_id)
+
+        epub_init_memberships = _library_entries_for_media(direct_db, epub_media_id)
+        assert epub_init_memberships == {epub_default_library, epub_lib}, (
+            f"epub init should attach default + library_ids; got {epub_init_memberships}"
+        )
+
+        epub_staging_path = build_upload_staging_storage_path(
+            epub_media_id, get_file_extension("epub")
+        )
+        fake_storage.put_object(epub_staging_path, epub_bytes, "application/epub+zip")
+
+        epub_confirm = auth_client.post(
+            f"/media/{epub_media_id}/ingest",
+            json={"library_ids": [str(epub_lib)]},
+            headers=auth_headers(epub_user),
+        )
+        assert epub_confirm.status_code == 200, (
+            "EPUB ingest confirm should succeed, "
+            f"got {epub_confirm.status_code}: {epub_confirm.text}"
+        )
+
+        with direct_db.session() as session:
+            jobs = session.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM background_jobs
+                    WHERE payload->>'media_id' = :media_id
+                    """
+                ),
+                {"media_id": str(epub_media_id)},
+            ).fetchall()
+        for job_row in jobs:
+            direct_db.register_cleanup("background_jobs", "id", job_row[0])
+
+        epub_confirm_memberships = _library_entries_for_media(direct_db, epub_media_id)
+        assert epub_confirm_memberships == {epub_default_library, epub_lib}, (
+            "epub confirm is additive + idempotent on library_ids; "
+            f"got {epub_confirm_memberships}"
+        )

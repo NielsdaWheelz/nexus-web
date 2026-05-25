@@ -2,7 +2,7 @@ import { useState, type ComponentProps, type RefCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import LibraryMembershipPanel from "./LibraryMembershipPanel";
-import type { LibraryTargetPickerItem } from "./LibraryTargetPicker";
+import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
 
 const libraries: LibraryTargetPickerItem[] = [
   {

@@ -56,7 +56,7 @@ class PodcastSubscribeRequest(BaseModel):
     image_url: str | None = None
     description: str | None = None
     auto_queue: bool = False
-    library_id: UUID | None = None
+    library_ids: list[UUID] = Field(default_factory=list)
 
     @field_validator("contributors", mode="before")
     @classmethod
@@ -64,6 +64,14 @@ class PodcastSubscribeRequest(BaseModel):
         if not isinstance(value, list):
             return value
         return [contributor_credit_write_payload(item) for item in value]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PodcastOpmlImportRequest(BaseModel):
+    opml: str = Field(min_length=1)
+    default_library_ids: list[UUID] = Field(default_factory=list)
+    per_feed_library_ids: dict[str, list[UUID]] = Field(default_factory=dict)
 
     model_config = ConfigDict(extra="forbid")
 

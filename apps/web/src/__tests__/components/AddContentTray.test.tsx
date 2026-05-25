@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AddContentTray from "@/components/AddContentTray";
 import { OPEN_ADD_CONTENT_EVENT } from "@/components/addContentEvents";
@@ -181,5 +181,279 @@ describe("AddContentTray", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add note" }));
 
     expect(await screen.findByText("Added to today.")).toBeInTheDocument();
+  });
+
+  describe("library multi-select wiring", () => {
+    type FromUrlCall = { url: string; library_ids: string[] };
+
+    function setupFetchWithLibraries(calls: FromUrlCall[]) {
+      vi.restoreAllMocks();
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/libraries") {
+          return jsonResponse({
+            data: [
+              { id: "lib-default", name: "My Library", is_default: true, color: null },
+              { id: "lib-research", name: "Research", is_default: false, color: "#0ea5e9" },
+              { id: "lib-books", name: "Books", is_default: false, color: "#22c55e" },
+            ],
+          });
+        }
+        if (url.pathname === "/api/media/from-url" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as {
+            url: string;
+            library_ids: string[];
+          };
+          calls.push({ url: body.url, library_ids: body.library_ids });
+          return jsonResponse({
+            data: {
+              media_id: `media-${calls.length}`,
+              idempotency_outcome: "created",
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+      });
+    }
+
+    async function openBatchPicker() {
+      const dialog = await screen.findByRole("dialog", { name: "Add content" });
+      const libraryField = dialog.querySelector("label");
+      // The first picker in the dialog body is the batch picker (under the "Also add to" label).
+      const batchTrigger = within(dialog).getAllByRole("button", {
+        name: /My Library only|\+ /,
+      })[0];
+      expect(libraryField).not.toBeNull();
+      expect(batchTrigger).toBeInTheDocument();
+      fireEvent.click(batchTrigger);
+      return screen.getByRole("dialog", { name: "Select libraries" });
+    }
+
+    it("applies the batch picker to subsequently enqueued items but not to previously enqueued ones", async () => {
+      const calls: FromUrlCall[] = [];
+      setupFetchWithLibraries(calls);
+
+      render(<AddContentTray />);
+
+      openTray();
+      await screen.findByRole("dialog", { name: "Add content" });
+
+      // Wait for libraries to be loaded so the batch picker has selectable options.
+      await waitFor(() => {
+        expect(
+          screen.getAllByRole("button", { name: /My Library only/ }).length
+        ).toBeGreaterThan(0);
+      });
+
+      // 1. Enqueue first item under the default empty batch selection.
+      dispatchPaste(window, "https://example.com/first.pdf");
+      await waitFor(() => {
+        expect(
+          calls.find((call) => call.url === "https://example.com/first.pdf")
+        ).toBeDefined();
+      });
+
+      // 2. Change batch picker to add "Research".
+      const batchPanel = await openBatchPicker();
+      fireEvent.click(
+        within(batchPanel).getByRole("option", { name: /Research/ })
+      );
+
+      // 3. Enqueue another item; this one should pick up "Research" only.
+      dispatchPaste(window, "https://example.com/second.pdf");
+      await waitFor(() => {
+        expect(
+          calls.find((call) => call.url === "https://example.com/second.pdf")
+        ).toBeDefined();
+      });
+
+      const firstCall = calls.find(
+        (call) => call.url === "https://example.com/first.pdf"
+      );
+      const secondCall = calls.find(
+        (call) => call.url === "https://example.com/second.pdf"
+      );
+
+      expect(firstCall?.library_ids).toEqual([]);
+      expect(secondCall?.library_ids).toEqual(["lib-research"]);
+    });
+
+    it("lets a per-row override change library_ids independently of the batch", async () => {
+      const calls: FromUrlCall[] = [];
+      const heldResponses: Array<() => void> = [];
+      vi.restoreAllMocks();
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/libraries") {
+          return jsonResponse({
+            data: [
+              { id: "lib-default", name: "My Library", is_default: true, color: null },
+              { id: "lib-research", name: "Research", is_default: false, color: "#0ea5e9" },
+              { id: "lib-books", name: "Books", is_default: false, color: "#22c55e" },
+            ],
+          });
+        }
+        if (url.pathname === "/api/media/from-url" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as {
+            url: string;
+            library_ids: string[];
+          };
+          calls.push({ url: body.url, library_ids: body.library_ids });
+          // Hold the response so we can interact with the queue while items are in flight.
+          return new Promise<Response>((resolve) => {
+            heldResponses.push(() =>
+              resolve(
+                jsonResponse({
+                  data: {
+                    media_id: `media-${calls.length}`,
+                    idempotency_outcome: "created",
+                  },
+                })
+              )
+            );
+          });
+        }
+        throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+      });
+
+      render(<AddContentTray />);
+
+      openTray();
+      await screen.findByRole("dialog", { name: "Add content" });
+
+      await waitFor(() => {
+        expect(
+          screen.getAllByRole("button", { name: /My Library only/ }).length
+        ).toBeGreaterThan(0);
+      });
+
+      // Enqueue three URLs; MAX_ACTIVE_UPLOADS=2 keeps the third one queued
+      // (and therefore showing its per-row library picker chip).
+      dispatchPaste(
+        window,
+        "https://example.com/first.pdf\nhttps://example.com/second.pdf\nhttps://example.com/third.pdf"
+      );
+
+      // The third row stays queued while the held responses are pending.
+      await waitFor(() => {
+        expect(
+          screen.getByText("https://example.com/third.pdf")
+        ).toBeInTheDocument();
+      });
+      await waitFor(() => {
+        expect(calls.length).toBe(2);
+      });
+
+      // Find the queued row's per-row picker (the chip in the row's actions
+      // column). The Remove button's aria-label uniquely identifies the row.
+      const removeButton = screen.getByRole("button", {
+        name: "Remove https://example.com/third.pdf",
+      });
+      const queueItem = removeButton.closest(
+        "div"
+      )?.parentElement as HTMLElement | null;
+      expect(queueItem).not.toBeNull();
+      const rowPickerTrigger = within(queueItem as HTMLElement).getByRole(
+        "button",
+        { name: /My Library only/ }
+      );
+      fireEvent.click(rowPickerTrigger);
+
+      const rowPanel = await screen.findByRole("dialog", {
+        name: "Select libraries",
+      });
+      fireEvent.click(within(rowPanel).getByRole("option", { name: /Books/ }));
+
+      // The row's chip should now reflect the override.
+      await waitFor(() => {
+        expect(
+          within(queueItem as HTMLElement).getByRole("button", {
+            name: /\+ Books/,
+          })
+        ).toBeInTheDocument();
+      });
+
+      // Release the held responses; the third item will be picked up next.
+      for (const release of heldResponses) {
+        release();
+      }
+      heldResponses.length = 0;
+
+      await waitFor(() => {
+        expect(calls.length).toBe(3);
+      });
+
+      const overriddenCall = calls.find(
+        (call) => call.url === "https://example.com/third.pdf"
+      );
+      const firstCall = calls.find(
+        (call) => call.url === "https://example.com/first.pdf"
+      );
+      const secondCall = calls.find(
+        (call) => call.url === "https://example.com/second.pdf"
+      );
+
+      expect(overriddenCall?.library_ids).toEqual(["lib-books"]);
+      expect(firstCall?.library_ids).toEqual([]);
+      expect(secondCall?.library_ids).toEqual([]);
+
+      // Release any remaining queued response.
+      for (const release of heldResponses) {
+        release();
+      }
+    });
+
+    it("submits each queue item with its own library_ids", async () => {
+      const calls: FromUrlCall[] = [];
+      setupFetchWithLibraries(calls);
+
+      render(<AddContentTray />);
+
+      openTray();
+      await screen.findByRole("dialog", { name: "Add content" });
+
+      await waitFor(() => {
+        expect(
+          screen.getAllByRole("button", { name: /My Library only/ }).length
+        ).toBeGreaterThan(0);
+      });
+
+      // Open the batch picker and select Research.
+      const batchPanel = await openBatchPicker();
+      fireEvent.click(
+        within(batchPanel).getByRole("option", { name: /Research/ })
+      );
+
+      dispatchPaste(window, "https://example.com/alpha.pdf");
+      await waitFor(() => {
+        expect(
+          calls.find((c) => c.url === "https://example.com/alpha.pdf")
+        ).toBeDefined();
+      });
+
+      // The batch panel is still open. Toggle to Books only (deselect
+      // Research, select Books) within the same panel session.
+      fireEvent.click(
+        within(batchPanel).getByRole("option", { name: /Research/ })
+      );
+      fireEvent.click(
+        within(batchPanel).getByRole("option", { name: /Books/ })
+      );
+
+      dispatchPaste(window, "https://example.com/beta.pdf");
+      await waitFor(() => {
+        expect(
+          calls.find((c) => c.url === "https://example.com/beta.pdf")
+        ).toBeDefined();
+      });
+
+      const alpha = calls.find(
+        (c) => c.url === "https://example.com/alpha.pdf"
+      );
+      const beta = calls.find((c) => c.url === "https://example.com/beta.pdf");
+
+      expect(alpha?.library_ids).toEqual(["lib-research"]);
+      expect(beta?.library_ids).toEqual(["lib-books"]);
+    });
   });
 });

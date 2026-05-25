@@ -1,5 +1,13 @@
 import { apiFetch } from "@/lib/api/client";
-import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
+
+export interface LibraryTargetPickerItem {
+  id: string;
+  name: string;
+  color: string | null;
+  isInLibrary: boolean;
+  canAdd: boolean;
+  canRemove: boolean;
+}
 
 export interface LibrarySummary {
   id: string;
@@ -65,6 +73,27 @@ export async function addMediaToLibrary(
     method: "POST",
     body: JSON.stringify({ media_id: mediaId }),
   });
+}
+
+interface AddMediaToLibrariesResponse {
+  data: {
+    media_id: string;
+    library_ids_added: string[];
+  };
+}
+
+export async function addMediaToLibraries(
+  mediaId: string,
+  libraryIds: string[],
+): Promise<{ media_id: string; library_ids_added: string[] }> {
+  const response = await apiFetch<AddMediaToLibrariesResponse>(
+    `/api/media/${mediaId}/libraries`,
+    {
+      method: "POST",
+      body: JSON.stringify({ library_ids: libraryIds }),
+    },
+  );
+  return response.data;
 }
 
 export async function removeMediaFromLibrary(

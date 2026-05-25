@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
-import { patchLibraryMembership } from "./mediaLibraries";
+import {
+  patchLibraryMembership,
+  type LibraryTargetPickerItem,
+} from "./mediaLibraries";
 
 function makeLibrary(
   overrides: Partial<LibraryTargetPickerItem> = {},

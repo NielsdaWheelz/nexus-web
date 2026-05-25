@@ -17,7 +17,6 @@ from nexus.db.session import transaction
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
-    ForbiddenError,
     InvalidRequestError,
     NotFoundError,
 )
@@ -31,6 +30,7 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionStatusOut,
     PodcastUnsubscribeOut,
 )
+from nexus.services.libraries import set_subscription_libraries, validate_libraries_accessible
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
 from ._writes import replace_podcast_contributors_from_body, update_podcast_metadata
@@ -57,12 +57,27 @@ def import_subscriptions_from_opml(
     db: Session,
     viewer_id: UUID,
     *,
-    file_name: str | None,
-    content_type: str | None,
-    payload: bytes,
+    opml_xml: str,
+    default_library_ids: list[UUID],
+    per_feed_library_ids: dict[str, list[UUID]],
 ) -> PodcastOpmlImportOut:
-    _validate_opml_upload(content_type=content_type, payload=payload)
-    outline_rows = _parse_opml_rss_outlines(payload)
+    if not isinstance(opml_xml, str):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "OPML import requires the OPML payload as a string.",
+        )
+    validate_libraries_accessible(db, viewer_id, default_library_ids)
+    for feed_library_ids in per_feed_library_ids.values():
+        validate_libraries_accessible(db, viewer_id, feed_library_ids)
+    payload_bytes = opml_xml.encode("utf-8")
+    if not payload_bytes:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "OPML file is empty.")
+    if len(payload_bytes) > PODCAST_OPML_MAX_BYTES:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "OPML file exceeds the 1MB size limit.",
+        )
+    outline_rows = _parse_opml_rss_outlines(payload_bytes)
     if len(outline_rows) > PODCAST_OPML_MAX_OUTLINES:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
@@ -110,6 +125,8 @@ def import_subscriptions_from_opml(
             )
         )
 
+        library_ids = per_feed_library_ids.get(normalized_feed_url, default_library_ids)
+
         try:
             with transaction(db):
                 now = datetime.now(UTC)
@@ -152,6 +169,7 @@ def import_subscriptions_from_opml(
                 if not subscription_created and existing_status != "unsubscribed":
                     summary.skipped_already_subscribed += 1
                     continue
+                set_subscription_libraries(db, viewer_id, podcast_id, library_ids)
                 _enqueue_podcast_subscription_sync(
                     db,
                     user_id=viewer_id,
@@ -169,7 +187,6 @@ def import_subscriptions_from_opml(
             logger.exception(
                 "podcast_opml_import_unexpected_error",
                 feed_url=normalized_feed_url,
-                file_name=file_name,
                 error=str(exc),
             )
             summary.errors.append(
@@ -234,33 +251,12 @@ def subscribe_to_podcast(
     viewer_id: UUID,
     body: PodcastSubscribeRequest,
 ) -> PodcastSubscribeOut:
+    validate_libraries_accessible(db, viewer_id, body.library_ids)
     normalized_feed_url = validate_and_normalize_feed_url(body.feed_url)
     normalized_body = body.model_copy(update={"feed_url": normalized_feed_url})
     now = datetime.now(UTC)
 
     with transaction(db):
-        if body.library_id is not None:
-            target_library = db.execute(
-                text("""
-                    SELECT m.role, l.is_default
-                    FROM memberships m
-                    JOIN libraries l ON l.id = m.library_id
-                    WHERE m.library_id = :library_id
-                      AND m.user_id = :viewer_id
-                    FOR UPDATE OF l
-                """),
-                {"library_id": body.library_id, "viewer_id": viewer_id},
-            ).fetchone()
-            if target_library is None:
-                raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
-            if target_library[0] != "admin":
-                raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
-            if bool(target_library[1]):
-                raise ForbiddenError(
-                    ApiErrorCode.E_DEFAULT_LIBRARY_FORBIDDEN,
-                    "Podcasts cannot be added to the default library",
-                )
-
         podcast_id = upsert_podcast(db, normalized_body, now=now)
         subscription_created = _upsert_subscription(
             db,
@@ -269,6 +265,7 @@ def subscribe_to_podcast(
             now=now,
             auto_queue=body.auto_queue,
         )
+        set_subscription_libraries(db, viewer_id, podcast_id, body.library_ids)
         sync_enqueued = _enqueue_podcast_subscription_sync(
             db,
             user_id=viewer_id,
@@ -277,12 +274,6 @@ def subscribe_to_podcast(
         snapshot = _get_subscription_sync_snapshot(db, viewer_id, podcast_id)
         if snapshot is None:
             raise ApiError(ApiErrorCode.E_INTERNAL, "Failed to read podcast subscription state.")
-        if body.library_id is not None:
-            _add_podcast_to_library_if_missing(
-                db,
-                library_id=body.library_id,
-                podcast_id=podcast_id,
-            )
 
     return PodcastSubscribeOut(
         podcast_id=podcast_id,
@@ -514,27 +505,6 @@ def unsubscribe_from_podcast(
     )
 
 
-def _validate_opml_upload(*, content_type: str | None, payload: bytes) -> None:
-    normalized_content_type = str(content_type or "").split(";")[0].strip().lower()
-    if (
-        normalized_content_type
-        and normalized_content_type not in {"application/octet-stream", "binary/octet-stream"}
-        and "xml" not in normalized_content_type
-        and "opml" not in normalized_content_type
-    ):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "OPML import requires an XML file upload.",
-        )
-    if not payload:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "OPML file is empty.")
-    if len(payload) > PODCAST_OPML_MAX_BYTES:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "OPML file exceeds the 1MB size limit.",
-        )
-
-
 def _parse_opml_rss_outlines(payload: bytes) -> list[dict[str, str]]:
     try:
         parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=False)
@@ -648,6 +618,7 @@ def _build_opml_subscribe_request(
         image_url=provider_image,
         description=provider_description,
         auto_queue=False,
+        library_ids=[],
     )
 
 
@@ -877,61 +848,9 @@ def _upsert_subscription(
     return True
 
 
-def _add_podcast_to_library_if_missing(
-    db: Session,
-    *,
-    library_id: UUID,
-    podcast_id: UUID,
-) -> None:
-    existing_entry = db.execute(
-        text("""
-            SELECT 1
-            FROM library_entries
-            WHERE library_id = :library_id
-              AND podcast_id = :podcast_id
-        """),
-        {"library_id": library_id, "podcast_id": podcast_id},
-    ).fetchone()
-    if existing_entry is not None:
-        return
-
-    try:
-        with db.begin_nested():
-            db.execute(
-                text("""
-                    INSERT INTO library_entries (library_id, media_id, podcast_id, position)
-                    VALUES (
-                        :library_id,
-                        NULL,
-                        :podcast_id,
-                        (
-                            SELECT COALESCE(MAX(position), -1) + 1
-                            FROM library_entries
-                            WHERE library_id = :library_id
-                        )
-                    )
-                """),
-                {
-                    "library_id": library_id,
-                    "podcast_id": podcast_id,
-                },
-            )
-    except IntegrityError as exc:
-        if not _is_library_podcast_entry_conflict(exc):
-            raise
-
-
 def _is_subscription_identity_conflict(exc: IntegrityError) -> bool:
     orig = getattr(exc, "orig", None)
     constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
     if constraint_name:
         return constraint_name == "podcast_subscriptions_pkey"
     return "podcast_subscriptions_pkey" in str(orig or exc)
-
-
-def _is_library_podcast_entry_conflict(exc: IntegrityError) -> bool:
-    orig = getattr(exc, "orig", None)
-    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
-    if constraint_name:
-        return constraint_name == "uq_library_entries_library_podcast"
-    return "uq_library_entries_library_podcast" in str(orig or exc)

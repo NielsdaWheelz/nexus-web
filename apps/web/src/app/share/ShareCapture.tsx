@@ -1,15 +1,25 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import LibraryMultiSelectPicker from "@/components/LibraryMultiSelectPicker";
 import { extractUrls } from "@/lib/extractUrls";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
+import { useAddMediaToLibraries } from "@/lib/media/useAddMediaToLibraries";
+import { useNonDefaultLibraries } from "@/lib/media/useNonDefaultLibraries";
 import { quickCaptureDailyNote } from "@/lib/notes/api";
+import { deepLinkBack } from "./shareDeepLink";
 import styles from "./share.module.css";
 
 // One captured item. A failed capture carries no destination; a successful one
 // carries the in-app `path` its "Open" action targets.
 type CaptureResult =
-  | { label: string; ok: true; status: string; path: string }
+  | {
+      label: string;
+      ok: true;
+      status: string;
+      path: string;
+      mediaId?: string;
+    }
   | { label: string; ok: false };
 
 export default function ShareCapture({
@@ -28,33 +38,60 @@ export default function ShareCapture({
   // (quickCaptureDailyNote is not idempotent, unlike from-url).
   const capturedAttempt = useRef<number | null>(null);
 
+  // Post-add library picker state. Modal opens once after every URL has been
+  // processed; the same selection is applied to every created media row.
+  const [createdMediaIds, setCreatedMediaIds] = useState<string[]>([]);
+  const [showLibraryModal, setShowLibraryModal] = useState(false);
+  const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
+
+  const libraryPicker = useNonDefaultLibraries();
+  const loadLibraries = libraryPicker.load;
+  const { add: addLibraries } = useAddMediaToLibraries();
+
   useEffect(() => {
     if (!trimmed || capturedAttempt.current === attempt) {
       return;
     }
     capturedAttempt.current = attempt;
     setResults(null);
+    setCreatedMediaIds([]);
+    setSelectedLibraryIds([]);
+    setShowLibraryModal(false);
 
     void (async () => {
       const urls = extractUrls(trimmed);
       if (urls.length > 0) {
-        setResults(
-          await Promise.all(
-            urls.map(async (url): Promise<CaptureResult> => {
-              try {
-                const { mediaId, duplicate } = await addMediaFromUrl({ url });
-                return {
-                  label: url,
-                  ok: true,
-                  status: duplicate ? "Already in your library" : "Saved",
-                  path: `/media/${mediaId}`,
-                };
-              } catch {
-                return { label: url, ok: false };
-              }
-            }),
-          ),
+        const settled = await Promise.all(
+          urls.map(async (url): Promise<CaptureResult> => {
+            try {
+              const { mediaId, duplicate } = await addMediaFromUrl({
+                url,
+                libraryIds: [],
+              });
+              return {
+                label: url,
+                ok: true,
+                status: duplicate ? "Already in your library" : "Saved",
+                path: `/media/${mediaId}`,
+                mediaId,
+              };
+            } catch {
+              return { label: url, ok: false };
+            }
+          }),
         );
+        setResults(settled);
+        const createdIds = settled
+          .filter(
+            (entry): entry is Extract<CaptureResult, { ok: true }> => entry.ok,
+          )
+          .map((entry) => entry.mediaId)
+          .filter((id): id is string => Boolean(id));
+        if (createdIds.length > 0) {
+          setCreatedMediaIds(createdIds);
+          setShowLibraryModal(true);
+          void loadLibraries();
+        }
         return;
       }
       try {
@@ -71,7 +108,7 @@ export default function ShareCapture({
         setResults([{ label: trimmed, ok: false }]);
       }
     })();
-  }, [trimmed, attempt]);
+  }, [trimmed, attempt, loadLibraries]);
 
   const doneHref = isShell ? "nexus-share://dismiss" : "/";
 
@@ -154,6 +191,25 @@ export default function ShareCapture({
           Done
         </a>
       </div>
+      <LibraryMultiSelectPicker
+        mode="modal"
+        open={showLibraryModal}
+        selectedLibraryIds={selectedLibraryIds}
+        onChange={setSelectedLibraryIds}
+        libraries={libraryPicker.libraries}
+        onConfirm={async (ids) => {
+          for (const mediaId of createdMediaIds) {
+            await addLibraries(mediaId, ids);
+          }
+          setShowLibraryModal(false);
+          deepLinkBack();
+        }}
+        onSkip={() => {
+          setShowLibraryModal(false);
+          deepLinkBack();
+        }}
+        title="Add to libraries?"
+      />
     </>
   );
 }

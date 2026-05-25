@@ -221,14 +221,6 @@ export function getDocumentActionLabel(
   return busy ? "Adding..." : "Add";
 }
 
-export function getDocumentLibraryActionLabel(
-  result: BrowseDocumentResult,
-): string {
-  return isProjectGutenbergDocument(result)
-    ? "Import + library"
-    : "Add + library";
-}
-
 export function getDocumentFallbackDescription(
   result: BrowseDocumentResult,
 ): string {

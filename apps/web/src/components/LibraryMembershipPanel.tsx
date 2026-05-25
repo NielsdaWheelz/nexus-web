@@ -17,7 +17,7 @@ import {
 import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
+import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./LibraryMembershipPanel.module.css";

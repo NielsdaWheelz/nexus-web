@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from nexus.api.deps import get_db
 from nexus.auth.extension import get_extension_viewer
 from nexus.auth.middleware import Viewer, get_viewer
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import success_response
 from nexus.schemas.media import (
     ArticleCaptureRequest,
@@ -25,6 +26,9 @@ from nexus.schemas.media import (
     ListeningStateBatchUpsertRequest,
     ListeningStateUpsertRequest,
     MediaEvidenceResponse,
+    MediaIngestRequest,
+    MediaLibrariesRequest,
+    MediaLibrariesResponse,
     RetryRequest,
     TranscriptForecastBatchRequest,
     TranscriptRequestBatchRequest,
@@ -167,7 +171,7 @@ def create_from_url(
         db=db,
         viewer_id=viewer.user_id,
         url=request_body.url,
-        library_id=request_body.library_id,
+        library_ids=request_body.library_ids,
         request_id=request_id,
     )
     return success_response(result.model_dump(mode="json"))
@@ -189,6 +193,7 @@ def create_captured_article(
         site_name=request_body.site_name,
         published_time=request_body.published_time,
         content_html=request_body.content_html,
+        library_ids=request_body.library_ids,
     )
     return success_response(result.model_dump(mode="json"))
 
@@ -199,12 +204,22 @@ async def create_captured_file(
     viewer: Annotated[Viewer, Depends(get_extension_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
+    library_ids_header = request.headers.get("x-nexus-library-ids", "")
+    try:
+        library_ids: list[UUID] = [
+            UUID(s.strip()) for s in library_ids_header.split(",") if s.strip()
+        ]
+    except ValueError as exc:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "invalid x-nexus-library-ids header"
+        ) from exc
     result = media_service.create_captured_file(
         db=db,
         viewer_id=viewer.user_id,
         payload=await request.body(),
         filename=request.headers.get("x-nexus-filename") or "",
         content_type=request.headers.get("content-type") or "",
+        library_ids=library_ids,
         source_url=request.headers.get("x-nexus-source-url"),
         request_id=getattr(request.state, "request_id", None),
     )
@@ -222,7 +237,7 @@ def create_captured_url(
         db=db,
         viewer_id=viewer.user_id,
         url=request_body.url,
-        library_id=request_body.library_id,
+        library_ids=request_body.library_ids,
         request_id=getattr(request.state, "request_id", None),
     )
     return success_response(result.model_dump(mode="json"))
@@ -389,7 +404,7 @@ def upload_init(
         filename=request.filename,
         content_type=request.content_type,
         size_bytes=request.size_bytes,
-        library_id=request.library_id,
+        library_ids=request.library_ids,
     )
     return success_response(result)
 
@@ -397,6 +412,7 @@ def upload_init(
 @router.post("/media/{media_id}/ingest")
 def confirm_ingest(
     media_id: UUID,
+    body: MediaIngestRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     request: Request,
@@ -418,6 +434,7 @@ def confirm_ingest(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,
+        library_ids=body.library_ids,
         request_id=request_id,
     )
     return success_response(result)
@@ -452,6 +469,32 @@ def retry_ingest(
             media_id=media_id,
             request_id=request_id,
         )
+    )
+
+
+@router.post("/media/{media_id}/libraries")
+def add_media_libraries(
+    media_id: UUID,
+    body: MediaLibrariesRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Additively attach the media to one or more libraries.
+
+    Idempotent: ids already present are deduplicated; the viewer's default
+    library id is silently deduped. Existing memberships are preserved.
+
+    Returns the subset of ids actually inserted (excludes already-present and
+    default-library dedupes).
+    """
+    media_service.get_media_for_viewer(db, viewer.user_id, media_id)
+    inserted = libraries_service.add_media_to_libraries(
+        db, viewer.user_id, media_id, body.library_ids
+    )
+    return success_response(
+        MediaLibrariesResponse(
+            media_id=media_id, library_ids_added=inserted
+        ).model_dump(mode="json")
     )
 
 

@@ -129,38 +129,106 @@ def _expect_remote_redirect(remote_http, url: str, target_url: str, *, status: i
     remote_http.get(url).mock(return_value=httpx.Response(status, headers={"Location": target_url}))
 
 
-def _expect_x_oembed(remote_http, post_id: str, *, status: int = 200):
-    url = str(
-        httpx.URL(
-            "https://publish.x.com/oembed",
-            params={
-                "url": f"https://x.com/i/status/{post_id}",
-                "omit_script": "1",
-                "dnt": "1",
-                "hide_thread": "1",
-            },
-        )
+def _patch_x_api_settings(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "nexus.services.x_api.get_settings",
+        lambda: SimpleNamespace(
+            x_api_bearer_token="test-x-token",
+            x_api_base_url="https://api.x.com/2",
+            x_api_timeout_seconds=10.0,
+            x_api_author_thread_max_posts=1000,
+            x_api_include_user_expansions=True,
+        ),
     )
-    return remote_http.get(url).mock(
+
+
+def _x_root_payload(post_id: str, *, quoted_id: str | None = None) -> dict:
+    refs = []
+    includes_tweets = []
+    include_users = [
+        {"id": "10", "name": "Ada Lovelace", "username": "ada"},
+    ]
+    if quoted_id is not None:
+        refs.append({"type": "quoted", "id": quoted_id})
+        includes_tweets.append(
+            {
+                "id": quoted_id,
+                "author_id": "20",
+                "text": "Quoted insight from Grace.",
+                "created_at": "2026-04-15T11:00:00.000Z",
+                "conversation_id": quoted_id,
+            }
+        )
+        include_users.append({"id": "20", "name": "Grace Hopper", "username": "grace"})
+    return {
+        "data": {
+            "id": post_id,
+            "author_id": "10",
+            "text": "Opening post from Ada.",
+            "created_at": "2026-04-15T12:00:00.000Z",
+            "conversation_id": post_id,
+            "referenced_tweets": refs,
+        },
+        "includes": {"users": include_users, "tweets": includes_tweets},
+    }
+
+
+def _x_search_payload(post_id: str) -> dict:
+    return {
+        "data": [
+            {
+                "id": post_id,
+                "author_id": "10",
+                "text": "Opening post from Ada.",
+                "created_at": "2026-04-15T12:00:00.000Z",
+                "conversation_id": post_id,
+            },
+            {
+                "id": "1234567891",
+                "author_id": "10",
+                "text": "Second post in the author's thread.",
+                "created_at": "2026-04-15T12:01:00.000Z",
+                "conversation_id": post_id,
+                "referenced_tweets": [{"type": "replied_to", "id": post_id}],
+            },
+            {
+                "id": "9999999999",
+                "author_id": "99",
+                "text": "A reply from someone else should not be captured.",
+                "created_at": "2026-04-15T12:02:00.000Z",
+                "conversation_id": post_id,
+                "referenced_tweets": [{"type": "replied_to", "id": post_id}],
+            },
+            {
+                "id": "1234567892",
+                "author_id": "10",
+                "text": "Side reply from Ada to someone else.",
+                "created_at": "2026-04-15T12:03:00.000Z",
+                "conversation_id": post_id,
+                "referenced_tweets": [{"type": "replied_to", "id": "9999999999"}],
+            },
+        ],
+        "includes": {
+            "users": [
+                {"id": "10", "name": "Ada Lovelace", "username": "ada"},
+                {"id": "99", "name": "Other Author", "username": "other"},
+            ]
+        },
+        "meta": {"result_count": 3},
+    }
+
+
+def _expect_x_author_thread(remote_http, post_id: str, *, status: int = 200):
+    root_route = remote_http.get(f"https://api.x.com/2/tweets/{post_id}").mock(
         return_value=httpx.Response(
             status,
-            json={
-                "type": "rich",
-                "version": "1.0",
-                "provider_name": "X",
-                "author_name": "Ada Lovelace",
-                "author_url": "https://x.com/ada",
-                "html": (
-                    "<blockquote class='twitter-tweet'>"
-                    "<p>Hello from X.</p>"
-                    "<script>bad()</script>"
-                    f"<a href='https://x.com/ada/status/{post_id}'>April 15, 2026</a>"
-                    "</blockquote>"
-                ),
-                "url": f"https://x.com/ada/status/{post_id}",
-            },
+            json=_x_root_payload(post_id, quoted_id="4444444444") if status == 200 else {},
         )
     )
+    search_route = remote_http.get("https://api.x.com/2/tweets/search/all").mock(
+        return_value=httpx.Response(200, json=_x_search_payload(post_id))
+    )
+    return root_route, search_route
 
 
 def _install_background_job_insert_failure(direct_db: DirectSessionManager) -> None:
@@ -888,14 +956,15 @@ class TestFromUrlSuccess:
 
 
 class TestFromUrlXPost:
-    """Tests for official oEmbed-backed X post ingestion."""
+    """Tests for official X API-backed author-thread ingestion."""
 
-    def test_x_post_url_creates_ready_web_article(
-        self, auth_client, direct_db: DirectSessionManager, remote_http
+    def test_x_post_url_creates_ready_author_thread_web_article(
+        self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
     ):
+        _patch_x_api_settings(monkeypatch)
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
-        _expect_x_oembed(remote_http, "1234567890")
+        _expect_x_author_thread(remote_http, "1234567890")
 
         response = auth_client.post(
             "/media/from_url",
@@ -924,16 +993,41 @@ class TestFromUrlXPost:
                 """),
                 {"media_id": media_id},
             ).fetchone()
-            fragment = session.execute(
+            fragments = session.execute(
                 text("""
-                    SELECT f.html_sanitized, f.canonical_text, COUNT(fb.id)
+                    SELECT f.idx, f.html_sanitized, f.canonical_text, COUNT(fb.id)
                     FROM fragments f
                     LEFT JOIN fragment_blocks fb ON fb.fragment_id = f.id
                     WHERE f.media_id = :media_id
                     GROUP BY f.id
+                    ORDER BY f.idx ASC
                 """),
                 {"media_id": media_id},
+            ).fetchall()
+            quoted_media = session.execute(
+                text("""
+                    SELECT id, kind, title, canonical_url, canonical_source_url,
+                           provider, provider_id, processing_status
+                    FROM media
+                    WHERE provider = 'x'
+                      AND provider_id = '4444444444'
+                """)
             ).fetchone()
+            quoted_job_ids = (
+                []
+                if quoted_media is None
+                else [
+                    row[0]
+                    for row in session.execute(
+                        text("""
+                        SELECT id
+                        FROM background_jobs
+                        WHERE payload->>'media_id' = :media_id
+                    """),
+                        {"media_id": str(quoted_media[0])},
+                    ).fetchall()
+                ]
+            )
             job_ids = [
                 row[0]
                 for row in session.execute(
@@ -949,26 +1043,46 @@ class TestFromUrlXPost:
 
         assert media is not None
         assert media[0] == "web_article"
-        assert media[1] == "X post by Ada Lovelace"
+        assert media[1] == "X thread by Ada Lovelace"
         assert media[2] == "https://x.com/ada/status/1234567890?s=20"
-        assert media[3] == "https://x.com/i/status/1234567890"
+        assert media[3] is None
         assert media[4] == "https://x.com/i/status/1234567890"
         assert media[5] == "x"
-        assert media[6] == "1234567890"
+        assert media[6] == "thread:1234567890"
         assert media[7] == "ready_for_reading"
         assert media[8] == "X"
-        assert "Hello from X." in media[9]
-        assert fragment is not None
-        assert "<script" not in fragment[0]
-        assert "Hello from X." in fragment[1]
-        assert fragment[2] >= 1
+        assert "Opening post from Ada." in media[9]
+        assert len(fragments) == 2
+        assert fragments[0][0] == 0
+        assert "<script" not in fragments[0][1]
+        assert "Opening post from Ada." in fragments[0][2]
+        assert "Quoted post by Grace Hopper" in fragments[0][2]
+        assert "A reply from someone else" not in "\n".join(row[2] for row in fragments)
+        assert "Side reply from Ada" not in "\n".join(row[2] for row in fragments)
+        assert fragments[0][3] >= 1
+        assert fragments[1][0] == 1
+        assert "Second post in the author's thread." in fragments[1][2]
+        assert quoted_media is not None
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", quoted_media[0])
+        direct_db.register_cleanup("library_entries", "media_id", quoted_media[0])
+        direct_db.register_cleanup("media", "id", quoted_media[0])
+        assert quoted_media[1] == "web_article"
+        assert quoted_media[2] == "X post by Grace Hopper"
+        assert quoted_media[3] == "https://x.com/i/status/4444444444"
+        assert quoted_media[4] == "https://x.com/i/status/4444444444"
+        assert quoted_media[5] == "x"
+        assert quoted_media[6] == "4444444444"
+        assert quoted_media[7] == "ready_for_reading"
+        for job_id in quoted_job_ids:
+            direct_db.register_cleanup("background_jobs", "id", job_id)
         for job_id in job_ids:
             direct_db.register_cleanup("background_jobs", "id", job_id)
         assert job_count == 1
 
     def test_x_post_reuse_is_global_across_users(
-        self, auth_client, direct_db: DirectSessionManager, remote_http
+        self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
     ):
+        _patch_x_api_settings(monkeypatch)
         user_a = create_test_user_id()
         user_b = create_test_user_id()
         default_library_a = UUID(
@@ -981,7 +1095,7 @@ class TestFromUrlXPost:
                 "default_library_id"
             ]
         )
-        route = _expect_x_oembed(remote_http, "2222222222")
+        root_route, search_route = _expect_x_author_thread(remote_http, "2222222222")
 
         first_response = auth_client.post(
             "/media/from_url",
@@ -994,6 +1108,33 @@ class TestFromUrlXPost:
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
+        with direct_db.session() as session:
+            quoted_media = session.execute(
+                text("""
+                    SELECT id
+                    FROM media
+                    WHERE provider = 'x'
+                      AND provider_id = '4444444444'
+                """)
+            ).fetchone()
+            if quoted_media is not None:
+                direct_db.register_cleanup(
+                    "default_library_intrinsics", "media_id", quoted_media[0]
+                )
+                direct_db.register_cleanup("library_entries", "media_id", quoted_media[0])
+                direct_db.register_cleanup("media", "id", quoted_media[0])
+            cleanup_media_ids = [str(media_id)]
+            if quoted_media is not None:
+                cleanup_media_ids.append(str(quoted_media[0]))
+            for job_id in session.execute(
+                text("""
+                    SELECT id
+                    FROM background_jobs
+                    WHERE payload->>'media_id' = ANY(:media_ids)
+                """),
+                {"media_ids": cleanup_media_ids},
+            ).scalars():
+                direct_db.register_cleanup("background_jobs", "id", job_id)
 
         second_response = auth_client.post(
             "/media/from_url",
@@ -1006,7 +1147,8 @@ class TestFromUrlXPost:
         assert first_data["idempotency_outcome"] == "created"
         assert second_data["idempotency_outcome"] == "reused"
         assert UUID(second_data["media_id"]) == media_id
-        assert route.call_count == 1
+        assert root_route.call_count == 1
+        assert search_route.call_count == 1
 
         with direct_db.session() as session:
             attachments = session.execute(
@@ -1022,12 +1164,13 @@ class TestFromUrlXPost:
         assert default_library_a in attached_library_ids
         assert default_library_b in attached_library_ids
 
-    def test_x_oembed_failure_does_not_fall_back_to_generic_article(
-        self, auth_client, direct_db: DirectSessionManager, remote_http
+    def test_x_api_failure_does_not_fall_back_to_generic_article(
+        self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
     ):
+        _patch_x_api_settings(monkeypatch)
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
-        _expect_x_oembed(remote_http, "3333333333", status=404)
+        _expect_x_author_thread(remote_http, "3333333333", status=404)
 
         response = auth_client.post(
             "/media/from_url",
@@ -1043,7 +1186,7 @@ class TestFromUrlXPost:
                 text("""
                     SELECT COUNT(*)
                     FROM media
-                    WHERE provider_id = '3333333333'
+                    WHERE provider_id = 'thread:3333333333'
                        OR requested_url = 'https://x.com/ada/status/3333333333'
                 """)
             ).scalar_one()
@@ -1059,6 +1202,152 @@ class TestFromUrlXPost:
 
         assert media_count == 0
         assert job_count == 0
+
+    def test_refresh_existing_x_post_upgrades_to_author_thread_snapshot(
+        self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
+    ):
+        _patch_x_api_settings(monkeypatch)
+        user_id = create_test_user_id()
+        default_library_id = UUID(
+            auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+                "default_library_id"
+            ]
+        )
+        media_id = uuid4()
+        _expect_x_author_thread(remote_http, "5555555555")
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO media (
+                        id, kind, title, requested_url, canonical_url,
+                        canonical_source_url, provider, provider_id,
+                        processing_status, publisher, description,
+                        created_by_user_id, created_at, updated_at,
+                        processing_completed_at
+                    )
+                    VALUES (
+                        :media_id, 'web_article', 'Old X post',
+                        'https://x.com/ada/status/5555555555',
+                        'https://x.com/i/status/5555555555',
+                        'https://x.com/i/status/5555555555',
+                        'x', '5555555555', 'ready_for_reading',
+                        'X', 'Old single-post capture', :user_id,
+                        now(), now(), now()
+                    )
+                """),
+                {"media_id": media_id, "user_id": user_id},
+            )
+            fragment_id = session.execute(
+                text("""
+                    INSERT INTO fragments (media_id, idx, html_sanitized, canonical_text)
+                    VALUES (
+                        :media_id, 0,
+                        '<article>Old single tweet</article>',
+                        'Old single tweet'
+                    )
+                    RETURNING id
+                """),
+                {"media_id": media_id},
+            ).scalar_one()
+            session.execute(
+                text("""
+                    INSERT INTO fragment_blocks (fragment_id, block_idx, start_offset, end_offset)
+                    VALUES (:fragment_id, 0, 0, 16)
+                """),
+                {"fragment_id": fragment_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
+                    VALUES (:default_library_id, :media_id)
+                """),
+                {"default_library_id": default_library_id, "media_id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.post(
+            f"/media/{media_id}/refresh",
+            headers=auth_headers(user_id),
+        )
+
+        assert response.status_code == 202, response.text
+        data = response.json()["data"]
+        assert UUID(data["media_id"]) == media_id
+        assert data["processing_status"] == "ready_for_reading"
+        assert data["refresh_enqueued"] is False
+        assert data["idempotency_outcome"] == "refreshed"
+
+        with direct_db.session() as session:
+            media = session.execute(
+                text("""
+                    SELECT title, canonical_url, canonical_source_url, provider,
+                           provider_id, processing_status, publisher, description
+                    FROM media
+                    WHERE id = :media_id
+                """),
+                {"media_id": media_id},
+            ).fetchone()
+            fragments = session.execute(
+                text("""
+                    SELECT idx, canonical_text
+                    FROM fragments
+                    WHERE media_id = :media_id
+                    ORDER BY idx ASC
+                """),
+                {"media_id": media_id},
+            ).fetchall()
+            quoted_media = session.execute(
+                text("""
+                    SELECT id, provider_id, title
+                    FROM media
+                    WHERE provider = 'x'
+                      AND provider_id = '4444444444'
+                """)
+            ).fetchone()
+            media_ids = [str(media_id)]
+            if quoted_media is not None:
+                media_ids.append(str(quoted_media[0]))
+            job_ids = [
+                row[0]
+                for row in session.execute(
+                    text("""
+                        SELECT id
+                        FROM background_jobs
+                        WHERE payload->>'media_id' = ANY(:media_ids)
+                    """),
+                    {"media_ids": media_ids},
+                ).fetchall()
+            ]
+
+        assert media is not None
+        assert media[0] == "X thread by Ada Lovelace"
+        assert media[1] is None
+        assert media[2] == "https://x.com/i/status/5555555555"
+        assert media[3] == "x"
+        assert media[4] == "thread:5555555555"
+        assert media[5] == "ready_for_reading"
+        assert media[6] == "X"
+        assert "Opening post from Ada." in media[7]
+        assert len(fragments) == 2
+        combined_text = "\n".join(row[1] for row in fragments)
+        assert "Old single tweet" not in combined_text
+        assert "Opening post from Ada." in combined_text
+        assert "Second post in the author's thread." in combined_text
+        assert "Quoted post by Grace Hopper" in combined_text
+        assert "Side reply from Ada" not in combined_text
+        assert quoted_media is not None
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", quoted_media[0])
+        direct_db.register_cleanup("library_entries", "media_id", quoted_media[0])
+        direct_db.register_cleanup("media", "id", quoted_media[0])
+        assert quoted_media[1] == "4444444444"
+        assert quoted_media[2] == "X post by Grace Hopper"
+        for job_id in job_ids:
+            direct_db.register_cleanup("background_jobs", "id", job_id)
 
     def test_x_url_without_post_id_is_rejected(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()

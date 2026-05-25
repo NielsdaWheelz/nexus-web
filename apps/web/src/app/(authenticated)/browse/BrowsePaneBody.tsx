@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { FileText, Mic, Play, Video } from "lucide-react";
-import LibraryTargetPicker from "@/components/LibraryTargetPicker";
+import LibraryMultiSelectPicker from "@/components/LibraryMultiSelectPicker";
 import {
   FeedbackNotice,
   toFeedback,
@@ -29,7 +29,6 @@ import {
   formatEpisodeMeta,
   getDocumentActionLabel,
   getDocumentFallbackDescription,
-  getDocumentLibraryActionLabel,
   getDocumentSourceLabel,
   isDocumentResult,
   isPodcastEpisodeResult,
@@ -70,6 +69,33 @@ export default function BrowsePaneBody() {
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [hasSearched, setHasSearched] = useState(Boolean(appliedQuery));
   const libraryPicker = useNonDefaultLibraries();
+  const [rowLibraryIds, setRowLibraryIds] = useState<Record<string, string[]>>(
+    {},
+  );
+
+  const pickerLibraries = useMemo(
+    () =>
+      libraryPicker.libraries.map((library) => ({
+        id: library.id,
+        name: library.name,
+        color: library.color,
+      })),
+    [libraryPicker.libraries],
+  );
+
+  const getRowLibraryIds = useCallback(
+    (rowKey: string): string[] => rowLibraryIds[rowKey] ?? [],
+    [rowLibraryIds],
+  );
+
+  const setRowSelection = useCallback((rowKey: string, next: string[]) => {
+    setRowLibraryIds((current) => ({ ...current, [rowKey]: next }));
+  }, []);
+
+  const { load: loadLibraries } = libraryPicker;
+  useEffect(() => {
+    void loadLibraries();
+  }, [loadLibraries]);
 
   useEffect(() => {
     setDraftQuery(appliedQuery);
@@ -190,7 +216,7 @@ export default function BrowsePaneBody() {
 
   async function followPodcast(
     result: BrowsePodcastResult,
-    libraryId: string | null = null,
+    libraryIds: string[] = [],
   ) {
     const busyKey = `podcast:${result.provider_podcast_id}`;
     busyKeys.add(busyKey);
@@ -204,7 +230,7 @@ export default function BrowsePaneBody() {
         website_url: result.website_url,
         image_url: result.image_url,
         description: result.description,
-        library_id: libraryId,
+        library_ids: libraryIds,
       });
       setSections((current) =>
         updateSection(current, "podcasts", (results) =>
@@ -226,7 +252,7 @@ export default function BrowsePaneBody() {
 
   async function addAndOpenResult(
     result: BrowseDocumentResult | BrowseVideoResult,
-    libraryId: string | null = null,
+    libraryIds: string[] = [],
   ) {
     if (result.media_id) {
       requestOpenInAppPane(`/media/${result.media_id}`);
@@ -242,7 +268,7 @@ export default function BrowsePaneBody() {
     try {
       const added = await addMediaFromUrl({
         url: result.type === "documents" ? result.url : result.watch_url,
-        libraryId,
+        libraryIds,
       });
       setSections((current) =>
         updateSection(current, result.type, (results) => {
@@ -408,6 +434,8 @@ export default function BrowsePaneBody() {
                 if (result.type === "documents") {
                   const busy = busyKeys.ids.has(`document:${result.url}`);
                   const sourceLabel = getDocumentSourceLabel(result);
+                  const rowKey = `document:${result.url}`;
+                  const selectedLibraryIds = getRowLibraryIds(rowKey);
                   return (
                     <div key={result.url} className={styles.row}>
                       <div
@@ -415,14 +443,14 @@ export default function BrowsePaneBody() {
                         tabIndex={0}
                         className={styles.primary}
                         onClick={() => {
-                          void addAndOpenResult(result);
+                          void addAndOpenResult(result, selectedLibraryIds);
                         }}
                         onKeyDown={(event) => {
                           if (event.key !== "Enter" && event.key !== " ") {
                             return;
                           }
                           event.preventDefault();
-                          void addAndOpenResult(result);
+                          void addAndOpenResult(result, selectedLibraryIds);
                         }}
                       >
                         <div className={styles.leading}>
@@ -458,31 +486,24 @@ export default function BrowsePaneBody() {
                         maxVisible={2}
                       />
                       <div className={styles.actions}>
+                        {!result.media_id ? (
+                          <LibraryMultiSelectPicker
+                            mode="dropdown"
+                            selectedLibraryIds={selectedLibraryIds}
+                            onChange={(next) => setRowSelection(rowKey, next)}
+                            libraries={pickerLibraries}
+                          />
+                        ) : null}
                         <Button
                           variant="primary"
                           size="md"
                           disabled={busy}
                           onClick={() => {
-                            void addAndOpenResult(result);
+                            void addAndOpenResult(result, selectedLibraryIds);
                           }}
                         >
                           {getDocumentActionLabel(result, busy)}
                         </Button>
-                        {!result.media_id ? (
-                          <LibraryTargetPicker
-                            label={getDocumentLibraryActionLabel(result)}
-                            libraries={libraryPicker.libraries}
-                            loading={libraryPicker.loading}
-                            disabled={busy}
-                            onOpen={() => {
-                              void libraryPicker.load();
-                            }}
-                            onSelectLibrary={(libraryId) => {
-                              void addAndOpenResult(result, libraryId);
-                            }}
-                            emptyMessage="No non-default libraries available."
-                          />
-                        ) : null}
                       </div>
                     </div>
                   );
@@ -492,6 +513,8 @@ export default function BrowsePaneBody() {
                   const busy = busyKeys.ids.has(
                     `video:${result.provider_video_id}`,
                   );
+                  const rowKey = `video:${result.provider_video_id}`;
+                  const selectedLibraryIds = getRowLibraryIds(rowKey);
                   return (
                     <div key={result.provider_video_id} className={styles.row}>
                       <div
@@ -499,14 +522,14 @@ export default function BrowsePaneBody() {
                         tabIndex={0}
                         className={styles.primary}
                         onClick={() => {
-                          void addAndOpenResult(result);
+                          void addAndOpenResult(result, selectedLibraryIds);
                         }}
                         onKeyDown={(event) => {
                           if (event.key !== "Enter" && event.key !== " ") {
                             return;
                           }
                           event.preventDefault();
-                          void addAndOpenResult(result);
+                          void addAndOpenResult(result, selectedLibraryIds);
                         }}
                       >
                         <div className={styles.leading}>
@@ -545,12 +568,20 @@ export default function BrowsePaneBody() {
                         maxVisible={2}
                       />
                       <div className={styles.actions}>
+                        {!result.media_id ? (
+                          <LibraryMultiSelectPicker
+                            mode="dropdown"
+                            selectedLibraryIds={selectedLibraryIds}
+                            onChange={(next) => setRowSelection(rowKey, next)}
+                            libraries={pickerLibraries}
+                          />
+                        ) : null}
                         <Button
                           variant="primary"
                           size="md"
                           disabled={busy}
                           onClick={() => {
-                            void addAndOpenResult(result);
+                            void addAndOpenResult(result, selectedLibraryIds);
                           }}
                         >
                           {result.media_id
@@ -561,21 +592,6 @@ export default function BrowsePaneBody() {
                               ? "Adding..."
                               : "Add"}
                         </Button>
-                        {!result.media_id ? (
-                          <LibraryTargetPicker
-                            label="Add + library"
-                            libraries={libraryPicker.libraries}
-                            loading={libraryPicker.loading}
-                            disabled={busy}
-                            onOpen={() => {
-                              void libraryPicker.load();
-                            }}
-                            onSelectLibrary={(libraryId) => {
-                              void addAndOpenResult(result, libraryId);
-                            }}
-                            emptyMessage="No non-default libraries available."
-                          />
-                        ) : null}
                       </div>
                     </div>
                   );
@@ -585,6 +601,8 @@ export default function BrowsePaneBody() {
                   const busy = busyKeys.ids.has(
                     `podcast:${result.provider_podcast_id}`,
                   );
+                  const rowKey = `podcast:${result.provider_podcast_id}`;
+                  const selectedLibraryIds = getRowLibraryIds(rowKey);
                   return (
                     <div
                       key={result.provider_podcast_id}
@@ -654,29 +672,24 @@ export default function BrowsePaneBody() {
                           </Button>
                         ) : (
                           <>
+                            <LibraryMultiSelectPicker
+                              mode="dropdown"
+                              selectedLibraryIds={selectedLibraryIds}
+                              onChange={(next) =>
+                                setRowSelection(rowKey, next)
+                              }
+                              libraries={pickerLibraries}
+                            />
                             <Button
                               variant="primary"
                               size="md"
                               disabled={busy}
                               onClick={() => {
-                                void followPodcast(result);
+                                void followPodcast(result, selectedLibraryIds);
                               }}
                             >
                               {busy ? "Following..." : "Follow"}
                             </Button>
-                            <LibraryTargetPicker
-                              label="Follow + library"
-                              libraries={libraryPicker.libraries}
-                              loading={libraryPicker.loading}
-                              disabled={busy}
-                              onOpen={() => {
-                                void libraryPicker.load();
-                              }}
-                              onSelectLibrary={(libraryId) => {
-                                void followPodcast(result, libraryId);
-                              }}
-                              emptyMessage="No non-default libraries available."
-                            />
                           </>
                         )}
                       </div>

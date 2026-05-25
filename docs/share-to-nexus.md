@@ -10,12 +10,13 @@ Date: 2026-05-19.
 
 Nexus already ingests external content well. `POST /media/from_url`
 (`python/nexus/api/routes/media.py:139`) classifies and ingests any URL — a
-YouTube link becomes a `video`, an X/Twitter post becomes a `web_article` built
-from official oEmbed, a `.pdf`/`.epub` URL becomes file-backed media, and every
-other URL becomes an extracted `web_article`. `POST /notes/daily/{date}/quick-capture`
-(`python/nexus/api/routes/notes.py:106`) appends free text to today's daily
-note. The browser extension reaches this pipeline from the desktop; the in-app
-Add-content tray reaches it from a running session.
+YouTube link becomes a `video`, a public X/Twitter post becomes an official
+X API-backed same-author thread `web_article`, a `.pdf`/`.epub` URL becomes
+file-backed media, and every other URL becomes an extracted `web_article`.
+`POST /notes/daily/{date}/quick-capture` (`python/nexus/api/routes/notes.py:106`)
+appends free text to today's daily note. The browser extension reaches this
+pipeline from the desktop; the in-app Add-content tray reaches it from a running
+session.
 
 Nothing reaches it from the *rest of an Android phone*. The Android app
 (`apps/android`) is a WebView shell whose only `<intent-filter>`s on
@@ -67,7 +68,7 @@ backdrop); `ShareActivity` is a plain WebView host.
 
 | Shared `text/plain` | Capture |
 |---|---|
-| Contains one or more URLs | One `POST /api/media/from-url` per URL. The backend classifies each (YouTube → `video`, X/Twitter post → oEmbed `web_article`, `.pdf`/`.epub` → file media, else extracted `web_article`) — unchanged. |
+| Contains one or more URLs | One `POST /api/media/from-url` per URL. The backend classifies each (YouTube → `video`, public X/Twitter post → official X API-backed same-author thread `web_article`, `.pdf`/`.epub` → file media, else extracted `web_article`) — unchanged. |
 | Plain text, no URL — a quote or thought | One `POST /api/notes/daily/{today}/quick-capture` — a bullet on today's daily note. |
 | Empty / whitespace | Nothing. `ShareActivity` finishes before loading `/share`; `ShareCapture` also renders `nothing to share` defensively if it is reached with empty text. |
 
@@ -621,7 +622,7 @@ The `/share` surface:
 
 - [ ] Sharing an article URL captures it; the card shows the URL and **Saved**.
 - [ ] Sharing the same URL again shows **Already in your library** (no duplicate).
-- [ ] Sharing an X/Twitter post URL captures it as a readable post.
+- [ ] Sharing an X/Twitter post URL captures it as a readable same-author thread.
 - [ ] Sharing a YouTube URL captures it as a video.
 - [ ] Sharing plain text with no URL adds a bullet to today's daily note.
 - [ ] Sharing text containing a URL captures the URL as media.

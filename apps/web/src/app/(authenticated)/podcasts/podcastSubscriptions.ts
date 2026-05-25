@@ -1,4 +1,4 @@
-import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
+import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
 import { apiFetch } from "@/lib/api/client";
 import type { ContributorCredit } from "@/lib/contributors/types";
 
@@ -110,7 +110,7 @@ export type PodcastSubscribeInput = {
   website_url: string | null;
   image_url: string | null;
   description: string | null;
-  library_id?: string | null;
+  library_ids: string[];
 };
 
 export type PodcastSubscribeResult = {

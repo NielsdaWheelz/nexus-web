@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import type { LibraryTargetPickerItem } from "@/components/LibraryTargetPicker";
 import {
   type FeedbackContent,
   toFeedback,
 } from "@/components/feedback/Feedback";
-import { fetchNonDefaultLibraries } from "@/lib/media/mediaLibraries";
+import {
+  fetchNonDefaultLibraries,
+  type LibraryTargetPickerItem,
+} from "@/lib/media/mediaLibraries";
 
 interface NonDefaultLibraries {
   libraries: LibraryTargetPickerItem[];
@@ -17,10 +19,10 @@ interface NonDefaultLibraries {
 }
 
 /**
- * Lazy-loads the user's non-default libraries shaped for a `LibraryTargetPicker`
- * (all entries start with `isInLibrary: false` since the picker is used to pick
- * a *destination*, not to display current membership). Idempotent — repeat
- * calls are no-ops while loading or after a successful load.
+ * Lazy-loads the user's non-default libraries shaped as library-membership
+ * rows (all entries start with `isInLibrary: false` since these are used to
+ * pick a *destination*, not to display current membership). Idempotent —
+ * repeat calls are no-ops while loading or after a successful load.
  */
 export function useNonDefaultLibraries(): NonDefaultLibraries {
   const [libraries, setLibraries] = useState<LibraryTargetPickerItem[]>([]);

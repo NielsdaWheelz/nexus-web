@@ -17,6 +17,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -2103,6 +2104,40 @@ class PodcastSubscription(Base):
     )
 
     podcast: Mapped["Podcast"] = relationship("Podcast")
+
+
+class PodcastSubscriptionLibrary(Base):
+    """Join row attaching a podcast subscription to a non-default library."""
+
+    __tablename__ = "podcast_subscription_libraries"
+
+    subscription_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+    )
+    subscription_podcast_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+    )
+    library_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("libraries.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["subscription_user_id", "subscription_podcast_id"],
+            ["podcast_subscriptions.user_id", "podcast_subscriptions.podcast_id"],
+            ondelete="CASCADE",
+        ),
+        Index("ix_podcast_subscription_libraries_library_id", "library_id"),
+    )
 
 
 class PodcastSubscriptionPollRun(Base):

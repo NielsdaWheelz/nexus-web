@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -14,6 +15,7 @@ _X_HOSTS = {
     "mobile.twitter.com",
 }
 _POST_PATH_PREFIXES = {"status", "statuses"}
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{1,15}$")
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,7 @@ class XIdentity:
     provider: str
     provider_id: str
     canonical_url: str
+    username: str | None = None
 
 
 def is_x_url(url: str) -> bool:
@@ -47,9 +50,8 @@ def classify_x_url(url: str) -> XIdentity | None:
         provider=_X_PROVIDER,
         provider_id=provider_id,
         canonical_url=f"https://x.com/i/status/{provider_id}",
+        username=_extract_username(parsed.path),
     )
-
-
 
 
 def _extract_post_id(path: str) -> str | None:
@@ -58,4 +60,15 @@ def _extract_post_id(path: str) -> str | None:
         if segment in _POST_PATH_PREFIXES and idx + 1 < len(segments):
             post_id = segments[idx + 1]
             return post_id if post_id.isdecimal() else None
+    return None
+
+
+def _extract_username(path: str) -> str | None:
+    segments = [segment for segment in path.split("/") if segment]
+    for idx, segment in enumerate(segments):
+        if segment in _POST_PATH_PREFIXES and idx > 0:
+            username = segments[idx - 1].strip("@")
+            if username.lower() == "i":
+                return None
+            return username if _USERNAME_RE.fullmatch(username) else None
     return None

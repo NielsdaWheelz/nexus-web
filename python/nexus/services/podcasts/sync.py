@@ -47,7 +47,7 @@ from nexus.services.transcript_segments import (
     insert_transcript_fragments,
     normalize_transcript_segments,
 )
-from nexus.services.upload import _ensure_in_default_library
+from nexus.services.libraries import assign_libraries_for_media
 from nexus.services.url_normalize import validate_requested_url
 
 from ._normalize import (
@@ -663,6 +663,18 @@ def _sync_subscription_ingest(
     enrichment_media_ids: set[UUID] = set()
     chapter_sync_rows: list[tuple[UUID, list[dict[str, Any]] | None]] = []
     transcript_sync_rows: list[dict[str, Any]] = []
+    subscription_library_rows = db.execute(
+        text(
+            """
+            SELECT library_id
+            FROM podcast_subscription_libraries
+            WHERE subscription_user_id = :user_id
+              AND subscription_podcast_id = :podcast_id
+            """
+        ),
+        {"user_id": viewer_id, "podcast_id": podcast_id},
+    ).fetchall()
+    subscription_library_ids: list[UUID] = [row[0] for row in subscription_library_rows]
     podcast_contributors = load_contributor_credits_for_podcasts(db, [podcast_id]).get(
         podcast_id,
         [],
@@ -714,7 +726,7 @@ def _sync_subscription_ingest(
         media_id: UUID
         if existing_media_id is not None:
             media_id = existing_media_id
-            _ensure_in_default_library(db, viewer_id, media_id)
+            assign_libraries_for_media(db, viewer_id, media_id, subscription_library_ids)
             db.execute(
                 text(
                     """
@@ -907,7 +919,7 @@ def _sync_subscription_ingest(
             )
             if not author_names:
                 enrichment_media_ids.add(media_id)
-            _ensure_in_default_library(db, viewer_id, media_id)
+            assign_libraries_for_media(db, viewer_id, media_id, subscription_library_ids)
             ingested_episode_count += 1
             ingested_media_ids.append(media_id)
             enrichment_media_ids.add(media_id)

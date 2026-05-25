@@ -3,7 +3,7 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.responses import success_response
 from nexus.schemas.podcast import (
     PodcastEnsureRequest,
+    PodcastOpmlImportRequest,
     PodcastSubscribeRequest,
     PodcastSubscriptionSettingsPatchRequest,
 )
@@ -92,18 +93,17 @@ def list_subscriptions(
 
 @router.post("/podcasts/import/opml")
 def import_subscriptions_from_opml(
+    body: PodcastOpmlImportRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    file: Annotated[UploadFile, File(...)],
 ) -> dict:
-    """Import podcast subscriptions from an uploaded OPML file."""
-    payload = file.file.read()
+    """Import podcast subscriptions from a JSON OPML payload."""
     out = podcast_subscription_service.import_subscriptions_from_opml(
         db,
         viewer.user_id,
-        file_name=file.filename,
-        content_type=file.content_type,
-        payload=payload,
+        opml_xml=body.opml,
+        default_library_ids=body.default_library_ids,
+        per_feed_library_ids=body.per_feed_library_ids,
     )
     return success_response(out.model_dump(mode="json"))
 

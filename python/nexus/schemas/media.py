@@ -143,7 +143,13 @@ class UploadInitRequest(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content_type: str
     size_bytes: int = Field(gt=0)
-    library_id: UUID | None = None
+    library_ids: list[UUID] = Field(default_factory=list)
+
+
+class MediaIngestRequest(BaseModel):
+    """Request schema for POST /media/{id}/ingest."""
+
+    library_ids: list[UUID] = Field(default_factory=list)
 
 
 class ArticleCaptureRequest(BaseModel):
@@ -156,6 +162,7 @@ class ArticleCaptureRequest(BaseModel):
     excerpt: str | None = Field(default=None, max_length=4000)
     site_name: str | None = Field(default=None, max_length=1024)
     published_time: str | None = Field(default=None, max_length=128)
+    library_ids: list[UUID] = Field(default_factory=list)
 
 
 class ArticleCaptureResponse(BaseModel):
@@ -301,7 +308,7 @@ class FromUrlRequest(BaseModel):
         min_length=1,
         description="The URL to ingest. Must be an absolute http/https URL, including PDF, EPUB, article, or video URLs.",
     )
-    library_id: UUID | None = None
+    library_ids: list[UUID] = Field(default_factory=list)
 
 
 class FromUrlResponse(BaseModel):
@@ -314,6 +321,19 @@ class FromUrlResponse(BaseModel):
     idempotency_outcome: Literal["created", "reused"]
     processing_status: str
     ingest_enqueued: bool
+
+
+class MediaLibrariesRequest(BaseModel):
+    """Request schema for POST /media/{id}/libraries."""
+
+    library_ids: list[UUID] = Field(default_factory=list)
+
+
+class MediaLibrariesResponse(BaseModel):
+    """Response schema for POST /media/{id}/libraries."""
+
+    media_id: UUID
+    library_ids_added: list[UUID]
 
 
 class MediaEvidenceTextQuoteOut(BaseModel):

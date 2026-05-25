@@ -16,14 +16,14 @@ import {
   OPEN_ADD_CONTENT_EVENT,
   type AddContentMode,
 } from "@/components/addContentEvents";
-import LibraryTargetPicker from "@/components/LibraryTargetPicker";
+import LibraryMultiSelectPicker from "@/components/LibraryMultiSelectPicker";
 import {
   FeedbackNotice,
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import QuickNotePanel from "@/components/QuickNotePanel";
-import { apiPostFormData } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import { extractUrls } from "@/lib/extractUrls";
 import { createNotePage } from "@/lib/notes/api";
 import {
@@ -47,8 +47,7 @@ type QueueItem = {
   id: number;
   source: "file" | "url";
   label: string;
-  libraryId: string | null;
-  libraryName: string | null;
+  libraryIds: string[];
   file?: File;
   url?: string;
   status: "queued" | "working" | "success" | "error";
@@ -83,7 +82,7 @@ export default function AddContentTray() {
   const [urlText, setUrlText] = useState("");
   const [urlError, setUrlError] = useState<string | null>(null);
   const libraryPicker = useNonDefaultLibraries();
-  const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null);
+  const [batchLibraryIds, setBatchLibraryIds] = useState<string[]>([]);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState<FeedbackContent | null>(null);
@@ -103,9 +102,6 @@ export default function AddContentTray() {
       if (files.length === 0) {
         return;
       }
-      const selectedLibraryName =
-        libraryPicker.libraries.find((library) => library.id === selectedLibraryId)
-          ?.name ?? null;
       setMode("content");
       setOpen(true);
       setQueue((current) => [
@@ -116,8 +112,7 @@ export default function AddContentTray() {
             id: nextIdRef.current++,
             source: "file" as const,
             label: file.name,
-            libraryId: selectedLibraryId,
-            libraryName: selectedLibraryName,
+            libraryIds: [...batchLibraryIds],
             file,
             status: error ? ("error" as const) : ("queued" as const),
             error: error ?? undefined,
@@ -126,7 +121,7 @@ export default function AddContentTray() {
         }),
       ]);
     },
-    [libraryPicker.libraries, selectedLibraryId]
+    [batchLibraryIds]
   );
 
   const enqueueUrls = useCallback(
@@ -134,9 +129,6 @@ export default function AddContentTray() {
       if (urls.length === 0) {
         return;
       }
-      const selectedLibraryName =
-        libraryPicker.libraries.find((library) => library.id === selectedLibraryId)
-          ?.name ?? null;
       setMode("content");
       setOpen(true);
       setQueue((current) => [
@@ -145,15 +137,14 @@ export default function AddContentTray() {
           id: nextIdRef.current++,
           source: "url" as const,
           label: url,
-          libraryId: selectedLibraryId,
-          libraryName: selectedLibraryName,
+          libraryIds: [...batchLibraryIds],
           url,
           status: "queued" as const,
           autoOpen: autoOpenSingle && urls.length === 1,
         })),
       ]);
     },
-    [libraryPicker.libraries, selectedLibraryId]
+    [batchLibraryIds]
   );
 
   const startItem = useCallback((item: QueueItem) => {
@@ -176,7 +167,7 @@ export default function AddContentTray() {
           }
           result = await uploadIngestFile({
             file: item.file,
-            libraryId: item.libraryId,
+            libraryIds: item.libraryIds,
           });
         } else {
           if (!item.url) {
@@ -184,7 +175,7 @@ export default function AddContentTray() {
           }
           result = await addMediaFromUrl({
             url: item.url,
-            libraryId: item.libraryId,
+            libraryIds: item.libraryIds,
           });
         }
 
@@ -232,11 +223,17 @@ export default function AddContentTray() {
     setImportError(null);
     setImportResult(null);
     try {
-      const formData = new FormData();
-      formData.append("file", importFile);
-      const responseBody = await apiPostFormData<{ data?: PodcastOpmlImportResult }>(
+      const opmlText = await importFile.text();
+      const responseBody = await apiFetch<{ data?: PodcastOpmlImportResult }>(
         "/api/podcasts/import/opml",
-        formData
+        {
+          method: "POST",
+          body: JSON.stringify({
+            opml: opmlText,
+            default_library_ids: batchLibraryIds,
+            per_feed_library_ids: {},
+          }),
+        }
       );
       if (!responseBody?.data) {
         throw new Error("Import response missing summary payload");
@@ -247,7 +244,7 @@ export default function AddContentTray() {
     } finally {
       setImportBusy(false);
     }
-  }, [importFile]);
+  }, [batchLibraryIds, importFile]);
 
   useEffect(() => {
     const available = MAX_ACTIVE_UPLOADS - activeIdsRef.current.size;
@@ -534,23 +531,20 @@ export default function AddContentTray() {
               {noteFeedback ? <FeedbackNotice feedback={noteFeedback} /> : null}
 
               <div className={styles.libraryField}>
-                <label className={styles.libraryLabel}>Library</label>
-                <LibraryTargetPicker
-                  label="My Library only"
-                  libraries={libraryPicker.libraries}
-                  loading={libraryPicker.loading}
-                  allowNoLibrary
-                  noLibraryLabel="My Library only"
-                  selectedLibraryId={selectedLibraryId}
-                  onOpen={() => {
-                    void loadLibraries();
-                  }}
-                  onSelectLibrary={setSelectedLibraryId}
-                  emptyMessage="No non-default libraries available."
+                <label className={styles.libraryLabel}>Also add to</label>
+                <LibraryMultiSelectPicker
+                  mode="dropdown"
+                  selectedLibraryIds={batchLibraryIds}
+                  onChange={setBatchLibraryIds}
+                  libraries={libraryPicker.libraries.map((library) => ({
+                    id: library.id,
+                    name: library.name,
+                    color: library.color,
+                  }))}
                 />
                 <small className={styles.libraryHelp}>
                   {libraryPicker.error?.title ??
-                    "Pick one non-default library to add there too, or use My Library only."}
+                    "Add new items to one or more libraries on top of My Library."}
                 </small>
               </div>
 
@@ -611,6 +605,8 @@ export default function AddContentTray() {
                         ? `/media/${item.mediaId}?duplicate=true`
                         : `/media/${item.mediaId}`
                       : null;
+                    const allowRowPicker =
+                      item.status === "queued" || item.status === "error";
                     return (
                       <div key={item.id} className={styles.queueItem}>
                         <div className={styles.itemIcon} aria-hidden="true">
@@ -619,7 +615,6 @@ export default function AddContentTray() {
                         <div className={styles.itemText}>
                           <span title={item.label}>{item.label}</span>
                           <small>
-                            {item.libraryName ? `Library: ${item.libraryName} · ` : "My Library · "}
                             {item.status === "queued" ? "Queued" : null}
                             {item.status === "working"
                               ? item.source === "file"
@@ -635,6 +630,26 @@ export default function AddContentTray() {
                           </small>
                         </div>
                         <div className={styles.itemActions}>
+                          {allowRowPicker ? (
+                            <LibraryMultiSelectPicker
+                              mode="dropdown"
+                              selectedLibraryIds={item.libraryIds}
+                              onChange={(next) =>
+                                setQueue((current) =>
+                                  current.map((row) =>
+                                    row.id === item.id
+                                      ? { ...row, libraryIds: next }
+                                      : row
+                                  )
+                                )
+                              }
+                              libraries={libraryPicker.libraries.map((library) => ({
+                                id: library.id,
+                                name: library.name,
+                                color: library.color,
+                              }))}
+                            />
+                          ) : null}
                           {item.status === "success" && href ? (
                             <Button
                               variant="secondary"

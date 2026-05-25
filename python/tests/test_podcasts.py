@@ -6940,7 +6940,13 @@ class TestPodcastOpmlImportExport:
 
         first_response = auth_client.post(
             "/podcasts/import/opml",
-            files={"file": ("subscriptions.opml", opml_payload, "application/xml")},
+            json={
+                "opml": opml_payload.decode("utf-8")
+                if isinstance(opml_payload, bytes)
+                else opml_payload,
+                "default_library_ids": [],
+                "per_feed_library_ids": {},
+            },
             headers=auth_headers(user_id),
         )
 
@@ -7036,7 +7042,13 @@ class TestPodcastOpmlImportExport:
 
         second_response = auth_client.post(
             "/podcasts/import/opml",
-            files={"file": ("subscriptions.opml", opml_payload, "application/xml")},
+            json={
+                "opml": opml_payload.decode("utf-8")
+                if isinstance(opml_payload, bytes)
+                else opml_payload,
+                "default_library_ids": [],
+                "per_feed_library_ids": {},
+            },
             headers=auth_headers(user_id),
         )
 
@@ -7100,14 +7112,18 @@ class TestPodcastOpmlImportExport:
         summaries = []
         summary_lock = threading.Lock()
 
+        opml_xml = (
+            opml_payload.decode("utf-8") if isinstance(opml_payload, bytes) else opml_payload
+        )
+
         def import_once(_index: int) -> None:
             with direct_db.session() as session:
                 summary = import_subscriptions_from_opml(
                     session,
                     user_id,
-                    file_name="subscriptions.opml",
-                    content_type="application/xml",
-                    payload=opml_payload,
+                    opml_xml=opml_xml,
+                    default_library_ids=[],
+                    per_feed_library_ids={},
                 )
             with summary_lock:
                 summaries.append(summary)
@@ -7169,7 +7185,11 @@ class TestPodcastOpmlImportExport:
 
         response = auth_client.post(
             "/podcasts/import/opml",
-            files={"file": ("subscriptions.txt", b"not xml", "text/plain")},
+            json={
+                "opml": "not xml",
+                "default_library_ids": [],
+                "per_feed_library_ids": {},
+            },
             headers=auth_headers(user_id),
         )
         assert response.status_code == 400, (
@@ -7189,7 +7209,13 @@ class TestPodcastOpmlImportExport:
         oversized_payload = b"<opml>" + (b"x" * (1_000_001)) + b"</opml>"
         response = auth_client.post(
             "/podcasts/import/opml",
-            files={"file": ("oversized.opml", oversized_payload, "application/xml")},
+            json={
+                "opml": oversized_payload.decode("utf-8")
+                if isinstance(oversized_payload, bytes)
+                else oversized_payload,
+                "default_library_ids": [],
+                "per_feed_library_ids": {},
+            },
             headers=auth_headers(user_id),
         )
         assert response.status_code == 400, (
@@ -7216,7 +7242,13 @@ class TestPodcastOpmlImportExport:
         too_many_opml = _build_opml_document(outline_rows)
         response = auth_client.post(
             "/podcasts/import/opml",
-            files={"file": ("too-many.opml", too_many_opml, "application/xml")},
+            json={
+                "opml": too_many_opml.decode("utf-8")
+                if isinstance(too_many_opml, bytes)
+                else too_many_opml,
+                "default_library_ids": [],
+                "per_feed_library_ids": {},
+            },
             headers=auth_headers(user_id),
         )
         assert response.status_code == 400, (
@@ -8959,4 +8991,418 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         assert queue_rows_after_second_retry == queue_rows_after_retry, (
             "second video retry should not enqueue another job while one is already pending. "
             f"after_first={queue_rows_after_retry} after_second={queue_rows_after_second_retry}"
+        )
+
+
+# =============================================================================
+# Multi-library subscription tests (docs/multi-library-assignment.md §13.1)
+# =============================================================================
+
+
+def _create_test_library(session, owner_user_id: UUID, name: str) -> UUID:
+    from tests.factories import create_test_library
+
+    return create_test_library(session, owner_user_id, name)
+
+
+def _library_entries_for_media(direct_db, media_id: UUID) -> set[UUID]:
+    """Return the set of library_ids that media_id is currently attached to."""
+    with direct_db.session() as session:
+        rows = session.execute(
+            text(
+                """
+                SELECT library_id
+                FROM library_entries
+                WHERE media_id = :media_id
+                """
+            ),
+            {"media_id": media_id},
+        ).fetchall()
+    return {UUID(str(row[0])) for row in rows}
+
+
+class TestSubscribeWithLibraryIds:
+    """Podcast subscribe + sync with `library_ids` per spec §13.1."""
+
+    def test_subscribe_with_library_ids_populates_join_table(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        """Subscribe with library_ids inserts one row per id in podcast_subscription_libraries."""
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        with direct_db.session() as session:
+            lib_a = _create_test_library(session, user_id, "Subscribe Lib A")
+            lib_b = _create_test_library(session, user_id, "Subscribe Lib B")
+        for lib in (lib_a, lib_b):
+            direct_db.register_cleanup("memberships", "library_id", lib)
+            direct_db.register_cleanup("libraries", "id", lib)
+
+        provider_podcast_id = f"sub-libs-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Subscribe Libs Podcast")
+        payload["library_ids"] = [str(lib_a), str(lib_b)]
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: []},
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        direct_db.register_cleanup("podcasts", "id", podcast_id)
+        direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+        direct_db.register_cleanup(
+            "podcast_subscription_libraries", "subscription_podcast_id", podcast_id
+        )
+
+        with direct_db.session() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT library_id
+                    FROM podcast_subscription_libraries
+                    WHERE subscription_user_id = :user_id
+                      AND subscription_podcast_id = :podcast_id
+                    """
+                ),
+                {"user_id": user_id, "podcast_id": podcast_id},
+            ).fetchall()
+        library_ids_on_subscription = {UUID(str(row[0])) for row in rows}
+        assert library_ids_on_subscription == {lib_a, lib_b}, (
+            "podcast_subscription_libraries must have exactly one row per subscribed library id, "
+            f"got {library_ids_on_subscription}"
+        )
+
+    def test_subscribe_backfills_existing_episodes_to_libraries(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        """Initial sync backfills existing episodes into the subscription's libraries."""
+        from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
+
+        user_id = create_test_user_id()
+        default_library_id = _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
+            initial_episode_window=5,
+        )
+
+        with direct_db.session() as session:
+            lib_a = _create_test_library(session, user_id, "Backfill Lib A")
+            lib_b = _create_test_library(session, user_id, "Backfill Lib B")
+        for lib in (lib_a, lib_b):
+            direct_db.register_cleanup("memberships", "library_id", lib)
+            direct_db.register_cleanup("libraries", "id", lib)
+
+        provider_podcast_id = f"backfill-libs-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Backfill Libs Podcast")
+        payload["library_ids"] = [str(lib_a), str(lib_b)]
+        episodes = [
+            {
+                "provider_episode_id": "backfill-ep-1",
+                "guid": "backfill-guid-1",
+                "title": "Backfill Episode 1",
+                "audio_url": "https://cdn.example.com/backfill-ep-1.mp3",
+                "published_at": "2026-04-01T00:00:00Z",
+                "duration_seconds": 60,
+                "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 800, "text": "ep1"}],
+            },
+            {
+                "provider_episode_id": "backfill-ep-2",
+                "guid": "backfill-guid-2",
+                "title": "Backfill Episode 2",
+                "audio_url": "https://cdn.example.com/backfill-ep-2.mp3",
+                "published_at": "2026-04-02T00:00:00Z",
+                "duration_seconds": 60,
+                "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "ep2"}],
+            },
+        ]
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast={provider_podcast_id: episodes},
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        direct_db.register_cleanup("podcasts", "id", podcast_id)
+        direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+        direct_db.register_cleanup(
+            "podcast_subscription_libraries", "subscription_podcast_id", podcast_id
+        )
+
+        with direct_db.session() as session:
+            sync_result = run_podcast_subscription_sync_now(
+                session,
+                user_id=user_id,
+                podcast_id=podcast_id,
+            )
+            session.commit()
+        assert sync_result["sync_status"] in {"complete", "source_limited"}, (
+            f"sync should complete to backfill episodes; got {sync_result}"
+        )
+
+        with direct_db.session() as session:
+            episode_rows = session.execute(
+                text(
+                    """
+                    SELECT m.id
+                    FROM media m
+                    JOIN podcast_episodes pe ON pe.media_id = m.id
+                    WHERE pe.podcast_id = :podcast_id
+                    """
+                ),
+                {"podcast_id": podcast_id},
+            ).fetchall()
+            episode_ids = {UUID(str(row[0])) for row in episode_rows}
+
+        assert len(episode_ids) >= 2, f"expected at least two episodes, got {episode_ids}"
+
+        for episode_id in episode_ids:
+            memberships = _library_entries_for_media(direct_db, episode_id)
+            assert {default_library_id, lib_a, lib_b}.issubset(memberships), (
+                "each backfilled episode media row must belong to default + subscription libs, "
+                f"got {memberships} for {episode_id}"
+            )
+
+    def test_sync_new_episodes_inherit_subscription_libraries(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        """New episodes synced into an existing subscription inherit its library set."""
+        from nexus.tasks.podcast_sync_subscription import run_podcast_subscription_sync_now
+
+        user_id = create_test_user_id()
+        default_library_id = _bootstrap_user(auth_client, user_id)
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="ai_plus",
+            transcription_minutes_limit_monthly=None,
+            initial_episode_window=5,
+        )
+
+        with direct_db.session() as session:
+            lib_a = _create_test_library(session, user_id, "Inherit Lib A")
+            lib_b = _create_test_library(session, user_id, "Inherit Lib B")
+        for lib in (lib_a, lib_b):
+            direct_db.register_cleanup("memberships", "library_id", lib)
+            direct_db.register_cleanup("libraries", "id", lib)
+
+        provider_podcast_id = f"inherit-libs-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Inherit Libs Podcast")
+        payload["library_ids"] = [str(lib_a), str(lib_b)]
+
+        initial_episodes = [
+            {
+                "provider_episode_id": "inherit-ep-1",
+                "guid": "inherit-guid-1",
+                "title": "Inherit Episode 1",
+                "audio_url": "https://cdn.example.com/inherit-ep-1.mp3",
+                "published_at": "2026-04-01T00:00:00Z",
+                "duration_seconds": 60,
+                "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 800, "text": "ep1"}],
+            },
+        ]
+        episodes_by_podcast: dict[str, list[dict[str, object]]] = {
+            provider_podcast_id: list(initial_episodes)
+        }
+        _mock_podcast_index(
+            monkeypatch,
+            podcasts=[payload],
+            episodes_by_podcast=episodes_by_podcast,
+        )
+
+        subscribe_data = _subscribe(auth_client, user_id, payload)
+        podcast_id = UUID(subscribe_data["podcast_id"])
+        direct_db.register_cleanup("podcasts", "id", podcast_id)
+        direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+        direct_db.register_cleanup(
+            "podcast_subscription_libraries", "subscription_podcast_id", podcast_id
+        )
+
+        with direct_db.session() as session:
+            run_podcast_subscription_sync_now(
+                session,
+                user_id=user_id,
+                podcast_id=podcast_id,
+            )
+            session.commit()
+
+        with direct_db.session() as session:
+            first_sync_episode_ids = {
+                UUID(str(row[0]))
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT m.id
+                        FROM media m
+                        JOIN podcast_episodes pe ON pe.media_id = m.id
+                        WHERE pe.podcast_id = :podcast_id
+                        """
+                    ),
+                    {"podcast_id": podcast_id},
+                ).fetchall()
+            }
+
+        # Add a NEW episode to the mocked feed for the next sync run.
+        new_episode = {
+            "provider_episode_id": "inherit-ep-2",
+            "guid": "inherit-guid-2",
+            "title": "Inherit Episode 2 (NEW)",
+            "audio_url": "https://cdn.example.com/inherit-ep-2.mp3",
+            "published_at": "2026-04-15T00:00:00Z",
+            "duration_seconds": 60,
+            "transcript_segments": [{"t_start_ms": 0, "t_end_ms": 700, "text": "ep2"}],
+        }
+        episodes_by_podcast[provider_podcast_id].append(new_episode)
+
+        with direct_db.session() as session:
+            run_podcast_subscription_sync_now(
+                session,
+                user_id=user_id,
+                podcast_id=podcast_id,
+            )
+            session.commit()
+
+        with direct_db.session() as session:
+            second_sync_episode_ids = {
+                UUID(str(row[0]))
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT m.id
+                        FROM media m
+                        JOIN podcast_episodes pe ON pe.media_id = m.id
+                        WHERE pe.podcast_id = :podcast_id
+                        """
+                    ),
+                    {"podcast_id": podcast_id},
+                ).fetchall()
+            }
+
+        assert second_sync_episode_ids, "second sync must yield at least one episode media row"
+        for episode_id in second_sync_episode_ids:
+            memberships = _library_entries_for_media(direct_db, episode_id)
+            assert {default_library_id, lib_a, lib_b}.issubset(memberships), (
+                "every episode media row synced under a subscription with library_ids "
+                f"must inherit those libraries; got {memberships} for {episode_id}"
+            )
+
+    def test_opml_import_per_feed_override_wins_over_default(
+        self, auth_client, monkeypatch, direct_db
+    ):
+        """`per_feed_library_ids` overrides `default_library_ids` for that feed only."""
+        from nexus.services.podcasts.catalog import validate_and_normalize_feed_url
+
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+
+        with direct_db.session() as session:
+            lib_a = _create_test_library(session, user_id, "OPML Lib A (default)")
+            lib_b = _create_test_library(session, user_id, "OPML Lib B (per-feed)")
+        for lib in (lib_a, lib_b):
+            direct_db.register_cleanup("memberships", "library_id", lib)
+            direct_db.register_cleanup("libraries", "id", lib)
+
+        suffix = uuid4()
+        feed_one = f"https://feeds.example.com/{suffix}-one.xml"
+        feed_two = f"https://feeds.example.com/{suffix}-two.xml"
+        normalized_feed_one = validate_and_normalize_feed_url(feed_one)
+        normalized_feed_two = validate_and_normalize_feed_url(feed_two)
+
+        opml_payload = _build_opml_document(
+            [
+                f'    <outline type="rss" text="Feed One" xmlUrl="{feed_one}" />',
+                f'    <outline type="rss" text="Feed Two" xmlUrl="{feed_two}" />',
+            ]
+        ).decode("utf-8")
+
+        def fake_lookup(self, feed_url: str) -> dict[str, object] | None:
+            _ = self, feed_url
+            return None
+
+        monkeypatch.setattr(
+            "nexus.services.podcasts.provider.PodcastIndexClient.lookup_podcast_by_feed_url",
+            fake_lookup,
+            raising=False,
+        )
+
+        response = auth_client.post(
+            "/podcasts/import/opml",
+            headers=auth_headers(user_id),
+            json={
+                "opml": opml_payload,
+                "default_library_ids": [str(lib_a)],
+                "per_feed_library_ids": {normalized_feed_one: [str(lib_b)]},
+            },
+        )
+        assert response.status_code == 200, (
+            f"OPML import (JSON body) should succeed, got {response.status_code}: {response.text}"
+        )
+        summary = response.json()["data"]
+        assert summary["imported"] == 2, (
+            f"both feeds should be imported as new subscriptions, got {summary}"
+        )
+
+        # Identify both podcasts for cleanup + assertions.
+        with direct_db.session() as session:
+            feed_one_pid_row = session.execute(
+                text("SELECT id FROM podcasts WHERE feed_url = :feed_url"),
+                {"feed_url": normalized_feed_one},
+            ).fetchone()
+            feed_two_pid_row = session.execute(
+                text("SELECT id FROM podcasts WHERE feed_url = :feed_url"),
+                {"feed_url": normalized_feed_two},
+            ).fetchone()
+        assert feed_one_pid_row is not None and feed_two_pid_row is not None
+        podcast_one = UUID(str(feed_one_pid_row[0]))
+        podcast_two = UUID(str(feed_two_pid_row[0]))
+        for podcast_id in (podcast_one, podcast_two):
+            direct_db.register_cleanup("podcasts", "id", podcast_id)
+            direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+            direct_db.register_cleanup(
+                "podcast_subscription_libraries", "subscription_podcast_id", podcast_id
+            )
+
+        with direct_db.session() as session:
+            feed_one_libs = {
+                UUID(str(row[0]))
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT library_id
+                        FROM podcast_subscription_libraries
+                        WHERE subscription_user_id = :user_id
+                          AND subscription_podcast_id = :podcast_id
+                        """
+                    ),
+                    {"user_id": user_id, "podcast_id": podcast_one},
+                ).fetchall()
+            }
+            feed_two_libs = {
+                UUID(str(row[0]))
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT library_id
+                        FROM podcast_subscription_libraries
+                        WHERE subscription_user_id = :user_id
+                          AND subscription_podcast_id = :podcast_id
+                        """
+                    ),
+                    {"user_id": user_id, "podcast_id": podcast_two},
+                ).fetchall()
+            }
+
+        assert feed_one_libs == {lib_b}, (
+            "feed_one has a per-feed override → lib_b ONLY (default lib_a does NOT apply); "
+            f"got {feed_one_libs}"
+        )
+        assert feed_two_libs == {lib_a}, (
+            "feed_two falls back to default_library_ids → lib_a; "
+            f"got {feed_two_libs}"
         )

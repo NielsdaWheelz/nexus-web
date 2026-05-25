@@ -533,6 +533,126 @@ def add_media_to_library(
     return _hydrate_library_entries(db, viewer_id, [row])[0]
 
 
+def validate_libraries_accessible(
+    db: Session,
+    viewer_id: UUID,
+    library_ids: list[UUID],
+) -> None:
+    """Raise ForbiddenError(E_LIBRARY_FORBIDDEN) if any id is inaccessible.
+
+    Use at the top of any ingest path before creating media, so a forbidden
+    library_id rejects the request atomically (no orphan rows).
+
+    The viewer's default library id and duplicates are silently deduped. An
+    empty list is a no-op.
+    """
+    from nexus.services.upload import _get_default_library_id
+
+    if not library_ids:
+        return
+    default_library_id = _get_default_library_id(db, viewer_id)
+    targets = list({lid for lid in library_ids if lid != default_library_id})
+    if not targets:
+        return
+    accessible_rows = db.execute(
+        text("""
+            SELECT l.id
+            FROM libraries l
+            LEFT JOIN memberships m
+              ON m.library_id = l.id AND m.user_id = :viewer_id
+            WHERE l.id = ANY(:library_ids)
+              AND (l.owner_user_id = :viewer_id OR m.user_id IS NOT NULL)
+        """),
+        {"viewer_id": viewer_id, "library_ids": targets},
+    ).fetchall()
+    accessible_ids = {UUID(str(row[0])) for row in accessible_rows}
+    if accessible_ids != set(targets):
+        raise ForbiddenError(
+            ApiErrorCode.E_LIBRARY_FORBIDDEN, "library not accessible"
+        )
+
+
+def add_media_to_libraries(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    library_ids: list[UUID],
+) -> list[UUID]:
+    """Bulk additive add of media to multiple libraries.
+
+    The viewer's default library id and duplicate ids are deduped. Every id
+    in the resulting target set must reference a library where the viewer is
+    owner or has a membership row; otherwise the whole call is rejected with
+    no partial application.
+
+    Args:
+        db: Database session.
+        viewer_id: The ID of the viewer.
+        media_id: The ID of the media to add.
+        library_ids: Library ids to attach the media to. May be empty.
+
+    Returns:
+        The subset of ids actually inserted (excludes already-present and
+        the viewer's default library id).
+
+    Raises:
+        ForbiddenError: If any id is inaccessible to the viewer.
+    """
+    from nexus.services.upload import _get_default_library_id
+
+    validate_libraries_accessible(db, viewer_id, library_ids)
+    if not library_ids:
+        return []
+    default_library_id = _get_default_library_id(db, viewer_id)
+    targets = list({lid for lid in library_ids if lid != default_library_id})
+    if not targets:
+        return []
+
+    existing_rows = db.execute(
+        text("""
+            SELECT library_id
+            FROM library_entries
+            WHERE media_id = :media_id
+              AND library_id = ANY(:library_ids)
+        """),
+        {"media_id": media_id, "library_ids": targets},
+    ).fetchall()
+    already_present = {UUID(str(row[0])) for row in existing_rows}
+
+    to_insert = [lid for lid in targets if lid not in already_present]
+    for library_id in to_insert:
+        add_media_to_library(db, viewer_id, library_id, media_id)
+
+    return to_insert
+
+
+def assign_libraries_for_media(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    library_ids: list[UUID],
+) -> None:
+    """Attach media to viewer's default library + every id in library_ids.
+
+    Additive and idempotent. The viewer's default library id, if present in
+    library_ids, is silently deduplicated.
+
+    Args:
+        db: Database session.
+        viewer_id: The ID of the viewer.
+        media_id: The ID of the media to attach.
+        library_ids: Additional library ids to attach the media to.
+
+    Raises:
+        ForbiddenError: If any id in library_ids is inaccessible.
+    """
+    from nexus.services.upload import _ensure_in_default_library
+
+    validate_libraries_accessible(db, viewer_id, library_ids)
+    _ensure_in_default_library(db, viewer_id, media_id)
+    add_media_to_libraries(db, viewer_id, media_id, library_ids)
+
+
 def ensure_writable_non_default_library(
     db: Session,
     viewer_id: UUID,
@@ -1967,4 +2087,63 @@ def revoke_library_invite(
             {"invite_id": invite_id, "now": now},
         )
 
+
+# =============================================================================
+# Podcast subscription libraries
+# =============================================================================
+
+
+def set_subscription_libraries(
+    db: Session,
+    subscription_user_id: UUID,
+    subscription_podcast_id: UUID,
+    library_ids: list[UUID],
+) -> None:
+    """Replace the library set attached to a podcast subscription.
+
+    Validates accessibility for all ids. The viewer's default library id is
+    allowed but silently deduped if present in library_ids.
+
+    Args:
+        db: Database session.
+        subscription_user_id: The subscription's user id (also acts as viewer).
+        subscription_podcast_id: The subscription's podcast id.
+        library_ids: Library ids that should be attached after this call.
+
+    Raises:
+        ForbiddenError: If any id in library_ids is inaccessible.
+    """
+    from nexus.services.upload import _get_default_library_id
+
+    validate_libraries_accessible(db, subscription_user_id, library_ids)
+    default_library_id = _get_default_library_id(db, subscription_user_id)
+    targets = list({lid for lid in library_ids if lid != default_library_id})
+
+    with transaction(db):
+        db.execute(
+            text("""
+                DELETE FROM podcast_subscription_libraries
+                WHERE subscription_user_id = :user_id
+                  AND subscription_podcast_id = :podcast_id
+            """),
+            {
+                "user_id": subscription_user_id,
+                "podcast_id": subscription_podcast_id,
+            },
+        )
+        for library_id in targets:
+            db.execute(
+                text("""
+                    INSERT INTO podcast_subscription_libraries
+                        (subscription_user_id,
+                         subscription_podcast_id,
+                         library_id)
+                    VALUES (:user_id, :podcast_id, :library_id)
+                """),
+                {
+                    "user_id": subscription_user_id,
+                    "podcast_id": subscription_podcast_id,
+                    "library_id": library_id,
+                },
+            )
 

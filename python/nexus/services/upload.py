@@ -119,7 +119,7 @@ def init_upload(
     filename: str,
     content_type: str,
     size_bytes: int,
-    library_id: UUID | None = None,
+    library_ids: list[UUID],
 ) -> dict:
     """Initialize a file upload.
 
@@ -133,20 +133,24 @@ def init_upload(
         filename: Original filename.
         content_type: MIME content type.
         size_bytes: File size in bytes.
+        library_ids: Additional libraries to attach the new media to. The viewer's
+            default library is always implicit; this list adds non-default libraries
+            on top. Empty list means default-only.
 
     Returns:
         Dict with media_id, upload_url, and expires_at.
 
     Raises:
         InvalidRequestError: If validation fails.
+        ForbiddenError: If any id in library_ids is inaccessible to the viewer.
         ApiError: If signing fails.
     """
     settings = get_settings()
 
+    libraries_service.validate_libraries_accessible(db, viewer_id, library_ids)
+
     # Validate request
     _validate_upload_request(kind, content_type, size_bytes)
-    if library_id is not None:
-        libraries_service.ensure_writable_non_default_library(db, viewer_id, library_id)
 
     # Get file extension
     ext = get_file_extension(kind)
@@ -201,13 +205,11 @@ def init_upload(
     # Flush media + media_file first so FK on closure tables is satisfied
     db.flush()
 
-    # Add to viewer's default library with intrinsic provenance
-    _ensure_in_default_library(db, viewer_id, media_id)
+    # Attach to viewer's default library + every additional library in library_ids.
+    # Raises ForbiddenError(E_LIBRARY_FORBIDDEN) atomically if any id is inaccessible.
+    libraries_service.assign_libraries_for_media(db, viewer_id, media_id, library_ids)
 
     db.commit()
-
-    if library_id is not None:
-        libraries_service.add_media_to_library(db, viewer_id, library_id, media_id)
 
     return {
         "media_id": str(media_id),

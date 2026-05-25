@@ -57,10 +57,10 @@ export function getFileUploadError(file: File): string | null {
 
 export async function uploadIngestFile({
   file,
-  libraryId = null,
+  libraryIds,
 }: {
   file: File;
-  libraryId?: string | null;
+  libraryIds: string[];
 }): Promise<{
   mediaId: string;
   duplicate: boolean;
@@ -77,7 +77,7 @@ export async function uploadIngestFile({
       filename: file.name,
       content_type: contentTypeFor(kind),
       size_bytes: file.size,
-      library_id: libraryId,
+      library_ids: libraryIds,
     }),
   });
 
@@ -97,6 +97,7 @@ export async function uploadIngestFile({
     `/api/media/${init.data.media_id}/ingest`,
     {
       method: "POST",
+      body: JSON.stringify({ library_ids: libraryIds }),
     },
   );
 
@@ -108,17 +109,17 @@ export async function uploadIngestFile({
 
 export async function addMediaFromUrl({
   url,
-  libraryId = null,
+  libraryIds,
 }: {
   url: string;
-  libraryId?: string | null;
+  libraryIds: string[];
 }): Promise<{
   mediaId: string;
   duplicate: boolean;
 }> {
   const response = await apiFetch<FromUrlResponse>("/api/media/from-url", {
     method: "POST",
-    body: JSON.stringify({ url, library_id: libraryId }),
+    body: JSON.stringify({ url, library_ids: libraryIds }),
   });
 
   return {
