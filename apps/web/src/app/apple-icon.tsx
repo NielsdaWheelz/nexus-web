@@ -22,9 +22,9 @@ export default function AppleIcon() {
           viewBox="0 0 64 64"
           xmlns="http://www.w3.org/2000/svg"
         >
-          <circle cx="32" cy="18" r="6.5" fill="#c4a472" />
-          <circle cx="18" cy="44" r="5.5" fill="#c4a472" />
-          <circle cx="46" cy="44" r="5.5" fill="#c4a472" />
+          <circle cx="32" cy="22" r="8.5" fill="#c4a472" />
+          <circle cx="22" cy="40" r="8.5" fill="#c4a472" />
+          <circle cx="42" cy="40" r="8.5" fill="#c4a472" />
         </svg>
       </div>
     ),

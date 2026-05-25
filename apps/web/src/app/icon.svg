@@ -6,7 +6,7 @@
       .dot { fill: #c4a472; }
     }
   </style>
-  <circle class="dot" cx="32" cy="18" r="6.5"/>
-  <circle class="dot" cx="18" cy="44" r="5.5"/>
-  <circle class="dot" cx="46" cy="44" r="5.5"/>
+  <circle class="dot" cx="32" cy="22" r="8.5"/>
+  <circle class="dot" cx="22" cy="40" r="8.5"/>
+  <circle class="dot" cx="42" cy="40" r="8.5"/>
 </svg>
