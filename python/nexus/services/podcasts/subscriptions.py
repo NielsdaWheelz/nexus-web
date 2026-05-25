@@ -124,12 +124,6 @@ def import_subscriptions_from_opml(
                             feed_url=normalized_feed_url,
                             error=provider_exc.message,
                         )
-                    except Exception as provider_exc:  # justify-ignore-error: provider enrichment is best-effort; OPML import proceeds without it
-                        logger.warning(
-                            "podcast_opml_provider_lookup_unexpected_error",
-                            feed_url=normalized_feed_url,
-                            error=str(provider_exc),
-                        )
 
                     subscribe_body = _build_opml_subscribe_request(
                         normalized_feed_url=normalized_feed_url,

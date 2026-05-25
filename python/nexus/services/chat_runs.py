@@ -493,7 +493,7 @@ def create_chat_run(
             dedupe_key=f"chat_run:{run.id}",
         )
         db.commit()
-    except Exception:  # justify-ignore-error: rollback boundary; re-raises after cleanup
+    except Exception:
         db.rollback()
         raise
 
@@ -630,7 +630,7 @@ def retry_failed_assistant_response(
             dedupe_key=f"chat_run:{run.id}",
         )
         db.commit()
-    except Exception:  # justify-ignore-error: rollback boundary; re-raises after cleanup
+    except Exception:
         db.rollback()
         raise
 
@@ -760,7 +760,7 @@ async def execute_chat_run(
                 assistant_content=ERROR_CODE_TO_MESSAGE.get(exc.code.value, exc.message),
             )
             return {"status": "error", "error_code": exc.code.value}
-        except Exception:  # justify-ignore-error: rollback boundary; re-raises after cleanup
+        except Exception:
             db.rollback()
             raise
     except Exception as exc:  # justify-ignore-error: chat-run boundary; finalize the run as failed and report E_INTERNAL
@@ -773,7 +773,7 @@ async def execute_chat_run(
                 viewer_id=None,
             )
             return {"status": "error", "error_code": ApiErrorCode.E_INTERNAL.value}
-        except Exception:  # justify-ignore-error: rollback boundary; re-raises after cleanup
+        except Exception:
             db.rollback()
             raise
     finally:

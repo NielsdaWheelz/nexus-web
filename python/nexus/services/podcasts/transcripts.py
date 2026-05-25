@@ -696,7 +696,7 @@ def forecast_podcast_transcripts_for_viewer(
                 )
             )
         db.commit()
-    except Exception:  # justify-ignore-error: rollback boundary; re-raises after cleanup
+    except Exception:
         db.rollback()
         raise
 
@@ -1312,7 +1312,7 @@ def run_podcast_transcription_now(
             media_id=media_id,
             stale_extracting_seconds=stale_extracting_seconds,
         )
-    except Exception:  # justify-ignore-error: heartbeat is best-effort; transcription proceeds without it
+    except (RuntimeError, SQLAlchemyError):
         logger.warning(
             "podcast_transcription_heartbeat_start_failed",
             media_id=str(media_id),

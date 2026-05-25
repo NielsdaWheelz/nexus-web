@@ -159,7 +159,7 @@ def run_scheduled_active_subscription_poll(
             limit=effective_limit,
             sync_lease_seconds=sync_lease_seconds,
         )
-    except Exception as exc:  # justify-ignore-error: scheduled-poll boundary; record run failure for ops visibility before re-raising
+    except Exception as exc:
         with transaction(db):
             _mark_subscription_poll_run_failed(
                 db,
