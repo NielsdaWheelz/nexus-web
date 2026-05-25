@@ -226,67 +226,6 @@ def hydrate_object_ref(db: Session, viewer_id: UUID, ref: ObjectRef) -> Hydrated
             icon="quote",
         )
 
-    if ref.object_type == "artifact":
-        row = db.execute(
-            text(
-                """
-                SELECT id, conversation_id, artifact_kind, title, preview_text
-                FROM message_artifacts
-                WHERE id = :id
-                """
-            ),
-            {"id": ref.object_id},
-        ).fetchone()
-        if row is None or not can_read_conversation(db, viewer_id, row[1]):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
-        return HydratedObjectRef(
-            object_type="artifact",
-            object_id=row[0],
-            label=str(row[3] or row[2]),
-            snippet=str(row[4] or "")[:300],
-            route=f"/conversations/{row[1]}?artifact={row[0]}",
-            icon="sparkles",
-        )
-
-    if ref.object_type == "artifact_part":
-        row = (
-            db.execute(
-                text(
-                    """
-                SELECT
-                    part.id,
-                    part.part_key,
-                    part.part_type,
-                    part.text AS part_text,
-                    ma.id AS artifact_id,
-                    ma.artifact_kind,
-                    ma.title,
-                    ma.conversation_id
-                FROM message_artifact_parts part
-                JOIN message_artifacts ma ON ma.id = part.artifact_id
-                WHERE part.id = :id
-                """
-                ),
-                {"id": ref.object_id},
-            )
-            .mappings()
-            .first()
-        )
-        if row is None or not can_read_conversation(db, viewer_id, row["conversation_id"]):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
-        label = row["part_key"] or row["part_type"] or row["title"] or row["artifact_kind"]
-        return HydratedObjectRef(
-            object_type="artifact_part",
-            object_id=row["id"],
-            label=str(label),
-            snippet=str(row["part_text"] or "")[:300],
-            route=(
-                f"/conversations/{row['conversation_id']}"
-                f"?artifact={row['artifact_id']}&artifactPart={row['id']}"
-            ),
-            icon="sparkles",
-        )
-
     raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
 
 
@@ -636,61 +575,6 @@ def search_object_refs(
         if len(results) >= limit:
             return results
 
-    artifact_rows = db.execute(
-        text(
-            """
-            SELECT id, conversation_id
-            FROM message_artifacts
-            WHERE COALESCE(title, '') ILIKE :pattern
-               OR artifact_kind ILIKE :pattern
-               OR COALESCE(preview_text, '') ILIKE :pattern
-            ORDER BY created_at DESC, id ASC
-            LIMIT :limit
-            """
-        ),
-        {"pattern": pattern, "limit": limit * 3},
-    )
-    for object_id, conversation_id in artifact_rows:
-        if not can_read_conversation(db, viewer_id, conversation_id):
-            continue
-        results.append(
-            hydrate_object_ref(
-                db, viewer_id, ObjectRef(object_type="artifact", object_id=object_id)
-            )
-        )
-        if len(results) >= limit:
-            return results
-
-    artifact_part_rows = db.execute(
-        text(
-            """
-            SELECT part.id, ma.conversation_id
-            FROM message_artifact_parts part
-            JOIN message_artifacts ma ON ma.id = part.artifact_id
-            WHERE part.text ILIKE :pattern
-               OR COALESCE(part.part_key, '') ILIKE :pattern
-               OR COALESCE(part.part_type, '') ILIKE :pattern
-               OR COALESCE(ma.title, '') ILIKE :pattern
-               OR ma.artifact_kind ILIKE :pattern
-            ORDER BY ma.created_at DESC, part.ordinal ASC, part.id ASC
-            LIMIT :limit
-            """
-        ),
-        {"pattern": pattern, "limit": limit * 3},
-    )
-    for object_id, conversation_id in artifact_part_rows:
-        if not can_read_conversation(db, viewer_id, conversation_id):
-            continue
-        results.append(
-            hydrate_object_ref(
-                db,
-                viewer_id,
-                ObjectRef(object_type="artifact_part", object_id=object_id),
-            )
-        )
-        if len(results) >= limit:
-            return results
-
     return results
 
 
@@ -870,5 +754,4 @@ def render_object_context(db: Session, viewer_id: UUID, ref: ObjectRef) -> str:
             "</context_lookup_result>",
         ]
     )
-
 

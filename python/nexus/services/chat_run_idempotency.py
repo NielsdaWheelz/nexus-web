@@ -14,7 +14,6 @@ from nexus.db.models import ChatRun, Message, MessageContextItem
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.schemas.conversation import (
-    ArtifactIntentOptions,
     BranchAnchorRequest,
     ContextItem,
     ConversationScopeRequest,
@@ -32,7 +31,6 @@ def compute_payload_hash(
     key_mode: str,
     contexts: Sequence[ContextItem],
     web_search: WebSearchOptions,
-    artifact_intent: ArtifactIntentOptions,
     conversation_id: UUID | None,
     conversation_scope: ConversationScopeRequest | None,
     parent_message_id: UUID | None,
@@ -47,7 +45,6 @@ def compute_payload_hash(
     payload = (
         f"{conversation_id}|{parent_message_id}|{payload_anchor}|{content}|{model_id}|{reasoning}|{key_mode}|"
         f"{payload_scope}|{sorted_contexts}|{web_search.model_dump(mode='json')}|"
-        f"{artifact_intent.model_dump(mode='json')}"
     )
     return hashlib.sha256(payload.encode()).hexdigest()
 
@@ -88,7 +85,6 @@ def compute_retry_payload_hash(
         "source_reasoning": source_run.reasoning,
         "source_key_mode": source_run.key_mode,
         "source_web_search": source_run.web_search,
-        "source_artifact_intent": source_run.artifact_intent,
         "source_contexts": contexts,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)

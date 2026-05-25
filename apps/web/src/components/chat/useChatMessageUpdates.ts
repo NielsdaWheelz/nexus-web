@@ -15,62 +15,21 @@ import {
   type WebCitationEventData,
 } from "@/lib/api/sse/citations";
 import type {
-  SSEArtifactDeltaEvent,
   SSEClaimEvent,
   SSEClaimEvidenceEvent,
   SSERetrievalResultEvent,
   SSESourceManifestDeltaEvent,
   SSEToolCallEvent,
 } from "@/lib/api/sse/events";
-import { isRetrievalLocator } from "@/lib/api/sse/locators";
 import { conversationMessageText } from "@/lib/conversations/types";
 import type {
   ConversationMessage,
-  MessageArtifactPart,
   MessageDocument,
   MessageRetrievalResultRef,
   MessageSourceManifestDelta,
   MessageRetrieval,
   MessageToolCall,
 } from "@/lib/conversations/types";
-
-function artifactPartHasEvidence(part: unknown): part is MessageArtifactPart {
-  if (!part || typeof part !== "object") return false;
-  const record = part as Record<string, unknown>;
-  if (
-    typeof record.source_version !== "string" ||
-    !isRetrievalLocator(record.locator)
-  ) {
-    return false;
-  }
-  return (
-    Boolean(record.source_ref && typeof record.source_ref === "object") ||
-    Boolean(record.context_ref && typeof record.context_ref === "object") ||
-    Boolean(record.result_ref && typeof record.result_ref === "object") ||
-    (Array.isArray(record.source_refs) && record.source_refs.length > 0) ||
-    typeof record.evidence_span_id === "string" ||
-    (Array.isArray(record.evidence_span_ids) && record.evidence_span_ids.length > 0)
-  );
-}
-
-function artifactPartIsVisible(part: unknown): part is MessageArtifactPart {
-  if (artifactPartHasEvidence(part)) return true;
-  if (!part || typeof part !== "object") return false;
-  const record = part as Record<string, unknown>;
-  if (
-    typeof record.source_version !== "string" ||
-    !isRetrievalLocator(record.locator)
-  ) {
-    return false;
-  }
-  const metadata = record.metadata;
-  return (
-    metadata !== null &&
-    typeof metadata === "object" &&
-    !Array.isArray(metadata) &&
-    (metadata as Record<string, unknown>).support_state === "not_source_grounded"
-  );
-}
 
 function retrievalFromSearchCitation(
   citation: SearchCitationEventData,
@@ -391,67 +350,6 @@ export function useChatMessageUpdates({
     [setMessages],
   );
 
-  const handleArtifactDelta = useCallback(
-    (assistantId: string, data: SSEArtifactDeltaEvent["data"]) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) return m;
-          const artifact = {
-            artifact_id: typeof data.artifact_id === "string" ? data.artifact_id : null,
-            durable_artifact_id:
-              typeof data.durable_artifact_id === "string" ? data.durable_artifact_id : null,
-            artifact_key:
-              typeof data.artifact_key === "string" ? data.artifact_key : null,
-            artifact_version:
-              typeof data.artifact_version === "number" ? data.artifact_version : null,
-            supersedes_artifact_id:
-              typeof data.supersedes_artifact_id === "string"
-                ? data.supersedes_artifact_id
-                : null,
-            artifact_kind:
-              typeof data.artifact_kind === "string" ? data.artifact_kind : null,
-            title: typeof data.title === "string" ? data.title : null,
-            status: typeof data.status === "string" ? data.status : null,
-            delta: typeof data.delta === "string" ? data.delta : null,
-            parts: Array.isArray(data.parts)
-              ? data.parts.filter(artifactPartIsVisible)
-              : [],
-          };
-          const blocks = m.message_document?.blocks ?? [];
-          return {
-            ...m,
-            message_document: {
-              type: "message_document",
-              version: 1,
-              blocks: [
-                ...blocks.filter(
-                  (block) =>
-                    block.type !== "artifact_preview" ||
-                    !artifact.artifact_id ||
-                    block.artifact_id !== artifact.artifact_id,
-                ),
-                {
-                  type: "artifact_preview",
-                  artifact_id: artifact.artifact_id,
-                  durable_artifact_id: artifact.durable_artifact_id,
-                  artifact_key: artifact.artifact_key,
-                  artifact_version: artifact.artifact_version,
-                  supersedes_artifact_id: artifact.supersedes_artifact_id,
-                  artifact_kind: artifact.artifact_kind,
-                  title: artifact.title,
-                  status: artifact.status,
-                  delta: artifact.delta,
-                  parts: artifact.parts,
-                },
-              ],
-            },
-          };
-        }),
-      );
-    },
-    [setMessages],
-  );
-
   const handleClaim = useCallback(
     (assistantId: string, data: SSEClaimEvent["data"]) => {
       setMessages((prev) =>
@@ -583,7 +481,6 @@ export function useChatMessageUpdates({
     handleToolCall,
     handleToolResult,
     handleSourceManifestDelta,
-    handleArtifactDelta,
     handleClaim,
     handleClaimEvidence,
     handleDone,

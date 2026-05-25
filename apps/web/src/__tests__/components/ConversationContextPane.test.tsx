@@ -184,41 +184,6 @@ const provenanceMessage = {
         source_version: "source-v1",
         created_at: "2026-01-03T00:00:00Z",
       },
-      {
-        type: "artifact_preview",
-        durable_artifact_id: "artifact-1",
-        artifact_key: "focus-study-guide",
-        artifact_version: 1,
-        artifact_kind: "study_guide",
-        title: "Focus Study Guide",
-        status: "complete",
-        parts: [
-          {
-            id: "artifact-part-1",
-            artifact_id: "artifact-1",
-            ordinal: 0,
-            part_key: "Practice loop",
-            part_type: "section",
-            text: "Use recovery blocks between focus sessions.",
-            source_version: "source-v1",
-            locator: {
-              type: "web_text_offsets",
-              media_id: "media-1",
-              fragment_id: "fragment-1",
-              start_offset: 0,
-              end_offset: 38,
-            },
-            source_ref: {
-              type: "message_retrieval",
-              id: "retrieval-1",
-              label: "Deep Work",
-              media_id: "media-1",
-              deep_link: "/media/media-1",
-            },
-            evidence_span_id: "span-1",
-          },
-        ],
-      },
     ],
   },
 } as ConversationMessage;
@@ -354,7 +319,7 @@ describe("ConversationContextPane", () => {
     expect(screen.getByText("2 forks found")).toBeInTheDocument();
   });
 
-  it("summarizes conversation provenance across claims, sources, and artifacts", () => {
+  it("summarizes conversation provenance across claims and sources", () => {
     render(
       <ConversationContextPane
         conversationId="conversation-1"
@@ -384,12 +349,10 @@ describe("ConversationContextPane", () => {
         name: "Focus source Deep Work in lineage",
       }),
     );
-    expect(screen.getAllByText("Focus Study Guide").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Needs evidence").length).toBeGreaterThan(0);
     expect(
       screen.getAllByText("Recovery keeps attention sustainable.").length,
     ).toBeGreaterThan(0);
-    expect(screen.getByText("1/1 cited artifact parts")).toBeVisible();
     expect(screen.getAllByText("1/1 retrieved").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Deep Work").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: "Open source" })).toHaveAttribute(
@@ -397,10 +360,5 @@ describe("ConversationContextPane", () => {
       "/media/media-1",
     );
     expect(screen.getByText("Claim trail")).toBeVisible();
-    expect(screen.getByText("Derived artifacts")).toBeVisible();
-    expect(screen.getByText("Practice loop - section")).toBeVisible();
-    expect(
-      screen.getAllByText("Use recovery blocks between focus sessions.").length,
-    ).toBeGreaterThan(0);
   });
 });

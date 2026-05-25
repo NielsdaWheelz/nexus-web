@@ -77,10 +77,6 @@ const ALLOWED_RESPONSE_HEADERS = new Set([
   "accept-ranges",
   "content-range",
   "location",
-  "x-nexus-artifact-export-id",
-  "x-nexus-artifact-version",
-  "x-nexus-artifact-content-sha256",
-  "x-nexus-artifact-manifest-sha256",
 ]);
 
 /**

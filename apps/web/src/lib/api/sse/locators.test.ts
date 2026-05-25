@@ -42,15 +42,6 @@ describe("retrieval locator contract", () => {
         end_offset: 12,
       }),
     ).toBe(true);
-    expect(
-      isRetrievalLocator({
-        type: "artifact_part_ref",
-        artifact_id: "artifact-1",
-        artifact_part_id: "part-1",
-        message_id: "message-1",
-        conversation_id: "conversation-1",
-      }),
-    ).toBe(true);
   });
 
   it("keeps locator variants strict at type level", () => {

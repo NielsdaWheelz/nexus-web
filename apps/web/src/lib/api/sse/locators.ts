@@ -79,14 +79,6 @@ export type RetrievalLocator =
       title?: string | null;
       display_url?: string | null;
       accessed_at?: string | null;
-    }
-  | {
-      type: "artifact_part_ref";
-      artifact_id: string;
-      artifact_part_id: string;
-      message_id: string;
-      conversation_id: string;
-      part_key?: string | null;
     };
 
 export type MediaRetrievalLocator = Extract<
@@ -257,22 +249,6 @@ export function isRetrievalLocator(value: unknown): value is RetrievalLocator {
         isOptionalString(value.title) &&
         isOptionalString(value.display_url) &&
         isOptionalString(value.accessed_at)
-      );
-    case "artifact_part_ref":
-      return (
-        hasOnlyKeys(value, [
-          "type",
-          "artifact_id",
-          "artifact_part_id",
-          "message_id",
-          "conversation_id",
-          "part_key",
-        ]) &&
-        typeof value.artifact_id === "string" &&
-        typeof value.artifact_part_id === "string" &&
-        typeof value.message_id === "string" &&
-        typeof value.conversation_id === "string" &&
-        isOptionalString(value.part_key)
       );
     default:
       return false;

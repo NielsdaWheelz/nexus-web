@@ -254,7 +254,6 @@ describe("ChatComposer", () => {
         allowed_domains: [],
         blocked_domains: [],
       },
-      artifact_intent: { kind: "off" },
     });
     expect(init?.headers).toEqual(
       expect.objectContaining({
@@ -291,35 +290,6 @@ describe("ChatComposer", () => {
     const [, init] = chatRunCalls(fetchMock)[0];
     const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
     expect(body.content).toBe("First line\nSecond line");
-    expect(body.artifact_intent).toEqual({ kind: "off" });
-  });
-
-  it("sends the selected artifact intent", async () => {
-    const user = userEvent.setup();
-    const fetchMock = installChatComposerFetchMock();
-
-    render(<ChatComposer conversationId="conversation-1" />);
-
-    expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
-    ).toBeInTheDocument();
-
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Artifact intent" }),
-      "timeline",
-    );
-    const message = screen.getByRole("textbox", { name: "Ask anything" });
-    await user.click(message);
-    await user.keyboard("Build a timeline");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
-
-    await waitFor(() => {
-      expect(chatRunCalls(fetchMock)).toHaveLength(1);
-    });
-
-    const [, init] = chatRunCalls(fetchMock)[0];
-    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
-    expect(body.artifact_intent).toEqual({ kind: "timeline" });
   });
 
   it("shows branch reply mode and sends the branch anchor payload", async () => {
@@ -517,7 +487,6 @@ describe("ChatComposer", () => {
     expect(body.parent_message_id).toBeUndefined();
     expect(body.branch_anchor).toEqual({ kind: "none" });
     expect(body.conversation_scope).toEqual({ type: "general" });
-    expect(body.artifact_intent).toEqual({ kind: "off" });
   });
 
   it("keeps a stable-key draft when conversation identity changes", async () => {
@@ -598,7 +567,6 @@ describe("ChatComposer", () => {
     ).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Ask anything" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Web search mode" })).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "Artifact intent" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Send message" })).toBeVisible();
 
     const host = screen.getByTestId("mobile-composer-host");

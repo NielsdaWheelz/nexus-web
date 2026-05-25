@@ -96,10 +96,6 @@ export interface MessageContextSnapshot {
   media_kind?: string;
   locator?: RetrievalLocator | null;
   source_version?: string | null;
-  artifact_id?: string | null;
-  artifact_key?: string | null;
-  artifact_version?: number | null;
-  artifact_part_provenance?: Record<string, unknown> | null;
 }
 
 export interface MessageRetrieval {
@@ -433,105 +429,6 @@ export interface MessageRerankLedger {
   created_at: string;
 }
 
-export interface MessageArtifactDelta {
-  artifact_id?: string | null;
-  durable_artifact_id?: string | null;
-  artifact_key?: string | null;
-  artifact_version?: number | null;
-  supersedes_artifact_id?: string | null;
-  artifact_kind?: string | null;
-  title?: string | null;
-  status?: string | null;
-  delta?: string | null;
-  parts?: MessageArtifactPart[];
-}
-
-export interface MessageArtifactPart {
-  id?: string | null;
-  artifact_id?: string | null;
-  ordinal?: number | null;
-  part_key?: string | null;
-  part_type?: string | null;
-  text?: string | null;
-  source_version: string;
-  locator: RetrievalLocator;
-  source_ref?: ConversationSourceRef | null;
-  source_refs?: ConversationSourceRef[];
-  context_ref?: RetrievalContextRef | null;
-  result_ref?: MessageRetrievalResultRef | null;
-  evidence_span_id?: string | null;
-  evidence_span_ids?: string[];
-  metadata?: Record<string, unknown>;
-  created_at?: string;
-}
-
-export interface MessageArtifact {
-  id: string;
-  conversation_id: string;
-  message_id: string;
-  chat_run_id?: string | null;
-  artifact_key: string;
-  artifact_version: number;
-  supersedes_artifact_id?: string | null;
-  artifact_kind: string;
-  title?: string | null;
-  status: "streaming" | "complete" | "error";
-  preview_text?: string | null;
-  metadata?: Record<string, unknown>;
-  parts: MessageArtifactPart[];
-  created_at: string;
-  updated_at: string;
-}
-
-interface MessageArtifactCitationEntry {
-  artifact_part_id: string;
-  ordinal: number;
-  part_key?: string | null;
-  part_type?: string | null;
-  source_version: string;
-  locator: RetrievalLocator;
-  source_ref?: ConversationSourceRef | null;
-  source_refs?: ConversationSourceRef[];
-  context_ref?: RetrievalContextRef | null;
-  result_ref?: MessageRetrievalResultRef | null;
-  evidence_span_id?: string | null;
-  evidence_span_ids?: string[];
-  metadata?: Record<string, unknown>;
-}
-
-export interface MessageArtifactCitationManifest {
-  artifact_id: string;
-  message_id: string;
-  conversation_id: string;
-  entries: MessageArtifactCitationEntry[];
-}
-
-export interface MessageArtifactExport {
-  export_id: string;
-  format: "markdown" | "json" | "html" | "pdf" | "csv";
-  artifact: MessageArtifact;
-  artifact_version: number;
-  citation_manifest: MessageArtifactCitationManifest;
-  content_sha256: string;
-  manifest_sha256: string;
-  exported_at: string;
-  content: string | Record<string, unknown>;
-}
-
-export interface MessageArtifactExportLedger {
-  id: string;
-  conversation_id: string;
-  message_id: string;
-  artifact_id: string;
-  viewer_user_id: string;
-  format: "markdown" | "json" | "html" | "pdf" | "csv";
-  artifact_version: number;
-  content_sha256: string;
-  manifest_sha256: string;
-  metadata?: Record<string, unknown>;
-  created_at: string;
-}
-
 export interface MessageDocument {
   type: "message_document";
   version: number;
@@ -593,19 +490,6 @@ export interface MessageDocument {
     | ({
         type: "claim_evidence";
       } & MessageClaimEvidence)
-    | {
-        type: "artifact_preview";
-        artifact_id?: string | null;
-        durable_artifact_id?: string | null;
-        artifact_key?: string | null;
-        artifact_version?: number | null;
-        supersedes_artifact_id?: string | null;
-        artifact_kind?: string | null;
-        title?: string | null;
-        status?: string | null;
-        delta?: string | null;
-        parts?: MessageArtifactPart[];
-      }
   >;
 }
 
@@ -620,7 +504,6 @@ export interface ConversationMessage {
   branch_anchor?: BranchAnchor | null;
   contexts?: MessageContextSnapshot[];
   tool_calls?: MessageToolCall[];
-  artifacts?: MessageArtifact[];
   status: "pending" | "complete" | "error" | "cancelled";
   error_code: string | null;
   can_retry_response: boolean;

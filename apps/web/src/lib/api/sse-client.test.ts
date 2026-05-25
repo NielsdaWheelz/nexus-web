@@ -32,9 +32,6 @@ describe("sseClientDirect", () => {
               'event: claim_evidence',
               'data: {"id":"evidence-1","claim_id":"claim-1","ordinal":0,"evidence_role":"supports","source_ref":{"type":"web_result","id":"web:1","source_version":"web_search:brave:web:1"},"retrieval_id":"retrieval-1","context_ref":{"type":"web_result","id":"web:1"},"result_ref":{"type":"web_result","id":"web:1","result_type":"web_result","result_ref":"web:1","source_id":"web:1","title":"Web Result","url":"https://example.com/story","deep_link":"https://example.com/story","snippet":"web match","source_version":"web_search:brave:web:1","context_ref":{"type":"web_result","id":"web:1"},"locator":{"type":"external_url","url":"https://example.com/story"},"media_id":null,"media_kind":null,"score":1,"selected":true},"exact_snippet":"web match","locator":{"type":"external_url","url":"https://example.com/story"},"deep_link":"https://example.com/story","retrieval_status":"web_result","selected":true,"included_in_prompt":true,"source_version":"web_search:brave:web:1","created_at":"2026-01-01T00:00:00Z"}',
               "",
-              'event: artifact_delta',
-              'data: {"artifact_id":"artifact-1","artifact_kind":"timeline","title":"Timeline","status":"streaming","delta":"Draft artifact","parts":[]}',
-              "",
               'event: delta',
               'data: {"delta":"Hello"}',
               "",
@@ -230,17 +227,6 @@ describe("sseClientDirect", () => {
           included_in_prompt: true,
           source_version: "web_search:brave:web:1",
           created_at: "2026-01-01T00:00:00Z",
-        },
-      },
-      {
-        type: "artifact_delta",
-        data: {
-          artifact_id: "artifact-1",
-          artifact_kind: "timeline",
-          title: "Timeline",
-          status: "streaming",
-          delta: "Draft artifact",
-          parts: [],
         },
       },
       {
@@ -776,109 +762,6 @@ describe("sseClientDirect", () => {
     );
   });
 
-  it("accepts typed artifact part provenance refs", async () => {
-    const mediaResult = {
-      type: "media",
-      id: "media-1",
-      result_type: "media",
-      source_id: "media-1",
-      title: "Article",
-      source_label: "Article",
-      snippet: "match",
-      deep_link: "/media/media-1",
-      context_ref: { type: "media", id: "media-1" },
-      source_version: null,
-      locator: null,
-      media_id: "media-1",
-      media_kind: "web_article",
-      score: 1,
-      selected: true,
-    };
-    const artifactDelta = {
-      artifact_id: "artifact-1",
-      artifact_kind: "timeline",
-      parts: [
-        {
-          id: "part-1",
-          source_version: "artifact_part:part-1:v1",
-          locator: {
-            type: "artifact_part_ref",
-            artifact_id: "artifact-1",
-            artifact_part_id: "part-1",
-            message_id: "assistant-1",
-            conversation_id: "conversation-1",
-          },
-          source_ref: {
-            type: "message_retrieval",
-            id: "retrieval-1",
-            context_ref: { type: "media", id: "media-1" },
-            result_ref: mediaResult,
-          },
-          source_refs: [
-            {
-              type: "web_result",
-              id: "web:1",
-              source_version: "web_search:test:web:1",
-            },
-          ],
-          context_ref: { type: "media", id: "media-1" },
-          result_ref: mediaResult,
-        },
-      ],
-    };
-
-    const events = await collectOneSseEvent("artifact_delta", artifactDelta);
-
-    expect(events).toEqual([{ type: "artifact_delta", data: artifactDelta }]);
-  });
-
-  it("rejects artifact parts with loose provenance refs", async () => {
-    const validPart = {
-      id: "part-1",
-      source_version: "artifact_part:part-1:v1",
-      locator: {
-        type: "artifact_part_ref",
-        artifact_id: "artifact-1",
-        artifact_part_id: "part-1",
-        message_id: "assistant-1",
-        conversation_id: "conversation-1",
-      },
-      source_ref: {
-        type: "message_retrieval",
-        id: "retrieval-1",
-      },
-    };
-
-    await expectInvalidSseEvent(
-      "artifact_delta",
-      {
-        artifact_id: "artifact-1",
-        parts: [{ ...validPart, context_ref: { type: "loose", id: "x" } }],
-      },
-      "Invalid SSE payload for artifact_delta",
-    );
-    await expectInvalidSseEvent(
-      "artifact_delta",
-      {
-        artifact_id: "artifact-1",
-        parts: [{ ...validPart, result_ref: { type: "media", id: "media-1" } }],
-      },
-      "Invalid SSE payload for artifact_delta",
-    );
-    await expectInvalidSseEvent(
-      "artifact_delta",
-      {
-        artifact_id: "artifact-1",
-        parts: [
-          {
-            ...validPart,
-            source_ref: { type: "unknown", id: "source-1", extra: true },
-          },
-        ],
-      },
-      "Invalid SSE payload for artifact_delta",
-    );
-  });
 });
 
 async function collectOneSseEvent(eventType: string, data: unknown) {

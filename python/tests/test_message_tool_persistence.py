@@ -25,8 +25,6 @@ from nexus.db.models import (
     ChatRunEvent,
     ChatRunEventType,
     Message,
-    MessageArtifact,
-    MessageArtifactPart,
     MessageRetrieval,
     MessageToolCall,
     Model,
@@ -45,12 +43,10 @@ from nexus.schemas.conversation import (
 )
 from nexus.schemas.notes import OBJECT_TYPE_VALUES
 from nexus.schemas.retrieval import retrieval_context_ref_json, retrieval_result_ref_json
-from nexus.schemas.search import SearchResultArtifactPartOut
 from nexus.services import contexts as contexts_service
 from nexus.services.agent_tools.app_search import (
     AppSearchCitation,
     AppSearchRun,
-    _citation_from_search_result,
     persist_app_search_run,
     render_retrieved_context_blocks,
 )
@@ -71,7 +67,6 @@ from nexus.services.chat_run_verification import (
     VERIFICATION_FAILURE_CONTENT,
     verified_assistant_content,
 )
-from nexus.services.conversations import load_message_artifacts_for_message_ids, message_to_out
 from tests.factories import (
     create_searchable_media,
     create_test_conversation,
@@ -166,7 +161,6 @@ def test_message_retrieval_result_type_enum_matches_response_contract():
     assert "contributor" in orm_types
     assert "episode" in orm_types
     assert "video" in orm_types
-    assert "artifact_part" in orm_types
     assert "annotation" not in orm_types
 
 
@@ -177,7 +171,6 @@ def test_chat_run_event_type_enum_matches_response_contract():
     assert orm_types == schema_types
     assert "retrieval_result" in orm_types
     assert "source_manifest_delta" in orm_types
-    assert "artifact_delta" in orm_types
     assert "claim" in orm_types
     assert "citation" not in orm_types
     assert "tool_result" not in orm_types
@@ -596,160 +589,6 @@ def test_retrieval_ref_json_rejects_status_and_preserves_web_source_version():
         )
 
 
-def test_artifact_part_app_search_ref_emits_strict_source_version():
-    artifact_id = uuid4()
-    part_id = uuid4()
-    message_id = uuid4()
-    conversation_id = uuid4()
-    locator = {
-        "type": "artifact_part_ref",
-        "artifact_id": str(artifact_id),
-        "artifact_part_id": str(part_id),
-        "message_id": str(message_id),
-        "conversation_id": str(conversation_id),
-        "part_key": "row-1",
-    }
-    result = SearchResultArtifactPartOut(
-        type="artifact_part",
-        id=part_id,
-        score=0.9,
-        snippet="Artifact needle row evidence",
-        artifact_id=artifact_id,
-        message_id=message_id,
-        conversation_id=conversation_id,
-        artifact_kind="comparison_table",
-        artifact_title="Research Table",
-        part_key="row-1",
-        part_type="table_row",
-        evidence_span_ids=[],
-        source_version=f"artifact_part:{part_id}:v1",
-        locator=locator,
-        title="Research Table",
-        source_label="artifact part",
-        media_id=None,
-        media_kind=None,
-        deep_link=f"/conversations/{conversation_id}?artifact={artifact_id}&artifactPart={part_id}",
-        context_ref={
-            "type": "artifact_part",
-            "id": part_id,
-            "artifact_id": artifact_id,
-            "source_version": f"artifact_part:{part_id}:v1",
-            "locator": locator,
-            "artifact_part_provenance": {
-                "type": "artifact_part",
-                "artifact_id": artifact_id,
-                "artifact_kind": "comparison_table",
-                "message_id": message_id,
-                "conversation_id": conversation_id,
-                "artifact_part_id": part_id,
-                "part_key": "row-1",
-                "source_version": f"artifact_part:{part_id}:v1",
-                "locator": locator,
-            },
-        },
-    )
-
-    citation = _citation_from_search_result(result, filters={})
-
-    assert citation.locator == locator
-    assert citation.source_version == f"artifact_part:{part_id}:v1"
-    assert citation.result_ref_json()["source_version"] == f"artifact_part:{part_id}:v1"
-
-
-def test_app_search_renders_selected_artifact_part_context(db_session, bootstrapped_user):
-    conversation_id = create_test_conversation(db_session, bootstrapped_user)
-    user_message_id = create_test_message(
-        db_session,
-        conversation_id,
-        seq=1,
-        role="user",
-        content="Build a comparison table.",
-    )
-    assistant_message_id = create_test_message(
-        db_session,
-        conversation_id,
-        seq=2,
-        role="assistant",
-        content="Done.",
-        parent_message_id=user_message_id,
-    )
-    artifact_id = uuid4()
-    part_id = uuid4()
-    db_session.execute(
-        text("""
-            INSERT INTO message_artifacts (
-                id, conversation_id, message_id, artifact_key,
-                artifact_version, artifact_kind, title, status
-            )
-            VALUES (
-                :artifact_id, :conversation_id, :message_id, 'research-table',
-                1, 'comparison_table', 'Research Table', 'complete'
-            )
-        """),
-        {
-            "artifact_id": artifact_id,
-            "conversation_id": conversation_id,
-            "message_id": assistant_message_id,
-        },
-    )
-    db_session.execute(
-        text("""
-            INSERT INTO message_artifact_parts (
-                id, artifact_id, ordinal, part_key, part_type, text,
-                source_version, locator, metadata
-            )
-            VALUES (
-                :part_id, :artifact_id, 0, 'row-1', 'table_row',
-                'Artifact needle row evidence',
-                concat('artifact_part', chr(58), CAST(:part_id AS text), chr(58), 'v1'),
-                jsonb_build_object(
-                    'type', 'artifact_part_ref',
-                    'artifact_id', CAST(:artifact_id AS text),
-                    'artifact_part_id', CAST(:part_id AS text),
-                    'message_id', CAST(:message_id AS text),
-                    'conversation_id', CAST(:conversation_id AS text),
-                    'part_key', 'row-1'
-                ),
-                '{"support_state":"not_source_grounded"}'::jsonb
-            )
-        """),
-        {
-            "part_id": part_id,
-            "artifact_id": artifact_id,
-            "message_id": assistant_message_id,
-            "conversation_id": conversation_id,
-        },
-    )
-    db_session.flush()
-    citation = AppSearchCitation(
-        result_type="artifact_part",
-        source_id=str(part_id),
-        title="Research Table",
-        source_label="artifact part",
-        snippet="Artifact needle row evidence",
-        deep_link=f"/conversations/{conversation_id}?artifact={artifact_id}&artifactPart={part_id}",
-        citation_label=None,
-        locator=None,
-        context_ref={"type": "artifact_part", "id": str(part_id)},
-        evidence_span_id=None,
-        source_version=f"artifact_part:{part_id}:v1",
-        media_id=None,
-        media_kind=None,
-        score=0.9,
-    )
-
-    rendered, total_chars, selected = render_retrieved_context_blocks(
-        db_session,
-        viewer_id=bootstrapped_user,
-        citations=[citation],
-    )
-
-    assert selected == [citation]
-    assert total_chars > 0
-    assert "<artifact_part>" in rendered
-    assert "Artifact needle row evidence" in rendered
-
-
 def test_message_document_rejects_incomplete_citable_claim_evidence():
     retrieval = _web_retrieval_payload()
     evidence = {
@@ -1145,7 +984,7 @@ def test_assistant_claim_evidence_round_trip(db_session: Session):
     assert persisted.evidence[0].source_ref["retrieval_id"] == str(retrieval.id)
 
 
-def test_message_document_persists_source_manifest_and_cited_artifact_parts(
+def test_message_document_persists_source_manifest(
     db_session: Session,
 ):
     conversation_id, user_message_id, assistant_message_id = _create_message_pair(db_session)
@@ -1243,48 +1082,6 @@ def test_message_document_persists_source_manifest_and_cited_artifact_parts(
                     "metadata": {},
                     "latency_ms": 24,
                     "status": "complete",
-                },
-            ),
-            ChatRunEvent(
-                run_id=run.id,
-                seq=2,
-                event_type="artifact_delta",
-                payload={
-                    "artifact_id": "artifact-1",
-                    "artifact_kind": "timeline",
-                    "title": "Timeline",
-                    "status": "complete",
-                    "parts": [
-                        {
-                            "id": "part-1",
-                            "source_version": "artifact_part:part-1:v1",
-                            "locator": {
-                                "type": "artifact_part_ref",
-                                "artifact_id": "artifact-1",
-                                "artifact_part_id": "part-1",
-                                "message_id": str(assistant_message_id),
-                                "conversation_id": str(conversation_id),
-                                "part_key": "part-1",
-                            },
-                            "metadata": {"support_state": "not_source_grounded"},
-                        },
-                        {
-                            "part_key": "part-2",
-                            "source_version": "artifact_part:part-2:v1",
-                            "locator": {
-                                "type": "artifact_part_ref",
-                                "artifact_id": "artifact-1",
-                                "artifact_part_id": "part-2",
-                                "message_id": str(assistant_message_id),
-                                "conversation_id": str(conversation_id),
-                                "part_key": "part-2",
-                            },
-                            "source_ref": {
-                                "type": "message_retrieval",
-                                "id": "retrieval-1",
-                            },
-                        },
-                    ],
                 },
             ),
             ChatRunEvent(
@@ -1439,216 +1236,6 @@ def test_message_document_persists_source_manifest_and_cited_artifact_parts(
     assert document["blocks"][5]["included_in_prompt_count"] == 1
     assert document["blocks"][5]["excluded_by_budget_count"] == 1
     assert document["blocks"][5]["metadata"] == {"empty_status": "partial"}
-    assert document["blocks"][6]["type"] == "artifact_preview"
-    assert document["blocks"][6]["parts"][0]["id"] == "part-1"
-    assert document["blocks"][6]["parts"][0]["metadata"] == {"support_state": "not_source_grounded"}
-    assert document["blocks"][6]["parts"][1]["part_key"] == "part-2"
-    assert document["blocks"][6]["parts"][1]["source_ref"] == {
-        "type": "message_retrieval",
-        "id": "retrieval-1",
-    }
-
-
-def test_message_artifact_rows_enrich_preview_blocks(db_session: Session):
-    conversation_id, _user_message_id, assistant_message_id = _create_message_pair(db_session)
-    artifact = MessageArtifact(
-        conversation_id=conversation_id,
-        message_id=assistant_message_id,
-        artifact_key="artifact-1",
-        artifact_kind="timeline",
-        title="Timeline",
-        status="complete",
-        preview_text="Durable preview",
-    )
-    db_session.add(artifact)
-    db_session.flush()
-    part_id = uuid4()
-    part = MessageArtifactPart(
-        id=part_id,
-        artifact_id=artifact.id,
-        ordinal=0,
-        part_key="part-1",
-        part_type="event",
-        part_text="Cited event",
-        source_version=f"artifact_part:{part_id}:v1",
-        locator={
-            "type": "artifact_part_ref",
-            "artifact_id": str(artifact.id),
-            "artifact_part_id": str(part_id),
-            "message_id": str(assistant_message_id),
-            "conversation_id": str(conversation_id),
-            "part_key": "part-1",
-        },
-        source_ref={"type": "message_retrieval", "id": "retrieval-1"},
-        source_refs=[{"type": "message_retrieval", "id": "retrieval-2"}],
-        evidence_span_ids=[str(uuid4())],
-    )
-    db_session.add(part)
-    message = db_session.get(Message, assistant_message_id)
-    message.message_document = {
-        "type": "message_document",
-        "version": 1,
-        "blocks": [
-            {
-                "type": "artifact_preview",
-                "artifact_id": "artifact-1",
-                "artifact_kind": "timeline",
-                "parts": [],
-            }
-        ],
-    }
-    db_session.commit()
-
-    artifacts = load_message_artifacts_for_message_ids(db_session, [assistant_message_id])
-    message_out = message_to_out(message, artifacts=artifacts[assistant_message_id])
-
-    block = message_out.message_document.model_dump(mode="json")["blocks"][0]
-    assert block["artifact_id"] == str(artifact.id)
-    assert block["durable_artifact_id"] == str(artifact.id)
-    assert block["delta"] == "Durable preview"
-    assert block["parts"][0]["id"] == str(part.id)
-    assert block["parts"][0]["source_ref"]["type"] == "message_retrieval"
-    assert block["parts"][0]["source_ref"]["id"] == "retrieval-1"
-    assert block["parts"][0]["source_refs"][0]["type"] == "message_retrieval"
-    assert block["parts"][0]["source_refs"][0]["id"] == "retrieval-2"
-
-
-def test_finalize_run_persists_artifact_delta_rows(db_session: Session):
-    conversation_id, user_message_id, assistant_message_id = _create_message_pair(db_session)
-    user_id = db_session.execute(
-        text("SELECT owner_user_id FROM conversations WHERE id = :id"),
-        {"id": conversation_id},
-    ).scalar_one()
-    ensure_user_and_default_library(db_session, user_id)
-    media_id = create_searchable_media(db_session, user_id, title="Artifact Delta Evidence")
-    evidence_span_id = db_session.execute(
-        text(
-            """
-            SELECT primary_evidence_span_id
-            FROM content_chunks
-            WHERE media_id = :media_id
-            ORDER BY chunk_idx ASC
-            LIMIT 1
-            """
-        ),
-        {"media_id": media_id},
-    ).scalar_one()
-    model_id = create_test_model(db_session)
-    run = ChatRun(
-        owner_user_id=user_id,
-        conversation_id=conversation_id,
-        user_message_id=user_message_id,
-        assistant_message_id=assistant_message_id,
-        idempotency_key=str(uuid4()),
-        payload_hash="payload",
-        status="running",
-        model_id=model_id,
-        reasoning="none",
-        key_mode="auto",
-        web_search={"mode": "off"},
-        next_event_seq=2,
-    )
-    db_session.add(run)
-    db_session.flush()
-    db_session.add(
-        ChatRunEvent(
-            run_id=run.id,
-            seq=1,
-            event_type="artifact_delta",
-            payload={
-                "artifact_id": "artifact-1",
-                "artifact_kind": "timeline",
-                "title": "Timeline",
-                "status": "streaming",
-                "delta": "Durable preview",
-                "parts": [
-                    {
-                        "part_key": "part-1",
-                        "part_type": "event",
-                        "text": "Cited event",
-                        "source_version": f"message:{user_message_id}:v1",
-                        "locator": {
-                            "type": "message_offsets",
-                            "conversation_id": str(conversation_id),
-                            "message_id": str(user_message_id),
-                            "start_offset": 0,
-                            "end_offset": 12,
-                            "message_seq": 1,
-                        },
-                        "source_ref": {"type": "message", "id": str(user_message_id)},
-                        "source_refs": [{"type": "message", "id": str(user_message_id)}],
-                        "evidence_span_id": str(evidence_span_id),
-                    }
-                ],
-            },
-        )
-    )
-    db_session.commit()
-
-    finalize_run(
-        db_session,
-        run_id=run.id,
-        assistant_content="Done.",
-        assistant_status="complete",
-        run_status="complete",
-        done_status="complete",
-        error_code=None,
-        model=None,
-        resolved_key=None,
-        key_mode="auto",
-        latency_ms=12,
-        usage=None,
-        provider_request_id=None,
-        viewer_id=user_id,
-    )
-
-    artifact_row = (
-        db_session.execute(
-            text(
-                """
-            SELECT artifact_key, artifact_kind, status, preview_text, metadata
-            FROM message_artifacts
-            WHERE message_id = :message_id
-            """
-            ),
-            {"message_id": assistant_message_id},
-        )
-        .mappings()
-        .one()
-    )
-    part_row = (
-        db_session.execute(
-            text(
-                """
-            SELECT
-                ordinal, part_key, part_type, text, source_ref, source_refs,
-                evidence_span_id, evidence_span_ids
-            FROM message_artifact_parts
-            WHERE artifact_id = (
-                SELECT id FROM message_artifacts WHERE message_id = :message_id
-            )
-            """
-            ),
-            {"message_id": assistant_message_id},
-        )
-        .mappings()
-        .one()
-    )
-
-    assert artifact_row["artifact_key"] == "artifact-1"
-    assert artifact_row["artifact_kind"] == "timeline"
-    assert artifact_row["status"] == "complete"
-    assert artifact_row["preview_text"] == "Durable preview"
-    assert artifact_row["metadata"]["source"] == "chat_run_artifact_delta"
-    assert artifact_row["metadata"]["run_event_seqs"] == [1]
-    assert part_row["ordinal"] == 0
-    assert part_row["part_key"] == "part-1"
-    assert part_row["part_type"] == "event"
-    assert part_row["text"] == "Cited event"
-    assert part_row["source_ref"] == {"type": "message", "id": str(user_message_id)}
-    assert part_row["source_refs"] == [{"type": "message", "id": str(user_message_id)}]
-    assert part_row["evidence_span_id"] == evidence_span_id
-    assert part_row["evidence_span_ids"] == [str(evidence_span_id)]
 
 
 def test_reconcile_prompt_retrievals_preserves_empty_manifest_metadata(
@@ -2207,43 +1794,6 @@ def test_chat_run_event_payloads_are_strict():
                 "selected_count": 1,
                 "filters": {},
                 "results": [{**retrieval_citation, "filters": {"unexpected": True}}],
-            },
-        )
-    assert (
-        chat_run_event_payload_json(
-            "artifact_delta",
-            {
-                "artifact_id": "artifact-1",
-                "artifact_kind": "timeline",
-                "status": "streaming",
-                "parts": [
-                    {
-                        "part_key": "claim-1",
-                        "text": "The source-backed generated claim.",
-                        "source_version": f"message:{assistant_message_id}:v1",
-                        "locator": {
-                            "type": "message_offsets",
-                            "conversation_id": str(conversation_id),
-                            "message_id": str(assistant_message_id),
-                            "start_offset": 0,
-                            "end_offset": 12,
-                            "message_seq": 2,
-                        },
-                        "source_ref": {"type": "message", "id": str(uuid4())},
-                    }
-                ],
-            },
-        )["parts"][0]["part_key"]
-        == "claim-1"
-    )
-    with pytest.raises(ValidationError):
-        chat_run_event_payload_json(
-            "artifact_delta",
-            {
-                "artifact_id": "artifact-1",
-                "artifact_kind": "timeline",
-                "status": "streaming",
-                "parts": [{"part_key": "claim-1", "text": "Unbacked generated claim."}],
             },
         )
     with pytest.raises(ValidationError):

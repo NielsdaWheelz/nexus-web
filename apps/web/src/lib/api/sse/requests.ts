@@ -10,12 +10,8 @@ export interface ObjectRefContextItem {
   type: ContextItemType;
   id: string;
   evidence_span_ids?: string[];
-  artifact_id?: string;
-  artifact_key?: string | null;
-  artifact_version?: number | null;
   source_version?: string;
   locator?: RetrievalLocator;
-  artifact_part_provenance?: Record<string, unknown>;
   /** Display fields carried by the caller when available. */
   color?: ContextItemColor;
   preview?: string;
@@ -49,40 +45,14 @@ export type ConversationScopeInput =
   | { type: "media"; media_id: string }
   | { type: "library"; library_id: string };
 
-export type ArtifactIntentKind =
-  | "off"
-  | "auto"
-  | "briefing_document"
-  | "study_guide"
-  | "faq"
-  | "timeline"
-  | "comparison_table"
-  | "extraction_table"
-  | "claim_table"
-  | "contradiction_report"
-  | "source_map"
-  | "concept_map"
-  | "outline"
-  | "flashcards"
-  | "quiz"
-  | "audio_overview_script"
-  | "audio_overview"
-  | "video_slide_overview_manifest"
-  | "bibliography"
-  | "citation_audit";
-
 type ChatRunContext =
   | {
       kind: "object_ref";
       type: ContextItemType;
       id: string;
       evidence_span_ids?: string[];
-      artifact_id?: string;
-      artifact_key?: string | null;
-      artifact_version?: number | null;
       source_version?: string;
       locator?: RetrievalLocator;
-      artifact_part_provenance?: Record<string, unknown>;
     }
   | {
       kind: "reader_selection";
@@ -120,16 +90,8 @@ export function toWireContextItem(item: ContextItem): ChatRunContext {
     ...(item.evidence_span_ids?.length
       ? { evidence_span_ids: item.evidence_span_ids }
       : {}),
-    ...(item.artifact_id ? { artifact_id: item.artifact_id } : {}),
-    ...(item.artifact_key ? { artifact_key: item.artifact_key } : {}),
-    ...(item.artifact_version
-      ? { artifact_version: item.artifact_version }
-      : {}),
     ...(item.source_version ? { source_version: item.source_version } : {}),
     ...(item.locator ? { locator: item.locator } : {}),
-    ...(item.artifact_part_provenance
-      ? { artifact_part_provenance: item.artifact_part_provenance }
-      : {}),
   };
 }
 
@@ -149,5 +111,4 @@ export interface ChatRunCreateRequest {
     allowed_domains?: string[];
     blocked_domains?: string[];
   };
-  artifact_intent: { kind: ArtifactIntentKind };
 }

@@ -100,10 +100,6 @@ function buildSourceMeta(result: SearchApiResult): string | null {
     return result.source_label ?? "conversation";
   }
 
-  if (result.type === "artifact") {
-    return result.source_label ?? result.artifact_kind;
-  }
-
   if (result.type === "evidence_span") {
     return result.source_label ?? result.citation_label;
   }
@@ -126,10 +122,6 @@ function buildSourceMeta(result: SearchApiResult): string | null {
 
   if (result.type === "fragment") {
     return result.source_label ?? "fragment";
-  }
-
-  if (result.type === "artifact_part") {
-    return result.source_label ?? result.artifact_kind;
   }
 
   if (result.type === "web_result") {
@@ -191,14 +183,8 @@ function buildPrimaryText(result: SearchApiResult): string {
   if (result.type === "conversation") {
     return result.title || sanitizeSnippet(result.snippet) || "Conversation";
   }
-  if (result.type === "artifact") {
-    return result.title || sanitizeSnippet(result.snippet) || result.artifact_kind;
-  }
   if (result.type === "evidence_span") {
     return sanitizeSnippet(result.snippet) || result.citation_label;
-  }
-  if (result.type === "artifact_part") {
-    return sanitizeSnippet(result.snippet) || result.artifact_title || result.artifact_kind;
   }
   if (result.type === "web_result") {
     return result.title || sanitizeSnippet(result.snippet) || result.url;
@@ -237,12 +223,8 @@ function adaptSearchResultRow(
       type: result.context_ref.type,
       id: result.context_ref.id,
       evidenceSpanIds: result.context_ref.evidence_span_ids ?? [],
-      artifactId: result.context_ref.artifact_id ?? undefined,
-      artifactKey: result.context_ref.artifact_key,
-      artifactVersion: result.context_ref.artifact_version,
       sourceVersion: result.context_ref.source_version ?? undefined,
       locator: result.context_ref.locator ?? undefined,
-      artifactPartProvenance: result.context_ref.artifact_part_provenance ?? undefined,
     },
     typeLabel:
       result.type === "content_chunk"
@@ -257,10 +239,6 @@ function adaptSearchResultRow(
               ? result.citation_label
             : result.type === "conversation"
               ? "conversation"
-            : result.type === "artifact"
-              ? "artifact"
-            : result.type === "artifact_part"
-              ? "artifact"
             : result.type === "web_result"
               ? "web result"
             : result.type,

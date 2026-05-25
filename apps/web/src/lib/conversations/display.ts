@@ -126,18 +126,3 @@ export function formatConversationScopeBadge(scope: ConversationScope): string {
   const exhaustive: never = scope;
   return exhaustive;
 }
-
-/**
- * Build the conversation-pane URL that opens an artifact (and optionally
- * focuses one of its parts). All path / query segments are URL-encoded.
- */
-export function buildArtifactHref(args: {
-  conversationId: string;
-  artifactId: string;
-  artifactPartId?: string;
-}): string {
-  const base = `/conversations/${encodeURIComponent(args.conversationId)}?artifact=${encodeURIComponent(args.artifactId)}`;
-  return args.artifactPartId
-    ? `${base}&artifactPart=${encodeURIComponent(args.artifactPartId)}`
-    : base;
-}

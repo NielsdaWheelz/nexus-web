@@ -31,10 +31,7 @@ import {
 import ChatComposer from "@/components/ChatComposer";
 import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
-import type {
-  ArtifactFocusTarget,
-  ReaderSourceTarget,
-} from "@/components/chat/MessageRow";
+import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
@@ -101,14 +98,6 @@ export default function ConversationPaneBody() {
     stripAttachState,
   } = useAttachedContextsFromUrl(searchParams);
   const runIdFromUrl = searchParams.get("run");
-  const artifactFocusTarget = useMemo<ArtifactFocusTarget | null>(() => {
-    const artifactId = searchParams.get("artifact");
-    if (!artifactId) return null;
-    return {
-      artifactId,
-      artifactPartId: searchParams.get("artifactPart"),
-    };
-  }, [searchParams]);
 
   const clearAttachState = useCallback(() => {
     clearContexts();
@@ -134,7 +123,6 @@ export default function ConversationPaneBody() {
     <ChatView
       id={id}
       runIdFromUrl={runIdFromUrl}
-      artifactFocusTarget={artifactFocusTarget}
       attachedContexts={attachedContexts}
       setAttachedContexts={setAttachedContexts}
       onRemoveContext={removeContext}
@@ -152,7 +140,6 @@ export default function ConversationPaneBody() {
 function ChatView({
   id,
   runIdFromUrl,
-  artifactFocusTarget,
   attachedContexts,
   setAttachedContexts,
   onRemoveContext,
@@ -161,7 +148,6 @@ function ChatView({
 }: {
   id: string;
   runIdFromUrl: string | null;
-  artifactFocusTarget: ArtifactFocusTarget | null;
   attachedContexts: ContextItem[];
   setAttachedContexts: Dispatch<SetStateAction<ContextItem[]>>;
   onRemoveContext: (index: number) => void;
@@ -726,13 +712,6 @@ function ChatView({
     [handleReaderSourceActivate, setAttachedContexts],
   );
 
-  const handleAttachContext = useCallback(
-    (context: ContextItem) => {
-      setAttachedContexts((current) => mergeContextItems(current, [context]));
-    },
-    [setAttachedContexts],
-  );
-
   const handleSaveSourceQuote = useCallback(
     async (target: ReaderSourceTarget) => {
       const locator = target.locator;
@@ -820,9 +799,6 @@ function ChatView({
               onReaderSourceActivate={handleReaderSourceActivate}
               onAskAboutSource={handleAskAboutSource}
               onSaveSourceQuote={handleSaveSourceQuote}
-              onAttachContext={handleAttachContext}
-              onChatRunCreated={handleChatRunCreated}
-              artifactFocusTarget={artifactFocusTarget}
               forkOptionsByParentId={forkOptionsByParentId}
               switchableLeafIds={switchableLeafIds}
               onSelectFork={(fork) => {

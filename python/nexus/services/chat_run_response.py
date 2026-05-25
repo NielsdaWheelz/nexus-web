@@ -12,7 +12,6 @@ from nexus.schemas.conversation import ChatRunOut, ChatRunResponse
 from nexus.services.conversations import (
     conversation_to_out,
     get_message_count,
-    load_message_artifacts_for_message_ids,
     load_message_context_snapshots_for_message_ids,
     message_to_out,
     retryable_assistant_message_ids,
@@ -28,7 +27,6 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
 
     message_ids = [user_message.id, assistant_message.id]
     contexts_by_message_id = load_message_context_snapshots_for_message_ids(db, message_ids)
-    artifacts_by_message_id = load_message_artifacts_for_message_ids(db, message_ids)
     retryable_message_ids = retryable_assistant_message_ids(
         db,
         viewer_id=viewer_id,
@@ -37,13 +35,11 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
     user_message_out = message_to_out(
         user_message,
         contexts_by_message_id.get(user_message.id, []),
-        artifacts_by_message_id.get(user_message.id, []),
         can_retry_response=user_message.id in retryable_message_ids,
     )
     assistant_message_out = message_to_out(
         assistant_message,
         contexts_by_message_id.get(assistant_message.id, []),
-        artifacts_by_message_id.get(assistant_message.id, []),
         can_retry_response=assistant_message.id in retryable_message_ids,
     )
     return ChatRunResponse(

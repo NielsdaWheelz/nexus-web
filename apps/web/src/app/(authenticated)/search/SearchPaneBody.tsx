@@ -48,8 +48,6 @@ const SEARCH_TYPE_LABELS: Record<SearchType, string> = {
   message: "Messages",
   evidence_span: "Evidence spans",
   conversation: "Conversations",
-  artifact: "Artifacts",
-  artifact_part: "Artifacts",
   web_result: "Web",
 };
 

@@ -16,8 +16,6 @@ from nexus.db.models import (
     ConversationActivePath,
     ConversationBranch,
     Message,
-    MessageArtifact,
-    MessageArtifactPart,
     Model,
     UserApiKey,
 )
@@ -381,131 +379,6 @@ def seed_branching(owner_user_id: UUID) -> dict[str, object]:
         }
 
 
-def seed_artifact_follow_up(owner_user_id: UUID) -> dict[str, object]:
-    session_factory = create_session_factory()
-    with session_factory() as db:
-        model_id = openai_model_id(db)
-        ensure_send_key(db, owner_user_id)
-
-        conversation = Conversation(
-            id=uuid4(),
-            owner_user_id=owner_user_id,
-            title="E2E artifact conversation",
-            sharing="private",
-            scope_type="general",
-            next_seq=1,
-        )
-        db.add(conversation)
-        db.flush()
-
-        root_user = add_message(
-            db,
-            conversation.id,
-            1,
-            "user",
-            "Create a concise timeline from this seeded source note.",
-        )
-        assistant_content = "Here is a durable timeline artifact with source-backed export and follow-up coverage."
-        root_assistant = add_message(
-            db,
-            conversation.id,
-            2,
-            "assistant",
-            assistant_content,
-            parent_message_id=root_user.id,
-            model_id=model_id,
-        )
-        origin_run = ChatRun(
-            id=uuid4(),
-            owner_user_id=owner_user_id,
-            conversation_id=conversation.id,
-            user_message_id=root_user.id,
-            assistant_message_id=root_assistant.id,
-            idempotency_key=f"e2e-artifact-origin-{conversation.id}",
-            payload_hash="e2e-artifact-origin",
-            status="complete",
-            model_id=model_id,
-            reasoning="none",
-            key_mode="auto",
-            web_search={"mode": "off"},
-            artifact_intent={"kind": "timeline"},
-        )
-        db.add(origin_run)
-        db.flush()
-
-        artifact = MessageArtifact(
-            id=uuid4(),
-            conversation_id=conversation.id,
-            message_id=root_assistant.id,
-            chat_run_id=origin_run.id,
-            artifact_key="e2e-timeline",
-            artifact_version=1,
-            artifact_kind="timeline",
-            title="E2E Timeline",
-            status="complete",
-            preview_text="A durable seeded timeline ready for export and follow-up.",
-            metadata_json={"fixture": "artifact_follow_up"},
-        )
-        db.add(artifact)
-        db.flush()
-
-        part_id = uuid4()
-        part_text = (
-            "1997: The seeded source note establishes a durable artifact viewer, "
-            "export ledger, and artifact-part follow-up path."
-        )
-        db.add(
-            MessageArtifactPart(
-                id=part_id,
-                artifact_id=artifact.id,
-                ordinal=0,
-                part_key="1997",
-                part_type="event",
-                part_text=part_text,
-                source_version=f"artifact_part:{part_id}:v1",
-                locator={
-                    "type": "artifact_part_ref",
-                    "artifact_id": str(artifact.id),
-                    "artifact_part_id": str(part_id),
-                    "message_id": str(root_assistant.id),
-                    "conversation_id": str(conversation.id),
-                    "part_key": "1997",
-                },
-                source_ref={
-                    "type": "message",
-                    "id": str(root_user.id),
-                    "message_id": str(root_user.id),
-                    "conversation_id": str(conversation.id),
-                    "message_seq": 1,
-                    "label": "Seeded source note",
-                },
-                evidence_span_ids=[],
-                source_refs=[],
-                metadata_json={"fixture": "artifact_follow_up"},
-            )
-        )
-
-        conversation.next_seq = 3
-        db.add(
-            ConversationActivePath(
-                conversation_id=conversation.id,
-                viewer_user_id=owner_user_id,
-                active_leaf_message_id=root_assistant.id,
-            )
-        )
-        db.commit()
-
-        return {
-            "conversation_id": str(conversation.id),
-            "assistant_message_id": str(root_assistant.id),
-            "artifact_id": str(artifact.id),
-            "artifact_part_id": str(part_id),
-            "artifact_title": artifact.title,
-            "origin_chat_run_id": str(origin_run.id),
-            "part_text": part_text,
-        }
-
-
 def main() -> None:
     owner_user_id = UUID(require_env("NEXUS_E2E_OWNER_USER_ID"))
     scenario = require_env("NEXUS_E2E_CONVERSATION_SCENARIO")
@@ -514,8 +387,6 @@ def main() -> None:
         result = seed_scroll(owner_user_id, message_count)
     elif scenario == "branching":
         result = seed_branching(owner_user_id)
-    elif scenario == "artifact_follow_up":
-        result = seed_artifact_follow_up(owner_user_id)
     else:
         raise RuntimeError(f"Unknown scenario: {scenario}")
 

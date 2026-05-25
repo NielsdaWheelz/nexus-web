@@ -343,7 +343,6 @@ export default function ConversationNewPaneBody() {
               onReaderSourceActivate={handleReaderSourceActivate}
               onAskAboutSource={handleAskAboutSource}
               onSaveSourceQuote={handleSaveSourceQuote}
-              onChatRunCreated={handleChatRunCreated}
               scrollportRef={scrollportRef}
               onScroll={handleChatScroll}
               composer={

@@ -39,8 +39,7 @@ def search(
         description=(
             "Comma-separated list of types to search "
             "(media, podcast, episode, video, content_chunk, fragment, contributor, page, "
-            "note_block, highlight, message, evidence_span, conversation, artifact, "
-            "artifact_part, web_result)"
+            "note_block, highlight, message, evidence_span, conversation, web_result)"
         ),
     ),
     contributor_handles: str | None = Query(
@@ -88,7 +87,6 @@ def search(
     - `highlight` - Search saved source highlights
     - `message` - Search conversation messages
     - `web_result` - Search persisted public-web retrievals from visible conversations
-    - `artifact_part` - Search durable generated artifact parts
 
     **Visibility:**
     - Search never returns invisible content

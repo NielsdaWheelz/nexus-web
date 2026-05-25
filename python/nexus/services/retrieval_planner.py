@@ -25,8 +25,6 @@ APP_SEARCH_TYPES_ALL = (
     "message",
     "evidence_span",
     "conversation",
-    "artifact",
-    "artifact_part",
 )
 APP_SEARCH_TYPES_SCOPED = ("content_chunk", "fragment", "evidence_span")
 _SHORT_NON_SEARCH_MESSAGES = {

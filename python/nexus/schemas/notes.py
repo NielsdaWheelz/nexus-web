@@ -18,8 +18,6 @@ OBJECT_TYPES = Literal[
     "fragment",
     "contributor",
     "evidence_span",
-    "artifact",
-    "artifact_part",
 ]
 NOTE_BLOCK_KINDS = Literal["bullet", "heading", "todo", "quote", "code", "image", "embed"]
 OBJECT_LINK_RELATIONS = Literal[
@@ -43,8 +41,6 @@ OBJECT_TYPE_VALUES = {
     "fragment",
     "contributor",
     "evidence_span",
-    "artifact",
-    "artifact_part",
 }
 NOTE_BLOCK_KIND_VALUES = {"bullet", "heading", "todo", "quote", "code", "image", "embed"}
 NOTE_PM_BODY_NODE_TYPES = {"paragraph", "code_block", "object_embed"}

@@ -2,9 +2,6 @@ import type {
   ConversationMemoryInspection,
   ConversationMessage,
   ConversationSourceRef,
-  MessageArtifact,
-  MessageArtifactDelta,
-  MessageArtifactPart,
   MessageClaimEvidence,
   MessageRetrieval,
   MessageRetrievalResultRef,
@@ -12,7 +9,6 @@ import type {
 import { getStringField } from "@/lib/validation";
 import { statusSeverity } from "./audit";
 import type {
-  ProvenanceArtifact,
   ProvenanceClaim,
   ProvenanceModel,
   ProvenanceSource,
@@ -23,7 +19,7 @@ export function countProvenanceSignals(
   memory?: ConversationMemoryInspection | null,
 ): number {
   const model = buildProvenanceModel(messages, memory);
-  return model.sourceCount + model.artifactCount + model.claimCount;
+  return model.sourceCount + model.claimCount;
 }
 
 export function buildProvenanceModel(
@@ -33,12 +29,8 @@ export function buildProvenanceModel(
   const sources = new Map<string, ProvenanceSource>();
   const claimById = new Map<string, ProvenanceClaim>();
   const claimEvidenceByClaimId = new Map<string, MessageClaimEvidence[]>();
-  const artifacts = new Map<string, ProvenanceArtifact>();
-  const seenArtifactPartKeys = new Set<string>();
   let retrievalCount = 0;
   let includedRetrievalCount = 0;
-  let artifactPartCount = 0;
-  let citedArtifactPartCount = 0;
   let citationIssueCount = 0;
 
   for (const message of messages) {
@@ -80,31 +72,7 @@ export function buildProvenanceModel(
         }
       } else if (block.type === "citation_audit") {
         citationIssueCount += citationAuditIssueCount(block);
-      } else if (block.type === "artifact_preview") {
-        const artifact = artifactFromPreview(block, conversationArtifactHref(block));
-        artifacts.set(artifact.key, artifact);
-        const partCounts = recordArtifactPartProvenance(
-          artifact,
-          block.parts ?? [],
-          sources,
-          seenArtifactPartKeys,
-        );
-        artifactPartCount += partCounts.partCount;
-        citedArtifactPartCount += partCounts.citedPartCount;
       }
-    }
-
-    for (const artifact of message.artifacts ?? []) {
-      const modelArtifact = artifactFromDurable(artifact);
-      artifacts.set(modelArtifact.key, modelArtifact);
-      const partCounts = recordArtifactPartProvenance(
-        modelArtifact,
-        artifact.parts ?? [],
-        sources,
-        seenArtifactPartKeys,
-      );
-      artifactPartCount += partCounts.partCount;
-      citedArtifactPartCount += partCounts.citedPartCount;
     }
   }
 
@@ -160,9 +128,6 @@ export function buildProvenanceModel(
       (a, b) => statusSeverity(b.status) - statusSeverity(a.status) || a.ordinal - b.ordinal,
     );
   const sortedSources = [...sources.values()].sort(sourceSort);
-  const sortedArtifacts = [...artifacts.values()].sort(
-    (a, b) => b.partCount - a.partCount || a.title.localeCompare(b.title),
-  );
 
   return {
     messageCount: messages.length,
@@ -173,15 +138,11 @@ export function buildProvenanceModel(
     retrievalCount,
     includedRetrievalCount,
     sourceCount: sortedSources.length,
-    artifactCount: sortedArtifacts.length,
-    artifactPartCount,
-    citedArtifactPartCount,
     memoryItemCount: activeMemoryItems.length,
     memorySourceCount,
     citationIssueCount,
     sources: sortedSources,
     riskClaims,
-    artifacts: sortedArtifacts,
   };
 }
 
@@ -206,12 +167,10 @@ function ensureSource(
     retrievalCount: 0,
     includedRetrievalCount: 0,
     claimEvidenceCount: 0,
-    artifactPartCount: 0,
     memorySourceCount: 0,
     statuses: new Set(),
     snippets: [],
     claims: [],
-    artifactParts: [],
   };
   sources.set(identity.key, source);
   return source;
@@ -272,20 +231,6 @@ function sourceIdentityFromEvidence(
   );
 }
 
-function sourceIdentityFromArtifactPart(
-  part: MessageArtifactPart,
-): SourceIdentity | null {
-  const sourceRefs = [
-    part.source_ref,
-    ...(part.source_refs ?? []),
-  ].filter((source): source is ConversationSourceRef => Boolean(source));
-  for (const sourceRef of sourceRefs) {
-    const identity = sourceIdentityFromSourceRef(sourceRef);
-    if (identity) return identity;
-  }
-  return sourceIdentityFromResultRef(part.result_ref);
-}
-
 function sourceIdentityFromSourceRef(
   sourceRef?: ConversationSourceRef | null,
 ): SourceIdentity | null {
@@ -328,105 +273,13 @@ function sourceIdentityFromResultRef(
   };
 }
 
-function artifactFromPreview(
-  artifact: MessageArtifactDelta,
-  href?: string,
-): ProvenanceArtifact {
-  const id = artifact.durable_artifact_id ?? artifact.artifact_id ?? null;
-  const key =
-    id ??
-    (artifact.artifact_key
-      ? `${artifact.artifact_key}:v${artifact.artifact_version ?? "draft"}`
-      : `${artifact.artifact_kind ?? "artifact"}:${artifact.title ?? "untitled"}`);
-  const parts = artifact.parts ?? [];
-  return {
-    key,
-    id,
-    title: artifact.title || artifact.artifact_kind || "Generated artifact",
-    kind: artifact.artifact_kind || "artifact",
-    status: artifact.status || "preview",
-    href,
-    partCount: parts.length,
-    citedPartCount: parts.filter(artifactPartHasEvidence).length,
-  };
-}
-
-function artifactFromDurable(artifact: MessageArtifact): ProvenanceArtifact {
-  return {
-    key: artifact.id,
-    id: artifact.id,
-    title: artifact.title || artifact.artifact_key || artifact.artifact_kind,
-    kind: artifact.artifact_kind,
-    status: artifact.status,
-    partCount: artifact.parts.length,
-    citedPartCount: artifact.parts.filter(artifactPartHasEvidence).length,
-  };
-}
-
-function recordArtifactPartProvenance(
-  artifact: ProvenanceArtifact,
-  parts: MessageArtifactPart[],
-  sources: Map<string, ProvenanceSource>,
-  seenArtifactPartKeys: Set<string>,
-): { partCount: number; citedPartCount: number } {
-  let partCount = 0;
-  let citedPartCount = 0;
-  parts.forEach((part, index) => {
-    const key = artifactPartIdentity(artifact.key, part, index);
-    if (seenArtifactPartKeys.has(key)) return;
-    seenArtifactPartKeys.add(key);
-
-    partCount += 1;
-    if (artifactPartHasEvidence(part)) citedPartCount += 1;
-    const source = sourceIdentityFromArtifactPart(part);
-    if (source) {
-      const node = ensureSource(sources, source);
-      addSourceVersion(node, part.source_version);
-      node.artifactPartCount += 1;
-      addSnippet(node, part.text ?? null);
-      node.artifactParts.push({
-        key,
-        artifactTitle: artifact.title,
-        artifactKind: artifact.kind,
-        partKey: part.part_key || `Part ${index + 1}`,
-        partType: part.part_type || "",
-        text: part.text ?? null,
-      });
-    }
-  });
-  return { partCount, citedPartCount };
-}
-
-function artifactPartIdentity(
-  artifactKey: string,
-  part: MessageArtifactPart,
-  index: number,
-): string {
-  if (part.id) return `id:${part.id}`;
-  return [
-    artifactKey,
-    part.part_key ?? "",
-    part.part_type ?? "",
-    part.ordinal ?? index,
-    part.source_version,
-    part.text?.slice(0, 80) ?? "",
-  ].join(":");
-}
-
-function conversationArtifactHref(artifact: MessageArtifactDelta): string | undefined {
-  const id = artifact.durable_artifact_id ?? artifact.artifact_id;
-  return id ? `?artifact=${encodeURIComponent(id)}` : undefined;
-}
-
 function sourceSort(a: ProvenanceSource, b: ProvenanceSource): number {
   const scoreA =
     a.claimEvidenceCount * 5 +
-    a.artifactPartCount * 3 +
     a.includedRetrievalCount * 2 +
     a.memorySourceCount;
   const scoreB =
     b.claimEvidenceCount * 5 +
-    b.artifactPartCount * 3 +
     b.includedRetrievalCount * 2 +
     b.memorySourceCount;
   return scoreB - scoreA || a.label.localeCompare(b.label);
@@ -450,17 +303,6 @@ function citationAuditIssueCount(audit: {
     ) +
     audit.missing_locator_count +
     audit.missing_source_version_count
-  );
-}
-
-function artifactPartHasEvidence(part: MessageArtifactPart): boolean {
-  return (
-    Boolean(part.source_ref) ||
-    Boolean(part.context_ref) ||
-    Boolean(part.result_ref) ||
-    (part.source_refs?.length ?? 0) > 0 ||
-    Boolean(part.evidence_span_id) ||
-    (part.evidence_span_ids?.length ?? 0) > 0
   );
 }
 

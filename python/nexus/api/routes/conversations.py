@@ -12,8 +12,6 @@ Response envelope: {"data": ...} or {"data": [...], "page": {...}}
 Error envelope: {"error": {"code": "...", "message": "...", "request_id": "..."}}
 """
 
-import json
-import re
 from typing import Annotated
 from uuid import UUID
 
@@ -27,12 +25,6 @@ from nexus.responses import success_response
 from nexus.schemas.conversation import (
     AssistantVerifierRunListResponse,
     ConversationScopeRequest,
-    MessageArtifactAskRequest,
-    MessageArtifactAskResponse,
-    MessageArtifactCreateRequest,
-    MessageArtifactExportLedgerListResponse,
-    MessageArtifactListResponse,
-    MessageArtifactResponse,
     MessageRerankLedgerListResponse,
     MessageRetrievalCandidateLedgerListResponse,
     RenameBranchRequest,
@@ -389,138 +381,6 @@ def list_message_rerank_ledgers(
         tool_call_id=tool_call_id,
     )
     return success_response([item.model_dump(mode="json") for item in result])
-
-
-@router.get("/artifacts", response_model=MessageArtifactListResponse)
-def list_artifacts(
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    message_id: Annotated[
-        UUID,
-        Query(description="Message whose durable artifacts should be listed"),
-    ],
-) -> dict:
-    artifacts = conversations_service.list_message_artifacts(
-        db=db,
-        viewer_id=viewer.user_id,
-        message_id=message_id,
-    )
-    return success_response([artifact.model_dump(mode="json") for artifact in artifacts])
-
-
-@router.post("/artifacts", status_code=201, response_model=MessageArtifactResponse)
-def create_artifact(
-    body: MessageArtifactCreateRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    artifact = conversations_service.create_artifact(
-        db=db,
-        viewer_id=viewer.user_id,
-        request=body,
-    )
-    return success_response(artifact.model_dump(mode="json"))
-
-
-@router.get("/artifacts/{artifact_id}", response_model=MessageArtifactResponse)
-def get_artifact(
-    artifact_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    artifact = conversations_service.get_artifact(
-        db=db,
-        viewer_id=viewer.user_id,
-        artifact_id=artifact_id,
-    )
-    return success_response(artifact.model_dump(mode="json"))
-
-
-@router.post("/artifacts/{artifact_id}/export")
-def export_artifact(
-    artifact_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    format: str = Query(default="markdown", description="Export format"),
-) -> Response:
-    export = conversations_service.export_artifact(
-        db=db,
-        viewer_id=viewer.user_id,
-        artifact_id=artifact_id,
-        export_format=format,
-    )
-    return _artifact_export_response(export)
-
-
-@router.get(
-    "/artifacts/{artifact_id}/exports",
-    response_model=MessageArtifactExportLedgerListResponse,
-)
-def list_artifact_exports(
-    artifact_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    exports = conversations_service.list_artifact_exports(
-        db=db,
-        viewer_id=viewer.user_id,
-        artifact_id=artifact_id,
-    )
-    return success_response([export.model_dump(mode="json") for export in exports])
-
-
-def _artifact_export_response(export) -> Response:
-    title = export.artifact.title or export.artifact.artifact_kind or "artifact"
-    filename = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "artifact"
-    content_types = {
-        "markdown": ("md", "text/markdown; charset=utf-8"),
-        "json": ("json", "application/json; charset=utf-8"),
-        "html": ("html", "text/html; charset=utf-8"),
-        "csv": ("csv", "text/csv; charset=utf-8"),
-        "pdf": ("pdf", "application/pdf"),
-    }
-    extension, media_type = content_types[export.format]
-    if export.format == "json":
-        body = (
-            json.dumps(export.content, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
-            + "\n"
-        )
-    elif export.format == "pdf":
-        body = str(export.content).encode("latin-1")
-    else:
-        body = str(export.content)
-    return Response(
-        content=body,
-        media_type=media_type,
-        headers={
-            "Cache-Control": "no-store",
-            "Content-Disposition": f'attachment; filename="{filename}.{extension}"',
-            "X-Nexus-Artifact-Export-Id": str(export.export_id),
-            "X-Nexus-Artifact-Version": str(export.artifact_version),
-            "X-Nexus-Artifact-Content-SHA256": export.content_sha256,
-            "X-Nexus-Artifact-Manifest-SHA256": export.manifest_sha256,
-        },
-    )
-
-
-@router.post(
-    "/artifacts/{artifact_id}/ask",
-    response_model=MessageArtifactAskResponse,
-    response_model_exclude_none=True,
-)
-def create_artifact_ask(
-    artifact_id: UUID,
-    body: MessageArtifactAskRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    result = conversations_service.create_artifact_ask(
-        db=db,
-        viewer_id=viewer.user_id,
-        artifact_id=artifact_id,
-        request=body,
-    )
-    return success_response(result.model_dump(mode="json", exclude_none=True))
 
 
 @router.post("/messages/{assistant_message_id}/retry", status_code=200)

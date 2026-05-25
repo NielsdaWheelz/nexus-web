@@ -9,15 +9,11 @@ export interface ProvenanceModel {
   retrievalCount: number;
   includedRetrievalCount: number;
   sourceCount: number;
-  artifactCount: number;
-  artifactPartCount: number;
-  citedArtifactPartCount: number;
   memoryItemCount: number;
   memorySourceCount: number;
   citationIssueCount: number;
   sources: ProvenanceSource[];
   riskClaims: ProvenanceClaim[];
-  artifacts: ProvenanceArtifact[];
 }
 
 export interface ProvenanceSource {
@@ -29,12 +25,10 @@ export interface ProvenanceSource {
   retrievalCount: number;
   includedRetrievalCount: number;
   claimEvidenceCount: number;
-  artifactPartCount: number;
   memorySourceCount: number;
   statuses: Set<MessageClaimSupportStatus>;
   snippets: string[];
   claims: ProvenanceClaim[];
-  artifactParts: ProvenanceArtifactPart[];
 }
 
 export interface ProvenanceClaim {
@@ -45,26 +39,6 @@ export interface ProvenanceClaim {
   status: MessageClaimSupportStatus;
   evidenceCount: number;
   sourceLabels: string[];
-}
-
-export interface ProvenanceArtifact {
-  key: string;
-  id: string | null;
-  title: string;
-  kind: string;
-  status: string;
-  href?: string;
-  partCount: number;
-  citedPartCount: number;
-}
-
-export interface ProvenanceArtifactPart {
-  key: string;
-  artifactTitle: string;
-  artifactKind: string;
-  partKey: string;
-  partType: string;
-  text: string | null;
 }
 
 export type ProvenanceAuditLevel = "verified" | "review" | "attention";
@@ -85,7 +59,6 @@ export interface ProvenanceAudit {
   coverage: {
     retrieval: number;
     claims: number;
-    artifacts: number;
   };
   strengths: string[];
   issues: ProvenanceAuditIssue[];
@@ -109,9 +82,6 @@ export interface ProvenancePacket {
     | "retrievalCount"
     | "includedRetrievalCount"
     | "sourceCount"
-    | "artifactCount"
-    | "artifactPartCount"
-    | "citedArtifactPartCount"
     | "memoryItemCount"
     | "memorySourceCount"
     | "citationIssueCount"
@@ -127,7 +97,6 @@ export interface ProvenancePacket {
       total: number;
     };
     claim_links: number;
-    artifact_parts: number;
     memory_refs: number;
     snippets: string[];
   }>;
@@ -138,15 +107,6 @@ export interface ProvenancePacket {
     text: string;
     evidence_count: number;
     source_labels: string[];
-  }>;
-  artifacts: Array<{
-    key: string;
-    id: string | null;
-    title: string;
-    kind: string;
-    status: string;
-    cited_parts: number;
-    total_parts: number;
   }>;
   issues: Array<Pick<ProvenanceAuditIssue, "id" | "severity" | "label" | "detail" | "action">>;
 }

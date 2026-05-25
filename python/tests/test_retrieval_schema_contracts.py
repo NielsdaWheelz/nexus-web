@@ -3,10 +3,7 @@ from uuid import uuid4
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from nexus.schemas.conversation import (
-    MessageArtifactPartOut,
-    MessageRetrievalOut,
-)
+from nexus.schemas.conversation import MessageRetrievalOut
 from nexus.schemas.media import MediaEvidenceResponse
 from nexus.schemas.retrieval import (
     retrieval_context_ref_json,
@@ -156,16 +153,6 @@ def _pdf_locator() -> dict[str, object]:
             }
         ],
         "exact": "PDF quote",
-    }
-
-
-def _artifact_part_locator(artifact_id: str, artifact_part_id: str) -> dict[str, object]:
-    return {
-        "type": "artifact_part_ref",
-        "artifact_id": artifact_id,
-        "artifact_part_id": artifact_part_id,
-        "message_id": str(uuid4()),
-        "conversation_id": str(uuid4()),
     }
 
 
@@ -324,19 +311,6 @@ def test_retrieval_locator_json_accepts_documented_variants_and_rejects_unknown(
         == "transcript_time_range"
     )
     assert retrieval_locator_json(_pdf_locator())["type"] == "pdf_page_geometry"
-    assert (
-        retrieval_locator_json(
-            {
-                "type": "artifact_part_ref",
-                "artifact_id": str(uuid4()),
-                "artifact_part_id": str(uuid4()),
-                "message_id": str(uuid4()),
-                "conversation_id": str(uuid4()),
-            }
-        )["type"]
-        == "artifact_part_ref"
-    )
-
     with pytest.raises(ValidationError):
         retrieval_locator_json({"type": "totally_unknown", "id": "x"})
     with pytest.raises(ValidationError):
@@ -396,43 +370,7 @@ def test_retrieval_locator_json_accepts_documented_variants_and_rejects_unknown(
         retrieval_locator_json({**_pdf_locator(), "quads": [{"x1": 1.0}]})
 
 
-def test_retrieval_ref_json_accepts_artifact_part_and_rejects_unknown_variant():
-    artifact_part_id = str(uuid4())
-    artifact_id = str(uuid4())
-    artifact_ref = retrieval_result_ref_json(
-        {
-            "type": "artifact_part",
-            "id": artifact_part_id,
-            "result_type": "artifact_part",
-            "source_id": artifact_part_id,
-            "artifact_id": artifact_id,
-            "message_id": str(uuid4()),
-            "conversation_id": str(uuid4()),
-            "artifact_kind": "timeline",
-            "title": "Artifact part",
-            "snippet": "Generated claim",
-            "deep_link": "/conversations/example",
-            "context_ref": {"type": "artifact_part", "id": artifact_part_id},
-            "source_version": "artifact-part:v1",
-            "locator": _artifact_part_locator(artifact_id, artifact_part_id),
-        }
-    )
-
-    assert artifact_ref["type"] == "artifact_part"
-    assert artifact_ref["source_version"] == "artifact-part:v1"
-    assert artifact_ref["locator"]["type"] == "artifact_part_ref"
-    with pytest.raises(ValidationError):
-        retrieval_result_ref_json({**artifact_ref, "context_ref": {"type": "message", "id": "m1"}})
-    with pytest.raises(ValidationError):
-        retrieval_result_ref_json(
-            {key: value for key, value in artifact_ref.items() if key != "source_version"}
-        )
-    with pytest.raises(ValidationError):
-        retrieval_result_ref_json(
-            {key: value for key, value in artifact_ref.items() if key != "locator"}
-        )
-    with pytest.raises(ValidationError):
-        retrieval_result_ref_json({**artifact_ref, "locator": _external_url_locator()})
+def test_retrieval_ref_json_rejects_unknown_variant():
     with pytest.raises(ValidationError):
         retrieval_result_ref_json({"type": "totally_unknown", "id": "x"})
 
@@ -635,21 +573,6 @@ def test_message_retrieval_out_rejects_extra_keys_and_ref_drift():
         )
 
 
-def test_message_output_schemas_reject_extra_keys():
-    with pytest.raises(ValidationError):
-        MessageArtifactPartOut.model_validate(
-            {
-                "id": str(uuid4()),
-                "artifact_id": str(uuid4()),
-                "ordinal": 0,
-                "source_version": "artifact_part:v1",
-                "locator": _artifact_part_locator(str(uuid4()), str(uuid4())),
-                "created_at": "2026-01-01T00:00:00Z",
-                "unexpected_field": True,
-            }
-        )
-
-
 def test_search_result_out_rejects_unknown_variant():
     with pytest.raises(ValidationError):
         SEARCH_RESULT_ADAPTER.validate_python({"type": "totally_unknown", "id": "x"})
@@ -796,54 +719,6 @@ def test_search_result_out_requires_page_source_version():
         )
     with pytest.raises(ValidationError):
         SEARCH_RESULT_ADAPTER.validate_python({**payload, "source_version": ""})
-
-
-def test_search_result_out_requires_artifact_part_source_version_and_locator():
-    artifact_id = str(uuid4())
-    artifact_part_id = str(uuid4())
-    source_version = "artifact-part:v1"
-    locator = _artifact_part_locator(artifact_id, artifact_part_id)
-    payload = {
-        **_search_base("artifact_part"),
-        "id": artifact_part_id,
-        "artifact_id": artifact_id,
-        "message_id": locator["message_id"],
-        "conversation_id": locator["conversation_id"],
-        "artifact_kind": "timeline",
-        "evidence_span_ids": [str(uuid4())],
-        "source_version": source_version,
-        "locator": locator,
-    }
-    payload["context_ref"] = {
-        "type": "artifact_part",
-        "id": artifact_part_id,
-        "artifact_id": artifact_id,
-        "source_version": source_version,
-        "locator": locator,
-        "artifact_part_provenance": {
-            "type": "artifact_part",
-            "artifact_id": artifact_id,
-            "artifact_part_id": artifact_part_id,
-            "message_id": locator["message_id"],
-            "conversation_id": locator["conversation_id"],
-            "source_version": source_version,
-            "locator": locator,
-        },
-    }
-
-    assert SEARCH_RESULT_ADAPTER.validate_python(payload).type == "artifact_part"
-    with pytest.raises(ValidationError):
-        SEARCH_RESULT_ADAPTER.validate_python(
-            {key: value for key, value in payload.items() if key != "source_version"}
-        )
-    with pytest.raises(ValidationError):
-        SEARCH_RESULT_ADAPTER.validate_python({**payload, "source_version": ""})
-    with pytest.raises(ValidationError):
-        SEARCH_RESULT_ADAPTER.validate_python(
-            {key: value for key, value in payload.items() if key != "locator"}
-        )
-    with pytest.raises(ValidationError):
-        SEARCH_RESULT_ADAPTER.validate_python({**payload, "locator": _external_url_locator()})
 
 
 def test_search_result_out_requires_web_result_context_and_external_url_locator():

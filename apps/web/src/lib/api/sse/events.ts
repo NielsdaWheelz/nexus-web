@@ -130,22 +130,6 @@ export interface SSESourceManifestDeltaEvent {
   };
 }
 
-export interface SSEArtifactDeltaEvent {
-  type: "artifact_delta";
-  data: {
-    artifact_id?: string | null;
-    durable_artifact_id?: string | null;
-    artifact_key?: string | null;
-    artifact_version?: number | null;
-    supersedes_artifact_id?: string | null;
-    artifact_kind?: string | null;
-    title?: string | null;
-    status?: string | null;
-    delta?: string | null;
-    parts?: unknown[];
-  };
-}
-
 export interface SSEClaimEvent {
   type: "claim";
   data: {
@@ -176,7 +160,6 @@ export type SSEEvent =
   | SSEToolCallEvent
   | SSERetrievalResultEvent
   | SSESourceManifestDeltaEvent
-  | SSEArtifactDeltaEvent
   | SSEClaimEvent
   | SSEClaimEvidenceEvent;
 
@@ -349,109 +332,6 @@ function parseSourceManifestDeltaData(
   // justify-type-assertion: the guard above exhaustively validated every
   // field of the source_manifest_delta payload.
   return data as SSESourceManifestDeltaEvent["data"];
-}
-
-function parseArtifactDeltaData(data: unknown): SSEArtifactDeltaEvent["data"] {
-  if (
-    !isRecord(data) ||
-    (data.artifact_id !== undefined &&
-      data.artifact_id !== null &&
-      typeof data.artifact_id !== "string") ||
-    (data.durable_artifact_id !== undefined &&
-      data.durable_artifact_id !== null &&
-      typeof data.durable_artifact_id !== "string") ||
-    (data.artifact_key !== undefined &&
-      data.artifact_key !== null &&
-      typeof data.artifact_key !== "string") ||
-    (data.artifact_version !== undefined &&
-      data.artifact_version !== null &&
-      !Number.isInteger(data.artifact_version)) ||
-    (data.supersedes_artifact_id !== undefined &&
-      data.supersedes_artifact_id !== null &&
-      typeof data.supersedes_artifact_id !== "string") ||
-    (data.artifact_kind !== undefined &&
-      data.artifact_kind !== null &&
-      typeof data.artifact_kind !== "string") ||
-    (data.title !== undefined &&
-      data.title !== null &&
-      typeof data.title !== "string") ||
-    (data.status !== undefined &&
-      data.status !== null &&
-      typeof data.status !== "string") ||
-    (data.delta !== undefined &&
-      data.delta !== null &&
-      typeof data.delta !== "string") ||
-    (data.parts !== undefined &&
-      (!Array.isArray(data.parts) || !data.parts.every(isArtifactDeltaPart)))
-  ) {
-    throw new Error("Invalid SSE payload for artifact_delta");
-  }
-  // justify-type-assertion: the guard above exhaustively validated every
-  // field of the artifact_delta payload.
-  return data as SSEArtifactDeltaEvent["data"];
-}
-
-function isArtifactDeltaPart(part: unknown): boolean {
-  if (!isRecord(part)) return false;
-  if (
-    !hasOnlyKeys(part, [
-      "id",
-      "artifact_id",
-      "ordinal",
-      "part_key",
-      "part_type",
-      "text",
-      "source_version",
-      "locator",
-      "source_ref",
-      "source_refs",
-      "context_ref",
-      "result_ref",
-      "evidence_span_id",
-      "evidence_span_ids",
-      "metadata",
-      "created_at",
-    ]) ||
-    typeof part.source_version !== "string" ||
-    !isRetrievalLocator(part.locator) ||
-    (part.id !== undefined &&
-      part.id !== null &&
-      typeof part.id !== "string") ||
-    (part.artifact_id !== undefined &&
-      part.artifact_id !== null &&
-      typeof part.artifact_id !== "string") ||
-    (part.ordinal !== undefined &&
-      part.ordinal !== null &&
-      !Number.isInteger(part.ordinal)) ||
-    !isOptionalString(part.part_key) ||
-    !isOptionalString(part.part_type) ||
-    !isOptionalString(part.text) ||
-    !isOptionalSourceRef(part.source_ref) ||
-    (part.source_refs !== undefined &&
-      (!Array.isArray(part.source_refs) ||
-        !part.source_refs.every(isSourceRef))) ||
-    !isOptionalRetrievalContextRef(part.context_ref) ||
-    !isOptionalRetrievalResultRef(part.result_ref) ||
-    !isOptionalString(part.evidence_span_id) ||
-    (part.evidence_span_ids !== undefined &&
-      (!Array.isArray(part.evidence_span_ids) ||
-        !part.evidence_span_ids.every((id) => typeof id === "string"))) ||
-    !isOptionalRecord(part.metadata) ||
-    !isOptionalString(part.created_at)
-  ) {
-    return false;
-  }
-  return (
-    isRecord(part.source_ref) ||
-    isRecord(part.context_ref) ||
-    isRecord(part.result_ref) ||
-    (Array.isArray(part.source_refs) && part.source_refs.length > 0) ||
-    typeof part.evidence_span_id === "string" ||
-    (Array.isArray(part.evidence_span_ids) &&
-      part.evidence_span_ids.length > 0) ||
-    (isRecord(part.metadata) &&
-      part.metadata.support_state === "not_source_grounded")
-  );
 }
 
 function parseClaimData(data: unknown): SSEClaimEvent["data"] {
@@ -734,8 +614,6 @@ export function toChatSSEEvent(eventType: string, data: unknown): SSEEvent {
         type: "source_manifest_delta",
         data: parseSourceManifestDeltaData(data),
       };
-    case "artifact_delta":
-      return { type: "artifact_delta", data: parseArtifactDeltaData(data) };
     case "claim":
       return { type: "claim", data: parseClaimData(data) };
     case "claim_evidence":

@@ -152,7 +152,6 @@ export default function ConversationContextPane({
           )
         ) : mode === "provenance" ? (
           <ConversationProvenancePanel
-            conversationId={conversationId}
             messages={messages}
             memory={memory}
           />

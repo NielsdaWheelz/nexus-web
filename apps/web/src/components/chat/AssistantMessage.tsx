@@ -8,12 +8,10 @@ import {
   assistantSelectionAnchor,
   mapAssistantSelectionToSource,
 } from "@/lib/conversations/assistantSelection";
-import type { ContextItem } from "@/lib/api/sse/requests";
 import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { createRandomId } from "@/lib/createRandomId";
 import type {
   BranchDraft,
-  ChatRunResponse,
   ConversationMessage,
   ForkOption,
   MessageToolCall,
@@ -24,7 +22,7 @@ import AssistantSelectionPopover, {
 import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
 import ForkStrip from "./ForkStrip";
 import StreamingGutterCue from "./StreamingGutterCue";
-import type { ArtifactFocusTarget, ReaderSourceTarget } from "./MessageRow";
+import type { ReaderSourceTarget } from "./MessageRow";
 import styles from "./MessageRow.module.css";
 
 export default function AssistantMessage({
@@ -36,9 +34,6 @@ export default function AssistantMessage({
   onActivateTarget,
   onAskAboutSource,
   onSaveSourceQuote,
-  onAttachContext,
-  onChatRunCreated,
-  artifactFocusTarget,
   hasReaderActivator,
   errorLabel,
   timestampLabel,
@@ -51,9 +46,6 @@ export default function AssistantMessage({
   onActivateTarget: (target: ReaderSourceTarget) => void;
   onAskAboutSource?: (target: ReaderSourceTarget) => void;
   onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
-  onAttachContext?: (context: ContextItem) => void;
-  onChatRunCreated?: (runData: ChatRunResponse["data"]) => void;
-  artifactFocusTarget?: ArtifactFocusTarget | null;
   hasReaderActivator: boolean;
   errorLabel: string;
   timestampLabel: string;
@@ -194,9 +186,6 @@ export default function AssistantMessage({
           onActivateTarget={onActivateTarget}
           onAskAboutSource={onAskAboutSource}
           onSaveSourceQuote={onSaveSourceQuote}
-          onAttachContext={onAttachContext}
-          onChatRunCreated={onChatRunCreated}
-          artifactFocusTarget={artifactFocusTarget}
           hasReaderActivator={hasReaderActivator}
         />
       ) : null}

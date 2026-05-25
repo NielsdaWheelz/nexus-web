@@ -77,41 +77,6 @@ describe("parsePendingContexts", () => {
     expect(parsePendingContexts(params)).toEqual([]);
   });
 
-  it("returns full artifact-part contexts from json query values", () => {
-    const context = {
-      kind: "object_ref",
-      type: "artifact_part",
-      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      artifact_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      artifact_key: "research-table",
-      artifact_version: 1,
-      source_version: "artifact_part:a1b2c3d4-e5f6-7890-abcd-ef1234567890:v1",
-      locator: {
-        type: "artifact_part_ref",
-        artifact_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        artifact_part_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        message_id: "c1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        conversation_id: "d1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      },
-      artifact_part_provenance: {
-        type: "artifact_part",
-        artifact_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        artifact_part_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        source_version: "artifact_part:a1b2c3d4-e5f6-7890-abcd-ef1234567890:v1",
-        locator: {
-          type: "artifact_part_ref",
-          artifact_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
-          artifact_part_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-          message_id: "c1b2c3d4-e5f6-7890-abcd-ef1234567890",
-          conversation_id: "d1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        },
-      },
-    };
-    const params = new URLSearchParams();
-    params.set("attach_context_json", JSON.stringify(context));
-
-    expect(parsePendingContexts(params)).toEqual([context]);
-  });
 });
 
 describe("parseConversationScopeFromUrl", () => {
@@ -178,40 +143,6 @@ describe("pending context params", () => {
     );
   });
 
-  it("sets full artifact-part contexts on json params", () => {
-    const params = setPendingContextParam(new URLSearchParams("foo=bar"), {
-      kind: "object_ref",
-      type: "artifact_part",
-      id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      artifact_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      artifact_key: "research-table",
-      artifact_version: 1,
-      source_version: "artifact_part:a1b2c3d4-e5f6-7890-abcd-ef1234567890:v1",
-      locator: {
-        type: "artifact_part_ref",
-        artifact_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        artifact_part_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        message_id: "c1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        conversation_id: "d1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      },
-      artifact_part_provenance: {
-        type: "artifact_part",
-        artifact_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        artifact_part_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        source_version: "artifact_part:a1b2c3d4-e5f6-7890-abcd-ef1234567890:v1",
-        locator: {
-          type: "artifact_part_ref",
-          artifact_id: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
-          artifact_part_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-          message_id: "c1b2c3d4-e5f6-7890-abcd-ef1234567890",
-          conversation_id: "d1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        },
-      },
-    });
-
-    expect(params.get("attach_context")).toBeNull();
-    expect(params.get("attach_context_json")).toContain('"type":"artifact_part"');
-  });
 });
 
 describe("signatures", () => {

@@ -52,53 +52,6 @@ describe("toWireContextItem", () => {
     });
   });
 
-  it("preserves artifact part provenance wire fields", () => {
-    const locator = {
-      type: "artifact_part_ref",
-      artifact_id: "artifact-1",
-      artifact_part_id: "part-1",
-      message_id: "message-1",
-      conversation_id: "conversation-1",
-    } as const;
-    const wire = toWireContextItem({
-      kind: "object_ref",
-      type: "artifact_part",
-      id: "part-1",
-      evidence_span_ids: ["span-1"],
-      artifact_id: "artifact-1",
-      artifact_key: "artifact-key",
-      artifact_version: 2,
-      source_version: "artifact_part:part-1:v1",
-      locator,
-      artifact_part_provenance: {
-        artifact_id: "artifact-1",
-        artifact_part_id: "part-1",
-        source_version: "artifact_part:part-1:v1",
-        locator,
-      },
-      preview: "selected text",
-    });
-
-    expect(wire).toEqual({
-      kind: "object_ref",
-      type: "artifact_part",
-      id: "part-1",
-      evidence_span_ids: ["span-1"],
-      artifact_id: "artifact-1",
-      artifact_key: "artifact-key",
-      artifact_version: 2,
-      source_version: "artifact_part:part-1:v1",
-      locator,
-      artifact_part_provenance: {
-        artifact_id: "artifact-1",
-        artifact_part_id: "part-1",
-        source_version: "artifact_part:part-1:v1",
-        locator,
-      },
-    });
-    expect("preview" in wire).toBe(false);
-  });
-
   it("omits undefined optional display fields", () => {
     const item: ContextItem = {
       kind: "object_ref",

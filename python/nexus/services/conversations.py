@@ -16,32 +16,23 @@ Routes are transport-only and call exactly one service function.
 """
 
 import base64
-import csv
-import hashlib
-import html
-import io
 import json
-import textwrap
 from collections.abc import Callable, Sequence
 from datetime import datetime
-from typing import Any, Literal, cast
-from uuid import UUID, uuid4
+from typing import Any, cast
+from uuid import UUID
 
 from sqlalchemy import delete, func, select, text
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
 from nexus.db.models import (
     AssistantMessageVerifierRun,
     ChatRun,
     Conversation,
-    EvidenceSpan,
     Library,
     Media,
     Message,
-    MessageArtifact,
-    MessageArtifactExport,
-    MessageArtifactPart,
     MessageContextItem,
     MessageRerankLedger,
     MessageRetrieval,
@@ -54,31 +45,13 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.evidence_span_ids import trusted_evidence_span_ids
 from nexus.logging import get_logger
 from nexus.schemas.conversation import (
     BRANCH_ANCHOR_KINDS,
-    MESSAGE_ARTIFACT_KINDS,
-    ArtifactIntentOptions,
-    AssistantMessageBranchAnchorRequest,
     AssistantVerifierRunOut,
-    ChatRunCreateRequest,
     ConversationOut,
     ConversationScopeOut,
     ConversationScopeRequest,
-    MessageArtifactAskRequest,
-    MessageArtifactCitationEntryOut,
-    MessageArtifactCitationManifestOut,
-    MessageArtifactContextSnapshot,
-    MessageArtifactCreateRequest,
-    MessageArtifactExportLedgerOut,
-    MessageArtifactExportOut,
-    MessageArtifactOut,
-    MessageArtifactPartContextSnapshot,
-    MessageArtifactPartCreateRequest,
-    MessageArtifactPartOut,
-    MessageArtifactPartProvenance,
-    MessageContextRef,
     MessageContextSnapshot,
     MessageContextSnapshotOut,
     MessageDocument,
@@ -87,15 +60,10 @@ from nexus.schemas.conversation import (
     MessageRetrievalCandidateLedgerOut,
     PageInfo,
 )
-from nexus.schemas.retrieval import retrieval_locator_json
-from nexus.services.context_lookup import hydrate_context_ref, hydrate_source_ref
 from nexus.services.contexts import reader_selection_message_snapshot_from_row
 from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.conversation_memory import conversation_memory_inspection
 from nexus.services.message_context_snapshots import (
-    artifact_context_snapshot_fields,
-    artifact_part_context_ref,
-    artifact_part_context_snapshot_fields,
     trusted_content_chunk_context_snapshot_fields,
     trusted_context_snapshot,
     trusted_object_ref_context_snapshot_payload,
@@ -239,50 +207,6 @@ def get_message_count(db: Session, conversation_id: UUID) -> int:
         select(func.count()).select_from(Message).where(Message.conversation_id == conversation_id)
     )
     return result or 0
-
-
-def _artifact_part_to_out(part: MessageArtifactPart) -> MessageArtifactPartOut:
-    return MessageArtifactPartOut(
-        id=part.id,
-        artifact_id=part.artifact_id,
-        ordinal=part.ordinal,
-        part_key=part.part_key,
-        part_type=part.part_type,
-        text=part.part_text,
-        source_version=part.source_version,
-        locator=cast(Any, part.locator),
-        source_ref=cast(Any, part.source_ref),
-        context_ref=cast(Any, part.context_ref),
-        result_ref=cast(Any, part.result_ref),
-        evidence_span_id=part.evidence_span_id,
-        evidence_span_ids=trusted_evidence_span_ids(part.evidence_span_ids),
-        source_refs=cast(Any, part.source_refs),
-        metadata=part.metadata_json,
-        created_at=part.created_at,
-    )
-
-
-def _artifact_to_out(artifact: MessageArtifact) -> MessageArtifactOut:
-    return MessageArtifactOut(
-        id=artifact.id,
-        conversation_id=artifact.conversation_id,
-        message_id=artifact.message_id,
-        chat_run_id=artifact.chat_run_id,
-        artifact_key=artifact.artifact_key,
-        artifact_version=artifact.artifact_version,
-        supersedes_artifact_id=artifact.supersedes_artifact_id,
-        # artifact_kind and status are Text columns constrained to the literal
-        # sets by CHECK constraints ck_message_artifacts_kind_supported and
-        # ck_message_artifacts_status, so the casts narrow validated DB values.
-        artifact_kind=cast(MESSAGE_ARTIFACT_KINDS, artifact.artifact_kind),
-        title=artifact.title,
-        status=cast(Literal["streaming", "complete", "error"], artifact.status),
-        preview_text=artifact.preview_text,
-        metadata=artifact.metadata_json,
-        parts=[_artifact_part_to_out(part) for part in artifact.parts],
-        created_at=artifact.created_at,
-        updated_at=artifact.updated_at,
-    )
 
 
 def conversation_to_out(
@@ -496,20 +420,15 @@ def resolve_conversation_for_scope(
 def message_to_out(
     message: Message,
     contexts: list[MessageContextSnapshotOut] | None = None,
-    artifacts: list[MessageArtifactOut] | None = None,
     can_retry_response: bool = False,
 ) -> MessageOut:
     """Convert Message ORM model to MessageOut schema."""
     branch_anchor = {"kind": message.branch_anchor_kind, **(message.branch_anchor or {})}
-    artifact_list = artifacts or []
     return MessageOut(
         id=message.id,
         seq=message.seq,
         role=message.role,
-        message_document=_message_document_with_artifact_refs(
-            message.message_document,
-            artifact_list,
-        ),
+        message_document=MessageDocument.model_validate(message.message_document),
         parent_message_id=message.parent_message_id,
         branch_root_message_id=message.branch_root_message_id,
         branch_anchor_kind=cast(BRANCH_ANCHOR_KINDS, message.branch_anchor_kind),
@@ -521,110 +440,6 @@ def message_to_out(
         created_at=message.created_at,
         updated_at=message.updated_at,
     )
-
-
-def _message_document_with_artifact_refs(
-    message_document: dict[str, object],
-    artifacts: list[MessageArtifactOut],
-) -> MessageDocument:
-    blocks = message_document.get("blocks")
-    if not artifacts or not isinstance(blocks, list):
-        return MessageDocument.model_validate(message_document)
-
-    by_key = {artifact.artifact_key: artifact for artifact in artifacts if artifact.artifact_key}
-    by_id = {str(artifact.id): artifact for artifact in artifacts}
-    next_blocks: list[object] = []
-    seen_artifact_ids: set[str] = set()
-    seen_artifact_keys: set[str] = set()
-    changed = False
-    for block in blocks:
-        if not isinstance(block, dict) or block.get("type") != "artifact_preview":
-            next_blocks.append(block)
-            continue
-        artifact_ref = block.get("artifact_id")
-        artifact = (by_id.get(artifact_ref) if isinstance(artifact_ref, str) else None) or (
-            by_key.get(artifact_ref) if isinstance(artifact_ref, str) else None
-        )
-        if artifact is None:
-            next_blocks.append(block)
-            continue
-        seen_artifact_ids.add(str(artifact.id))
-        seen_artifact_keys.add(artifact.artifact_key)
-        next_block = dict(block)
-        next_block["durable_artifact_id"] = str(artifact.id)
-        next_block["artifact_id"] = str(artifact.id)
-        next_block.setdefault("artifact_key", artifact.artifact_key)
-        if artifact.preview_text is not None:
-            next_block.setdefault("delta", artifact.preview_text)
-        if artifact.parts:
-            next_block["parts"] = [_artifact_part_preview(part) for part in artifact.parts]
-        next_blocks.append(next_block)
-        changed = True
-
-    for artifact in artifacts:
-        if str(artifact.id) in seen_artifact_ids or artifact.artifact_key in seen_artifact_keys:
-            continue
-        next_blocks.append(
-            {
-                "type": "artifact_preview",
-                "artifact_id": str(artifact.id),
-                "durable_artifact_id": str(artifact.id),
-                "artifact_key": artifact.artifact_key,
-                "artifact_version": artifact.artifact_version,
-                "supersedes_artifact_id": str(artifact.supersedes_artifact_id)
-                if artifact.supersedes_artifact_id is not None
-                else None,
-                "artifact_kind": artifact.artifact_kind,
-                "title": artifact.title,
-                "status": artifact.status,
-                "delta": artifact.preview_text,
-                "parts": [_artifact_part_preview(part) for part in artifact.parts],
-            }
-        )
-        changed = True
-
-    if not changed:
-        return MessageDocument.model_validate(message_document)
-    return MessageDocument.model_validate({**message_document, "blocks": next_blocks})
-
-
-def _artifact_part_preview(part: MessageArtifactPartOut) -> dict[str, object]:
-    preview: dict[str, object] = {
-        "id": str(part.id),
-        "ordinal": part.ordinal,
-        "source_version": part.source_version,
-        "locator": part.locator.model_dump(mode="json"),
-    }
-    if part.part_key is not None:
-        preview["part_key"] = part.part_key
-    if part.part_type is not None:
-        preview["part_type"] = part.part_type
-    if part.text is not None:
-        preview["text"] = part.text
-    if part.source_ref is not None:
-        preview["source_ref"] = part.source_ref.model_dump(
-            mode="json",
-            exclude_none=True,
-            exclude_defaults=True,
-        )
-    if part.context_ref is not None:
-        preview["context_ref"] = part.context_ref.model_dump(mode="json")
-    if part.result_ref is not None:
-        preview["result_ref"] = part.result_ref.model_dump(mode="json")
-    if part.evidence_span_id is not None:
-        preview["evidence_span_id"] = str(part.evidence_span_id)
-    if part.evidence_span_ids:
-        preview["evidence_span_ids"] = [str(value) for value in part.evidence_span_ids]
-    if part.source_refs:
-        preview["source_refs"] = [
-            source_ref.model_dump(
-                mode="json",
-                exclude_none=True,
-                exclude_defaults=True,
-            )
-            for source_ref in part.source_refs
-        ]
-    return preview
 
 
 def retryable_assistant_message_ids(
@@ -689,50 +504,11 @@ def load_message_context_snapshots_for_message_ids(
                     payload=stored,
                 )
             )
-        if row.object_type == "artifact":
-            payload.update(artifact_context_snapshot_fields(stored))
-            snapshots_by_message_id.setdefault(row.message_id, []).append(
-                MessageArtifactContextSnapshot.model_validate(payload)
-            )
-            continue
-        if row.object_type == "artifact_part":
-            payload.update(artifact_part_context_snapshot_fields(stored))
-            snapshots_by_message_id.setdefault(row.message_id, []).append(
-                MessageArtifactPartContextSnapshot.model_validate(payload)
-            )
-            continue
         snapshots_by_message_id.setdefault(row.message_id, []).append(
             MessageContextSnapshot.model_validate(payload)
         )
 
     return snapshots_by_message_id
-
-
-def load_message_artifacts_for_message_ids(
-    db: Session,
-    message_ids: Sequence[UUID],
-) -> dict[UUID, list[MessageArtifactOut]]:
-    """Load durable generated artifacts for the given messages."""
-    if not message_ids:
-        return {}
-
-    artifacts = (
-        db.execute(
-            select(MessageArtifact)
-            .options(joinedload(MessageArtifact.parts))
-            .where(MessageArtifact.message_id.in_(message_ids))
-            .order_by(MessageArtifact.created_at.asc(), MessageArtifact.id.asc())
-        )
-        .unique()
-        .scalars()
-        .all()
-    )
-    artifacts_by_message_id: dict[UUID, list[MessageArtifactOut]] = {}
-    for artifact in artifacts:
-        artifacts_by_message_id.setdefault(artifact.message_id, []).append(
-            _artifact_to_out(artifact)
-        )
-    return artifacts_by_message_id
 
 
 # =============================================================================
@@ -1061,7 +837,6 @@ def list_messages(
 
     message_ids = [row[0] for row in rows]
     contexts_by_message_id = load_message_context_snapshots_for_message_ids(db, message_ids)
-    artifacts_by_message_id = load_message_artifacts_for_message_ids(db, message_ids)
     retryable_message_ids = retryable_assistant_message_ids(
         db,
         viewer_id=viewer_id,
@@ -1072,10 +847,7 @@ def list_messages(
             id=row[0],
             seq=row[1],
             role=row[2],
-            message_document=_message_document_with_artifact_refs(
-                row[12],
-                artifacts_by_message_id.get(row[0], []),
-            ),
+            message_document=MessageDocument.model_validate(row[12]),
             parent_message_id=row[8],
             branch_root_message_id=row[9],
             branch_anchor_kind=row[10],
@@ -1097,637 +869,6 @@ def list_messages(
         next_cursor = encode_message_cursor(last.seq, last.id)
 
     return messages, PageInfo(next_cursor=next_cursor)
-
-
-def list_message_artifacts(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    message_id: UUID,
-) -> list[MessageArtifactOut]:
-    message = db.get(Message, message_id)
-    if message is None:
-        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-    get_conversation_for_visible_read_or_404(db, viewer_id, message.conversation_id)
-    return load_message_artifacts_for_message_ids(db, [message_id]).get(message_id, [])
-
-
-def _assert_artifact_part_refs_readable(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    part: MessageArtifactPartCreateRequest,
-) -> None:
-    source_refs = [part.source_ref] if part.source_ref is not None else []
-    source_refs.extend(part.source_refs)
-    for source_ref in source_refs:
-        result = hydrate_source_ref(
-            db,
-            viewer_id=viewer_id,
-            source_ref=source_ref.model_dump(mode="json", exclude_none=True),
-        )
-        if not result.resolved:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Artifact source_ref is not readable",
-            )
-
-    if part.context_ref is not None:
-        result = hydrate_context_ref(
-            db,
-            viewer_id=viewer_id,
-            context_ref=part.context_ref.model_dump(mode="json", exclude_none=True),
-        )
-        if not result.resolved:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Artifact context_ref is not readable",
-            )
-
-    if part.result_ref is not None:
-        result_ref = part.result_ref.model_dump(mode="json", exclude_none=True)
-        context_ref = result_ref.get("context_ref")
-        if isinstance(context_ref, dict) and context_ref.get("type") != "web_result":
-            result = hydrate_context_ref(db, viewer_id=viewer_id, context_ref=context_ref)
-            if not result.resolved:
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "Artifact result_ref context is not readable",
-                )
-
-    for evidence_span_id in _artifact_part_evidence_span_ids(part):
-        media_id = db.scalar(
-            select(EvidenceSpan.media_id).where(EvidenceSpan.id == evidence_span_id)
-        )
-        if media_id is None or not can_read_media(db, viewer_id, media_id):
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Artifact evidence_span_id is not readable",
-            )
-
-
-def create_artifact(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    request: MessageArtifactCreateRequest,
-) -> MessageArtifactOut:
-    message = db.get(Message, request.message_id)
-    if message is None:
-        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-    get_conversation_for_owner_write_or_404(db, viewer_id, message.conversation_id)
-    if message.role != "assistant":
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Artifacts can only be attached to assistant messages",
-        )
-    if request.status != "error" and not request.parts:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Artifacts require structured parts",
-        )
-    db.execute(select(Message.id).where(Message.id == message.id).with_for_update()).scalar_one()
-    previous = db.execute(
-        select(MessageArtifact.id, MessageArtifact.artifact_version)
-        .where(
-            MessageArtifact.message_id == message.id,
-            MessageArtifact.artifact_key == request.artifact_key,
-        )
-        .order_by(MessageArtifact.artifact_version.desc(), MessageArtifact.created_at.desc())
-        .limit(1)
-    ).first()
-
-    artifact = MessageArtifact(
-        conversation_id=message.conversation_id,
-        message_id=message.id,
-        chat_run_id=None,
-        artifact_key=request.artifact_key,
-        artifact_version=int(previous[1]) + 1 if previous is not None else 1,
-        supersedes_artifact_id=previous[0] if previous is not None else None,
-        artifact_kind=request.artifact_kind,
-        title=request.title,
-        status=request.status,
-        preview_text=request.preview_text,
-        metadata_json=request.metadata,
-    )
-    db.add(artifact)
-    db.flush()
-    for ordinal, part in enumerate(request.parts):
-        _assert_artifact_part_refs_readable(db, viewer_id=viewer_id, part=part)
-        evidence_span_ids = _artifact_part_evidence_span_ids(part)
-        part_id = uuid4()
-        locator = retrieval_locator_json(
-            {
-                "type": "artifact_part_ref",
-                "artifact_id": str(artifact.id),
-                "artifact_part_id": str(part_id),
-                "message_id": str(message.id),
-                "conversation_id": str(message.conversation_id),
-                "part_key": part.part_key,
-            }
-        )
-        if locator is None:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Artifact part locator is invalid",
-            )
-        db.add(
-            MessageArtifactPart(
-                id=part_id,
-                artifact_id=artifact.id,
-                ordinal=ordinal,
-                part_key=part.part_key,
-                part_type=part.part_type,
-                part_text=part.text,
-                source_version=f"artifact_part:{part_id}:v1",
-                locator=locator,
-                source_ref=part.source_ref.model_dump(mode="json") if part.source_ref else None,
-                context_ref=part.context_ref.model_dump(mode="json") if part.context_ref else None,
-                result_ref=part.result_ref.model_dump(mode="json") if part.result_ref else None,
-                evidence_span_id=part.evidence_span_id,
-                evidence_span_ids=[str(value) for value in evidence_span_ids],
-                source_refs=[ref.model_dump(mode="json") for ref in part.source_refs],
-                metadata_json=part.metadata,
-            )
-        )
-    db.commit()
-    db.refresh(artifact)
-    return get_artifact(db, viewer_id=viewer_id, artifact_id=artifact.id)
-
-
-def _artifact_part_evidence_span_ids(part: MessageArtifactPartCreateRequest) -> list[UUID]:
-    evidence_span_ids = list(part.evidence_span_ids)
-    if part.evidence_span_id is not None:
-        evidence_span_ids.append(part.evidence_span_id)
-    return evidence_span_ids
-
-
-def get_artifact(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    artifact_id: UUID,
-) -> MessageArtifactOut:
-    artifact = (
-        db.execute(
-            select(MessageArtifact)
-            .options(joinedload(MessageArtifact.parts))
-            .where(MessageArtifact.id == artifact_id)
-        )
-        .unique()
-        .scalars()
-        .first()
-    )
-    if artifact is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Artifact not found")
-    get_conversation_for_visible_read_or_404(db, viewer_id, artifact.conversation_id)
-    return _artifact_to_out(artifact)
-
-
-ARTIFACT_EXPORT_FORMATS = ("markdown", "json", "html", "pdf", "csv")
-
-
-def export_artifact(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    artifact_id: UUID,
-    export_format: str,
-) -> MessageArtifactExportOut:
-    if export_format not in ARTIFACT_EXPORT_FORMATS:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid artifact export format")
-
-    artifact = get_artifact(db, viewer_id=viewer_id, artifact_id=artifact_id)
-    manifest = _artifact_citation_manifest(artifact)
-    content: str | dict[str, Any]
-    if export_format == "markdown":
-        content = _artifact_markdown(artifact)
-    elif export_format == "json":
-        content = {
-            "artifact": artifact.model_dump(mode="json"),
-            "citation_manifest": manifest.model_dump(mode="json"),
-        }
-    elif export_format == "html":
-        content = _artifact_html(artifact)
-    elif export_format == "csv":
-        content = _artifact_csv(artifact)
-    else:
-        content = _artifact_pdf(artifact)
-
-    content_sha256 = hashlib.sha256(
-        _artifact_export_content_bytes(export_format, content)
-    ).hexdigest()
-    manifest_sha256 = hashlib.sha256(
-        json.dumps(
-            manifest.model_dump(mode="json"),
-            ensure_ascii=True,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
-    ledger = MessageArtifactExport(
-        conversation_id=artifact.conversation_id,
-        message_id=artifact.message_id,
-        artifact_id=artifact.id,
-        viewer_user_id=viewer_id,
-        export_format=export_format,
-        artifact_version=artifact.artifact_version,
-        content_sha256=content_sha256,
-        manifest_sha256=manifest_sha256,
-        metadata_json={
-            "artifact_key": artifact.artifact_key,
-            "artifact_kind": artifact.artifact_kind,
-            "part_count": len(artifact.parts),
-        },
-    )
-    db.add(ledger)
-    db.commit()
-    db.refresh(ledger)
-
-    return MessageArtifactExportOut(
-        export_id=ledger.id,
-        format=cast(Literal["markdown", "json", "html", "pdf", "csv"], export_format),
-        artifact=artifact,
-        artifact_version=artifact.artifact_version,
-        citation_manifest=manifest,
-        content_sha256=content_sha256,
-        manifest_sha256=manifest_sha256,
-        exported_at=ledger.created_at,
-        content=content,
-    )
-
-
-def list_artifact_exports(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    artifact_id: UUID,
-) -> list[MessageArtifactExportLedgerOut]:
-    artifact = db.get(MessageArtifact, artifact_id)
-    if artifact is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Artifact not found")
-    conversation = get_conversation_for_visible_read_or_404(db, viewer_id, artifact.conversation_id)
-    statement = select(MessageArtifactExport).where(
-        MessageArtifactExport.artifact_id == artifact.id
-    )
-    if conversation.owner_user_id != viewer_id:
-        statement = statement.where(MessageArtifactExport.viewer_user_id == viewer_id)
-    rows = db.scalars(
-        statement.order_by(MessageArtifactExport.created_at.desc(), MessageArtifactExport.id.desc())
-    ).all()
-    return [
-        MessageArtifactExportLedgerOut(
-            id=row.id,
-            conversation_id=row.conversation_id,
-            message_id=row.message_id,
-            artifact_id=row.artifact_id,
-            viewer_user_id=row.viewer_user_id,
-            format=cast(Literal["markdown", "json", "html", "pdf", "csv"], row.export_format),
-            artifact_version=row.artifact_version,
-            content_sha256=row.content_sha256,
-            manifest_sha256=row.manifest_sha256,
-            metadata=row.metadata_json,
-            created_at=row.created_at,
-        )
-        for row in rows
-    ]
-
-
-def create_artifact_ask(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    artifact_id: UUID,
-    request: MessageArtifactAskRequest,
-) -> ChatRunCreateRequest:
-    artifact = get_artifact(db, viewer_id=viewer_id, artifact_id=artifact_id)
-    part = None
-    if request.artifact_part_id is not None:
-        part = next(
-            (candidate for candidate in artifact.parts if candidate.id == request.artifact_part_id),
-            None,
-        )
-        if part is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Artifact part not found")
-    if part is not None:
-        context = artifact_part_context_ref(
-            artifact_part_id=part.id,
-            artifact_id=artifact.id,
-            source_version=part.source_version,
-            locator=part.locator,
-            evidence_span_id=part.evidence_span_id,
-            evidence_span_ids=part.evidence_span_ids,
-            artifact_kind=artifact.artifact_kind,
-            message_id=artifact.message_id,
-            conversation_id=artifact.conversation_id,
-            artifact_key=artifact.artifact_key,
-            artifact_version=artifact.artifact_version,
-            artifact_title=artifact.title,
-            ordinal=part.ordinal,
-            part_key=part.part_key,
-            part_type=part.part_type,
-            text=part.text,
-            source_ref=part.source_ref,
-            context_ref=part.context_ref,
-            result_ref=part.result_ref,
-            source_refs=part.source_refs,
-            metadata=part.metadata,
-        )
-    else:
-        context = MessageContextRef(
-            type="artifact",
-            id=artifact.id,
-            artifact_id=artifact.id,
-            artifact_key=artifact.artifact_key,
-            artifact_version=artifact.artifact_version,
-            artifact_part_provenance=_artifact_provenance(artifact),
-        )
-    payload = ChatRunCreateRequest(
-        conversation_id=artifact.conversation_id,
-        parent_message_id=artifact.message_id,
-        branch_anchor=AssistantMessageBranchAnchorRequest(
-            kind="assistant_message",
-            message_id=artifact.message_id,
-        ),
-        content=request.content,
-        model_id=request.model_id,
-        reasoning=request.reasoning,
-        key_mode=request.key_mode,
-        contexts=[context],
-        web_search=request.web_search,
-        artifact_intent=ArtifactIntentOptions(kind="off"),
-    )
-    return payload
-
-
-def _artifact_citation_manifest(
-    artifact: MessageArtifactOut,
-) -> MessageArtifactCitationManifestOut:
-    return MessageArtifactCitationManifestOut(
-        artifact_id=artifact.id,
-        message_id=artifact.message_id,
-        conversation_id=artifact.conversation_id,
-        entries=[
-            MessageArtifactCitationEntryOut(
-                artifact_part_id=part.id,
-                ordinal=part.ordinal,
-                part_key=part.part_key,
-                part_type=part.part_type,
-                source_version=part.source_version,
-                locator=part.locator,
-                source_ref=part.source_ref,
-                context_ref=part.context_ref,
-                result_ref=part.result_ref,
-                evidence_span_id=part.evidence_span_id,
-                evidence_span_ids=part.evidence_span_ids,
-                source_refs=part.source_refs,
-                metadata=part.metadata,
-            )
-            for part in artifact.parts
-        ],
-    )
-
-
-def _artifact_export_content_bytes(export_format: str, content: str | dict[str, Any]) -> bytes:
-    if export_format == "json":
-        return (
-            json.dumps(content, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
-        ).encode("utf-8")
-    if export_format == "pdf":
-        return str(content).encode("latin-1")
-    return str(content).encode("utf-8")
-
-
-def _artifact_markdown(artifact: MessageArtifactOut) -> str:
-    lines: list[str] = []
-    if artifact.title:
-        lines.extend([f"# {artifact.title}", ""])
-    elif artifact.artifact_kind:
-        lines.extend([f"# {artifact.artifact_kind.replace('_', ' ').title()}", ""])
-
-    for part in artifact.parts:
-        label = f"artifact-part-{part.ordinal + 1}"
-        text_value = (part.text or "").strip()
-        if part.part_type:
-            lines.extend([f"## {part.part_type.replace('_', ' ').title()}", ""])
-        if text_value:
-            lines.extend([f"{text_value} [^{label}]", ""])
-
-    if artifact.preview_text and not artifact.parts:
-        lines.extend([artifact.preview_text.strip(), ""])
-
-    if artifact.parts:
-        lines.extend(["## Citation Manifest", ""])
-        for part in artifact.parts:
-            label = f"artifact-part-{part.ordinal + 1}"
-            lines.append(f"[^{label}]: {_artifact_manifest_entry_json(part)}")
-
-    return "\n".join(lines).strip() + "\n"
-
-
-def _artifact_manifest_entry_json(part: MessageArtifactPartOut) -> str:
-    return json.dumps(
-        {
-            "artifact_part_id": str(part.id),
-            "ordinal": part.ordinal,
-            "part_key": part.part_key,
-            "part_type": part.part_type,
-            "source_version": part.source_version,
-            "locator": part.locator.model_dump(mode="json"),
-            "source_ref": part.source_ref.model_dump(mode="json") if part.source_ref else None,
-            "context_ref": part.context_ref.model_dump(mode="json") if part.context_ref else None,
-            "result_ref": part.result_ref.model_dump(mode="json") if part.result_ref else None,
-            "evidence_span_id": str(part.evidence_span_id) if part.evidence_span_id else None,
-            "evidence_span_ids": [str(value) for value in part.evidence_span_ids],
-            "source_refs": [ref.model_dump(mode="json") for ref in part.source_refs],
-            "metadata": part.metadata,
-        },
-        ensure_ascii=True,
-        sort_keys=True,
-    )
-
-
-def _artifact_display_title(artifact: MessageArtifactOut) -> str:
-    """Title shown in exports; falls back to humanized artifact_kind."""
-    return artifact.title or artifact.artifact_kind.replace("_", " ").title()
-
-
-def _artifact_html(artifact: MessageArtifactOut) -> str:
-    title = _artifact_display_title(artifact)
-    lines = [
-        "<!doctype html>",
-        '<html lang="en">',
-        "<head>",
-        '<meta charset="utf-8">',
-        f"<title>{html.escape(title)}</title>",
-        "</head>",
-        "<body>",
-        f"<h1>{html.escape(title)}</h1>",
-    ]
-    for part in artifact.parts:
-        if part.part_type:
-            lines.append(f"<h2>{html.escape(part.part_type.replace('_', ' ').title())}</h2>")
-        if part.text:
-            label = f"artifact-part-{part.ordinal + 1}"
-            lines.append(
-                f"<p>{html.escape(part.text)} "
-                f'<a href="#{label}" aria-label="Citation {label}">[{label}]</a></p>'
-            )
-    if artifact.preview_text and not artifact.parts:
-        lines.append(f"<p>{html.escape(artifact.preview_text)}</p>")
-    if artifact.parts:
-        lines.extend(["<h2>Citation Manifest</h2>", "<ol>"])
-        for part in artifact.parts:
-            label = f"artifact-part-{part.ordinal + 1}"
-            lines.append(
-                f'<li id="{label}"><pre>'
-                f"{html.escape(_artifact_manifest_entry_json(part))}</pre></li>"
-            )
-        lines.append("</ol>")
-    lines.extend(["</body>", "</html>"])
-    return "\n".join(lines) + "\n"
-
-
-def _artifact_csv(artifact: MessageArtifactOut) -> str:
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(
-        [
-            "ordinal",
-            "part_key",
-            "part_type",
-            "source_version",
-            "locator",
-            "text",
-            "evidence_span_ids",
-            "source_refs",
-            "source_ref",
-            "context_ref",
-            "result_ref",
-            "citation_manifest_artifact_id",
-            "citation_manifest_message_id",
-            "citation_manifest_conversation_id",
-        ]
-    )
-    for part in artifact.parts:
-        writer.writerow(
-            [
-                part.ordinal,
-                part.part_key or "",
-                part.part_type or "",
-                part.source_version,
-                json.dumps(part.locator.model_dump(mode="json"), ensure_ascii=True),
-                part.text or "",
-                json.dumps([str(value) for value in part.evidence_span_ids], ensure_ascii=True),
-                json.dumps([ref.model_dump(mode="json") for ref in part.source_refs]),
-                json.dumps(part.source_ref.model_dump(mode="json")) if part.source_ref else "",
-                json.dumps(part.context_ref.model_dump(mode="json")) if part.context_ref else "",
-                json.dumps(part.result_ref.model_dump(mode="json")) if part.result_ref else "",
-                str(artifact.id),
-                str(artifact.message_id),
-                str(artifact.conversation_id),
-            ]
-        )
-    return output.getvalue()
-
-
-def _artifact_pdf(artifact: MessageArtifactOut) -> str:
-    title = _artifact_display_title(artifact)
-    lines = [title, ""]
-    for part in artifact.parts:
-        if part.part_type:
-            lines.append(part.part_type.replace("_", " ").title())
-        if part.text:
-            lines.append(f"{part.text} [artifact-part-{part.ordinal + 1}]")
-            lines.append("")
-    if artifact.preview_text and not artifact.parts:
-        lines.append(artifact.preview_text)
-    if artifact.parts:
-        lines.extend(["Citation Manifest", ""])
-        for part in artifact.parts:
-            lines.append(f"artifact-part-{part.ordinal + 1}: {_artifact_manifest_entry_json(part)}")
-
-    wrapped_lines: list[str] = []
-    for line in lines:
-        if not line:
-            wrapped_lines.append("")
-            continue
-        wrapped_lines.extend(
-            textwrap.wrap(
-                line,
-                width=96,
-                break_long_words=True,
-                break_on_hyphens=False,
-            )
-            or [""]
-        )
-    pages = [
-        wrapped_lines[index : index + 52] for index in range(0, max(1, len(wrapped_lines)), 52)
-    ]
-    page_object_numbers = [4 + index * 2 for index in range(len(pages))]
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        (
-            f"<< /Type /Pages /Kids [{' '.join(f'{number} 0 R' for number in page_object_numbers)}] "
-            f"/Count {len(pages)} >>"
-        ).encode("ascii"),
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    ]
-    for index, page_lines in enumerate(pages):
-        page_object_number = 4 + index * 2
-        content_object_number = page_object_number + 1
-        commands = ["BT", "/F1 10 Tf", "50 780 Td", "12 TL"]
-        for line in page_lines:
-            escaped = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-            commands.append(f"({escaped}) Tj")
-            commands.append("T*")
-        commands.append("ET")
-        stream = "\n".join(commands).encode("latin-1", "replace")
-        objects.append(
-            (
-                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-                f"/Resources << /Font << /F1 3 0 R >> >> /Contents {content_object_number} 0 R >>"
-            ).encode("ascii")
-        )
-        objects.append(
-            b"<< /Length "
-            + str(len(stream)).encode("ascii")
-            + b" >>\nstream\n"
-            + stream
-            + b"\nendstream"
-        )
-    body = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
-    offsets = [0]
-    for index, obj in enumerate(objects, start=1):
-        offsets.append(len(body))
-        body.extend(f"{index} 0 obj\n".encode("ascii"))
-        body.extend(obj)
-        body.extend(b"\nendobj\n")
-    xref_offset = len(body)
-    body.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
-    body.extend(b"0000000000 65535 f \n")
-    for offset in offsets[1:]:
-        body.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
-    body.extend(
-        (
-            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
-            f"startxref\n{xref_offset}\n%%EOF\n"
-        ).encode("ascii")
-    )
-    return body.decode("latin-1")
-
-
-def _artifact_provenance(artifact: MessageArtifactOut) -> MessageArtifactPartProvenance:
-    return MessageArtifactPartProvenance(
-        type="artifact",
-        artifact_id=artifact.id,
-        artifact_kind=artifact.artifact_kind,
-        message_id=artifact.message_id,
-        conversation_id=artifact.conversation_id,
-        artifact_key=artifact.artifact_key,
-        artifact_version=artifact.artifact_version,
-        artifact_title=artifact.title,
-    )
 
 
 def _get_message_for_visible_read_or_404(
@@ -2087,24 +1228,6 @@ def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID])
 
     db.execute(
         text("""
-            DELETE FROM message_artifact_exports
-            WHERE message_id = ANY(:message_ids)
-        """),
-        {"message_ids": list(message_ids)},
-    )
-    artifact_ids = _message_artifact_ids_for_messages(db, message_ids)
-    if artifact_ids:
-        db.execute(
-            text("DELETE FROM message_artifact_parts WHERE artifact_id = ANY(:artifact_ids)"),
-            {"artifact_ids": artifact_ids},
-        )
-        db.execute(
-            text("DELETE FROM message_artifacts WHERE id = ANY(:artifact_ids)"),
-            {"artifact_ids": artifact_ids},
-        )
-
-    db.execute(
-        text("""
             DELETE FROM assistant_message_citation_audits
             WHERE message_id = ANY(:message_ids)
         """),
@@ -2293,19 +1416,6 @@ def _message_tool_call_ids_for_messages(db: Session, message_ids: Sequence[UUID]
         WHERE user_message_id = ANY(:message_ids)
            OR assistant_message_id = ANY(:message_ids)
         ORDER BY tool_call_index ASC, id ASC
-        """,
-        {"message_ids": list(message_ids)},
-    )
-
-
-def _message_artifact_ids_for_messages(db: Session, message_ids: Sequence[UUID]) -> list[UUID]:
-    return _query_uuid_ids(
-        db,
-        """
-        SELECT id
-        FROM message_artifacts
-        WHERE message_id = ANY(:message_ids)
-        ORDER BY created_at ASC, id ASC
         """,
         {"message_ids": list(message_ids)},
     )

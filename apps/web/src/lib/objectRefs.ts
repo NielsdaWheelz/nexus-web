@@ -12,8 +12,6 @@ export const OBJECT_TYPES = [
   "fragment",
   "contributor",
   "evidence_span",
-  "artifact",
-  "artifact_part",
 ] as const;
 
 export type ObjectType = (typeof OBJECT_TYPES)[number];

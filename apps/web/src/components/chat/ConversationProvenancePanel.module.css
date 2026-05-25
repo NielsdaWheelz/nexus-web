@@ -346,9 +346,7 @@
 }
 
 .sectionHeader span,
-.factRow span,
-.artifactRow small,
-.artifactRow em {
+.factRow span {
   color: var(--ink-faint);
   font-size: var(--text-xs);
   line-height: var(--leading-snug);
@@ -388,7 +386,7 @@
 
 .lineageGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
   min-width: 0;
   padding: var(--space-2);
@@ -461,10 +459,6 @@ button.lineageNode {
   border-color: color-mix(in srgb, var(--danger) 34%, var(--edge-subtle));
 }
 
-.lineageNode[data-kind="artifact"] {
-  border-color: color-mix(in srgb, var(--accent) 24%, var(--edge-subtle));
-}
-
 .lineageNode strong {
   min-width: 0;
   overflow: hidden;
@@ -499,8 +493,7 @@ button.lineageNode {
 }
 
 .riskList,
-.sourceList,
-.artifactList {
+.sourceList {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -511,8 +504,7 @@ button.lineageNode {
 }
 
 .riskItem,
-.sourceCard,
-.artifactRow {
+.sourceCard {
   min-width: 0;
   border: 1px solid var(--edge-subtle);
   border-radius: var(--radius-md);
@@ -570,8 +562,7 @@ button.lineageNode {
 }
 
 .sourceCard:hover,
-.sourceCard[data-active="true"],
-a.artifactRow:hover {
+.sourceCard[data-active="true"] {
   border-color: var(--edge);
   background: var(--surface-1);
 }
@@ -622,36 +613,6 @@ a.artifactRow:hover {
   color: var(--ink-muted);
   font-size: var(--text-xs);
   line-height: var(--leading-snug);
-}
-
-.artifactRow {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--space-1) var(--space-2);
-  align-items: center;
-  padding: var(--space-3);
-  color: inherit;
-  text-decoration: none;
-}
-
-.artifactRow svg {
-  color: var(--ink-faint);
-}
-
-.artifactRow span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.artifactRow small,
-.artifactRow em {
-  grid-column: 2;
-  font-style: normal;
 }
 
 .dossier {

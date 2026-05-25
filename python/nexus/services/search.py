@@ -50,8 +50,6 @@ from nexus.schemas.retrieval import (
 from nexus.schemas.search import (
     SearchPageInfo,
     SearchResponse,
-    SearchResultArtifactOut,
-    SearchResultArtifactPartOut,
     SearchResultContentChunkOut,
     SearchResultContextRefOut,
     SearchResultContributorOut,
@@ -73,7 +71,6 @@ from nexus.schemas.search import (
 from nexus.services import object_search
 from nexus.services.contributor_credits import normalize_contributor_role
 from nexus.services.locator_resolver import resolve_evidence_span
-from nexus.services.message_context_snapshots import artifact_part_context_ref
 from nexus.services.semantic_chunks import (
     build_text_embedding,
     to_pgvector_literal,
@@ -115,8 +112,6 @@ ALL_RESULT_TYPES = (
     "message",
     "evidence_span",
     "conversation",
-    "artifact",
-    "artifact_part",
     "web_result",
 )
 VALID_RESULT_TYPES = frozenset(ALL_RESULT_TYPES)
@@ -136,8 +131,6 @@ TYPE_WEIGHTS = {
     "message": 1.0,
     "evidence_span": 1.15,
     "conversation": 0.95,
-    "artifact": 1.1,
-    "artifact_part": 1.15,
     "web_result": 0.9,
 }
 
@@ -273,44 +266,12 @@ class _RankedContributorResult:
 
 
 @dataclass(slots=True)
-class _RankedArtifactPartResult:
-    id: UUID
-    snippet: str
-    artifact_id: UUID
-    message_id: UUID
-    conversation_id: UUID
-    artifact_key: str
-    artifact_version: int
-    artifact_kind: str
-    artifact_title: str | None
-    part_key: str | None
-    part_type: str | None
-    evidence_span_ids: list[UUID]
-    source_version: str
-    locator: dict[str, Any]
-    score: _SearchScore
-    result_type: Literal["artifact_part"] = "artifact_part"
-
-
-@dataclass(slots=True)
 class _RankedConversationResult:
     id: UUID
     title: str
     snippet: str
     score: _SearchScore
     result_type: Literal["conversation"] = "conversation"
-
-
-@dataclass(slots=True)
-class _RankedArtifactResult:
-    id: UUID
-    snippet: str
-    conversation_id: UUID
-    message_id: UUID
-    artifact_kind: str
-    title: str
-    score: _SearchScore
-    result_type: Literal["artifact"] = "artifact"
 
 
 @dataclass(slots=True)
@@ -353,8 +314,6 @@ InternalSearchResult = (
     | _RankedHighlightResult
     | _RankedMessageResult
     | _RankedConversationResult
-    | _RankedArtifactResult
-    | _RankedArtifactPartResult
     | _RankedWebResult
 )
 
@@ -1433,40 +1392,6 @@ def get_search_result(
             )
         )
 
-    if result_type == "artifact":
-        artifact_id = _uuid_from_search_id(result_id)
-        row = db.execute(
-            text(
-                f"""
-                WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
-                SELECT
-                    ma.id,
-                    ma.conversation_id,
-                    ma.message_id,
-                    ma.artifact_kind,
-                    ma.title,
-                    ma.preview_text
-                FROM message_artifacts ma
-                JOIN visible_conversations vc ON vc.conversation_id = ma.conversation_id
-                WHERE ma.id = :id
-                """
-            ),
-            {"viewer_id": viewer_id, "id": artifact_id},
-        ).first()
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        return _result_to_out(
-            _RankedArtifactResult(
-                id=row[0],
-                conversation_id=row[1],
-                message_id=row[2],
-                artifact_kind=str(row[3]),
-                title=str(row[4] or row[3]),
-                snippet=_truncate_snippet(str(row[5] or row[4] or row[3])),
-                score=score,
-            )
-        )
-
     if result_type == "web_result":
         retrieval_id = _uuid_from_search_id(result_id)
         row = db.execute(
@@ -1578,59 +1503,6 @@ def get_search_result(
                     media_kind=str(row[5]),
                 ),
                 source=_build_search_source(row[1], row[5], row[6], row[8], row[7]),
-                score=score,
-            )
-        )
-
-    if result_type == "artifact_part":
-        part_id = _uuid_from_search_id(result_id)
-        row = db.execute(
-            text(
-                f"""
-                WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
-                SELECT
-                    part.id,
-                    ma.id,
-                    ma.message_id,
-                    ma.conversation_id,
-                    ma.artifact_key,
-                    ma.artifact_version,
-                    ma.artifact_kind,
-                    ma.title,
-                    part.part_key,
-                    part.part_type,
-                    part."text",
-                    part.evidence_span_ids,
-                    part.source_version,
-                    part.locator
-                FROM message_artifact_parts part
-                JOIN message_artifacts ma ON ma.id = part.artifact_id
-                JOIN visible_conversations vc ON vc.conversation_id = ma.conversation_id
-                WHERE part.id = :id
-                """
-            ),
-            {"viewer_id": viewer_id, "id": part_id},
-        ).first()
-        if row is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-        return _result_to_out(
-            _RankedArtifactPartResult(
-                id=row[0],
-                artifact_id=row[1],
-                message_id=row[2],
-                conversation_id=row[3],
-                artifact_key=str(row[4]),
-                artifact_version=int(row[5]),
-                artifact_kind=str(row[6]),
-                artifact_title=str(row[7]) if row[7] is not None else None,
-                part_key=str(row[8]) if row[8] is not None else None,
-                part_type=str(row[9]) if row[9] is not None else None,
-                evidence_span_ids=[UUID(str(value)) for value in row[11] if isinstance(value, str)]
-                if isinstance(row[11], list)
-                else [],
-                source_version=_required_source_version("artifact_part", str(row[12])),
-                locator=_required_locator("artifact_part", row[13]),
-                snippet=_truncate_snippet(str(row[10] or row[7] or row[6])),
                 score=score,
             )
         )
@@ -1774,10 +1646,6 @@ def _search_type(
         return _search_messages(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "conversation":
         return _search_conversations(db, viewer_id, q, scope_type, scope_id, limit)
-    if result_type == "artifact":
-        return _search_artifacts(db, viewer_id, q, scope_type, scope_id, limit)
-    if result_type == "artifact_part":
-        return _search_artifact_parts(db, viewer_id, q, scope_type, scope_id, limit)
     if result_type == "web_result":
         return _search_web_results(db, viewer_id, q, has_query, scope_type, scope_id, limit)
     raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid search type: {result_type}")
@@ -3283,87 +3151,6 @@ def _search_conversations(
     ]
 
 
-def _search_artifacts(
-    db: Session,
-    viewer_id: UUID,
-    q: str,
-    scope_type: str,
-    scope_id: UUID | None,
-    limit: int,
-) -> list[InternalSearchResult]:
-    scope_filter = ""
-    params: dict[str, Any] = {"viewer_id": viewer_id, "query": q, "limit": limit}
-    if scope_type == "media":
-        return []
-    if scope_type == "library":
-        scope_filter = """
-            AND ma.conversation_id IN (
-                SELECT cs.conversation_id
-                FROM conversation_shares cs
-                JOIN conversations conv ON conv.id = cs.conversation_id
-                WHERE cs.library_id = :scope_id
-                  AND conv.sharing = 'library'
-            )
-        """
-        params["scope_id"] = scope_id
-    elif scope_type == "conversation":
-        scope_filter = "AND ma.conversation_id = :scope_id"
-        params["scope_id"] = scope_id
-
-    rows = db.execute(
-        text(
-            f"""
-            WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
-            SELECT
-                ma.id,
-                ma.conversation_id,
-                ma.message_id,
-                ma.artifact_kind,
-                ma.title,
-                ma.preview_text,
-                ts_rank_cd(
-                    to_tsvector(
-                        'english',
-                        concat_ws(' ', COALESCE(ma.title, ''), ma.artifact_kind,
-                                  COALESCE(ma.preview_text, ''))
-                    ),
-                    websearch_to_tsquery('english', :query)
-                ) AS score,
-                ts_headline(
-                    'english',
-                    concat_ws(' ', COALESCE(ma.title, ''), ma.artifact_kind,
-                              COALESCE(ma.preview_text, '')),
-                    websearch_to_tsquery('english', :query),
-                    'MaxWords=50, MinWords=10, MaxFragments=1'
-                ) AS snippet
-            FROM message_artifacts ma
-            JOIN visible_conversations vc ON vc.conversation_id = ma.conversation_id
-            WHERE to_tsvector(
-                    'english',
-                    concat_ws(' ', COALESCE(ma.title, ''), ma.artifact_kind,
-                              COALESCE(ma.preview_text, ''))
-                ) @@ websearch_to_tsquery('english', :query)
-              {scope_filter}
-            ORDER BY score DESC, ma.id ASC
-            LIMIT :limit
-            """
-        ),
-        params,
-    ).fetchall()
-    return [
-        _RankedArtifactResult(
-            id=row[0],
-            conversation_id=row[1],
-            message_id=row[2],
-            artifact_kind=str(row[3]),
-            title=str(row[4] or row[3]),
-            snippet=_truncate_snippet(str(row[7] or row[5] or row[4] or row[3])),
-            score=_build_search_score(row[6]),
-        )
-        for row in rows
-    ]
-
-
 def _search_evidence_spans(
     db: Session,
     viewer_id: UUID,
@@ -3461,134 +3248,6 @@ def _search_evidence_spans(
             )
         )
     return results
-
-
-def _search_artifact_parts(
-    db: Session,
-    viewer_id: UUID,
-    q: str,
-    scope_type: str,
-    scope_id: UUID | None,
-    limit: int,
-) -> list[InternalSearchResult]:
-    """Search durable generated artifact parts visible through their conversation."""
-    scope_filter = ""
-    params: dict[str, Any] = {"viewer_id": viewer_id, "query": q, "limit": limit}
-
-    if scope_type == "all":
-        pass
-    elif scope_type == "media":
-        return []
-    elif scope_type == "library":
-        scope_filter = """
-            AND ma.conversation_id IN (
-                SELECT cs.conversation_id
-                FROM conversation_shares cs
-                JOIN conversations conv ON conv.id = cs.conversation_id
-                WHERE cs.library_id = :scope_id
-                  AND conv.sharing = 'library'
-            )
-        """
-        params["scope_id"] = scope_id
-    elif scope_type == "conversation":
-        scope_filter = "AND ma.conversation_id = :scope_id"
-        params["scope_id"] = scope_id
-    else:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
-
-    rows = db.execute(
-        text(
-            f"""
-            WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
-            SELECT
-                part.id,
-                ma.id AS artifact_id,
-                ma.message_id,
-                ma.conversation_id,
-                ma.artifact_key,
-                ma.artifact_version,
-                ma.artifact_kind,
-                ma.title,
-                part.part_key,
-                part.part_type,
-                part."text",
-                part.evidence_span_ids,
-                part.source_version,
-                part.locator,
-                ts_rank_cd(
-                    to_tsvector(
-                        'english',
-                        concat_ws(
-                            ' ',
-                            COALESCE(ma.title, ''),
-                            ma.artifact_kind,
-                            COALESCE(ma.preview_text, ''),
-                            COALESCE(part.part_key, ''),
-                            COALESCE(part.part_type, ''),
-                            COALESCE(part."text", '')
-                        )
-                    ),
-                    websearch_to_tsquery('english', :query)
-                ) AS score,
-                ts_headline(
-                    'english',
-                    concat_ws(
-                        ' ',
-                        COALESCE(ma.title, ''),
-                        ma.artifact_kind,
-                        COALESCE(ma.preview_text, ''),
-                        COALESCE(part.part_key, ''),
-                        COALESCE(part.part_type, ''),
-                        COALESCE(part."text", '')
-                    ),
-                    websearch_to_tsquery('english', :query),
-                    'MaxWords=50, MinWords=10, MaxFragments=1'
-                ) AS snippet
-            FROM message_artifact_parts part
-            JOIN message_artifacts ma ON ma.id = part.artifact_id
-            JOIN visible_conversations vc ON vc.conversation_id = ma.conversation_id
-            WHERE to_tsvector(
-                    'english',
-                    concat_ws(
-                        ' ',
-                        COALESCE(ma.title, ''),
-                        ma.artifact_kind,
-                        COALESCE(ma.preview_text, ''),
-                        COALESCE(part.part_key, ''),
-                        COALESCE(part.part_type, ''),
-                        COALESCE(part."text", '')
-                    )
-                ) @@ websearch_to_tsquery('english', :query)
-            {scope_filter}
-            ORDER BY score DESC, part.id ASC
-            LIMIT :limit
-            """
-        ),
-        params,
-    ).fetchall()
-
-    return [
-        _RankedArtifactPartResult(
-            id=row[0],
-            artifact_id=row[1],
-            message_id=row[2],
-            conversation_id=row[3],
-            artifact_key=str(row[4]),
-            artifact_version=int(row[5]),
-            artifact_kind=str(row[6]),
-            artifact_title=str(row[7]) if row[7] is not None else None,
-            part_key=str(row[8]) if row[8] is not None else None,
-            part_type=str(row[9]) if row[9] is not None else None,
-            evidence_span_ids=[UUID(str(value)) for value in row[11] if isinstance(value, str)]
-            if isinstance(row[11], list)
-            else [],
-            source_version=_required_source_version("artifact_part", str(row[12])),
-            locator=_required_locator("artifact_part", row[13]),
-            snippet=_truncate_snippet(str(row[15] or row[10] or row[7] or row[6])),
-            score=_build_search_score(row[14]),
-        )
-        for row in rows
-    ]
 
 
 def _search_web_results(
@@ -3867,25 +3526,6 @@ def _result_context_ref(result: InternalSearchResult) -> SearchResultContextRefO
         )
     if isinstance(result, _RankedContributorResult):
         return SearchResultContextRefOut(type=result.result_type, id=result.handle)
-    if isinstance(result, _RankedArtifactPartResult):
-        context = artifact_part_context_ref(
-            artifact_part_id=result.id,
-            artifact_id=result.artifact_id,
-            source_version=result.source_version,
-            locator=result.locator,
-            evidence_span_ids=result.evidence_span_ids,
-            artifact_kind=result.artifact_kind,
-            message_id=result.message_id,
-            conversation_id=result.conversation_id,
-            artifact_key=result.artifact_key,
-            artifact_version=result.artifact_version,
-            artifact_title=result.artifact_title,
-            part_key=result.part_key,
-            part_type=result.part_type,
-        )
-        return SearchResultContextRefOut.model_validate(
-            context.model_dump(mode="json", exclude_none=True, exclude={"kind"})
-        )
     return SearchResultContextRefOut(type=result.result_type, id=result.id)
 
 
@@ -4059,11 +3699,6 @@ def _result_deep_link(result: InternalSearchResult) -> str:
         return f"/conversations/{result.id}"
     if isinstance(result, _RankedEvidenceSpanResult):
         return f"/media/{result.source.media_id}?evidence={result.id}"
-    if isinstance(result, _RankedArtifactResult):
-        return f"/conversations/{result.conversation_id}?artifact={result.id}"
-    if isinstance(result, _RankedArtifactPartResult):
-        query = urlencode({"artifact": result.artifact_id, "artifactPart": result.id})
-        return f"/conversations/{result.conversation_id}?{query}"
     if isinstance(result, _RankedWebResult):
         return result.url
     raise AssertionError(f"Unknown search result type: {type(result).__name__}")
@@ -4156,16 +3791,6 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
             "context_ref": context_ref,
         }
 
-    if isinstance(result, _RankedArtifactResult):
-        return {
-            "title": result.title,
-            "source_label": f"{result.artifact_kind} - artifact",
-            "media_id": None,
-            "media_kind": None,
-            "deep_link": deep_link,
-            "context_ref": context_ref,
-        }
-
     if isinstance(result, _RankedHighlightResult):
         return {
             "title": result.source.title,
@@ -4182,17 +3807,6 @@ def _result_model_fields(result: InternalSearchResult) -> dict[str, Any]:
             "source_label": _build_source_label(result.source),
             "media_id": result.source.media_id,
             "media_kind": result.source.media_kind,
-            "deep_link": deep_link,
-            "context_ref": context_ref,
-        }
-
-    if isinstance(result, _RankedArtifactPartResult):
-        title = result.artifact_title or result.artifact_kind
-        return {
-            "title": title,
-            "source_label": f"{title} - artifact",
-            "media_id": None,
-            "media_kind": None,
             "deep_link": deep_link,
             "context_ref": context_ref,
         }
@@ -4342,32 +3956,6 @@ def _result_to_out(result: InternalSearchResult) -> SearchResultOut:
             type="conversation",
             **base_payload,
         )
-
-    if isinstance(result, _RankedArtifactResult):
-        return SearchResultArtifactOut(
-            type="artifact",
-            conversation_id=result.conversation_id,
-            message_id=result.message_id,
-            artifact_kind=result.artifact_kind,
-            **base_payload,
-        )
-
-    if isinstance(result, _RankedArtifactPartResult):
-        payload: dict[str, Any] = {
-            "type": "artifact_part",
-            "artifact_id": result.artifact_id,
-            "message_id": result.message_id,
-            "conversation_id": result.conversation_id,
-            "artifact_kind": result.artifact_kind,
-            "artifact_title": result.artifact_title,
-            "part_key": result.part_key,
-            "part_type": result.part_type,
-            "evidence_span_ids": result.evidence_span_ids,
-            "source_version": _required_source_version("artifact_part", result.source_version),
-            "locator": _required_locator("artifact_part", result.locator),
-            **base_payload,
-        }
-        return SearchResultArtifactPartOut(**payload)
 
     if isinstance(result, _RankedWebResult):
         return SearchResultWebOut(

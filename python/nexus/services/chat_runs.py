@@ -37,7 +37,6 @@ from nexus.errors import (
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger, set_flow_id
 from nexus.schemas.conversation import (
-    ArtifactIntentOptions,
     BranchAnchorRequest,
     ChatRunEventOut,
     ChatRunResponse,
@@ -62,7 +61,6 @@ from nexus.services.chat_run_access import (
     load_retryable_failed_assistant_message,
     load_source_run_for_retry,
 )
-from nexus.services.chat_run_artifact_persistence import append_generated_artifact_delta
 from nexus.services.chat_run_event_store import (
     TERMINAL_RUN_STATUSES,
     append_and_commit,
@@ -183,7 +181,6 @@ def create_chat_run(
     key_mode: str,
     contexts: Sequence[ContextItem],
     web_search: WebSearchOptions,
-    artifact_intent: ArtifactIntentOptions,
     idempotency_key: str | None,
 ) -> ChatRunResponse:
     contexts = list(contexts)
@@ -201,7 +198,6 @@ def create_chat_run(
         key_mode,
         contexts,
         web_search,
-        artifact_intent,
         conversation_id,
         conversation_scope,
         parent_message_id,
@@ -275,7 +271,6 @@ def create_chat_run(
             reasoning=reasoning,
             key_mode=key_mode,
             web_search=web_search.model_dump(mode="json"),
-            artifact_intent=artifact_intent.model_dump(mode="json"),
             next_event_seq=1,
         )
         db.add(run)
@@ -412,7 +407,6 @@ def retry_failed_assistant_response(
             reasoning=source_run.reasoning,
             key_mode=source_run.key_mode,
             web_search=dict(source_run.web_search or {}),
-            artifact_intent=dict(source_run.artifact_intent),
             next_event_seq=1,
         )
         db.add(run)
@@ -973,29 +967,6 @@ async def _execute_chat_run(
             if assistant_message is not None
             else False
         )
-        artifact_intent = ArtifactIntentOptions.model_validate(run.artifact_intent)
-        if artifact_intent.kind != "off" and assistant_message is not None:
-            await append_generated_artifact_delta(
-                db,
-                run=run,
-                user_message=user_message,
-                model=model,
-                resolved_key=resolved_key,
-                llm_router=llm_router,
-                artifact_intent=artifact_intent,
-                evidence_rows=prompt_evidence_rows,
-                source_backed=buffer_provider_deltas,
-            )
-            if is_cancel_requested(db, run.id):
-                finalize_cancelled(
-                    db,
-                    run,
-                    model,
-                    resolved_key,
-                    int((time.monotonic() - start_time) * 1000),
-                )
-                return {"status": "cancelled"}
-
         llm_request = assembly.llm_request
         full_content = ""
         usage: LLMUsage | None = None

@@ -29,8 +29,6 @@ def test_general_scope_can_plan_all_app_search():
         "fragment",
         "evidence_span",
         "conversation",
-        "artifact",
-        "artifact_part",
     }.issubset(plan.app_search.types)
     assert plan.web_search.enabled is False
 
@@ -119,8 +117,6 @@ def test_library_scope_never_includes_message_search():
 
     assert "message" not in plan.app_search.types
     assert "conversation" not in plan.app_search.types
-    assert "artifact" not in plan.app_search.types
-    assert "artifact_part" not in plan.app_search.types
 
 
 def test_contributor_conversation_scope_is_not_planned_until_persistable():

@@ -70,7 +70,6 @@ function locatorMatchesSearchType(
   }
   if (type === "note_block") return locator.type === "note_block_offsets";
   if (type === "message") return locator.type === "message_offsets";
-  if (type === "artifact_part") return locator.type === "artifact_part_ref";
   if (type === "web_result") return locator.type === "external_url";
   return false;
 }
@@ -188,41 +187,6 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
     }
     evidenceSpanIds = contextRef.evidence_span_ids;
   }
-  const artifactContextFields =
-    contextRef.type === "artifact_part"
-      ? {
-          artifact_id:
-            typeof contextRef.artifact_id === "string" ? contextRef.artifact_id : null,
-          artifact_key:
-            typeof contextRef.artifact_key === "string" || contextRef.artifact_key === null
-              ? contextRef.artifact_key
-              : undefined,
-          artifact_version:
-            typeof contextRef.artifact_version === "number"
-              ? contextRef.artifact_version
-              : contextRef.artifact_version === null
-                ? null
-                : undefined,
-          source_version:
-            typeof contextRef.source_version === "string" ? contextRef.source_version : null,
-          locator: isRetrievalLocator(contextRef.locator) ? contextRef.locator : null,
-          artifact_part_provenance: isRecord(contextRef.artifact_part_provenance)
-            ? contextRef.artifact_part_provenance
-            : null,
-        }
-      : null;
-  if (
-    artifactContextFields &&
-    (!artifactContextFields.artifact_id ||
-      artifactContextFields.artifact_key === undefined ||
-      artifactContextFields.artifact_version === undefined ||
-      !artifactContextFields.source_version ||
-      !artifactContextFields.locator ||
-      !artifactContextFields.artifact_part_provenance)
-  ) {
-    return null;
-  }
-
   const base = {
     id: row.id,
     score: row.score,
@@ -237,16 +201,6 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
       type: contextRef.type as SearchType,
       id: contextRef.id,
       ...(evidenceSpanIds ? { evidence_span_ids: evidenceSpanIds } : {}),
-      ...(artifactContextFields
-        ? {
-            artifact_id: artifactContextFields.artifact_id,
-            artifact_key: artifactContextFields.artifact_key,
-            artifact_version: artifactContextFields.artifact_version,
-            source_version: artifactContextFields.source_version,
-            locator: artifactContextFields.locator,
-            artifact_part_provenance: artifactContextFields.artifact_part_provenance,
-          }
-        : {}),
     },
   };
 
@@ -512,51 +466,6 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
       return {
         ...base,
         type: "conversation",
-      };
-    case "artifact":
-      if (
-        typeof row.conversation_id !== "string" ||
-        typeof row.message_id !== "string" ||
-        typeof row.artifact_kind !== "string" ||
-        base.context_ref.type !== "artifact"
-      ) {
-        return null;
-      }
-      return {
-        ...base,
-        type: "artifact",
-        conversation_id: row.conversation_id,
-        message_id: row.message_id,
-        artifact_kind: row.artifact_kind,
-      };
-    case "artifact_part":
-      if (
-        typeof row.artifact_id !== "string" ||
-        typeof row.message_id !== "string" ||
-        typeof row.conversation_id !== "string" ||
-        typeof row.artifact_kind !== "string" ||
-        typeof row.source_version !== "string" ||
-        !isRetrievalLocator(row.locator) ||
-        !locatorMatchesSearchType("artifact_part", row.locator) ||
-        base.context_ref.type !== "artifact_part" ||
-        base.context_ref.artifact_id !== row.artifact_id ||
-        base.context_ref.source_version !== row.source_version
-      ) {
-        return null;
-      }
-      return {
-        ...base,
-        type: "artifact_part",
-        artifact_id: row.artifact_id,
-        message_id: row.message_id,
-        conversation_id: row.conversation_id,
-        artifact_kind: row.artifact_kind,
-        artifact_title:
-          typeof row.artifact_title === "string" ? row.artifact_title : null,
-        part_key: typeof row.part_key === "string" ? row.part_key : null,
-        part_type: typeof row.part_type === "string" ? row.part_type : null,
-        source_version: row.source_version,
-        locator: row.locator,
       };
     case "web_result":
       if (

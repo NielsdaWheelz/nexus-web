@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 from nexus.db.models import ChatRun, Message, MessageLLM, Model
 from nexus.errors import ApiErrorCode
 from nexus.services.api_key_resolver import ResolvedKey, update_user_key_status
-from nexus.services.chat_run_artifact_persistence import persist_artifact_deltas_for_message
 from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES, append_run_event
 from nexus.services.chat_run_evidence import finalize_message_evidence
 from nexus.services.chat_run_message_blocks import message_document_with_run_components
@@ -167,7 +166,6 @@ def finalize_run(
         assistant_message.error_code = error_code
         assistant_message.updated_at = datetime.now(UTC)
         if assistant_status == "complete":
-            persist_artifact_deltas_for_message(db, run=run, assistant_message=assistant_message)
             claim_events, claim_evidence_events = finalize_message_evidence(
                 db,
                 run,

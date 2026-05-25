@@ -407,7 +407,6 @@ class TestSourceBackedChatRunStreaming:
                 reasoning="none",
                 key_mode="auto",
                 web_search={"mode": "off"},
-                artifact_intent={"kind": "off"},
             )
             retrieval_media_id = other_media_id if other_media_id is not None else media_id
             tool_call = MessageToolCall(
@@ -541,7 +540,6 @@ class TestSourceBackedChatRunStreaming:
                 reasoning="none",
                 key_mode="auto",
                 web_search={"mode": "off"},
-                artifact_intent={"kind": "timeline"},
             )
             result_ref = {
                 "type": "web_result",
@@ -634,71 +632,11 @@ class TestSourceBackedChatRunStreaming:
                 deltas = [row["payload"]["delta"] for row in events if row["event_type"] == "delta"]
                 assert deltas == [supported]
                 assert all(unsupported not in delta for delta in deltas)
-                artifact_events = [
-                    row["payload"] for row in events if row["event_type"] == "artifact_delta"
-                ]
-                retrieval_id = session.execute(
-                    text(
-                        """
-                        SELECT mr.id
-                        FROM message_retrievals mr
-                        JOIN message_tool_calls mtc ON mtc.id = mr.tool_call_id
-                        WHERE mtc.assistant_message_id = :message_id
-                        """
-                    ),
-                    {"message_id": assistant_message_id},
-                ).scalar_one()
-                assert len(artifact_events) == 1
-                artifact_event = artifact_events[0]
-                assert artifact_event["artifact_id"] == "generated-artifact"
-                assert artifact_event["artifact_kind"] == "timeline"
-                assert artifact_event["status"] == "complete"
-                assert artifact_event["delta"] == "A source-backed timeline was generated."
-                artifact_part = artifact_event["parts"][0]
-                assert artifact_part["text"] == supported
-                assert artifact_part["source_version"]
-                assert isinstance(artifact_part["locator"], dict)
-                assert artifact_part["source_ref"]["retrieval_id"] == str(retrieval_id)
-                assert artifact_part["context_ref"]["type"] in {"message", "web_result"}
-                assert artifact_part["metadata"]["support_state"] == "source_grounded"
-
                 assistant_content = session.execute(
                     text("SELECT content FROM messages WHERE id = :message_id"),
                     {"message_id": assistant_message_id},
                 ).scalar_one()
                 assert assistant_content == supported
-                durable_artifact = (
-                    session.execute(
-                        text(
-                            """
-                            SELECT ma.artifact_key,
-                                   ma.artifact_kind,
-                                   ma.status,
-                                   map.text,
-                                   map.source_ref,
-                                   map.result_ref,
-                                   map.metadata
-                            FROM message_artifacts ma
-                            JOIN message_artifact_parts map ON map.artifact_id = ma.id
-                            WHERE ma.message_id = :message_id
-                            """
-                        ),
-                        {"message_id": assistant_message_id},
-                    )
-                    .mappings()
-                    .one()
-                )
-                assert durable_artifact["artifact_key"] == "generated-artifact"
-                assert durable_artifact["artifact_kind"] == "timeline"
-                assert durable_artifact["status"] == "complete"
-                assert durable_artifact["text"] == supported
-                assert durable_artifact["source_ref"]["retrieval_id"] == str(retrieval_id)
-                assert durable_artifact["result_ref"]["type"] in {"message", "web_result"}
-                assert durable_artifact["metadata"]["source_provenance"]["source_version"]
-                assert isinstance(
-                    durable_artifact["metadata"]["source_provenance"]["locator"],
-                    dict,
-                )
 
                 metadata = session.execute(
                     text(
@@ -728,23 +666,6 @@ class TestSourceBackedChatRunStreaming:
             clear_settings_cache()
             with direct_db.session() as cleanup:
                 if assistant_message_id is not None:
-                    cleanup.execute(
-                        text(
-                            """
-                            DELETE FROM message_artifact_parts
-                            WHERE artifact_id IN (
-                                SELECT id
-                                FROM message_artifacts
-                                WHERE message_id = :message_id
-                            )
-                            """
-                        ),
-                        {"message_id": assistant_message_id},
-                    )
-                    cleanup.execute(
-                        text("DELETE FROM message_artifacts WHERE message_id = :message_id"),
-                        {"message_id": assistant_message_id},
-                    )
                     cleanup.execute(
                         text(
                             """

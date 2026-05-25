@@ -27,8 +27,6 @@ from nexus.services.context_rendering import render_context_blocks
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 from nexus.services.contributors import get_contributor_by_handle, get_contributor_by_id
 from nexus.services.message_context_snapshots import (
-    artifact_context_snapshot_fields,
-    artifact_part_context_snapshot_fields,
     context_evidence_span_ids,
     trusted_content_chunk_context_snapshot_fields,
     trusted_context_snapshot,
@@ -62,8 +60,6 @@ SUPPORTED_CONTEXT_REF_TYPES = {
     "evidence_span",
     "podcast",
     "contributor",
-    "artifact",
-    "artifact_part",
     "web_result",
 }
 SUPPORTED_SOURCE_REF_TYPES = {
@@ -268,63 +264,6 @@ def hydrate_context_ref(
             text_block,
             max_chars=max_chars,
         )
-
-    if context_type == "artifact_part":
-        assert context_id is not None
-        try:
-            message_context_ref = MessageContextRef.model_validate(dict(context_ref))
-        except ValidationError:
-            return _failed(
-                source_ref,
-                context_ref,
-                "invalid",
-                "artifact_part context_ref requires durable provenance",
-            )
-        row = db.execute(
-            text(
-                """
-                SELECT ma.conversation_id
-                FROM message_artifact_parts part
-                JOIN message_artifacts ma ON ma.id = part.artifact_id
-                WHERE part.id = :artifact_part_id
-                """
-            ),
-            {"artifact_part_id": context_id},
-        ).fetchone()
-        if row is None:
-            return _failed(source_ref, context_ref, "not_found", "Context not found")
-        if not can_read_conversation(db, viewer_id, row[0]):
-            return _failed(source_ref, context_ref, "forbidden", "Context not readable")
-        text_block = _render_message_context_ref(
-            db,
-            message_context_ref,
-        )
-        return _resolve_text_result(source_ref, context_ref, text_block, max_chars=max_chars)
-
-    if context_type == "artifact":
-        assert context_id is not None
-        try:
-            message_context_ref = MessageContextRef.model_validate(dict(context_ref))
-        except ValidationError:
-            return _failed(
-                source_ref,
-                context_ref,
-                "invalid",
-                "artifact context_ref is invalid",
-            )
-        row = db.execute(
-            text("SELECT conversation_id FROM message_artifacts WHERE id = :artifact_id"),
-            {"artifact_id": context_id},
-        ).fetchone()
-        if row is None:
-            return _failed(source_ref, context_ref, "not_found", "Context not found")
-        if not can_read_conversation(db, viewer_id, row[0]):
-            return _failed(source_ref, context_ref, "forbidden", "Context not readable")
-        text_block = _render_message_context_ref(
-            db,
-            message_context_ref,
-        )
-        return _resolve_text_result(source_ref, context_ref, text_block, max_chars=max_chars)
 
     if context_type == "evidence_span":
         assert context_id is not None
@@ -569,18 +508,6 @@ def _context_ref_from_message_context(
         locator = object_payload["locator"]
         if locator is not None:
             context_ref["locator"] = locator
-    if row.object_type == "artifact":
-        try:
-            context_ref.update(artifact_context_snapshot_fields(snapshot))
-            MessageContextRef.model_validate(context_ref)
-        except (ValueError, ValidationError):
-            return None
-    if row.object_type == "artifact_part":
-        try:
-            context_ref.update(artifact_part_context_snapshot_fields(snapshot))
-            MessageContextRef.model_validate(context_ref)
-        except (ValueError, ValidationError):
-            return None
     return context_ref
 
 
@@ -1001,5 +928,4 @@ def _render_web_result(result_ref: Mapping[str, object]) -> str:
                 lines.append(f"<excerpt>{xml_escape(extra_snippet)}</excerpt>")
     lines.append("</web_search_result>")
     return "\n".join(lines)
-
 

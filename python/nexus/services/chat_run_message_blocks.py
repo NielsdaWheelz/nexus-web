@@ -6,16 +6,9 @@ from typing import cast
 from uuid import UUID
 
 from sqlalchemy import select, text
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
-from nexus.db.models import (
-    ChatRun,
-    ChatRunEvent,
-    MessageArtifact,
-    MessageArtifactPart,
-    SourceManifest,
-)
-from nexus.evidence_span_ids import trusted_evidence_span_ids
+from nexus.db.models import ChatRun, SourceManifest
 
 
 def message_document(role: str, content: str) -> dict[str, object]:
@@ -74,7 +67,6 @@ def message_document_with_run_components(
             else []
         ),
         *source_manifest_blocks_for_run(db, run_id),
-        *_artifact_preview_blocks_for_run(db, run_id),
     ]
     return document
 
@@ -126,176 +118,6 @@ def source_manifest_blocks_for_run(db: Session, run_id: UUID) -> list[dict[str, 
             }
         )
     return blocks
-
-
-def _artifact_preview_blocks_for_run(db: Session, run_id: UUID) -> list[dict[str, object]]:
-    durable_artifacts: dict[str, MessageArtifact] = {}
-    for artifact in (
-        db.execute(
-            select(MessageArtifact)
-            .options(joinedload(MessageArtifact.parts))
-            .where(
-                MessageArtifact.chat_run_id == run_id,
-                MessageArtifact.artifact_key.is_not(None),
-            )
-            .order_by(
-                MessageArtifact.artifact_key.asc(),
-                MessageArtifact.artifact_version.asc(),
-                MessageArtifact.created_at.asc(),
-                MessageArtifact.id.asc(),
-            )
-        )
-        .unique()
-        .scalars()
-    ):
-        if artifact.artifact_key:
-            durable_artifacts[artifact.artifact_key] = artifact
-
-    rows = (
-        db.execute(
-            select(ChatRunEvent.payload)
-            .where(ChatRunEvent.run_id == run_id, ChatRunEvent.event_type == "artifact_delta")
-            .order_by(ChatRunEvent.seq.asc())
-        )
-        .scalars()
-        .all()
-    )
-    blocks: list[dict[str, object]] = []
-    for payload in rows:
-        if not isinstance(payload, dict):
-            continue
-        artifact_id = payload.get("artifact_id")
-        artifact_kind = payload.get("artifact_kind")
-        title = payload.get("title")
-        status = payload.get("status")
-        delta = payload.get("delta")
-        parts = payload.get("parts")
-        durable_artifact = (
-            durable_artifacts.get(artifact_id) if isinstance(artifact_id, str) else None
-        )
-        if durable_artifact is not None:
-            blocks.append(
-                {
-                    "type": "artifact_preview",
-                    "artifact_id": str(durable_artifact.id),
-                    "artifact_key": durable_artifact.artifact_key,
-                    "durable_artifact_id": str(durable_artifact.id),
-                    "artifact_version": durable_artifact.artifact_version,
-                    "supersedes_artifact_id": str(durable_artifact.supersedes_artifact_id)
-                    if durable_artifact.supersedes_artifact_id is not None
-                    else None,
-                    "artifact_kind": durable_artifact.artifact_kind,
-                    "title": durable_artifact.title,
-                    "status": durable_artifact.status,
-                    "delta": durable_artifact.preview_text,
-                    "parts": [
-                        _durable_artifact_part_preview_for_document(part)
-                        for part in durable_artifact.parts
-                    ],
-                }
-            )
-            continue
-        blocks.append(
-            {
-                "type": "artifact_preview",
-                "artifact_id": artifact_id if isinstance(artifact_id, str) else None,
-                "durable_artifact_id": None,
-                "artifact_kind": artifact_kind if isinstance(artifact_kind, str) else None,
-                "title": title if isinstance(title, str) else None,
-                "status": status if isinstance(status, str) else None,
-                "delta": delta if isinstance(delta, str) else None,
-                "parts": _artifact_parts_with_evidence(parts if isinstance(parts, list) else []),
-            }
-        )
-    return blocks
-
-
-def _durable_artifact_part_preview_for_document(part: MessageArtifactPart) -> dict[str, object]:
-    preview: dict[str, object] = {
-        "id": str(part.id),
-        "artifact_id": str(part.artifact_id),
-        "ordinal": part.ordinal,
-        "source_version": part.source_version,
-        "locator": part.locator,
-    }
-    if part.part_key is not None:
-        preview["part_key"] = part.part_key
-    if part.part_type is not None:
-        preview["part_type"] = part.part_type
-    if part.part_text is not None:
-        preview["text"] = part.part_text
-    if part.source_ref is not None:
-        preview["source_ref"] = part.source_ref
-    if part.context_ref is not None:
-        preview["context_ref"] = part.context_ref
-    if part.result_ref is not None:
-        preview["result_ref"] = part.result_ref
-    if part.evidence_span_id is not None:
-        preview["evidence_span_id"] = str(part.evidence_span_id)
-    evidence_span_ids = trusted_evidence_span_ids(part.evidence_span_ids)
-    if evidence_span_ids:
-        preview["evidence_span_ids"] = [
-            str(evidence_span_id) for evidence_span_id in evidence_span_ids
-        ]
-    if part.source_refs:
-        preview["source_refs"] = list(part.source_refs)
-    if part.metadata_json:
-        preview["metadata"] = part.metadata_json
-    return preview
-
-
-def _artifact_parts_with_evidence(parts: list[object]) -> list[object]:
-    evidence_parts: list[object] = []
-    for part in parts:
-        if not isinstance(part, dict):
-            continue
-        metadata = part.get("metadata")
-        if (
-            isinstance(part.get("source_ref"), dict)
-            or isinstance(part.get("context_ref"), dict)
-            or isinstance(part.get("result_ref"), dict)
-            or (
-                isinstance(part.get("source_refs"), list)
-                and len(cast(list[object], part.get("source_refs"))) > 0
-            )
-            or isinstance(part.get("evidence_span_id"), str)
-            or (
-                isinstance(part.get("evidence_span_ids"), list)
-                and len(cast(list[object], part.get("evidence_span_ids"))) > 0
-            )
-            or (
-                isinstance(metadata, dict)
-                and metadata.get("support_state") == "not_source_grounded"
-            )
-        ):
-            source_version = part.get("source_version")
-            locator = part.get("locator")
-            if not isinstance(source_version, str) or not isinstance(locator, dict):
-                raise ValueError("artifact_delta evidence parts require source_version and locator")
-            preview: dict[str, object] = {
-                "source_version": source_version,
-                "locator": locator,
-            }
-            for key in (
-                "id",
-                "artifact_id",
-                "ordinal",
-                "part_key",
-                "part_type",
-                "text",
-                "source_ref",
-                "source_refs",
-                "context_ref",
-                "result_ref",
-                "evidence_span_id",
-                "evidence_span_ids",
-                "metadata",
-                "created_at",
-            ):
-                if key in part:
-                    preview[key] = cast(object, part[key])
-            evidence_parts.append(preview)
-    return evidence_parts
 
 
 def _citation_audit_blocks_for_message(

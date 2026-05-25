@@ -5,13 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from uuid import UUID
 
-from pydantic import BaseModel
-
-from nexus.errors import ApiError, ApiErrorCode
-from nexus.evidence_span_ids import canonical_evidence_span_ids, trusted_evidence_span_ids
-from nexus.schemas.conversation import MessageArtifactPartProvenance, MessageContextRef
+from nexus.evidence_span_ids import trusted_evidence_span_ids
 from nexus.schemas.notes import HydratedObjectRef
-from nexus.schemas.retrieval import retrieval_locator_json
 
 HIGHLIGHT_COLOR_VALUES = frozenset({"yellow", "green", "blue", "pink", "purple"})
 
@@ -127,18 +122,6 @@ def context_snapshot_optional_uuid(
         raise ValueError(f"context snapshot {key} must be a UUID string") from None
 
 
-def context_snapshot_optional_positive_int(
-    snapshot: Mapping[str, object],
-    key: str,
-) -> int | None:
-    value = _optional_snapshot_value(snapshot, key)
-    if value is None:
-        return None
-    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-        raise ValueError(f"context snapshot {key} must be a positive integer")
-    return value
-
-
 def context_snapshot_optional_mapping(
     snapshot: Mapping[str, object],
     key: str,
@@ -182,109 +165,6 @@ def context_evidence_span_ids(
     return trusted_evidence_span_ids(raw_values)
 
 
-def artifact_part_context_ref(
-    *,
-    artifact_part_id: UUID,
-    artifact_id: UUID,
-    source_version: str,
-    locator: BaseModel | Mapping[str, object],
-    evidence_span_id: UUID | None = None,
-    evidence_span_ids: Sequence[UUID | str] = (),
-    artifact_kind: str | None = None,
-    message_id: UUID | None = None,
-    conversation_id: UUID | None = None,
-    artifact_key: str | None = None,
-    artifact_version: int | None = None,
-    artifact_title: str | None = None,
-    ordinal: int | None = None,
-    part_key: str | None = None,
-    part_type: str | None = None,
-    text: str | None = None,
-    source_ref: BaseModel | Mapping[str, object] | None = None,
-    context_ref: BaseModel | Mapping[str, object] | None = None,
-    result_ref: BaseModel | Mapping[str, object] | None = None,
-    source_refs: Sequence[BaseModel | Mapping[str, object]] = (),
-    metadata: Mapping[str, object] | None = None,
-) -> MessageContextRef:
-    raw_locator = (
-        locator.model_dump(mode="json") if isinstance(locator, BaseModel) else dict(locator)
-    )
-    stored_locator = retrieval_locator_json(raw_locator)
-    if stored_locator is None:
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Artifact part context provenance cannot be verified",
-        )
-    context_evidence_span_ids = canonical_evidence_span_ids(
-        [
-            *evidence_span_ids,
-            *([evidence_span_id] if evidence_span_id is not None else []),
-        ]
-    )
-    provenance_evidence_span_ids = (
-        [
-            value
-            for value in context_evidence_span_ids
-            if evidence_span_id is None or value != evidence_span_id
-        ]
-        if context_evidence_span_ids
-        else []
-    )
-    provenance = MessageArtifactPartProvenance.model_validate(
-        {
-            "type": "artifact_part",
-            "artifact_id": artifact_id,
-            "artifact_kind": artifact_kind,
-            "message_id": message_id,
-            "conversation_id": conversation_id,
-            "artifact_key": artifact_key,
-            "artifact_version": artifact_version,
-            "artifact_title": artifact_title,
-            "artifact_part_id": artifact_part_id,
-            "ordinal": ordinal,
-            "part_key": part_key,
-            "part_type": part_type,
-            "text": text,
-            "source_version": source_version,
-            "locator": stored_locator,
-            "source_ref": _model_or_mapping_payload(source_ref),
-            "context_ref": _model_or_mapping_payload(context_ref),
-            "result_ref": _model_or_mapping_payload(result_ref),
-            "evidence_span_id": evidence_span_id,
-            "evidence_span_ids": provenance_evidence_span_ids,
-            "source_refs": [
-                payload
-                for source in source_refs
-                if (payload := _model_or_mapping_payload(source)) is not None
-            ],
-            "metadata": dict(metadata or {}),
-        }
-    )
-    return MessageContextRef.model_validate(
-        {
-            "type": "artifact_part",
-            "id": artifact_part_id,
-            "evidence_span_ids": context_evidence_span_ids,
-            "artifact_id": artifact_id,
-            "artifact_key": artifact_key,
-            "artifact_version": artifact_version,
-            "source_version": source_version,
-            "locator": stored_locator,
-            "artifact_part_provenance": provenance.model_dump(mode="json", exclude_none=True),
-        }
-    )
-
-
-def _model_or_mapping_payload(
-    value: BaseModel | Mapping[str, object] | None,
-) -> dict[str, object] | None:
-    if value is None:
-        return None
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="json", exclude_none=True)
-    return dict(value)
-
-
 def trusted_content_chunk_context_snapshot_fields(
     *,
     object_type: str | None,
@@ -304,105 +184,6 @@ def trusted_content_chunk_context_snapshot_fields(
         "source_version": context_snapshot_required_string(snapshot, "source_version"),
         "locator": context_snapshot_required_mapping(snapshot, "locator"),
     }
-
-
-def artifact_context_snapshot_fields(
-    snapshot: Mapping[str, object],
-) -> dict[str, object]:
-    artifact_id = context_snapshot_required_uuid(snapshot, "id")
-    fields: dict[str, object] = {}
-
-    stored_artifact_id = context_snapshot_optional_uuid(snapshot, "artifact_id")
-    if stored_artifact_id is not None:
-        if stored_artifact_id != artifact_id:
-            raise ValueError("context snapshot artifact_id must match id")
-        fields["artifact_id"] = str(stored_artifact_id)
-
-    artifact_key = context_snapshot_optional_string(snapshot, "artifact_key")
-    if artifact_key is not None:
-        fields["artifact_key"] = artifact_key
-    artifact_version = context_snapshot_optional_positive_int(snapshot, "artifact_version")
-    if artifact_version is not None:
-        fields["artifact_version"] = artifact_version
-
-    provenance = context_snapshot_optional_mapping(snapshot, "artifact_part_provenance")
-    if provenance is None:
-        return fields
-    provenance_type = context_snapshot_required_string(provenance, "type")
-    if provenance_type != "artifact":
-        raise ValueError("artifact_part_provenance type must be artifact")
-    if context_snapshot_required_uuid(provenance, "artifact_id") != artifact_id:
-        raise ValueError("artifact_part_provenance artifact_id must match id")
-    provenance_artifact_key = context_snapshot_optional_string(provenance, "artifact_key")
-    if (
-        artifact_key is not None
-        and provenance_artifact_key is not None
-        and provenance_artifact_key != artifact_key
-    ):
-        raise ValueError("artifact_part_provenance artifact_key must match artifact_key")
-    provenance_artifact_version = context_snapshot_optional_positive_int(
-        provenance,
-        "artifact_version",
-    )
-    if (
-        artifact_version is not None
-        and provenance_artifact_version is not None
-        and provenance_artifact_version != artifact_version
-    ):
-        raise ValueError("artifact_part_provenance artifact_version must match artifact_version")
-    fields["artifact_part_provenance"] = provenance
-    return fields
-
-
-def artifact_part_context_snapshot_fields(
-    snapshot: Mapping[str, object],
-) -> dict[str, object]:
-    artifact_part_id = context_snapshot_required_uuid(snapshot, "id")
-    artifact_id = context_snapshot_required_uuid(snapshot, "artifact_id")
-    source_version = context_snapshot_required_string(snapshot, "source_version")
-    locator = context_snapshot_required_mapping(snapshot, "locator")
-    if locator.get("type") != "artifact_part_ref":
-        raise ValueError("context snapshot locator must be artifact_part_ref")
-    if context_snapshot_required_uuid(locator, "artifact_id") != artifact_id:
-        raise ValueError("context snapshot locator artifact_id must match artifact_id")
-    if context_snapshot_required_uuid(locator, "artifact_part_id") != artifact_part_id:
-        raise ValueError("context snapshot locator artifact_part_id must match id")
-    provenance = context_snapshot_required_mapping(snapshot, "artifact_part_provenance")
-    provenance_type = context_snapshot_required_string(provenance, "type")
-    if provenance_type != "artifact_part":
-        raise ValueError("artifact_part_provenance type must be artifact_part")
-    if context_snapshot_required_uuid(provenance, "artifact_id") != artifact_id:
-        raise ValueError("artifact_part_provenance artifact_id must match artifact_id")
-    if context_snapshot_required_uuid(provenance, "artifact_part_id") != artifact_part_id:
-        raise ValueError("artifact_part_provenance artifact_part_id must match id")
-    artifact_version = context_snapshot_optional_positive_int(snapshot, "artifact_version")
-    provenance_artifact_version = context_snapshot_optional_positive_int(
-        provenance,
-        "artifact_version",
-    )
-    if (
-        artifact_version is not None
-        and provenance_artifact_version is not None
-        and provenance_artifact_version != artifact_version
-    ):
-        raise ValueError("artifact_part_provenance artifact_version must match artifact_version")
-    if context_snapshot_required_string(provenance, "source_version") != source_version:
-        raise ValueError("artifact_part_provenance source_version must match source_version")
-    if context_snapshot_required_mapping(provenance, "locator") != locator:
-        raise ValueError("artifact_part_provenance locator must match locator")
-
-    fields: dict[str, object] = {
-        "artifact_id": str(artifact_id),
-        "source_version": source_version,
-        "locator": locator,
-        "artifact_part_provenance": provenance,
-    }
-    artifact_key = context_snapshot_optional_string(snapshot, "artifact_key")
-    if artifact_key is not None:
-        fields["artifact_key"] = artifact_key
-    if artifact_version is not None:
-        fields["artifact_version"] = artifact_version
-    return fields
 
 
 def object_ref_context_snapshot(

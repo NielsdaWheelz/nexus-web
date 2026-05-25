@@ -45,17 +45,6 @@ function buildAskHref(row: SearchResultRowViewModel): string | null {
   ) {
     return null;
   }
-  if (
-    row.contextRef.type === "artifact_part" &&
-    (!row.contextRef.artifactId ||
-      !isUuid(row.contextRef.artifactId) ||
-      !row.contextRef.sourceVersion ||
-      !row.contextRef.locator ||
-      !row.contextRef.artifactPartProvenance)
-  ) {
-    return null;
-  }
-
   const params = new URLSearchParams();
   if (
     row.type === "content_chunk" &&
@@ -71,12 +60,6 @@ function buildAskHref(row: SearchResultRowViewModel): string | null {
     ...(row.contextRef.evidenceSpanIds.length > 0
       ? { evidence_span_ids: row.contextRef.evidenceSpanIds }
       : {}),
-    artifact_id: row.contextRef.artifactId,
-    artifact_key: row.contextRef.artifactKey,
-    artifact_version: row.contextRef.artifactVersion,
-    source_version: row.contextRef.sourceVersion,
-    locator: row.contextRef.locator,
-    artifact_part_provenance: row.contextRef.artifactPartProvenance,
   });
   return `/conversations/new?${next.toString()}`;
 }

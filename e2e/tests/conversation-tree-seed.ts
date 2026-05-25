@@ -30,16 +30,6 @@ export interface BranchingConversationSeed {
   disposable_leaf_message_id: string;
 }
 
-export interface ArtifactFollowUpConversationSeed {
-  conversation_id: string;
-  assistant_message_id: string;
-  artifact_id: string;
-  artifact_part_id: string;
-  artifact_title: string;
-  origin_chat_run_id: string;
-  part_text: string;
-}
-
 async function e2eOwnerUserId(page: Page): Promise<string> {
   const response = await page.request.get("/api/me");
   const body = await response.text();
@@ -53,7 +43,7 @@ async function e2eOwnerUserId(page: Page): Promise<string> {
 
 function seedConversationTree<T>(
   ownerUserId: string,
-  scenario: "artifact_follow_up" | "branching" | "scroll",
+  scenario: "branching" | "scroll",
   extraEnv: Record<string, string> = {},
 ): T {
   const databaseUrl = process.env.DATABASE_URL;
@@ -117,14 +107,5 @@ export async function seedBranchingConversation(
   return seedConversationTree<BranchingConversationSeed>(
     await e2eOwnerUserId(page),
     "branching",
-  );
-}
-
-export async function seedArtifactFollowUpConversation(
-  page: Page,
-): Promise<ArtifactFollowUpConversationSeed> {
-  return seedConversationTree<ArtifactFollowUpConversationSeed>(
-    await e2eOwnerUserId(page),
-    "artifact_follow_up",
   );
 }

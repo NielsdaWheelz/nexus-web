@@ -80,7 +80,6 @@ export function useChatRunTail({
     handleToolCall,
     handleToolResult,
     handleSourceManifestDelta,
-    handleArtifactDelta,
     handleClaim,
     handleClaimEvidence,
     handleDone,
@@ -336,10 +335,6 @@ export function useChatRunTail({
                   if (!currentRunIsVisible()) break;
                   handleSourceManifestDelta(currentAssistantId, event.data);
                   break;
-                case "artifact_delta":
-                  if (!currentRunIsVisible()) break;
-                  handleArtifactDelta(currentAssistantId, event.data);
-                  break;
                 case "claim":
                   if (!currentRunIsVisible()) break;
                   handleClaim(currentAssistantId, event.data);
@@ -391,7 +386,6 @@ export function useChatRunTail({
       handleToolCall,
       handleToolResult,
       handleSourceManifestDelta,
-      handleArtifactDelta,
       handleClaim,
       handleClaimEvidence,
       flushDeltas,

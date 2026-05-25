@@ -78,7 +78,6 @@ async def test_real_web_article_context_chat_persists_retrievals_prompt_and_cita
                 }
             ],
             "web_search": {"mode": "off"},
-            "artifact_intent": {"kind": "off"},
         },
     )
     assert create_response.status_code == 200, create_response.text
@@ -179,7 +178,6 @@ async def test_real_media_chat_persists_no_results_and_no_indexed_evidence_statu
             "conversation_scope": {"type": "library", "library_id": str(library_id)},
             "contexts": [],
             "web_search": {"mode": "off"},
-            "artifact_intent": {"kind": "off"},
         },
     )
     assert no_results_response.status_code == 200, no_results_response.text
@@ -238,7 +236,6 @@ async def test_real_media_chat_persists_no_results_and_no_indexed_evidence_statu
                 "conversation_scope": {"type": "media", "media_id": str(ocr_media_id)},
                 "contexts": [],
                 "web_search": {"mode": "off"},
-                "artifact_intent": {"kind": "off"},
             },
         )
         assert no_index_response.status_code == 200, no_index_response.text

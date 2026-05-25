@@ -63,8 +63,6 @@ from nexus.services.conversation_memory import (
 from nexus.services.conversations import conversation_scope_metadata
 from nexus.services.library_intelligence import load_current_library_artifact_context
 from nexus.services.message_context_snapshots import (
-    artifact_context_snapshot_fields,
-    artifact_part_context_snapshot_fields,
     trusted_content_chunk_context_snapshot_fields,
     trusted_context_snapshot,
     trusted_object_ref_context_snapshot_payload,
@@ -790,14 +788,6 @@ def _context_ref_payload(db: Session, ref: ContextItem) -> dict[str, object]:
         payload["source_version"] = ref.source_version
     if ref.locator is not None:
         payload["locator"] = ref.locator.model_dump(mode="json")
-    if ref.type == "artifact":
-        payload.update(
-            artifact_context_snapshot_fields(ref.model_dump(mode="json", exclude_none=True))
-        )
-    if ref.type == "artifact_part":
-        payload.update(
-            artifact_part_context_snapshot_fields(ref.model_dump(mode="json", exclude_none=True))
-        )
     return payload
 
 
@@ -852,10 +842,6 @@ def load_message_context_refs(db: Session, user_message_id: UUID) -> list[Contex
                 locator = object_payload["locator"]
                 if locator is not None:
                     payload["locator"] = locator
-            if row.object_type == "artifact":
-                payload.update(artifact_context_snapshot_fields(snapshot))
-            if row.object_type == "artifact_part":
-                payload.update(artifact_part_context_snapshot_fields(snapshot))
             refs.append(MessageContextRef.model_validate(payload))
         except (ValueError, ValidationError) as exc:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Message context not found") from exc

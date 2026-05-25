@@ -228,47 +228,6 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             """
-                            DELETE FROM message_artifact_exports
-                            WHERE viewer_user_id = :value
-                               OR conversation_id IN (
-                                   SELECT id FROM conversations WHERE owner_user_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_artifact_parts
-                            WHERE artifact_id IN (
-                                SELECT ma.id
-                                FROM message_artifacts ma
-                                JOIN messages m ON m.id = ma.message_id
-                                JOIN conversations c ON c.id = m.conversation_id
-                                WHERE c.owner_user_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_artifacts
-                            WHERE message_id IN (
-                                SELECT m.id
-                                FROM messages m
-                                JOIN conversations c ON c.id = m.conversation_id
-                                WHERE c.owner_user_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
                             DELETE FROM chat_run_events
                             WHERE run_id IN (
                                 SELECT cr.id
@@ -527,40 +486,6 @@ class DirectSessionManager:
                         )
                     session.execute(
                         text(
-                            """
-                            DELETE FROM message_artifact_exports
-                            WHERE conversation_id = :value
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_artifact_parts
-                            WHERE artifact_id IN (
-                                SELECT ma.id
-                                FROM message_artifacts ma
-                                JOIN messages m ON m.id = ma.message_id
-                                WHERE m.conversation_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_artifacts
-                            WHERE message_id IN (
-                                SELECT id FROM messages WHERE conversation_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
                             "DELETE FROM conversation_active_paths WHERE conversation_id = :value"
                         ),
                         {"value": value},
@@ -704,25 +629,6 @@ class DirectSessionManager:
                                )
                             """
                         ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text("DELETE FROM message_artifact_exports WHERE message_id = :value"),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_artifact_parts
-                            WHERE artifact_id IN (
-                                SELECT id FROM message_artifacts WHERE message_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text("DELETE FROM message_artifacts WHERE message_id = :value"),
                         {"value": value},
                     )
                     session.execute(
@@ -911,40 +817,6 @@ class DirectSessionManager:
                             """
                             DELETE FROM source_manifests
                             WHERE conversation_id = :value
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_artifact_exports
-                            WHERE conversation_id = :value
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_artifact_parts
-                            WHERE artifact_id IN (
-                                SELECT ma.id
-                                FROM message_artifacts ma
-                                JOIN messages m ON m.id = ma.message_id
-                                WHERE m.conversation_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_artifacts
-                            WHERE message_id IN (
-                                SELECT id FROM messages WHERE conversation_id = :value
-                            )
                             """
                         ),
                         {"value": value},

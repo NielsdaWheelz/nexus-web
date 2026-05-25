@@ -33,7 +33,6 @@ from nexus.services.conversations import (
     get_conversation_for_owner_write_or_404,
     get_conversation_for_visible_read_or_404,
     get_message_count,
-    load_message_artifacts_for_message_ids,
     load_message_context_snapshots_for_message_ids,
     message_to_out,
     retryable_assistant_message_ids,
@@ -926,7 +925,6 @@ def _message_outs_by_id(
     messages_by_id = {message.id: message for message in messages}
     message_ids = list(messages_by_id)
     contexts_by_message_id = load_message_context_snapshots_for_message_ids(db, message_ids)
-    artifacts_by_message_id = load_message_artifacts_for_message_ids(db, message_ids)
     retryable_message_ids = retryable_assistant_message_ids(
         db,
         viewer_id=viewer_id,
@@ -936,7 +934,6 @@ def _message_outs_by_id(
         message_id: message_to_out(
             message,
             contexts_by_message_id.get(message.id, []),
-            artifacts_by_message_id.get(message.id, []),
             can_retry_response=message.id in retryable_message_ids,
         )
         for message_id, message in messages_by_id.items()

@@ -15,8 +15,6 @@ export const ALL_SEARCH_TYPES = [
   "message",
   "evidence_span",
   "conversation",
-  "artifact",
-  "artifact_part",
   "web_result",
 ] as const;
 
@@ -43,12 +41,8 @@ export interface SearchBaseResult {
     type: SearchType;
     id: string;
     evidence_span_ids?: string[];
-    artifact_id?: string | null;
-    artifact_key?: string | null;
-    artifact_version?: number | null;
     source_version?: string | null;
     locator?: RetrievalLocator | null;
-    artifact_part_provenance?: Record<string, unknown> | null;
   };
 }
 
@@ -137,26 +131,6 @@ export interface SearchConversationResult extends SearchBaseResult {
   type: "conversation";
 }
 
-export interface SearchArtifactResult extends SearchBaseResult {
-  type: "artifact";
-  conversation_id: string;
-  message_id: string;
-  artifact_kind: string;
-}
-
-export interface SearchArtifactPartResult extends SearchBaseResult {
-  type: "artifact_part";
-  artifact_id: string;
-  message_id: string;
-  conversation_id: string;
-  artifact_kind: string;
-  artifact_title: string | null;
-  part_key: string | null;
-  part_type: string | null;
-  source_version: string;
-  locator: RetrievalLocator;
-}
-
 export interface SearchWebResult extends SearchBaseResult {
   type: "web_result";
   result_type: "web_result";
@@ -186,8 +160,6 @@ export type SearchApiResult =
   | SearchMessageResult
   | SearchEvidenceSpanResult
   | SearchConversationResult
-  | SearchArtifactResult
-  | SearchArtifactPartResult
   | SearchWebResult;
 
 export interface SearchResponseShape {
@@ -206,12 +178,8 @@ export interface SearchResultRowViewModel {
     type: SearchType;
     id: string;
     evidenceSpanIds: string[];
-    artifactId?: string;
-    artifactKey?: string | null;
-    artifactVersion?: number | null;
     sourceVersion?: string;
     locator?: RetrievalLocator;
-    artifactPartProvenance?: Record<string, unknown>;
   } | null;
   typeLabel: string;
   primaryText: string;

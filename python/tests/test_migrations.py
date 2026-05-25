@@ -860,10 +860,7 @@ class TestMigrationUpgradeDowngrade:
                 assert message_document["type"] == "message_document"
                 assert message_document["blocks"][0]["text"] == "find sources"
 
-                for seq, event_type in enumerate(
-                    ("source_manifest_delta", "artifact_delta", "claim"),
-                    start=2,
-                ):
+                for seq, event_type in enumerate(("source_manifest_delta", "claim"), start=2):
                     session.execute(
                         text(
                             """
@@ -4772,52 +4769,6 @@ class TestS3SchemaConstraints:
             session.rollback()
             assert "ck_chat_runs_idempotency_key_length" in str(exc_info.value)
 
-            with pytest.raises(IntegrityError) as exc_info:
-                session.execute(
-                    text("""
-                        INSERT INTO chat_runs (
-                            owner_user_id,
-                            conversation_id,
-                            user_message_id,
-                            assistant_message_id,
-                            idempotency_key,
-                            payload_hash,
-                            status,
-                            model_id,
-                            reasoning,
-                            key_mode,
-                            web_search,
-                            artifact_intent
-                        )
-                        VALUES (
-                            :user_id,
-                            :conversation_id,
-                            :msg1,
-                            :msg2,
-                            :key,
-                            'hash',
-                            'queued',
-                            :model_id,
-                            'none',
-                            'auto',
-                            '{"mode": "off"}'::jsonb,
-                            '{"kind": "legacy"}'::jsonb
-                        )
-                    """),
-                    {
-                        "user_id": user_id,
-                        "conversation_id": conversation_id,
-                        "key": f"artifact-intent-{uuid4()}",
-                        "msg1": msg1_id,
-                        "msg2": msg2_id,
-                        "model_id": model_id,
-                    },
-                )
-                session.commit()
-
-            session.rollback()
-            assert "ck_chat_runs_artifact_intent_kind" in str(exc_info.value)
-
     def test_chat_branching_foreign_keys_are_not_cascading(self, migrated_engine):
         """Branch-path ownership cleanup is explicit in services, not FK cascades."""
         with Session(migrated_engine) as session:
@@ -4895,10 +4846,6 @@ class TestS3SchemaConstraints:
             "assistant_message_claims_message_id_fkey",
             "assistant_message_claim_evidence_claim_id_fkey",
             "assistant_message_claim_evidence_retrieval_id_fkey",
-            "message_artifact_exports_conversation_id_fkey",
-            "message_artifact_exports_message_id_fkey",
-            "message_artifact_exports_artifact_id_fkey",
-            "message_artifact_exports_viewer_user_id_fkey",
         }
         with Session(migrated_engine) as session:
             rows = session.execute(
@@ -4917,17 +4864,14 @@ class TestS3SchemaConstraints:
         assert set(delete_rules.values()) == {"NO ACTION"}, delete_rules
 
     def test_citation_audits_are_append_only_per_message(self, migrated_engine):
-        """Append-only ledgers/artifacts must not retain old one-row unique constraints."""
+        """Append-only ledgers must not retain old one-row unique constraints."""
         with Session(migrated_engine) as session:
             unique_rows = session.execute(
                 text(
                     """
                     SELECT constraint_name
                     FROM information_schema.table_constraints
-                    WHERE constraint_name IN (
-                        'uix_assistant_citation_audits_message',
-                        'uix_message_artifacts_message_key'
-                    )
+                    WHERE constraint_name = 'uix_assistant_citation_audits_message'
                     """
                 )
             ).fetchall()
@@ -4941,46 +4885,9 @@ class TestS3SchemaConstraints:
                     """
                 )
             ).fetchall()
-            artifact_index_rows = session.execute(
-                text(
-                    """
-                    SELECT indexname
-                    FROM pg_indexes
-                    WHERE tablename = 'message_artifacts'
-                      AND indexname = 'idx_message_artifacts_message_key_created'
-                    """
-                )
-            ).fetchall()
 
         assert unique_rows == []
         assert len(index_rows) == 1
-        assert len(artifact_index_rows) == 1
-
-    def test_message_artifacts_require_stable_keys(self, migrated_engine):
-        """Durable artifact versioning depends on a stable non-null key."""
-        with Session(migrated_engine) as session:
-            nullable = session.execute(
-                text(
-                    """
-                    SELECT is_nullable
-                    FROM information_schema.columns
-                    WHERE table_name = 'message_artifacts'
-                      AND column_name = 'artifact_key'
-                    """
-                )
-            ).scalar_one()
-            check_sql = session.execute(
-                text(
-                    """
-                    SELECT pg_get_constraintdef(oid)
-                    FROM pg_constraint
-                    WHERE conname = 'ck_message_artifacts_key_length'
-                    """
-                )
-            ).scalar_one()
-
-        assert nullable == "NO"
-        assert "artifact_key IS NULL" not in check_sql
 
     def test_fragment_block_offsets_constraint(self, migrated_engine):
         """CHECK constraint: end_offset >= start_offset."""

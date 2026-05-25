@@ -2,10 +2,8 @@
 
 import {
   AlertTriangle,
-  Boxes,
   Check,
   Clipboard,
-  FileText,
   Network,
   ShieldCheck,
 } from "lucide-react";
@@ -29,23 +27,20 @@ import {
 } from "@/lib/conversations/provenance/packet";
 import type {
   ProvenanceAudit,
-  ProvenanceArtifact,
   ProvenanceClaim,
   ProvenanceModel,
   ProvenancePacketVerification,
   ProvenanceSource,
 } from "@/lib/conversations/provenance/types";
-import { buildArtifactHref, truncateText } from "@/lib/conversations/display";
+import { truncateText } from "@/lib/conversations/display";
 import styles from "./ConversationProvenancePanel.module.css";
 
 interface ConversationProvenancePanelProps {
-  conversationId?: string;
   messages: ConversationMessage[];
   memory?: ConversationMemoryInspection | null;
 }
 
 export default function ConversationProvenancePanel({
-  conversationId,
   messages,
   memory,
 }: ConversationProvenancePanelProps) {
@@ -72,7 +67,6 @@ export default function ConversationProvenancePanel({
   const hasSignals =
     model.claimCount > 0 ||
     model.retrievalCount > 0 ||
-    model.artifactCount > 0 ||
     model.memoryItemCount > 0;
 
   useEffect(() => {
@@ -156,7 +150,6 @@ export default function ConversationProvenancePanel({
       <div className={styles.metricGrid}>
         <Metric label="Claims" value={model.claimCount} icon={<ShieldCheck />} />
         <Metric label="Sources" value={model.sourceCount} icon={<Network />} />
-        <Metric label="Artifacts" value={model.artifactCount} icon={<Boxes />} />
         <Metric
           label="Risk"
           value={model.riskClaimCount + model.citationIssueCount}
@@ -180,7 +173,6 @@ export default function ConversationProvenancePanel({
         </div>
         <VerificationBar model={model} />
         <div className={styles.factRow}>
-          <span>{model.citedArtifactPartCount}/{model.artifactPartCount} cited artifact parts</span>
           <span>{model.memoryItemCount} memory items</span>
           <span>{model.memorySourceCount} memory sources</span>
         </div>
@@ -189,7 +181,6 @@ export default function ConversationProvenancePanel({
       {model.sources.length > 0 ? (
         <LineageGraph
           model={model}
-          conversationId={conversationId}
           activeSourceKey={activeSource?.key ?? null}
           onSelectSource={setSelectedSourceKey}
         />
@@ -241,32 +232,6 @@ export default function ConversationProvenancePanel({
       ) : null}
 
       {activeSource ? <SourceDossier source={activeSource} /> : null}
-
-      {model.artifacts.length > 0 ? (
-        <section className={styles.section} aria-label="Artifact chain">
-          <div className={styles.sectionHeader}>
-            <h4>Artifact chain</h4>
-            <span>{model.artifacts.length} generated</span>
-          </div>
-          <div className={styles.artifactList}>
-            {model.artifacts.slice(0, 6).map((artifact) => (
-              <ArtifactLinkOrDiv
-                key={artifact.key}
-                artifact={artifact}
-                conversationId={conversationId}
-                className={styles.artifactRow}
-              >
-                <FileText size={14} aria-hidden="true" />
-                <span>{artifact.title}</span>
-                <small>{artifact.kind}</small>
-                <em>
-                  {artifact.citedPartCount}/{artifact.partCount} cited
-                </em>
-              </ArtifactLinkOrDiv>
-            ))}
-          </div>
-        </section>
-      ) : null}
     </section>
   );
 }
@@ -310,7 +275,6 @@ function AuditVerdict({
         <div className={styles.coverageGrid} aria-label="Audit coverage">
           <CoverageMeter label="Retrieval" value={audit.coverage.retrieval} />
           <CoverageMeter label="Claims" value={audit.coverage.claims} />
-          <CoverageMeter label="Artifacts" value={audit.coverage.artifacts} />
         </div>
         {audit.strengths.length > 0 ? (
           <div className={styles.factRow}>
@@ -375,27 +339,23 @@ function dedupeClaims(claims: ProvenanceClaim[]): ProvenanceClaim[] {
 
 function LineageGraph({
   model,
-  conversationId,
   activeSourceKey,
   onSelectSource,
 }: {
   model: ProvenanceModel;
-  conversationId?: string;
   activeSourceKey: string | null;
   onSelectSource: (sourceKey: string) => void;
 }) {
   const claimNodes = dedupeClaims(
     model.sources.flatMap((source) => source.claims),
   ).slice(0, 4);
-  const artifactNodes = model.artifacts.slice(0, 4);
 
   return (
     <section className={styles.lineage} aria-label="Evidence lineage graph">
       <div className={styles.sectionHeader}>
         <h4>Lineage</h4>
         <span>
-          {model.sourceCount} sources - {model.claimCount} claims -{" "}
-          {model.artifactCount} artifacts
+          {model.sourceCount} sources - {model.claimCount} claims
         </span>
       </div>
       <div className={styles.lineageGrid}>
@@ -411,9 +371,7 @@ function LineageGraph({
               onClick={() => onSelectSource(source.key)}
             >
               <strong>{source.label}</strong>
-              <span>
-                {source.claimEvidenceCount} claims, {source.artifactPartCount} parts
-              </span>
+              <span>{source.claimEvidenceCount} claims</span>
             </button>
           ))}
         </LineageColumn>
@@ -434,27 +392,6 @@ function LineageGraph({
             <div className={styles.lineageEmptyNode}>No verified claims yet.</div>
           )}
         </LineageColumn>
-        <LineageColumn label="Artifacts">
-          {artifactNodes.length > 0 ? (
-            artifactNodes.map((artifact) => (
-              <ArtifactLinkOrDiv
-                key={artifact.key}
-                artifact={artifact}
-                conversationId={conversationId}
-                className={styles.lineageNode}
-                dataKind="artifact"
-              >
-                <strong>{artifact.title}</strong>
-                <span>
-                  {artifact.kind} - {artifact.citedPartCount}/
-                  {artifact.partCount} cited
-                </span>
-              </ArtifactLinkOrDiv>
-            ))
-          ) : (
-            <div className={styles.lineageEmptyNode}>No artifacts yet.</div>
-          )}
-        </LineageColumn>
       </div>
     </section>
   );
@@ -470,43 +407,6 @@ function LineageColumn({
   return (
     <div className={styles.lineageColumn}>
       <span className={styles.lineageColumnLabel}>{label}</span>
-      {children}
-    </div>
-  );
-}
-
-/**
- * Render `children` inside an `<a>` when the artifact has a resolvable
- * pane-deeplink (or external href), otherwise inside a `<div>`. Owns the
- * conversation-pane → artifact href computation so both the lineage and the
- * artifact-chain views share one implementation.
- */
-function ArtifactLinkOrDiv({
-  artifact,
-  conversationId,
-  className,
-  dataKind,
-  children,
-}: {
-  artifact: ProvenanceArtifact;
-  conversationId: string | undefined;
-  className: string;
-  dataKind?: string;
-  children: ReactNode;
-}) {
-  const href =
-    conversationId && artifact.id
-      ? buildArtifactHref({ conversationId, artifactId: artifact.id })
-      : artifact.href;
-  if (href) {
-    return (
-      <a className={className} data-kind={dataKind} href={href}>
-        {children}
-      </a>
-    );
-  }
-  return (
-    <div className={className} data-kind={dataKind}>
       {children}
     </div>
   );
@@ -575,9 +475,6 @@ function SourceCard({
         {source.claimEvidenceCount > 0 ? (
           <span>{source.claimEvidenceCount} claim links</span>
         ) : null}
-        {source.artifactPartCount > 0 ? (
-          <span>{source.artifactPartCount} artifact parts</span>
-        ) : null}
         {source.memorySourceCount > 0 ? (
           <span>{source.memorySourceCount} memory refs</span>
         ) : null}
@@ -593,7 +490,6 @@ function SourceCard({
 
 function SourceDossier({ source }: { source: ProvenanceSource }) {
   const visibleClaims = source.claims.slice(0, 4);
-  const visibleArtifactParts = source.artifactParts.slice(0, 4);
   const external = source.href ? /^https?:\/\//.test(source.href) : false;
 
   return (
@@ -602,8 +498,7 @@ function SourceDossier({ source }: { source: ProvenanceSource }) {
         <div>
           <h4>{source.label}</h4>
           <p>
-            {source.claimEvidenceCount} claim links, {source.artifactPartCount} artifact
-            parts, {source.memorySourceCount} memory refs
+            {source.claimEvidenceCount} claim links, {source.memorySourceCount} memory refs
           </p>
         </div>
         {source.href ? (
@@ -638,27 +533,6 @@ function SourceDossier({ source }: { source: ProvenanceSource }) {
         </div>
       ) : null}
 
-      {visibleArtifactParts.length > 0 ? (
-        <div className={styles.dossierBlock}>
-          <div className={styles.dossierBlockHeader}>
-            <span>Derived artifacts</span>
-            <small>{source.artifactParts.length} parts</small>
-          </div>
-          <ul className={styles.dossierList}>
-            {visibleArtifactParts.map((part) => (
-              <li key={part.key}>
-                <strong>{part.artifactTitle}</strong>
-                <p>
-                  {part.partKey}
-                  {part.partType ? ` - ${part.partType}` : ""}
-                </p>
-                {part.text ? <small>{truncateText(part.text, 120)}</small> : null}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
       {source.snippets.length > 0 ? (
         <div className={styles.dossierBlock}>
           <div className={styles.dossierBlockHeader}>
@@ -677,4 +551,3 @@ function SourceDossier({ source }: { source: ProvenanceSource }) {
     </section>
   );
 }
-

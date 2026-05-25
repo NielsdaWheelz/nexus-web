@@ -24,8 +24,6 @@ class RetrievalContextRef(BaseModel):
         "evidence_span",
         "conversation",
         "web_result",
-        "artifact",
-        "artifact_part",
     ]
     id: UUID | str
     evidence_span_ids: list[UUID | str] = Field(default_factory=list)
@@ -377,41 +375,6 @@ class WebRetrievalResultRef(BaseModel):
         return self
 
 
-class ArtifactPartRetrievalResultRef(BaseModel):
-    type: Literal["artifact_part"]
-    id: UUID | str
-    result_type: Literal["artifact_part"]
-    source_id: str
-    artifact_id: UUID | str
-    message_id: UUID | str
-    conversation_id: UUID | str
-    artifact_kind: str
-    artifact_title: str | None = None
-    part_key: str | None = None
-    part_type: str | None = None
-    title: str
-    source_label: str | None = None
-    snippet: str | None = None
-    deep_link: str
-    context_ref: RetrievalContextRef
-    source_version: str = Field(min_length=1)
-    locator: RetrievalLocator
-    media_id: None = None
-    media_kind: None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_artifact_part_ref(self) -> ArtifactPartRetrievalResultRef:
-        if self.context_ref.type != "artifact_part":
-            raise ValueError("artifact_part context_ref.type must be artifact_part")
-        if self.locator.type != "artifact_part_ref":
-            raise ValueError("artifact_part result_ref locator must be artifact_part_ref")
-        return self
-
-
 class EvidenceSpanRetrievalResultRef(BaseModel):
     type: Literal["evidence_span"]
     id: UUID | str
@@ -467,35 +430,6 @@ class ConversationRetrievalResultRef(BaseModel):
         return self
 
 
-class ArtifactRetrievalResultRef(BaseModel):
-    type: Literal["artifact"]
-    id: UUID | str
-    result_type: Literal["artifact"]
-    source_id: str
-    conversation_id: UUID | str
-    message_id: UUID | str
-    artifact_kind: str
-    title: str
-    source_label: str | None = None
-    snippet: str | None = None
-    deep_link: str
-    context_ref: RetrievalContextRef
-    source_version: None = None
-    locator: None = None
-    media_id: None = None
-    media_kind: None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_artifact_ref(self) -> ArtifactRetrievalResultRef:
-        if self.context_ref.type != "artifact":
-            raise ValueError("artifact context_ref.type must be artifact")
-        return self
-
-
 RetrievalResultRef = Annotated[
     MediaRetrievalResultRef
     | PodcastRetrievalResultRef
@@ -509,10 +443,8 @@ RetrievalResultRef = Annotated[
     | HighlightRetrievalResultRef
     | MessageRetrievalResultRef
     | WebRetrievalResultRef
-    | ArtifactPartRetrievalResultRef
     | EvidenceSpanRetrievalResultRef
-    | ConversationRetrievalResultRef
-    | ArtifactRetrievalResultRef,
+    | ConversationRetrievalResultRef,
     Field(discriminator="type"),
 ]
 
@@ -672,17 +604,6 @@ class ExternalUrlLocator(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ArtifactPartRefLocator(BaseModel):
-    type: Literal["artifact_part_ref"]
-    artifact_id: UUID | str
-    artifact_part_id: UUID | str
-    message_id: UUID | str
-    conversation_id: UUID | str
-    part_key: str | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-
 TypedRetrievalLocator = Annotated[
     WebTextOffsetsLocator
     | EpubFragmentOffsetsLocator
@@ -692,8 +613,7 @@ TypedRetrievalLocator = Annotated[
     | AudioTimeRangeLocator
     | VideoTimeRangeLocator
     | MessageOffsetsLocator
-    | ExternalUrlLocator
-    | ArtifactPartRefLocator,
+    | ExternalUrlLocator,
     Field(discriminator="type"),
 ]
 
@@ -723,8 +643,6 @@ def validate_locator_for_result_type(result_type: str, locator: RetrievalLocator
             expected = {"message_offsets"}
         case "web_result":
             expected = {"external_url"}
-        case "artifact_part":
-            expected = {"artifact_part_ref"}
         case _:
             raise ValueError(f"{result_type} locator is not supported")
     if locator.type not in expected:

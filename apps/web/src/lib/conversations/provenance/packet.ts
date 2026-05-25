@@ -28,9 +28,6 @@ export function createProvenancePacket(model: ProvenanceModel): ProvenancePacket
       retrievalCount: model.retrievalCount,
       includedRetrievalCount: model.includedRetrievalCount,
       sourceCount: model.sourceCount,
-      artifactCount: model.artifactCount,
-      artifactPartCount: model.artifactPartCount,
-      citedArtifactPartCount: model.citedArtifactPartCount,
       memoryItemCount: model.memoryItemCount,
       memorySourceCount: model.memorySourceCount,
       citationIssueCount: model.citationIssueCount,
@@ -46,7 +43,6 @@ export function createProvenancePacket(model: ProvenanceModel): ProvenancePacket
         total: source.retrievalCount,
       },
       claim_links: source.claimEvidenceCount,
-      artifact_parts: source.artifactPartCount,
       memory_refs: source.memorySourceCount,
       snippets: source.snippets.slice(0, 3).map((snippet) => truncateText(snippet, 240)),
     })),
@@ -57,15 +53,6 @@ export function createProvenancePacket(model: ProvenanceModel): ProvenancePacket
       text: claim.text,
       evidence_count: claim.evidenceCount,
       source_labels: claim.sourceLabels,
-    })),
-    artifacts: model.artifacts.map((artifact) => ({
-      key: artifact.key,
-      id: artifact.id,
-      title: artifact.title,
-      kind: artifact.kind,
-      status: artifact.status,
-      cited_parts: artifact.citedPartCount,
-      total_parts: artifact.partCount,
     })),
     issues: audit.issues.map((issue) => ({
       id: issue.id,
@@ -145,13 +132,6 @@ export function verifyProvenancePacket(
       detail: "Packet source list is missing.",
     });
   }
-  if (!Array.isArray(packet.artifacts)) {
-    issues.push({
-      id: "packet-artifacts",
-      severity: "attention",
-      detail: "Packet artifact list is missing.",
-    });
-  }
   if (!Array.isArray(packet.risk_claims)) {
     issues.push({
       id: "packet-risk-claims",
@@ -170,19 +150,6 @@ export function verifyProvenancePacket(
       id: "packet-source-count",
       severity: "review",
       detail: "Packet source count does not match the source list.",
-    });
-  }
-
-  if (
-    isRecord(packet.counts) &&
-    Array.isArray(packet.artifacts) &&
-    typeof packet.counts.artifactCount === "number" &&
-    packet.counts.artifactCount !== packet.artifacts.length
-  ) {
-    issues.push({
-      id: "packet-artifact-count",
-      severity: "review",
-      detail: "Packet artifact count does not match the artifact list.",
     });
   }
 
@@ -215,17 +182,13 @@ export function formatProvenanceBrief(model: ProvenanceModel): string {
     `${pluralize(model.assistantCount, "assistant turn")}, ${pluralize(
       model.sourceCount,
       "source",
-    )}, ${pluralize(model.claimCount, "claim")}, ${pluralize(
-      model.artifactCount,
-      "artifact",
-    )}.`,
+    )}, ${pluralize(model.claimCount, "claim")}.`,
     `Verdict: ${audit.label} (${audit.score}/100). ${audit.summary}`,
     `Packet: ${packet.fingerprint}`,
     "",
     "Coverage",
     `- Retrieved in prompt: ${model.includedRetrievalCount}/${model.retrievalCount}`,
     `- Supported claims: ${model.supportedClaimCount}/${model.claimCount}`,
-    `- Cited artifact parts: ${model.citedArtifactPartCount}/${model.artifactPartCount}`,
     `- Citation issues: ${model.citationIssueCount}`,
   ];
 
@@ -247,16 +210,7 @@ export function formatProvenanceBrief(model: ProvenanceModel): string {
     lines.push("", "Top sources");
     for (const source of model.sources.slice(0, 5)) {
       lines.push(
-        `- ${source.label}: ${source.includedRetrievalCount}/${source.retrievalCount} retrieved, ${source.claimEvidenceCount} claim links, ${source.artifactPartCount} artifact parts`,
-      );
-    }
-  }
-
-  if (model.artifacts.length > 0) {
-    lines.push("", "Artifacts");
-    for (const artifact of model.artifacts.slice(0, 5)) {
-      lines.push(
-        `- ${artifact.title}: ${artifact.citedPartCount}/${artifact.partCount} cited parts`,
+        `- ${source.label}: ${source.includedRetrievalCount}/${source.retrievalCount} retrieved, ${source.claimEvidenceCount} claim links`,
       );
     }
   }

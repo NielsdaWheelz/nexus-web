@@ -2,10 +2,8 @@
 
 import { useCallback } from "react";
 import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
-import type { ContextItem } from "@/lib/api/sse/requests";
 import type {
   BranchDraft,
-  ChatRunResponse,
   ConversationMessage,
   ForkOption,
   MessageEvidenceLocator,
@@ -35,11 +33,6 @@ export interface ReaderSourceTarget {
   context_id?: string | null;
 }
 
-export interface ArtifactFocusTarget {
-  artifactId: string;
-  artifactPartId?: string | null;
-}
-
 interface MessageRowProps {
   message: ConversationMessage;
   forkOptions?: ForkOption[];
@@ -52,9 +45,6 @@ interface MessageRowProps {
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
   onAskAboutSource?: (target: ReaderSourceTarget) => void;
   onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
-  onAttachContext?: (context: ContextItem) => void;
-  onChatRunCreated?: (runData: ChatRunResponse["data"]) => void;
-  artifactFocusTarget?: ArtifactFocusTarget | null;
 }
 
 function formatTime(iso: string): string {
@@ -86,9 +76,6 @@ export function MessageRow({
   onReaderSourceActivate,
   onAskAboutSource,
   onSaveSourceQuote,
-  onAttachContext,
-  onChatRunCreated,
-  artifactFocusTarget,
 }: MessageRowProps) {
   const activateTarget = useCallback(
     (target: ReaderSourceTarget) => {
@@ -139,9 +126,6 @@ export function MessageRow({
           onActivateTarget={activateTarget}
           onAskAboutSource={onAskAboutSource}
           onSaveSourceQuote={onSaveSourceQuote}
-          onAttachContext={onAttachContext}
-          onChatRunCreated={onChatRunCreated}
-          artifactFocusTarget={artifactFocusTarget}
           hasReaderActivator={Boolean(onReaderSourceActivate)}
         />
       );

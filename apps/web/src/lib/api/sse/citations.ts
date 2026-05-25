@@ -20,9 +20,7 @@ export type SearchCitationResultType =
   | "message"
   | "contributor"
   | "evidence_span"
-  | "conversation"
-  | "artifact"
-  | "artifact_part";
+  | "conversation";
 
 export type RetrievalContextRef =
   | {
@@ -50,8 +48,6 @@ const SEARCH_CITATION_RESULT_TYPES = new Set<SearchCitationResultType>([
   "contributor",
   "evidence_span",
   "conversation",
-  "artifact",
-  "artifact_part",
 ]);
 
 export function isRetrievalContextRef(
@@ -223,32 +219,6 @@ export type ConversationSearchCitationEventData = SearchCitationBase<
   null
 >;
 
-export type ArtifactSearchCitationEventData = SearchCitationBase<
-  "artifact",
-  "artifact",
-  null,
-  null
-> & {
-  conversation_id: string;
-  message_id: string;
-  artifact_kind: string;
-};
-
-export type ArtifactPartSearchCitationEventData = SearchCitationBase<
-  "artifact_part",
-  "artifact_part",
-  string,
-  Extract<RetrievalLocator, { type: "artifact_part_ref" }>
-> & {
-  artifact_id: string;
-  message_id: string;
-  conversation_id: string;
-  artifact_kind: string;
-  artifact_title?: string | null;
-  part_key?: string | null;
-  part_type?: string | null;
-};
-
 export type SearchCitationEventData =
   | MediaSearchCitationEventData
   | PodcastSearchCitationEventData
@@ -262,9 +232,7 @@ export type SearchCitationEventData =
   | MessageSearchCitationEventData
   | ContributorSearchCitationEventData
   | EvidenceSpanSearchCitationEventData
-  | ConversationSearchCitationEventData
-  | ArtifactSearchCitationEventData
-  | ArtifactPartSearchCitationEventData;
+  | ConversationSearchCitationEventData;
 
 export type WebCitationEventData = {
   assistant_message_id?: string;
@@ -421,37 +389,6 @@ export function isSearchCitationEventData(
       );
     case "conversation":
       return isSearchCitationBase(citation, "conversation", "conversation", []);
-    case "artifact":
-      return (
-        isSearchCitationBase(citation, "artifact", "artifact", [
-          "conversation_id",
-          "message_id",
-          "artifact_kind",
-        ]) &&
-        typeof citation.conversation_id === "string" &&
-        typeof citation.message_id === "string" &&
-        typeof citation.artifact_kind === "string"
-      );
-    case "artifact_part":
-      return (
-        isSearchCitationBase(citation, "artifact_part", "artifact_part", [
-          "artifact_id",
-          "message_id",
-          "conversation_id",
-          "artifact_kind",
-          "artifact_title",
-          "part_key",
-          "part_type",
-        ]) &&
-        typeof citation.artifact_id === "string" &&
-        typeof citation.message_id === "string" &&
-        typeof citation.conversation_id === "string" &&
-        typeof citation.artifact_kind === "string" &&
-        typeof citation.source_version === "string" &&
-        isOptionalString(citation.artifact_title) &&
-        isOptionalString(citation.part_key) &&
-        isOptionalString(citation.part_type)
-      );
   }
   return false;
 }
@@ -499,7 +436,6 @@ function isSearchCitationLocator(
     case "page":
     case "contributor":
     case "conversation":
-    case "artifact":
       return locator === null;
     case "content_chunk":
     case "fragment":
@@ -512,10 +448,6 @@ function isSearchCitationLocator(
       );
     case "message":
       return isRetrievalLocator(locator) && locator.type === "message_offsets";
-    case "artifact_part":
-      return (
-        isRetrievalLocator(locator) && locator.type === "artifact_part_ref"
-      );
   }
 }
 

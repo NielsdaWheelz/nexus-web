@@ -4,7 +4,6 @@ import {
   Highlighter,
   MessageSquare,
   Mic,
-  Sparkles,
   UserRound,
   Video,
   type LucideIcon,
@@ -29,7 +28,5 @@ export const SEARCH_TYPE_ICON: Record<SearchType, LucideIcon> = {
   message: MessageSquare,
   evidence_span: FileText,
   conversation: MessageSquare,
-  artifact: Sparkles,
-  artifact_part: Sparkles,
   web_result: Globe,
 };

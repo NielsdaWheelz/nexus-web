@@ -12,7 +12,6 @@ import type {
 export function assessProvenanceModel(model: ProvenanceModel): ProvenanceAudit {
   const retrievalCoverage = ratio(model.includedRetrievalCount, model.retrievalCount);
   const claimCoverage = ratio(model.supportedClaimCount, model.claimCount);
-  const artifactCoverage = ratio(model.citedArtifactPartCount, model.artifactPartCount);
   const issues: ProvenanceAuditIssue[] = [];
 
   if (model.riskClaims.length > 0) {
@@ -48,22 +47,12 @@ export function assessProvenanceModel(model: ProvenanceModel): ProvenanceAudit {
     });
   }
 
-  if (model.artifactPartCount > model.citedArtifactPartCount) {
-    issues.push({
-      id: "artifact-citations",
-      severity: "review",
-      label: `${model.citedArtifactPartCount}/${model.artifactPartCount} artifact parts cited`,
-      detail: "Generated artifact material is not fully connected back to source evidence.",
-      action: "Attach source refs or evidence spans to uncited artifact parts.",
-    });
-  }
-
-  if (model.sourceCount === 0 && (model.claimCount > 0 || model.artifactCount > 0)) {
+  if (model.sourceCount === 0 && model.claimCount > 0) {
     issues.push({
       id: "source-graph-empty",
       severity: "attention",
       label: "No source graph",
-      detail: "The conversation has claims or artifacts without any source nodes.",
+      detail: "The conversation has claims without any source nodes.",
       action: "Run source-grounded retrieval before trusting this answer.",
     });
   }
@@ -82,8 +71,7 @@ export function assessProvenanceModel(model: ProvenanceModel): ProvenanceAudit {
   score -= severityPenalty(model.riskClaims);
   score -= Math.min(32, model.citationIssueCount * 8);
   score -= Math.round((1 - retrievalCoverage) * 20);
-  score -= Math.round((1 - artifactCoverage) * 15);
-  if (model.sourceCount === 0 && (model.claimCount > 0 || model.artifactCount > 0)) {
+  if (model.sourceCount === 0 && model.claimCount > 0) {
     score -= 20;
   }
   if (model.memoryItemCount > 0 && model.memorySourceCount === 0) {
@@ -95,7 +83,6 @@ export function assessProvenanceModel(model: ProvenanceModel): ProvenanceAudit {
   const strengths = auditStrengths(model, {
     retrieval: retrievalCoverage,
     claims: claimCoverage,
-    artifacts: artifactCoverage,
   });
   const nextActions = issues.map((issue) => issue.action).slice(0, 4);
 
@@ -107,7 +94,6 @@ export function assessProvenanceModel(model: ProvenanceModel): ProvenanceAudit {
     coverage: {
       retrieval: retrievalCoverage,
       claims: claimCoverage,
-      artifacts: artifactCoverage,
     },
     strengths,
     issues,
@@ -181,7 +167,7 @@ function auditSummary(
   issueCount: number,
 ): string {
   if (level === "verified") {
-    return "The answer has a complete source-to-claim-to-artifact chain.";
+    return "The answer has a complete source-to-claim chain.";
   }
   if (level === "review") {
     return `${score}/100 with ${pluralize(issueCount, "repair item")}; suitable for review before reuse.`;
@@ -202,9 +188,6 @@ function auditStrengths(
   }
   if (model.retrievalCount > 0 && coverage.retrieval === 1) {
     strengths.push("All retrievals reached the prompt");
-  }
-  if (model.artifactPartCount > 0 && coverage.artifacts === 1) {
-    strengths.push("All artifact parts cite evidence");
   }
   if (model.memorySourceCount > 0) {
     strengths.push(`${pluralize(model.memorySourceCount, "memory source")} linked`);

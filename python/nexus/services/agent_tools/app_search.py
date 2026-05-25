@@ -36,7 +36,6 @@ from nexus.schemas.retrieval import (
 )
 from nexus.schemas.search import SearchResultOut
 from nexus.services.context_rendering import render_context_blocks
-from nexus.services.contexts import load_artifact_part_context_ref
 from nexus.services.contributor_credits import normalize_contributor_role
 from nexus.services.contributors import get_contributor_by_handle
 from nexus.services.search import hash_query, parse_scope, search
@@ -56,7 +55,6 @@ STRICT_LOCATOR_RESULT_TYPES = frozenset(
         "highlight",
         "message",
         "evidence_span",
-        "artifact_part",
     }
 )
 STRICT_SOURCE_VERSION_RESULT_TYPES = STRICT_LOCATOR_RESULT_TYPES | {"page"}
@@ -173,31 +171,6 @@ class AppSearchCitation:
                 "source_version": self.source_version,
                 "locator": self.locator,
             }
-        if self.result_type == "artifact_part":
-            return {
-                "type": "artifact_part",
-                "id": self.source_id,
-                "result_type": "artifact_part",
-                "source_id": self.source_id,
-                "artifact_id": self.result_ref["artifact_id"],
-                "message_id": self.result_ref["message_id"],
-                "conversation_id": self.result_ref["conversation_id"],
-                "artifact_kind": self.result_ref["artifact_kind"],
-                "artifact_title": self.result_ref.get("artifact_title"),
-                "part_key": self.result_ref.get("part_key"),
-                "part_type": self.result_ref.get("part_type"),
-                "title": self.title,
-                "source_label": self.source_label,
-                "snippet": self.snippet,
-                "deep_link": self.deep_link,
-                "context_ref": self.context_ref,
-                "source_version": self.source_version,
-                "locator": self.locator,
-                "media_id": None,
-                "media_kind": None,
-                "score": self.score,
-                "selected": self.selected,
-            }
         if self.result_type == "evidence_span":
             return {
                 "type": "evidence_span",
@@ -224,27 +197,6 @@ class AppSearchCitation:
                 "id": self.source_id,
                 "result_type": "conversation",
                 "source_id": self.source_id,
-                "title": self.title,
-                "source_label": self.source_label,
-                "snippet": self.snippet,
-                "deep_link": self.deep_link,
-                "context_ref": self.context_ref,
-                "source_version": None,
-                "locator": None,
-                "media_id": None,
-                "media_kind": None,
-                "score": self.score,
-                "selected": self.selected,
-            }
-        if self.result_type == "artifact":
-            return {
-                "type": "artifact",
-                "id": self.source_id,
-                "result_type": "artifact",
-                "source_id": self.source_id,
-                "conversation_id": self.result_ref["conversation_id"],
-                "message_id": self.result_ref["message_id"],
-                "artifact_kind": self.result_ref["artifact_kind"],
                 "title": self.title,
                 "source_label": self.source_label,
                 "snippet": self.snippet,
@@ -1105,27 +1057,6 @@ def _render_single_retrieved_context(
 
     if context_type == "podcast":
         return _render_podcast_context(db, viewer_id, context_id, citation)
-
-    if context_type == "artifact":
-        row = db.execute(
-            text("SELECT conversation_id FROM message_artifacts WHERE id = :artifact_id"),
-            {"artifact_id": context_id},
-        ).fetchone()
-        if row is None or not can_read_conversation(db, viewer_id, row[0]):
-            return None
-        return render_context_blocks(db, [MessageContextRef(type="artifact", id=context_id)])[0]
-
-    if context_type == "artifact_part":
-        try:
-            context = load_artifact_part_context_ref(db, context_id)
-        except (ApiError, NotFoundError, ValueError):  # justify-ignore-error: skip retrieved context block when artifact_part is missing, inaccessible, or malformed
-            return None
-        provenance = context.artifact_part_provenance
-        if provenance is None or provenance.conversation_id is None:
-            return None
-        if not can_read_conversation(db, viewer_id, provenance.conversation_id):
-            return None
-        return render_context_blocks(db, [context])[0]
 
     return None
 

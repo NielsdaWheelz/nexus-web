@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import Model
-from nexus.schemas.conversation import ArtifactIntentOptions, ChatRunCreateRequest, WebSearchOptions
+from nexus.schemas.conversation import ChatRunCreateRequest, WebSearchOptions
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.chat_runs import (
     ERROR_CODE_TO_MESSAGE,
@@ -71,7 +71,6 @@ def test_chat_run_request_defaults_reasoning_to_default():
         content="Summarize this.",
         model_id=uuid4(),
         web_search=WebSearchOptions(mode="off"),
-        artifact_intent=ArtifactIntentOptions(kind="off"),
     )
 
     assert request.reasoning == "default"
@@ -139,7 +138,6 @@ def _post_chat_run(auth_client, user_id: UUID, model_id: UUID, reasoning: str | 
         "conversation_scope": {"type": "general"},
         "contexts": [],
         "web_search": {"mode": "off"},
-        "artifact_intent": {"kind": "off"},
     }
     if reasoning is not None:
         payload["reasoning"] = reasoning
@@ -154,8 +152,8 @@ def _post_chat_run(auth_client, user_id: UUID, model_id: UUID, reasoning: str | 
 def _register_run_cleanup(direct_db: DirectSessionManager, conversation_id: UUID) -> None:
     # The "conversations"/"id" and "messages"/"conversation_id" cleanup branches
     # both cascade-delete every chat_runs child (chat_run_events,
-    # source_manifests, chat_prompt_assemblies, message_artifacts, the
-    # assistant_message_* ledgers, retrieval/rerank ledgers) keyed on the
+    # source_manifests, chat_prompt_assemblies, assistant_message_* ledgers,
+    # retrieval/rerank ledgers) keyed on the
     # conversation, then delete chat_runs itself. Registering a bare
     # "chat_runs"/"id" item instead deletes that row before those cascades run
     # (cleanup is LIFO), which trips chat_prompt_assemblies_chat_run_id_fkey.
