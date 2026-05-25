@@ -22,6 +22,7 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiErrorCode
 from nexus.logging import get_logger
+from nexus.storage.client import StorageError
 
 logger = get_logger(__name__)
 
@@ -196,7 +197,7 @@ def _extract_with_pymupdf(
 
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as exc:
+    except RuntimeError as exc:
         err_str = str(exc).lower()
         if "password" in err_str or "encrypted" in err_str:
             return PdfExtractionError(
@@ -246,9 +247,7 @@ def _extract_with_pymupdf(
                 page_text = str(page.get_text("text") or "")
                 try:
                     raw_page_label = page.get_label()
-                except AttributeError:
-                    raw_page_label = None
-                except RuntimeError:
+                except (AttributeError, RuntimeError):
                     raw_page_label = None
                 page_label = (
                     raw_page_label.strip()
@@ -258,7 +257,7 @@ def _extract_with_pymupdf(
                 page_rect = page.rect
                 page_size = (float(page_rect.width), float(page_rect.height))
                 page_rotation = int(page.rotation or 0)
-            except Exception:
+            except (RuntimeError, AttributeError, ValueError):
                 page_text = ""
                 page_label = None
                 page_size = None
@@ -474,7 +473,7 @@ def extract_pdf_artifacts(
 
     try:
         pdf_bytes = b"".join(storage_client.stream_object(media_file.storage_path))
-    except Exception as exc:
+    except StorageError as exc:
         return PdfExtractionError(
             error_code=ApiErrorCode.E_STORAGE_ERROR.value,
             error_message=f"Failed to read PDF from storage: {exc}",

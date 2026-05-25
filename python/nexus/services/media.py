@@ -1163,7 +1163,7 @@ def create_captured_web_article(
     try:
         html_sanitized = sanitize_html(content_html, url)
         canonical_text = generate_canonical_text(html_sanitized)
-    except Exception as exc:
+    except ValueError as exc:
         raise ApiError(
             ApiErrorCode.E_SANITIZATION_FAILED,
             "Captured article could not be sanitized",
