@@ -10,7 +10,7 @@ from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
 from llm_calling.types import LLMRequest, Turn
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -31,7 +31,6 @@ from nexus.schemas.conversation import (
     ContextItem,
     MessageContextRef,
 )
-from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.chat_prompt import (
     SYSTEM_PROMPT_VERSION,
     PromptPlan,
@@ -51,6 +50,7 @@ from nexus.services.context_rendering import (
     PROMPT_VERSION,
     render_context_blocks,
     render_conversation_scope_block,
+    safe_retrieval_locator_json,
 )
 from nexus.services.contexts import reader_selection_context_from_row
 from nexus.services.conversation_branches import load_message_path
@@ -755,7 +755,7 @@ def _context_source_version(
 
 def _context_ref_payload(db: Session, ref: ContextItem) -> dict[str, object]:
     if ref.kind == "reader_selection":
-        locator = _locator_json(ref.locator)
+        locator = safe_retrieval_locator_json(ref.locator)
         payload = ref.model_dump(mode="json", exclude_none=True)
         payload["type"] = "reader_selection"
         payload["id"] = str(ref.client_context_id)
@@ -801,14 +801,6 @@ def _context_ref_payload(db: Session, ref: ContextItem) -> dict[str, object]:
     return payload
 
 
-def _locator_json(value: object) -> dict[str, object]:
-    if isinstance(value, BaseModel):
-        raw = value.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
-    elif isinstance(value, Mapping):
-        raw = dict(value)
-    else:
-        return {}
-    return retrieval_locator_json(raw) or {}
 
 
 def load_message_context_refs(db: Session, user_message_id: UUID) -> list[ContextItem]:

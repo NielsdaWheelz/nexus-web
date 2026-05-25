@@ -262,7 +262,7 @@ def _render_single_context(db: Session, ctx: ContextItem) -> str | None:
 
 
 def _render_reader_selection_context(ctx: ReaderSelectionContext) -> str:
-    locator = _locator_json(ctx.locator)
+    locator = safe_retrieval_locator_json(ctx.locator)
     lines = [
         "<reader_selection>",
         f"<source>{xml_escape(ctx.media_title)}</source>",
@@ -281,7 +281,8 @@ def _render_reader_selection_context(ctx: ReaderSelectionContext) -> str:
     return "\n".join(lines)
 
 
-def _locator_json(value: object) -> dict[str, object]:
+def safe_retrieval_locator_json(value: object) -> dict[str, object]:
+    """Best-effort retrieval locator normalization; returns {} when value is unusable."""
     if isinstance(value, BaseModel):
         raw = value.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
     elif isinstance(value, Mapping):
@@ -351,7 +352,7 @@ def _source_metadata_locator(
 ) -> dict[str, object]:
     if context_ref.locator is None:
         return fallback_locator
-    return _locator_json(context_ref.locator) or fallback_locator
+    return safe_retrieval_locator_json(context_ref.locator) or fallback_locator
 
 
 def _render_fragment_highlight_context(
