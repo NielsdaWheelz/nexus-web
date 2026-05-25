@@ -144,8 +144,7 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
                 ApiErrorCode.E_DEFAULT_LIBRARY_FORBIDDEN, "Cannot rename default library"
             )
 
-        if role != "admin":
-            raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
+        _require_admin(role)
 
         # Update name and updated_at
         now = datetime.now(UTC)
@@ -483,8 +482,7 @@ def add_media_to_library(
             raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
 
         role = membership[0]
-        if role != "admin":
-            raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
+        _require_admin(role)
 
         # Step 2: Verify media exists
         result = db.execute(
