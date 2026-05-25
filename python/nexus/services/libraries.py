@@ -1818,7 +1818,9 @@ def accept_library_invite(
 
     # Step 9: Post-commit best-effort enqueue (non-fatal)
     if default_lib is not None:
-        _enqueue_default_library_backfill_job(default_lib[0], invite_library_id, viewer_id)
+        from nexus.services.default_library_closure import enqueue_backfill_task
+
+        enqueue_backfill_task(default_lib[0], invite_library_id, viewer_id)
 
     return AcceptLibraryInviteResponse(
         invite=invite_out,
@@ -1966,19 +1968,3 @@ def revoke_library_invite(
         )
 
 
-def _enqueue_default_library_backfill_job(
-    default_library_id: UUID,
-    source_library_id: UUID,
-    user_id: UUID,
-    request_id: str | None = None,
-) -> bool:
-    """Best-effort enqueue of backfill worker task.
-
-    Delegates to shared enqueue helper. Never raises.
-    The durable backfill job row is authoritative; this is advisory.
-    """
-    from nexus.services.default_library_closure import enqueue_backfill_task
-
-    return enqueue_backfill_task(
-        default_library_id, source_library_id, user_id, request_id=request_id
-    )
