@@ -152,8 +152,8 @@ def _browse_documents(
             gutenberg_offset = int(decoded.get("gutenberg_offset", 0))
             if nexus_offset < 0 or gutenberg_offset < 0:
                 raise ValueError("Negative document browse offsets are invalid")
-        except Exception:
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+        except (TypeError, ValueError) as exc:
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from exc
 
     if phase == "gutenberg":
         gutenberg_rows = _search_project_gutenberg_rows(
@@ -762,8 +762,8 @@ def _decode_browse_cursor(
         if payload.get("page_type") != page_type:
             raise ValueError("Cursor type mismatch")
         return payload
-    except Exception:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+    except ValueError as exc:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from exc
 
 
 def _get_json(
@@ -813,7 +813,7 @@ def _get_json(
                     time.sleep(_BROWSE_PROVIDER_BACKOFF_SECONDS[attempt_index])
                     continue
                 break
-            except Exception as exc:
+            except (httpx.HTTPError, ValueError, ApiError) as exc:
                 last_error = exc
                 break
 
@@ -824,10 +824,7 @@ def _get_json(
 
 
 def _site_name_from_url(url: str) -> str | None:
-    try:
-        host = urlsplit(url).hostname
-    except Exception:
-        return None
+    host = urlsplit(url).hostname
     if not host:
         return None
     if host.startswith("www."):

@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -211,7 +212,7 @@ def _confirm_epub_ingest(
                 "request_id": request_id,
             },
         )
-    except Exception as exc:
+    except SQLAlchemyError as exc:
         db.rollback()
         logger.error(
             "epub_dispatch_failed media_id=%s error=%s",
@@ -312,7 +313,7 @@ def retry_epub_ingest_for_viewer(
                 "request_id": request_id,
             },
         )
-    except Exception as exc:
+    except SQLAlchemyError as exc:
         db.rollback()
         logger.error(
             "epub_retry_dispatch_failed media_id=%s error=%s",

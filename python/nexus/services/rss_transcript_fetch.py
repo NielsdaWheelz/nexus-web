@@ -318,7 +318,7 @@ def _fetch_transcript_text(url: str, *, source_type: str) -> tuple[str | None, s
         )
     except httpx.TimeoutException:
         return None, "timeout"
-    except Exception as exc:  # pragma: no cover - exercised in integration paths.
+    except httpx.HTTPError as exc:  # pragma: no cover - exercised in integration paths.
         return None, f"request_failed:{exc}"
 
     if response.status_code >= 400:

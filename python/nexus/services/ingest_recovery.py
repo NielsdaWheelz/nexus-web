@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
@@ -65,7 +66,7 @@ def enqueue_stale_ingest_reconcile(*, request_id: str | None = None) -> bool:
         )
         db.commit()
         return True
-    except Exception as exc:
+    except SQLAlchemyError as exc:
         db.rollback()
         logger.error(
             "stale_ingest_reconcile_enqueue_failed",

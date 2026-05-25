@@ -76,7 +76,7 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
 
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-    except Exception:
+    except ImportError:
         logger.info("youtube_transcript_dependency_missing")
         return _failure(
             ApiErrorCode.E_TRANSCRIPTION_FAILED.value, "Transcription provider unavailable"
