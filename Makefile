@@ -2,7 +2,7 @@
 # Run `make help` for available commands.
 
 .PHONY: help setup dev down logs clean api web worker migrate migrate-test migrate-down seed seed-real-media-e2e \
-	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release audit \
+	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release build-icons audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
 	test-android test-migrations test-supabase test-real-media test-live-providers test-e2e test-e2e-ui \
 	smoke verify verify-android verify-android-release verify-full \
@@ -63,6 +63,7 @@ help:
 	@echo "  make audit              - Dependency vulnerability audits"
 	@echo "  make build-android      - Build Android debug and instrumentation APKs"
 	@echo "  make build-android-release - Build signed Android release APK"
+	@echo "  make build-icons        - Regenerate icons from apps/web/public/brand/asterism.svg"
 	@echo "  make verify-android     - Android lint + debug/test APK build"
 	@echo "  make verify-android-release - Build and verify signed Android release APK"
 	@echo "  make test-unit          - Fast backend and frontend unit tests"
@@ -273,6 +274,9 @@ build-android:
 
 build-android-release:
 	cd apps/android && ./gradlew :app:lintRelease :app:assembleRelease
+
+build-icons:
+	node scripts/build-icons.mjs
 
 audit:
 	cd python && uv sync --all-extras --locked
