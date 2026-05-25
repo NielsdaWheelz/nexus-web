@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from nexus.services.url_normalize import normalize_host
+
 _X_PROVIDER = "x"
 _X_HOSTS = {
     "x.com",
@@ -24,7 +26,7 @@ class XIdentity:
 def is_x_url(url: str) -> bool:
     """Return True when URL host is one of the X/Twitter host variants."""
     parsed = urlparse(url)
-    return _normalize_host(parsed.hostname) in _X_HOSTS
+    return normalize_host(parsed.hostname) in _X_HOSTS
 
 
 def classify_x_url(url: str) -> XIdentity | None:
@@ -34,7 +36,7 @@ def classify_x_url(url: str) -> XIdentity | None:
     decimal post ID.
     """
     parsed = urlparse(url)
-    if _normalize_host(parsed.hostname) not in _X_HOSTS:
+    if normalize_host(parsed.hostname) not in _X_HOSTS:
         return None
 
     provider_id = _extract_post_id(parsed.path)
@@ -48,13 +50,6 @@ def classify_x_url(url: str) -> XIdentity | None:
     )
 
 
-def _normalize_host(hostname: str | None) -> str:
-    if hostname is None:
-        return ""
-    host = hostname.strip().lower().rstrip(".")
-    if host.startswith("www."):
-        host = host[4:]
-    return host
 
 
 def _extract_post_id(path: str) -> str | None:

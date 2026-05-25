@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
 
+from nexus.services.url_normalize import normalize_host
+
 _YOUTUBE_PROVIDER = "youtube"
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
@@ -41,7 +43,7 @@ def build_youtube_identity(provider_video_id: str) -> YouTubeIdentity:
 def is_youtube_url(url: str) -> bool:
     """Return True when URL host is one of the YouTube host variants."""
     parsed = urlparse(url)
-    return _normalize_host(parsed.hostname) in _YOUTUBE_HOSTS
+    return normalize_host(parsed.hostname) in _YOUTUBE_HOSTS
 
 
 def classify_youtube_url(url: str) -> YouTubeIdentity | None:
@@ -51,7 +53,7 @@ def classify_youtube_url(url: str) -> YouTubeIdentity | None:
     include a valid canonical video ID.
     """
     parsed = urlparse(url)
-    host = _normalize_host(parsed.hostname)
+    host = normalize_host(parsed.hostname)
     if host not in _YOUTUBE_HOSTS:
         return None
 
@@ -62,13 +64,6 @@ def classify_youtube_url(url: str) -> YouTubeIdentity | None:
     return build_youtube_identity(provider_video_id)
 
 
-def _normalize_host(hostname: str | None) -> str:
-    if hostname is None:
-        return ""
-    host = hostname.strip().lower().rstrip(".")
-    if host.startswith("www."):
-        host = host[4:]
-    return host
 
 
 def _extract_video_id(parsed, host: str) -> str | None:

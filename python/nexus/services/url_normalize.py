@@ -114,6 +114,16 @@ def _is_blocked_hostname(hostname: str) -> bool:
     return False
 
 
+def normalize_host(hostname: str | None) -> str:
+    """Lowercase, strip trailing dots, and drop leading 'www.' from a URL host."""
+    if hostname is None:
+        return ""
+    host = hostname.strip().lower().rstrip(".")
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
 def validate_requested_url(url: str) -> None:
     """Validate a URL for web article ingestion.
 
