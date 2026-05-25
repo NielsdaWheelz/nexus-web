@@ -1,4 +1,5 @@
 import type { SVGProps } from "react";
+import { ASTERISM_DOTS, ASTERISM_VIEWBOX } from "@/lib/brand";
 
 interface AsterismMarkProps extends Omit<SVGProps<SVGSVGElement>, "color"> {
   size?: number | string;
@@ -16,7 +17,7 @@ export default function AsterismMark({
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 64 64"
+      viewBox={`0 0 ${ASTERISM_VIEWBOX} ${ASTERISM_VIEWBOX}`}
       width={size}
       height={size}
       fill={color}
@@ -26,9 +27,9 @@ export default function AsterismMark({
       {...rest}
     >
       {labelled ? <title>{title}</title> : null}
-      <circle cx="32" cy="18" r="6.5" />
-      <circle cx="18" cy="44" r="5.5" />
-      <circle cx="46" cy="44" r="5.5" />
+      {ASTERISM_DOTS.map((d, i) => (
+        <circle key={i} cx={d.cx} cy={d.cy} r={d.r} />
+      ))}
     </svg>
   );
 }

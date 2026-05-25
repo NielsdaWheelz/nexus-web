@@ -1,4 +1,10 @@
 import { ImageResponse } from "next/og";
+import {
+  ASTERISM_DOTS,
+  ASTERISM_VIEWBOX,
+  BRAND_BG_DARK,
+  BRAND_FG_ON_DARK,
+} from "@/lib/brand";
 
 export const alt = "Nexus — A reading and notes platform";
 export const size = { width: 1200, height: 630 };
@@ -15,7 +21,7 @@ export default function OpenGraphImage() {
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          background: "#15140f",
+          background: BRAND_BG_DARK,
           color: "#ededef",
           fontFamily: "serif",
           gap: 36,
@@ -24,12 +30,12 @@ export default function OpenGraphImage() {
         <svg
           width="220"
           height="220"
-          viewBox="0 0 64 64"
+          viewBox={`0 0 ${ASTERISM_VIEWBOX} ${ASTERISM_VIEWBOX}`}
           xmlns="http://www.w3.org/2000/svg"
         >
-          <circle cx="32" cy="18" r="6.5" fill="#c4a472" />
-          <circle cx="18" cy="44" r="5.5" fill="#c4a472" />
-          <circle cx="46" cy="44" r="5.5" fill="#c4a472" />
+          {ASTERISM_DOTS.map((d, i) => (
+            <circle key={i} cx={d.cx} cy={d.cy} r={d.r} fill={BRAND_FG_ON_DARK} />
+          ))}
         </svg>
         <div
           style={{
