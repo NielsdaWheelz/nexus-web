@@ -818,8 +818,8 @@ def _decode_media_cursor(cursor: str) -> tuple[datetime, UUID]:
         if updated_at.tzinfo is None:
             updated_at = updated_at.replace(tzinfo=UTC)
         media_id = UUID(payload["id"])
-    except Exception:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+    except (KeyError, ValueError) as exc:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from exc
     return updated_at, media_id
 
 

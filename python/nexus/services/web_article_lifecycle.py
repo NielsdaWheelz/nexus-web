@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import delete, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -98,7 +99,7 @@ def retry_web_article_for_viewer(
                 "request_id": request_id,
             },
         )
-    except Exception as exc:
+    except SQLAlchemyError as exc:
         db.rollback()
         logger.error(
             "web_article_retry_dispatch_failed",
