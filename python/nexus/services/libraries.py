@@ -501,39 +501,36 @@ def add_media_to_library(
         if is_default_library:
             ensure_default_intrinsic(db, library_id, media_id)
         else:
-            row = db.execute(
+            existing = db.execute(
                 text("""
-                    SELECT id, library_id, media_id, podcast_id, created_at, position
-                    FROM library_entries
-                    WHERE library_id = :library_id
-                      AND media_id = :media_id
+                    SELECT 1 FROM library_entries
+                    WHERE library_id = :library_id AND media_id = :media_id
                 """),
                 {"library_id": library_id, "media_id": media_id},
             ).fetchone()
-            if row is None:
-                row = db.execute(
+            if existing is None:
+                db.execute(
                     text("""
                         INSERT INTO library_entries (library_id, media_id, podcast_id, position)
                         VALUES (:library_id, :media_id, NULL, :position)
-                        RETURNING id, library_id, media_id, podcast_id, created_at, position
                     """),
                     {
                         "library_id": library_id,
                         "media_id": media_id,
                         "position": _next_library_entry_position(db, library_id),
                     },
-                ).fetchone()
+                )
             add_media_to_non_default_closure(db, library_id, media_id)
-        if is_default_library:
-            row = db.execute(
-                text("""
-                    SELECT id, library_id, media_id, podcast_id, created_at, position
-                    FROM library_entries
-                    WHERE library_id = :library_id
-                      AND media_id = :media_id
-                """),
-                {"library_id": library_id, "media_id": media_id},
-            ).fetchone()
+
+        row = db.execute(
+            text("""
+                SELECT id, library_id, media_id, podcast_id, created_at, position
+                FROM library_entries
+                WHERE library_id = :library_id
+                  AND media_id = :media_id
+            """),
+            {"library_id": library_id, "media_id": media_id},
+        ).fetchone()
 
     return _hydrate_library_entries(db, viewer_id, [row])[0]
 
