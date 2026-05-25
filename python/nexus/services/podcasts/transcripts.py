@@ -2477,7 +2477,7 @@ def _transcribe_with_deepgram(audio_url: str, *, diarize: bool) -> dict[str, Any
             status_code=exc.response.status_code,
         )
         return _transcription_failure_result(code, "Transcription failed")
-    except Exception as exc:  # justify-ignore-error: provider HTTP boundary; recover into a typed failure result
+    except (httpx.HTTPError, ValueError) as exc:
         logger.warning(
             "podcast_transcription_provider_request_failed",
             audio_url=audio_url,
