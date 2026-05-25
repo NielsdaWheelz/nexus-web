@@ -675,7 +675,7 @@ def enqueue_backfill_task(
             countdown,
         )
         return True
-    except Exception:
+    except Exception:  # justify-ignore-error: best-effort enqueue boundary; rollback + log + return False
         db.rollback()
         logger.exception(
             "backfill_enqueue_failed: dl=%s src=%s user=%s",
