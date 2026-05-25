@@ -60,13 +60,15 @@ from nexus.services.chat_run_claim_parsing import (
     parse_claim_verifier_response,
 )
 from nexus.services.chat_run_event_store import append_run_event
+from nexus.services.chat_run_evidence import (
+    finalize_message_evidence,
+    message_prompt_evidence_rows,
+)
 from nexus.services.chat_run_message_blocks import message_document_with_run_components
 from nexus.services.chat_run_prompt_tracking import reconcile_prompt_retrievals
 from nexus.services.chat_runs import (
     VERIFICATION_FAILURE_CONTENT,
-    _finalize_message_evidence,
     _finalize_run,
-    _message_prompt_evidence_rows,
     _verified_assistant_content,
 )
 from nexus.services.conversations import load_message_artifacts_for_message_ids, message_to_out
@@ -909,7 +911,7 @@ def test_message_prompt_evidence_rows_include_attached_content_chunk_context(
     assistant_message = db_session.get(Message, assistant_message_id)
     assert assistant_message is not None
 
-    _prompt_rows, evidence_rows = _message_prompt_evidence_rows(
+    _prompt_rows, evidence_rows = message_prompt_evidence_rows(
         db_session,
         run,
         assistant_message,
@@ -3309,7 +3311,7 @@ def test_finalize_message_evidence_persists_unsupported_claim_without_evidence(
     db_session.add(tool_call)
     db_session.flush()
 
-    _finalize_message_evidence(db_session, run, assistant_message)
+    finalize_message_evidence(db_session, run, assistant_message)
     rows = (
         db_session.execute(
             text(
@@ -3368,7 +3370,7 @@ def test_finalize_message_evidence_persists_unsupported_claim_without_evidence(
     assert audit.missing_locator_count == 0
     assert audit.missing_source_version_count == 0
 
-    _finalize_message_evidence(db_session, run, assistant_message)
+    finalize_message_evidence(db_session, run, assistant_message)
     audit_ids = (
         db_session.execute(
             select(AssistantMessageCitationAudit.id)
@@ -3464,7 +3466,7 @@ def test_finalize_message_evidence_parse_failed_does_not_fall_back_to_lexical_su
     _add_prompt_assembly(db_session, run, assistant_message_id, [tool_call.retrievals[0].id])
     db_session.flush()
 
-    _finalize_message_evidence(
+    finalize_message_evidence(
         db_session,
         run,
         assistant_message,
@@ -3598,7 +3600,7 @@ def test_finalize_message_evidence_rejects_prompt_retrieval_locator_drift(
     _add_prompt_assembly(db_session, run, assistant_message_id, [tool_call.retrievals[0].id])
     db_session.flush()
 
-    _finalize_message_evidence(
+    finalize_message_evidence(
         db_session,
         run,
         assistant_message,
@@ -3735,7 +3737,7 @@ def test_finalize_message_evidence_downgrades_claims_missing_evidence(
     db_session.flush()
     _add_prompt_assembly(db_session, run, assistant_message_id, [tool_call.retrievals[0].id])
 
-    _finalize_message_evidence(
+    finalize_message_evidence(
         db_session,
         run,
         assistant_message,
@@ -3846,7 +3848,7 @@ def test_finalize_message_evidence_fails_closed_for_source_backed_empty_results(
     )
     db_session.flush()
 
-    _finalize_message_evidence(db_session, run, assistant_message)
+    finalize_message_evidence(db_session, run, assistant_message)
 
     summary = db_session.execute(
         select(AssistantMessageEvidenceSummary).where(
@@ -3900,7 +3902,7 @@ def test_finalize_message_evidence_persists_not_source_grounded_claim(
     assert assistant_message is not None
     assistant_message.content = "The answer was not requested against saved sources."
 
-    claim_events, claim_evidence_events = _finalize_message_evidence(
+    claim_events, claim_evidence_events = finalize_message_evidence(
         db_session,
         run,
         assistant_message,
@@ -3989,7 +3991,7 @@ def test_finalize_message_evidence_fails_closed_when_source_answer_has_no_claim_
     )
     db_session.flush()
 
-    _finalize_message_evidence(db_session, run, assistant_message)
+    finalize_message_evidence(db_session, run, assistant_message)
 
     summary = db_session.execute(
         select(AssistantMessageEvidenceSummary).where(
@@ -4126,7 +4128,7 @@ def test_finalize_message_evidence_preserves_llm_unsupported_statuses(db_session
         [retrieval.id for retrieval in tool_call.retrievals],
     )
 
-    _finalize_message_evidence(
+    finalize_message_evidence(
         db_session,
         run,
         assistant_message,
@@ -4309,7 +4311,7 @@ def test_citation_audit_counts_partially_supported_claims(db_session: Session):
     db_session.flush()
     _add_prompt_assembly(db_session, run, assistant_message_id, [tool_call.retrievals[0].id])
 
-    _finalize_message_evidence(
+    finalize_message_evidence(
         db_session,
         run,
         assistant_message,
