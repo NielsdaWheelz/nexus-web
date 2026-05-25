@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState, useTransition, type FormEvent } from "react";
+import AsterismMark from "@/components/AsterismMark";
 import Button from "@/components/ui/Button";
 import {
   FeedbackNotice,
@@ -142,7 +143,10 @@ export default function LoginPageClient({
   return (
     <div className={styles.container}>
       <main className={styles.frame}>
-        <h1 className={styles.wordmark}>Nexus</h1>
+        <div className={styles.brand}>
+          <AsterismMark size={40} className={styles.brandMark} aria-hidden="true" />
+          <h1 className={styles.wordmark}>Nexus</h1>
+        </div>
 
         {initialFeedback ? <FeedbackNotice feedback={initialFeedback} /> : null}
         {formError ? (

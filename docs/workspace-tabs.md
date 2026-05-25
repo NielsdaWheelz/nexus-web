@@ -97,16 +97,23 @@ The tab is content-hugging and truncates only the title.
   chain intact.
 - The icon and action group never shrink.
 - The title is left-aligned and uses `text-overflow: ellipsis`.
-- The action group reserves its width in every state; hover and focus reveal
-  actions by opacity, not layout changes.
+- The action group reserves its width in every state; hover, focus-within, and
+  active lift the action group from an ambient rest opacity to full opacity,
+  not by layout changes.
+
+The tab is a pill with uniform `--radius-md` corners. It does not adopt the
+folder-tab metaphor of joining the canvas below, because the canvas is
+horizontally scrollable and the active pane is not always directly below the
+active tab.
 
 The visual state model is:
 
 - inactive: transparent tab on the strip surface.
-- hover: visible lift toward the active surface.
-- active: canvas-surface fill plus a top accent bar.
-- in view: bottom accent marker, independent from active state.
-- minimized: muted title styling and restore action.
+- hover: `--surface-hover` fill, title at full contrast.
+- active: `--surface-active` fill, `--shadow-1` elevation, route icon in
+  `--accent`.
+- in view: left-edge accent tick, half-height; independent from active state.
+- minimized: `--surface-sunken` fill, muted title, dimmed icon.
 - focus visible: inset `--ring` outline.
 - pending: local skeleton block with reduced-motion support.
 

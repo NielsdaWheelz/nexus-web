@@ -74,7 +74,7 @@ function PaneTab({
         onFocus={onActivatorFocus}
         onKeyDown={onActivatorKeyDown}
       >
-        <RouteIcon aria-hidden size={14} strokeWidth={2} className={styles.icon} />
+        <RouteIcon aria-hidden size={16} strokeWidth={1.75} className={styles.icon} />
         {isPending ? (
           <span className={styles.titleSkeleton} aria-hidden />
         ) : (
@@ -93,9 +93,9 @@ function PaneTab({
           onClick={isMinimized ? onRestore : onMinimize}
         >
           {isMinimized ? (
-            <Maximize2 aria-hidden size={16} strokeWidth={2} />
+            <Maximize2 aria-hidden size={14} strokeWidth={2} />
           ) : (
-            <Minus aria-hidden size={16} strokeWidth={2} />
+            <Minus aria-hidden size={14} strokeWidth={2} />
           )}
         </button>
         <button
@@ -105,7 +105,7 @@ function PaneTab({
           aria-label={`Close ${title}`}
           onClick={onClose}
         >
-          <X aria-hidden size={16} strokeWidth={2} />
+          <X aria-hidden size={14} strokeWidth={2} />
         </button>
       </div>
     </div>

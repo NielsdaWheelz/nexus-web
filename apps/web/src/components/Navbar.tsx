@@ -7,6 +7,7 @@ import { getPaneRouteIcon, resolvePaneRoute } from "@/lib/panes/paneRouteRegistr
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import { fetchPinnedObjects, type PinnedObject } from "@/lib/pinnedObjects";
+import AsterismMark from "@/components/AsterismMark";
 import Button from "@/components/ui/Button";
 import styles from "./Navbar.module.css";
 
@@ -118,9 +119,11 @@ export default function Navbar({ onToggle }: NavbarProps) {
         <Link
           href="/libraries"
           className={styles.logo}
+          aria-label="Nexus — Home"
           onClick={(e) => handleNavClick(e, "/libraries")}
         >
-          {collapsed ? "N" : "Nexus"}
+          <AsterismMark size={20} className={styles.logoMark} />
+          {!collapsed && <span className={styles.logoText}>Nexus</span>}
         </Link>
         <Button
           variant="ghost"

@@ -15,12 +15,28 @@ import { readThemeCookie } from "@/lib/theme/cookie";
 export const metadata: Metadata = {
   title: "Nexus",
   description: "A reading and notes platform",
+  applicationName: "Nexus",
+  openGraph: {
+    title: "Nexus",
+    description: "A reading and notes platform",
+    siteName: "Nexus",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Nexus",
+    description: "A reading and notes platform",
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#faf8f3" },
+    { media: "(prefers-color-scheme: dark)", color: "#15140f" },
+  ],
 };
 
 const inter = Inter({

@@ -18,6 +18,17 @@
   max-width: 24rem;
 }
 
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.brandMark {
+  color: var(--accent);
+}
+
 .wordmark {
   margin: 0;
   color: var(--ink);

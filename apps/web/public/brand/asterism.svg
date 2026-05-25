@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Nexus">
+  <title>Nexus</title>
+  <style>
+    .dot { fill: #7d5e35; }
+    @media (prefers-color-scheme: dark) {
+      .dot { fill: #c4a472; }
+    }
+  </style>
+  <circle class="dot" cx="32" cy="18" r="6.5"/>
+  <circle class="dot" cx="18" cy="44" r="5.5"/>
+  <circle class="dot" cx="46" cy="44" r="5.5"/>
+</svg>

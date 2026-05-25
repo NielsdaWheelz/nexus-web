@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import AsterismMark from "@/components/AsterismMark";
 import Button from "@/components/ui/Button";
 import styles from "./page.module.css";
 
@@ -18,6 +19,7 @@ export default function AndroidPage() {
     <div className={styles.container}>
       <main className={styles.frame}>
         <header className={styles.heading}>
+          <AsterismMark size={40} className={styles.headingMark} aria-hidden="true" />
           <h1 className={styles.wordmark}>Nexus</h1>
           <p className={styles.subhead}>Android</p>
         </header>
