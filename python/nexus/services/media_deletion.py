@@ -16,7 +16,7 @@ from nexus.logging import get_logger
 from nexus.schemas.media import DeleteDocumentResponse, DeleteDocumentStatus
 from nexus.services.content_indexing import delete_media_content_index
 from nexus.services.default_library_closure import remove_media_from_non_default_closure
-from nexus.storage.client import get_storage_client
+from nexus.storage.client import StorageError, get_storage_client
 
 if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
@@ -740,9 +740,9 @@ def _delete_storage_objects(
     for storage_path in storage_paths:
         try:
             client.delete_object(storage_path)
-        except Exception as exc:
-            # justify-ignore-error: storage deletion happens after the DB commit;
-            # the document is already unreachable and retryable cleanup is operational.
+        except StorageError as exc:
+            # Storage deletion happens after the DB commit; the document is
+            # already unreachable and retryable cleanup is operational.
             logger.warning(
                 "document_storage_delete_failed storage_path=%s error=%s",
                 storage_path,
