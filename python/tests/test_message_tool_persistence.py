@@ -55,11 +55,11 @@ from nexus.services.agent_tools.app_search import (
     render_retrieved_context_blocks,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.chat_run_message_blocks import message_document_with_run_components
 from nexus.services.chat_runs import (
     VERIFICATION_FAILURE_CONTENT,
     _finalize_message_evidence,
     _finalize_run,
-    _message_document_with_run_components,
     _message_prompt_evidence_rows,
     _parse_claim_extractor_response,
     _parse_claim_verifier_response,
@@ -1402,7 +1402,7 @@ def test_message_document_persists_source_manifest_and_cited_artifact_parts(
     )
     db_session.commit()
 
-    document = _message_document_with_run_components(
+    document = message_document_with_run_components(
         db_session,
         run_id=run.id,
         role="assistant",
@@ -1920,7 +1920,7 @@ def test_reconcile_prompt_retrievals_updates_current_source_manifest_snapshot(
     assert durable_manifest.index_versions == ["web:index:v1"]
     assert durable_manifest.metadata_json == {"provider": "test", "empty_status": "partial"}
 
-    document = _message_document_with_run_components(
+    document = message_document_with_run_components(
         db_session,
         run_id=run.id,
         role="assistant",
