@@ -19,7 +19,7 @@ from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -43,6 +43,10 @@ from nexus.schemas.conversation import ContextItem, MessageContextRef, ReaderSel
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.context_window import get_context_window
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
+from nexus.services.note_block_markdown import (
+    note_outline_markdown,
+    ordered_note_blocks_for_page,
+)
 from nexus.services.pdf_quote_match import MatcherAnomaly, MatchStatus, compute_match
 from nexus.services.pdf_quote_match_policy import (
     CoherenceAnomalyKind,
@@ -660,8 +664,8 @@ def _render_note_context(db: Session, context_type: str, context_id: UUID) -> st
         page = db.get(Page, context_id)
         if page is None:
             return None
-        blocks = _ordered_note_blocks_for_page(db, page.id)
-        content = _note_outline_markdown(blocks, None)
+        blocks = ordered_note_blocks_for_page(db, page.id)
+        content = note_outline_markdown(blocks, None)
         lines = [
             "<page>",
             f"<title>{xml_escape(page.title)}</title>",
@@ -678,8 +682,8 @@ def _render_note_context(db: Session, context_type: str, context_id: UUID) -> st
         return None
     page_id = block.page_id
     assert page_id is not None
-    blocks = _ordered_note_blocks_for_page(db, page_id)
-    content = _note_outline_markdown(blocks, block.parent_block_id, root_block=block)
+    blocks = ordered_note_blocks_for_page(db, page_id)
+    content = note_outline_markdown(blocks, block.parent_block_id, root_block=block)
     lines = ["<note_block>", f"<content>{xml_escape(content)}</content>"]
     if block.body_text:
         _append_source_metadata_xml(
@@ -697,67 +701,6 @@ def _render_note_context(db: Session, context_type: str, context_id: UUID) -> st
     return "\n".join(lines)
 
 
-def _ordered_note_blocks_for_page(db: Session, page_id: UUID) -> list[NoteBlock]:
-    return list(
-        db.scalars(
-            select(NoteBlock)
-            .where(NoteBlock.page_id == page_id)
-            .order_by(
-                NoteBlock.parent_block_id.asc().nullsfirst(),
-                NoteBlock.order_key.asc(),
-                NoteBlock.created_at.asc(),
-                NoteBlock.id.asc(),
-            )
-        )
-    )
-
-
-def _note_outline_markdown(
-    blocks: list[NoteBlock],
-    parent_id: UUID | None,
-    *,
-    root_block: NoteBlock | None = None,
-) -> str:
-    blocks_by_parent: dict[UUID | None, list[NoteBlock]] = {}
-    for block in blocks:
-        blocks_by_parent.setdefault(block.parent_block_id, []).append(block)
-
-    lines: list[str] = []
-
-    def visit(block: NoteBlock, depth: int) -> None:
-        lines.append(_note_block_markdown(block, depth))
-        for child in blocks_by_parent.get(block.id, []):
-            visit(child, depth + 1)
-
-    if root_block is not None:
-        visit(root_block, 0)
-    else:
-        for block in blocks_by_parent.get(parent_id, []):
-            visit(block, 0)
-
-    return "\n".join(lines).strip()
-
-
-def _note_block_markdown(block: NoteBlock, depth: int) -> str:
-    indent = "  " * depth
-    text = (block.body_markdown or block.body_text or "").strip()
-    lines = text.splitlines() or [""]
-    if block.block_kind == "heading":
-        level = min(depth + 1, 6)
-        rendered = [f"{indent}{'#' * level} {lines[0]}".rstrip()]
-        rendered.extend(f"{indent}{line}".rstrip() for line in lines[1:])
-        return "\n".join(rendered)
-    if block.block_kind == "todo":
-        rendered = [f"{indent}- [ ] {lines[0]}".rstrip()]
-        rendered.extend(f"{indent}  {line}".rstrip() for line in lines[1:])
-        return "\n".join(rendered)
-    if block.block_kind == "quote":
-        return "\n".join(f"{indent}> {line}".rstrip() for line in lines)
-    if block.block_kind == "code":
-        return "\n".join([f"{indent}```", *[f"{indent}{line}" for line in lines], f"{indent}```"])
-    rendered = [f"{indent}- {lines[0]}".rstrip()]
-    rendered.extend(f"{indent}  {line}".rstrip() for line in lines[1:])
-    return "\n".join(rendered)
 
 
 def _render_conversation_context(db: Session, conversation_id: UUID) -> str | None:

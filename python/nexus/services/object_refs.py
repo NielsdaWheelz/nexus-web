@@ -36,6 +36,10 @@ from nexus.schemas.notes import (
     UpdatePinnedObjectRefRequest,
 )
 from nexus.services.contributors import hydrate_contributor_object_ref
+from nexus.services.note_block_markdown import (
+    note_outline_markdown,
+    ordered_note_blocks_for_page,
+)
 
 
 def hydrate_object_ref(db: Session, viewer_id: UUID, ref: ObjectRef) -> HydratedObjectRef:
@@ -829,8 +833,8 @@ def render_object_context(db: Session, viewer_id: UUID, ref: ObjectRef) -> str:
     hydrated = hydrate_object_ref(db, viewer_id, ref)
 
     if ref.object_type == "page":
-        blocks = _ordered_note_blocks_for_page(db, ref.object_id)
-        content = _note_outline_markdown(blocks, None)
+        blocks = ordered_note_blocks_for_page(db, ref.object_id)
+        content = note_outline_markdown(blocks, None)
         return "\n".join(
             [
                 '<context_lookup_result type="page">',
@@ -846,8 +850,8 @@ def render_object_context(db: Session, viewer_id: UUID, ref: ObjectRef) -> str:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
         page_id = block.page_id
         assert page_id is not None
-        blocks = _ordered_note_blocks_for_page(db, page_id)
-        content = _note_outline_markdown(blocks, block.parent_block_id, root_block=block)
+        blocks = ordered_note_blocks_for_page(db, page_id)
+        content = note_outline_markdown(blocks, block.parent_block_id, root_block=block)
         return "\n".join(
             [
                 '<context_lookup_result type="note_block">',
@@ -868,64 +872,3 @@ def render_object_context(db: Session, viewer_id: UUID, ref: ObjectRef) -> str:
     )
 
 
-def _ordered_note_blocks_for_page(db: Session, page_id: UUID) -> list[NoteBlock]:
-    return list(
-        db.scalars(
-            select(NoteBlock)
-            .where(NoteBlock.page_id == page_id)
-            .order_by(
-                NoteBlock.parent_block_id.asc().nullsfirst(),
-                NoteBlock.order_key.asc(),
-                NoteBlock.created_at.asc(),
-                NoteBlock.id.asc(),
-            )
-        )
-    )
-
-
-def _note_outline_markdown(
-    blocks: list[NoteBlock],
-    parent_id: UUID | None,
-    *,
-    root_block: NoteBlock | None = None,
-) -> str:
-    blocks_by_parent: dict[UUID | None, list[NoteBlock]] = {}
-    for block in blocks:
-        blocks_by_parent.setdefault(block.parent_block_id, []).append(block)
-
-    lines: list[str] = []
-
-    def visit(block: NoteBlock, depth: int) -> None:
-        lines.append(_note_block_markdown(block, depth))
-        for child in blocks_by_parent.get(block.id, []):
-            visit(child, depth + 1)
-
-    if root_block is not None:
-        visit(root_block, 0)
-    else:
-        for block in blocks_by_parent.get(parent_id, []):
-            visit(block, 0)
-
-    return "\n".join(lines).strip()
-
-
-def _note_block_markdown(block: NoteBlock, depth: int) -> str:
-    indent = "  " * depth
-    text_value = (block.body_markdown or block.body_text or "").strip()
-    lines = text_value.splitlines() or [""]
-    if block.block_kind == "heading":
-        level = min(depth + 1, 6)
-        rendered = [f"{indent}{'#' * level} {lines[0]}".rstrip()]
-        rendered.extend(f"{indent}{line}".rstrip() for line in lines[1:])
-        return "\n".join(rendered)
-    if block.block_kind == "todo":
-        rendered = [f"{indent}- [ ] {lines[0]}".rstrip()]
-        rendered.extend(f"{indent}  {line}".rstrip() for line in lines[1:])
-        return "\n".join(rendered)
-    if block.block_kind == "quote":
-        return "\n".join(f"{indent}> {line}".rstrip() for line in lines)
-    if block.block_kind == "code":
-        return "\n".join([f"{indent}```", *[f"{indent}{line}" for line in lines], f"{indent}```"])
-    rendered = [f"{indent}- {lines[0]}".rstrip()]
-    rendered.extend(f"{indent}  {line}".rstrip() for line in lines[1:])
-    return "\n".join(rendered)
