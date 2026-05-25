@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
@@ -1246,7 +1246,7 @@ def create_captured_web_article(
             language=media_language,
         )
         db.commit()
-    except Exception as exc:
+    except (SQLAlchemyError, ApiError) as exc:
         db.rollback()
         logger.exception(
             "captured_web_article_content_index_failed",
@@ -1728,7 +1728,7 @@ def create_or_reuse_x_oembed_article(
                 language=media_language,
             )
             db.commit()
-        except Exception as exc:
+        except (SQLAlchemyError, ApiError) as exc:
             db.rollback()
             logger.exception(
                 "x_oembed_content_index_failed",
@@ -1879,7 +1879,7 @@ def _enqueue_ingest_task(
             request_id=request_id,
         )
         return True
-    except Exception as exc:
+    except SQLAlchemyError as exc:
         logger.error(
             "ingest_task_enqueue_failed",
             media_id=str(media_id),
@@ -1904,7 +1904,7 @@ def _try_enrich_dispatch(media_id: str, request_id: str | None) -> None:
             max_attempts=1,
         )
         db.commit()
-    except Exception:
+    except SQLAlchemyError:
         db.rollback()
         logger.warning("enrich_metadata_dispatch_failed", media_id=media_id)
     finally:
@@ -1935,7 +1935,7 @@ def _enqueue_youtube_ingest_task(
             request_id=request_id,
         )
         return True
-    except Exception as exc:
+    except SQLAlchemyError as exc:
         logger.error(
             "ingest_video_task_enqueue_failed",
             media_id=str(media_id),
