@@ -202,7 +202,7 @@ def request_podcast_transcript_for_viewer(
         transcript_state = "not_requested"
         transcript_coverage = "none"
 
-    required_minutes = _episode_minutes({"duration_seconds": duration_seconds})
+    required_minutes = max(1, (duration_seconds + 59) // 60) if duration_seconds else 1
     entitlements = get_entitlements(db, viewer_id)
     monthly_limit_minutes = entitlements.transcription_minutes_limit_monthly
     if entitlements.current_period_start and entitlements.current_period_end:
@@ -2299,15 +2299,6 @@ def _commit_reserved_usage_for_media(
         },
     )
     assert result.rowcount == 1  # justify-service-invariant-check: ensured usage row exists.
-
-
-def _episode_minutes(episode: dict[str, Any]) -> int:
-    seconds = coerce_positive_int(episode.get("duration_seconds"))
-    if seconds is None:
-        return 1
-    return max(1, (seconds + 59) // 60)
-
-
 
 
 def _normalize_terminal_transcription_error_code(raw_value: Any) -> str | None:
