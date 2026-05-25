@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 import httpx
 from lxml import etree
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.coerce import coerce_non_negative_int, coerce_positive_int
@@ -1383,7 +1383,7 @@ def _enqueue_podcast_subscription_sync(
             },
         )
         return True
-    except Exception as exc:  # justify-ignore-error: enqueue boundary; re-raise as ApiError so callers see a typed failure
+    except SQLAlchemyError as exc:
         logger.error(
             "podcast_sync_enqueue_failed",
             user_id=str(user_id),
