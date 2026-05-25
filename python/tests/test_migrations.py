@@ -1834,6 +1834,157 @@ class TestSchemaConstraints:
             session.rollback()
             assert "uq_billing_accounts_user_id" in str(exc_info.value)
 
+    def test_billing_entitlement_override_constraints_rejected(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO billing_entitlement_overrides (
+                            id,
+                            user_id,
+                            plan_tier,
+                            platform_token_quota_mode,
+                            reason
+                        )
+                        VALUES (:id, :user_id, 'free', 'plan', 'bad')
+                        """
+                    ),
+                    {"id": uuid4(), "user_id": user_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_billing_entitlement_overrides_plan_tier" in str(exc_info.value)
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO billing_entitlement_overrides (
+                            id,
+                            user_id,
+                            plan_tier,
+                            platform_token_quota_mode,
+                            platform_token_limit_monthly,
+                            reason
+                        )
+                        VALUES (:id, :user_id, 'ai_pro', 'plan', 10, 'bad')
+                        """
+                    ),
+                    {"id": uuid4(), "user_id": user_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_billing_entitlement_overrides_platform_token_limit" in str(exc_info.value)
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO billing_entitlement_overrides (
+                            id,
+                            user_id,
+                            plan_tier,
+                            transcription_quota_mode,
+                            transcription_minutes_limit_monthly,
+                            reason
+                        )
+                        VALUES (:id, :user_id, 'ai_pro', 'custom', -1, 'bad')
+                        """
+                    ),
+                    {"id": uuid4(), "user_id": user_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_billing_entitlement_overrides_transcription_limit" in str(exc_info.value)
+
+    def test_billing_entitlement_override_zero_custom_quota_allowed(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO billing_entitlement_overrides (
+                        id,
+                        user_id,
+                        plan_tier,
+                        platform_token_quota_mode,
+                        platform_token_limit_monthly,
+                        transcription_quota_mode,
+                        transcription_minutes_limit_monthly,
+                        reason
+                    )
+                    VALUES (
+                        :id,
+                        :user_id,
+                        'ai_pro',
+                        'custom',
+                        0,
+                        'custom',
+                        0,
+                        'zero quota'
+                    )
+                    """
+                ),
+                {"id": uuid4(), "user_id": user_id},
+            )
+            session.commit()
+
+    def test_billing_entitlement_override_user_unique_rejected(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO billing_entitlement_overrides (id, user_id, plan_tier, reason)
+                    VALUES (:id, :user_id, 'plus', 'first')
+                    """
+                ),
+                {"id": uuid4(), "user_id": user_id},
+            )
+            session.commit()
+
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO billing_entitlement_overrides (id, user_id, plan_tier, reason)
+                        VALUES (:id, :user_id, 'ai_pro', 'second')
+                        """
+                    ),
+                    {"id": uuid4(), "user_id": user_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "uq_billing_entitlement_overrides_user_id" in str(exc_info.value)
+
+    def test_billing_entitlement_override_event_type_constraint_rejected(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            user_id = uuid4()
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            with pytest.raises(IntegrityError) as exc_info:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO billing_entitlement_override_events (
+                            id,
+                            user_id,
+                            event_type,
+                            reason
+                        )
+                        VALUES (:id, :user_id, 'deleted', 'bad')
+                        """
+                    ),
+                    {"id": uuid4(), "user_id": user_id},
+                )
+                session.commit()
+            session.rollback()
+            assert "ck_billing_entitlement_override_events_event_type" in str(exc_info.value)
+
     def test_pages_title_length_constraint_rejected(self, migrated_engine):
         with Session(migrated_engine) as session:
             user_id = uuid4()

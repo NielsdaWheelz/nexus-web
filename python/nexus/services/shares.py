@@ -20,7 +20,7 @@ from nexus.schemas.conversation import (
     ConversationSharesOut,
     ConversationShareTargetOut,
 )
-from nexus.services.billing import get_entitlements
+from nexus.services.billing_entitlements import get_effective_entitlements
 
 
 def is_member_of_library(db: Session, user_id: UUID, library_id: UUID) -> bool:
@@ -107,7 +107,7 @@ def set_conversation_shares_for_owner(
         ApiError(E_FORBIDDEN): Owner not member of target library.
     """
     conversation = _verify_conversation_owner_for_shares(db, viewer_id, conversation_id)
-    if library_ids and not get_entitlements(db, viewer_id).can_share:
+    if library_ids and not get_effective_entitlements(db, viewer_id).can_share:
         raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Sharing requires Plus.")
 
     # Dedupe

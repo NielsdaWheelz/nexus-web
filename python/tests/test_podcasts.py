@@ -12,6 +12,10 @@ from lxml import etree
 from sqlalchemy import text
 
 from nexus.config import clear_settings_cache, get_settings
+from nexus.services.billing_entitlements import (
+    grant_entitlement_override,
+    revoke_entitlement_override,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -409,12 +413,16 @@ def _set_plan(
     _ = actor_user_id, initial_episode_window
     if plan_tier == "ai_plus":
         os.environ["BILLING_AI_PLUS_TRANSCRIPTION_MINUTES_MONTHLY"] = str(
-            transcription_minutes_limit_monthly or 300
+            transcription_minutes_limit_monthly
+            if transcription_minutes_limit_monthly is not None
+            else 300
         )
         clear_settings_cache()
     elif plan_tier == "ai_pro":
         os.environ["BILLING_AI_PRO_TRANSCRIPTION_MINUTES_MONTHLY"] = str(
-            transcription_minutes_limit_monthly or 1200
+            transcription_minutes_limit_monthly
+            if transcription_minutes_limit_monthly is not None
+            else 1200
         )
         clear_settings_cache()
 
@@ -424,63 +432,31 @@ def _set_plan(
     db_iter = db_override()
     db = next(db_iter)
     try:
-        now = datetime.now(UTC)
-        account = db.execute(
-            text("SELECT id FROM billing_accounts WHERE user_id = :user_id"),
+        existing = db.execute(
+            text("SELECT id FROM billing_entitlement_overrides WHERE user_id = :user_id"),
             {"user_id": target_user_id},
         ).fetchone()
-        values = {
-            "user_id": target_user_id,
-            "plan_tier": plan_tier,
-            "subscription_status": "active" if plan_tier != "free" else None,
-            "current_period_start": now - timedelta(days=1) if plan_tier != "free" else None,
-            "current_period_end": now + timedelta(days=30) if plan_tier != "free" else None,
-            "updated_at": now,
-        }
-        if account is None:
-            db.execute(
-                text(
-                    """
-                    INSERT INTO billing_accounts (
-                        id,
-                        user_id,
-                        plan_tier,
-                        subscription_status,
-                        current_period_start,
-                        current_period_end,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (
-                        :id,
-                        :user_id,
-                        :plan_tier,
-                        :subscription_status,
-                        :current_period_start,
-                        :current_period_end,
-                        :updated_at,
-                        :updated_at
-                    )
-                    """
-                ),
-                {"id": uuid4(), **values},
-            )
-        else:
-            db.execute(
-                text(
-                    """
-                    UPDATE billing_accounts
-                    SET plan_tier = :plan_tier,
-                        subscription_status = :subscription_status,
-                        current_period_start = :current_period_start,
-                        current_period_end = :current_period_end,
-                        updated_at = :updated_at
-                    WHERE user_id = :user_id
-                    """
-                ),
-                values,
-            )
-        db.commit()
+        if plan_tier == "free":
+            if existing is not None:
+                revoke_entitlement_override(
+                    db,
+                    user_id=target_user_id,
+                    reason="podcast test free plan",
+                    actor_label="test",
+                )
+            return
+        grant_entitlement_override(
+            db,
+            user_id=target_user_id,
+            plan_tier=plan_tier,
+            platform_token_quota_mode="plan",
+            platform_token_limit_monthly=None,
+            transcription_quota_mode="plan",
+            transcription_minutes_limit_monthly=None,
+            expires_at=None,
+            reason="podcast test access",
+            actor_label="test",
+        )
     finally:
         db_iter.close()
 
@@ -2312,16 +2288,8 @@ class TestPodcastBillingQuota:
 
         monthly_limit = get_settings().billing_ai_plus_transcription_minutes_monthly
         with direct_db.session() as session:
-            usage_date = session.execute(
-                text(
-                    """
-                    SELECT current_period_start::date
-                    FROM billing_accounts
-                    WHERE user_id = :user_id
-                    """
-                ),
-                {"user_id": user_id},
-            ).scalar_one()
+            now = datetime.now(UTC)
+            usage_date = date(now.year, now.month, 1)
             session.execute(
                 text(
                     """

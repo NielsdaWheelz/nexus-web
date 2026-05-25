@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from nexus.app import create_app
 from nexus.auth.middleware import AuthMiddleware
 from nexus.db.session import create_session_factory
+from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.mock_verifier import MockJwtVerifier
@@ -26,36 +27,17 @@ pytestmark = pytest.mark.integration
 
 
 def _seed_plus_billing(session: Session, user_id: UUID) -> None:
-    existing = session.execute(
-        text("SELECT id FROM billing_accounts WHERE user_id = :user_id"),
-        {"user_id": user_id},
-    ).fetchone()
-    if existing is not None:
-        return
-    session.execute(
-        text("""
-            INSERT INTO billing_accounts (
-                id,
-                user_id,
-                plan_tier,
-                subscription_status,
-                current_period_start,
-                current_period_end,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                :id,
-                :user_id,
-                'plus',
-                'active',
-                now(),
-                now() + interval '30 days',
-                now(),
-                now()
-            )
-        """),
-        {"id": uuid4(), "user_id": user_id},
+    grant_entitlement_override(
+        session,
+        user_id=user_id,
+        plan_tier="plus",
+        platform_token_quota_mode="plan",
+        platform_token_limit_monthly=None,
+        transcription_quota_mode="plan",
+        transcription_minutes_limit_monthly=None,
+        expires_at=None,
+        reason="share test access",
+        actor_label="test",
     )
 
 

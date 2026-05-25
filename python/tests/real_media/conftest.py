@@ -5,15 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from sqlalchemy import text
 
 from nexus.config import get_settings
+from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import (
     build_storage_path,
@@ -72,49 +72,21 @@ def _is_local_storage_endpoint(endpoint_url: str) -> bool:
 
 
 def grant_ai_plus(direct_db: DirectSessionManager, user_id: UUID) -> None:
-    direct_db.register_cleanup("billing_accounts", "user_id", user_id)
+    direct_db.register_cleanup("billing_entitlement_overrides", "user_id", user_id)
+    direct_db.register_cleanup("billing_entitlement_override_events", "user_id", user_id)
     with direct_db.session() as session:
-        now = datetime.now(UTC)
-        session.execute(
-            text(
-                """
-                INSERT INTO billing_accounts (
-                    id,
-                    user_id,
-                    plan_tier,
-                    subscription_status,
-                    current_period_start,
-                    current_period_end,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    :id,
-                    :user_id,
-                    'ai_plus',
-                    'active',
-                    :current_period_start,
-                    :current_period_end,
-                    :now,
-                    :now
-                )
-                ON CONFLICT (user_id) DO UPDATE
-                SET plan_tier = 'ai_plus',
-                    subscription_status = 'active',
-                    current_period_start = EXCLUDED.current_period_start,
-                    current_period_end = EXCLUDED.current_period_end,
-                    updated_at = EXCLUDED.updated_at
-                """
-            ),
-            {
-                "id": uuid4(),
-                "user_id": user_id,
-                "current_period_start": now - timedelta(days=1),
-                "current_period_end": now + timedelta(days=30),
-                "now": now,
-            },
+        grant_entitlement_override(
+            session,
+            user_id=user_id,
+            plan_tier="ai_plus",
+            platform_token_quota_mode="plan",
+            platform_token_limit_monthly=None,
+            transcription_quota_mode="plan",
+            transcription_minutes_limit_monthly=None,
+            expires_at=None,
+            reason="real-media test access",
+            actor_label="test",
         )
-        session.commit()
 
 
 def capture_nasa_water_article(

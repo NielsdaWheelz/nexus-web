@@ -24,7 +24,7 @@ from nexus.config import get_settings
 from nexus.db.models import Model, UserApiKey
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.billing import get_entitlements
+from nexus.services.billing_entitlements import get_effective_entitlements
 from nexus.services.crypto import CryptoError, decrypt_api_key
 
 logger = get_logger(__name__)
@@ -128,7 +128,7 @@ def resolve_api_key(
             )
             user_key = None
 
-    can_use_platform_key = get_entitlements(db, user_id).can_use_platform_llm
+    can_use_platform_key = get_effective_entitlements(db, user_id).can_use_platform_llm
 
     # Resolve based on mode
     if key_mode == "byok_only":

@@ -24,7 +24,7 @@ import subprocess
 import sys
 import time
 import zipfile
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from html import escape
 from io import BytesIO
 from pathlib import Path
@@ -37,6 +37,7 @@ from sqlalchemy import select, text
 from nexus.db.models import FailureStage, Fragment, Media, ProcessingStatus
 from nexus.db.session import create_session_factory
 from nexus.schemas.highlights import CreateHighlightRequest
+from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import (
     rebuild_fragment_content_index,
@@ -687,67 +688,19 @@ def _clear_fragment_artifacts(db, media_id: UUID) -> None:
 
 
 def _ensure_ai_plus_billing(db, user_id: UUID) -> None:
-    """Keep the E2E user on an AI Plus plan so transcript flows stay testable."""
-    now = datetime.now(UTC)
-    values = {
-        "user_id": user_id,
-        "plan_tier": "ai_plus",
-        "subscription_status": "active",
-        "current_period_start": now - timedelta(days=1),
-        "current_period_end": now + timedelta(days=30),
-        "updated_at": now,
-    }
-    account_id = db.execute(
-        text("SELECT id FROM billing_accounts WHERE user_id = :user_id"),
-        {"user_id": user_id},
-    ).scalar_one_or_none()
-    if account_id is None:
-        db.execute(
-            text(
-                """
-                INSERT INTO billing_accounts (
-                    id,
-                    user_id,
-                    plan_tier,
-                    subscription_status,
-                    current_period_start,
-                    current_period_end,
-                    cancel_at_period_end,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    gen_random_uuid(),
-                    :user_id,
-                    :plan_tier,
-                    :subscription_status,
-                    :current_period_start,
-                    :current_period_end,
-                    false,
-                    :updated_at,
-                    :updated_at
-                )
-                """
-            ),
-            values,
-        )
-    else:
-        db.execute(
-            text(
-                """
-                UPDATE billing_accounts
-                SET plan_tier = :plan_tier,
-                    subscription_status = :subscription_status,
-                    current_period_start = :current_period_start,
-                    current_period_end = :current_period_end,
-                    cancel_at_period_end = false,
-                    updated_at = :updated_at
-                WHERE user_id = :user_id
-                """
-            ),
-            values,
-        )
-    db.commit()
+    """Keep the E2E user on internal AI Plus access."""
+    grant_entitlement_override(
+        db,
+        user_id=user_id,
+        plan_tier="ai_plus",
+        platform_token_quota_mode="plan",
+        platform_token_limit_monthly=None,
+        transcription_quota_mode="plan",
+        transcription_minutes_limit_monthly=None,
+        expires_at=None,
+        reason="E2E seed access",
+        actor_label="seed_e2e_data",
+    )
 
 
 def _upsert_media_transcript_state(

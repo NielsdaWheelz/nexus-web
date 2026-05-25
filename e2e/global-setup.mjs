@@ -329,7 +329,7 @@ function databaseHasSeededBilling(dbUrl) {
         "cur=conn.cursor();" +
         "cur.execute(" +
         JSON.stringify(
-          "select ba.plan_tier from billing_accounts ba join users u on u.id = ba.user_id where u.email = %s",
+          "select beo.plan_tier from billing_entitlement_overrides beo join users u on u.id = beo.user_id where lower(u.email) = lower(%s) and beo.revoked_at is null and (beo.expires_at is null or now() < beo.expires_at)",
         ) +
         ", (os.environ['E2E_USER_EMAIL'],));" +
         "row=cur.fetchone();" +

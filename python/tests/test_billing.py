@@ -17,6 +17,11 @@ from sqlalchemy.orm import Session
 from nexus.config import clear_settings_cache
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services import billing as billing_service
+from nexus.services.billing_entitlements import (
+    get_effective_entitlements,
+    grant_entitlement_override,
+    revoke_entitlement_override,
+)
 from tests.helpers import auth_headers
 
 pytestmark = pytest.mark.integration
@@ -49,7 +54,8 @@ class TestBillingEntitlements:
 
         account = billing_service.get_billing_account(db_session, user_id)
         assert account.billing_enabled is True
-        assert account.plan_tier == "free"
+        assert account.billing_plan_tier == "free"
+        assert account.entitlement_plan_tier == "free"
 
     def test_ai_plus_entitlements_are_active_and_bounded(self, db_session: Session):
         user_id = uuid4()
@@ -97,10 +103,12 @@ class TestBillingEntitlements:
             },
         )
 
-        entitlements = billing_service.get_entitlements(db_session, user_id)
-        assert entitlements.plan_tier == "ai_plus"
+        entitlements = get_effective_entitlements(db_session, user_id)
+        assert entitlements.entitlement_plan_tier == "ai_plus"
+        assert entitlements.entitlement_source == "subscription"
         assert entitlements.can_share is True
         assert entitlements.can_use_platform_llm is True
+        assert entitlements.can_transcribe is True
         assert entitlements.platform_token_limit_monthly == 1_000_000
         assert entitlements.transcription_minutes_limit_monthly == 300
 
@@ -147,10 +155,69 @@ class TestBillingEntitlements:
             },
         )
 
-        entitlements = billing_service.get_entitlements(db_session, user_id)
-        assert entitlements.plan_tier == "free"
+        entitlements = get_effective_entitlements(db_session, user_id)
+        assert entitlements.entitlement_plan_tier == "free"
         assert entitlements.can_share is False
         assert entitlements.can_use_platform_llm is False
+
+    def test_grant_only_ai_pro_unlimited_entitlements(self, db_session: Session):
+        user_id = uuid4()
+        db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        grant_entitlement_override(
+            db_session,
+            user_id=user_id,
+            plan_tier="ai_pro",
+            platform_token_quota_mode="unlimited",
+            platform_token_limit_monthly=None,
+            transcription_quota_mode="unlimited",
+            transcription_minutes_limit_monthly=None,
+            expires_at=None,
+            reason="owner access",
+            actor_label="test",
+        )
+
+        entitlements = get_effective_entitlements(db_session, user_id)
+        assert entitlements.billing_plan_tier == "free"
+        assert entitlements.entitlement_plan_tier == "ai_pro"
+        assert entitlements.entitlement_source == "internal_grant"
+        assert entitlements.platform_token_limit_monthly is None
+        assert entitlements.transcription_minutes_limit_monthly is None
+        assert entitlements.can_share is True
+        assert entitlements.can_use_platform_llm is True
+        assert entitlements.can_transcribe is True
+
+        account = billing_service.get_billing_account(db_session, user_id)
+        assert account.ai_token_usage.limit is None
+        assert account.ai_token_usage.remaining is None
+        assert account.transcription_usage.limit is None
+        assert account.transcription_usage.remaining is None
+        assert account.can_manage_billing is False
+
+    def test_revoked_grant_falls_back_to_free(self, db_session: Session):
+        user_id = uuid4()
+        db_session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        grant_entitlement_override(
+            db_session,
+            user_id=user_id,
+            plan_tier="ai_pro",
+            platform_token_quota_mode="unlimited",
+            platform_token_limit_monthly=None,
+            transcription_quota_mode="unlimited",
+            transcription_minutes_limit_monthly=None,
+            expires_at=None,
+            reason="temporary access",
+            actor_label="test",
+        )
+        revoke_entitlement_override(
+            db_session,
+            user_id=user_id,
+            reason="revoke",
+            actor_label="test",
+        )
+
+        entitlements = get_effective_entitlements(db_session, user_id)
+        assert entitlements.entitlement_plan_tier == "free"
+        assert entitlements.entitlement_source == "free"
 
 
 class TestStripeWebhookProcessing:
@@ -344,7 +411,10 @@ class TestBillingRoutes:
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["billing_enabled"] is True
-        assert data["plan_tier"] == "free"
+        assert data["billing_plan_tier"] == "free"
+        assert data["entitlement_plan_tier"] == "free"
+        assert "plan_tier" not in data
+        assert "subscription_status" not in data
 
     def test_disabled_checkout_route_returns_503(
         self,

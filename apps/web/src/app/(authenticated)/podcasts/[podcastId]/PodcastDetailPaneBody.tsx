@@ -198,8 +198,7 @@ export default function PodcastDetailPaneBody() {
   });
   const [episodesDrawerOpen, setEpisodesDrawerOpen] = useState(false);
   const billingDisabled = billingAccount?.billing_enabled === false;
-  const transcriptionAllowed =
-    (billingAccount?.transcription_usage.limit ?? 0) > 0;
+  const transcriptionAllowed = billingAccount?.can_transcribe === true;
 
   useSetPaneTitle(detail?.podcast.title ?? (loading ? null : "Podcast"));
 

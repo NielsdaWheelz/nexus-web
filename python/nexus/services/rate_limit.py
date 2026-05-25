@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.billing import get_entitlements, get_platform_token_usage
+from nexus.services.billing import get_platform_token_usage
+from nexus.services.billing_entitlements import get_effective_entitlements
 from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
@@ -245,24 +246,28 @@ class RateLimiter:
                 usage_date=usage_date,
                 now=datetime.now(UTC),
             )
-            entitlements = get_entitlements(db, user_id)
-            period_start, period_end = self._billing_usage_dates(
-                datetime.now(UTC),
-                entitlements.current_period_start,
-                entitlements.current_period_end,
-            )
+            entitlements = get_effective_entitlements(db, user_id)
+            period_start = entitlements.usage_period_start.date()
+            period_end = entitlements.usage_period_end.date()
             monthly_usage = get_platform_token_usage(db, user_id, period_start, period_end)
             db.commit()
 
-        if not entitlements.can_use_platform_llm or entitlements.platform_token_limit_monthly <= 0:
+        if not entitlements.can_use_platform_llm:
             raise ApiError(
                 ApiErrorCode.E_BILLING_REQUIRED, "Platform LLM access requires an AI tier."
             )
 
-        if (
-            monthly_usage["used"] + monthly_usage["reserved"]
-            >= entitlements.platform_token_limit_monthly
-        ):
+        monthly_limit = entitlements.platform_token_limit_monthly
+        if monthly_limit is None:
+            return
+
+        if monthly_limit <= 0:
+            raise ApiError(
+                ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED,
+                "Monthly AI token quota exceeded",
+            )
+
+        if monthly_usage["used"] + monthly_usage["reserved"] >= monthly_limit:
             logger.warning("token_budget.exceeded", **safe_kv(key_mode="platform"))
             raise ApiError(
                 ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED,
@@ -313,7 +318,7 @@ class RateLimiter:
                     "now": now,
                 },
             )
-            if inserted.rowcount > 0:
+            if getattr(inserted, "rowcount", 0) > 0:
                 db.execute(
                     text(
                         """
@@ -381,15 +386,12 @@ class RateLimiter:
                 db.commit()
                 return
 
-            entitlements = get_entitlements(db, user_id)
-            period_start, period_end = self._billing_usage_dates(
-                now,
-                entitlements.current_period_start,
-                entitlements.current_period_end,
-            )
+            entitlements = get_effective_entitlements(db, user_id)
+            period_start = entitlements.usage_period_start.date()
+            period_end = entitlements.usage_period_end.date()
             monthly_usage = get_platform_token_usage(db, user_id, period_start, period_end)
             monthly_limit = entitlements.platform_token_limit_monthly
-            if not entitlements.can_use_platform_llm or monthly_limit <= 0:
+            if not entitlements.can_use_platform_llm:
                 db.rollback()
                 raise ApiError(
                     ApiErrorCode.E_BILLING_REQUIRED,
@@ -397,7 +399,7 @@ class RateLimiter:
                 )
 
             next_total = monthly_usage["used"] + monthly_usage["reserved"] + int(est_tokens)
-            if next_total > monthly_limit:
+            if monthly_limit is not None and next_total > monthly_limit:
                 db.rollback()
                 raise ApiError(
                     ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED,
@@ -555,7 +557,7 @@ class RateLimiter:
                     "now": now,
                 },
             )
-            if inserted.rowcount > 0 and normalized_tokens > 0:
+            if getattr(inserted, "rowcount", 0) > 0 and normalized_tokens > 0:
                 db.execute(
                     text(
                         """
@@ -651,7 +653,9 @@ class RateLimiter:
         try:
             with self._session() as db:
                 yield db
-        except Exception as exc:  # justify-ignore-error: rate limiter must fail closed on any DB-session failure
+        except (
+            Exception
+        ) as exc:  # justify-ignore-error: rate limiter must fail closed on any DB-session failure
             logger.warning(warn_msg, error=str(exc), **warn_kw)
 
     @contextmanager
@@ -664,7 +668,9 @@ class RateLimiter:
                 yield db
         except ApiError:
             raise
-        except Exception as exc:  # justify-ignore-error: rate limiter must fail closed on any DB-session failure
+        except (
+            Exception
+        ) as exc:  # justify-ignore-error: rate limiter must fail closed on any DB-session failure
             logger.warning(warn_msg, error=str(exc), **warn_kw)
             raise ApiError(raise_code, raise_msg) from exc
 
@@ -807,19 +813,6 @@ class RateLimiter:
     @staticmethod
     def _today_utc() -> date:
         return datetime.now(UTC).date()
-
-    @staticmethod
-    def _billing_usage_dates(
-        now: datetime,
-        current_period_start: datetime | None,
-        current_period_end: datetime | None,
-    ) -> tuple[date, date]:
-        if current_period_start is not None and current_period_end is not None:
-            return current_period_start.date(), current_period_end.date()
-        start = date(now.year, now.month, 1)
-        if now.month == 12:
-            return start, date(now.year + 1, 1, 1)
-        return start, date(now.year, now.month + 1, 1)
 
 
 def _advisory_lock_key(*, scope: str, user_id: UUID, usage_date: date | None = None) -> int:

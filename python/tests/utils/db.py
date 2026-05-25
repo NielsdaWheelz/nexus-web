@@ -166,6 +166,16 @@ class DirectSessionManager:
                         {"value": value},
                     )
                     session.execute(
+                        text(
+                            "DELETE FROM billing_entitlement_override_events WHERE user_id = :value"
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM billing_entitlement_overrides WHERE user_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
                         text("DELETE FROM object_links WHERE user_id = :value"),
                         {"value": value},
                     )

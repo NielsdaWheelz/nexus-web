@@ -6431,6 +6431,156 @@ class BillingAccount(Base):
     )
 
 
+class BillingEntitlementOverride(Base):
+    """Internal unpaid entitlement grant for one user."""
+
+    __tablename__ = "billing_entitlement_overrides"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    plan_tier: Mapped[str] = mapped_column(Text, nullable=False)
+    platform_token_quota_mode: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default="plan",
+    )
+    platform_token_limit_monthly: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    transcription_quota_mode: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default="plan",
+    )
+    transcription_minutes_limit_monthly: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+    updated_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+    created_by_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_by_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "plan_tier IN ('plus', 'ai_plus', 'ai_pro')",
+            name="ck_billing_entitlement_overrides_plan_tier",
+        ),
+        CheckConstraint(
+            "platform_token_quota_mode IN ('plan', 'custom', 'unlimited')",
+            name="ck_billing_entitlement_overrides_platform_token_quota_mode",
+        ),
+        CheckConstraint(
+            """
+            (
+                platform_token_quota_mode = 'custom'
+                AND platform_token_limit_monthly IS NOT NULL
+                AND platform_token_limit_monthly >= 0
+            )
+            OR (
+                platform_token_quota_mode <> 'custom'
+                AND platform_token_limit_monthly IS NULL
+            )
+            """,
+            name="ck_billing_entitlement_overrides_platform_token_limit",
+        ),
+        CheckConstraint(
+            "transcription_quota_mode IN ('plan', 'custom', 'unlimited')",
+            name="ck_billing_entitlement_overrides_transcription_quota_mode",
+        ),
+        CheckConstraint(
+            """
+            (
+                transcription_quota_mode = 'custom'
+                AND transcription_minutes_limit_monthly IS NOT NULL
+                AND transcription_minutes_limit_monthly >= 0
+            )
+            OR (
+                transcription_quota_mode <> 'custom'
+                AND transcription_minutes_limit_monthly IS NULL
+            )
+            """,
+            name="ck_billing_entitlement_overrides_transcription_limit",
+        ),
+        CheckConstraint(
+            "char_length(btrim(reason)) > 0",
+            name="ck_billing_entitlement_overrides_reason_present",
+        ),
+        UniqueConstraint("user_id", name="uq_billing_entitlement_overrides_user_id"),
+    )
+
+
+class BillingEntitlementOverrideEvent(Base):
+    """Audit event for an internal entitlement grant mutation."""
+
+    __tablename__ = "billing_entitlement_override_events"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    override_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("billing_entitlement_overrides.id"),
+        nullable=True,
+    )
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+    actor_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    before_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    after_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('created', 'updated', 'revoked')",
+            name="ck_billing_entitlement_override_events_event_type",
+        ),
+        CheckConstraint(
+            "char_length(btrim(reason)) > 0",
+            name="ck_billing_entitlement_override_events_reason_present",
+        ),
+    )
+
+
 class StripeWebhookEvent(Base):
     """Processed Stripe webhook event id for idempotency."""
 

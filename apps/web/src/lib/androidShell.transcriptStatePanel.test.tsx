@@ -7,13 +7,18 @@ const { apiFetchMock, mockBillingState } = vi.hoisted(() => ({
   mockBillingState: {
     account: {
       billing_enabled: true,
-      plan_tier: "plus",
-      subscription_status: "active",
+      billing_plan_tier: "plus",
+      billing_status: "active",
+      subscription_current_period_start: "2026-04-01T00:00:00Z",
+      subscription_current_period_end: "2026-05-01T00:00:00Z",
       cancel_at_period_end: false,
+      can_manage_billing: true,
+      entitlement_plan_tier: "plus",
+      entitlement_source: "subscription",
+      entitlement_expires_at: null,
       can_share: true,
       can_use_platform_llm: false,
-      current_period_start: "2026-04-01T00:00:00Z",
-      current_period_end: "2026-05-01T00:00:00Z",
+      can_transcribe: false,
       ai_token_usage: {
         used: 0,
         reserved: 0,

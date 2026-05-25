@@ -1,4 +1,4 @@
-"""Stripe billing state and entitlement checks."""
+"""Stripe billing state and account reads."""
 
 from datetime import UTC, date, datetime
 from uuid import UUID
@@ -10,85 +10,63 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.models import BillingAccount, StripeWebhookEvent
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.schemas.billing import BillingAccountOut, BillingEntitlementsOut, BillingUsageBucketOut
-
-ACTIVE_SUBSCRIPTION_STATUSES = {"active", "trialing"}
-
-
-def get_entitlements(db: Session, user_id: UUID) -> BillingEntitlementsOut:
-    account = db.scalar(select(BillingAccount).where(BillingAccount.user_id == user_id))
-    if account is None:
-        return _free_entitlements()
-
-    now = _db_now(db)
-    if account.subscription_status not in ACTIVE_SUBSCRIPTION_STATUSES:
-        return _free_entitlements()
-    if account.current_period_end is not None and now >= account.current_period_end:
-        return _free_entitlements()
-
-    settings = get_settings()
-    if account.plan_tier == "plus":
-        return BillingEntitlementsOut(
-            plan_tier="plus",
-            can_share=True,
-            can_use_platform_llm=False,
-            platform_token_limit_monthly=0,
-            transcription_minutes_limit_monthly=0,
-            current_period_start=account.current_period_start,
-            current_period_end=account.current_period_end,
-        )
-    if account.plan_tier == "ai_plus":
-        return BillingEntitlementsOut(
-            plan_tier="ai_plus",
-            can_share=True,
-            can_use_platform_llm=True,
-            platform_token_limit_monthly=settings.billing_ai_plus_platform_token_limit_monthly,
-            transcription_minutes_limit_monthly=settings.billing_ai_plus_transcription_minutes_monthly,
-            current_period_start=account.current_period_start,
-            current_period_end=account.current_period_end,
-        )
-    if account.plan_tier == "ai_pro":
-        return BillingEntitlementsOut(
-            plan_tier="ai_pro",
-            can_share=True,
-            can_use_platform_llm=True,
-            platform_token_limit_monthly=settings.billing_ai_pro_platform_token_limit_monthly,
-            transcription_minutes_limit_monthly=settings.billing_ai_pro_transcription_minutes_monthly,
-            current_period_start=account.current_period_start,
-            current_period_end=account.current_period_end,
-        )
-    return _free_entitlements()
+from nexus.schemas.billing import BillingAccountOut, BillingUsageBucketOut
+from nexus.services.billing_entitlements import (
+    ACTIVE_SUBSCRIPTION_STATUSES,
+    get_effective_entitlements,
+)
 
 
 def get_billing_account(db: Session, user_id: UUID) -> BillingAccountOut:
     settings = get_settings()
     account = db.scalar(select(BillingAccount).where(BillingAccount.user_id == user_id))
-    entitlements = get_entitlements(db, user_id)
-    period_start, period_end = _usage_period(db, entitlements)
+    entitlements = get_effective_entitlements(db, user_id)
+    period_start = entitlements.usage_period_start
+    period_end = entitlements.usage_period_end
     token_usage = get_platform_token_usage(db, user_id, period_start.date(), period_end.date())
     transcription_usage = get_transcription_usage(
         db, user_id, period_start.date(), period_end.date()
     )
+    token_remaining = (
+        None
+        if entitlements.platform_token_limit_monthly is None
+        else max(
+            0,
+            entitlements.platform_token_limit_monthly
+            - token_usage["used"]
+            - token_usage["reserved"],
+        )
+    )
+    transcription_remaining = (
+        None
+        if entitlements.transcription_minutes_limit_monthly is None
+        else max(
+            0,
+            entitlements.transcription_minutes_limit_monthly
+            - transcription_usage["used"]
+            - transcription_usage["reserved"],
+        )
+    )
 
     return BillingAccountOut(
         billing_enabled=settings.billing_enabled,
-        plan_tier=entitlements.plan_tier,
-        subscription_status=account.subscription_status if account is not None else "free",
-        current_period_start=entitlements.current_period_start,
-        current_period_end=entitlements.current_period_end,
+        billing_plan_tier=entitlements.billing_plan_tier,
+        billing_status=entitlements.billing_status,
+        subscription_current_period_start=entitlements.subscription_current_period_start,
+        subscription_current_period_end=entitlements.subscription_current_period_end,
         cancel_at_period_end=bool(account.cancel_at_period_end) if account is not None else False,
+        can_manage_billing=entitlements.can_manage_billing,
+        entitlement_plan_tier=entitlements.entitlement_plan_tier,
+        entitlement_source=entitlements.entitlement_source,
+        entitlement_expires_at=entitlements.entitlement_expires_at,
         can_share=entitlements.can_share,
         can_use_platform_llm=entitlements.can_use_platform_llm,
+        can_transcribe=entitlements.can_transcribe,
         ai_token_usage=BillingUsageBucketOut(
             used=token_usage["used"],
             reserved=token_usage["reserved"],
             limit=entitlements.platform_token_limit_monthly,
-            remaining=max(
-                0,
-                entitlements.platform_token_limit_monthly
-                - token_usage["used"]
-                - token_usage["reserved"],
-            ),
+            remaining=token_remaining,
             period_start=period_start,
             period_end=period_end,
         ),
@@ -96,12 +74,7 @@ def get_billing_account(db: Session, user_id: UUID) -> BillingAccountOut:
             used=transcription_usage["used"],
             reserved=transcription_usage["reserved"],
             limit=entitlements.transcription_minutes_limit_monthly,
-            remaining=max(
-                0,
-                entitlements.transcription_minutes_limit_monthly
-                - transcription_usage["used"]
-                - transcription_usage["reserved"],
-            ),
+            remaining=transcription_remaining,
             period_start=period_start,
             period_end=period_end,
         ),
@@ -123,10 +96,13 @@ def create_checkout_session(db: Session, user_id: UUID, email: str | None, plan_
     account = db.scalar(select(BillingAccount).where(BillingAccount.user_id == user_id))
     now = _db_now(db)
     if account is None or not account.stripe_customer_id:
-        customer = stripe.Customer.create(
-            email=email,
-            metadata={"nexus_user_id": str(user_id)},
-        )
+        if email:
+            customer = stripe.Customer.create(
+                email=email,
+                metadata={"nexus_user_id": str(user_id)},
+            )
+        else:
+            customer = stripe.Customer.create(metadata={"nexus_user_id": str(user_id)})
         if account is None:
             account = BillingAccount(
                 user_id=user_id,
@@ -152,8 +128,12 @@ def create_checkout_session(db: Session, user_id: UUID, email: str | None, plan_
         )
         return str(session["url"])
 
+    stripe_customer_id = account.stripe_customer_id
+    if not stripe_customer_id:
+        raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "No billing customer exists")
+
     session = stripe.checkout.Session.create(
-        customer=account.stripe_customer_id,
+        customer=stripe_customer_id,
         mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
         success_url=f"{settings.app_public_url.rstrip('/')}/settings/billing?checkout=success",
@@ -270,16 +250,6 @@ def get_transcription_usage(
     return {"used": int(row[0] or 0), "reserved": int(row[1] or 0)}
 
 
-def _free_entitlements() -> BillingEntitlementsOut:
-    return BillingEntitlementsOut(
-        plan_tier="free",
-        can_share=False,
-        can_use_platform_llm=False,
-        platform_token_limit_monthly=0,
-        transcription_minutes_limit_monthly=0,
-    )
-
-
 def _price_id_for_plan(plan_tier: str) -> str | None:
     settings = get_settings()
     if plan_tier == "plus":
@@ -302,28 +272,14 @@ def _plan_for_price_id(price_id: str | None) -> str:
     return "free"
 
 
-def _usage_period(
-    db: Session,
-    entitlements: BillingEntitlementsOut,
-) -> tuple[datetime, datetime]:
-    if entitlements.current_period_start and entitlements.current_period_end:
-        return entitlements.current_period_start, entitlements.current_period_end
-
-    now = _db_now(db)
-    start = datetime(now.year, now.month, 1, tzinfo=UTC)
-    if now.month == 12:
-        end = datetime(now.year + 1, 1, 1, tzinfo=UTC)
-    else:
-        end = datetime(now.year, now.month + 1, 1, tzinfo=UTC)
-    return start, end
-
-
 def _db_now(db: Session) -> datetime:
     return db.execute(text("SELECT now()")).scalar_one()
 
 
 def _stripe_timestamp(value: object) -> datetime | None:
     if value is None:
+        return None
+    if not isinstance(value, int | float | str):
         return None
     return datetime.fromtimestamp(int(value), UTC)
 

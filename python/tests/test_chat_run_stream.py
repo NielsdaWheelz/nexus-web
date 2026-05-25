@@ -29,6 +29,7 @@ from nexus.config import clear_settings_cache
 from nexus.db.models import ChatRun, MessageRetrieval, MessageToolCall
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.middleware.stream_cors import StreamCORSMiddleware
+from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.chat_run_verification import VERIFICATION_FAILURE_CONTENT
 from nexus.services.chat_runs import execute_chat_run
@@ -153,36 +154,21 @@ def _insert_terminal_run(
 
 
 def _seed_ai_plus_billing(direct_db: DirectSessionManager, user_id: UUID) -> None:
+    direct_db.register_cleanup("billing_entitlement_overrides", "user_id", user_id)
+    direct_db.register_cleanup("billing_entitlement_override_events", "user_id", user_id)
     with direct_db.session() as session:
-        session.execute(
-            text(
-                """
-                INSERT INTO billing_accounts (
-                    id,
-                    user_id,
-                    plan_tier,
-                    subscription_status,
-                    current_period_start,
-                    current_period_end,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    gen_random_uuid(),
-                    :user_id,
-                    'ai_plus',
-                    'active',
-                    now(),
-                    now() + interval '30 days',
-                    now(),
-                    now()
-                )
-                """
-            ),
-            {"user_id": user_id},
+        grant_entitlement_override(
+            session,
+            user_id=user_id,
+            plan_tier="ai_plus",
+            platform_token_quota_mode="plan",
+            platform_token_limit_monthly=None,
+            transcription_quota_mode="plan",
+            transcription_minutes_limit_monthly=None,
+            expires_at=None,
+            reason="chat stream test access",
+            actor_label="test",
         )
-        session.commit()
-    direct_db.register_cleanup("billing_accounts", "user_id", user_id)
 
 
 class _StreamingAnswerRouter:
@@ -881,7 +867,13 @@ class TestSourceBackedChatRunStreaming:
                         {"conversation_id": conversation_id},
                     )
                 cleanup.execute(
-                    text("DELETE FROM billing_accounts WHERE user_id = :user_id"),
+                    text(
+                        "DELETE FROM billing_entitlement_override_events WHERE user_id = :user_id"
+                    ),
+                    {"user_id": user_id},
+                )
+                cleanup.execute(
+                    text("DELETE FROM billing_entitlement_overrides WHERE user_id = :user_id"),
                     {"user_id": user_id},
                 )
                 cleanup.execute(

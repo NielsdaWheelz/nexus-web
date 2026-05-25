@@ -5,25 +5,31 @@ import { apiFetch } from "@/lib/api/client";
 import { toFeedback } from "@/components/feedback/Feedback";
 
 export type BillingPlanTier = "free" | "plus" | "ai_plus" | "ai_pro";
+export type BillingEntitlementSource = "free" | "subscription" | "internal_grant";
 
 export interface BillingUsageSnapshot {
   used: number;
   reserved: number;
-  limit: number;
-  remaining: number;
+  limit: number | null;
+  remaining: number | null;
   period_start: string;
   period_end: string;
 }
 
 export interface BillingAccount {
   billing_enabled: boolean;
-  plan_tier: BillingPlanTier;
-  subscription_status: string;
+  billing_plan_tier: BillingPlanTier;
+  billing_status: string;
+  subscription_current_period_start: string | null;
+  subscription_current_period_end: string | null;
   cancel_at_period_end: boolean;
+  can_manage_billing: boolean;
+  entitlement_plan_tier: BillingPlanTier;
+  entitlement_source: BillingEntitlementSource;
+  entitlement_expires_at: string | null;
   can_share: boolean;
   can_use_platform_llm: boolean;
-  current_period_start: string | null;
-  current_period_end: string | null;
+  can_transcribe: boolean;
   ai_token_usage: BillingUsageSnapshot;
   transcription_usage: BillingUsageSnapshot;
 }

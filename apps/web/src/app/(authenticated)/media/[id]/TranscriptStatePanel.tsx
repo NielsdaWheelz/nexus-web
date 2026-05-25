@@ -54,9 +54,7 @@ export default function TranscriptStatePanel({
     useState<TranscriptRequestForecast | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
   const billingDisabled = billingAccount?.billing_enabled === false;
-  const transcriptionLocked =
-    billingAccount != null &&
-    (billingAccount.plan_tier === "free" || billingAccount.plan_tier === "plus");
+  const transcriptionLocked = billingAccount != null && !billingAccount.can_transcribe;
   const requestDisabled =
     billingLoading ||
     billingDisabled ||
@@ -244,7 +242,10 @@ export default function TranscriptStatePanel({
     return (
       <div className={styles.notReady}>
         <p>Transcription is included with AI Plus and AI Pro.</p>
-        <p>Current plan: {billingAccount ? planLabel(billingAccount.plan_tier) : "Free"}.</p>
+        <p>
+          Current plan:{" "}
+          {billingAccount ? planLabel(billingAccount.entitlement_plan_tier) : "Free"}.
+        </p>
         <p>
           {billingDisabled
             ? "Billing is temporarily unavailable, so plan upgrades are unavailable right now."

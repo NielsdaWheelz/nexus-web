@@ -23,7 +23,18 @@ vi.mock("@/lib/billing/useBillingAccount", () => ({
   useBillingAccount: () => ({
     account: {
       billing_enabled: true,
-      plan_tier: "plus",
+      billing_plan_tier: "plus",
+      billing_status: "active",
+      subscription_current_period_start: "2026-03-01T00:00:00Z",
+      subscription_current_period_end: "2026-04-01T00:00:00Z",
+      cancel_at_period_end: false,
+      can_manage_billing: true,
+      entitlement_plan_tier: "plus",
+      entitlement_source: "subscription",
+      entitlement_expires_at: null,
+      can_share: true,
+      can_use_platform_llm: false,
+      can_transcribe: false,
       transcription_usage: {
         used: 0,
         reserved: 0,

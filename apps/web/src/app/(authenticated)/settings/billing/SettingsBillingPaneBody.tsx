@@ -73,26 +73,30 @@ function formatDateRange(start: string | null, end: string | null): string {
 }
 
 function statusSummary(account: {
-  plan_tier: BillingPlanTier;
-  subscription_status: string;
+  billing_plan_tier: BillingPlanTier;
+  billing_status: string;
   cancel_at_period_end: boolean;
-  current_period_end: string | null;
+  subscription_current_period_end: string | null;
+  entitlement_source: string;
 }): string {
-  if (account.plan_tier === "free") {
+  if (account.entitlement_source === "internal_grant") {
+    return "Internal access grant.";
+  }
+  if (account.billing_plan_tier === "free") {
     return "No active subscription.";
   }
-  if (account.subscription_status === "canceled") {
-    return account.current_period_end
-      ? `Ended ${formatDateRange(null, account.current_period_end)}`
+  if (account.billing_status === "canceled") {
+    return account.subscription_current_period_end
+      ? `Ended ${formatDateRange(null, account.subscription_current_period_end)}`
       : "Subscription canceled.";
   }
   if (account.cancel_at_period_end) {
-    return account.current_period_end
-      ? `Ends ${formatDateRange(null, account.current_period_end)}`
+    return account.subscription_current_period_end
+      ? `Ends ${formatDateRange(null, account.subscription_current_period_end)}`
       : "Scheduled to cancel at period end.";
   }
-  return account.current_period_end
-    ? `Renews ${formatDateRange(null, account.current_period_end)}`
+  return account.subscription_current_period_end
+    ? `Renews ${formatDateRange(null, account.subscription_current_period_end)}`
     : "Billing period unavailable.";
 }
 
@@ -111,20 +115,26 @@ function activePlanIndex(planTier: BillingPlanTier): number {
   return PLAN_SEQUENCE.indexOf(planTier);
 }
 
+function sourceLabel(source: string): string {
+  if (source === "internal_grant") return "Internal grant";
+  if (source === "subscription") return "Subscription";
+  return "Free";
+}
+
 export default function SettingsBillingPaneBody() {
   const { account, loading, error } = useBillingAccount();
   const [checkoutBusy, setCheckoutBusy] = useState<BillingPlanTier | null>(null);
   const [portalBusy, setPortalBusy] = useState(false);
   const [actionError, setActionError] = useState<FeedbackContent | null>(null);
 
-  const paidPlan = account?.plan_tier ?? "free";
+  const effectivePlan = account?.entitlement_plan_tier ?? "free";
+  const billingPlan = account?.billing_plan_tier ?? "free";
   const billingEnabled = account?.billing_enabled ?? false;
-  const currentPlanIndex = activePlanIndex(paidPlan);
-  const hasPaidPlan = paidPlan !== "free";
-  const showManageBillingAction = billingEnabled && hasPaidPlan;
+  const currentPlanIndex = activePlanIndex(effectivePlan);
+  const showManageBillingAction = billingEnabled && Boolean(account?.can_manage_billing);
 
   let upgradePlans: BillingPlanTier[] = [];
-  if (billingEnabled && paidPlan === "free") {
+  if (billingEnabled && billingPlan === "free" && effectivePlan === "free") {
     upgradePlans = PLAN_SEQUENCE.filter(
       (planTier) => activePlanIndex(planTier) > currentPlanIndex
     );
@@ -135,7 +145,9 @@ export default function SettingsBillingPaneBody() {
   let actionHint: string | null = null;
   if (showManageBillingAction) {
     actionHint = "Change plan, payment method, or cancellation in Stripe billing.";
-  } else if (billingEnabled && paidPlan === "free" && upgradePlans.length === 0) {
+  } else if (account?.entitlement_source === "internal_grant") {
+    actionHint = "Internal access is active; no Stripe subscription is required.";
+  } else if (billingEnabled && billingPlan === "free" && upgradePlans.length === 0) {
     actionHint = "No subscription is active.";
   }
 
@@ -163,7 +175,7 @@ export default function SettingsBillingPaneBody() {
   );
 
   const launchBillingPortal = useCallback(async () => {
-    if (!billingEnabled) {
+    if (!billingEnabled || !account?.can_manage_billing) {
       setActionError({ severity: "error", title: BILLING_DISABLED_MESSAGE });
       return;
     }
@@ -179,7 +191,7 @@ export default function SettingsBillingPaneBody() {
     } finally {
       setPortalBusy(false);
     }
-  }, [billingEnabled]);
+  }, [account?.can_manage_billing, billingEnabled]);
 
   return (
     <SectionCard>
@@ -197,18 +209,32 @@ export default function SettingsBillingPaneBody() {
               <div className={styles.summaryItem}>
                 <dt className={styles.summaryLabel}>Plan</dt>
                 <dd className={styles.summaryValue}>
-                  <Pill tone="info">{planLabel(account.plan_tier)}</Pill>
-                  <span className={styles.summaryMeta}>{planDescription(account.plan_tier)}</span>
+                  <Pill tone="info">{planLabel(account.entitlement_plan_tier)}</Pill>
+                  <span className={styles.summaryMeta}>
+                    {planDescription(account.entitlement_plan_tier)}
+                  </span>
                 </dd>
               </div>
 
               <div className={styles.summaryItem}>
                 <dt className={styles.summaryLabel}>Status</dt>
                 <dd className={styles.summaryValue}>
-                  <Pill tone={statusVariant(account.subscription_status, account.plan_tier)}>
-                    {statusLabel(account.subscription_status, account.plan_tier)}
+                  <Pill tone={statusVariant(account.billing_status, account.billing_plan_tier)}>
+                    {statusLabel(account.billing_status, account.billing_plan_tier)}
                   </Pill>
                   <span className={styles.summaryMeta}>{statusSummary(account)}</span>
+                </dd>
+              </div>
+
+              <div className={styles.summaryItem}>
+                <dt className={styles.summaryLabel}>Access source</dt>
+                <dd className={styles.summaryValue}>
+                  <Pill tone="info">{sourceLabel(account.entitlement_source)}</Pill>
+                  {account.entitlement_expires_at && (
+                    <span className={styles.summaryMeta}>
+                      Expires {formatDateRange(null, account.entitlement_expires_at)}
+                    </span>
+                  )}
                 </dd>
               </div>
 
@@ -216,7 +242,10 @@ export default function SettingsBillingPaneBody() {
                 <dt className={styles.summaryLabel}>Billing period</dt>
                 <dd className={styles.summaryValue}>
                   <span className={styles.summaryText}>
-                    {formatDateRange(account.current_period_start, account.current_period_end)}
+                    {formatDateRange(
+                      account.subscription_current_period_start,
+                      account.subscription_current_period_end
+                    )}
                   </span>
                 </dd>
               </div>
@@ -253,7 +282,7 @@ export default function SettingsBillingPaneBody() {
             <div className={styles.entitlementRow}>
               <span>Sharing: {yesNo(account.can_share)}</span>
               <span>Platform AI: {yesNo(account.can_use_platform_llm)}</span>
-              <span>Transcription: {yesNo(account.transcription_usage.limit > 0)}</span>
+              <span>Transcription: {yesNo(account.can_transcribe)}</span>
             </div>
 
             {(showUpgradeActions || showManageBillingAction || actionHint) && (

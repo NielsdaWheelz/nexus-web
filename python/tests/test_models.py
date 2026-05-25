@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy import text
 
 from nexus.config import clear_settings_cache
+from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.crypto import MASTER_KEY_SIZE, _get_master_key
 from tests.factories import seed_test_models
 from tests.helpers import auth_headers, create_test_user_id
@@ -62,33 +63,21 @@ def setup_test_master_key(monkeypatch):
 
 
 def _seed_ai_plus_billing(direct_db: DirectSessionManager, user_id) -> None:
+    direct_db.register_cleanup("billing_entitlement_overrides", "user_id", user_id)
+    direct_db.register_cleanup("billing_entitlement_override_events", "user_id", user_id)
     with direct_db.session() as session:
-        session.execute(
-            text("""
-                INSERT INTO billing_accounts (
-                    id,
-                    user_id,
-                    plan_tier,
-                    subscription_status,
-                    current_period_start,
-                    current_period_end,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    gen_random_uuid(),
-                    :user_id,
-                    'ai_plus',
-                    'active',
-                    now(),
-                    now() + interval '30 days',
-                    now(),
-                    now()
-                )
-            """),
-            {"user_id": user_id},
+        grant_entitlement_override(
+            session,
+            user_id=user_id,
+            plan_tier="ai_plus",
+            platform_token_quota_mode="plan",
+            platform_token_limit_monthly=None,
+            transcription_quota_mode="plan",
+            transcription_minutes_limit_monthly=None,
+            expires_at=None,
+            reason="model test access",
+            actor_label="test",
         )
-        session.commit()
 
 
 class TestModelFiltering:

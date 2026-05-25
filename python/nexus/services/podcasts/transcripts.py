@@ -28,7 +28,8 @@ from nexus.errors import (
 )
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
-from nexus.services.billing import get_entitlements, get_transcription_usage
+from nexus.services.billing import get_transcription_usage
+from nexus.services.billing_entitlements import get_effective_entitlements
 from nexus.services.content_indexing import (
     CHUNKER_VERSION,
     mark_content_index_failed,
@@ -192,6 +193,11 @@ def request_podcast_transcript_for_viewer(
             "Transcript request is only supported for podcast episodes.",
         )
 
+    required_minutes = max(1, (duration_seconds + 59) // 60) if duration_seconds else 1
+    entitlements = get_effective_entitlements(db, viewer_id)
+    if not entitlements.can_transcribe:
+        raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Transcription requires an AI tier.")
+
     if transcript_state is None:
         _ensure_media_transcript_state_row(
             db,
@@ -202,19 +208,9 @@ def request_podcast_transcript_for_viewer(
         transcript_state = "not_requested"
         transcript_coverage = "none"
 
-    required_minutes = max(1, (duration_seconds + 59) // 60) if duration_seconds else 1
-    entitlements = get_entitlements(db, viewer_id)
     monthly_limit_minutes = entitlements.transcription_minutes_limit_monthly
-    if entitlements.current_period_start and entitlements.current_period_end:
-        usage_start_date = entitlements.current_period_start.date()
-        usage_end_date = entitlements.current_period_end.date()
-    else:
-        usage_start_date = date(usage_date.year, usage_date.month, 1)
-        usage_end_date = (
-            date(usage_date.year + 1, 1, 1)
-            if usage_date.month == 12
-            else date(usage_date.year, usage_date.month + 1, 1)
-        )
+    usage_start_date = entitlements.usage_period_start.date()
+    usage_end_date = entitlements.usage_period_end.date()
     usage_snapshot = get_transcription_usage(
         db,
         viewer_id,
@@ -222,8 +218,12 @@ def request_podcast_transcript_for_viewer(
         usage_end_date,
     )
     consumed_minutes = int(usage_snapshot["used"]) + int(usage_snapshot["reserved"])
-    remaining_minutes = max(0, int(monthly_limit_minutes) - consumed_minutes)
-    fits_budget = required_minutes <= remaining_minutes
+    remaining_minutes = (
+        None
+        if monthly_limit_minutes is None
+        else max(0, int(monthly_limit_minutes) - consumed_minutes)
+    )
+    fits_budget = remaining_minutes is None or required_minutes <= remaining_minutes
 
     already_ready = transcript_state in {"ready", "partial"} and transcript_coverage in {
         "partial",
@@ -380,9 +380,10 @@ def request_podcast_transcript_for_viewer(
         monthly_limit_minutes=monthly_limit_minutes,
         now=now,
     )
-    remaining_minutes_after = max(
-        0,
-        int(monthly_limit_minutes) - int(usage_snapshot_after["total"]),
+    remaining_minutes_after = (
+        None
+        if monthly_limit_minutes is None
+        else max(0, int(monthly_limit_minutes) - int(usage_snapshot_after["total"]))
     )
 
     existing_job_id = db.scalar(
@@ -1319,7 +1320,9 @@ def run_podcast_transcription_now(
         )
     try:
         transcription_result = _transcribe_podcast_audio(audio_url)
-    except Exception as exc:  # justify-ignore-error: provider boundary; recover into failed-status terminal record
+    except (
+        Exception
+    ) as exc:  # justify-ignore-error: provider boundary; recover into failed-status terminal record
         now = datetime.now(UTC)
         logger.exception(
             "podcast_transcription_unhandled_error",
@@ -1396,7 +1399,9 @@ def run_podcast_transcription_now(
                 transcript_segments=transcript_segments,
                 reason="podcast_transcription",
             )
-        except Exception as exc:  # justify-ignore-error: transcript text stays usable when semantic indexing fails
+        except (
+            Exception
+        ) as exc:  # justify-ignore-error: transcript text stays usable when semantic indexing fails
             semantic_status = "failed"
             error_code = (
                 exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INTERNAL.value
@@ -2027,7 +2032,7 @@ def _reserve_usage_minutes_or_raise(
     usage_start_date: date,
     usage_end_date: date,
     required_minutes: int,
-    monthly_limit_minutes: int,
+    monthly_limit_minutes: int | None,
     now: datetime,
 ) -> dict[str, int]:
     if required_minutes <= 0:
@@ -2054,44 +2059,65 @@ def _reserve_usage_minutes_or_raise(
         now=now,
     )
 
-    admitted_row = db.execute(
-        text(
-            """
-            UPDATE podcast_transcription_usage_daily AS usage
-            SET
-                minutes_reserved = usage.minutes_reserved + :required_minutes,
-                updated_at = :updated_at
-            WHERE usage.user_id = :user_id
-              AND usage.usage_date = :usage_date
-              AND (
-                    COALESCE(
-                        (
-                            SELECT SUM(other.minutes_used + other.minutes_reserved)
-                            FROM podcast_transcription_usage_daily other
-                            WHERE other.user_id = :user_id
-                              AND other.usage_date >= :usage_start_date
-                              AND other.usage_date < :usage_end_date
-                              AND other.usage_date <> :usage_date
-                        ),
-                        0
-                    )
-                    + usage.minutes_used
-                    + usage.minutes_reserved
-                    + :required_minutes
-                  ) <= :monthly_limit_minutes
-            RETURNING usage.minutes_used, usage.minutes_reserved
-            """
-        ),
-        {
-            "user_id": user_id,
-            "usage_date": usage_date,
-            "usage_start_date": usage_start_date,
-            "usage_end_date": usage_end_date,
-            "required_minutes": required_minutes,
-            "monthly_limit_minutes": monthly_limit_minutes,
-            "updated_at": now,
-        },
-    ).fetchone()
+    if monthly_limit_minutes is None:
+        admitted_row = db.execute(
+            text(
+                """
+                UPDATE podcast_transcription_usage_daily
+                SET
+                    minutes_reserved = minutes_reserved + :required_minutes,
+                    updated_at = :updated_at
+                WHERE user_id = :user_id
+                  AND usage_date = :usage_date
+                RETURNING minutes_used, minutes_reserved
+                """
+            ),
+            {
+                "user_id": user_id,
+                "usage_date": usage_date,
+                "required_minutes": required_minutes,
+                "updated_at": now,
+            },
+        ).fetchone()
+    else:
+        admitted_row = db.execute(
+            text(
+                """
+                UPDATE podcast_transcription_usage_daily AS usage
+                SET
+                    minutes_reserved = usage.minutes_reserved + :required_minutes,
+                    updated_at = :updated_at
+                WHERE usage.user_id = :user_id
+                  AND usage.usage_date = :usage_date
+                  AND (
+                        COALESCE(
+                            (
+                                SELECT SUM(other.minutes_used + other.minutes_reserved)
+                                FROM podcast_transcription_usage_daily other
+                                WHERE other.user_id = :user_id
+                                  AND other.usage_date >= :usage_start_date
+                                  AND other.usage_date < :usage_end_date
+                                  AND other.usage_date <> :usage_date
+                            ),
+                            0
+                        )
+                        + usage.minutes_used
+                        + usage.minutes_reserved
+                        + :required_minutes
+                      ) <= :monthly_limit_minutes
+                RETURNING usage.minutes_used, usage.minutes_reserved
+                """
+            ),
+            {
+                "user_id": user_id,
+                "usage_date": usage_date,
+                "usage_start_date": usage_start_date,
+                "usage_end_date": usage_end_date,
+                "required_minutes": required_minutes,
+                "monthly_limit_minutes": monthly_limit_minutes,
+                "updated_at": now,
+            },
+        ).fetchone()
     if admitted_row is None:
         usage_before = get_transcription_usage(db, user_id, usage_start_date, usage_end_date)
         logger.warning(
@@ -2298,7 +2324,9 @@ def _commit_reserved_usage_for_media(
             "updated_at": now,
         },
     )
-    assert result.rowcount == 1  # justify-service-invariant-check: ensured usage row exists.
+    assert (
+        getattr(result, "rowcount", 0) == 1
+    )  # justify-service-invariant-check: ensured usage row exists.
 
 
 def _normalize_terminal_transcription_error_code(raw_value: Any) -> str | None:
@@ -2590,5 +2618,3 @@ def _word_range_end_ms(raw_words: Any) -> int | None:
         if max_end_ms is None or end_ms > max_end_ms:
             max_end_ms = end_ms
     return max_end_ms
-
-
