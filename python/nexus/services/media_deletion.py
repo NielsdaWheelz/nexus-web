@@ -16,6 +16,7 @@ from nexus.logging import get_logger
 from nexus.schemas.media import DeleteDocumentResponse, DeleteDocumentStatus
 from nexus.services.content_indexing import delete_media_content_index
 from nexus.services.default_library_closure import remove_media_from_non_default_closure
+from nexus.services.libraries import normalize_library_entry_positions
 from nexus.storage.client import StorageError, get_storage_client
 
 if TYPE_CHECKING:
@@ -103,7 +104,7 @@ def delete_document_for_viewer(
             )
             if default_row is not None:
                 removed_from_library_ids.append(UUID(str(default_library_id)))
-            _normalize_library_entry_positions(db, default_library_id)
+            normalize_library_entry_positions(db, default_library_id)
 
         controlled_libraries = [
             row[0]
@@ -133,7 +134,7 @@ def delete_document_for_viewer(
                 {"library_id": library_id, "media_id": media_id},
             )
             remove_media_from_non_default_closure(db, library_id, media_id)
-            _normalize_library_entry_positions(db, library_id)
+            normalize_library_entry_positions(db, library_id)
             removed_from_library_ids.append(UUID(str(library_id)))
 
         _delete_viewer_media_state(db, viewer_id, media_id)
@@ -268,7 +269,7 @@ def remove_document_from_library(
             )
             remove_media_from_non_default_closure(db, library_id, media_id)
 
-        _normalize_library_entry_positions(db, library_id)
+        normalize_library_entry_positions(db, library_id)
 
         remaining_reference_count = _remaining_reference_count(db, media_id)
         if remaining_reference_count == 0:
@@ -708,26 +709,6 @@ def _gc_default_library_entry(db: Session, default_library_id: UUID, media_id: U
     )
 
 
-def _normalize_library_entry_positions(db: Session, library_id: UUID) -> None:
-    db.execute(
-        text("""
-            WITH ordered AS (
-                SELECT
-                    id,
-                    ROW_NUMBER() OVER (
-                        ORDER BY position ASC, created_at DESC, id DESC
-                    ) - 1 AS new_position
-                FROM library_entries
-                WHERE library_id = :library_id
-            )
-            UPDATE library_entries le
-            SET position = ordered.new_position
-            FROM ordered
-            WHERE le.id = ordered.id
-              AND le.position <> ordered.new_position
-        """),
-        {"library_id": library_id},
-    )
 
 
 def _delete_storage_objects(

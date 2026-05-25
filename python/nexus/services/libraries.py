@@ -726,7 +726,7 @@ def remove_podcast_from_library(
         ).fetchone()
         if deleted is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found in library")
-        _normalize_library_entry_positions(db, library_id)
+        normalize_library_entry_positions(db, library_id)
 
 
 def list_library_entries(
@@ -830,7 +830,7 @@ def reorder_library_entries(
                     "entry_id": entry_id,
                 },
             )
-        _normalize_library_entry_positions(db, library_id)
+        normalize_library_entry_positions(db, library_id)
 
     return list_library_entries(
         db,
@@ -855,7 +855,7 @@ def _next_library_entry_position(db: Session, library_id: UUID) -> int:
     return int(next_position)
 
 
-def _normalize_library_entry_positions(db: Session, library_id: UUID) -> None:
+def normalize_library_entry_positions(db: Session, library_id: UUID) -> None:
     db.execute(
         text("""
             WITH ordered AS (
