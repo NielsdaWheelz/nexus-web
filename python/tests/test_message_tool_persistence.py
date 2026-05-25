@@ -64,11 +64,11 @@ from nexus.services.chat_run_evidence import (
     finalize_message_evidence,
     message_prompt_evidence_rows,
 )
+from nexus.services.chat_run_finalize import finalize_run
 from nexus.services.chat_run_message_blocks import message_document_with_run_components
 from nexus.services.chat_run_prompt_tracking import reconcile_prompt_retrievals
 from nexus.services.chat_runs import (
     VERIFICATION_FAILURE_CONTENT,
-    _finalize_run,
     _verified_assistant_content,
 )
 from nexus.services.conversations import load_message_artifacts_for_message_ids, message_to_out
@@ -1585,7 +1585,7 @@ def test_finalize_run_persists_artifact_delta_rows(db_session: Session):
     )
     db_session.commit()
 
-    _finalize_run(
+    finalize_run(
         db_session,
         run_id=run.id,
         assistant_content="Done.",
@@ -2487,7 +2487,7 @@ async def test_verified_assistant_content_extracts_general_answer_claims_as_not_
         "not_source_grounded",
     ]
 
-    _finalize_run(
+    finalize_run(
         db_session,
         run_id=run.id,
         assistant_content=verified_content,
@@ -2699,7 +2699,7 @@ async def test_verified_assistant_content_removes_unsupported_claim_before_final
     assert verifier_hint["metadata"]["rewrote_answer"] is True
     assert verifier_hint["metadata"]["removed_claim_count"] == 1
 
-    _finalize_run(
+    finalize_run(
         db_session,
         run_id=run.id,
         assistant_content=verified_content,
@@ -2923,7 +2923,7 @@ async def test_verified_assistant_content_persists_all_contradicted_claims(
     assert verifier_hint["metadata"]["claim_statuses"][0]["answer_start_offset"] is None
     assert verifier_hint["metadata"]["final_unsupported_claim_count"] == 1
 
-    _finalize_run(
+    finalize_run(
         db_session,
         run_id=run.id,
         assistant_content=verified_content,
@@ -3202,7 +3202,7 @@ async def test_verified_assistant_content_fails_closed_when_verifier_generate_fa
         for item in verifier_hint["metadata"]["claim_statuses"]
     )
 
-    _finalize_run(
+    finalize_run(
         db_session,
         run_id=run.id,
         assistant_content=verified_content,

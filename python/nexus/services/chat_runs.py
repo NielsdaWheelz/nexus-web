@@ -29,7 +29,6 @@ from nexus.db.models import (
     ChatRunEvent,
     Conversation,
     Message,
-    MessageLLM,
     Model,
 )
 from nexus.errors import (
@@ -61,7 +60,6 @@ from nexus.services.api_key_resolver import (
     ResolvedKey,
     get_model_by_id,
     resolve_api_key,
-    update_user_key_status,
 )
 from nexus.services.chat_run_access import (
     copy_context_rows,
@@ -73,7 +71,6 @@ from nexus.services.chat_run_access import (
 from nexus.services.chat_run_artifact_persistence import (
     artifact_delta_from_model_response,
     artifact_error_delta,
-    persist_artifact_deltas_for_message,
 )
 from nexus.services.chat_run_claim_parsing import (
     ClaimCandidate,
@@ -91,8 +88,17 @@ from nexus.services.chat_run_event_store import (
     mark_running,
 )
 from nexus.services.chat_run_evidence import (
-    finalize_message_evidence,
     message_prompt_evidence_rows,
+)
+from nexus.services.chat_run_finalize import (
+    ERROR_CODE_TO_MESSAGE,
+    MAX_ASSISTANT_CONTENT_LENGTH,
+    TRUNCATION_NOTICE,
+    dummy_resolved_key,
+    finalize_cancelled,
+    finalize_error,
+    finalize_interrupted,
+    finalize_run,
 )
 from nexus.services.chat_run_idempotency import (
     compute_payload_hash,
@@ -104,15 +110,13 @@ from nexus.services.chat_run_idempotency import (
 )
 from nexus.services.chat_run_message_blocks import (
     message_document,
-    message_document_with_run_components,
     source_manifest_blocks_for_run,
 )
 from nexus.services.chat_run_prompt_tracking import (
-    prompt_assembly_metadata,
     reconcile_prompt_retrievals,
 )
 from nexus.services.chat_run_scope import is_source_backed_run, scope_constraints_for_run
-from nexus.services.chat_run_usage import usage_log_fields, usage_provider_json, usage_tokens
+from nexus.services.chat_run_usage import usage_log_fields, usage_tokens
 from nexus.services.chat_run_validation import load_valid_parent_for_send, validate_pre_phase
 from nexus.services.context_assembler import (
     assemble_chat_context,
@@ -161,8 +165,6 @@ from nexus.services.seq import assign_next_message_seq
 
 logger = get_logger(__name__)
 
-MAX_ASSISTANT_CONTENT_LENGTH = 50000
-TRUNCATION_NOTICE = "\n\n[Response truncated due to length]"
 LLM_TIMEOUT_SECONDS = 45.0
 ARTIFACT_OUTPUT_KINDS = frozenset(
     {
@@ -187,28 +189,6 @@ ARTIFACT_OUTPUT_KINDS = frozenset(
     }
 )
 
-ERROR_CODE_TO_MESSAGE = {
-    "E_LLM_TIMEOUT": "The model timed out while responding. Please try again.",
-    "E_LLM_RATE_LIMIT": "The model is temporarily rate-limited. Please try again shortly.",
-    "E_LLM_INVALID_KEY": "The configured API key is invalid or has been revoked.",
-    "E_LLM_PROVIDER_DOWN": "The model provider is currently unavailable. Please try again later.",
-    "E_LLM_BAD_REQUEST": (
-        "The request was rejected by the model provider. Please try a different model or setting."
-    ),
-    "E_LLM_CONTEXT_TOO_LARGE": "The context was too large for the model. Please try with less context.",
-    "E_MODEL_NOT_AVAILABLE": "The requested model is not available.",
-    "E_LLM_INTERRUPTED": "The model response was interrupted. Please try again.",
-    "E_LLM_INCOMPLETE": (
-        "The model ran out of output tokens before it could finish. "
-        "Try again with less context or a lower reasoning setting."
-    ),
-    "E_CONTEXT_TOO_LARGE": "One selected context is too large or unavailable. Remove it and try again.",
-    "E_APP_SEARCH_FAILED": "The scoped content search failed. Please try again.",
-    "E_CANCELLED": "Request cancelled.",
-    "E_TOKEN_BUDGET_EXCEEDED": "Monthly AI token quota exceeded.",
-}
-
-LLM_INCOMPLETE_ERROR_CODE = ApiErrorCode.E_LLM_INCOMPLETE.value
 REASONING_OUTPUT_TOKENS = 25000
 DEFAULT_OUTPUT_TOKENS = 4096
 
@@ -652,7 +632,7 @@ async def execute_chat_run(
             error=str(exc),
         )
         try:
-            _finalize_error(
+            finalize_error(
                 db,
                 run_id=run_id,
                 error_code=exc.code.value,
@@ -666,7 +646,7 @@ async def execute_chat_run(
     except Exception as exc:  # justify-ignore-error: chat-run boundary; finalize the run as failed and report E_INTERNAL
         logger.exception("chat_run.unhandled_error", run_id=str(run_id), error=str(exc))
         try:
-            _finalize_error(
+            finalize_error(
                 db,
                 run_id=run_id,
                 error_code=ApiErrorCode.E_INTERNAL.value,
@@ -697,12 +677,12 @@ async def _execute_chat_run(
         return {"status": "skipped", "reason": "terminal"}
 
     if has_delta_without_terminal(db, run.id):
-        _finalize_interrupted(db, run)
+        finalize_interrupted(db, run)
         return {"status": "error", "error_code": ApiErrorCode.E_LLM_INTERRUPTED.value}
 
     model = db.get(Model, run.model_id)
     if model is None:
-        _finalize_error(
+        finalize_error(
             db,
             run_id=run.id,
             error_code=ApiErrorCode.E_MODEL_NOT_AVAILABLE.value,
@@ -716,20 +696,20 @@ async def _execute_chat_run(
     if run is None or run.status in TERMINAL_RUN_STATUSES:
         return {"status": "skipped", "reason": "terminal"}
     if run.cancel_requested_at is not None:
-        _finalize_cancelled(db, run, model, None, 0)
+        finalize_cancelled(db, run, model, None, 0)
         return {"status": "cancelled"}
 
     try:
         resolved_key = resolve_api_key(db, run.owner_user_id, model.provider, run.key_mode)
     except LLMError as exc:
         error_code = LLM_ERROR_CODE_TO_API_ERROR_CODE[exc.error_code].value
-        _finalize_error(
+        finalize_error(
             db,
             run_id=run.id,
             error_code=error_code,
             viewer_id=run.owner_user_id,
             model=model,
-            resolved_key=_dummy_resolved_key(model),
+            resolved_key=dummy_resolved_key(model),
             key_mode=run.key_mode,
             assistant_content=ERROR_CODE_TO_MESSAGE["E_LLM_INVALID_KEY"],
         )
@@ -751,7 +731,7 @@ async def _execute_chat_run(
         conversation = db.get(Conversation, run.conversation_id)
         user_message = db.get(Message, run.user_message_id)
         if conversation is None or user_message is None:
-            _finalize_error(
+            finalize_error(
                 db,
                 run_id=run.id,
                 error_code=ApiErrorCode.E_CONVERSATION_NOT_FOUND.value,
@@ -881,7 +861,7 @@ async def _execute_chat_run(
             }:
                 error_code = app_search_run.error_code or ApiErrorCode.E_APP_SEARCH_FAILED.value
                 latency_ms = int((time.monotonic() - start_time) * 1000)
-                _finalize_error(
+                finalize_error(
                     db,
                     run_id=run.id,
                     error_code=error_code,
@@ -901,7 +881,7 @@ async def _execute_chat_run(
                 }
 
         if is_cancel_requested(db, run.id):
-            _finalize_cancelled(
+            finalize_cancelled(
                 db, run, model, resolved_key, int((time.monotonic() - start_time) * 1000)
             )
             return {"status": "cancelled"}
@@ -983,7 +963,7 @@ async def _execute_chat_run(
                     },
                 )
         if is_cancel_requested(db, run.id):
-            _finalize_cancelled(
+            finalize_cancelled(
                 db, run, model, resolved_key, int((time.monotonic() - start_time) * 1000)
             )
             return {"status": "cancelled"}
@@ -1011,7 +991,7 @@ async def _execute_chat_run(
                 remaining_tokens=exc.remaining_tokens,
             )
             error_code = exc.api_error_code.value
-            _finalize_error(
+            finalize_error(
                 db,
                 run_id=run.id,
                 error_code=error_code,
@@ -1031,7 +1011,7 @@ async def _execute_chat_run(
                 failure_message=failure.message if failure is not None else str(exc),
             )
             error_code = ApiErrorCode.E_CONTEXT_TOO_LARGE.value
-            _finalize_error(
+            finalize_error(
                 db,
                 run_id=run.id,
                 error_code=error_code,
@@ -1078,7 +1058,7 @@ async def _execute_chat_run(
                 source_backed=buffer_provider_deltas,
             )
             if is_cancel_requested(db, run.id):
-                _finalize_cancelled(
+                finalize_cancelled(
                     db,
                     run,
                     model,
@@ -1141,7 +1121,7 @@ async def _execute_chat_run(
                         locally_truncated = True
                         break
                 if is_cancel_requested(db, run.id):
-                    _finalize_cancelled(
+                    finalize_cancelled(
                         db,
                         run,
                         model,
@@ -1166,7 +1146,7 @@ async def _execute_chat_run(
                     latency_ms=int((time.monotonic() - llm_start) * 1000),
                 ),
             )
-            _finalize_error(
+            finalize_error(
                 db,
                 run_id=run.id,
                 error_code=error_code,
@@ -1182,7 +1162,7 @@ async def _execute_chat_run(
 
         if not terminal_seen and not locally_truncated:
             latency_ms = int((time.monotonic() - start_time) * 1000)
-            _finalize_error(
+            finalize_error(
                 db,
                 run_id=run.id,
                 error_code=ApiErrorCode.E_LLM_INTERRUPTED.value,
@@ -1203,17 +1183,17 @@ async def _execute_chat_run(
                 **safe_kv(
                     **llm_log_fields,
                     outcome="error",
-                    error_class=LLM_INCOMPLETE_ERROR_CODE,
+                    error_class=ApiErrorCode.E_LLM_INCOMPLETE.value,
                     incomplete_reason=incomplete_reason,
                     latency_ms=int((time.monotonic() - llm_start) * 1000),
                     **usage_log_fields(usage),
                     provider_request_id=provider_request_id,
                 ),
             )
-            _finalize_error(
+            finalize_error(
                 db,
                 run_id=run.id,
-                error_code=LLM_INCOMPLETE_ERROR_CODE,
+                error_code=ApiErrorCode.E_LLM_INCOMPLETE.value,
                 viewer_id=run.owner_user_id,
                 model=model,
                 resolved_key=resolved_key,
@@ -1222,7 +1202,7 @@ async def _execute_chat_run(
                 usage=usage,
                 provider_request_id=provider_request_id,
             )
-            return {"status": "error", "error_code": LLM_INCOMPLETE_ERROR_CODE}
+            return {"status": "error", "error_code": ApiErrorCode.E_LLM_INCOMPLETE.value}
 
         if usage_tokens(usage)["total_tokens"] is None:
             latency_ms = int((time.monotonic() - start_time) * 1000)
@@ -1238,7 +1218,7 @@ async def _execute_chat_run(
                     provider_request_id=provider_request_id,
                 ),
             )
-            _finalize_error(
+            finalize_error(
                 db,
                 run_id=run.id,
                 error_code=error_code,
@@ -1275,7 +1255,7 @@ async def _execute_chat_run(
             append_and_commit(db, run.id, "delta", {"delta": verified_content})
 
         latency_ms = int((time.monotonic() - start_time) * 1000)
-        _finalize_run(
+        finalize_run(
             db,
             run_id=run.id,
             assistant_content=verified_content,
@@ -1640,88 +1620,6 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
         ),
         user_message=user_message_out,
         assistant_message=assistant_message_out,
-    )
-
-
-def _finalize_error(
-    db: Session,
-    *,
-    run_id: UUID,
-    error_code: str,
-    viewer_id: UUID | None,
-    model: Model | None = None,
-    resolved_key: ResolvedKey | None = None,
-    key_mode: str = "auto",
-    latency_ms: int = 0,
-    usage: LLMUsage | None = None,
-    provider_request_id: str | None = None,
-    assistant_content: str | None = None,
-) -> None:
-    """Finalize a run as an error using the standard error/error/error status shape.
-
-    Defaults `assistant_content` to `ERROR_CODE_TO_MESSAGE[error_code]` with a
-    generic fallback when the code is unknown.
-    """
-    content = (
-        assistant_content
-        if assistant_content is not None
-        else ERROR_CODE_TO_MESSAGE.get(
-            error_code, "An unexpected error occurred. Please try again."
-        )
-    )
-    _finalize_run(
-        db,
-        run_id=run_id,
-        assistant_content=content,
-        assistant_status="error",
-        run_status="error",
-        done_status="error",
-        error_code=error_code,
-        model=model,
-        resolved_key=resolved_key,
-        key_mode=key_mode,
-        latency_ms=latency_ms,
-        usage=usage,
-        provider_request_id=provider_request_id,
-        viewer_id=viewer_id,
-    )
-
-
-def _finalize_interrupted(db: Session, run: ChatRun) -> None:
-    model = db.get(Model, run.model_id)
-    _finalize_error(
-        db,
-        run_id=run.id,
-        error_code=ApiErrorCode.E_LLM_INTERRUPTED.value,
-        viewer_id=run.owner_user_id,
-        model=model,
-        resolved_key=_dummy_resolved_key(model) if model is not None else None,
-        key_mode=run.key_mode,
-    )
-
-
-def _finalize_cancelled(
-    db: Session,
-    run: ChatRun,
-    model: Model,
-    resolved_key: ResolvedKey | None,
-    latency_ms: int,
-) -> None:
-    _finalize_run(
-        db,
-        run_id=run.id,
-        assistant_content=ERROR_CODE_TO_MESSAGE["E_CANCELLED"],
-        assistant_status="error",
-        run_status="cancelled",
-        done_status="cancelled",
-        error_code=ApiErrorCode.E_CANCELLED.value,
-        model=model,
-        resolved_key=resolved_key,
-        key_mode=run.key_mode,
-        latency_ms=latency_ms,
-        usage=None,
-        provider_request_id=None,
-        viewer_id=run.owner_user_id,
     )
 
 
@@ -2212,111 +2110,3 @@ async def _extract_claim_candidates(
     return parse_claim_extractor_response(response.text, assistant_content=assistant_content)
 
 
-def _finalize_run(
-    db: Session,
-    *,
-    run_id: UUID,
-    assistant_content: str,
-    assistant_status: str,
-    run_status: str,
-    done_status: str,
-    error_code: str | None,
-    model: Model | None,
-    resolved_key: ResolvedKey | None,
-    key_mode: str,
-    latency_ms: int,
-    usage: LLMUsage | None,
-    provider_request_id: str | None,
-    viewer_id: UUID | None,
-    verifier_hint: dict[str, Any] | None = None,
-) -> None:
-    run = (
-        db.execute(select(ChatRun).where(ChatRun.id == run_id).with_for_update()).scalars().first()
-    )
-    if run is None or run.status in TERMINAL_RUN_STATUSES:
-        db.commit()
-        return
-
-    assistant_message = db.get(Message, run.assistant_message_id)
-    if assistant_message is not None:
-        content = assistant_content
-        if assistant_status == "complete" and len(content) > MAX_ASSISTANT_CONTENT_LENGTH:
-            content = content[:MAX_ASSISTANT_CONTENT_LENGTH] + TRUNCATION_NOTICE
-        assistant_message.content = content
-        assistant_message.status = assistant_status
-        assistant_message.error_code = error_code
-        assistant_message.updated_at = datetime.now(UTC)
-        if assistant_status == "complete":
-            persist_artifact_deltas_for_message(db, run=run, assistant_message=assistant_message)
-            claim_events, claim_evidence_events = finalize_message_evidence(
-                db,
-                run,
-                assistant_message,
-                verifier_hint,
-            )
-            assistant_message.message_document = message_document_with_run_components(
-                db,
-                run_id=run.id,
-                role="assistant",
-                content=content,
-            )
-            for claim_event in claim_events:
-                append_run_event(db, run, "claim", claim_event)
-            for claim_evidence_event in claim_evidence_events:
-                append_run_event(db, run, "claim_evidence", claim_evidence_event)
-        else:
-            assistant_message.message_document = message_document_with_run_components(
-                db,
-                run_id=run.id,
-                role="assistant",
-                content=content,
-            )
-
-    key = resolved_key or (model and _dummy_resolved_key(model))
-    if assistant_message is not None and model is not None and key is not None:
-        existing_llm = db.get(MessageLLM, assistant_message.id)
-        target = existing_llm or MessageLLM(message_id=assistant_message.id)
-        tokens = usage_tokens(usage)
-        prompt_plan_version, stable_prefix_hash = prompt_assembly_metadata(db, run_id=run.id)
-        target.provider = model.provider
-        target.model_name = model.model_name
-        target.input_tokens = tokens["input_tokens"]
-        target.output_tokens = tokens["output_tokens"]
-        target.total_tokens = tokens["total_tokens"]
-        target.reasoning_tokens = tokens["reasoning_tokens"]
-        target.cache_write_input_tokens = tokens["cache_write_input_tokens"]
-        target.cache_read_input_tokens = tokens["cache_read_input_tokens"]
-        target.cached_input_tokens = tokens["cached_input_tokens"]
-        target.key_mode_requested = key_mode
-        target.key_mode_used = key.mode
-        target.latency_ms = latency_ms
-        target.error_class = error_code if assistant_status == "error" else None
-        target.provider_request_id = provider_request_id
-        target.prompt_version = PROMPT_VERSION
-        target.prompt_plan_version = prompt_plan_version
-        target.stable_prefix_hash = stable_prefix_hash
-        target.provider_usage = usage_provider_json(usage)
-        if existing_llm is None:
-            db.add(target)
-
-        if key.mode == "byok":
-            if assistant_status == "complete":
-                update_user_key_status(db, key.user_key_id, "valid")
-            elif error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
-                update_user_key_status(db, key.user_key_id, "invalid")
-
-    run.status = run_status
-    run.error_code = error_code
-    run.completed_at = datetime.now(UTC)
-    run.updated_at = datetime.now(UTC)
-    done_payload: dict[str, Any] = {"status": done_status}
-    if error_code is not None:
-        done_payload["error_code"] = error_code
-    if assistant_message is not None and done_status == "complete":
-        done_payload["final_chars"] = len(assistant_message.content)
-    append_run_event(db, run, "done", done_payload)
-    db.commit()
-
-
-def _dummy_resolved_key(model: Model) -> ResolvedKey:
-    return ResolvedKey(api_key="", mode="platform", provider=model.provider, user_key_id=None)
