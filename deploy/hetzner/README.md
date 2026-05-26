@@ -87,6 +87,11 @@ environment in `apps/web`; run `vercel link` there first if the project is not
 linked. It keeps `NEXUS_INTERNAL_SECRET` sensitive and only leaves public
 frontend/runtime values readable for verification.
 
+Frontend production deploys are GitHub-triggered from `main` by the Vercel Git
+integration. Do not run a manual `vercel deploy --prod` in the normal publish
+path; reserve the CLI deploy command for explicit recovery or force-deploy
+operations.
+
 ## DNS
 
 Point an `A` record for `api.example.com` at the Hetzner server IPv4 address.

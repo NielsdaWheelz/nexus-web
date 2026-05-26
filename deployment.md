@@ -189,7 +189,12 @@ FASTAPI_BASE_URL=https://api.nexus.nielseriknandal.com
 NEXT_PUBLIC_SUPABASE_URL=https://jiaozhsisiphjtomoamy.supabase.co
 ```
 
-After syncing Vercel env, deploy production from the repo root:
+Frontend production deploys are GitHub-triggered. Push `main` to GitHub and let
+the Vercel Git integration build and promote the production deployment for
+`niels-erik-nandals-projects/nexus-web`.
+
+Use the CLI only for exceptional manual recovery or an explicitly requested
+force deploy, not for the normal publish path:
 
 ```bash
 vercel deploy --prod --scope niels-erik-nandals-projects
