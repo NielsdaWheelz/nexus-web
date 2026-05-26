@@ -92,6 +92,7 @@ class MediaOut(BaseModel):
     description: str | None = None
     description_html: str | None = None
     description_text: str | None = None
+    metadata_enriched_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

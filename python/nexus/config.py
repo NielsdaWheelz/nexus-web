@@ -357,6 +357,9 @@ class Settings(BaseSettings):
     metadata_enrichment_max_content_chars: int = Field(
         default=2000, alias="METADATA_ENRICHMENT_MAX_CONTENT_CHARS"
     )
+    metadata_enrichment_max_output_tokens: int = Field(
+        default=1200, alias="METADATA_ENRICHMENT_MAX_OUTPUT_TOKENS"
+    )
 
     # Stream token auth.
     # HS256 signing key for short-lived stream tokens (base64-encoded 32+ bytes)

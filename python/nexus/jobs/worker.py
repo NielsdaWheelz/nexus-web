@@ -124,12 +124,46 @@ class JobWorker:
 
         try:
             handler_result = definition.handler(payload=claimed.payload)
+            result_payload = _normalize_result_payload(handler_result)
+            failed_result_statuses = set(definition.failed_result_statuses)
+            if str(result_payload.get("status") or "") in failed_result_statuses:
+                error_code = str(result_payload.get("error_code") or "E_WORKER_TASK_FAILED")
+                reason = str(result_payload.get("reason") or "task returned failed status")
+                with self.session_factory() as db:
+                    transition = fail_job(
+                        db,
+                        job_id=claimed.id,
+                        worker_id=self.worker_id,
+                        error_code=error_code,
+                        error_message=reason,
+                        retry_delays_seconds=definition.retry_delays_seconds,
+                        result_payload=result_payload,
+                    )
+                    db.commit()
+                if transition is None:
+                    logger.warning(
+                        "worker_job_fail_rejected_lost_ownership",
+                        worker_id=self.worker_id,
+                        job_id=str(claimed.id),
+                        kind=claimed.kind,
+                    )
+                else:
+                    logger.warning(
+                        "worker_job_task_failed",
+                        worker_id=self.worker_id,
+                        job_id=str(claimed.id),
+                        kind=claimed.kind,
+                        status=transition,
+                        error_code=error_code,
+                    )
+                return True
+
             with self.session_factory() as db:
                 completed = complete_job(
                     db,
                     job_id=claimed.id,
                     worker_id=self.worker_id,
-                    result_payload=_normalize_result_payload(handler_result),
+                    result_payload=result_payload,
                 )
                 db.commit()
             if completed:

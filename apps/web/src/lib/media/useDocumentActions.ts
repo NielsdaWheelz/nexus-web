@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { usePaneRouter } from "@/lib/panes/paneRuntime";
+import { retryMediaMetadata, retryMediaSource } from "@/lib/media/retryClient";
 
 interface DocumentDeleteResponse {
   data: {
@@ -40,11 +41,13 @@ interface UseDocumentActionsOptions {
   media: DocumentActionTarget | null;
   /** Called after a retry/refresh API call succeeds; component resets its local content state. */
   onProcessingRestarted: (options: { resetRefreshSource: boolean }) => void;
+  onMetadataRetryEnqueued?: () => void;
 }
 
 export function useDocumentActions({
   media,
   onProcessingRestarted,
+  onMetadataRetryEnqueued,
 }: UseDocumentActionsOptions): DocumentActions {
   const router = usePaneRouter();
   const feedback = useFeedback();
@@ -85,10 +88,7 @@ export function useDocumentActions({
     }
     setRetryBusy(true);
     try {
-      await apiFetch(`/api/media/${media.id}/retry`, {
-        method: "POST",
-        body: JSON.stringify({ from_stage: "source" }),
-      });
+      await retryMediaSource(media.id);
       onProcessingRestarted({ resetRefreshSource: false });
       feedback.show({
         severity: "success",
@@ -122,15 +122,20 @@ export function useDocumentActions({
   }, [feedback, media, onProcessingRestarted, refreshBusy]);
 
   const handleRetryMetadata = useCallback(async () => {
-    if (!media || retryMetadataBusy || !media.capabilities?.can_retry_metadata) {
+    if (!media || retryMetadataBusy) {
+      return;
+    }
+    if (!media.capabilities?.can_retry_metadata) {
+      feedback.show({
+        severity: "warning",
+        title: "Only the creator can re-enrich metadata.",
+      });
       return;
     }
     setRetryMetadataBusy(true);
     try {
-      await apiFetch(`/api/media/${media.id}/retry`, {
-        method: "POST",
-        body: JSON.stringify({ from_stage: "metadata" }),
-      });
+      await retryMediaMetadata(media.id);
+      onMetadataRetryEnqueued?.();
       feedback.show({
         severity: "success",
         title: "Metadata re-enrichment started.",
@@ -142,7 +147,7 @@ export function useDocumentActions({
     } finally {
       setRetryMetadataBusy(false);
     }
-  }, [feedback, media, retryMetadataBusy]);
+  }, [feedback, media, onMetadataRetryEnqueued, retryMetadataBusy]);
 
   return {
     deleteBusy,

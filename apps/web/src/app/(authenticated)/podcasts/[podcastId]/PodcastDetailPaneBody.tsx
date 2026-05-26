@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { apiFetch } from "@/lib/api/client";
+import { retryMediaSource } from "@/lib/media/retryClient";
 import {
   episodeResourceOptions,
   podcastResourceOptions,
@@ -717,9 +718,8 @@ export default function PodcastDetailPaneBody() {
       busyMediaIds.add(mediaId);
       setError(null);
       try {
-        const response = await apiFetch<{ data: PodcastEpisodeMedia }>(
-          `/api/media/${mediaId}/retry`,
-          { method: "POST" },
+        const response = await retryMediaSource<{ data: PodcastEpisodeMedia }>(
+          mediaId,
         );
         setEpisodes((prev) =>
           prev.map((episode) =>

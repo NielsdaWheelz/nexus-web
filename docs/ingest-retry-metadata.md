@@ -1,8 +1,8 @@
 # Spec: Per-Stage Reingest — Metadata Retry & Broadened Source Refresh
 
-Status: proposal
+Status: implemented; reliability hardened
 Owner: ingestion pipeline
-Hard cutover. No legacy code, no fallbacks, no backward compatibility.
+Hard cutover. No legacy retry API fallback and no backward compatibility for body-less retry calls.
 
 ---
 
@@ -11,11 +11,11 @@ Hard cutover. No legacy code, no fallbacks, no backward compatibility.
 The ingestion pipeline has four stages — fetch, extract, chunk, embed — plus a follow-on LLM metadata enrichment step. Today:
 
 - The entire deterministic pipeline (fetch → extract → chunk → embed) runs as one monolithic job per media kind (`ingest_pdf`, `ingest_epub`, `ingest_web_article`, `ingest_youtube_video`). It's automatically retried up to 3 times by the job queue on transient failure.
-- `enrich_metadata` runs as a separate job, dispatched at end of extract. It has `max_attempts=1`, never raises (every failure branch returns `{"status": "skipped", "reason": ...}`), and never overwrites populated fields.
+- `enrich_metadata` runs as a separate job, dispatched at end of extract. It has `max_attempts=1`; failed task results are treated as failed background jobs for this job kind while still recording a soft `Media.failure_stage='metadata'` warning.
 - `POST /api/media/{id}/retry` is the only user-triggerable retry, and it only works when `processing_status='failed'`.
 - `POST /api/media/{id}/refresh` re-runs the source-acquisition path, but only for `web_article`, `video`, `podcast_episode`. Uploaded files (pdf, epub) cannot be refreshed.
 
-**Concrete user pain:** an EPUB ingested cleanly — `processing_status='ready'` — but LLM metadata is "a little messy" (e.g., the title field still contains the file name). There is no way to re-run metadata enrichment without dropping into the database. There is also no failure record anywhere, because the LLM call may have succeeded with poor output, or may have silently failed and been swallowed.
+**Concrete user pain:** an EPUB ingested cleanly — `processing_status='ready'` — but LLM metadata is "a little messy" (e.g., the title field still contains the file name). Metadata retry exists, but reliability hardening is required so malformed provider output, empty structured output, and provider misconfiguration are observable and do not look like successful work.
 
 ## 2. Goals
 
@@ -32,7 +32,7 @@ The ingestion pipeline has four stages — fetch, extract, chunk, embed — plus
 - NG4. No CLI script.
 - NG5. No backward compatibility for `POST /retry`'s previously body-less shape. Hard cutover — body becomes required.
 - NG6. No automatic re-enrichment cadence, scheduled retry, drift detection.
-- NG7. No change to `enrich_metadata` model selection, provider routing, or prompt content.
+- NG7. No chat-agent public web-search tool loop for metadata enrichment. Public web lookup should be a separate bounded metadata service if added later.
 - NG8. No command palette entries (palette is global-only post-cutover; `docs/command-palette-global-cutover.md`).
 - NG9. No mobile (Android) changes — app is consumption-only.
 
@@ -135,20 +135,22 @@ Flow:
 1. Load `Media`. Skip if missing (`{status:"skipped", reason:"media_not_found"}`).
 2. Skip if `processing_status == 'extracting'` (`reason: "not_ready"`).
 3. **Detect gaps.** If `force=False AND not has_any_gaps(gaps)` → `reason: "no_gaps"`. If `force=True`, treat every field as a gap (use `all_gaps()`).
-4. Select provider. Skip if none (`reason: "no_provider"`).
-5. Call LLM. On **any** failure path (`llm_failed`, `llm_incomplete`, `parse_failed`, `unexpected_error`):
+4. Select configured providers in reliability-first fallback order. If none are configured, record `E_METADATA_NO_PROVIDER`.
+5. Call LLM providers with bounded fallback. Parse model output through the strict metadata JSON contract before merging.
+6. On **any** terminal failure path (`llm_failed`, `llm_incomplete`, `parse_failed`, `no_fields`, `unexpected_error`):
    - Set `media.failure_stage = FailureStage.metadata`.
    - Set `media.last_error_code` (LLM error class or fixed code like `E_METADATA_PARSE_FAILED`).
    - Set `media.last_error_message` (truncated to 1000 chars).
+   - Update `media.updated_at`.
    - **Do not modify** `media.processing_status`.
    - Commit.
-   - Return `{status: "failed", reason: ...}`.
-6. On success:
+   - Return `{status: "failed", reason: ..., error_code: ..., attempted_providers: [...]}`. The worker records that result on the background job failure/dead row.
+7. On success:
    - `merge_enrichment(db, media, enrichment, gaps, force_overwrite=force)`. When `force_overwrite=True`, drop the "only fill if missing" guards and let the new values replace existing ones (subject to existing length caps).
-   - `media.metadata_enriched_at = now()`.
+   - If at least one field is accepted, set `media.metadata_enriched_at = now()` and `media.updated_at = now()`.
    - Clear `media.failure_stage / last_error_code / last_error_message` if they were `metadata`-related.
    - Commit.
-   - Return `{status: "success", fields: [...]}`.
+   - Return `{status: "success", fields: [...], provider: ..., model: ...}`.
 
 `max_attempts` stays at 1. The user is the retry boundary.
 
@@ -280,7 +282,7 @@ Flow:
 4. **One `/retry` endpoint with body** instead of two endpoints. Avoids endpoint proliferation and makes the stage selection explicit at every call site.
 5. **Hard cutover: body required.** No `from_stage` default. Forces explicitness; any client that called the old endpoint silently is broken loudly, which is the desired behavior.
 6. **Broaden `/refresh` instead of adding `/reprocess`.** Same user intent, same backend mechanics for pdf/epub as for url-backed kinds.
-7. **`max_attempts=1` stays** on `enrich_metadata`. The user is the retry boundary; automatic LLM retry on the cheap-model tier is wasteful.
+7. **`max_attempts=1` stays** on `enrich_metadata`. The user is the retry boundary; provider fallback inside one attempt is allowed because it is the smallest useful operation boundary.
 8. **No dedupe on the metadata enqueue.** Repeat clicks cost one LLM call each; frontend `retryMetadataBusy` is sufficient.
 9. **No new failure-history table.** Most-recent-failure semantics on `Media` match the rest of the codebase. `background_jobs` retains job-level history.
 10. **No backend rate limit on re-enrich.** Per simplicity rule. Reconsider if abuse becomes a real problem.
@@ -321,7 +323,7 @@ Flow:
 
 - O1. Soft-warning chip placement in `MediaPaneBody.tsx` — header chip vs. banner above doc body. Choose during implementation; header chip is the default per pane conventions.
 - O2. Translating the FastAPI 422 from a body-less `/retry` into a friendlier `E_INVALID_REQUEST` envelope. Default: leave as 422.
-- O3. Whether `metadata_enriched_at` bumps when force-retry produces no field changes (e.g., LLM returned empty object). Default: yes — the timestamp records the most-recent enrichment attempt outcome, not just last field change.
+- O3. Whether `metadata_enriched_at` bumps when force-retry produces no accepted fields. Current behavior: no. Empty or non-applicable output is a visible metadata failure (`E_METADATA_NO_FIELDS`) rather than a silent successful no-op.
 - O4. Whether the "Re-enrich metadata" item is always visible when capability is true, or hidden by default and surfaced only when `failure_stage='metadata'` plus a "More" expansion. Default: always visible.
 
 ## 13. Out-of-scope follow-ups (won't be done in this change)

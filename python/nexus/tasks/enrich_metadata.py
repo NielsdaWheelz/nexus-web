@@ -7,6 +7,7 @@ failures are recorded as `failure_stage='metadata'` on the media row
 
 import asyncio
 import time
+from datetime import UTC, datetime
 from uuid import UUID
 
 import httpx
@@ -17,6 +18,7 @@ from llm_calling.types import LLMRequest, Turn
 from nexus.config import get_settings
 from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.db.session import get_session_factory
+from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.metadata_enrichment import (
     MetadataGaps,
@@ -26,7 +28,7 @@ from nexus.services.metadata_enrichment import (
     has_any_gaps,
     merge_enrichment,
     parse_enrichment_response,
-    select_enrichment_provider,
+    select_enrichment_providers,
 )
 from nexus.services.redact import safe_kv
 
@@ -40,16 +42,48 @@ _READY_STATES = frozenset(
         ProcessingStatus.ready_for_reading,
         ProcessingStatus.embedding,
         ProcessingStatus.ready,
-        ProcessingStatus.failed,
     }
 )
 
 
 def _record_metadata_failure(media: Media, error_code: str, error_message: str) -> None:
     """Write failure_stage=metadata + last_error_* without touching processing_status."""
+    if media.processing_status == ProcessingStatus.failed:
+        return
     media.failure_stage = FailureStage.metadata
     media.last_error_code = error_code
     media.last_error_message = error_message[:_MAX_ERROR_MSG_LEN]
+    media.updated_at = datetime.now(UTC)
+
+
+def _failed_result(
+    *,
+    reason: str,
+    error_code: str,
+    provider: str | None = None,
+    model: str | None = None,
+    attempted_providers: list[dict[str, str]] | None = None,
+) -> dict:
+    result: dict[str, object] = {
+        "status": "failed",
+        "reason": reason,
+        "error_code": error_code,
+    }
+    if provider:
+        result["provider"] = provider
+    if model:
+        result["model"] = model
+    if attempted_providers:
+        result["attempted_providers"] = attempted_providers
+    return result
+
+
+def _llm_error_code(exc: Exception) -> str:
+    if isinstance(exc, LLMError):
+        return LLM_ERROR_CODE_TO_API_ERROR_CODE.get(
+            exc.error_code, ApiErrorCode.E_LLM_PROVIDER_DOWN
+        ).value
+    return ApiErrorCode.E_LLM_PROVIDER_DOWN.value
 
 
 def enrich_metadata(
@@ -105,154 +139,214 @@ def enrich_metadata(
             if not has_any_gaps(gaps):
                 return {"status": "skipped", "reason": "no_gaps"}
 
-        # Select provider
-        provider_info = select_enrichment_provider(settings)
-        if provider_info is None:
-            return {"status": "skipped", "reason": "no_provider"}
-
-        provider, model, api_key = provider_info
-
-        # Build content sample and prompt
-        content_sample = get_content_sample(db, media)
-        prompt = build_enrichment_prompt(db, media, content_sample, gaps)
-
-        # Call LLM
-        req = LLMRequest(
-            model_name=model,
-            messages=[Turn(role="user", content=prompt)],
-            max_tokens=512,
-            temperature=0.0,
-        )
-
-        llm_start = time.monotonic()
-        llm_log_fields = safe_kv(
-            provider=provider,
-            model_name=req.model_name,
-            reasoning_effort=req.reasoning_effort,
-            key_mode="platform",
-            streaming=False,
-            llm_operation="metadata_enrichment",
-            media_id=media_id,
-            message_chars=sum(len(message.content) for message in req.messages),
-        )
-        logger.info("llm.request.started", **llm_log_fields)
-
-        try:
-
-            async def _call():
-                async with httpx.AsyncClient() as client:
-                    router = LLMRouter(
-                        client,
-                        enable_openai=settings.enable_openai,
-                        enable_anthropic=settings.enable_anthropic,
-                        enable_gemini=settings.enable_gemini,
-                        enable_deepseek=settings.enable_deepseek,
-                    )
-                    return await router.generate(provider, req, api_key, timeout_s=30)
-
-            # Use an explicit event loop so the handler stays self-contained in
-            # the long-lived worker process.
-            loop = asyncio.new_event_loop()
-            try:
-                response = loop.run_until_complete(_call())
-            finally:
-                loop.close()
-        except Exception as exc:
-            error_code = exc.error_code.value if isinstance(exc, LLMError) else None
-            logger.error(
-                "llm.request.failed",
-                **safe_kv(
-                    **llm_log_fields,
-                    outcome="error",
-                    error_class=error_code,
-                    latency_ms=int((time.monotonic() - llm_start) * 1000),
-                    exception_type=type(exc).__name__,
-                ),
-            )
-            logger.warning(
-                "enrich_metadata_llm_failed",
-                media_id=media_id,
-                provider=provider,
-                error=str(exc),
-            )
+        providers = select_enrichment_providers(settings)
+        if not providers:
+            error_code = ApiErrorCode.E_METADATA_NO_PROVIDER.value
             _record_metadata_failure(
                 media,
-                error_code or "E_METADATA_LLM_FAILED",
-                str(exc),
+                error_code,
+                "No metadata enrichment provider is configured.",
             )
             db.commit()
-            return {"status": "failed", "reason": "llm_failed"}
+            return _failed_result(reason="no_provider", error_code=error_code)
 
-        if response.status == "incomplete":
-            usage = response.usage
-            logger.error(
-                "llm.request.failed",
+        content_sample = get_content_sample(db, media)
+        prompt = build_enrichment_prompt(db, media, content_sample, gaps)
+        attempted_providers: list[dict[str, str]] = []
+        last_failure = {
+            "reason": "llm_failed",
+            "error_code": ApiErrorCode.E_LLM_PROVIDER_DOWN.value,
+            "error_message": "Metadata enrichment did not complete.",
+            "provider": None,
+            "model": None,
+        }
+
+        for provider, model, api_key in providers:
+            attempted_providers.append({"provider": provider, "model": model})
+            req = LLMRequest(
+                model_name=model,
+                messages=[Turn(role="user", content=prompt)],
+                max_tokens=settings.metadata_enrichment_max_output_tokens,
+                temperature=0.0,
+            )
+
+            llm_start = time.monotonic()
+            llm_log_fields = safe_kv(
+                provider=provider,
+                model_name=req.model_name,
+                reasoning_effort=req.reasoning_effort,
+                key_mode="platform",
+                streaming=False,
+                llm_operation="metadata_enrichment",
+                media_id=media_id,
+                message_chars=sum(len(message.content) for message in req.messages),
+            )
+            logger.info("llm.request.started", **llm_log_fields)
+
+            try:
+
+                async def _call(provider=provider, req=req, api_key=api_key):
+                    async with httpx.AsyncClient() as client:
+                        router = LLMRouter(
+                            client,
+                            enable_openai=settings.enable_openai,
+                            enable_anthropic=settings.enable_anthropic,
+                            enable_gemini=settings.enable_gemini,
+                            enable_deepseek=settings.enable_deepseek,
+                        )
+                        return await router.generate(provider, req, api_key, timeout_s=30)
+
+                # Use an explicit event loop so the handler stays self-contained in
+                # the long-lived worker process.
+                loop = asyncio.new_event_loop()
+                try:
+                    response = loop.run_until_complete(_call())
+                finally:
+                    loop.close()
+            except Exception as exc:
+                error_code = _llm_error_code(exc)
+                logger.error(
+                    "llm.request.failed",
+                    **safe_kv(
+                        **llm_log_fields,
+                        outcome="error",
+                        error_class=error_code,
+                        latency_ms=int((time.monotonic() - llm_start) * 1000),
+                        exception_type=type(exc).__name__,
+                    ),
+                )
+                logger.warning(
+                    "enrich_metadata_llm_failed",
+                    media_id=media_id,
+                    provider=provider,
+                    model=model,
+                    error=str(exc),
+                )
+                last_failure = {
+                    "reason": "llm_failed",
+                    "error_code": error_code,
+                    "error_message": str(exc),
+                    "provider": provider,
+                    "model": model,
+                }
+                continue
+
+            if getattr(response, "status", None) == "incomplete":
+                usage = getattr(response, "usage", None)
+                logger.error(
+                    "llm.request.failed",
+                    **safe_kv(
+                        **llm_log_fields,
+                        outcome="error",
+                        error_class=ApiErrorCode.E_LLM_INCOMPLETE.value,
+                        incomplete_details=getattr(response, "incomplete_details", None),
+                        latency_ms=int((time.monotonic() - llm_start) * 1000),
+                        tokens_input=usage.input_tokens if usage else None,
+                        tokens_output=usage.output_tokens if usage else None,
+                        tokens_total=usage.total_tokens if usage else None,
+                        tokens_reasoning=usage.reasoning_tokens if usage else None,
+                        provider_request_id=getattr(response, "provider_request_id", None),
+                    ),
+                )
+                last_failure = {
+                    "reason": "llm_incomplete",
+                    "error_code": ApiErrorCode.E_LLM_INCOMPLETE.value,
+                    "error_message": str(
+                        getattr(response, "incomplete_details", None) or "llm response incomplete"
+                    ),
+                    "provider": provider,
+                    "model": model,
+                }
+                continue
+
+            usage = getattr(response, "usage", None)
+            logger.info(
+                "llm.request.finished",
                 **safe_kv(
                     **llm_log_fields,
-                    outcome="error",
-                    error_class="E_LLM_INCOMPLETE",
-                    incomplete_details=response.incomplete_details,
+                    outcome="success",
                     latency_ms=int((time.monotonic() - llm_start) * 1000),
                     tokens_input=usage.input_tokens if usage else None,
                     tokens_output=usage.output_tokens if usage else None,
                     tokens_total=usage.total_tokens if usage else None,
-                    tokens_reasoning=usage.reasoning_tokens if usage else None,
-                    provider_request_id=response.provider_request_id,
+                    provider_request_id=getattr(response, "provider_request_id", None),
                 ),
             )
-            _record_metadata_failure(
-                media,
-                "E_METADATA_LLM_INCOMPLETE",
-                str(response.incomplete_details or "llm response incomplete"),
-            )
+
+            response_text = str(getattr(response, "text", ""))
+            enrichment = parse_enrichment_response(response_text)
+            if enrichment is None:
+                logger.warning(
+                    "enrich_metadata_parse_failed",
+                    media_id=media_id,
+                    provider=provider,
+                    model=model,
+                    raw_text=response_text[:200],
+                )
+                last_failure = {
+                    "reason": "parse_failed",
+                    "error_code": ApiErrorCode.E_METADATA_PARSE_FAILED.value,
+                    "error_message": f"failed to parse LLM response as JSON: {response_text[:200]}",
+                    "provider": provider,
+                    "model": model,
+                }
+                continue
+
+            if not enrichment:
+                last_failure = {
+                    "reason": "no_fields",
+                    "error_code": ApiErrorCode.E_METADATA_NO_FIELDS.value,
+                    "error_message": "LLM returned no confident metadata fields.",
+                    "provider": provider,
+                    "model": model,
+                }
+                continue
+
+            merge_result = merge_enrichment(db, media, enrichment, gaps, force_overwrite=force)
+            if not merge_result.accepted_fields:
+                last_failure = {
+                    "reason": "no_applicable_fields",
+                    "error_code": ApiErrorCode.E_METADATA_NO_FIELDS.value,
+                    "error_message": "LLM returned no applicable metadata fields.",
+                    "provider": provider,
+                    "model": model,
+                }
+                continue
+
+            if media.failure_stage == FailureStage.metadata:
+                media.failure_stage = None
+                media.last_error_code = None
+                media.last_error_message = None
             db.commit()
-            return {"status": "failed", "reason": "llm_incomplete"}
 
-        usage = response.usage if hasattr(response, "usage") else None
-        logger.info(
-            "llm.request.finished",
-            **safe_kv(
-                **llm_log_fields,
-                outcome="success",
-                latency_ms=int((time.monotonic() - llm_start) * 1000),
-                tokens_input=usage.input_tokens if usage else None,
-                tokens_output=usage.output_tokens if usage else None,
-                tokens_total=usage.total_tokens if usage else None,
-                provider_request_id=getattr(response, "provider_request_id", None),
-            ),
-        )
-
-        # Parse and merge
-        enrichment = parse_enrichment_response(response.text)
-        if enrichment is None:
-            logger.warning(
-                "enrich_metadata_parse_failed",
+            logger.info(
+                "enrich_metadata_completed",
                 media_id=media_id,
-                raw_text=response.text[:200],
+                provider=provider,
+                model=model,
+                fields_enriched=list(merge_result.accepted_fields),
+                request_id=request_id,
             )
-            _record_metadata_failure(
-                media,
-                "E_METADATA_PARSE_FAILED",
-                f"failed to parse LLM response as JSON: {response.text[:200]}",
-            )
-            db.commit()
-            return {"status": "failed", "reason": "parse_failed"}
+            return {
+                "status": "success",
+                "fields": list(merge_result.accepted_fields),
+                "provider": provider,
+                "model": model,
+                "attempted_providers": attempted_providers,
+            }
 
-        merge_enrichment(db, media, enrichment, gaps, force_overwrite=force)
-        if media.failure_stage == FailureStage.metadata:
-            media.failure_stage = None
-            media.last_error_code = None
-            media.last_error_message = None
+        error_code = str(last_failure["error_code"])
+        _record_metadata_failure(media, error_code, str(last_failure["error_message"]))
         db.commit()
-
-        logger.info(
-            "enrich_metadata_completed",
-            media_id=media_id,
-            provider=provider,
-            fields_enriched=list(enrichment.keys()),
-            request_id=request_id,
+        return _failed_result(
+            reason=str(last_failure["reason"]),
+            error_code=error_code,
+            provider=(
+                str(last_failure["provider"]) if last_failure["provider"] is not None else None
+            ),
+            model=str(last_failure["model"]) if last_failure["model"] is not None else None,
+            attempted_providers=attempted_providers,
         )
-        return {"status": "success", "fields": list(enrichment.keys())}
 
     except Exception as exc:
         db.rollback()
@@ -265,6 +359,6 @@ def enrich_metadata(
         if media is not None:
             _record_metadata_failure(media, "E_METADATA_UNEXPECTED", str(exc))
             db.commit()
-        return {"status": "failed", "reason": "unexpected_error"}
+        return _failed_result(reason="unexpected_error", error_code="E_METADATA_UNEXPECTED")
     finally:
         db.close()

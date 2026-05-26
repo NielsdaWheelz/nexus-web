@@ -46,6 +46,7 @@ def retry_metadata_for_viewer(
         db,
         kind="enrich_metadata",
         payload={"media_id": str(media.id), "request_id": request_id, "force": True},
+        max_attempts=1,
     )
     db.commit()
 

@@ -25,6 +25,7 @@ class JobDefinition:
     retry_delays_seconds: tuple[int, ...] = (60, 300, 900)
     lease_seconds: int = 300
     periodic_interval_seconds: int | None = None
+    failed_result_statuses: tuple[str, ...] = ()
 
 
 def get_default_registry() -> dict[str, JobDefinition]:
@@ -104,6 +105,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=120,
+            failed_result_statuses=("failed",),
         ),
         "chat_run": JobDefinition(
             kind="chat_run",
@@ -266,9 +268,7 @@ def _run_chat_run(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
     from nexus.tasks.chat_run import chat_run
 
     reader_context = payload.get("reader_context")
-    reader_context_payload = (
-        dict(reader_context) if isinstance(reader_context, Mapping) else None
-    )
+    reader_context_payload = dict(reader_context) if isinstance(reader_context, Mapping) else None
     return chat_run(
         run_id=str(payload["run_id"]),
         reader_context=reader_context_payload,

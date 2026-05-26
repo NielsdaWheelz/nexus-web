@@ -137,6 +137,9 @@ class ApiErrorCode(str, Enum):
     # Ingestion errors (502/504)
     E_INGEST_FAILED = "E_INGEST_FAILED"  # 502
     E_INGEST_TIMEOUT = "E_INGEST_TIMEOUT"  # 504
+    E_METADATA_PARSE_FAILED = "E_METADATA_PARSE_FAILED"  # 502
+    E_METADATA_NO_FIELDS = "E_METADATA_NO_FIELDS"  # 502
+    E_METADATA_NO_PROVIDER = "E_METADATA_NO_PROVIDER"  # 503
 
     # Image proxy errors (400/403/413/502/504)
     E_SSRF_BLOCKED = "E_SSRF_BLOCKED"  # 403 - URL violates SSRF rules
@@ -267,6 +270,9 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     # Ingestion errors
     ApiErrorCode.E_INGEST_FAILED: 502,
     ApiErrorCode.E_INGEST_TIMEOUT: 504,
+    ApiErrorCode.E_METADATA_PARSE_FAILED: 502,
+    ApiErrorCode.E_METADATA_NO_FIELDS: 502,
+    ApiErrorCode.E_METADATA_NO_PROVIDER: 503,
     # Image proxy errors
     ApiErrorCode.E_SSRF_BLOCKED: 403,
     ApiErrorCode.E_IMAGE_FETCH_FAILED: 502,

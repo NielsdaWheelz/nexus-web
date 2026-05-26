@@ -118,6 +118,33 @@ describe("mediaResourceOptions", () => {
       disabled: true,
     });
   });
+
+  it("shows metadata re-enrichment between source refresh and chat when supported", () => {
+    const options = mediaResourceOptions({
+      media: {
+        ...media,
+        capabilities: { can_refresh_source: true, can_retry_metadata: true },
+      },
+      canManageLibraries: false,
+      refreshBusy: false,
+      retryMetadataBusy: true,
+      onRefreshSource: () => {},
+      onRetryMetadata: () => {},
+      onOpenChat: () => {},
+    });
+
+    expect(options.map((option) => option.id)).toEqual([
+      "open-source",
+      "refresh-source",
+      "re-enrich-metadata",
+      "chat-about-media",
+    ]);
+    expect(options[2]).toMatchObject({
+      id: "re-enrich-metadata",
+      label: "Re-enriching...",
+      disabled: true,
+    });
+  });
 });
 
 describe("libraryResourceOptions", () => {

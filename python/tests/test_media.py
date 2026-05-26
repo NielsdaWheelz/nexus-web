@@ -2723,20 +2723,29 @@ class TestRetryMetadataEndpoint:
         assert _count_jobs_for_media(direct_db, kind="enrich_metadata", media_id=media_id) == 1
 
         with direct_db.session() as session:
-            payload = session.execute(
-                text(
-                    """
-                    SELECT payload
+            row = (
+                session.execute(
+                    text(
+                        """
+                    SELECT payload, max_attempts
                     FROM background_jobs
                     WHERE kind = 'enrich_metadata'
                       AND payload->>'media_id' = :media_id
                     """
-                ),
-                {"media_id": str(media_id)},
-            ).scalar_one()
+                    ),
+                    {"media_id": str(media_id)},
+                )
+                .mappings()
+                .one()
+            )
+            payload = row["payload"]
             assert payload["media_id"] == str(media_id), payload
             assert payload["force"] is True, (
                 f"enrich_metadata job payload must include force=true, got {payload!r}"
+            )
+            assert row["max_attempts"] == 1, (
+                "manual metadata retry must keep the user as the retry boundary; "
+                f"got max_attempts={row['max_attempts']}"
             )
 
     def test_retry_metadata_forbidden_for_non_creator(
@@ -4040,9 +4049,7 @@ def _bootstrap_user_default_library(auth_client, user_id: UUID) -> UUID:
     return UUID(response.json()["data"]["default_library_id"])
 
 
-def _library_entries_for_media(
-    direct_db: DirectSessionManager, media_id: UUID
-) -> set[UUID]:
+def _library_entries_for_media(direct_db: DirectSessionManager, media_id: UUID) -> set[UUID]:
     with direct_db.session() as session:
         rows = session.execute(
             text(
@@ -4058,9 +4065,7 @@ def _library_entries_for_media(
 
 
 def _create_extension_token(auth_client, user_id: UUID) -> tuple[UUID, str]:
-    response = auth_client.post(
-        "/auth/extension-sessions", headers=auth_headers(user_id)
-    )
+    response = auth_client.post("/auth/extension-sessions", headers=auth_headers(user_id))
     assert response.status_code == 201, (
         f"extension session creation failed: {response.status_code} {response.text}"
     )
@@ -4145,8 +4150,7 @@ class TestFromUrlLibraryIds:
         )
 
         assert response.status_code == 403, (
-            "inaccessible library id must yield 403, "
-            f"got {response.status_code}: {response.text}"
+            f"inaccessible library id must yield 403, got {response.status_code}: {response.text}"
         )
         assert response.json()["error"]["code"] == "E_LIBRARY_FORBIDDEN"
 
@@ -4162,9 +4166,7 @@ class TestFromUrlLibraryIds:
                 ),
                 {"user_id": user_id, "url": url},
             ).scalar_one()
-        assert count == 0, (
-            "atomic rejection: no media row should exist after E_LIBRARY_FORBIDDEN"
-        )
+        assert count == 0, "atomic rejection: no media row should exist after E_LIBRARY_FORBIDDEN"
 
     def test_from_url_default_library_in_list_dedupes(
         self, auth_client, direct_db: DirectSessionManager
@@ -4203,8 +4205,7 @@ class TestFromUrlLibraryIds:
                 {"media_id": media_id, "library_id": default_library_id},
             ).scalar_one()
         assert default_entry_count == 1, (
-            "default library entry must appear exactly once, "
-            f"got {default_entry_count}"
+            f"default library entry must appear exactly once, got {default_entry_count}"
         )
 
         memberships = _library_entries_for_media(direct_db, media_id)
@@ -4273,9 +4274,7 @@ class TestFromUrlLibraryIds:
 class TestCaptureLibraryIds:
     """`POST /media/capture/*` endpoints with `library_ids` per spec §13.1."""
 
-    def test_capture_article_library_ids(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
+    def test_capture_article_library_ids(self, auth_client, direct_db: DirectSessionManager):
         """`POST /media/capture/article` honors `library_ids` in the body."""
         from tests.factories import create_test_library
 
@@ -4445,9 +4444,7 @@ class TestCaptureLibraryIds:
             f"comma-joined header → default + lib_x + lib_y; got {comma_memberships}"
         )
 
-    def test_capture_url_library_ids(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
+    def test_capture_url_library_ids(self, auth_client, direct_db: DirectSessionManager):
         """`POST /media/capture/url` honors `library_ids` body field."""
         from tests.factories import create_test_library
 
@@ -4514,9 +4511,7 @@ class TestUploadInitLibraryIds:
         monkeypatch.setattr(
             "nexus.services.epub_lifecycle.get_storage_client", lambda: fake_storage
         )
-        monkeypatch.setattr(
-            "nexus.services.epub_lifecycle.check_archive_safety", lambda data: None
-        )
+        monkeypatch.setattr("nexus.services.epub_lifecycle.check_archive_safety", lambda data: None)
 
         # ---- PDF path
         user_id = create_test_user_id()
@@ -4548,9 +4543,7 @@ class TestUploadInitLibraryIds:
         pdf_media_id = UUID(pdf_init.json()["data"]["media_id"])
         direct_db.register_cleanup("library_entries", "media_id", pdf_media_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", pdf_media_id)
-        direct_db.register_cleanup(
-            "default_library_closure_edges", "media_id", pdf_media_id
-        )
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", pdf_media_id)
         direct_db.register_cleanup("media_file", "media_id", pdf_media_id)
         direct_db.register_cleanup("media", "id", pdf_media_id)
 
@@ -4558,8 +4551,7 @@ class TestUploadInitLibraryIds:
         # should be present even before ingest confirms.
         memberships_after_init = _library_entries_for_media(direct_db, pdf_media_id)
         assert memberships_after_init == {default_library_id, pdf_lib_a, pdf_lib_b}, (
-            "init_upload must attach media to default + library_ids; "
-            f"got {memberships_after_init}"
+            f"init_upload must attach media to default + library_ids; got {memberships_after_init}"
         )
 
         # Put bytes into staging and confirm ingest with the same library_ids.
@@ -4629,12 +4621,8 @@ class TestUploadInitLibraryIds:
         epub_media_id = UUID(epub_init.json()["data"]["media_id"])
         direct_db.register_cleanup("epub_toc_nodes", "media_id", epub_media_id)
         direct_db.register_cleanup("library_entries", "media_id", epub_media_id)
-        direct_db.register_cleanup(
-            "default_library_intrinsics", "media_id", epub_media_id
-        )
-        direct_db.register_cleanup(
-            "default_library_closure_edges", "media_id", epub_media_id
-        )
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", epub_media_id)
+        direct_db.register_cleanup("default_library_closure_edges", "media_id", epub_media_id)
         direct_db.register_cleanup("fragments", "media_id", epub_media_id)
         direct_db.register_cleanup("media_file", "media_id", epub_media_id)
         direct_db.register_cleanup("media", "id", epub_media_id)
@@ -4675,6 +4663,5 @@ class TestUploadInitLibraryIds:
 
         epub_confirm_memberships = _library_entries_for_media(direct_db, epub_media_id)
         assert epub_confirm_memberships == {epub_default_library, epub_lib}, (
-            "epub confirm is additive + idempotent on library_ids; "
-            f"got {epub_confirm_memberships}"
+            f"epub confirm is additive + idempotent on library_ids; got {epub_confirm_memberships}"
         )

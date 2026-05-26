@@ -235,8 +235,54 @@ interface Media {
   description?: string | null;
   description_html?: string | null;
   description_text?: string | null;
+  metadata_enriched_at?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface MetadataRetryBaseline {
+  mediaId: string;
+  updatedAt: string;
+  metadataEnrichedAt: string | null | undefined;
+  signature: string;
+}
+
+function metadataRetrySignature(media: Media): string {
+  return JSON.stringify({
+    title: media.title,
+    contributors: media.contributors.map((credit) => [
+      credit.credited_name,
+      credit.role,
+    ]),
+    published_date: media.published_date ?? null,
+    publisher: media.publisher ?? null,
+    language: media.language ?? null,
+    description: media.description ?? null,
+  });
+}
+
+function metadataRetryTerminalState(
+  media: Media,
+  baseline: MetadataRetryBaseline | null,
+): "success" | "failed" | null {
+  if (!baseline || media.id !== baseline.mediaId) return null;
+  if (
+    media.metadata_enriched_at &&
+    media.metadata_enriched_at !== baseline.metadataEnrichedAt
+  ) {
+    return "success";
+  }
+  if (metadataRetrySignature(media) !== baseline.signature) {
+    return "success";
+  }
+  if (
+    media.failure_stage === "metadata" &&
+    Boolean(media.last_error_code) &&
+    media.updated_at !== baseline.updatedAt
+  ) {
+    return "failed";
+  }
+  return null;
 }
 
 interface SelectionState {
@@ -286,6 +332,8 @@ interface EvidenceResolutionResponse {
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
 const READER_POSITION_BUCKET_CP = 1024;
 const DOCUMENT_PROCESSING_POLL_INTERVAL_MS = 3000;
+const METADATA_REENRICHMENT_POLL_INTERVAL_MS = 3000;
+const METADATA_REENRICHMENT_MAX_POLLS = 40;
 const READER_SELECTION_CONTEXT_CP = 160;
 
 const EMPTY_PDF_HIGHLIGHTS_PANE_STATE: PdfHighlightsPaneState = {
@@ -464,6 +512,11 @@ export default function MediaPaneBody() {
   const [media, setMedia] = useState<Media | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
+  const metadataRetryBaselineRef = useRef<MetadataRetryBaseline | null>(null);
+  const [metadataRetryPollsRemaining, setMetadataRetryPollsRemaining] =
+    useState(0);
+  const [metadataRetryPollExhausted, setMetadataRetryPollExhausted] =
+    useState(false);
   useSetPaneTitle(loading ? null : buildCompactMediaPaneTitle(media) ?? "Media");
 
   // ---- Non-EPUB fragment state ----
@@ -999,6 +1052,9 @@ export default function MediaPaneBody() {
 
   useEffect(() => {
     let cancelled = false;
+    metadataRetryBaselineRef.current = null;
+    setMetadataRetryPollsRemaining(0);
+    setMetadataRetryPollExhausted(false);
 
     const fetchData = async () => {
       try {
@@ -1131,6 +1187,65 @@ export default function MediaPaneBody() {
     enabled: Boolean(media?.id) && documentProcessingPollEnabled,
     onPoll: pollDocumentProcessing,
     pollIntervalMs: DOCUMENT_PROCESSING_POLL_INTERVAL_MS,
+  });
+
+  const refreshMetadataRetryState = useCallback(
+    async (options?: { decrementOnNoChange?: boolean }) => {
+      const baseline = metadataRetryBaselineRef.current;
+      if (!media?.id || !baseline) {
+        return;
+      }
+
+      const mediaResp = await apiFetch<{ data: Media }>(`/api/media/${media.id}`);
+      const nextMedia = mediaResp.data;
+      setMedia(nextMedia);
+
+      const terminalState = metadataRetryTerminalState(nextMedia, baseline);
+      if (terminalState) {
+        metadataRetryBaselineRef.current = null;
+        setMetadataRetryPollsRemaining(0);
+        setMetadataRetryPollExhausted(false);
+        if (terminalState === "failed") {
+          feedback.show({
+            severity: "warning",
+            title: nextMedia.last_error_code
+              ? `Metadata enrichment failed: ${nextMedia.last_error_code}`
+              : "Metadata enrichment failed.",
+          });
+        }
+        return;
+      }
+
+      if (options?.decrementOnNoChange === false) {
+        return;
+      }
+
+      setMetadataRetryPollsRemaining((remaining) => {
+        if (remaining <= 1) {
+          metadataRetryBaselineRef.current = null;
+          setMetadataRetryPollExhausted(true);
+          return 0;
+        }
+        return remaining - 1;
+      });
+    },
+    [feedback, media?.id],
+  );
+
+  const pollMetadataRetryState = useCallback(async () => {
+    try {
+      await refreshMetadataRetryState();
+    } catch {
+      setMetadataRetryPollsRemaining((remaining) => Math.max(remaining - 1, 0));
+    }
+  }, [refreshMetadataRetryState]);
+
+  useIntervalPoll({
+    enabled:
+      metadataRetryPollsRemaining > 0 &&
+      Boolean(metadataRetryBaselineRef.current),
+    onPoll: pollMetadataRetryState,
+    pollIntervalMs: METADATA_REENRICHMENT_POLL_INTERVAL_MS,
   });
 
   // ==========================================================================
@@ -3251,6 +3366,19 @@ export default function MediaPaneBody() {
     [media],
   );
 
+  const handleMetadataRetryEnqueued = useCallback(() => {
+    if (!media) return;
+    metadataRetryBaselineRef.current = {
+      mediaId: media.id,
+      updatedAt: media.updated_at,
+      metadataEnrichedAt: media.metadata_enriched_at,
+      signature: metadataRetrySignature(media),
+    };
+    setMetadataRetryPollExhausted(false);
+    setMetadataRetryPollsRemaining(METADATA_REENRICHMENT_MAX_POLLS);
+    void refreshMetadataRetryState({ decrementOnNoChange: false });
+  }, [media, refreshMetadataRetryState]);
+
   const {
     deleteBusy: documentDeleteBusy,
     retryBusy: retryProcessingBusy,
@@ -3263,6 +3391,7 @@ export default function MediaPaneBody() {
   } = useDocumentActions({
     media,
     onProcessingRestarted: handleProcessingRestarted,
+    onMetadataRetryEnqueued: handleMetadataRetryEnqueued,
   });
 
   const handleContentClick = useCallback(
@@ -3532,27 +3661,43 @@ export default function MediaPaneBody() {
           View Source ↗
         </a>
       ) : null}
-      {media?.processing_status === "ready" &&
-      media?.failure_stage === "metadata" ? (
-        <button
-          type="button"
-          onClick={() => {
-            void handleRetryMetadata();
-          }}
-          disabled={retryMetadataBusy}
-          style={{
-            background: "none",
-            border: "none",
-            padding: 0,
-            cursor: retryMetadataBusy ? "default" : "pointer",
-          }}
-        >
+      {metadataRetryPollsRemaining > 0 ? (
+        <Pill tone="info">Checking metadata...</Pill>
+      ) : metadataRetryPollExhausted ? (
+        <Pill tone="warning">Still checking metadata. Refresh later.</Pill>
+      ) : null}
+      {media &&
+      isReadableStatus(media.processing_status) &&
+      media.failure_stage === "metadata" ? (
+        media.capabilities?.can_retry_metadata ? (
+          <button
+            type="button"
+            onClick={() => {
+              void handleRetryMetadata();
+            }}
+            disabled={retryMetadataBusy}
+            style={{
+              background: "none",
+              border: "none",
+              padding: 0,
+              cursor: retryMetadataBusy ? "default" : "pointer",
+            }}
+          >
+            <Pill tone="warning">
+              {retryMetadataBusy
+                ? "Re-enriching metadata..."
+                : `Metadata enrichment failed${
+                    media.last_error_code ? `: ${media.last_error_code}` : ""
+                  } - Re-enrich?`}
+            </Pill>
+          </button>
+        ) : (
           <Pill tone="warning">
-            {retryMetadataBusy
-              ? "Re-enriching metadata..."
-              : "Metadata enrichment failed — Re-enrich?"}
+            {media.last_error_code
+              ? `Metadata enrichment failed: ${media.last_error_code}`
+              : "Metadata enrichment failed"}
           </Pill>
-        </button>
+        )
       ) : null}
     </div>
   );

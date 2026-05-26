@@ -138,6 +138,7 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "m.publisher",
     "m.language",
     "m.description",
+    "m.metadata_enriched_at",
     "pe.description_html AS podcast_description_html",
     "pe.description_text AS podcast_description_text",
     "mts.transcript_state",
@@ -430,6 +431,7 @@ def _media_out_from_row(
         description=row["description"],
         description_html=row["podcast_description_html"],
         description_text=row["podcast_description_text"],
+        metadata_enriched_at=row["metadata_enriched_at"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

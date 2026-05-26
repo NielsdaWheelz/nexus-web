@@ -36,7 +36,7 @@ def _fetch_job_row(db: Session, job_id: UUID) -> dict[str, object]:
         db.execute(
             text(
                 """
-            SELECT status, attempts, claimed_by, result, dedupe_key
+            SELECT status, attempts, claimed_by, result, dedupe_key, error_code, last_error
             FROM background_jobs
             WHERE id = :job_id
             """
@@ -90,6 +90,54 @@ def test_worker_run_once_executes_handler_and_marks_job_succeeded(db_session: Se
         "Expected worker to pass payload through to handler unchanged. "
         f"Observed payloads={observed_payloads}"
     )
+
+
+def test_worker_can_treat_failed_task_result_as_failed_job(db_session: Session):
+    def handler(*, payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "status": "failed",
+            "reason": "parse_failed",
+            "error_code": "E_METADATA_PARSE_FAILED",
+            "media_id": payload.get("media_id"),
+        }
+
+    worker = JobWorker(
+        session_factory=task_session_factory(db_session),
+        worker_id="worker-test-failed-result",
+        registry={
+            "test_failed_result_job": JobDefinition(
+                kind="test_failed_result_job",
+                handler=handler,
+                max_attempts=1,
+                retry_delays_seconds=(0,),
+                lease_seconds=60,
+                failed_result_statuses=("failed",),
+            )
+        },
+    )
+
+    job = enqueue_job(
+        db_session,
+        kind="test_failed_result_job",
+        payload={"media_id": "media-1"},
+        max_attempts=1,
+    )
+    db_session.commit()
+
+    assert worker.run_once() is True
+
+    db_session.expire_all()
+    row = _fetch_job_row(db_session, job.id)
+    assert row["status"] == "dead"
+    assert row["attempts"] == 1
+    assert row["error_code"] == "E_METADATA_PARSE_FAILED"
+    assert row["last_error"] == "parse_failed"
+    assert row["result"] == {
+        "status": "failed",
+        "reason": "parse_failed",
+        "error_code": "E_METADATA_PARSE_FAILED",
+        "media_id": "media-1",
+    }
 
 
 def test_worker_run_once_skips_handler_when_start_heartbeat_loses_ownership(

@@ -491,6 +491,7 @@ def fail_job(
     error_code: str,
     error_message: str,
     retry_delays_seconds: Sequence[int],
+    result_payload: Mapping[str, Any] | None = None,
 ) -> str | None:
     """Apply retry/dead transition for a failed running job owned by worker_id."""
     row = (
@@ -536,6 +537,7 @@ def fail_job(
                 claimed_by = NULL,
                 error_code = :error_code,
                 last_error = :last_error,
+                result = CAST(:result_payload AS jsonb),
                 finished_at = CASE WHEN :is_dead THEN now() ELSE NULL END,
                 updated_at = now()
             WHERE id = :job_id
@@ -548,6 +550,9 @@ def fail_job(
             "last_error": error_message[:1000],
             "retry_delay_seconds": retry_delay_seconds,
             "is_dead": should_dead_letter,
+            "result_payload": (
+                json.dumps(dict(result_payload)) if result_payload is not None else None
+            ),
         },
     )
     if new_status == FAILED:

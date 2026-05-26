@@ -11,6 +11,7 @@ import {
 import { flushSync } from "react-dom";
 import { dispatchOpenAddContent } from "@/components/addContentEvents";
 import { apiFetch, isApiError } from "@/lib/api/client";
+import { retryMediaSource } from "@/lib/media/retryClient";
 import {
   FeedbackNotice,
   toFeedback,
@@ -472,9 +473,13 @@ export default function LibraryPaneBody() {
       if (args.busySet.ids.has(args.mediaId)) return;
       args.busySet.add(args.mediaId);
       try {
-        await apiFetch(`/api/media/${args.mediaId}${args.endpoint}`, {
-          method: "POST",
-        });
+        if (args.endpoint === "/retry") {
+          await retryMediaSource(args.mediaId);
+        } else {
+          await apiFetch(`/api/media/${args.mediaId}${args.endpoint}`, {
+            method: "POST",
+          });
+        }
         setEntries((current) =>
           current.map((entry) =>
             entry.kind === "media" && entry.media.id === args.mediaId
