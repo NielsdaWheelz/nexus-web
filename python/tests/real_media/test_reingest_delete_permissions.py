@@ -109,7 +109,7 @@ def test_real_web_article_reingest_replaces_active_index_and_hides_stale_evidenc
             "model_id": str(model_id),
             "reasoning": "none",
             "key_mode": "platform_only",
-            "conversation_scope": {"type": "media", "media_id": str(media_id)},
+            "singleton": {"kind": "media", "target_id": str(media_id)},
             "contexts": [
                 {
                     "kind": "object_ref",
@@ -118,7 +118,6 @@ def test_real_web_article_reingest_replaces_active_index_and_hides_stale_evidenc
                     "evidence_span_ids": [first_search_trace["evidence_span_id"]],
                 }
             ],
-            "web_search": {"mode": "off"},
         },
     )
     assert stale_context_response.status_code == 400, stale_context_response.text

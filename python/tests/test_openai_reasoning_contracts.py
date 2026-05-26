@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import Model
-from nexus.schemas.conversation import ChatRunCreateRequest, WebSearchOptions
+from nexus.schemas.conversation import ChatRunCreateRequest
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.chat_runs import (
     ERROR_CODE_TO_MESSAGE,
@@ -68,9 +68,9 @@ def test_openai_catalog_exposes_default_separate_from_none():
 
 def test_chat_run_request_defaults_reasoning_to_default():
     request = ChatRunCreateRequest(
+        conversation_id=uuid4(),
         content="Summarize this.",
         model_id=uuid4(),
-        web_search=WebSearchOptions(mode="off"),
     )
 
     assert request.reasoning == "default"
@@ -130,14 +130,19 @@ def _seed_ai_plus_billing(direct_db: DirectSessionManager, user_id: UUID) -> Non
         )
 
 
-def _post_chat_run(auth_client, user_id: UUID, model_id: UUID, reasoning: str | None):
+def _post_chat_run(
+    auth_client,
+    user_id: UUID,
+    model_id: UUID,
+    reasoning: str | None,
+    conversation_id: UUID,
+):
     payload = {
+        "conversation_id": str(conversation_id),
         "content": "Summarize the current notes.",
         "model_id": str(model_id),
         "key_mode": "auto",
-        "conversation_scope": {"type": "general"},
         "contexts": [],
-        "web_search": {"mode": "off"},
     }
     if reasoning is not None:
         payload["reasoning"] = reasoning
@@ -162,6 +167,12 @@ def _register_run_cleanup(direct_db: DirectSessionManager, conversation_id: UUID
 
 
 @pytest.mark.integration
+def _create_conversation(auth_client, user_id: UUID) -> UUID:
+    resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+    assert resp.status_code == 201, resp.text
+    return UUID(resp.json()["data"]["id"])
+
+
 def test_omitted_reasoning_stores_explicit_default(
     auth_client, direct_db: DirectSessionManager, chat_runs_schema
 ):
@@ -170,8 +181,11 @@ def test_omitted_reasoning_stores_explicit_default(
     _seed_ai_plus_billing(direct_db, user_id)
     with direct_db.session() as session:
         model_id = create_test_model(session)
+    conversation_id = _create_conversation(auth_client, user_id)
 
-    response = _post_chat_run(auth_client, user_id, model_id, reasoning=None)
+    response = _post_chat_run(
+        auth_client, user_id, model_id, reasoning=None, conversation_id=conversation_id
+    )
 
     assert response.status_code == 200, (
         f"Expected omitted reasoning to default, got {response.status_code}: {response.text}"
@@ -179,7 +193,7 @@ def test_omitted_reasoning_stores_explicit_default(
     data = response.json()["data"]
     assert data["run"]["reasoning"] == "default"
 
-    _register_run_cleanup(direct_db, UUID(data["conversation"]["id"]))
+    _register_run_cleanup(direct_db, conversation_id)
 
 
 @pytest.mark.integration
@@ -191,8 +205,16 @@ def test_unsupported_reasoning_mode_returns_actionable_400(
     _seed_ai_plus_billing(direct_db, user_id)
     with direct_db.session() as session:
         model_id = create_test_model(session)
+    conversation_id = _create_conversation(auth_client, user_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
 
-    response = _post_chat_run(auth_client, user_id, model_id, reasoning="minimal")
+    response = _post_chat_run(
+        auth_client,
+        user_id,
+        model_id,
+        reasoning="minimal",
+        conversation_id=conversation_id,
+    )
 
     assert response.status_code == 400, (
         f"Expected unsupported reasoning to fail, got {response.status_code}: {response.text}"
@@ -211,12 +233,18 @@ async def test_default_reasoning_uses_reasoning_aware_output_budget(
     _seed_ai_plus_billing(direct_db, user_id)
     with direct_db.session() as session:
         model_id = create_test_model(session)
+    conversation_id = _create_conversation(auth_client, user_id)
 
-    response = _post_chat_run(auth_client, user_id, model_id, reasoning="default")
+    response = _post_chat_run(
+        auth_client,
+        user_id,
+        model_id,
+        reasoning="default",
+        conversation_id=conversation_id,
+    )
     assert response.status_code == 200, f"Create failed: {response.text}"
     data = response.json()["data"]
     run_id = UUID(data["run"]["id"])
-    conversation_id = UUID(data["conversation"]["id"])
     _register_run_cleanup(direct_db, conversation_id)
 
     router = _CapturingRouter(
@@ -232,7 +260,6 @@ async def test_default_reasoning_uses_reasoning_aware_output_budget(
             session,
             run_id=run_id,
             llm_router=router,
-            web_search_provider=None,
         )
 
     assert result == {"status": "complete"}
@@ -281,12 +308,18 @@ async def test_incomplete_llm_result_finalizes_error_not_success(
     _seed_ai_plus_billing(direct_db, user_id)
     with direct_db.session() as session:
         model_id = create_test_model(session)
+    conversation_id = _create_conversation(auth_client, user_id)
 
-    response = _post_chat_run(auth_client, user_id, model_id, reasoning="medium")
+    response = _post_chat_run(
+        auth_client,
+        user_id,
+        model_id,
+        reasoning="medium",
+        conversation_id=conversation_id,
+    )
     assert response.status_code == 200, f"Create failed: {response.text}"
     data = response.json()["data"]
     run_id = UUID(data["run"]["id"])
-    conversation_id = UUID(data["conversation"]["id"])
     _register_run_cleanup(direct_db, conversation_id)
 
     with direct_db.session() as session:
@@ -294,7 +327,6 @@ async def test_incomplete_llm_result_finalizes_error_not_success(
             session,
             run_id=run_id,
             llm_router=_CapturingRouter(_IncompleteChunk()),
-            web_search_provider=None,
         )
 
     assert result == {"status": "error", "error_code": "E_LLM_INCOMPLETE"}
@@ -334,12 +366,18 @@ async def test_unread_stream_http_errors_keep_provider_error_classification(
     _seed_ai_plus_billing(direct_db, user_id)
     with direct_db.session() as session:
         model_id = create_test_model(session)
+    conversation_id = _create_conversation(auth_client, user_id)
 
-    response = _post_chat_run(auth_client, user_id, model_id, reasoning="default")
+    response = _post_chat_run(
+        auth_client,
+        user_id,
+        model_id,
+        reasoning="default",
+        conversation_id=conversation_id,
+    )
     assert response.status_code == 200, f"Create failed: {response.text}"
     data = response.json()["data"]
     run_id = UUID(data["run"]["id"])
-    conversation_id = UUID(data["conversation"]["id"])
     _register_run_cleanup(direct_db, conversation_id)
 
     with direct_db.session() as session:
@@ -347,7 +385,6 @@ async def test_unread_stream_http_errors_keep_provider_error_classification(
             session,
             run_id=run_id,
             llm_router=_UnreadStreamErrorRouter(status_code),
-            web_search_provider=None,
         )
 
     assert result == {"status": "error", "error_code": expected_error_code}

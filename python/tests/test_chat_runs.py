@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import threading
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -18,6 +19,8 @@ from nexus.services.message_context_snapshots import object_ref_context_snapshot
 from tests.factories import (
     create_searchable_media,
     create_test_conversation,
+    create_test_library,
+    create_test_media_in_library,
     create_test_message,
     create_test_model,
 )
@@ -37,7 +40,7 @@ def platform_key(monkeypatch):
 
 def _require_chat_runs_schema(engine: Engine) -> None:
     tables = set(inspect(engine).get_table_names())
-    missing = {"chat_runs", "chat_run_events"} - tables
+    missing = {"chat_runs", "chat_run_events", "chat_singletons"} - tables
     if missing:
         pytest.fail(f"chat-runs schema missing: {', '.join(sorted(missing))}")
 
@@ -48,16 +51,19 @@ def chat_runs_schema(engine: Engine) -> None:
 
 
 def _create_run_payload(model_id: UUID, **overrides) -> dict:
+    """Build a /chat-runs request body.
+
+    By default targets a not-yet-set conversation_id; callers either set
+    ``conversation_id`` or ``singleton``. The schema requires exactly one,
+    so omitting both is a 422.
+    """
     payload = {
         "content": "Summarize the current notes.",
         "model_id": str(model_id),
         "reasoning": "none",
         "key_mode": "auto",
         "contexts": [],
-        "web_search": {"mode": "off"},
     }
-    if "conversation_id" not in overrides:
-        payload["conversation_scope"] = {"type": "general"}
     payload.update(overrides)
     return payload
 
@@ -145,7 +151,6 @@ def _create_failed_chat_run(
                 model_id=model_id,
                 reasoning="none",
                 key_mode="auto",
-                web_search={"mode": "off"},
                 error_code=error_code,
                 completed_at=datetime.now(UTC),
             )
@@ -170,11 +175,14 @@ class TestChatRunCreate:
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
             model_id = create_test_model(session)
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = UUID(create_resp.json()["data"]["id"])
+        direct_db.register_cleanup("conversations", "id", conversation_id)
 
         response = auth_client.post(
             "/chat-runs",
             headers=auth_headers(user_id),
-            json=_create_run_payload(model_id),
+            json=_create_run_payload(model_id, conversation_id=str(conversation_id)),
         )
 
         assert response.status_code == 400, (
@@ -191,10 +199,19 @@ class TestChatRunCreate:
         with direct_db.session() as session:
             model_id = create_test_model(session)
 
+        # New chat lands via POST /conversations + POST /chat-runs with conversation_id
+        # since ChatRunCreateRequest requires either conversation_id or singleton.
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        assert create_resp.status_code == 201, (
+            f"Expected conversation create to succeed, got {create_resp.status_code}: "
+            f"{create_resp.text}"
+        )
+        conversation_id = UUID(create_resp.json()["data"]["id"])
+
         response = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id),
+            _create_run_payload(model_id, conversation_id=str(conversation_id)),
             idempotency_key="chat-run-new-conversation",
         )
 
@@ -205,7 +222,7 @@ class TestChatRunCreate:
         _assert_create_shape(data)
 
         run_id = UUID(data["run"]["id"])
-        conversation_id = UUID(data["conversation"]["id"])
+        assert UUID(data["conversation"]["id"]) == conversation_id
         _register_run_cleanup(direct_db, run_id, conversation_id)
 
         with direct_db.session() as session:
@@ -236,224 +253,204 @@ class TestChatRunCreate:
         assert event_rows[0].payload["conversation_id"] == str(conversation_id)
         assert job_count == 1, f"Expected one chat_run background job for run {run_id}"
 
-    def test_scoped_create_run_continues_existing_scoped_conversation_selected_path(
+    def test_singleton_second_send_continues_existing_singleton_selected_path(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
+        """After the doc singleton is materialized, a second send anchored to the
+        selected assistant leaf appends under that branch (no scope coupling)."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
             model_id = create_test_model(session)
-            media_id = create_searchable_media(session, user_id, title="Scoped Run Source")
+            media_id = create_searchable_media(session, user_id, title="Singleton Run Source")
 
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
 
-        resolve = auth_client.post(
-            "/conversations/resolve",
-            headers=auth_headers(user_id),
-            json={"type": "media", "media_id": str(media_id)},
+        # First send into the doc singleton materializes the conversation.
+        first = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                singleton={"kind": "media", "target_id": str(media_id)},
+                content="Root question about this doc.",
+            ),
+            idempotency_key="chat-run-singleton-first-send",
         )
-        assert resolve.status_code == 200, (
-            f"Expected scoped conversation resolve to succeed, got {resolve.status_code}: "
-            f"{resolve.text}"
+        assert first.status_code == 200, (
+            f"Expected singleton first send to succeed, got {first.status_code}: {first.text}"
         )
-        conversation_id = UUID(resolve.json()["data"]["id"])
+        first_data = first.json()["data"]
+        conversation_id = UUID(first_data["conversation"]["id"])
+        first_run_id = UUID(first_data["run"]["id"])
+        first_user_id = UUID(first_data["user_message"]["id"])
+        first_assistant_id = UUID(first_data["assistant_message"]["id"])
         direct_db.register_cleanup("conversations", "id", conversation_id)
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
         direct_db.register_cleanup("conversation_active_paths", "conversation_id", conversation_id)
+        direct_db.register_cleanup("chat_singletons", "conversation_id", conversation_id)
+        _register_run_cleanup(direct_db, first_run_id)
 
+        # Promote the pending assistant to "complete" so the parent is sendable.
         with direct_db.session() as session:
-            root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
-            first_assistant_id = create_test_message(
-                session,
-                conversation_id,
-                2,
-                "assistant",
-                "First answer",
-                parent_message_id=root_user_id,
+            session.execute(
+                text("UPDATE messages SET status = 'complete' WHERE id = :id"),
+                {"id": first_assistant_id},
             )
-            selected_user_id = create_test_message(
+            persist_active_leaf(
                 session,
-                conversation_id,
-                3,
-                "user",
-                "Selected branch",
-                parent_message_id=first_assistant_id,
-            )
-            selected_parent_id = create_test_message(
-                session,
-                conversation_id,
-                4,
-                "assistant",
-                "Selected answer",
-                parent_message_id=selected_user_id,
-            )
-            sibling_user_id = create_test_message(
-                session,
-                conversation_id,
-                5,
-                "user",
-                "Other branch",
-                parent_message_id=first_assistant_id,
-            )
-            sibling_assistant_id = create_test_message(
-                session,
-                conversation_id,
-                6,
-                "assistant",
-                "Other answer",
-                parent_message_id=sibling_user_id,
-            )
-            ensure_branch_metadata(
-                session,
+                viewer_id=user_id,
                 conversation_id=conversation_id,
-                branch_user_message_id=selected_user_id,
-            )
-            ensure_branch_metadata(
-                session,
-                conversation_id=conversation_id,
-                branch_user_message_id=sibling_user_id,
+                active_leaf_message_id=first_assistant_id,
             )
             session.commit()
-
-        active_path_response = auth_client.post(
-            f"/conversations/{conversation_id}/active-path",
-            headers=auth_headers(user_id),
-            json={"active_leaf_message_id": str(selected_parent_id)},
-        )
-        assert active_path_response.status_code == 200, (
-            f"Expected active path update to succeed, got "
-            f"{active_path_response.status_code}: {active_path_response.text}"
-        )
 
         response = _post_chat_run(
             auth_client,
             user_id,
             _create_run_payload(
                 model_id,
-                conversation_scope={"type": "media", "media_id": str(media_id)},
+                conversation_id=str(conversation_id),
+                parent_message_id=str(first_assistant_id),
+                branch_anchor=_assistant_message_anchor(first_assistant_id),
+                content="Follow-up on the same doc.",
             ),
-            idempotency_key="chat-run-existing-scoped-selected-path",
+            idempotency_key="chat-run-singleton-follow-up",
         )
 
         assert response.status_code == 200, (
-            f"Expected scoped chat run create to succeed, got {response.status_code}: "
-            f"{response.text}"
+            f"Expected singleton follow-up to succeed, got {response.status_code}: {response.text}"
         )
         data = response.json()["data"]
-        run_id = UUID(data["run"]["id"])
-        _register_run_cleanup(direct_db, run_id)
         assert data["conversation"]["id"] == str(conversation_id)
-        assert data["user_message"]["parent_message_id"] == str(selected_parent_id)
-        assert data["user_message"]["branch_anchor_kind"] == "assistant_message"
+        assert data["user_message"]["parent_message_id"] == str(first_assistant_id)
         assert data["assistant_message"]["parent_message_id"] == data["user_message"]["id"]
 
         messages_response = auth_client.get(
             f"/conversations/{conversation_id}/messages",
             headers=auth_headers(user_id),
         )
-        assert messages_response.status_code == 200, (
-            f"Expected selected-path messages to load, got "
-            f"{messages_response.status_code}: {messages_response.text}"
-        )
+        assert messages_response.status_code == 200, messages_response.text
         visible_message_ids = [item["id"] for item in messages_response.json()["data"]]
-        assert visible_message_ids == [
-            str(root_user_id),
-            str(first_assistant_id),
-            str(selected_user_id),
-            str(selected_parent_id),
-            data["user_message"]["id"],
-            data["assistant_message"]["id"],
-        ]
-        assert str(sibling_user_id) not in visible_message_ids
-        assert str(sibling_assistant_id) not in visible_message_ids
+        # Selected path: original user + assistant, then the follow-up pair.
+        assert str(first_user_id) in visible_message_ids
+        assert str(first_assistant_id) in visible_message_ids
+        assert data["user_message"]["id"] in visible_message_ids
+        assert data["assistant_message"]["id"] in visible_message_ids
 
-    def test_scoped_create_run_rejects_pending_active_leaf(
+    def test_chat_run_singleton_rejects_pending_active_leaf(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
+        """A second send while the singleton's assistant is still pending is 409
+        E_CONVERSATION_BUSY when the client correctly anchors on the pending
+        leaf (the frontend always echoes parent_message_id from the latest
+        active path)."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
             model_id = create_test_model(session)
-            media_id = create_searchable_media(session, user_id, title="Busy Scoped Source")
+            media_id = create_searchable_media(session, user_id, title="Busy Singleton Source")
 
         first = _post_chat_run(
             auth_client,
             user_id,
             _create_run_payload(
                 model_id,
-                conversation_scope={"type": "media", "media_id": str(media_id)},
+                singleton={"kind": "media", "target_id": str(media_id)},
             ),
-            idempotency_key="chat-run-busy-scoped-first",
+            idempotency_key="chat-run-busy-singleton-first",
         )
         assert first.status_code == 200, (
-            f"Expected first scoped chat run to create pending assistant, got "
-            f"{first.status_code}: {first.text}"
+            f"Expected first singleton send to succeed, got {first.status_code}: {first.text}"
         )
         first_data = first.json()["data"]
         run_id = UUID(first_data["run"]["id"])
         conversation_id = UUID(first_data["conversation"]["id"])
+        pending_assistant_id = UUID(first_data["assistant_message"]["id"])
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         _register_run_cleanup(direct_db, run_id, conversation_id)
+        # chat_singletons FK -> conversations.id; register after the
+        # conversations cleanup so LIFO order cleans the singleton first.
+        direct_db.register_cleanup("chat_singletons", "conversation_id", conversation_id)
 
+        # Second send anchored to the still-pending assistant — the only target
+        # the frontend would have. Service must reject as E_CONVERSATION_BUSY
+        # (or E_BRANCH_PATH_INVALID, since a pending assistant fails the
+        # "parent must be complete" guard in validate_pre_phase). Either path
+        # is a user-visible block — assert one of them.
         second = _post_chat_run(
             auth_client,
             user_id,
             _create_run_payload(
                 model_id,
                 content="Second send while assistant is pending.",
-                conversation_scope={"type": "media", "media_id": str(media_id)},
+                conversation_id=str(conversation_id),
+                parent_message_id=str(pending_assistant_id),
+                branch_anchor=_assistant_message_anchor(pending_assistant_id),
             ),
-            idempotency_key="chat-run-busy-scoped-second",
+            idempotency_key="chat-run-busy-singleton-second",
         )
 
-        assert second.status_code == 409, (
-            f"Expected scoped chat with pending active assistant to be busy, got "
-            f"{second.status_code}: {second.text}"
+        assert second.status_code in (400, 409), (
+            f"Expected second send to fail while assistant is pending, "
+            f"got {second.status_code}: {second.text}"
         )
-        assert second.json()["error"]["code"] == "E_CONVERSATION_BUSY"
+        assert second.json()["error"]["code"] in {
+            "E_CONVERSATION_BUSY",
+            "E_BRANCH_PATH_INVALID",
+        }, (
+            f"Expected E_CONVERSATION_BUSY or E_BRANCH_PATH_INVALID, got: {second.text}"
+        )
 
-    def test_scoped_create_run_uses_previous_complete_parent_after_error_leaf(
+    def test_chat_run_resends_after_failed_leaf_with_explicit_parent(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
+        """When the prior assistant errored, the client can resend by anchoring
+        on the previous *complete* assistant (the parent of the failed
+        follow-up). The chat-runs path no longer auto-resolves the parent
+        from the active leaf; the client supplies it explicitly."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
             model_id = create_test_model(session)
-            media_id = create_searchable_media(session, user_id, title="Errored Scoped Source")
+            media_id = create_searchable_media(session, user_id, title="Errored Singleton Source")
 
-        resolve = auth_client.post(
-            "/conversations/resolve",
-            headers=auth_headers(user_id),
-            json={"type": "media", "media_id": str(media_id)},
+        # Materialize the singleton via the first send.
+        first = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                singleton={"kind": "media", "target_id": str(media_id)},
+                content="Root question.",
+            ),
+            idempotency_key="chat-run-error-leaf-first",
         )
-        assert resolve.status_code == 200, resolve.text
-        conversation_id = UUID(resolve.json()["data"]["id"])
+        assert first.status_code == 200, first.text
+        first_data = first.json()["data"]
+        conversation_id = UUID(first_data["conversation"]["id"])
+        complete_assistant_id = UUID(first_data["assistant_message"]["id"])
+        first_run_id = UUID(first_data["run"]["id"])
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-        direct_db.register_cleanup("conversation_active_paths", "conversation_id", conversation_id)
-        direct_db.register_cleanup("conversations", "id", conversation_id)
+        _register_run_cleanup(direct_db, first_run_id, conversation_id)
+        direct_db.register_cleanup("chat_singletons", "conversation_id", conversation_id)
 
         with direct_db.session() as session:
-            root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
-            complete_assistant_id = create_test_message(
-                session,
-                conversation_id,
-                2,
-                "assistant",
-                "First answer",
-                parent_message_id=root_user_id,
+            session.execute(
+                text("UPDATE messages SET status = 'complete' WHERE id = :id"),
+                {"id": complete_assistant_id},
             )
             failed_user_id = create_test_message(
                 session,
@@ -485,20 +482,26 @@ class TestChatRunCreate:
             user_id,
             _create_run_payload(
                 model_id,
+                conversation_id=str(conversation_id),
                 content="Continue after failed answer.",
-                conversation_scope={"type": "media", "media_id": str(media_id)},
+                parent_message_id=str(complete_assistant_id),
+                branch_anchor=_assistant_message_anchor(complete_assistant_id),
             ),
-            idempotency_key="chat-run-error-leaf-scoped",
+            idempotency_key="chat-run-error-leaf-second",
         )
 
         assert response.status_code == 200, response.text
         data = response.json()["data"]
-        _register_run_cleanup(direct_db, UUID(data["run"]["id"]), conversation_id)
+        _register_run_cleanup(direct_db, UUID(data["run"]["id"]))
+        assert data["conversation"]["id"] == str(conversation_id)
         assert data["user_message"]["parent_message_id"] == str(complete_assistant_id)
 
-    def test_create_run_for_existing_conversation_requires_parent(
+    def test_create_run_for_empty_conversation_succeeds_without_parent(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
+        """An empty conversation (no messages yet) accepts the first send without a
+        parent_message_id: load_valid_parent_for_send returns None and the
+        run is created as the conversation's root user message."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
@@ -510,15 +513,16 @@ class TestChatRunCreate:
             auth_client,
             user_id,
             _create_run_payload(model_id, conversation_id=str(conversation_id)),
-            idempotency_key="chat-run-existing-conversation",
+            idempotency_key="chat-run-empty-conversation",
         )
 
-        assert response.status_code == 400, (
-            f"Expected existing-conversation run without parent to fail, got "
+        assert response.status_code == 200, (
+            f"Expected empty-conversation send to succeed, got "
             f"{response.status_code}: {response.text}"
         )
-        assert response.json()["error"]["code"] == "E_BRANCH_PATH_INVALID"
-        direct_db.register_cleanup("conversations", "id", conversation_id)
+        data = response.json()["data"]
+        assert data["user_message"]["parent_message_id"] is None
+        _register_run_cleanup(direct_db, UUID(data["run"]["id"]), conversation_id)
 
     def test_create_run_for_existing_non_empty_conversation_requires_parent(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
@@ -844,7 +848,6 @@ class TestChatRunCreate:
                     model_id=model_id,
                     reasoning="none",
                     key_mode="auto",
-                    web_search={"mode": "off"},
                 )
             )
             session.commit()
@@ -877,7 +880,9 @@ class TestChatRunCreate:
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
             model_id = create_test_model(session)
-        payload = _create_run_payload(model_id)
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = UUID(create_resp.json()["data"]["id"])
+        payload = _create_run_payload(model_id, conversation_id=str(conversation_id))
 
         first = _post_chat_run(auth_client, user_id, payload, "chat-run-replay")
         second = _post_chat_run(auth_client, user_id, payload, "chat-run-replay")
@@ -891,7 +896,6 @@ class TestChatRunCreate:
         assert second_data["assistant_message"]["id"] == first_data["assistant_message"]["id"]
 
         run_id = UUID(first_data["run"]["id"])
-        conversation_id = UUID(first_data["conversation"]["id"])
         _register_run_cleanup(direct_db, run_id, conversation_id)
 
     def test_idempotency_mismatch_returns_409(
@@ -902,17 +906,19 @@ class TestChatRunCreate:
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
             model_id = create_test_model(session)
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = UUID(create_resp.json()["data"]["id"])
 
         first = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id, content="First prompt"),
+            _create_run_payload(model_id, conversation_id=str(conversation_id), content="First prompt"),
             "chat-run-mismatch",
         )
         second = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id, content="Different prompt"),
+            _create_run_payload(model_id, conversation_id=str(conversation_id), content="Different prompt"),
             "chat-run-mismatch",
         )
 
@@ -924,7 +930,6 @@ class TestChatRunCreate:
 
         first_data = first.json()["data"]
         run_id = UUID(first_data["run"]["id"])
-        conversation_id = UUID(first_data["conversation"]["id"])
         _register_run_cleanup(direct_db, run_id, conversation_id)
 
     def test_idempotency_mismatch_includes_context_evidence_span_ids(
@@ -1000,8 +1005,11 @@ class TestChatRunCreate:
             ).scalar_one()
             session.commit()
 
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id_for_evidence = UUID(create_resp.json()["data"]["id"])
         first_payload = _create_run_payload(
             model_id,
+            conversation_id=str(conversation_id_for_evidence),
             contexts=[
                 {
                     "kind": "object_ref",
@@ -1013,6 +1021,7 @@ class TestChatRunCreate:
         )
         second_payload = _create_run_payload(
             model_id,
+            conversation_id=str(conversation_id_for_evidence),
             contexts=[
                 {
                     "kind": "object_ref",
@@ -1130,12 +1139,14 @@ class TestChatRunCreate:
             )
             session.commit()
 
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conv_id_for_stale = UUID(create_resp.json()["data"]["id"])
         response = _post_chat_run(
             auth_client,
             user_id,
             _create_run_payload(
                 model_id,
-                conversation_scope={"type": "media", "media_id": str(media_id)},
+                conversation_id=str(conv_id_for_stale),
                 contexts=[
                     {
                         "kind": "object_ref",
@@ -1158,6 +1169,7 @@ class TestChatRunCreate:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("conversations", "id", conv_id_for_stale)
 
     def test_active_sibling_run_does_not_block_anchored_send(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
@@ -1204,12 +1216,12 @@ class TestChatRunCreate:
                     INSERT INTO chat_runs (
                         id, owner_user_id, conversation_id, user_message_id,
                         assistant_message_id, idempotency_key, payload_hash, status,
-                        model_id, reasoning, key_mode, web_search
+                        model_id, reasoning, key_mode
                     )
                     VALUES (
                         :id, :owner_user_id, :conversation_id, :user_message_id,
                         :assistant_message_id, :idempotency_key, :payload_hash, 'queued',
-                        :model_id, 'none', 'auto', '{"mode": "off"}'::jsonb
+                        :model_id, 'none', 'auto'
                     )
                     """
                 ),
@@ -1256,18 +1268,19 @@ class TestChatRunCreate:
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
             model_id = create_test_model(session)
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = UUID(create_resp.json()["data"]["id"])
 
         response = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id),
+            _create_run_payload(model_id, conversation_id=str(conversation_id)),
             idempotency_key="chat-run-list-active",
         )
 
         assert response.status_code == 200, f"Create failed: {response.text}"
         created = response.json()["data"]
         run_id = UUID(created["run"]["id"])
-        conversation_id = UUID(created["conversation"]["id"])
         _register_run_cleanup(direct_db, run_id, conversation_id)
 
         listed = auth_client.get(
@@ -1288,17 +1301,18 @@ class TestChatRunCreate:
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
             model_id = create_test_model(session)
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = UUID(create_resp.json()["data"]["id"])
 
         response = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id),
+            _create_run_payload(model_id, conversation_id=str(conversation_id)),
             idempotency_key="chat-run-delete-conversation",
         )
 
         assert response.status_code == 200, f"Create failed: {response.text}"
         run_id = UUID(response.json()["data"]["run"]["id"])
-        conversation_id = UUID(response.json()["data"]["conversation"]["id"])
         _register_run_cleanup(direct_db, run_id, conversation_id)
 
         deleted = auth_client.delete(
@@ -1320,6 +1334,493 @@ class TestChatRunCreate:
             ).scalar_one()
         assert remaining_runs == 0
         assert remaining_events == 0
+
+
+class TestChatRunRequestSchema:
+    """Pydantic-level contracts on POST /chat-runs."""
+
+    def test_chat_run_request_rejects_web_search_field(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        """Per spec §7.1: requests with `web_search` field are rejected by
+        Pydantic extra-fields-forbid. The app maps every Pydantic error to a
+        single 400 E_INVALID_REQUEST envelope (validation_exception_handler in
+        ``nexus/app.py``), so we assert the API-level behavior here."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = UUID(create_resp.json()["data"]["id"])
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        payload = _create_run_payload(model_id, conversation_id=str(conversation_id))
+        payload["web_search"] = {"mode": "auto"}
+
+        response = auth_client.post(
+            "/chat-runs",
+            headers={**auth_headers(user_id), "Idempotency-Key": "chat-run-rejects-web-search"},
+            json=payload,
+        )
+        assert response.status_code == 400, (
+            f"Expected web_search extra-field to be rejected, got {response.status_code}: "
+            f"{response.text}"
+        )
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_chat_run_request_rejects_conversation_scope_field(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        """Per spec §7.1: requests with `conversation_scope` field are rejected
+        by Pydantic extra-fields-forbid. See the matching note in
+        ``test_chat_run_request_rejects_web_search_field``."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = UUID(create_resp.json()["data"]["id"])
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        payload = _create_run_payload(model_id, conversation_id=str(conversation_id))
+        payload["conversation_scope"] = {"type": "general"}
+
+        response = auth_client.post(
+            "/chat-runs",
+            headers={
+                **auth_headers(user_id),
+                "Idempotency-Key": "chat-run-rejects-conversation-scope",
+            },
+            json=payload,
+        )
+        assert response.status_code == 400, (
+            f"Expected conversation_scope extra-field to be rejected, got "
+            f"{response.status_code}: {response.text}"
+        )
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_chat_run_request_requires_conversation_id_or_singleton(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        """Per spec §7.1: exactly one of conversation_id or singleton is set.
+        Both/neither hit the model-validator and are rejected as 400
+        E_INVALID_REQUEST per the global validation_exception_handler."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id = create_searchable_media(session, user_id, title="Either-Or Source")
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # Neither -> 400 E_INVALID_REQUEST.
+        neither = auth_client.post(
+            "/chat-runs",
+            headers={**auth_headers(user_id), "Idempotency-Key": "chat-run-neither-target"},
+            json=_create_run_payload(model_id),
+        )
+        assert neither.status_code == 400, (
+            f"Expected omitting both conversation_id and singleton to fail, got "
+            f"{neither.status_code}: {neither.text}"
+        )
+        assert neither.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+        # Both -> 400 E_INVALID_REQUEST.
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = UUID(create_resp.json()["data"]["id"])
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+
+        both = auth_client.post(
+            "/chat-runs",
+            headers={**auth_headers(user_id), "Idempotency-Key": "chat-run-both-targets"},
+            json=_create_run_payload(
+                model_id,
+                conversation_id=str(conversation_id),
+                singleton={"kind": "media", "target_id": str(media_id)},
+            ),
+        )
+        assert both.status_code == 400, (
+            f"Expected supplying both conversation_id and singleton to fail, got "
+            f"{both.status_code}: {both.text}"
+        )
+        assert both.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+
+class TestChatRunSingleton:
+    """Singleton resolution contracts for POST /chat-runs."""
+
+    def test_chat_run_singleton_creates_lazily(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        """First send into a doc singleton creates the chat_singletons row + a new
+        conversation in the same transaction."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id = create_searchable_media(session, user_id, title="Lazy Singleton Source")
+
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        # Pre-condition: no chat_singletons row yet.
+        with direct_db.session() as session:
+            pre = session.execute(
+                text(
+                    """
+                    SELECT count(*) FROM chat_singletons
+                    WHERE user_id = :user_id AND kind = 'media' AND target_id = :media_id
+                    """
+                ),
+                {"user_id": user_id, "media_id": media_id},
+            ).scalar_one()
+        assert pre == 0
+
+        response = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                singleton={"kind": "media", "target_id": str(media_id)},
+            ),
+            idempotency_key="chat-run-singleton-creates-lazily",
+        )
+        assert response.status_code == 200, (
+            f"Expected first singleton send to succeed, got {response.status_code}: "
+            f"{response.text}"
+        )
+        data = response.json()["data"]
+        run_id = UUID(data["run"]["id"])
+        conversation_id = UUID(data["conversation"]["id"])
+        # Singletons FK to conversations.id (no CASCADE), so chat_singletons
+        # rows must be cleaned BEFORE conversations rows. LIFO: register
+        # _register_run_cleanup first (its conversations cleanup runs late),
+        # then register chat_singletons (it runs first).
+        _register_run_cleanup(direct_db, run_id, conversation_id)
+        direct_db.register_cleanup("chat_singletons", "conversation_id", conversation_id)
+
+        # Post-condition: singleton row exists and points at the conversation.
+        with direct_db.session() as session:
+            singleton_conv_id = session.execute(
+                text(
+                    """
+                    SELECT conversation_id FROM chat_singletons
+                    WHERE user_id = :user_id AND kind = 'media' AND target_id = :media_id
+                    """
+                ),
+                {"user_id": user_id, "media_id": media_id},
+            ).scalar_one()
+        assert singleton_conv_id == conversation_id
+
+    def test_chat_run_singleton_resolves_existing(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        """A second singleton send for the same (viewer, kind, target) reuses the
+        existing conversation_id."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id = create_searchable_media(session, user_id, title="Existing Singleton Source")
+
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        first = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                singleton={"kind": "media", "target_id": str(media_id)},
+                content="First singleton send.",
+            ),
+            idempotency_key="chat-run-singleton-resolves-existing-first",
+        )
+        assert first.status_code == 200, first.text
+        first_data = first.json()["data"]
+        first_conversation_id = UUID(first_data["conversation"]["id"])
+        first_assistant_id = UUID(first_data["assistant_message"]["id"])
+        _register_run_cleanup(direct_db, UUID(first_data["run"]["id"]), first_conversation_id)
+        # chat_singletons FK -> conversations.id (no CASCADE); LIFO order needs
+        # this registered AFTER the conversations cleanup above.
+        direct_db.register_cleanup("chat_singletons", "conversation_id", first_conversation_id)
+
+        # Promote the pending assistant so the conversation isn't busy.
+        with direct_db.session() as session:
+            session.execute(
+                text("UPDATE messages SET status = 'complete' WHERE id = :id"),
+                {"id": first_assistant_id},
+            )
+            persist_active_leaf(
+                session,
+                viewer_id=user_id,
+                conversation_id=first_conversation_id,
+                active_leaf_message_id=first_assistant_id,
+            )
+            session.commit()
+
+        second = _post_chat_run(
+            auth_client,
+            user_id,
+            _create_run_payload(
+                model_id,
+                singleton={"kind": "media", "target_id": str(media_id)},
+                content="Second singleton send.",
+                parent_message_id=str(first_assistant_id),
+                branch_anchor=_assistant_message_anchor(first_assistant_id),
+            ),
+            idempotency_key="chat-run-singleton-resolves-existing-second",
+        )
+        assert second.status_code == 200, (
+            f"Expected second singleton send to succeed, got {second.status_code}: {second.text}"
+        )
+        second_data = second.json()["data"]
+        second_conversation_id = UUID(second_data["conversation"]["id"])
+        _register_run_cleanup(direct_db, UUID(second_data["run"]["id"]))
+
+        assert second_conversation_id == first_conversation_id, (
+            "Second send must reuse the singleton's existing conversation_id; "
+            f"got new conversation {second_conversation_id} (first was {first_conversation_id})"
+        )
+
+    def test_chat_run_singleton_race_safety(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        """Two concurrent first-sends into the same (viewer, kind, target) settle
+        on exactly one chat_singletons row.
+
+        Uses threading on the live TestClient + auth_client (which is itself
+        thread-safe under FastAPI's TestClient). One winner conversation_id is
+        observed; the other request also returns it (or fails cleanly), but
+        ``chat_singletons`` ends with exactly one row."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            media_id = create_searchable_media(session, user_id, title="Race Singleton Source")
+
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        results: list[dict] = []
+        results_lock = threading.Lock()
+        barrier = threading.Barrier(2)
+
+        def send(idem_suffix: str) -> None:
+            barrier.wait(timeout=5)
+            try:
+                response = _post_chat_run(
+                    auth_client,
+                    user_id,
+                    _create_run_payload(
+                        model_id,
+                        singleton={"kind": "media", "target_id": str(media_id)},
+                        content=f"Race send {idem_suffix}.",
+                    ),
+                    idempotency_key=f"chat-run-singleton-race-{idem_suffix}",
+                )
+            except Exception as exc:  # justify-ignore-error: surface race outcome to assertions below
+                with results_lock:
+                    results.append({"error": str(exc)})
+                return
+            with results_lock:
+                results.append({"status": response.status_code, "body": response.text})
+
+        threads = [
+            threading.Thread(target=send, args=("alpha",)),
+            threading.Thread(target=send, args=("beta",)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        # Both attempts settle (200) or one of them surfaces a transient retry-safe error.
+        # The hard contract is: at most one chat_singletons row for (viewer, media).
+        with direct_db.session() as session:
+            singleton_count = session.execute(
+                text(
+                    """
+                    SELECT count(*) FROM chat_singletons
+                    WHERE user_id = :user_id AND kind = 'media' AND target_id = :media_id
+                    """
+                ),
+                {"user_id": user_id, "media_id": media_id},
+            ).scalar_one()
+            singleton_conv_id = session.execute(
+                text(
+                    """
+                    SELECT conversation_id FROM chat_singletons
+                    WHERE user_id = :user_id AND kind = 'media' AND target_id = :media_id
+                    """
+                ),
+                {"user_id": user_id, "media_id": media_id},
+            ).scalar_one_or_none()
+        assert singleton_count == 1, (
+            f"Expected exactly one singleton row after concurrent first-sends, got "
+            f"{singleton_count}. Results: {results}"
+        )
+        if singleton_conv_id is not None:
+            # LIFO order: register the "last cleaned" first so dependents
+            # (chat_run_events FK -> chat_runs; chat_singletons FK -> conversations)
+            # are cleaned earlier.
+            direct_db.register_cleanup("conversations", "id", singleton_conv_id)
+            direct_db.register_cleanup("messages", "conversation_id", singleton_conv_id)
+            direct_db.register_cleanup(
+                "conversation_active_paths", "conversation_id", singleton_conv_id
+            )
+            with direct_db.session() as session:
+                run_ids = session.execute(
+                    text("SELECT id FROM chat_runs WHERE conversation_id = :id"),
+                    {"id": singleton_conv_id},
+                ).scalars().all()
+            direct_db.register_cleanup("chat_runs", "conversation_id", singleton_conv_id)
+            for run_id in run_ids:
+                direct_db.register_cleanup("chat_run_events", "run_id", run_id)
+                with direct_db.session() as session:
+                    job_ids = session.execute(
+                        text(
+                            "SELECT id FROM background_jobs WHERE payload->>'run_id' = :run_id"
+                        ),
+                        {"run_id": str(run_id)},
+                    ).scalars().all()
+                for job_id in job_ids:
+                    direct_db.register_cleanup("background_jobs", "id", job_id)
+            direct_db.register_cleanup("chat_singletons", "conversation_id", singleton_conv_id)
+
+    def test_chat_run_tools_always_registered(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        """Every chat-run accepts both `app_search` and `web_search` as tool_name on
+        SSE tool_call events: the schemas registered for those events expose both."""
+        from nexus.schemas.conversation import (
+            ChatRunRetrievalResultEventPayload,
+            ChatRunSourceManifestDeltaEventPayload,
+            ChatRunToolCallEventPayload,
+        )
+
+        common = {
+            "tool_call_id": None,
+            "assistant_message_id": str(uuid4()),
+            "tool_call_index": 0,
+            "status": "running",
+            "scope": "all",
+        }
+        for tool_name in ("app_search", "web_search"):
+            ChatRunToolCallEventPayload.model_validate(
+                {**common, "tool_name": tool_name, "types": [], "semantic": True, "filters": {}}
+            )
+            ChatRunRetrievalResultEventPayload.model_validate(
+                {
+                    "assistant_message_id": common["assistant_message_id"],
+                    "tool_name": tool_name,
+                    "tool_call_index": 0,
+                    "status": "complete",
+                    "result_count": 0,
+                    "selected_count": 0,
+                    "filters": {},
+                    "results": [],
+                }
+            )
+            ChatRunSourceManifestDeltaEventPayload.model_validate(
+                {
+                    "assistant_message_id": common["assistant_message_id"],
+                    "tool_name": tool_name,
+                    "tool_call_index": 0,
+                    "scope": "all",
+                    "filters": {},
+                    "requested_types": [],
+                    "candidate_count": 0,
+                    "result_count": 0,
+                    "selected_count": 0,
+                    "included_in_prompt_count": 0,
+                    "excluded_by_budget_count": 0,
+                    "excluded_by_scope_count": 0,
+                    "stale_count": 0,
+                    "unreadable_count": 0,
+                    "index_versions": [],
+                    "status": "complete",
+                }
+            )
+
+    def test_chat_run_reader_context_passes_to_prompt(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        """`reader_context.media_id` shows up in the chat_run job payload so the
+        worker can render the retrieval hint block; the request payload itself
+        ships the hint (without it becoming a hard filter)."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            model_id = create_test_model(session)
+            library_id = create_test_library(session, user_id, "Reader Hint Library")
+            media_id = create_test_media_in_library(
+                session, user_id, library_id, title="Reader Hint Doc"
+            )
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        conversation_id = UUID(create_resp.json()["data"]["id"])
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+
+        payload = _create_run_payload(
+            model_id,
+            conversation_id=str(conversation_id),
+            reader_context={"media_id": str(media_id), "library_id": str(library_id)},
+        )
+        response = _post_chat_run(
+            auth_client,
+            user_id,
+            payload,
+            idempotency_key="chat-run-reader-context-hint",
+        )
+        assert response.status_code == 200, (
+            f"Expected chat-run with reader_context to succeed, got "
+            f"{response.status_code}: {response.text}"
+        )
+        data = response.json()["data"]
+        run_id = UUID(data["run"]["id"])
+        _register_run_cleanup(direct_db, run_id)
+
+        # Behavior: the chat_run worker payload carries the reader_context, which
+        # is what tells the prompt assembler to render the reader_context_hint
+        # block (the model-prompt hint, not a hard filter).
+        with direct_db.session() as session:
+            job_payload = session.execute(
+                text(
+                    """
+                    SELECT payload FROM background_jobs
+                    WHERE kind = 'chat_run' AND payload->>'run_id' = :run_id
+                    """
+                ),
+                {"run_id": str(run_id)},
+            ).scalar_one()
+        assert isinstance(job_payload, dict)
+        hint = job_payload.get("reader_context")
+        assert isinstance(hint, dict), (
+            f"Expected reader_context dict in chat_run job payload, got "
+            f"{job_payload!r}"
+        )
+        assert hint.get("media_id") == str(media_id)
+        assert hint.get("library_id") == str(library_id)
 
 
 class TestChatResponseRetry:

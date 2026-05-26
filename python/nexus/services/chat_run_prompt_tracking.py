@@ -230,8 +230,6 @@ def reconcile_prompt_retrievals(db: Session, *, run: ChatRun, assembly: Any) -> 
             "metadata": {},
         }
         if existing_manifest is not None:
-            if "web_search_mode" in existing_manifest:
-                manifest["web_search_mode"] = existing_manifest.get("web_search_mode")
             if isinstance(existing_manifest.get("index_versions"), list):
                 manifest["index_versions"] = existing_manifest["index_versions"]
             if isinstance(existing_manifest.get("metadata"), dict):

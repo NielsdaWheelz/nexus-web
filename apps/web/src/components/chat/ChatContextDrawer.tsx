@@ -8,11 +8,11 @@ import type { ContextItem } from "@/lib/api/sse/requests";
 import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import type {
-  ConversationMemoryInspection,
-  ConversationScope,
   BranchGraph,
-  ForkOption,
+  ConversationMemoryInspection,
   ConversationMessage,
+  ConversationSingleton,
+  ForkOption,
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
 import styles from "./ChatContextDrawer.module.css";
@@ -20,7 +20,7 @@ import styles from "./ChatContextDrawer.module.css";
 export default function ChatContextDrawer({
   conversationId,
   contexts,
-  scope,
+  singleton,
   memory,
   messages,
   persistedRows,
@@ -36,7 +36,7 @@ export default function ChatContextDrawer({
 }: {
   conversationId?: string;
   contexts: ContextItem[];
-  scope?: ConversationScope;
+  singleton?: ConversationSingleton | null;
   memory?: ConversationMemoryInspection | null;
   messages?: ConversationMessage[];
   persistedRows?: Array<{
@@ -108,7 +108,7 @@ export default function ChatContextDrawer({
             <div className={styles.body}>
               <ConversationContextPane
                 conversationId={conversationId}
-                scope={scope}
+                singleton={singleton}
                 memory={memory}
                 messages={messages}
                 contexts={contexts}

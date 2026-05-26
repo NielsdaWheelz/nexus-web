@@ -9,18 +9,10 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
-import Pill from "@/components/ui/Pill";
 import { AppList, AppListItem } from "@/components/ui/AppList";
-import {
-  formatConversationScopeBadge,
-  formatConversationScopeLabel,
-} from "@/lib/conversations/display";
+import { SINGLETON_KIND_ICONS } from "@/lib/conversations/display";
 import type { ConversationSummary } from "@/lib/conversations/types";
 import styles from "./ConversationsPaneBody.module.css";
-
-// ============================================================================
-// Types
-// ============================================================================
 
 type Conversation = ConversationSummary;
 
@@ -29,17 +21,12 @@ interface ConversationsResponse {
   page: { next_cursor: string | null };
 }
 
-// ============================================================================
-// Component
-// ============================================================================
-
 export default function ConversationsPaneBody() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
 
-  // Fetch conversations
   const fetchConversations = useCallback(
     async (cursor?: string) => {
       try {
@@ -124,11 +111,11 @@ function ConversationListItem({
   conversation: Conversation;
   onDelete: (conversationId: string) => Promise<void>;
 }) {
-  const scope = conversation.scope;
-  const description =
-    scope.type === "general"
-      ? `${conversation.message_count} messages`
-      : `${formatConversationScopeLabel(scope)} - ${conversation.message_count} messages`;
+  const singleton = conversation.singleton;
+  const Icon = singleton ? SINGLETON_KIND_ICONS[singleton.kind] : null;
+  const description = singleton
+    ? singleton.target_title
+    : `${conversation.message_count} messages`;
 
   return (
     <AppListItem
@@ -137,14 +124,14 @@ function ConversationListItem({
       paneTitleHint={conversation.title}
       description={description}
       meta={new Date(conversation.updated_at).toLocaleDateString()}
-      trailing={
-        <Pill tone={scope.type === "general" ? "neutral" : "info"}>
-          {formatConversationScopeBadge(scope)}
-        </Pill>
+      icon={Icon ? <Icon size={16} aria-hidden="true" /> : undefined}
+      options={
+        singleton
+          ? undefined
+          : conversationResourceOptions({
+              onDelete: () => void onDelete(conversation.id),
+            })
       }
-      options={conversationResourceOptions({
-        onDelete: () => void onDelete(conversation.id),
-      })}
     />
   );
 }

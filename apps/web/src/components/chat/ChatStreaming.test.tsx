@@ -84,7 +84,7 @@ function runData({
       title: "Test conversation",
       sharing: "private",
       message_count: 2,
-      scope: { type: "general" },
+      singleton: null,
       created_at: baseTimestamp,
       updated_at: baseTimestamp,
     },

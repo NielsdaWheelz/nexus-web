@@ -743,7 +743,6 @@ def test_message_prompt_evidence_rows_include_attached_content_chunk_context(
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     db_session.commit()
@@ -938,7 +937,6 @@ def test_assistant_claim_evidence_round_trip(db_session: Session):
     db_session.add(
         AssistantMessageEvidenceSummary(
             message_id=assistant_message_id,
-            scope_type="general",
             scope_ref=None,
             retrieval_status="included_in_prompt",
             support_status="supported",
@@ -1004,7 +1002,6 @@ def test_message_document_persists_source_manifest(
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     db_session.flush()
@@ -1143,7 +1140,6 @@ def test_message_document_persists_source_manifest(
     db_session.add(
         AssistantMessageEvidenceSummary(
             message_id=assistant_message_id,
-            scope_type="general",
             scope_ref=None,
             retrieval_status="included_in_prompt",
             support_status="supported",
@@ -1258,7 +1254,6 @@ def test_reconcile_prompt_retrievals_preserves_empty_manifest_metadata(
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "auto"},
     )
     db_session.add(run)
     db_session.flush()
@@ -1298,7 +1293,6 @@ def test_reconcile_prompt_retrievals_preserves_empty_manifest_metadata(
                 "excluded_by_scope_count": 0,
                 "stale_count": 0,
                 "unreadable_count": 0,
-                "web_search_mode": "auto",
                 "index_versions": ["web:index:v1"],
                 "metadata": {"provider": "test"},
                 "latency_ms": 17,
@@ -1329,7 +1323,9 @@ def test_reconcile_prompt_retrievals_preserves_empty_manifest_metadata(
     ).scalar_one()
 
     assert manifest["filters"] == {"allowed_domains": ["example.com"]}
-    assert manifest["web_search_mode"] == "auto"
+    assert "web_search_mode" not in manifest, (
+        f"source_manifest_delta payload should not include web_search_mode; got {manifest}"
+    )
     assert manifest["index_versions"] == ["web:index:v1"]
     assert manifest["metadata"] == {"provider": "test"}
     assert manifest["candidate_count"] == 0
@@ -1342,7 +1338,6 @@ def test_reconcile_prompt_retrievals_preserves_empty_manifest_metadata(
     assert durable_manifest is not None
     assert durable_manifest.tool_call_id == tool_call.id
     assert durable_manifest.filters == {"allowed_domains": ["example.com"]}
-    assert durable_manifest.web_search_mode == "auto"
     assert durable_manifest.index_versions == ["web:index:v1"]
     assert durable_manifest.metadata_json == {"provider": "test"}
     assert durable_manifest.candidate_count == 0
@@ -1370,7 +1365,6 @@ def test_reconcile_prompt_retrievals_updates_current_source_manifest_snapshot(
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "auto"},
     )
     db_session.add(run)
     db_session.flush()
@@ -1447,7 +1441,6 @@ def test_reconcile_prompt_retrievals_updates_current_source_manifest_snapshot(
             "excluded_by_scope_count": 0,
             "stale_count": 0,
             "unreadable_count": 0,
-            "web_search_mode": "auto",
             "index_versions": ["web:index:v1"],
             "metadata": {"provider": "test", "empty_status": "partial"},
             "latency_ms": 21,
@@ -1507,7 +1500,6 @@ def test_reconcile_prompt_retrievals_updates_current_source_manifest_snapshot(
     assert durable_manifest.excluded_by_budget_count == 1
     assert durable_manifest.excluded_by_scope_count == 1
     assert durable_manifest.filters == {"allowed_domains": ["example.com"]}
-    assert durable_manifest.web_search_mode == "auto"
     assert durable_manifest.index_versions == ["web:index:v1"]
     assert durable_manifest.metadata_json == {"provider": "test", "empty_status": "partial"}
 
@@ -1547,7 +1539,6 @@ def test_reconcile_prompt_retrievals_marks_dropped_web_evidence_by_budget(
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "auto"},
     )
     db_session.add(run)
     db_session.flush()
@@ -1984,7 +1975,6 @@ async def test_verified_assistant_content_extracts_general_answer_claims_as_not_
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     db_session.commit()
@@ -2133,7 +2123,6 @@ async def test_verified_assistant_content_removes_unsupported_claim_before_final
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     tool_call = MessageToolCall(
@@ -2340,7 +2329,6 @@ async def test_verified_assistant_content_persists_all_contradicted_claims(
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     source_version = "content_chunk:contradiction:v1"
@@ -2548,7 +2536,6 @@ async def test_verified_assistant_content_drops_unextracted_factual_text(
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     tool_call = MessageToolCall(
@@ -2675,7 +2662,6 @@ async def test_verified_assistant_content_fails_closed_when_verifier_generate_fa
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     source_id = str(uuid4())
@@ -2824,7 +2810,6 @@ def test_finalize_message_evidence_persists_unsupported_claim_without_evidence(
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     assistant_message = db_session.get(Message, assistant_message_id)
@@ -2956,7 +2941,6 @@ def test_finalize_message_evidence_parse_failed_does_not_fall_back_to_lexical_su
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     assistant_message = db_session.get(Message, assistant_message_id)
@@ -3087,7 +3071,6 @@ def test_finalize_message_evidence_rejects_prompt_retrieval_locator_drift(
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     assistant_message = db_session.get(Message, assistant_message_id)
@@ -3233,7 +3216,6 @@ def test_finalize_message_evidence_downgrades_claims_missing_evidence(
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     supported_text = "The observatory detected water vapor in the target atmosphere."
@@ -3379,7 +3361,6 @@ def test_finalize_message_evidence_fails_closed_for_source_backed_empty_results(
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     assistant_message = db_session.get(Message, assistant_message_id)
@@ -3445,7 +3426,6 @@ def test_finalize_message_evidence_persists_not_source_grounded_claim(
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     assistant_message = db_session.get(Message, assistant_message_id)
@@ -3506,7 +3486,6 @@ def test_finalize_message_evidence_fails_closed_when_source_answer_has_no_claim_
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     assistant_message = db_session.get(Message, assistant_message_id)
@@ -3588,7 +3567,6 @@ def test_finalize_message_evidence_preserves_llm_unsupported_statuses(db_session
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     assistant_message = db_session.get(Message, assistant_message_id)
@@ -3811,7 +3789,6 @@ def test_citation_audit_counts_partially_supported_claims(db_session: Session):
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     assistant_message = db_session.get(Message, assistant_message_id)

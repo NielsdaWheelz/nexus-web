@@ -1,4 +1,4 @@
-"""Pre-phase validation for chat run creation: input, model, rate limits, scope, branch parents."""
+"""Pre-phase validation for chat run creation: input, model, rate limits, branch parents."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from llm_calling.errors import LLMError
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_highlight, can_read_media
@@ -16,7 +17,6 @@ from nexus.schemas.conversation import (
     MAX_MESSAGE_CONTENT_LENGTH,
     BranchAnchorRequest,
     ContextItem,
-    ConversationScopeRequest,
 )
 from nexus.schemas.notes import ObjectRef
 from nexus.services.api_key_resolver import (
@@ -26,7 +26,6 @@ from nexus.services.api_key_resolver import (
 )
 from nexus.services.contexts import validate_content_chunk_evidence_span_ids
 from nexus.services.conversation_branches import branch_anchor_for_message
-from nexus.services.conversations import authorize_conversation_scope
 from nexus.services.models import get_model_catalog_metadata
 from nexus.services.object_refs import hydrate_object_ref
 from nexus.services.rate_limit import get_rate_limiter
@@ -35,8 +34,7 @@ from nexus.services.rate_limit import get_rate_limiter
 def validate_pre_phase(
     db: Session,
     viewer_id: UUID,
-    conversation_id: UUID | None,
-    conversation_scope: ConversationScopeRequest | None,
+    conversation_id: UUID,
     parent_message_id: UUID | None,
     branch_anchor: BranchAnchorRequest,
     content: str,
@@ -85,21 +83,13 @@ def validate_pre_phase(
     rate_limiter.check_concurrent_limit(viewer_id)
     if use_platform_key:
         rate_limiter.check_token_budget(viewer_id)
-    if conversation_id is not None:
-        _validate_parent_anchor_for_existing_conversation(
-            db,
-            viewer_id,
-            conversation_id,
-            parent_message_id,
-            branch_anchor,
-        )
-    elif conversation_scope is not None:
-        if parent_message_id is not None or branch_anchor.kind != "none":
-            raise ApiError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "conversation_scope sends cannot include a branch parent",
-            )
-        authorize_conversation_scope(db, viewer_id, conversation_scope)
+    _validate_parent_anchor_for_existing_conversation(
+        db,
+        viewer_id,
+        conversation_id,
+        parent_message_id,
+        branch_anchor,
+    )
 
     return model
 
@@ -111,10 +101,17 @@ def load_valid_parent_for_send(
     parent_message_id: UUID | None,
 ) -> Message | None:
     if parent_message_id is None:
-        raise ApiError(
-            ApiErrorCode.E_BRANCH_PATH_INVALID,
-            "Existing conversations require parent_message_id",
+        message_count = db.scalar(
+            select(func.count())
+            .select_from(Message)
+            .where(Message.conversation_id == conversation_id)
         )
+        if message_count:
+            raise ApiError(
+                ApiErrorCode.E_BRANCH_PATH_INVALID,
+                "Existing conversations require parent_message_id",
+            )
+        return None
     parent = db.get(Message, parent_message_id)
     if parent is None or parent.conversation_id != conversation_id:
         raise ApiError(ApiErrorCode.E_BRANCH_PATH_INVALID, "Parent message not found")

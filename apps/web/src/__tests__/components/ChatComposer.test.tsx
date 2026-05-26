@@ -248,13 +248,9 @@ describe("ChatComposer", () => {
       model_id: "gpt-5.5",
       reasoning: "high",
       key_mode: "byok_only",
-      web_search: {
-        mode: "auto",
-        freshness_days: null,
-        allowed_domains: [],
-        blocked_domains: [],
-      },
     });
+    expect(body).not.toHaveProperty("web_search");
+    expect(body).not.toHaveProperty("conversation_scope");
     expect(init?.headers).toEqual(
       expect.objectContaining({
         "Content-Type": "application/json",
@@ -486,7 +482,10 @@ describe("ChatComposer", () => {
     expect(body.conversation_id).toBeUndefined();
     expect(body.parent_message_id).toBeUndefined();
     expect(body.branch_anchor).toEqual({ kind: "none" });
-    expect(body.conversation_scope).toEqual({ type: "general" });
+    expect(body).not.toHaveProperty("conversation_scope");
+    expect(body).not.toHaveProperty("web_search");
+    expect(body.singleton).toBeNull();
+    expect(body.reader_context).toBeNull();
   });
 
   it("keeps a stable-key draft when conversation identity changes", async () => {
@@ -548,6 +547,61 @@ describe("ChatComposer", () => {
     expect(onRemoveContext).toHaveBeenCalledWith(0);
   });
 
+  it("sends singleton + reader_context payload for a new doc-chat first message", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installChatComposerFetchMock();
+
+    render(
+      <ChatComposer
+        conversationId={null}
+        singletonTarget={{ kind: "media", target_id: "media-1" }}
+        readerContext={{ media_id: "media-1", library_id: null }}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+    ).toBeInTheDocument();
+
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("First message into the doc chat");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(chatRunCalls(fetchMock)).toHaveLength(1);
+    });
+
+    const [, init] = chatRunCalls(fetchMock)[0];
+    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest & {
+      conversation_id?: string;
+    };
+
+    expect(body.conversation_id).toBeUndefined();
+    expect(body.singleton).toEqual({ kind: "media", target_id: "media-1" });
+    expect(body.reader_context).toEqual({
+      media_id: "media-1",
+      library_id: null,
+    });
+    expect(body).not.toHaveProperty("web_search");
+    expect(body).not.toHaveProperty("conversation_scope");
+  });
+
+  it("does not render a web-search selector or scope chip in the composer", async () => {
+    installChatComposerFetchMock();
+
+    render(<ChatComposer conversationId="conversation-1" />);
+
+    expect(
+      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("combobox", { name: /web search/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/web search/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^scope/i)).not.toBeInTheDocument();
+  });
+
   it("keeps the composer controls inside a 320px mobile width without horizontal scrolling", async () => {
     installChatComposerFetchMock();
     setViewportWidth(320);
@@ -566,7 +620,9 @@ describe("ChatComposer", () => {
       await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
     ).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Ask anything" })).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "Web search mode" })).toBeVisible();
+    expect(
+      screen.queryByRole("combobox", { name: "Web search mode" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send message" })).toBeVisible();
 
     const host = screen.getByTestId("mobile-composer-host");

@@ -20,12 +20,11 @@ def test_chat_run_create_request_rejects_duplicate_context_evidence_span_ids():
     with pytest.raises(ValidationError, match="evidence_span_ids must not contain duplicates"):
         ChatRunCreateRequest.model_validate(
             {
+                "conversation_id": str(uuid4()),
                 "content": "Summarize this context.",
                 "model_id": str(uuid4()),
                 "reasoning": "none",
                 "key_mode": "auto",
-                "conversation_scope": {"type": "general"},
-                "web_search": {"mode": "off"},
                 "contexts": [
                     {
                         "kind": "object_ref",

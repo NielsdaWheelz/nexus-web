@@ -91,13 +91,13 @@ def _insert_terminal_run(
                 INSERT INTO chat_runs (
                     id, owner_user_id, conversation_id, user_message_id,
                     assistant_message_id, idempotency_key, payload_hash, status,
-                    model_id, reasoning, key_mode, web_search, completed_at,
+                    model_id, reasoning, key_mode, completed_at,
                     next_event_seq
                 )
                 VALUES (
                     :id, :owner_user_id, :conversation_id, :user_message_id,
                     :assistant_message_id, :idempotency_key, :payload_hash, :status,
-                    :model_id, 'none', 'auto', '{"mode": "off"}'::jsonb, :completed_at,
+                    :model_id, 'none', 'auto', :completed_at,
                     4
                 )
                 """
@@ -406,7 +406,6 @@ class TestSourceBackedChatRunStreaming:
                 model_id=model_id,
                 reasoning="none",
                 key_mode="auto",
-                web_search={"mode": "off"},
             )
             retrieval_media_id = other_media_id if other_media_id is not None else media_id
             tool_call = MessageToolCall(
@@ -460,7 +459,6 @@ class TestSourceBackedChatRunStreaming:
                     session,
                     run_id=run_id,
                     llm_router=_StreamingAnswerRouter(f"{supported} ", unsupported),
-                    web_search_provider=None,
                 )
 
                 assert result == {"status": "complete"}
@@ -539,7 +537,6 @@ class TestSourceBackedChatRunStreaming:
                 model_id=model_id,
                 reasoning="none",
                 key_mode="auto",
-                web_search={"mode": "off"},
             )
             result_ref = {
                 "type": "web_result",
@@ -609,7 +606,6 @@ class TestSourceBackedChatRunStreaming:
                     session,
                     run_id=run_id,
                     llm_router=_StreamingAnswerRouter(f"{supported} ", unsupported),
-                    web_search_provider=None,
                 )
 
                 assert result == {"status": "complete"}

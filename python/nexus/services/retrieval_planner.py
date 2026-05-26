@@ -8,8 +8,6 @@ from uuid import UUID
 
 from llm_calling.types import Turn
 
-from nexus.errors import ApiError, ApiErrorCode
-
 APP_SEARCH_QUERY_MAX_CHARS = 512
 APP_SEARCH_TYPES_ALL = (
     "media",
@@ -26,7 +24,6 @@ APP_SEARCH_TYPES_ALL = (
     "evidence_span",
     "conversation",
 )
-APP_SEARCH_TYPES_SCOPED = ("content_chunk", "fragment", "evidence_span")
 _SHORT_NON_SEARCH_MESSAGES = {
     "hi",
     "hello",
@@ -68,53 +65,14 @@ _APP_SEARCH_CUE_TERMS = (
     "compare",
 )
 
-_WEB_SEARCH_CUE_TERMS = (
-    "latest",
-    "current",
-    "today",
-    "yesterday",
-    "tomorrow",
-    "recent",
-    "news",
-    "price",
-    "pricing",
-    "release",
-    "changelog",
-    "docs",
-    "documentation",
-    "source",
-    "sources",
-    "cite",
-    "citation",
-    "verify",
-    "look up",
-    "lookup",
-    "web",
-    "internet",
-    "search the web",
-    "find online",
-    "api",
-    "law",
-    "legal",
-    "regulation",
-    "standard",
-)
-
 
 @dataclass(frozen=True)
 class AppSearchPlan:
     enabled: bool
     query: str | None
-    scope: str
     types: tuple[str, ...]
     semantic: bool
     filters: Mapping[str, object]
-    reason: str
-
-
-@dataclass(frozen=True)
-class WebSearchPlan:
-    enabled: bool
     reason: str
 
 
@@ -127,7 +85,6 @@ class ContextLookupRequest:
 @dataclass(frozen=True)
 class RetrievalPlan:
     app_search: AppSearchPlan
-    web_search: WebSearchPlan
     context_lookup: tuple[ContextLookupRequest, ...]
 
 
@@ -135,85 +92,47 @@ def build_retrieval_plan(
     *,
     user_content: str,
     history: Sequence[Turn],
-    scope_metadata: Mapping[str, object],
     attached_context_refs: Sequence[Mapping[str, object]] = (),
     memory_source_refs: Sequence[Mapping[str, object]] = (),
-    web_search_options: Mapping[str, object] | None = None,
 ) -> RetrievalPlan:
     """Build a structured plan without executing retrieval or answering the user."""
 
-    app_scope = app_search_scope_for_conversation(scope_metadata)
-    scope_type = str(scope_metadata.get("type") or "general")
     has_user_context = bool(attached_context_refs)
-    app_filters = _app_search_filters_for_context(scope_metadata, attached_context_refs)
+    app_filters = _app_search_filters_for_context(attached_context_refs)
     normalized = " ".join(user_content.lower().split())
-    app_enabled = _should_run_app_search(
-        normalized,
-        has_user_context=has_user_context,
-        scoped=scope_type in {"media", "library"},
-    )
-    app_reason = "scoped conversation" if scope_type in {"media", "library"} else "query cues"
-    if not app_enabled:
-        app_reason = "no app-search cues"
+    app_enabled = _should_run_app_search(normalized, has_user_context=has_user_context)
+    app_reason = "query cues" if app_enabled else "no app-search cues"
 
     app_search = AppSearchPlan(
         enabled=app_enabled,
         query=build_app_search_query(
             user_content,
             history=history,
-            scope_metadata=scope_metadata,
             attached_context_refs=attached_context_refs,
             memory_source_refs=memory_source_refs,
         )
         if app_enabled
         else None,
-        scope=app_scope,
-        types=APP_SEARCH_TYPES_SCOPED
-        if scope_type in {"media", "library"}
-        else APP_SEARCH_TYPES_ALL,
+        types=APP_SEARCH_TYPES_ALL,
         semantic=True,
         filters=app_filters,
         reason=app_reason,
     )
 
-    web_search = _plan_web_search(normalized, web_search_options or {"mode": "off"})
     context_lookup = tuple(
         ContextLookupRequest(source_ref=source_ref, purpose="hydrate memory source evidence")
         for source_ref in _dedupe_source_refs(memory_source_refs)
     )
     return RetrievalPlan(
         app_search=app_search,
-        web_search=web_search,
         context_lookup=context_lookup,
     )
 
 
-def app_search_scope_for_conversation(scope_metadata: Mapping[str, object]) -> str:
-    """Return the app-search scope implied by persisted conversation scope."""
-
-    scope_type = scope_metadata.get("type")
-    if scope_type == "general":
-        return "all"
-    if scope_type == "media":
-        media_id = scope_metadata.get("media_id")
-        if not isinstance(media_id, str) or not media_id:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid media conversation scope")
-        return f"media:{media_id}"
-    if scope_type == "library":
-        library_id = scope_metadata.get("library_id")
-        if not isinstance(library_id, str) or not library_id:
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid library conversation scope")
-        return f"library:{library_id}"
-    raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid conversation scope")
-
-
 def _app_search_filters_for_context(
-    scope_metadata: Mapping[str, object],
     attached_context_refs: Sequence[Mapping[str, object]],
 ) -> Mapping[str, object]:
     contributor_handles: list[str] = []
-    roles: list[str] = []
-    content_kinds: list[str] = []
 
     for ref in attached_context_refs:
         if ref.get("type") != "contributor":
@@ -221,22 +140,6 @@ def _app_search_filters_for_context(
         handle = _contributor_handle_from_ref(ref)
         if handle:
             contributor_handles.append(handle)
-
-    for key, target in (("roles", roles), ("content_kinds", content_kinds)):
-        raw_values = scope_metadata.get(key)
-        if isinstance(raw_values, str):
-            values = [raw_values]
-        elif isinstance(raw_values, Sequence):
-            values = list(raw_values)
-        else:
-            values = []
-        seen_values: set[str] = set()
-        for raw_value in values:
-            value = str(raw_value or "").strip()
-            if not value or value in seen_values:
-                continue
-            target.append(value)
-            seen_values.add(value)
 
     seen_handles: set[str] = set()
     deduped_handles: list[str] = []
@@ -248,8 +151,8 @@ def _app_search_filters_for_context(
 
     return {
         "contributor_handles": deduped_handles,
-        "roles": roles,
-        "content_kinds": content_kinds,
+        "roles": [],
+        "content_kinds": [],
     }
 
 
@@ -257,7 +160,6 @@ def build_app_search_query(
     content: str,
     *,
     history: Sequence[Turn],
-    scope_metadata: Mapping[str, object],
     attached_context_refs: Sequence[Mapping[str, object]] = (),
     memory_source_refs: Sequence[Mapping[str, object]] = (),
 ) -> str:
@@ -302,11 +204,6 @@ def build_app_search_query(
         if prior_user:
             query = f"{prior_user} {query}"
 
-    scope_title = scope_metadata.get("title")
-    if scope_metadata.get("type") in {"media", "library"} and isinstance(scope_title, str):
-        if scope_title and scope_title.lower() not in query.lower():
-            query = f"{scope_title} {query}"
-
     source_labels = _source_ref_labels(memory_source_refs)
     if source_labels:
         query = f"{query} {' '.join(source_labels)}".strip()
@@ -348,38 +245,12 @@ def _latest_prior_user_text(history: Sequence[Turn]) -> str | None:
     return None
 
 
-def _should_run_app_search(
-    normalized_content: str, *, has_user_context: bool, scoped: bool
-) -> bool:
-    if scoped:
-        return True
+def _should_run_app_search(normalized_content: str, *, has_user_context: bool) -> bool:
     if len(normalized_content) < 2 or normalized_content in _SHORT_NON_SEARCH_MESSAGES:
         return False
     if any(term in normalized_content for term in _APP_SEARCH_CUE_TERMS):
         return True
     return not has_user_context and len(normalized_content) >= 12
-
-
-def _plan_web_search(
-    normalized_content: str,
-    options: Mapping[str, object],
-) -> WebSearchPlan:
-    mode = options.get("mode")
-    if mode == "off":
-        return WebSearchPlan(enabled=False, reason="web search disabled")
-    if mode == "required":
-        return WebSearchPlan(enabled=True, reason="web search required")
-    if mode == "auto":
-        enabled = (
-            len(normalized_content) >= 2
-            and normalized_content not in _SHORT_NON_SEARCH_MESSAGES
-            and any(term in normalized_content for term in _WEB_SEARCH_CUE_TERMS)
-        )
-        return WebSearchPlan(
-            enabled=enabled,
-            reason="web-search cues" if enabled else "no web-search cues",
-        )
-    return WebSearchPlan(enabled=False, reason="web search disabled")
 
 
 def _source_ref_labels(source_refs: Sequence[Mapping[str, object]]) -> list[str]:

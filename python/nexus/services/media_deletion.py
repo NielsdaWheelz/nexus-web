@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import delete, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
-from nexus.db.models import MediaKind
+from nexus.db.models import ChatSingleton, MediaKind
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
@@ -381,10 +381,6 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         {"media_id": media_id},
     )
     db.execute(
-        text("DELETE FROM conversations WHERE scope_media_id = :media_id"),
-        {"media_id": media_id},
-    )
-    db.execute(
         text("""
             DELETE FROM highlight_pdf_quads
             WHERE highlight_id IN (
@@ -495,6 +491,12 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM podcast_episodes WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
+    db.execute(
+        delete(ChatSingleton).where(
+            ChatSingleton.kind == "media",
+            ChatSingleton.target_id == media_id,
+        )
+    )
     db.execute(text("DELETE FROM media WHERE id = :media_id"), {"media_id": media_id})
     return storage_paths
 
@@ -580,14 +582,6 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
               AND mtc.conversation_id = c.id
               AND c.owner_user_id = :viewer_id
               AND mr.media_id = :media_id
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
-    )
-    db.execute(
-        text("""
-            DELETE FROM conversations
-            WHERE owner_user_id = :viewer_id
-              AND scope_media_id = :media_id
         """),
         {"viewer_id": viewer_id, "media_id": media_id},
     )

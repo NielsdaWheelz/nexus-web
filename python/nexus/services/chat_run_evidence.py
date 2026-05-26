@@ -6,11 +6,11 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, Conversation, Message
+from nexus.db.models import ChatRun, Message, MessageToolCall
 from nexus.schemas.retrieval import (
     retrieval_context_ref_json,
     retrieval_locator_json,
@@ -22,12 +22,30 @@ from nexus.services.chat_run_claim_parsing import (
     claim_has_valid_answer_offsets,
 )
 from nexus.services.chat_run_evidence_locators import canonical_evidence_span_matches
-from nexus.services.chat_run_scope import is_source_backed_run
 from nexus.services.context_lookup import hydrate_context_ref
 from nexus.services.message_context_snapshots import (
     context_evidence_span_ids,
     trusted_context_snapshot,
 )
+
+
+def is_source_backed_run(
+    db: Session,
+    *,
+    run: ChatRun,
+    assistant_message: Message | None,
+    evidence_rows: list[dict[str, Any]],
+) -> bool:
+    if evidence_rows:
+        return True
+    if assistant_message is None:
+        return False
+    tool_call_count = db.execute(
+        select(func.count(MessageToolCall.id)).where(
+            MessageToolCall.assistant_message_id == assistant_message.id
+        )
+    ).scalar_one()
+    return bool(tool_call_count)
 
 
 def message_prompt_evidence_rows(
@@ -342,14 +360,6 @@ def finalize_message_evidence(
         text("DELETE FROM assistant_message_evidence_summaries WHERE message_id = :message_id"),
         {"message_id": assistant_message.id},
     )
-
-    conversation = db.get(Conversation, run.conversation_id)
-    scope_type = conversation.scope_type if conversation is not None else "general"
-    scope_ref: dict[str, object] | None = None
-    if conversation is not None and scope_type == "media" and conversation.scope_media_id:
-        scope_ref = {"type": "media", "media_id": str(conversation.scope_media_id)}
-    elif conversation is not None and scope_type == "library" and conversation.scope_library_id:
-        scope_ref = {"type": "library", "library_id": str(conversation.scope_library_id)}
 
     prompt_assembly_id, evidence_rows = message_prompt_evidence_rows(db, run, assistant_message)
     verifier_name = "source_evidence_gate"
@@ -789,8 +799,6 @@ def finalize_message_evidence(
             """
             INSERT INTO assistant_message_evidence_summaries (
                 message_id,
-                scope_type,
-                scope_ref,
                 retrieval_status,
                 support_status,
                 verifier_status,
@@ -803,8 +811,6 @@ def finalize_message_evidence(
             )
             VALUES (
                 :message_id,
-                :scope_type,
-                :scope_ref,
                 :retrieval_status,
                 :support_status,
                 :verifier_status,
@@ -816,11 +822,9 @@ def finalize_message_evidence(
                 :prompt_assembly_id
             )
             """
-        ).bindparams(bindparam("scope_ref", type_=JSONB)),
+        ),
         {
             "message_id": assistant_message.id,
-            "scope_type": scope_type,
-            "scope_ref": scope_ref,
             "retrieval_status": retrieval_status,
             "support_status": support_status,
             "verifier_run_id": verifier_run_id,

@@ -105,7 +105,7 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
             "model_id": str(model_id),
             "reasoning": "none",
             "key_mode": "platform_only",
-            "conversation_scope": {"type": "media", "media_id": str(media_id)},
+            "singleton": {"kind": "media", "target_id": str(media_id)},
             "contexts": [
                 {
                     "kind": "object_ref",
@@ -114,7 +114,6 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
                     "evidence_span_ids": [initial_search_trace["evidence_span_id"]],
                 }
             ],
-            "web_search": {"mode": "off"},
         },
     )
     assert stale_context_response.status_code == 400, stale_context_response.text

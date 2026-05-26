@@ -52,27 +52,6 @@
   white-space: nowrap;
 }
 
-.webSearchSelect {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: var(--space-1);
-  color: var(--ink-muted);
-}
-
-.keyModeStatus {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  min-height: 32px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-}
-
 .sendButton {
   margin-left: auto;
 }

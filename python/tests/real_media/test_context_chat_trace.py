@@ -68,7 +68,7 @@ async def test_real_web_article_context_chat_persists_retrievals_prompt_and_cita
             "model_id": str(model_id),
             "reasoning": "none",
             "key_mode": "platform_only",
-            "conversation_scope": {"type": "media", "media_id": str(media_id)},
+            "singleton": {"kind": "media", "target_id": str(media_id)},
             "contexts": [
                 {
                     "kind": "object_ref",
@@ -77,7 +77,6 @@ async def test_real_web_article_context_chat_persists_retrievals_prompt_and_cita
                     "evidence_span_ids": [str(evidence_span_id)],
                 }
             ],
-            "web_search": {"mode": "off"},
         },
     )
     assert create_response.status_code == 200, create_response.text
@@ -92,7 +91,6 @@ async def test_real_web_article_context_chat_persists_retrievals_prompt_and_cita
             session,
             run_id=run_id,
             llm_router=auth_client.app.state.llm_router,
-            web_search_provider=None,
         )
     assert result == {"status": "complete"}, result
 
@@ -175,9 +173,8 @@ async def test_real_media_chat_persists_no_results_and_no_indexed_evidence_statu
             "model_id": str(model_id),
             "reasoning": "none",
             "key_mode": "platform_only",
-            "conversation_scope": {"type": "library", "library_id": str(library_id)},
+            "singleton": {"kind": "library", "target_id": str(library_id)},
             "contexts": [],
-            "web_search": {"mode": "off"},
         },
     )
     assert no_results_response.status_code == 200, no_results_response.text
@@ -191,7 +188,6 @@ async def test_real_media_chat_persists_no_results_and_no_indexed_evidence_statu
             session,
             run_id=no_results_run_id,
             llm_router=auth_client.app.state.llm_router,
-            web_search_provider=None,
         )
     assert no_results_result == {"status": "complete"}, no_results_result
     no_results_trace = assert_empty_chat_retrieval_status_trace(
@@ -233,9 +229,8 @@ async def test_real_media_chat_persists_no_results_and_no_indexed_evidence_statu
                 "model_id": str(model_id),
                 "reasoning": "none",
                 "key_mode": "platform_only",
-                "conversation_scope": {"type": "media", "media_id": str(ocr_media_id)},
+                "singleton": {"kind": "media", "target_id": str(ocr_media_id)},
                 "contexts": [],
-                "web_search": {"mode": "off"},
             },
         )
         assert no_index_response.status_code == 200, no_index_response.text
@@ -249,7 +244,6 @@ async def test_real_media_chat_persists_no_results_and_no_indexed_evidence_statu
                 session,
                 run_id=no_index_run_id,
                 llm_router=auth_client.app.state.llm_router,
-                web_search_provider=None,
             )
         assert no_index_result == {"status": "complete"}, no_index_result
         no_index_trace = assert_empty_chat_retrieval_status_trace(

@@ -24,7 +24,6 @@ from nexus.errors import ApiErrorCode
 from nexus.responses import success_response
 from nexus.schemas.conversation import (
     AssistantVerifierRunListResponse,
-    ConversationScopeRequest,
     MessageRerankLedgerListResponse,
     MessageRetrievalCandidateLedgerListResponse,
     RenameBranchRequest,
@@ -102,21 +101,7 @@ def create_conversation(
         db=db,
         viewer_id=viewer.user_id,
     )
-    return success_response(result.model_dump(mode="json"))
-
-
-@router.post("/conversations/resolve", status_code=200)
-def resolve_conversation(
-    body: ConversationScopeRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Resolve the canonical conversation for a durable scope."""
-    result = conversations_service.resolve_conversation(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_scope=body,
-    )
+    db.commit()
     return success_response(result.model_dump(mode="json"))
 
 
@@ -231,6 +216,7 @@ def delete_conversation(
 
     Errors:
         E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.
+        E_SINGLETON_UNDELETABLE (409): Conversation is a singleton (doc-chat or library-chat).
     """
     conversations_service.delete_conversation(
         db=db,

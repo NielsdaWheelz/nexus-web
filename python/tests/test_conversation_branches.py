@@ -386,7 +386,6 @@ def test_delete_branch_rejects_current_path_and_active_subtree_run(
                     model_id=model_id,
                     reasoning="none",
                     key_mode="auto",
-                    web_search={"mode": "off"},
                 ),
             ]
         )
@@ -529,7 +528,6 @@ def test_delete_branch_removes_subtree_and_dependent_rows(
                     model_id=model_id,
                     reasoning="none",
                     key_mode="auto",
-                    web_search={"mode": "off"},
                 ),
             ]
         )
@@ -739,7 +737,6 @@ def test_delete_branch_removes_subtree_and_dependent_rows(
                 INSERT INTO assistant_message_evidence_summaries (
                     id,
                     message_id,
-                    scope_type,
                     retrieval_status,
                     support_status,
                     verifier_status,
@@ -752,7 +749,6 @@ def test_delete_branch_removes_subtree_and_dependent_rows(
                 VALUES (
                     :id,
                     :message_id,
-                    'general',
                     'included_in_prompt',
                     'supported',
                     'llm_verified',

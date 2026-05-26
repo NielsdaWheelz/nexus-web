@@ -17,9 +17,10 @@ import httpx
 from llm_calling.errors import LLMError, LLMErrorCode, classify_provider_error
 from llm_calling.types import LLMUsage
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
-from web_search_tool.types import WebSearchProvider
 
+from nexus.auth.permissions import can_read_media, is_library_member
 from nexus.config import get_settings
 from nexus.db.models import (
     ChatRun,
@@ -32,6 +33,8 @@ from nexus.errors import (
     LLM_ERROR_CODE_TO_API_ERROR_CODE,
     ApiError,
     ApiErrorCode,
+    ForbiddenError,
+    InvalidRequestError,
     NotFoundError,
 )
 from nexus.jobs.queue import enqueue_job
@@ -41,15 +44,10 @@ from nexus.schemas.conversation import (
     ChatRunEventOut,
     ChatRunResponse,
     ContextItem,
-    ConversationScopeRequest,
-    WebSearchOptions,
+    ReaderContextHint,
+    SingletonTarget,
 )
 from nexus.services.agent_tools.app_search import execute_app_search
-from nexus.services.agent_tools.web_search import (
-    WEB_SEARCH_TOOL_CALL_INDEX,
-    WEB_SEARCH_TOOL_NAME,
-    execute_web_search,
-)
 from nexus.services.api_key_resolver import (
     get_model_by_id,
     resolve_api_key,
@@ -70,6 +68,7 @@ from nexus.services.chat_run_event_store import (
     mark_running,
 )
 from nexus.services.chat_run_evidence import (
+    is_source_backed_run,
     message_prompt_evidence_rows,
 )
 from nexus.services.chat_run_finalize import (
@@ -98,7 +97,7 @@ from nexus.services.chat_run_prompt_tracking import (
     reconcile_prompt_retrievals,
 )
 from nexus.services.chat_run_response import build_chat_run_response
-from nexus.services.chat_run_scope import is_source_backed_run
+from nexus.services.chat_run_singletons import resolve_singleton_conversation
 from nexus.services.chat_run_usage import usage_log_fields, usage_tokens
 from nexus.services.chat_run_validation import validate_pre_phase
 from nexus.services.chat_run_verification import (
@@ -126,9 +125,6 @@ from nexus.services.conversation_memory import (
     collect_memory_source_refs,
     load_active_memory_items,
     refresh_conversation_memory,
-)
-from nexus.services.conversations import (
-    conversation_scope_metadata,
 )
 from nexus.services.prompt_budget import ContextBudgetError
 from nexus.services.rate_limit import get_rate_limiter
@@ -172,7 +168,8 @@ def create_chat_run(
     *,
     viewer_id: UUID,
     conversation_id: UUID | None,
-    conversation_scope: ConversationScopeRequest | None,
+    singleton: SingletonTarget | None,
+    reader_context: ReaderContextHint | None,
     parent_message_id: UUID | None,
     branch_anchor: BranchAnchorRequest,
     content: str,
@@ -180,15 +177,25 @@ def create_chat_run(
     reasoning: str,
     key_mode: str,
     contexts: Sequence[ContextItem],
-    web_search: WebSearchOptions,
     idempotency_key: str | None,
 ) -> ChatRunResponse:
-    contexts = list(contexts)
-    if (conversation_id is None) == (conversation_scope is None):
-        raise ApiError(
+    if (conversation_id is None) == (singleton is None):
+        raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
-            "Exactly one of conversation_id or conversation_scope is required",
+            "Exactly one of conversation_id or singleton must be set",
         )
+
+    if singleton is not None:
+        _check_singleton_target_access(db, viewer_id, singleton)
+        conversation_id = _resolve_singleton_with_retry(
+            db,
+            viewer_id=viewer_id,
+            kind=singleton.kind,
+            target_id=singleton.target_id,
+        )
+    assert conversation_id is not None  # justify-service-invariant-check: mutex above guarantees it.
+
+    contexts = list(contexts)
     normalized_key = normalize_idempotency_key(idempotency_key)
 
     payload_hash = compute_payload_hash(
@@ -197,9 +204,7 @@ def create_chat_run(
         reasoning,
         key_mode,
         contexts,
-        web_search,
         conversation_id,
-        conversation_scope,
         parent_message_id,
         branch_anchor,
     )
@@ -229,7 +234,6 @@ def create_chat_run(
         db,
         viewer_id,
         conversation_id,
-        conversation_scope,
         parent_message_id,
         branch_anchor,
         content,
@@ -252,7 +256,6 @@ def create_chat_run(
             db,
             viewer_id,
             conversation_id,
-            conversation_scope,
             parent_message_id,
             branch_anchor,
             content,
@@ -270,7 +273,6 @@ def create_chat_run(
             model_id=model_id,
             reasoning=reasoning,
             key_mode=key_mode,
-            web_search=web_search.model_dump(mode="json"),
             next_event_seq=1,
         )
         db.add(run)
@@ -291,7 +293,7 @@ def create_chat_run(
         enqueue_job(
             db,
             kind="chat_run",
-            payload={"run_id": str(run.id)},
+            payload=_chat_run_job_payload(run.id, reader_context),
             priority=50,
             max_attempts=3,
             dedupe_key=f"chat_run:{run.id}",
@@ -302,6 +304,77 @@ def create_chat_run(
         raise
 
     return build_chat_run_response(db, viewer_id, run)
+
+
+def _check_singleton_target_access(
+    db: Session,
+    viewer_id: UUID,
+    target: SingletonTarget,
+) -> None:
+    if target.kind == "media":
+        allowed = can_read_media(db, viewer_id, target.target_id)
+    else:
+        allowed = is_library_member(db, viewer_id, target.target_id)
+    if not allowed:
+        raise ForbiddenError(
+            ApiErrorCode.E_SINGLETON_TARGET_FORBIDDEN,
+            "Cannot create a singleton chat for this target",
+        )
+
+
+def _resolve_singleton_with_retry(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    kind: Literal["media", "library"],
+    target_id: UUID,
+) -> UUID:
+    """Run resolve_singleton_conversation under SERIALIZABLE with bounded retry.
+
+    Concurrent first-sends to the same (viewer, kind, target) either commit one
+    winner or hit a serialization failure that this loop retries (taking the
+    SELECT branch on the second pass per docs/rules/database.md).
+    """
+    for attempt in range(3):
+        bind = db.get_bind()
+        in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
+        if not db.in_transaction() and not in_outer_transaction:
+            db.connection(execution_options={"isolation_level": "SERIALIZABLE"})
+        try:
+            conversation_id = resolve_singleton_conversation(db, viewer_id, kind, target_id)
+            db.commit()
+            return conversation_id
+        except OperationalError as exc:
+            db.rollback()
+            sqlstate = getattr(exc.orig, "sqlstate", None)
+            if sqlstate != "40001" and "could not serialize access" not in str(exc.orig).lower():
+                raise
+            if attempt == 2:
+                raise
+    raise AssertionError("singleton resolve retry loop exhausted")
+
+
+def _chat_run_job_payload(
+    run_id: UUID,
+    reader_context: ReaderContextHint | None,
+) -> dict[str, object]:
+    """Job payload for the chat_run worker.
+
+    Carries reader_context (a request-only model-prompt hint per spec §7.1)
+    through to the worker so prompt assembly can render the hint block without
+    a dedicated `ChatRun` column. The values are looked up to titles inside
+    `_build_reader_context_block` and otherwise discarded.
+    """
+    payload: dict[str, object] = {"run_id": str(run_id)}
+    if reader_context is not None:
+        hint: dict[str, str] = {}
+        if reader_context.media_id is not None:
+            hint["media_id"] = str(reader_context.media_id)
+        if reader_context.library_id is not None:
+            hint["library_id"] = str(reader_context.library_id)
+        if hint:
+            payload["reader_context"] = hint
+    return payload
 
 
 def retry_failed_assistant_response(
@@ -406,7 +479,6 @@ def retry_failed_assistant_response(
             model_id=source_run.model_id,
             reasoning=source_run.reasoning,
             key_mode=source_run.key_mode,
-            web_search=dict(source_run.web_search or {}),
             next_event_seq=1,
         )
         db.add(run)
@@ -530,10 +602,7 @@ async def execute_chat_run(
     *,
     run_id: UUID,
     llm_router: ChatRunLLMRouter,
-    web_search_provider: WebSearchProvider | None,
-    web_search_country: str = "US",
-    web_search_language: str = "en",
-    web_search_safe_search: Literal["off", "moderate", "strict"] = "moderate",
+    reader_context: ReaderContextHint | None = None,
 ) -> dict[str, str]:
     flow_id = str(run_id)
     set_flow_id(flow_id)
@@ -542,10 +611,7 @@ async def execute_chat_run(
             db,
             run_id=run_id,
             llm_router=llm_router,
-            web_search_provider=web_search_provider,
-            web_search_country=web_search_country,
-            web_search_language=web_search_language,
-            web_search_safe_search=web_search_safe_search,
+            reader_context=reader_context,
         )
     except ApiError as exc:
         logger.warning(
@@ -588,10 +654,7 @@ async def _execute_chat_run(
     *,
     run_id: UUID,
     llm_router: ChatRunLLMRouter,
-    web_search_provider: WebSearchProvider | None,
-    web_search_country: str,
-    web_search_language: str,
-    web_search_safe_search: Literal["off", "moderate", "strict"],
+    reader_context: ReaderContextHint | None = None,
 ) -> dict[str, str]:
     run = db.get(ChatRun, run_id)
     if run is None:
@@ -667,7 +730,6 @@ async def _execute_chat_run(
             )
             return {"status": "error", "error_code": ApiErrorCode.E_CONVERSATION_NOT_FOUND.value}
 
-        scope_metadata = conversation_scope_metadata(db, conversation)
         attached_context_refs = load_message_context_refs(db, run.user_message_id)
         path_messages = load_message_path(
             db,
@@ -701,13 +763,11 @@ async def _execute_chat_run(
         retrieval_plan = build_retrieval_plan(
             user_content=user_message.content,
             history=planner_history,
-            scope_metadata=scope_metadata,
             attached_context_refs=attached_context_ref_payloads,
             memory_source_refs=collect_memory_source_refs(
                 memory_items=memory_items,
                 snapshot=snapshot,
             ),
-            web_search_options=run.web_search,
         )
 
         if retrieval_plan.app_search.enabled:
@@ -716,6 +776,10 @@ async def _execute_chat_run(
             planned_query = retrieval_plan.app_search.query
             if planned_query is None:
                 raise AssertionError("enabled app-search plan is missing a query")
+            # The model owns scope at the tool boundary per spec §5.5. Until the
+            # tool-call dispatch loop lands, the planner-driven pre-fetch runs
+            # unscoped; execute_app_search renders this as scope="all" for the
+            # tool_call / source_manifest events.
             append_and_commit(
                 db,
                 run.id,
@@ -726,7 +790,7 @@ async def _execute_chat_run(
                     "tool_name": "app_search",
                     "tool_call_index": 0,
                     "status": "running",
-                    "scope": retrieval_plan.app_search.scope,
+                    "scope": "all",
                     "types": list(retrieval_plan.app_search.types),
                     "semantic": retrieval_plan.app_search.semantic,
                     "filters": dict(retrieval_plan.app_search.filters),
@@ -738,7 +802,8 @@ async def _execute_chat_run(
                 conversation_id=run.conversation_id,
                 user_message_id=run.user_message_id,
                 assistant_message_id=run.assistant_message_id,
-                scope=retrieval_plan.app_search.scope,
+                media_id=None,
+                library_id=None,
                 planned_query=planned_query,
                 planned_types=retrieval_plan.app_search.types,
                 planned_filters=retrieval_plan.app_search.filters,
@@ -778,113 +843,6 @@ async def _execute_chat_run(
                     "status": app_search_run.status,
                 },
             )
-            if app_search_run.status == "error" and scope_metadata.get("type") in {
-                "media",
-                "library",
-            }:
-                error_code = app_search_run.error_code or ApiErrorCode.E_APP_SEARCH_FAILED.value
-                latency_ms = int((time.monotonic() - start_time) * 1000)
-                finalize_error(
-                    db,
-                    run_id=run.id,
-                    error_code=error_code,
-                    viewer_id=run.owner_user_id,
-                    model=model,
-                    resolved_key=resolved_key,
-                    key_mode=run.key_mode,
-                    latency_ms=latency_ms,
-                    assistant_content=ERROR_CODE_TO_MESSAGE.get(
-                        error_code,
-                        ERROR_CODE_TO_MESSAGE[ApiErrorCode.E_APP_SEARCH_FAILED.value],
-                    ),
-                )
-                return {
-                    "status": "error",
-                    "error_code": error_code,
-                }
-
-        if is_cancel_requested(db, run.id):
-            finalize_cancelled(
-                db, run, model, resolved_key, int((time.monotonic() - start_time) * 1000)
-            )
-            return {"status": "cancelled"}
-
-        web_search = WebSearchOptions.model_validate(run.web_search)
-        if retrieval_plan.web_search.enabled:
-            append_and_commit(
-                db,
-                run.id,
-                "tool_call",
-                {
-                    "tool_call_id": None,
-                    "assistant_message_id": str(run.assistant_message_id),
-                    "tool_name": WEB_SEARCH_TOOL_NAME,
-                    "tool_call_index": WEB_SEARCH_TOOL_CALL_INDEX,
-                    "status": "running",
-                    "scope": "public_web",
-                    "types": ["mixed"],
-                    "semantic": False,
-                    "filters": {
-                        "freshness_days": web_search.freshness_days,
-                        "allowed_domains": web_search.allowed_domains,
-                        "blocked_domains": web_search.blocked_domains,
-                    },
-                },
-            )
-            web_search_run = await execute_web_search(
-                db,
-                provider=web_search_provider,
-                viewer_id=run.owner_user_id,
-                conversation_id=run.conversation_id,
-                user_message_id=run.user_message_id,
-                assistant_message_id=run.assistant_message_id,
-                content=user_message.content,
-                options=web_search,
-                country=web_search_country,
-                search_lang=web_search_language,
-                safe_search=web_search_safe_search,
-            )
-            if web_search_run is not None:
-                web_result_event = web_search_run.retrieval_result_event()
-                append_and_commit(db, run.id, "retrieval_result", web_result_event)
-                append_and_commit(
-                    db,
-                    run.id,
-                    "source_manifest_delta",
-                    {
-                        "assistant_message_id": str(run.assistant_message_id),
-                        "tool_call_id": str(web_search_run.tool_call_id)
-                        if web_search_run.tool_call_id
-                        else None,
-                        "tool_name": WEB_SEARCH_TOOL_NAME,
-                        "tool_call_index": web_search_run.tool_call_index,
-                        "query_hash": web_search_run.query_hash,
-                        "scope": "public_web",
-                        "filters": {
-                            "freshness_days": web_search.freshness_days,
-                            "allowed_domains": web_search.allowed_domains,
-                            "blocked_domains": web_search.blocked_domains,
-                        },
-                        "requested_types": [web_search_run.result_type],
-                        "candidate_count": len(web_search_run.citations),
-                        "result_count": len(web_search_run.citations),
-                        "selected_count": len(web_search_run.selected_citations),
-                        "included_in_prompt_count": 0,
-                        "excluded_by_budget_count": 0,
-                        "excluded_by_scope_count": 0,
-                        "stale_count": 0,
-                        "unreadable_count": 0,
-                        "web_search_mode": web_search.mode,
-                        "index_versions": [],
-                        "metadata": (
-                            {"empty_status": web_search_run.empty_status}
-                            if web_search_run.empty_status
-                            else {}
-                        ),
-                        "latency_ms": web_search_run.latency_ms,
-                        "status": web_search_run.status,
-                    },
-                )
         if is_cancel_requested(db, run.id):
             finalize_cancelled(
                 db, run, model, resolved_key, int((time.monotonic() - start_time) * 1000)
@@ -900,6 +858,7 @@ async def _execute_chat_run(
                 key_mode_used=resolved_key.mode,
                 provider_account_boundary=resolved_key.user_key_id or resolved_key.mode,
                 max_output_tokens=max_output_tokens,
+                reader_context=reader_context,
             )
             persist_prompt_assembly(db, run=run, assembly=assembly)
             reconcile_prompt_retrievals(db, run=run, assembly=assembly)
@@ -988,7 +947,6 @@ async def _execute_chat_run(
             stable_prefix_hash=assembly.prompt_plan.stable_prefix_hash,
             provider_request_hash=assembly.prompt_plan.provider_request_hash,
             cacheable_input_tokens_estimate=assembly.prompt_plan.cacheable_input_tokens_estimate,
-            scope_type=str(assembly.scope_metadata.get("type") or "general"),
         )
         logger.info("llm.request.started", **llm_log_fields)
         try:

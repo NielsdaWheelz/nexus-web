@@ -122,7 +122,6 @@ export interface SSESourceManifestDeltaEvent {
     excluded_by_scope_count: number;
     stale_count: number;
     unreadable_count: number;
-    web_search_mode?: "off" | "auto" | "required" | null;
     index_versions: string[];
     metadata?: Record<string, unknown>;
     latency_ms?: number | null;
@@ -317,11 +316,6 @@ function parseSourceManifestDeltaData(
     !Array.isArray(data.index_versions) ||
     !data.index_versions.every((item) => typeof item === "string") ||
     !isOptionalRecord(data.metadata) ||
-    (data.web_search_mode !== undefined &&
-      data.web_search_mode !== null &&
-      data.web_search_mode !== "off" &&
-      data.web_search_mode !== "auto" &&
-      data.web_search_mode !== "required") ||
     (data.latency_ms !== undefined &&
       data.latency_ms !== null &&
       !Number.isInteger(data.latency_ms)) ||

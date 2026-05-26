@@ -2,12 +2,10 @@ import type {
   ContextItem,
   ObjectRefContextItem,
 } from "@/lib/api/sse/requests";
-import type { ConversationScope } from "@/lib/conversations/types";
 import { isObjectType } from "@/lib/objectRefs";
 import { isUuid } from "@/lib/validation";
 
 const PENDING_CONTEXT_PARAM = "attach_context";
-const PENDING_SCOPE_PARAM = "scope";
 
 type PendingObjectContext = Pick<
   ObjectRefContextItem,
@@ -59,16 +57,6 @@ function parseTypedId(value: string): ObjectRefContextItem | null {
   };
 }
 
-// Shared scope wire format. Returns the URL-param value, or null to mean
-// "no param" (the general scope).
-function encodeScopeForUrl(scope: ConversationScope): string | null {
-  if (scope.type === "general") return null;
-  if (scope.type === "media") return `media:${scope.media_id}`;
-  if (scope.type === "library") return `library:${scope.library_id}`;
-  const exhaustive: never = scope;
-  return exhaustive;
-}
-
 export function parsePendingContexts(searchParams: URLSearchParams): ObjectRefContextItem[] {
   const contexts: ObjectRefContextItem[] = [];
   for (const rawValue of searchParams.getAll(PENDING_CONTEXT_PARAM)) {
@@ -80,27 +68,6 @@ export function parsePendingContexts(searchParams: URLSearchParams): ObjectRefCo
   return contexts;
 }
 
-export function parseConversationScopeFromUrl(
-  searchParams: URLSearchParams,
-): ConversationScope {
-  const rawScope = searchParams.get(PENDING_SCOPE_PARAM);
-  if (!rawScope) {
-    return { type: "general" };
-  }
-
-  const [type, id, extra] = rawScope.split(":");
-  if (extra !== undefined || !id || !isUuid(id)) {
-    return { type: "general" };
-  }
-  if (type === "media") {
-    return { type: "media", media_id: id };
-  }
-  if (type === "library") {
-    return { type: "library", library_id: id };
-  }
-  return { type: "general" };
-}
-
 export function getContextIdentityKey(item: ContextItem): string {
   if (item.kind === "reader_selection") {
     return `reader_selection:${item.client_context_id}`;
@@ -109,7 +76,7 @@ export function getContextIdentityKey(item: ContextItem): string {
 }
 
 export function getPendingContextSignature(items: ContextItem[]): string {
-  return items.map(getContextIdentityKey).join("\u001e");
+  return items.map(getContextIdentityKey).join("");
 }
 
 export function mergeContextItems(
@@ -129,16 +96,11 @@ export function mergeContextItems(
   return next;
 }
 
-export function getConversationScopeSignature(scope: ConversationScope): string {
-  return encodeScopeForUrl(scope) ?? "general";
-}
-
 export function stripPendingContextParams(
   searchParams: URLSearchParams,
 ): URLSearchParams {
   const cleaned = new URLSearchParams(searchParams);
   cleaned.delete(PENDING_CONTEXT_PARAM);
-  cleaned.delete(PENDING_SCOPE_PARAM);
   return cleaned;
 }
 
@@ -152,19 +114,5 @@ export function setPendingContextParam(
     PENDING_CONTEXT_PARAM,
     encodeTypedId(context.type, context.id, context.evidence_span_ids),
   );
-  return next;
-}
-
-export function setConversationScopeParam(
-  searchParams: URLSearchParams,
-  scope: ConversationScope,
-): URLSearchParams {
-  const next = new URLSearchParams(searchParams);
-  const value = encodeScopeForUrl(scope);
-  if (value === null) {
-    next.delete(PENDING_SCOPE_PARAM);
-  } else {
-    next.set(PENDING_SCOPE_PARAM, value);
-  }
   return next;
 }

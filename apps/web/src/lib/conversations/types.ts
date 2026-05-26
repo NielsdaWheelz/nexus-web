@@ -9,47 +9,19 @@ import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type {
   ContextItemColor,
   ContextItemType,
-  ConversationScopeInput,
 } from "@/lib/api/sse/requests";
-import type { ContributorCredit } from "@/lib/contributors/types";
 
-export type ConversationScope =
-  | { type: "general" }
-  | {
-      type: "media";
-      media_id: string;
-      title?: string | null;
-      media_kind?: string | null;
-      contributors?: ContributorCredit[];
-      published_date?: string | null;
-      publisher?: string | null;
-      canonical_source_url?: string | null;
-    }
-  | {
-      type: "library";
-      library_id: string;
-      title?: string | null;
-      library_name?: string | null;
-      entry_count?: number | null;
-      media_kinds?: string[];
-      source_policy?: string | null;
-    };
+export type SingletonKind = "media" | "library";
 
-/**
- * Drop the display-only fields off a ConversationScope so the wire shape
- * matches the FastAPI request schema (media_id / library_id only).
- */
-export function scopeToRequestInput(
-  scope: ConversationScope,
-): ConversationScopeInput {
-  switch (scope.type) {
-    case "media":
-      return { type: "media", media_id: scope.media_id };
-    case "library":
-      return { type: "library", library_id: scope.library_id };
-    case "general":
-      return { type: "general" };
-  }
+export interface Singleton {
+  kind: SingletonKind;
+  target_id: string;
+}
+
+export interface ConversationSingleton {
+  kind: SingletonKind;
+  target_id: string;
+  target_title: string;
 }
 
 export interface ConversationSummary {
@@ -57,10 +29,19 @@ export interface ConversationSummary {
   title: string;
   sharing: string;
   message_count: number;
-  scope: ConversationScope;
+  singleton: ConversationSingleton | null;
   memory?: ConversationMemoryInspection | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ConversationListItem {
+  id: string;
+  title: string | null;
+  first_user_message_excerpt: string;
+  message_count: number;
+  updated_at: string;
+  is_singleton: boolean;
 }
 
 export interface ConversationModel {
@@ -196,7 +177,6 @@ export type MessageEvidenceLocator = RetrievalLocator;
 export interface MessageEvidenceSummary {
   id: string;
   message_id: string;
-  scope_type: ConversationScope["type"];
   scope_ref: Record<string, unknown> | null;
   retrieval_status: MessageEvidenceRetrievalStatus;
   support_status: MessageClaimSupportStatus;
@@ -369,7 +349,6 @@ export interface MessageSourceManifestDelta {
   excluded_by_scope_count: number;
   stale_count: number;
   unreadable_count: number;
-  web_search_mode?: "off" | "auto" | "required" | null;
   index_versions: string[];
   metadata?: Record<string, unknown>;
   latency_ms?: number | null;
@@ -456,7 +435,6 @@ export interface MessageDocument {
         excluded_by_scope_count: number;
         stale_count: number;
         unreadable_count: number;
-        web_search_mode?: "off" | "auto" | "required" | null;
         index_versions: string[];
         metadata?: Record<string, unknown>;
         latency_ms?: number | null;

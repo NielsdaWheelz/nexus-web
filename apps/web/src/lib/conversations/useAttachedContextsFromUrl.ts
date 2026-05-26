@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContextItem } from "@/lib/api/sse/requests";
 import {
   getPendingContextSignature,
-  parseConversationScopeFromUrl,
   parsePendingContexts,
   stripPendingContextParams,
 } from "@/lib/conversations/attachedContext";
@@ -12,10 +11,6 @@ import {
 export function useAttachedContextsFromUrl(searchParams: URLSearchParams) {
   const initialAttach = useMemo(
     () => parsePendingContexts(searchParams),
-    [searchParams],
-  );
-  const conversationScope = useMemo(
-    () => parseConversationScopeFromUrl(searchParams),
     [searchParams],
   );
   const initialAttachSignature = useMemo(
@@ -49,7 +44,6 @@ export function useAttachedContextsFromUrl(searchParams: URLSearchParams) {
 
   return {
     attachedContexts,
-    conversationScope,
     setAttachedContexts,
     removeContext,
     clearContexts,

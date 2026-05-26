@@ -448,14 +448,28 @@ class TestMigrationUpgradeDowngrade:
         assert result.returncode == 0, f"Upgrade failed: {result.stderr}"
 
     def test_hard_cutover_downgrade_to_base_is_blocked(self):
-        """Head intentionally cannot downgrade through hard-cutover migrations."""
+        """Head intentionally cannot downgrade through hard-cutover migrations.
+
+        Each hard-cutover ``downgrade()`` raises ``NotImplementedError``
+        (the message varies per migration, e.g. ``"Hard cutover: 0115 is not
+        reversible"``). The assertion below checks for the consistent marker
+        in the stderr output."""
         reset_test_schema()
         run_alembic_command("upgrade head")
 
         result = run_alembic_command("downgrade base")
 
         assert result.returncode != 0
-        assert "hard cutover migration and has no downgrade path" in result.stderr
+        combined = (result.stdout or "") + (result.stderr or "")
+        assert (
+            "NotImplementedError" in combined
+            or "hard cutover migration and has no downgrade path" in combined
+            or "Hard cutover" in combined
+        ), (
+            "Expected downgrade from head to surface NotImplementedError "
+            "or 'Hard cutover' marker; "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
         reset_test_schema()
 
     def test_0107_canonicalizes_reader_selection_context_snapshots(self):
@@ -760,6 +774,9 @@ class TestMigrationUpgradeDowngrade:
                         "parent_message_id": user_message_id,
                     },
                 )
+                # At revision 0083 the chat_runs.web_search NOT NULL column
+                # still exists (it is dropped only in 0115). This test runs at
+                # 0083, so we must keep providing it here.
                 session.execute(
                     text(
                         """
@@ -4738,8 +4755,7 @@ class TestS3SchemaConstraints:
                             status,
                             model_id,
                             reasoning,
-                            key_mode,
-                            web_search
+                            key_mode
                         )
                         VALUES (
                             :user_id,
@@ -4751,8 +4767,7 @@ class TestS3SchemaConstraints:
                             'queued',
                             :model_id,
                             'none',
-                            'auto',
-                            '{"mode": "off"}'::jsonb
+                            'auto'
                         )
                     """),
                     {
@@ -5985,12 +6000,24 @@ class TestHighlightBridgeRemovalMigration0056:
             assert anchor_row[2] == 6
 
     def test_downgrade_head_to_0055_is_blocked_by_hard_cutover(self):
+        """Hard-cutover migrations make any downgrade from head fail. The
+        per-migration error message varies (e.g. ``"Hard cutover: 0115 is not
+        reversible"``); assert the consistent ``NotImplementedError`` marker
+        rather than the legacy phrase."""
         result = run_alembic_command("upgrade head")
         assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
 
         result = run_alembic_command("downgrade 0055")
         assert result.returncode != 0
-        assert "hard cutover migration and has no downgrade path" in result.stderr
+        combined = (result.stdout or "") + (result.stderr or "")
+        assert (
+            "NotImplementedError" in combined
+            or "hard cutover migration and has no downgrade path" in combined
+            or "Hard cutover" in combined
+        ), (
+            f"Expected downgrade to surface NotImplementedError or 'Hard cutover' marker; "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
 
 
 class TestMigration0026SemanticChunkBackfill:
@@ -7446,4 +7473,116 @@ class TestPodcastSubscriptionLibrariesMigration0113:
         assert remaining == 0, (
             "deleting a library must cascade-delete join rows; "
             f"got {remaining}"
+        )
+
+
+class TestChatSingletonsAndScopeDropMigration0114:
+    """Schema assertions for migration 0114 (chat_singletons + drop scope columns)."""
+
+    def test_0114_upgrade_applies_chat_singletons_and_drops_scope_columns(
+        self, migrated_engine
+    ):
+        """After upgrade head:
+        - ``chat_singletons`` exists with the PK/unique/check spec'd in §5.1.
+        - ``conversations`` no longer has ``scope_type`` / ``scope_id`` /
+          ``scope_media_id`` / ``scope_library_id``.
+        - ``assistant_message_evidence_summaries`` no longer has ``scope_type``.
+        """
+        with Session(migrated_engine) as session:
+            singleton_columns = session.execute(
+                text(
+                    """
+                    SELECT column_name, data_type, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_name = 'chat_singletons'
+                    ORDER BY ordinal_position
+                    """
+                )
+            ).fetchall()
+            singleton_constraints = session.execute(
+                text(
+                    """
+                    SELECT conname, contype
+                    FROM pg_constraint
+                    WHERE conrelid = 'chat_singletons'::regclass
+                    ORDER BY conname
+                    """
+                )
+            ).fetchall()
+            conversations_columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_name = 'conversations'
+                        """
+                    )
+                ).fetchall()
+            }
+            evidence_columns = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_name = 'assistant_message_evidence_summaries'
+                        """
+                    )
+                ).fetchall()
+            }
+
+        singleton_column_by_name = {row[0]: (row[1], row[2]) for row in singleton_columns}
+        for required in ("user_id", "kind", "target_id", "conversation_id", "created_at"):
+            assert required in singleton_column_by_name, (
+                f"chat_singletons must have column '{required}'; got {set(singleton_column_by_name)}"
+            )
+        # All non-nullable per spec §5.1.
+        for col in ("user_id", "kind", "target_id", "conversation_id", "created_at"):
+            assert singleton_column_by_name[col][1] == "NO", (
+                f"chat_singletons.{col} must be NOT NULL; got {singleton_column_by_name[col]}"
+            )
+
+        constraint_names = {row[0] for row in singleton_constraints}
+        assert "pk_chat_singletons" in constraint_names, (
+            f"chat_singletons must declare PK pk_chat_singletons; got {constraint_names}"
+        )
+        assert "uq_chat_singletons_conversation_id" in constraint_names, (
+            "chat_singletons must declare UNIQUE on conversation_id "
+            f"(uq_chat_singletons_conversation_id); got {constraint_names}"
+        )
+        assert "ck_chat_singletons_kind" in constraint_names, (
+            "chat_singletons must declare the kind CHECK constraint "
+            f"(ck_chat_singletons_kind); got {constraint_names}"
+        )
+
+        for legacy_col in ("scope_type", "scope_id", "scope_media_id", "scope_library_id"):
+            assert legacy_col not in conversations_columns, (
+                f"conversations.{legacy_col} must be dropped after 0114; "
+                f"got columns {conversations_columns}"
+            )
+
+        assert "scope_type" not in evidence_columns, (
+            "assistant_message_evidence_summaries.scope_type must be dropped after 0114; "
+            f"got columns {evidence_columns}"
+        )
+
+    def test_0114_downgrade_raises(self, migrated_engine):
+        """Per spec §6.1 / §11, the cutover is irreversible by policy.
+        Running ``alembic downgrade -1`` from head (0114→0113) raises
+        ``NotImplementedError`` (or fails with a non-zero alembic exit code
+        carrying that message)."""
+        result = run_alembic_command("downgrade -1")
+
+        assert result.returncode != 0, (
+            "Expected alembic downgrade from 0114 to fail; "
+            f"got returncode={result.returncode}, stderr={result.stderr}"
+        )
+        combined = (result.stdout or "") + (result.stderr or "")
+        assert "NotImplementedError" in combined or "not reversible" in combined, (
+            "Expected downgrade to surface the explicit NotImplementedError "
+            "or 'not reversible' marker; "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
         )

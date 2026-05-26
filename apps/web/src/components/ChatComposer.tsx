@@ -8,7 +8,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { ArrowUp, ChevronDown, Search, X } from "lucide-react";
+import { ArrowUp, ChevronDown, X } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
 import { toFeedback } from "@/components/feedback/Feedback";
@@ -16,6 +16,8 @@ import {
   toWireContextItem,
   type ChatRunCreateRequest,
   type ContextItem,
+  type ReaderContextHintInput,
+  type SingletonTargetInput,
 } from "@/lib/api/sse/requests";
 import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
 import ComposerContextRail from "@/components/chat/ComposerContextRail";
@@ -26,12 +28,10 @@ import Toggle from "@/components/ui/Toggle";
 import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import {
-  scopeToRequestInput,
-  type BranchDraft,
-  type ChatRunResponse,
-  type ConversationScope,
-  type ConversationModel,
+import type {
+  BranchDraft,
+  ChatRunResponse,
+  ConversationModel,
 } from "@/lib/conversations/types";
 import styles from "./ChatComposer.module.css";
 
@@ -42,8 +42,6 @@ import styles from "./ChatComposer.module.css";
 interface ChatComposerProps {
   /** Existing conversation ID (null for new conversation). */
   conversationId: string | null;
-  /** Persistent scope for a new scoped draft or loaded scoped conversation. */
-  conversationScope?: ConversationScope;
   /** Attached context items (from quote-to-chat). */
   attachedContexts?: ContextItem[];
   /** Remove a context chip. */
@@ -70,30 +68,21 @@ interface ChatComposerProps {
   onClearBranchDraft?: () => void;
   /** Jumps the transcript to the visible parent message for branch mode. */
   onJumpToBranchParent?: (messageId: string) => void;
-  /**
-   * Clears the conversation scope (reverts to general). Omit when the scope
-   * is structural and cannot sensibly be removed (e.g., loaded scoped
-   * conversations); the rail then renders the scope chip without an X.
-   */
-  onClearScope?: () => void;
+  /** Singleton target for first-send singleton materialization. Omit/null for existing conversations. */
+  singletonTarget?: SingletonTargetInput | null;
+  /** Reader context hint for the model (current media/library). Not a retrieval constraint. */
+  readerContext?: ReaderContextHintInput | null;
   /** Blocks sending while caller-owned conversation state is not safe to continue. */
   disabledReason?: string;
 }
 
 type ComposerModel = ConversationModel;
 type ReasoningMode = ChatRunCreateRequest["reasoning"];
-type WebSearchMode = ChatRunCreateRequest["web_search"]["mode"];
 
 /** Max contexts per message. */
 const MAX_CONTEXTS = 10;
 const PROVIDER_ORDER = ["openai", "anthropic", "gemini", "deepseek"] as const;
 const DEFAULT_REASONING: ReasoningMode = "default";
-const WEB_SEARCH_MODES = ["auto", "required", "off"] as const;
-const WEB_SEARCH_MODE_LABELS = {
-  auto: "Auto",
-  required: "Required",
-  off: "Off",
-} satisfies Record<WebSearchMode, string>;
 const REASONING_LABELS = {
   default: "Default",
   none: "None",
@@ -103,7 +92,6 @@ const REASONING_LABELS = {
   high: "High",
   max: "Max",
 } satisfies Record<ReasoningMode, string>;
-const DEFAULT_CONVERSATION_SCOPE: ConversationScope = { type: "general" };
 
 let cachedModels: ComposerModel[] | null = null;
 let modelLoadPromise: Promise<ComposerModel[]> | null = null;
@@ -170,7 +158,6 @@ function reasoningOptionsForModel(model: ComposerModel | undefined): ReasoningMo
 
 export default function ChatComposer({
   conversationId,
-  conversationScope = DEFAULT_CONVERSATION_SCOPE,
   attachedContexts = [],
   onRemoveContext,
   onChatRunCreated,
@@ -184,7 +171,8 @@ export default function ChatComposer({
   parentMessageId = null,
   onClearBranchDraft,
   onJumpToBranchParent,
-  onClearScope,
+  singletonTarget = null,
+  readerContext = null,
   disabledReason,
 }: ChatComposerProps) {
   const [content, setContent] = useState(initialContent);
@@ -196,7 +184,6 @@ export default function ChatComposer({
   const [selectedReasoning, setSelectedReasoning] =
     useState<ReasoningMode>(DEFAULT_REASONING);
   const [onlyUseMyKeys, setOnlyUseMyKeys] = useState(false);
-  const [webSearchMode, setWebSearchMode] = useState<WebSearchMode>("auto");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const isMobile = useIsMobileViewport();
   const closeSettingsOnDesktop = useCallback(() => {
@@ -367,20 +354,13 @@ export default function ChatComposer({
         ? { parent_message_id: replyParentMessageId }
         : {}),
       branch_anchor: branchAnchor,
-      web_search: {
-        mode: webSearchMode,
-        freshness_days: null,
-        allowed_domains: [],
-        blocked_domains: [],
-      },
+      singleton: conversationId ? null : singletonTarget,
+      reader_context: readerContext,
       contexts:
         attachedContexts.length > 0
           ? attachedContexts.slice(0, MAX_CONTEXTS).map(toWireContextItem)
           : undefined,
     };
-    if (!conversationId) {
-      body.conversation_scope = scopeToRequestInput(conversationScope);
-    }
 
     let sent = false;
     try {
@@ -401,10 +381,10 @@ export default function ChatComposer({
     selectedModelId,
     selectedReasoning,
     onlyUseMyKeys,
-    webSearchMode,
     attachedContexts,
     conversationId,
-    conversationScope,
+    singletonTarget,
+    readerContext,
     disabledReason,
     sendChatRun,
     branchDraft,
@@ -486,9 +466,7 @@ export default function ChatComposer({
         ) : null}
 
         <ComposerContextRail
-          scope={conversationScope}
           attachedContexts={attachedContexts}
-          onClearScope={onClearScope}
           onRemoveContext={(index) => onRemoveContext?.(index)}
         />
 
@@ -521,25 +499,6 @@ export default function ChatComposer({
           >
             <span className={styles.modelSummary}>{modelSummary}</span>
           </Button>
-
-          <span className={styles.webSearchSelect}>
-            <Search size={13} aria-hidden="true" />
-            <Select
-              size="sm"
-              value={webSearchMode}
-              onChange={(e) => setWebSearchMode(e.target.value as WebSearchMode)}
-              disabled={composerDisabled}
-              aria-label="Web search mode"
-            >
-              {WEB_SEARCH_MODES.map((mode) => (
-                <option key={mode} value={mode}>
-                  {WEB_SEARCH_MODE_LABELS[mode]}
-                </option>
-              ))}
-            </Select>
-          </span>
-
-          {onlyUseMyKeys && <span className={styles.keyModeStatus}>Your key</span>}
 
           <Button
             variant="primary"

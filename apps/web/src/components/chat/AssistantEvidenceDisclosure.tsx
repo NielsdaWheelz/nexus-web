@@ -471,15 +471,6 @@ function AssistantSourceManifest({
                 unreadable
               </span>
             ) : null}
-            {manifestRows.some((row) => row.web_search_mode) ? (
-              <span>
-                web{" "}
-                {manifestRows
-                  .map((row) => row.web_search_mode)
-                  .filter(Boolean)
-                  .join(", ")}
-              </span>
-            ) : null}
             {manifestRows.some((row) => row.query_hash) ? (
               <span>query hashed</span>
             ) : null}
@@ -502,6 +493,11 @@ function AssistantSourceManifest({
             >
               <div className={styles.sourceManifestRowHeader}>
                 <span>
+                  {row.tool_name === "web_search" ? (
+                    <Globe size={14} aria-hidden="true" />
+                  ) : (
+                    <Search size={14} aria-hidden="true" />
+                  )}
                   {row.tool_name === "web_search" ? "Web search" : "App search"}
                 </span>
                 <span>{row.status}</span>
@@ -532,9 +528,6 @@ function AssistantSourceManifest({
                 {row.stale_count ? <span>{row.stale_count} stale</span> : null}
                 {row.unreadable_count ? (
                   <span>{row.unreadable_count} unreadable</span>
-                ) : null}
-                {row.web_search_mode ? (
-                  <span>web {row.web_search_mode}</span>
                 ) : null}
                 {row.query_hash ? <span>query hashed</span> : null}
                 {row.index_versions.length > 0 ? (
@@ -1008,17 +1001,10 @@ function claimsWithMissingCitationOffsets(
 }
 
 function EvidenceSummary({ summary }: { summary: MessageEvidenceSummary }) {
-  const scopeTitle =
-    textField(summary.scope_ref, "title") ||
-    textField(summary.scope_ref, "library_name") ||
-    textField(summary.scope_ref, "media_title") ||
-    summary.scope_type;
-
   return (
     <div className={styles.evidenceSummary}>
       <div className={styles.evidenceSummaryTitle}>Evidence summary</div>
       <div className={styles.evidenceFacts}>
-        <span>Scope: {scopeTitle}</span>
         <span>{supportStatusLabel(summary.support_status)}</span>
         <span>{supportedClaimLabel(summary, [])}</span>
         <span>{retrievalStatusLabel(summary.retrieval_status)}</span>
@@ -1027,7 +1013,6 @@ function EvidenceSummary({ summary }: { summary: MessageEvidenceSummary }) {
         ) : null}
       </div>
       <DiagnosticsDisclosure label="Details">
-        <span>Scope type: {summary.scope_type}</span>
         <span>Support: {supportStatusLabel(summary.support_status)}</span>
         <span>Retrieval: {retrievalStatusLabel(summary.retrieval_status)}</span>
         <span>Verifier: {summary.verifier_status.replaceAll("_", " ")}</span>

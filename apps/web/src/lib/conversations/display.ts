@@ -1,12 +1,13 @@
-import { FileText, Globe, Library, type LucideIcon } from "lucide-react";
+import { FileText, Library, type LucideIcon } from "lucide-react";
 import type {
   ContextItem,
   ContextItemColor,
   ContextItemType,
 } from "@/lib/api/sse/requests";
 import type {
-  ConversationScope,
+  ConversationSingleton,
   MessageContextSnapshot,
+  SingletonKind,
 } from "@/lib/conversations/types";
 
 type DisplayContext =
@@ -93,36 +94,11 @@ export function formatContextMeta(
   return parts.join(" - ");
 }
 
-export const CONVERSATION_SCOPE_ICONS: Record<ConversationScope["type"], LucideIcon> = {
-  general: Globe,
+export const SINGLETON_KIND_ICONS: Record<SingletonKind, LucideIcon> = {
   media: FileText,
   library: Library,
 };
 
-export function formatConversationScopeLabel(scope: ConversationScope): string {
-  if (scope.type === "general") {
-    return "General chat";
-  }
-  if (scope.type === "media") {
-    return `Document: ${scope.title || "Selected document"}`;
-  }
-  if (scope.type === "library") {
-    return `Library: ${scope.title || scope.library_name || "Selected library"}`;
-  }
-  const exhaustive: never = scope;
-  return exhaustive;
-}
-
-export function formatConversationScopeBadge(scope: ConversationScope): string {
-  if (scope.type === "general") {
-    return "General";
-  }
-  if (scope.type === "media") {
-    return "Document";
-  }
-  if (scope.type === "library") {
-    return "Library";
-  }
-  const exhaustive: never = scope;
-  return exhaustive;
+export function formatSingletonLabel(singleton: ConversationSingleton): string {
+  return `Chat about *${singleton.target_title}*`;
 }

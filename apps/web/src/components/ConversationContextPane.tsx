@@ -1,12 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import ContextRow from "@/components/ui/ContextRow";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import ConversationMemoryPanel from "@/components/chat/ConversationMemoryPanel";
-import ConversationScopeChip from "@/components/chat/ConversationScopeChip";
 import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
 import ConversationProvenancePanel from "@/components/chat/ConversationProvenancePanel";
 import { countProvenanceSignals } from "@/lib/conversations/provenance/buildModel";
@@ -17,15 +16,17 @@ import type {
   ContextItemType,
 } from "@/lib/api/sse/requests";
 import {
+  SINGLETON_KIND_ICONS,
   formatContextMeta,
   formatSelectionContext,
+  formatSingletonLabel,
 } from "@/lib/conversations/display";
 import type {
   ConversationMemoryInspection,
-  ConversationScope,
+  ConversationMessage,
+  ConversationSingleton,
   BranchGraph,
   ForkOption,
-  ConversationMessage,
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
 import type { ReactNode } from "react";
@@ -56,9 +57,15 @@ interface ContextRowViewModel {
   onRemove?: () => void;
 }
 
+interface ReferencedMedia {
+  mediaId: string;
+  mediaTitle?: string;
+  mediaKind?: string;
+}
+
 interface ConversationContextPaneProps {
   conversationId?: string;
-  scope?: ConversationScope;
+  singleton?: ConversationSingleton | null;
   memory?: ConversationMemoryInspection | null;
   messages?: ConversationMessage[];
   contexts: ContextItem[];
@@ -77,7 +84,7 @@ interface ConversationContextPaneProps {
 
 export default function ConversationContextPane({
   conversationId,
-  scope,
+  singleton,
   memory,
   messages = [],
   contexts,
@@ -103,6 +110,22 @@ export default function ConversationContextPane({
     (count, forks) => count + forks.length,
     0,
   );
+
+  const referencedMedia = useMemo<ReferencedMedia[]>(() => {
+    const byMediaId = new Map<string, ReferencedMedia>();
+    for (const message of messages) {
+      for (const context of message.contexts ?? []) {
+        const mediaId = context.media_id;
+        if (!mediaId || byMediaId.has(mediaId)) continue;
+        byMediaId.set(mediaId, {
+          mediaId,
+          mediaTitle: context.media_title,
+          mediaKind: context.media_kind,
+        });
+      }
+    }
+    return [...byMediaId.values()];
+  }, [messages]);
 
   return (
     <div className={styles.shell} data-testid={testId}>
@@ -157,7 +180,8 @@ export default function ConversationContextPane({
           />
         ) : (
           <ContextContent
-            scope={scope}
+            singleton={singleton}
+            referencedMedia={referencedMedia}
             memory={memory}
             contexts={contexts}
             persistedRows={persistedRows}
@@ -171,34 +195,39 @@ export default function ConversationContextPane({
 }
 
 function ContextContent({
-  scope,
+  singleton,
+  referencedMedia,
   memory,
   contexts,
   persistedRows,
   hasMemory,
   onRemoveContext,
 }: {
-  scope?: ConversationScope;
+  singleton?: ConversationSingleton | null;
+  referencedMedia: ReferencedMedia[];
   memory?: ConversationMemoryInspection | null;
   contexts: ContextItem[];
   persistedRows: PersistedContextRow[];
   hasMemory: boolean;
   onRemoveContext?: (index: number) => void;
 }) {
+  const hasContent =
+    Boolean(singleton) ||
+    referencedMedia.length > 0 ||
+    contexts.length > 0 ||
+    persistedRows.length > 0 ||
+    hasMemory;
+
   return (
     <>
-      {(!scope || scope.type === "general") &&
-      contexts.length === 0 &&
-      persistedRows.length === 0 &&
-      !hasMemory ? (
+      {!hasContent ? (
         <FeedbackNotice severity="neutral" title="No linked context yet." />
       ) : null}
 
-      {scope && scope.type !== "general" ? (
-        <section className={styles.section} aria-label="Conversation scope">
-          <h3 className={styles.sectionTitle}>Scope</h3>
-          <ConversationScopeChip scope={scope} />
-        </section>
+      {singleton ? <SingletonSection singleton={singleton} /> : null}
+
+      {referencedMedia.length > 0 ? (
+        <ReferencedMediaSection media={referencedMedia} />
       ) : null}
 
       {contexts.length > 0 ? (
@@ -267,6 +296,50 @@ function ContextContent({
 
       <ConversationMemoryPanel memory={memory} />
     </>
+  );
+}
+
+function SingletonSection({ singleton }: { singleton: ConversationSingleton }) {
+  const Icon = SINGLETON_KIND_ICONS[singleton.kind];
+  return (
+    <section className={styles.section} aria-label="Conversation singleton">
+      <h3 className={styles.sectionTitle}>Singleton</h3>
+      <ContextRow
+        leading={<Icon size={16} aria-hidden="true" />}
+        title={formatSingletonLabel(singleton)}
+        titleClassName={styles.contextTitle}
+      />
+    </section>
+  );
+}
+
+function ReferencedMediaSection({ media }: { media: ReferencedMedia[] }) {
+  return (
+    <section className={styles.section} aria-label="Referenced media">
+      <h3 className={styles.sectionTitle}>Referenced media</h3>
+      <div className={styles.contextList}>
+        {media.map((item) => (
+          <ContextRow
+            key={item.mediaId}
+            title={item.mediaTitle || "Media"}
+            titleClassName={styles.contextTitle}
+            meta={item.mediaKind}
+            metaClassName={styles.contextMeta}
+            actions={
+              <ActionMenu
+                options={[
+                  {
+                    id: "open-source",
+                    label: "Open source",
+                    href: `/media/${item.mediaId}`,
+                  },
+                ]}
+              />
+            }
+          />
+        ))}
+      </div>
+    </section>
   );
 }
 

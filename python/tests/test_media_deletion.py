@@ -12,7 +12,13 @@ from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.message_context_snapshots import object_ref_context_snapshot
-from tests.factories import create_test_conversation_with_message, create_test_media
+from tests.factories import (
+    create_test_conversation,
+    create_test_conversation_with_message,
+    create_test_library,
+    create_test_media,
+    create_test_media_in_library,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -703,3 +709,198 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
             {"media_id": media_id, "content_chunk_id": content_chunk_id},
         ).one()
     assert counts == (0, 0, 0, 0, 0, 0, 0)
+
+
+def test_delete_document_hard_delete_cleans_chat_singletons(
+    auth_client, direct_db: DirectSessionManager
+):
+    """Per spec §4.7 / §5.1: deleting the media row deletes every
+    ``chat_singletons`` row pointing at it, but leaves the conversation row
+    intact (it still appears in the global chats pane)."""
+    user_id = create_test_user_id()
+    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+        "default_library_id"
+    ]
+
+    with direct_db.session() as session:
+        media_id = create_test_media(session)
+        conversation_id = create_test_conversation(session, user_id)
+        session.execute(
+            text(
+                """
+                INSERT INTO chat_singletons (user_id, kind, target_id, conversation_id)
+                VALUES (:user_id, 'media', :media_id, :conversation_id)
+                """
+            ),
+            {
+                "user_id": user_id,
+                "media_id": media_id,
+                "conversation_id": conversation_id,
+            },
+        )
+        session.commit()
+
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
+    direct_db.register_cleanup("chat_singletons", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+
+    add_resp = auth_client.post(
+        f"/libraries/{default_id}/media",
+        json={"media_id": str(media_id)},
+        headers=auth_headers(user_id),
+    )
+    assert add_resp.status_code == 201, add_resp.json()
+
+    delete_resp = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
+    assert delete_resp.status_code == 200, delete_resp.json()
+    assert delete_resp.json()["data"]["hard_deleted"] is True
+
+    with direct_db.session() as session:
+        singleton_count = session.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM chat_singletons
+                WHERE kind = 'media'
+                  AND target_id = :media_id
+                """
+            ),
+            {"media_id": media_id},
+        ).scalar_one()
+        assert singleton_count == 0
+
+        conversation_row = session.execute(
+            text("SELECT 1 FROM conversations WHERE id = :conversation_id"),
+            {"conversation_id": conversation_id},
+        ).fetchone()
+        assert conversation_row is not None
+
+        media_row = session.execute(
+            text("SELECT 1 FROM media WHERE id = :media_id"),
+            {"media_id": media_id},
+        ).fetchone()
+        assert media_row is None
+
+
+def test_delete_library_cleans_chat_singletons(
+    auth_client, direct_db: DirectSessionManager
+):
+    """Per spec §4.7 / §5.1: deleting a library deletes every
+    ``chat_singletons`` row pointing at it. The pointed-at conversation row
+    is not deleted."""
+    user_id = create_test_user_id()
+    auth_client.get("/me", headers=auth_headers(user_id))
+    with direct_db.session() as session:
+        library_id = create_test_library(session, user_id, "Singleton Lib Cleanup")
+        conversation_id = create_test_conversation(session, user_id)
+        session.execute(
+            text(
+                """
+                INSERT INTO chat_singletons (user_id, kind, target_id, conversation_id)
+                VALUES (:user_id, 'library', :library_id, :conversation_id)
+                """
+            ),
+            {
+                "user_id": user_id,
+                "library_id": library_id,
+                "conversation_id": conversation_id,
+            },
+        )
+        session.commit()
+
+    direct_db.register_cleanup("chat_singletons", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+
+    delete_resp = auth_client.delete(
+        f"/libraries/{library_id}", headers=auth_headers(user_id)
+    )
+    assert delete_resp.status_code == 204, delete_resp.text
+
+    with direct_db.session() as session:
+        singleton_count = session.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM chat_singletons
+                WHERE kind = 'library'
+                  AND target_id = :library_id
+                """
+            ),
+            {"library_id": library_id},
+        ).scalar_one()
+        assert singleton_count == 0
+
+        conversation_row = session.execute(
+            text("SELECT 1 FROM conversations WHERE id = :conversation_id"),
+            {"conversation_id": conversation_id},
+        ).fetchone()
+        assert conversation_row is not None
+
+        library_row = session.execute(
+            text("SELECT 1 FROM libraries WHERE id = :library_id"),
+            {"library_id": library_id},
+        ).fetchone()
+        assert library_row is None
+
+
+def test_delete_conversation_rows_without_commit_cleans_chat_singletons(
+    auth_client, direct_db: DirectSessionManager
+):
+    """Per spec §5.1: defense-in-depth at the row-deletion level. The
+    user-facing route is guarded with 409, but background cleanup paths invoke
+    ``delete_conversation_rows_without_commit`` directly — it must remove the
+    pointing ``chat_singletons`` row before deleting the conversation."""
+    from nexus.services.conversations import delete_conversation_rows_without_commit
+
+    user_id = create_test_user_id()
+    auth_client.get("/me", headers=auth_headers(user_id))
+    with direct_db.session() as session:
+        library_id = create_test_library(session, user_id, "Defense In Depth Lib")
+        media_id = create_test_media_in_library(
+            session, user_id, library_id, title="Defense In Depth Doc"
+        )
+        conversation_id = create_test_conversation(session, user_id)
+        session.execute(
+            text(
+                """
+                INSERT INTO chat_singletons (user_id, kind, target_id, conversation_id)
+                VALUES (:user_id, 'media', :media_id, :conversation_id)
+                """
+            ),
+            {
+                "user_id": user_id,
+                "media_id": media_id,
+                "conversation_id": conversation_id,
+            },
+        )
+        session.commit()
+
+    direct_db.register_cleanup("chat_singletons", "conversation_id", conversation_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+
+    with direct_db.session() as session:
+        delete_conversation_rows_without_commit(session, conversation_id)
+        session.commit()
+
+    with direct_db.session() as session:
+        singleton_row = session.execute(
+            text(
+                "SELECT 1 FROM chat_singletons WHERE conversation_id = :conversation_id"
+            ),
+            {"conversation_id": conversation_id},
+        ).fetchone()
+        assert singleton_row is None
+
+        conversation_row = session.execute(
+            text("SELECT 1 FROM conversations WHERE id = :conversation_id"),
+            {"conversation_id": conversation_id},
+        ).fetchone()
+        assert conversation_row is None

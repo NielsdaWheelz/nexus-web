@@ -16,8 +16,6 @@ from nexus.logging import get_logger
 from nexus.schemas.conversation import (
     BranchAnchorRequest,
     ContextItem,
-    ConversationScopeRequest,
-    WebSearchOptions,
 )
 from nexus.services.redact import safe_kv
 
@@ -30,9 +28,7 @@ def compute_payload_hash(
     reasoning: str,
     key_mode: str,
     contexts: Sequence[ContextItem],
-    web_search: WebSearchOptions,
-    conversation_id: UUID | None,
-    conversation_scope: ConversationScopeRequest | None,
+    conversation_id: UUID,
     parent_message_id: UUID | None,
     branch_anchor: BranchAnchorRequest,
 ) -> str:
@@ -40,11 +36,10 @@ def compute_payload_hash(
         (ctx.model_dump(mode="json") for ctx in contexts),
         key=lambda payload: json.dumps(payload, sort_keys=True, separators=(",", ":")),
     )
-    payload_scope = conversation_scope.model_dump(mode="json") if conversation_scope else None
     payload_anchor = branch_anchor.model_dump(mode="json")
     payload = (
-        f"{conversation_id}|{parent_message_id}|{payload_anchor}|{content}|{model_id}|{reasoning}|{key_mode}|"
-        f"{payload_scope}|{sorted_contexts}|{web_search.model_dump(mode='json')}|"
+        f"{conversation_id}|{parent_message_id}|{payload_anchor}|{content}|{model_id}|{reasoning}|"
+        f"{key_mode}|{sorted_contexts}|"
     )
     return hashlib.sha256(payload.encode()).hexdigest()
 
@@ -84,7 +79,6 @@ def compute_retry_payload_hash(
         "source_model_id": str(source_run.model_id),
         "source_reasoning": source_run.reasoning,
         "source_key_mode": source_run.key_mode,
-        "source_web_search": source_run.web_search,
         "source_contexts": contexts,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)

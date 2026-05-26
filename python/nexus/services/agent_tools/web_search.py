@@ -2,27 +2,17 @@
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
-from web_search_tool.types import (
-    WebSearchError,
-    WebSearchErrorCode,
-    WebSearchProvider,
-    WebSearchRequest,
-    WebSearchResultItem,
-    WebSearchResultType,
-)
+from web_search_tool.types import WebSearchResultItem
 
 from nexus.logging import get_logger
-from nexus.schemas.conversation import WebSearchOptions
 from nexus.schemas.retrieval import (
     retrieval_context_ref_json,
     retrieval_locator_json,
@@ -38,52 +28,6 @@ WEB_SEARCH_LIMIT = 6
 WEB_SEARCH_SELECTED_LIMIT = 5
 WEB_SEARCH_CONTEXT_CHARS = 12000
 WEB_SEARCH_QUERY_MAX_CHARS = 400
-
-_SHORT_NON_SEARCH_MESSAGES = {
-    "hi",
-    "hello",
-    "hey",
-    "thanks",
-    "thank you",
-    "ok",
-    "okay",
-}
-
-_WEB_SEARCH_CUE_TERMS = (
-    "latest",
-    "current",
-    "today",
-    "yesterday",
-    "tomorrow",
-    "recent",
-    "news",
-    "price",
-    "pricing",
-    "release",
-    "changelog",
-    "docs",
-    "documentation",
-    "source",
-    "sources",
-    "cite",
-    "citation",
-    "verify",
-    "look up",
-    "lookup",
-    "web",
-    "internet",
-    "search the web",
-    "find online",
-    "user feedback",
-    "reddit",
-    "hacker news",
-    "hn",
-    "api",
-    "law",
-    "legal",
-    "regulation",
-    "standard",
-)
 
 
 @dataclass(slots=True)
@@ -200,20 +144,6 @@ class WebSearchRun:
         }
 
 
-def should_run_web_search(content: str, options: WebSearchOptions) -> bool:
-    """Return whether chat should execute public web search for this turn."""
-
-    if options.mode == "off":
-        return False
-    if options.mode == "required":
-        return True
-
-    normalized = " ".join(content.lower().split())
-    if len(normalized) < 2 or normalized in _SHORT_NON_SEARCH_MESSAGES:
-        return False
-    return any(term in normalized for term in _WEB_SEARCH_CUE_TERMS)
-
-
 def build_web_search_query(content: str) -> str:
     """Build a bounded web-search query from the user message."""
 
@@ -236,120 +166,6 @@ def build_web_search_query(content: str) -> str:
             break
     query = query.strip(" \t\r\n?.!,;:")
     return (query or content).strip()[:WEB_SEARCH_QUERY_MAX_CHARS]
-
-
-async def execute_web_search(
-    db: Session,
-    *,
-    provider: WebSearchProvider | None,
-    viewer_id: UUID,
-    conversation_id: UUID,
-    user_message_id: UUID,
-    assistant_message_id: UUID,
-    content: str,
-    options: WebSearchOptions,
-    country: str = "US",
-    search_lang: str = "en",
-    safe_search: Literal["off", "moderate", "strict"] = "moderate",
-) -> WebSearchRun | None:
-    """Run public web search for a chat turn and persist tool metadata."""
-
-    del viewer_id
-    if not should_run_web_search(content, options):
-        return None
-
-    query = build_web_search_query(content)
-    start = time.monotonic()
-    citations: list[WebSearchCitation] = []
-    selected: list[WebSearchCitation] = []
-    provider_request_ids: list[str] = []
-    context_text = ""
-    context_chars = 0
-    status = "complete"
-    error_code: str | None = None
-    empty_status: str | None = None
-    result_type = "mixed"
-
-    try:
-        if provider is None:
-            raise WebSearchError(
-                code=WebSearchErrorCode.PROVIDER_DOWN,
-                message="Web search provider is not configured",
-                provider="brave",
-            )
-
-        request = WebSearchRequest(
-            query=query,
-            result_type=WebSearchResultType.MIXED,
-            limit=WEB_SEARCH_LIMIT,
-            freshness_days=options.freshness_days,
-            allowed_domains=tuple(options.allowed_domains),
-            blocked_domains=tuple(options.blocked_domains),
-            country=country,
-            search_lang=search_lang,
-            safe_search=safe_search,
-        )
-        result_type = request.result_type.value
-        response = await provider.search(request)
-        citations = [_citation_from_result(item) for item in response.results]
-        if response.provider_request_id:
-            provider_request_ids.append(response.provider_request_id)
-        context_text, context_chars, selected = render_web_context_blocks(citations)
-        if not context_text and not citations:
-            empty_status = "no_results"
-            context_text = '<web_search_results status="no_results" />'
-            context_chars = len(context_text)
-    except WebSearchError as exc:
-        logger.warning(
-            "agent_web_search_failed",
-            query_hash=hash_query(query),
-            provider=exc.provider,
-            error_code=str(exc.code),
-        )
-        status = "error"
-        error_code = f"E_WEB_SEARCH_{str(exc.code).upper()}"
-        empty_status = None
-        context_text = f'<web_search_results status="error" code="{xml_escape(error_code)}" />'
-        context_chars = len(context_text)
-    except ValueError as exc:
-        # WebSearchRequest.__post_init__ rejects out-of-bounds queries and
-        # malformed user-supplied domain filters. Provider/render failures are
-        # defects and propagate instead of becoming a UI error state.
-        logger.warning(
-            "agent_web_search_invalid_request",
-            query_hash=hash_query(query),
-            error=str(exc),
-        )
-        status = "error"
-        error_code = "E_WEB_SEARCH_INVALID_REQUEST"
-        empty_status = None
-        context_text = '<web_search_results status="error" code="E_WEB_SEARCH_INVALID_REQUEST" />'
-        context_chars = len(context_text)
-
-    latency_ms = int((time.monotonic() - start) * 1000)
-    run = WebSearchRun(
-        conversation_id=conversation_id,
-        user_message_id=user_message_id,
-        assistant_message_id=assistant_message_id,
-        query_hash=hash_query(query),
-        result_type=result_type,
-        requested_freshness_days=options.freshness_days,
-        requested_domains={
-            "allowed": list(options.allowed_domains),
-            "blocked": list(options.blocked_domains),
-        },
-        citations=citations,
-        selected_citations=selected,
-        context_text=context_text,
-        context_chars=context_chars,
-        latency_ms=latency_ms,
-        status=status,
-        error_code=error_code,
-        provider_request_ids=provider_request_ids,
-        empty_status=empty_status,
-    )
-    await run_in_threadpool(persist_web_search_run, db, run)
-    return run
 
 
 def _citation_from_result(result: WebSearchResultItem) -> WebSearchCitation:

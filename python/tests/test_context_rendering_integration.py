@@ -196,7 +196,6 @@ def test_object_context_rendering_supports_core_context_types(
         owner_user_id=bootstrapped_user,
         title="Research chat",
         sharing="private",
-        scope_type="general",
     )
     podcast = Podcast(
         id=uuid4(),

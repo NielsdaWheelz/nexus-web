@@ -1,136 +1,80 @@
-"""Tests for structured chat retrieval planning."""
+"""Tests for the (post-cutover) retrieval planner.
+
+Per spec §5.4, the planner no longer branches on web-search mode and no longer
+gates retrieval on conversation scope. Tool registration is universal:
+``app_search`` is selected by query cues; ``web_search`` is always available
+to the model (the planner does not decide whether it runs). This file
+exercises only the contracts that still apply.
+"""
 
 import pytest
 from llm_calling.types import Turn
 
-from nexus.errors import ApiError
 from nexus.services.retrieval_planner import (
     APP_SEARCH_TYPES_ALL,
-    APP_SEARCH_TYPES_SCOPED,
-    app_search_scope_for_conversation,
     build_retrieval_plan,
 )
 
 pytestmark = pytest.mark.unit
 
 
-def test_general_scope_can_plan_all_app_search():
+def test_planner_does_not_branch_on_web_search():
+    """Smoke test: the planner builds a plan regardless of any web-search
+    consideration. Both ``app_search`` and ``web_search`` are always available
+    to the model; the planner only decides whether to PRE-FETCH ``app_search``
+    (a per-query heuristic), never whether ``web_search`` is allowed."""
+    plan = build_retrieval_plan(
+        user_content="Verify the latest API documentation",
+        history=[],
+        attached_context_refs=[],
+        memory_source_refs=[],
+    )
+
+    # app_search is enabled when the user content contains a search cue or is
+    # long enough to merit a pre-fetch. No web-search flag participates.
+    assert plan.app_search.enabled is True
+    assert plan.app_search.types == APP_SEARCH_TYPES_ALL
+
+
+def test_planner_uses_app_search_cue_words():
     plan = build_retrieval_plan(
         user_content="Find my notes about transformers",
         history=[],
-        scope_metadata={"type": "general"},
-        web_search_options={"mode": "off"},
     )
 
     assert plan.app_search.enabled is True
-    assert plan.app_search.scope == "all"
-    assert plan.app_search.types == APP_SEARCH_TYPES_ALL
-    assert {
-        "fragment",
-        "evidence_span",
-        "conversation",
-    }.issubset(plan.app_search.types)
-    assert plan.web_search.enabled is False
-
-
-def test_media_scope_never_expands_outside_media_scope():
-    media_id = "11111111-1111-1111-1111-111111111111"
-    plan = build_retrieval_plan(
-        user_content="What did it say about attention?",
-        history=[],
-        scope_metadata={"type": "media", "media_id": media_id, "title": "Attention Paper"},
-        web_search_options={"mode": "auto"},
+    assert "find" not in (plan.app_search.query or "").lower(), (
+        f"Search cue prefix should be stripped from the query, got: {plan.app_search.query}"
     )
 
-    assert plan.app_search.enabled is True
-    assert plan.app_search.scope == f"media:{media_id}"
-    assert plan.app_search.types == APP_SEARCH_TYPES_SCOPED
-    assert plan.app_search.types == ("content_chunk", "fragment", "evidence_span")
-    assert "Attention Paper" in (plan.app_search.query or "")
-    assert plan.web_search.enabled is False
 
-
-def test_media_scope_reader_selection_adds_quote_signal_without_changing_scope():
-    media_id = "11111111-1111-1111-1111-111111111111"
+def test_planner_short_chat_disables_app_search():
+    """Short non-search messages do not pre-fetch (e.g., 'hi', 'thanks')."""
     plan = build_retrieval_plan(
-        user_content="What does this mean?",
+        user_content="hi",
         history=[],
-        scope_metadata={"type": "media", "media_id": media_id, "title": "Attention Paper"},
-        attached_context_refs=[
-            {
-                "kind": "reader_selection",
-                "client_context_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-                "media_id": media_id,
-                "media_title": "Attention Paper",
-                "media_kind": "pdf",
-                "exact": "scaled dot product attention quote",
-                "source_version": "pdf-source:v1",
-                "locator": {"kind": "pdf_text_quote", "page_number": 3},
-            }
-        ],
-        web_search_options={"mode": "off"},
     )
 
-    assert plan.app_search.enabled is True
-    assert plan.app_search.scope == f"media:{media_id}"
-    assert "scaled dot product attention quote" in (plan.app_search.query or "")
+    assert plan.app_search.enabled is False
 
 
-def test_library_scope_reader_selection_seeds_query_without_excluding_library_evidence():
-    library_id = "22222222-2222-2222-2222-222222222222"
-    selected_media_id = "33333333-3333-3333-3333-333333333333"
+def test_planner_followup_query_uses_recent_user_turn():
     plan = build_retrieval_plan(
-        user_content="Compare this to related sources",
-        history=[],
-        scope_metadata={"type": "library", "library_id": library_id, "title": "Research"},
-        attached_context_refs=[
-            {
-                "kind": "reader_selection",
-                "client_context_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-                "media_id": selected_media_id,
-                "media_title": "Selected Source",
-                "media_kind": "web_article",
-                "exact": "distinct selected quote signal",
-                "source_version": "web-source:v1",
-                "locator": {"kind": "fragment_offsets"},
-            }
+        user_content="What about that?",
+        history=[
+            Turn(role="user", content="Find sources about retrieval augmented generation"),
+            Turn(role="assistant", content="I found a few."),
         ],
     )
 
-    assert plan.app_search.enabled is True
-    assert plan.app_search.scope == f"library:{library_id}"
-    assert plan.app_search.types == APP_SEARCH_TYPES_SCOPED
-    assert "Selected Source" in (plan.app_search.query or "")
-    assert "distinct selected quote signal" in (plan.app_search.query or "")
+    assert plan.app_search.query is not None
+    assert "retrieval augmented generation" in plan.app_search.query
 
 
-def test_library_scope_never_includes_message_search():
-    library_id = "22222222-2222-2222-2222-222222222222"
-    scope = {"type": "library", "library_id": library_id, "title": "Research"}
-
-    assert app_search_scope_for_conversation(scope) == f"library:{library_id}"
-    plan = build_retrieval_plan(
-        user_content="Compare saved sources",
-        history=[],
-        scope_metadata=scope,
-    )
-
-    assert "message" not in plan.app_search.types
-    assert "conversation" not in plan.app_search.types
-
-
-def test_contributor_conversation_scope_is_not_planned_until_persistable():
-    with pytest.raises(ApiError):
-        app_search_scope_for_conversation(
-            {"type": "contributor", "contributor_handle": "octavia-butler"}
-        )
-
-
-def test_attached_contributor_context_adds_app_search_filter():
+def test_planner_attached_contributor_context_adds_app_search_filter():
     plan = build_retrieval_plan(
         user_content="Find related saved work",
         history=[],
-        scope_metadata={"type": "general"},
         attached_context_refs=[
             {"type": "contributor", "id": "octavia-butler"},
             {"type": "contributor", "contributor_handle": "octavia-butler"},
@@ -140,33 +84,26 @@ def test_attached_contributor_context_adds_app_search_filter():
     assert plan.app_search.filters["contributor_handles"] == ["octavia-butler"]
 
 
-def test_followup_query_uses_recent_user_turn():
+def test_planner_attached_reader_selection_seeds_query_when_cue_present():
+    """A reader_selection seeds the app_search query when cues trigger
+    app_search. The reader_selection alone does not auto-enable app_search;
+    the user content must still contain a cue or be long enough."""
     plan = build_retrieval_plan(
-        user_content="What about that?",
-        history=[
-            Turn(role="user", content="Find sources about retrieval augmented generation"),
-            Turn(role="assistant", content="I found a few."),
-        ],
-        scope_metadata={"type": "general"},
-    )
-
-    assert plan.app_search.query is not None
-    assert "retrieval augmented generation" in plan.app_search.query
-
-
-def test_web_search_required_and_memory_lookup_plans_are_structured():
-    source_ref = {
-        "type": "message_retrieval",
-        "retrieval_id": "33333333-3333-3333-3333-333333333333",
-    }
-    plan = build_retrieval_plan(
-        user_content="Verify the latest API documentation",
+        user_content="Find related work in my library to this quote.",
         history=[],
-        scope_metadata={"type": "general"},
-        memory_source_refs=[source_ref, source_ref],
-        web_search_options={"mode": "required"},
+        attached_context_refs=[
+            {
+                "kind": "reader_selection",
+                "client_context_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "media_id": "11111111-1111-1111-1111-111111111111",
+                "media_title": "Attention Paper",
+                "media_kind": "pdf",
+                "exact": "scaled dot product attention quote",
+                "source_version": "pdf-source:v1",
+                "locator": {"kind": "pdf_text_quote", "page_number": 3},
+            }
+        ],
     )
 
-    assert plan.web_search.enabled is True
-    assert len(plan.context_lookup) == 1
-    assert plan.context_lookup[0].source_ref == source_ref
+    assert plan.app_search.enabled is True
+    assert "scaled dot product attention quote" in (plan.app_search.query or "")

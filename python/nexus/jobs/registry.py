@@ -265,7 +265,14 @@ def _run_enrich_metadata(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | N
 def _run_chat_run(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
     from nexus.tasks.chat_run import chat_run
 
-    return chat_run(run_id=str(payload["run_id"]))
+    reader_context = payload.get("reader_context")
+    reader_context_payload = (
+        dict(reader_context) if isinstance(reader_context, Mapping) else None
+    )
+    return chat_run(
+        run_id=str(payload["run_id"]),
+        reader_context=reader_context_payload,
+    )
 
 
 def _run_library_intelligence_build(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:

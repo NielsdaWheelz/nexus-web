@@ -45,7 +45,6 @@ def _create_run(
         model_id=model_id,
         reasoning="none",
         key_mode="auto",
-        web_search={"mode": "off"},
     )
     db_session.add(run)
     db_session.commit()

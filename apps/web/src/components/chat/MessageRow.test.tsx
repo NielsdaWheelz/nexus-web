@@ -357,7 +357,6 @@ describe("MessageRow", () => {
     const summary = {
       id: "summary-1",
       message_id: "assistant-1",
-      scope_type: "general" as const,
       scope_ref: null,
       retrieval_status: "web_result" as const,
       support_status: "supported" as const,
@@ -477,7 +476,6 @@ describe("MessageRow", () => {
     const summary = {
       id: "summary-1",
       message_id: "assistant-1",
-      scope_type: "general" as const,
       scope_ref: null,
       retrieval_status: "retrieved" as const,
       support_status: "supported" as const,
@@ -643,7 +641,6 @@ describe("MessageRow", () => {
             excluded_by_scope_count: 0,
             stale_count: 0,
             unreadable_count: 0,
-            web_search_mode: "off",
             index_versions: ["semantic:v2"],
             metadata: { empty_status: "partial" },
             latency_ms: 24,
@@ -963,7 +960,6 @@ describe("MessageRow", () => {
       evidence_summary: {
         id: "summary-1",
         message_id: "assistant-1",
-        scope_type: "media",
         scope_ref: { title: "Research paper" },
         retrieval_status: "included_in_prompt",
         support_status: "supported",
@@ -1063,7 +1059,6 @@ describe("MessageRow", () => {
       evidence_summary: {
         id: "summary-1",
         message_id: "assistant-1",
-        scope_type: "media",
         scope_ref: { title: "Research paper" },
         retrieval_status: "included_in_prompt",
         support_status: "supported",
@@ -1181,7 +1176,6 @@ describe("MessageRow", () => {
       evidence_summary: {
         id: "summary-1",
         message_id: "assistant-1",
-        scope_type: "media",
         scope_ref: { title: "Research PDF" },
         retrieval_status: "included_in_prompt",
         support_status: "supported",
@@ -1288,7 +1282,6 @@ describe("MessageRow", () => {
       evidence_summary: {
         id: "summary-1",
         message_id: "assistant-1",
-        scope_type: "media",
         scope_ref: { title: "Article" },
         retrieval_status: "included_in_prompt",
         support_status: "supported",
@@ -1420,7 +1413,6 @@ describe("MessageRow", () => {
       evidence_summary: {
         id: "summary-1",
         message_id: "assistant-1",
-        scope_type: "media",
         scope_ref: { title: "Research PDF" },
         retrieval_status: "included_in_prompt",
         support_status: "supported",
@@ -1544,7 +1536,6 @@ describe("MessageRow", () => {
       evidence_summary: {
         id: "summary-1",
         message_id: "assistant-1",
-        scope_type: "media",
         scope_ref: { title: "Research paper" },
         retrieval_status: "included_in_prompt",
         support_status: "supported",
@@ -1642,7 +1633,6 @@ describe("MessageRow", () => {
       evidence_summary: {
         id: "summary-1",
         message_id: "assistant-1",
-        scope_type: "library",
         scope_ref: { library_name: "Research library" },
         retrieval_status: "excluded_by_scope",
         support_status: "not_enough_evidence",
@@ -2305,7 +2295,6 @@ describe("MessageRow", () => {
       evidence_summary: {
         id: "summary-1",
         message_id: "assistant-1",
-        scope_type: "general",
         scope_ref: null,
         retrieval_status: "included_in_prompt",
         support_status: "supported",
@@ -2410,7 +2399,6 @@ describe("MessageRow", () => {
       evidence_summary: {
         id: "summary-1",
         message_id: "assistant-1",
-        scope_type: "general",
         scope_ref: null,
         retrieval_status: "included_in_prompt",
         support_status: "supported",

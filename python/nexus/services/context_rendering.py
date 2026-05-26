@@ -163,71 +163,6 @@ def render_context_blocks(
     return "", 0
 
 
-def render_conversation_scope_block(scope_metadata: dict[str, object]) -> str:
-    scope_type = scope_metadata.get("type")
-    if scope_type == "general":
-        return ""
-
-    if scope_type == "media":
-        lines = ['<conversation_scope type="media">']
-        title = scope_metadata.get("title")
-        if isinstance(title, str) and title:
-            lines.append(f"<title>{xml_escape(title)}</title>")
-        media_kind = scope_metadata.get("media_kind")
-        if isinstance(media_kind, str) and media_kind:
-            lines.append(f"<media_kind>{xml_escape(media_kind)}</media_kind>")
-        contributors = scope_metadata.get("contributors")
-        if isinstance(contributors, list) and contributors:
-            lines.append("<contributors>")
-            for contributor in contributors:
-                if not isinstance(contributor, dict):
-                    continue
-                credited_name = contributor.get("credited_name")
-                role = contributor.get("role")
-                if isinstance(credited_name, str) and credited_name:
-                    role_attr = f' role="{xml_escape(role)}"' if isinstance(role, str) else ""
-                    lines.append(
-                        f"<contributor{role_attr}>{xml_escape(credited_name)}</contributor>"
-                    )
-            lines.append("</contributors>")
-        published_date = scope_metadata.get("published_date")
-        if isinstance(published_date, str) and published_date:
-            lines.append(f"<publication_date>{xml_escape(published_date)}</publication_date>")
-        publisher = scope_metadata.get("publisher")
-        if isinstance(publisher, str) and publisher:
-            lines.append(f"<publisher>{xml_escape(publisher)}</publisher>")
-        canonical_source_url = scope_metadata.get("canonical_source_url")
-        if isinstance(canonical_source_url, str) and canonical_source_url:
-            lines.append(
-                f"<canonical_source_url>{xml_escape(canonical_source_url)}</canonical_source_url>"
-            )
-        lines.append("</conversation_scope>")
-        return "\n".join(lines)
-
-    if scope_type == "library":
-        lines = ['<conversation_scope type="library">']
-        title = scope_metadata.get("title")
-        if isinstance(title, str) and title:
-            lines.append(f"<name>{xml_escape(title)}</name>")
-        entry_count = scope_metadata.get("entry_count")
-        if isinstance(entry_count, int):
-            lines.append(f"<entry_count>{entry_count}</entry_count>")
-        media_kinds = scope_metadata.get("media_kinds")
-        if isinstance(media_kinds, list) and media_kinds:
-            lines.append("<media_kinds>")
-            for media_kind in media_kinds:
-                if isinstance(media_kind, str) and media_kind:
-                    lines.append(f"<media_kind>{xml_escape(media_kind)}</media_kind>")
-            lines.append("</media_kinds>")
-        source_policy = scope_metadata.get("source_policy")
-        if isinstance(source_policy, str) and source_policy:
-            lines.append(f"<source_policy>{xml_escape(source_policy)}</source_policy>")
-        lines.append("</conversation_scope>")
-        return "\n".join(lines)
-
-    return ""
-
-
 def _render_single_context(db: Session, ctx: ContextItem) -> str | None:
     """Render a single context item to an XML block."""
     if ctx.kind == "reader_selection":
@@ -707,7 +642,6 @@ def _render_conversation_context(db: Session, conversation_id: UUID) -> str | No
         [
             "<conversation>",
             f"<title>{xml_escape(conversation.title)}</title>",
-            f"<scope_type>{xml_escape(conversation.scope_type)}</scope_type>",
             "</conversation>",
         ]
     )

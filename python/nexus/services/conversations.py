@@ -25,10 +25,11 @@ from uuid import UUID
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
+from nexus.auth.permissions import can_read_conversation
 from nexus.db.models import (
     AssistantMessageVerifierRun,
     ChatRun,
+    ChatSingleton,
     Conversation,
     Library,
     Media,
@@ -42,6 +43,7 @@ from nexus.db.models import (
 from nexus.errors import (
     CHAT_RESPONSE_RETRYABLE_ERROR_CODES,
     ApiErrorCode,
+    ConflictError,
     InvalidRequestError,
     NotFoundError,
 )
@@ -50,8 +52,8 @@ from nexus.schemas.conversation import (
     BRANCH_ANCHOR_KINDS,
     AssistantVerifierRunOut,
     ConversationOut,
-    ConversationScopeOut,
-    ConversationScopeRequest,
+    ConversationReferenceOut,
+    ConversationSingletonOut,
     MessageContextSnapshot,
     MessageContextSnapshotOut,
     MessageDocument,
@@ -61,7 +63,6 @@ from nexus.schemas.conversation import (
     PageInfo,
 )
 from nexus.services.contexts import reader_selection_message_snapshot_from_row
-from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.conversation_memory import conversation_memory_inspection
 from nexus.services.message_context_snapshots import (
     trusted_content_chunk_context_snapshot_fields,
@@ -82,6 +83,12 @@ MIN_LIMIT = 1
 MAX_LIMIT = 100
 DEFAULT_CONVERSATION_TITLE = "Chat"
 MAX_CONVERSATION_TITLE_LENGTH = 120
+
+# Reference-list pagination (§7.4): higher cap for tab-list use.
+DEFAULT_REFERENCE_LIMIT = 50
+MAX_REFERENCE_LIMIT = 200
+# Truncation for the row preview text shown in reader-pane lists.
+REFERENCE_EXCERPT_MAX_LENGTH = 200
 
 
 # =============================================================================
@@ -209,212 +216,58 @@ def get_message_count(db: Session, conversation_id: UUID) -> int:
     return result or 0
 
 
+def _singleton_for_conversation(
+    db: Session, viewer_id: UUID | None, conversation_id: UUID
+) -> ConversationSingletonOut | None:
+    """Return the viewer's singleton pin for this conversation, or None.
+
+    Single SQL roundtrip: left-outer-joins `media` and `libraries` to surface
+    the joined title (`media.title` for kind='media', `libraries.name` for
+    kind='library') alongside the singleton row.
+    """
+    if viewer_id is None:
+        return None
+    row = db.execute(
+        select(
+            ChatSingleton.kind,
+            ChatSingleton.target_id,
+            func.coalesce(Media.title, Library.name).label("target_title"),
+        )
+        .outerjoin(Media, (ChatSingleton.kind == "media") & (Media.id == ChatSingleton.target_id))
+        .outerjoin(
+            Library, (ChatSingleton.kind == "library") & (Library.id == ChatSingleton.target_id)
+        )
+        .where(
+            ChatSingleton.conversation_id == conversation_id,
+            ChatSingleton.user_id == viewer_id,
+        )
+    ).first()
+    if row is None or row.target_title is None:
+        return None
+    return ConversationSingletonOut(
+        kind=row.kind, target_id=row.target_id, target_title=row.target_title
+    )
+
+
 def conversation_to_out(
     db: Session,
     conversation: Conversation,
     message_count: int,
     viewer_id: UUID | None = None,
 ) -> ConversationOut:
-    """Convert Conversation ORM model to ConversationOut schema.
-
-    Args:
-        conversation: The ORM conversation.
-        message_count: Pre-computed message count.
-        viewer_id: The viewing user. Used to compute is_owner.
-    """
+    """Convert Conversation ORM model to ConversationOut schema."""
     return ConversationOut(
         id=conversation.id,
         title=conversation.title,
         owner_user_id=conversation.owner_user_id,
         is_owner=(viewer_id is not None and conversation.owner_user_id == viewer_id),
         sharing=conversation.sharing,
-        scope=conversation_scope_to_out(db, conversation),
+        singleton=_singleton_for_conversation(db, viewer_id, conversation.id),
         message_count=message_count,
         memory=conversation_memory_inspection(db, conversation_id=conversation.id),
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
     )
-
-
-def conversation_scope_to_out(db: Session, conversation: Conversation) -> ConversationScopeOut:
-    if conversation.scope_type == "general":
-        return ConversationScopeOut(type="general")
-
-    if conversation.scope_type == "media":
-        media = db.get(Media, conversation.scope_media_id) if conversation.scope_media_id else None
-        if media is None:
-            return ConversationScopeOut(type="media", media_id=conversation.scope_media_id)
-        contributors = load_contributor_credits_for_media(db, [media.id]).get(media.id, [])
-        return ConversationScopeOut(
-            type="media",
-            media_id=media.id,
-            title=media.title,
-            media_kind=media.kind,
-            contributors=contributors,
-            published_date=media.published_date,
-            publisher=media.publisher,
-            canonical_source_url=media.canonical_source_url,
-        )
-
-    if conversation.scope_type == "library":
-        library = (
-            db.get(Library, conversation.scope_library_id)
-            if conversation.scope_library_id
-            else None
-        )
-        if library is None:
-            return ConversationScopeOut(type="library", library_id=conversation.scope_library_id)
-        rows = db.execute(
-            text(
-                """
-                SELECT COUNT(le.media_id), array_remove(array_agg(DISTINCT m.kind), NULL)
-                FROM library_entries le
-                LEFT JOIN media m ON m.id = le.media_id
-                WHERE le.library_id = :library_id
-                """
-            ),
-            {"library_id": library.id},
-        ).one()
-        return ConversationScopeOut(
-            type="library",
-            library_id=library.id,
-            title=library.name,
-            library_name=library.name,
-            entry_count=int(rows[0] or 0),
-            media_kinds=list(rows[1] or []),
-            source_policy="library_membership",
-        )
-
-    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid conversation scope")
-
-
-def conversation_scope_metadata(db: Session, conversation: Conversation) -> dict[str, object]:
-    scope = conversation_scope_to_out(db, conversation)
-    return scope.model_dump(mode="json")
-
-
-def authorize_conversation_scope(
-    db: Session,
-    viewer_id: UUID,
-    conversation_scope: ConversationScopeRequest,
-) -> None:
-    if conversation_scope.type == "general":
-        return
-
-    if conversation_scope.type == "media":
-        media_id = conversation_scope.media_id
-        if media_id is None or not can_read_media(db, viewer_id, media_id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
-        return
-
-    if conversation_scope.type == "library":
-        library_id = conversation_scope.library_id
-        if library_id is None or not is_library_member(db, viewer_id, library_id):
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Library not found")
-        return
-
-    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid conversation scope")
-
-
-def _lock_scoped_conversation(
-    db: Session, viewer_id: UUID, scope_type: str, scope_id: UUID
-) -> None:
-    db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
-        {"lock_key": f"conversation_scope:{viewer_id}:{scope_type}:{scope_id}"},
-    )
-
-
-def resolve_conversation_for_scope(
-    db: Session,
-    viewer_id: UUID,
-    conversation_scope: ConversationScopeRequest,
-    title_content: str | None = None,
-) -> Conversation:
-    authorize_conversation_scope(db, viewer_id, conversation_scope)
-
-    if conversation_scope.type == "general":
-        conversation = Conversation(
-            owner_user_id=viewer_id,
-            title=derive_conversation_title(title_content),
-            sharing="private",
-            scope_type="general",
-            scope_media_id=None,
-            scope_library_id=None,
-            next_seq=1,
-        )
-        db.add(conversation)
-        db.flush()
-        return conversation
-
-    if conversation_scope.type == "media":
-        media = db.get(Media, conversation_scope.media_id) if conversation_scope.media_id else None
-        if conversation_scope.media_id is None:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST, "Media scope requires media_id"
-            )
-        _lock_scoped_conversation(db, viewer_id, "media", conversation_scope.media_id)
-        conversation = (
-            db.execute(
-                select(Conversation).where(
-                    Conversation.owner_user_id == viewer_id,
-                    Conversation.scope_type == "media",
-                    Conversation.scope_media_id == conversation_scope.media_id,
-                )
-            )
-            .scalars()
-            .first()
-        )
-        if conversation is not None:
-            return conversation
-        conversation = Conversation(
-            owner_user_id=viewer_id,
-            title=media.title if media is not None else DEFAULT_CONVERSATION_TITLE,
-            sharing="private",
-            scope_type="media",
-            scope_media_id=conversation_scope.media_id,
-            scope_library_id=None,
-            next_seq=1,
-        )
-        db.add(conversation)
-        db.flush()
-        return conversation
-
-    if conversation_scope.type == "library":
-        if conversation_scope.library_id is None:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Library scope requires library_id",
-            )
-        library = db.get(Library, conversation_scope.library_id)
-        _lock_scoped_conversation(db, viewer_id, "library", conversation_scope.library_id)
-        conversation = (
-            db.execute(
-                select(Conversation).where(
-                    Conversation.owner_user_id == viewer_id,
-                    Conversation.scope_type == "library",
-                    Conversation.scope_library_id == conversation_scope.library_id,
-                )
-            )
-            .scalars()
-            .first()
-        )
-        if conversation is not None:
-            return conversation
-        conversation = Conversation(
-            owner_user_id=viewer_id,
-            title=library.name if library is not None else DEFAULT_CONVERSATION_TITLE,
-            sharing="private",
-            scope_type="library",
-            scope_media_id=None,
-            scope_library_id=conversation_scope.library_id,
-            next_seq=1,
-        )
-        db.add(conversation)
-        db.flush()
-        return conversation
-
-    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid conversation scope")
 
 
 def message_to_out(
@@ -519,6 +372,10 @@ def load_message_context_snapshots_for_message_ids(
 def create_conversation(db: Session, viewer_id: UUID) -> ConversationOut:
     """Create a new empty private conversation.
 
+    The caller commits the surrounding transaction. This lets callers compose
+    creation with additional inserts (e.g. singleton resolution) inside a
+    single SERIALIZABLE transaction.
+
     Args:
         db: Database session.
         viewer_id: The ID of the user creating the conversation.
@@ -530,30 +387,13 @@ def create_conversation(db: Session, viewer_id: UUID) -> ConversationOut:
         owner_user_id=viewer_id,
         title=DEFAULT_CONVERSATION_TITLE,
         sharing="private",
-        scope_type="general",
         next_seq=1,
     )
 
     db.add(conversation)
     db.flush()
-    db.commit()
 
     return conversation_to_out(db, conversation, message_count=0, viewer_id=viewer_id)
-
-
-def resolve_conversation(
-    db: Session,
-    viewer_id: UUID,
-    conversation_scope: ConversationScopeRequest,
-) -> ConversationOut:
-    conversation = resolve_conversation_for_scope(db, viewer_id, conversation_scope)
-    db.commit()
-    return conversation_to_out(
-        db,
-        conversation,
-        get_message_count(db, conversation.id),
-        viewer_id=viewer_id,
-    )
 
 
 def get_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> ConversationOut:
@@ -644,6 +484,22 @@ def list_conversations(
         return _list_conversations_visible(db, viewer_id, limit, cursor, scope)
 
 
+_LIST_SINGLETON_JOIN_SQL = """
+    LEFT JOIN chat_singletons cs
+        ON cs.conversation_id = c.id AND cs.user_id = :viewer_id
+    LEFT JOIN media sm
+        ON cs.kind = 'media' AND sm.id = cs.target_id
+    LEFT JOIN libraries sl
+        ON cs.kind = 'library' AND sl.id = cs.target_id
+"""
+
+_LIST_SINGLETON_SELECT_SQL = (
+    "cs.kind AS singleton_kind, "
+    "cs.target_id AS singleton_target_id, "
+    "COALESCE(sm.title, sl.name) AS singleton_target_title"
+)
+
+
 def _list_conversations_mine(
     db: Session,
     viewer_id: UUID,
@@ -659,12 +515,9 @@ def _list_conversations_mine(
         text(f"""
             SELECT c.id, c.owner_user_id, c.title, c.sharing, c.created_at, c.updated_at,
                    (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count,
-                   c.scope_type, c.scope_media_id, c.scope_library_id,
-                   sm.title AS scope_media_title, sm.kind AS scope_media_kind,
-                   sl.name AS scope_library_name
+                   {_LIST_SINGLETON_SELECT_SQL}
             FROM conversations c
-            LEFT JOIN media sm ON sm.id = c.scope_media_id
-            LEFT JOIN libraries sl ON sl.id = c.scope_library_id
+            {_LIST_SINGLETON_JOIN_SQL}
             WHERE c.owner_user_id = :viewer_id
               {cursor_clause}
             ORDER BY c.updated_at DESC, c.id DESC
@@ -703,13 +556,10 @@ def _list_conversations_visible(
             WITH {cte}
             SELECT c.id, c.owner_user_id, c.title, c.sharing, c.created_at, c.updated_at,
                    (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count,
-                   c.scope_type, c.scope_media_id, c.scope_library_id,
-                   sm.title AS scope_media_title, sm.kind AS scope_media_kind,
-                   sl.name AS scope_library_name
+                   {_LIST_SINGLETON_SELECT_SQL}
             FROM conversations c
             JOIN visible_conversations vc ON vc.id = c.id
-            LEFT JOIN media sm ON sm.id = c.scope_media_id
-            LEFT JOIN libraries sl ON sl.id = c.scope_library_id
+            {_LIST_SINGLETON_JOIN_SQL}
             WHERE true
               {scope_filter}
               {cursor_clause}
@@ -725,7 +575,12 @@ def _list_conversations_visible(
 def _build_conversation_page(
     rows: Sequence, limit: int, viewer_id: UUID
 ) -> tuple[list[ConversationOut], PageInfo]:
-    """Build paginated response from raw rows."""
+    """Build paginated response from raw rows.
+
+    Row columns (in order): id, owner_user_id, title, sharing, created_at,
+    updated_at, message_count, singleton_kind, singleton_target_id,
+    singleton_target_title.
+    """
     has_more = len(rows) > limit
     if has_more:
         rows = rows[:limit]
@@ -737,10 +592,14 @@ def _build_conversation_page(
             title=row[2],
             is_owner=(row[1] == viewer_id),
             sharing=row[3],
-            scope=_conversation_scope_out_from_row(row),
             created_at=row[4],
             updated_at=row[5],
             message_count=row[6],
+            singleton=(
+                ConversationSingletonOut(kind=row[7], target_id=row[8], target_title=row[9])
+                if row[7] is not None and row[9] is not None
+                else None
+            ),
         )
         for row in rows
     ]
@@ -753,32 +612,13 @@ def _build_conversation_page(
     return conversations, PageInfo(next_cursor=next_cursor)
 
 
-def _conversation_scope_out_from_row(row: Sequence) -> ConversationScopeOut:
-    scope_type = row[7]
-    if scope_type == "general":
-        return ConversationScopeOut(type="general")
-    if scope_type == "media":
-        return ConversationScopeOut(
-            type="media",
-            media_id=row[8],
-            title=row[10],
-            media_kind=row[11],
-        )
-    if scope_type == "library":
-        return ConversationScopeOut(
-            type="library",
-            library_id=row[9],
-            title=row[12],
-            library_name=row[12],
-            source_policy="library_membership",
-        )
-    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid conversation scope")
-
-
 def delete_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> None:
     """Delete a conversation.
 
     Cleans conversation-owned context memory, then deletes the conversation.
+
+    Singletons are not user-deletable: a `chat_singletons` row pinning this
+    conversation refuses deletion with `E_SINGLETON_UNDELETABLE` (409).
 
     Args:
         db: Database session.
@@ -788,9 +628,24 @@ def delete_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> 
     Raises:
         NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
             or viewer is not the owner.
+        ConflictError(E_SINGLETON_UNDELETABLE): If the conversation is a
+            singleton (doc-chat or library-chat).
     """
     # Verify ownership (write = owner-only)
     get_conversation_for_owner_write_or_404(db, viewer_id, conversation_id)
+
+    if (
+        db.scalar(
+            select(ChatSingleton.conversation_id).where(
+                ChatSingleton.conversation_id == conversation_id
+            )
+        )
+        is not None
+    ):
+        raise ConflictError(
+            ApiErrorCode.E_SINGLETON_UNDELETABLE,
+            "Singleton conversations cannot be deleted.",
+        )
 
     delete_conversation_rows_without_commit(db, conversation_id)
     db.commit()
@@ -1147,6 +1002,10 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> None:
 
 
 def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) -> None:
+    db.execute(
+        delete(ChatSingleton).where(ChatSingleton.conversation_id == conversation_id)
+    )
+
     message_ids = _message_ids_for_conversation(db, conversation_id)
     delete_message_rows_without_commit(db, message_ids)
 
@@ -1419,3 +1278,112 @@ def _message_tool_call_ids_for_messages(db: Session, message_ids: Sequence[UUID]
         """,
         {"message_ids": list(message_ids)},
     )
+
+
+# =============================================================================
+# Reference-list (reader-pane "Other chats")
+# =============================================================================
+
+
+def list_referencing_conversations_for_media(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    *,
+    limit: int,
+    offset: int,
+) -> tuple[list[ConversationReferenceOut], int | None]:
+    """List non-singleton conversations that reference this media (§4.6, §7.4).
+
+    A conversation appears iff:
+    - It is visible to the viewer (owner / public / library-shared), AND
+    - At least one of its messages has a `message_context_items` row referencing
+      this media (either an `object_ref` of type 'media' with `object_id=media_id`,
+      or any context row with `source_media_id=media_id` — covering quotes and
+      citable child objects), AND
+    - It is not the viewer's doc-chat singleton for this media.
+
+    Ordered by `updated_at` desc, then `id` desc for stability under ties.
+
+    Returns:
+        Tuple of (items, next_offset). `next_offset` is the offset that would
+        return the next page, or None if this is the last page.
+    """
+    page_size = max(1, min(limit, MAX_REFERENCE_LIMIT))
+    starting_offset = max(0, offset)
+    fetch_count = page_size + 1  # one extra row signals "more pages exist"
+
+    rows = db.execute(
+        text(f"""
+            WITH {_build_visibility_cte(viewer_id)},
+            referencing_conversations AS (
+                SELECT DISTINCT c.id, c.title, c.updated_at
+                FROM conversations c
+                JOIN visible_conversations vc ON vc.id = c.id
+                JOIN messages m ON m.conversation_id = c.id
+                JOIN message_context_items mci ON mci.message_id = m.id
+                WHERE (
+                    (mci.context_kind = 'object_ref'
+                     AND mci.object_type = 'media'
+                     AND mci.object_id = :media_id)
+                    OR mci.source_media_id = :media_id
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM chat_singletons cs
+                    WHERE cs.user_id = :viewer_id
+                      AND cs.kind = 'media'
+                      AND cs.target_id = :media_id
+                      AND cs.conversation_id = c.id
+                )
+            )
+            SELECT
+                rc.id,
+                rc.title,
+                rc.updated_at,
+                (SELECT COUNT(*) FROM messages mc WHERE mc.conversation_id = rc.id)
+                    AS message_count,
+                (SELECT mf.content
+                 FROM messages mf
+                 WHERE mf.conversation_id = rc.id AND mf.role = 'user'
+                 ORDER BY mf.seq ASC
+                 LIMIT 1) AS first_user_message
+            FROM referencing_conversations rc
+            ORDER BY rc.updated_at DESC, rc.id DESC
+            LIMIT :fetch_count OFFSET :starting_offset
+        """),
+        {
+            "viewer_id": viewer_id,
+            "media_id": media_id,
+            "fetch_count": fetch_count,
+            "starting_offset": starting_offset,
+        },
+    ).all()
+
+    has_more = len(rows) > page_size
+    page_rows = rows[:page_size]
+
+    items = [
+        ConversationReferenceOut(
+            id=row[0],
+            title=row[1],
+            updated_at=row[2],
+            message_count=int(row[3]),
+            first_user_message_excerpt=_excerpt(row[4]),
+            is_singleton=False,
+        )
+        for row in page_rows
+    ]
+
+    next_offset = starting_offset + page_size if has_more else None
+    return items, next_offset
+
+
+def _excerpt(content: str | None) -> str:
+    """Return a trimmed excerpt of message content for row previews."""
+    if not content:
+        return ""
+    text_value = content.strip()
+    if len(text_value) <= REFERENCE_EXCERPT_MAX_LENGTH:
+        return text_value
+    return text_value[:REFERENCE_EXCERPT_MAX_LENGTH]

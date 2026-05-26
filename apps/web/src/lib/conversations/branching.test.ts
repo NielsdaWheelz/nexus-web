@@ -71,7 +71,7 @@ function runData(parentMessageId: string): ChatRunResponse["data"] {
       title: "Conversation",
       sharing: "private",
       message_count: 4,
-      scope: { type: "general" },
+      singleton: null,
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
     },
@@ -118,7 +118,7 @@ describe("conversation branching helpers", () => {
     expect(next).toBe(path);
   });
 
-  it("shows a parented scoped run when history has not loaded yet", () => {
+  it("shows a parented run when history has not loaded yet", () => {
     const next = selectedPathAfterRun([], runData("assistant-1"));
 
     expect(next.map((item) => item.id)).toEqual(["fork-user", "fork-assistant"]);

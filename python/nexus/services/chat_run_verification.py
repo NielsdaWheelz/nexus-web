@@ -20,9 +20,8 @@ from nexus.services.chat_run_claim_parsing import (
     parse_claim_extractor_response,
     parse_claim_verifier_response,
 )
-from nexus.services.chat_run_evidence import message_prompt_evidence_rows
+from nexus.services.chat_run_evidence import is_source_backed_run, message_prompt_evidence_rows
 from nexus.services.chat_run_message_blocks import source_manifest_blocks_for_run
-from nexus.services.chat_run_scope import is_source_backed_run, scope_constraints_for_run
 from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
@@ -186,7 +185,6 @@ async def verified_assistant_content(
                 "evidence_count_sent": 0,
                 "source_backed": False,
                 "source_manifest": source_manifest_blocks_for_run(db, run.id),
-                "scope_constraints": scope_constraints_for_run(db, run),
                 "claim_statuses": claim_statuses,
                 "answer_claim_statuses": claim_statuses,
                 "draft_claim_statuses": [dict(item) for item in claim_statuses],
@@ -252,7 +250,6 @@ async def verified_assistant_content(
         "claims": claim_payload,
         "selected_evidence": evidence_payload,
         "source_manifest": source_manifest_blocks_for_run(db, run.id),
-        "scope_constraints": scope_constraints_for_run(db, run),
     }
     try:
         response = await cast(Any, generate)(
@@ -328,7 +325,6 @@ async def verified_assistant_content(
             "evidence_count_sent": len(evidence_payload),
             "source_backed": True,
             "source_manifest": verifier_request["source_manifest"],
-            "scope_constraints": verifier_request["scope_constraints"],
             "claim_statuses": claim_statuses,
             "supported_claims": [
                 {

@@ -1,19 +1,31 @@
 "use client";
 
-import { useId, useRef, type ReactNode } from "react";
+import {
+  useId,
+  useRef,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { PanelRightClose } from "lucide-react";
 import Button from "@/components/ui/Button";
 import styles from "./SecondaryRail.module.css";
+
+export interface SecondaryRailTab {
+  id: "highlights" | "doc-chat" | "library-chat";
+  icon: ComponentType<{ size?: number }>;
+  tooltip: string;
+  body: ReactNode;
+}
 
 interface SecondaryRailProps {
   ariaLabel: string;
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   collapsed?: ReactNode;
-  children: ReactNode;
-  tabs?: Array<{ id: string; label: string; disabled?: boolean }>;
-  activeTabId?: string;
-  onActiveTabChange?: (tabId: string) => void;
+  children?: ReactNode;
+  tabs?: SecondaryRailTab[];
+  activeTabId?: SecondaryRailTab["id"];
+  onActiveTabIdChange?: (tabId: SecondaryRailTab["id"]) => void;
   expandedWidthPx?: number;
   bodyClassName?: string;
   testId?: string;
@@ -28,36 +40,37 @@ export default function SecondaryRail({
   onExpandedChange,
   collapsed,
   children,
-  tabs = [],
+  tabs,
   activeTabId,
-  onActiveTabChange,
+  onActiveTabIdChange,
   expandedWidthPx = SECONDARY_RAIL_EXPANDED_WIDTH_PX,
   bodyClassName,
   testId,
 }: SecondaryRailProps) {
   const panelId = useId();
-  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
-  const selectedTabId =
-    activeTabId ?? tabs.find((tab) => !tab.disabled)?.id ?? tabs[0]?.id;
-  const activeTab = tabs.find((tab) => tab.id === selectedTabId) ?? null;
+  const tabRefs = useRef(new Map<SecondaryRailTab["id"], HTMLButtonElement>());
+  const selectedTabId = activeTabId ?? tabs?.[0]?.id;
+  const activeTab = tabs?.find((tab) => tab.id === selectedTabId) ?? null;
   const activeTabDomId = activeTab ? `${panelId}-${activeTab.id}-tab` : undefined;
-  const enabledTabs = tabs.filter((tab) => !tab.disabled);
-  const selectTabFromKeyboard = (nextTabId: string) => {
-    onActiveTabChange?.(nextTabId);
+  const selectTabFromKeyboard = (nextTabId: SecondaryRailTab["id"]) => {
+    onActiveTabIdChange?.(nextTabId);
     window.requestAnimationFrame(() => {
       tabRefs.current.get(nextTabId)?.focus();
     });
   };
-  const selectRelativeTab = (currentTabId: string, direction: 1 | -1) => {
-    if (enabledTabs.length === 0) {
+  const selectRelativeTab = (
+    currentTabId: SecondaryRailTab["id"],
+    direction: 1 | -1,
+  ) => {
+    if (!tabs || tabs.length === 0) {
       return;
     }
-    const currentIndex = enabledTabs.findIndex((tab) => tab.id === currentTabId);
+    const currentIndex = tabs.findIndex((tab) => tab.id === currentTabId);
     const nextIndex =
       currentIndex === -1
         ? 0
-        : (currentIndex + direction + enabledTabs.length) % enabledTabs.length;
-    selectTabFromKeyboard(enabledTabs[nextIndex].id);
+        : (currentIndex + direction + tabs.length) % tabs.length;
+    selectTabFromKeyboard(tabs[nextIndex].id);
   };
 
   if (!expanded) {
@@ -89,48 +102,52 @@ export default function SecondaryRail({
       data-expanded="true"
     >
       <header className={styles.header}>
-        {tabs.length > 0 ? (
+        {tabs && tabs.length > 0 ? (
           <div className={styles.tabs} role="tablist" aria-label={ariaLabel}>
-            {tabs.map((tab) => (
-              <Button
-                key={tab.id}
-                id={`${panelId}-${tab.id}-tab`}
-                ref={(element) => {
-                  if (element) {
-                    tabRefs.current.set(tab.id, element);
-                  } else {
-                    tabRefs.current.delete(tab.id);
-                  }
-                }}
-                variant="ghost"
-                size="sm"
-                role="tab"
-                aria-controls={panelId}
-                aria-selected={selectedTabId === tab.id}
-                disabled={tab.disabled}
-                tabIndex={selectedTabId === tab.id ? 0 : -1}
-                className={styles.tab}
-                data-active={selectedTabId === tab.id ? "true" : "false"}
-                onClick={() => onActiveTabChange?.(tab.id)}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowRight") {
-                    event.preventDefault();
-                    selectRelativeTab(tab.id, 1);
-                  } else if (event.key === "ArrowLeft") {
-                    event.preventDefault();
-                    selectRelativeTab(tab.id, -1);
-                  } else if (event.key === "Home" && enabledTabs.length > 0) {
-                    event.preventDefault();
-                    selectTabFromKeyboard(enabledTabs[0].id);
-                  } else if (event.key === "End" && enabledTabs.length > 0) {
-                    event.preventDefault();
-                    selectTabFromKeyboard(enabledTabs[enabledTabs.length - 1].id);
-                  }
-                }}
-              >
-                {tab.label}
-              </Button>
-            ))}
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              const active = selectedTabId === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  id={`${panelId}-${tab.id}-tab`}
+                  ref={(element) => {
+                    if (element) {
+                      tabRefs.current.set(tab.id, element);
+                    } else {
+                      tabRefs.current.delete(tab.id);
+                    }
+                  }}
+                  role="tab"
+                  aria-controls={panelId}
+                  aria-selected={active}
+                  aria-label={tab.tooltip}
+                  title={tab.tooltip}
+                  tabIndex={active ? 0 : -1}
+                  className={styles.tab}
+                  data-active={active ? "true" : "false"}
+                  onClick={() => onActiveTabIdChange?.(tab.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowRight") {
+                      event.preventDefault();
+                      selectRelativeTab(tab.id, 1);
+                    } else if (event.key === "ArrowLeft") {
+                      event.preventDefault();
+                      selectRelativeTab(tab.id, -1);
+                    } else if (event.key === "Home") {
+                      event.preventDefault();
+                      selectTabFromKeyboard(tabs[0].id);
+                    } else if (event.key === "End") {
+                      event.preventDefault();
+                      selectTabFromKeyboard(tabs[tabs.length - 1].id);
+                    }
+                  }}
+                >
+                  <Icon size={18} />
+                </button>
+              );
+            })}
           </div>
         ) : (
           <span className={styles.title}>{ariaLabel}</span>
@@ -147,11 +164,11 @@ export default function SecondaryRail({
       </header>
       <div
         id={panelId}
-        role={tabs.length > 0 ? "tabpanel" : undefined}
+        role={tabs && tabs.length > 0 ? "tabpanel" : undefined}
         aria-labelledby={activeTabDomId}
         className={`${styles.body}${bodyClassName ? ` ${bodyClassName}` : ""}`}
       >
-        {children}
+        {activeTab ? activeTab.body : children}
       </div>
     </aside>
   );

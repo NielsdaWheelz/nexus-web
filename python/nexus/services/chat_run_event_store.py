@@ -117,7 +117,6 @@ def _persist_source_manifest_delta(
     manifest.excluded_by_scope_count = int(payload["excluded_by_scope_count"])
     manifest.stale_count = int(payload["stale_count"])
     manifest.unreadable_count = int(payload["unreadable_count"])
-    manifest.web_search_mode = payload["web_search_mode"]
     manifest.index_versions = list(payload["index_versions"])
     manifest.metadata_json = dict(payload["metadata"])
     manifest.latency_ms = latency_ms if isinstance(latency_ms, int) else None

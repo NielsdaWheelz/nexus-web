@@ -7,39 +7,36 @@ import {
   useState,
   type FocusEvent,
 } from "react";
-import ReaderAssistantPane, {
-  type ReaderAssistantScopeOption,
-} from "@/components/chat/ReaderAssistantPane";
+import ChatDetailSlideIn from "@/components/chat/ChatDetailSlideIn";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
-import { type ContextItem } from "@/lib/api/sse/requests";
-import type { ConversationScope } from "@/lib/conversations/types";
+import type {
+  ContextItem,
+  ReaderContextHintInput,
+  SingletonTargetInput,
+} from "@/lib/api/sse/requests";
 import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import { useFocusTrap } from "@/lib/ui/useFocusTrap";
 import styles from "./QuoteChatSheet.module.css";
 
 export default function QuoteChatSheet({
+  title,
   contexts,
   conversationId,
-  conversationScope,
-  scopeOptions,
-  targetLabel,
-  onScopeChange,
+  singletonTarget = null,
+  readerContext = null,
   onClose,
-  onConversationCreated,
   onOpenFullChat,
   onReaderSourceActivate,
   onAskAboutSource,
   onSaveSourceQuote,
 }: {
+  title: string;
   contexts: ContextItem[];
   conversationId: string | null;
-  conversationScope?: ConversationScope;
-  scopeOptions?: ReaderAssistantScopeOption[];
-  targetLabel?: string;
-  onScopeChange?: (scope: ConversationScope) => void;
+  singletonTarget?: SingletonTargetInput | null;
+  readerContext?: ReaderContextHintInput | null;
   onClose: () => void;
-  onConversationCreated: (conversationId: string, runId?: string) => void;
-  onOpenFullChat: (conversationId: string) => void;
+  onOpenFullChat?: () => void;
   onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
   onAskAboutSource?: (target: ReaderSourceTarget) => void;
   onSaveSourceQuote?: (target: ReaderSourceTarget) => void;
@@ -98,20 +95,17 @@ export default function QuoteChatSheet({
         onFocusCapture={handleFocusCapture}
         onBlurCapture={handleBlurCapture}
       >
-        <ReaderAssistantPane
-          contexts={contexts}
+        <ChatDetailSlideIn
+          title={title}
           conversationId={conversationId}
-          conversationScope={conversationScope}
-          scopeOptions={scopeOptions}
-          targetLabel={targetLabel}
-          onScopeChange={onScopeChange}
-          onClose={onClose}
-          onConversationAvailable={onConversationCreated}
+          singletonTarget={singletonTarget}
+          attachedContexts={contexts}
+          readerContext={readerContext}
+          onBack={onClose}
           onOpenFullChat={onOpenFullChat}
           onReaderSourceActivate={onReaderSourceActivate}
           onAskAboutSource={onAskAboutSource}
           onSaveSourceQuote={onSaveSourceQuote}
-          autoFocusComposer
         />
       </aside>
     </div>

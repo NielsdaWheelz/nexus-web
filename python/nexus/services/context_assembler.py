@@ -20,6 +20,8 @@ from nexus.db.models import (
     ChatRun,
     Contributor,
     Conversation,
+    Library,
+    Media,
     Message,
     MessageContextItem,
     MessageRetrieval,
@@ -30,6 +32,7 @@ from nexus.schemas.conversation import (
     MESSAGE_CONTEXT_TYPES,
     ContextItem,
     MessageContextRef,
+    ReaderContextHint,
 )
 from nexus.services.chat_prompt import (
     SYSTEM_PROMPT_VERSION,
@@ -49,7 +52,6 @@ from nexus.services.context_lookup import (
 from nexus.services.context_rendering import (
     PROMPT_VERSION,
     render_context_blocks,
-    render_conversation_scope_block,
     safe_retrieval_locator_json,
 )
 from nexus.services.contexts import reader_selection_context_from_row
@@ -60,8 +62,6 @@ from nexus.services.conversation_memory import (
     collect_memory_source_refs,
     load_active_memory_items,
 )
-from nexus.services.conversations import conversation_scope_metadata
-from nexus.services.library_intelligence import load_current_library_artifact_context
 from nexus.services.message_context_snapshots import (
     trusted_content_chunk_context_snapshot_fields,
     trusted_context_snapshot,
@@ -121,7 +121,6 @@ class ContextAssembly:
     history: tuple[Turn, ...]
     context_blocks: tuple[str, ...]
     context_types: frozenset[str]
-    scope_metadata: Mapping[str, object]
     retrieval_plan: RetrievalPlan
     lookup_results: tuple[ContextLookupResult, ...]
     tool_call_events: tuple[Mapping[str, object], ...]
@@ -138,6 +137,7 @@ def assemble_chat_context(
     key_mode_used: str,
     provider_account_boundary: str,
     max_output_tokens: int,
+    reader_context: ReaderContextHint | None = None,
 ) -> ContextAssembly:
     """Assemble the provider-neutral chat request for a durable chat run."""
 
@@ -148,7 +148,6 @@ def assemble_chat_context(
     if not can_read_conversation(db, run.owner_user_id, conversation.id):
         raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
 
-    scope_metadata = conversation_scope_metadata(db, conversation)
     attached_context_refs = load_message_context_refs(db, run.user_message_id)
     path_messages = load_message_path(
         db,
@@ -179,10 +178,8 @@ def assemble_chat_context(
     retrieval_plan = build_retrieval_plan(
         user_content=user_message.content,
         history=planner_history,
-        scope_metadata=scope_metadata,
         attached_context_refs=attached_context_ref_payloads,
         memory_source_refs=memory_source_refs,
-        web_search_options=run.web_search,
     )
 
     lookup_results: list[ContextLookupResult] = []
@@ -196,56 +193,17 @@ def assemble_chat_context(
         cache_policy=CACHE_POLICY_5M,
         required_provider_capability="prompt_cache",
     )
-    scope_block = render_conversation_scope_block(scope_metadata)
     mandatory_blocks: list[tuple[str, PromptBlock, Mapping[str, object]]] = []
-    if scope_block:
-        scope_text = scope_block + "\n" + _render_scope_policy_block(scope_metadata)
+
+    reader_context_block = _build_reader_context_block(db, reader_context)
+    if reader_context_block is not None:
         mandatory_blocks.append(
             (
-                "scope",
-                make_prompt_block(
-                    block_id=f"scope:{scope_metadata.get('type')}",
-                    role="system",
-                    lane="scope",
-                    text=scope_text,
-                    source_refs=[_scope_source_ref(scope_metadata)],
-                    source_version=_scope_source_version(scope_metadata),
-                    cache_policy=CACHE_POLICY_5M,
-                    required_provider_capability="prompt_cache",
-                ),
-                {"scope_type": scope_metadata.get("type")},
+                "reader_context_hint",
+                reader_context_block,
+                {"hint": "reader_context"},
             )
         )
-    artifact_block: PromptBlock | None = None
-    artifact_metadata: Mapping[str, object] | None = None
-    if scope_metadata.get("type") == "library" and scope_metadata.get("library_id") is not None:
-        artifact_context = load_current_library_artifact_context(
-            db,
-            run.owner_user_id,
-            UUID(str(scope_metadata["library_id"])),
-        )
-        if artifact_context is not None:
-            artifact_metadata = {
-                "type": "library_intelligence_version",
-                "id": str(artifact_context.version_id),
-                "library_id": str(artifact_context.library_id),
-                "source_set_version_id": str(artifact_context.source_set_version_id),
-            }
-            artifact_block = make_prompt_block(
-                block_id=f"library_intelligence:{artifact_context.version_id}",
-                role="system",
-                lane="artifact_context",
-                text=artifact_context.text,
-                source_refs=[artifact_metadata],
-                source_version=(
-                    f"{artifact_context.prompt_version}:"
-                    f"{artifact_context.schema_version}:"
-                    f"{artifact_context.source_set_hash}"
-                ),
-                cache_policy=CACHE_POLICY_5M,
-                privacy_scope="library",
-                required_provider_capability="prompt_cache",
-            )
 
     for ref, context_ref in zip(
         attached_context_refs,
@@ -420,19 +378,9 @@ def assemble_chat_context(
         ),
     ]
     for key, block, metadata in mandatory_blocks:
-        lane = "scope" if key == "scope" else "attached_context"
-        budget_items.append(
-            BudgetItem(key=key, lane=lane, blocks=(block,), mandatory=True, metadata=metadata)
-        )
-    if artifact_block is not None and artifact_metadata is not None:
         budget_items.append(
             BudgetItem(
-                key=artifact_block.id,
-                lane="artifact_context",
-                blocks=(artifact_block,),
-                mandatory=False,
-                priority=90,
-                metadata=artifact_metadata,
+                key=key, lane="attached_context", blocks=(block,), mandatory=True, metadata=metadata
             )
         )
     for index, (retrieval_id, block, metadata) in enumerate(retrieval_blocks):
@@ -506,12 +454,9 @@ def assemble_chat_context(
 
     selection = allocate_budget(budget_items, budget)
     included_keys = selection.included_keys()
-    if artifact_block is not None and artifact_block.id in included_keys:
-        context_types.add("library_intelligence")
     context_blocks = _selected_context_blocks(
         selection,
         mandatory_blocks=mandatory_blocks,
-        artifact_block=artifact_block,
         retrieval_blocks=retrieval_blocks,
         snapshot_block=snapshot_block,
         memory_block=memory_block,
@@ -527,8 +472,6 @@ def assemble_chat_context(
     history = _history_turns_from_units(selected_history_units)
     stable_blocks = _stable_blocks(
         system_block=system_block,
-        mandatory_blocks=mandatory_blocks,
-        artifact_block=artifact_block,
         snapshot_block=snapshot_block,
         memory_block=memory_block,
         included_keys=included_keys,
@@ -551,7 +494,6 @@ def assemble_chat_context(
             environment=environment,
             key_mode_used=key_mode_used,
             provider_account_boundary=provider_account_boundary,
-            scope_metadata=scope_metadata,
         ),
         model_name=model.model_name,
         max_tokens=max_output_tokens,
@@ -578,14 +520,7 @@ def assemble_chat_context(
         included_retrieval_ids=included_retrieval_ids,
         included_context_refs=[
             metadata for key, _text, metadata in mandatory_blocks if key in included_keys
-        ]
-        + (
-            [artifact_metadata]
-            if artifact_metadata is not None
-            and artifact_block is not None
-            and artifact_block.id in included_keys
-            else []
-        ),
+        ],
     )
     return ContextAssembly(
         llm_request=llm_request,
@@ -593,7 +528,6 @@ def assemble_chat_context(
         history=tuple(history),
         context_blocks=tuple(context_blocks),
         context_types=frozenset(context_types),
-        scope_metadata=scope_metadata,
         retrieval_plan=retrieval_plan,
         lookup_results=tuple(lookup_results),
         tool_call_events=tuple(tool_call_events),
@@ -724,6 +658,56 @@ def message_context_ref_payloads(
     refs: Sequence[ContextItem],
 ) -> list[dict[str, object]]:
     return [_context_ref_payload(db, ref) for ref in refs]
+
+
+def _build_reader_context_block(
+    db: Session,
+    reader_context: ReaderContextHint | None,
+) -> PromptBlock | None:
+    """Render the reader-context hint (the doc/library the viewer is reading).
+
+    Per spec §4.12 and §5.7 this is a model hint, not a retrieval filter. The
+    hint flows in as a request-level parameter; titles are resolved here and
+    discarded after the prompt block is rendered.
+    """
+    if reader_context is None:
+        return None
+    media_id = reader_context.media_id
+    library_id = reader_context.library_id
+    if media_id is None and library_id is None:
+        return None
+
+    media_title: str | None = None
+    library_name: str | None = None
+    if media_id is not None:
+        media_title = db.scalar(select(Media.title).where(Media.id == media_id))
+    if library_id is not None:
+        library_name = db.scalar(select(Library.name).where(Library.id == library_id))
+
+    fragments: list[str] = []
+    source_refs: list[Mapping[str, object]] = []
+    source_version_parts: list[str] = []
+    if media_title:
+        fragments.append(f'media "{xml_escape(media_title)}"')
+        source_refs.append({"type": "media", "id": str(media_id)})
+        source_version_parts.append(f"media:{media_id}")
+    if library_name:
+        fragments.append(f'library "{xml_escape(library_name)}"')
+        source_refs.append({"type": "library", "id": str(library_id)})
+        source_version_parts.append(f"library:{library_id}")
+    if not fragments:
+        return None
+
+    body = "The user is currently viewing " + " in ".join(fragments) + "."
+    text_block = "<reader_context_hint>\n" + body + "\n</reader_context_hint>"
+    return make_prompt_block(
+        block_id="reader_context_hint",
+        role="system",
+        lane="attached_context",
+        text=text_block,
+        source_refs=source_refs,
+        source_version="reader_context_hint:" + "|".join(source_version_parts),
+    )
 
 
 def _context_type_name(ref: ContextItem) -> str:
@@ -1061,7 +1045,6 @@ def _selected_context_blocks(
     selection: BudgetSelection,
     *,
     mandatory_blocks: Sequence[tuple[str, PromptBlock, Mapping[str, object]]],
-    artifact_block: PromptBlock | None,
     retrieval_blocks: Sequence[tuple[UUID, PromptBlock, Mapping[str, object]]],
     snapshot_block: PromptBlock | None,
     memory_block: PromptBlock | None,
@@ -1072,8 +1055,6 @@ def _selected_context_blocks(
     for key, block, _metadata in mandatory_blocks:
         if key in included_keys and block.lane == "attached_context":
             blocks.append(block.text)
-    if artifact_block is not None and artifact_block.id in included_keys:
-        blocks.append(artifact_block.text)
     for retrieval_id, block, _metadata in retrieval_blocks:
         if f"retrieved_evidence:{retrieval_id}" in included_keys:
             blocks.append(block.text)
@@ -1087,18 +1068,11 @@ def _selected_context_blocks(
 def _stable_blocks(
     *,
     system_block: PromptBlock,
-    mandatory_blocks: Sequence[tuple[str, PromptBlock, Mapping[str, object]]],
-    artifact_block: PromptBlock | None,
     snapshot_block: PromptBlock | None,
     memory_block: PromptBlock | None,
     included_keys: set[str],
 ) -> tuple[PromptBlock, ...]:
     blocks = [system_block]
-    for key, block, _metadata in mandatory_blocks:
-        if key == "scope" and key in included_keys:
-            blocks.append(block)
-    if artifact_block is not None and artifact_block.id in included_keys:
-        blocks.append(artifact_block)
     if snapshot_block is not None and any(key.startswith("snapshot:") for key in included_keys):
         blocks.append(snapshot_block)
     if memory_block is not None and "memory:active" in included_keys:
@@ -1115,7 +1089,7 @@ def _dynamic_system_blocks(
 ) -> tuple[PromptBlock, ...]:
     blocks: list[PromptBlock] = []
     for key, block, _metadata in mandatory_blocks:
-        if key != "scope" and key in included_keys:
+        if key in included_keys:
             blocks.append(block)
     for retrieval_id, block, _metadata in retrieval_blocks:
         if f"retrieved_evidence:{retrieval_id}" in included_keys:
@@ -1152,47 +1126,6 @@ def _retrieval_lane(metadata: Mapping[str, object]) -> BudgetLane:
     return "retrieved_evidence"
 
 
-def _render_scope_policy_block(scope_metadata: Mapping[str, object]) -> str:
-    scope_type = scope_metadata.get("type")
-    if scope_type == "media":
-        return (
-            "<scope_policy>Search and source-grounded claims must stay within this saved "
-            "document unless web evidence is present.</scope_policy>"
-        )
-    if scope_type == "library":
-        return (
-            "<scope_policy>Search and source-grounded claims must stay within this saved "
-            "library unless web evidence is present.</scope_policy>"
-        )
-    return "<scope_policy>Use the supplied evidence blocks when relevant.</scope_policy>"
-
-
-def _scope_source_ref(scope_metadata: Mapping[str, object]) -> Mapping[str, object]:
-    scope_type = str(scope_metadata.get("type") or "general")
-    if scope_type == "media":
-        return {
-            "type": "conversation_scope",
-            "scope_type": scope_type,
-            "id": scope_metadata.get("media_id"),
-        }
-    if scope_type == "library":
-        return {
-            "type": "conversation_scope",
-            "scope_type": scope_type,
-            "id": scope_metadata.get("library_id"),
-        }
-    return {"type": "conversation_scope", "scope_type": scope_type}
-
-
-def _scope_source_version(scope_metadata: Mapping[str, object]) -> str:
-    scope_type = str(scope_metadata.get("type") or "general")
-    if scope_type == "media":
-        return f"media:{scope_metadata.get('media_id')}"
-    if scope_type == "library":
-        return f"library:{scope_metadata.get('library_id')}"
-    return "general"
-
-
 def _safe_source_ref(source_ref: Mapping[str, object]) -> Mapping[str, object]:
     ref_type = source_ref.get("type")
     ref_id = source_ref.get("id") or source_ref.get("message_id") or source_ref.get("retrieval_id")
@@ -1219,13 +1152,11 @@ def _cache_identity(
     environment: str,
     key_mode_used: str,
     provider_account_boundary: str,
-    scope_metadata: Mapping[str, object],
 ) -> Mapping[str, object]:
     return {
         "environment": environment,
         "owner_user_id": str(run.owner_user_id),
         "conversation_id": str(run.conversation_id),
-        "scope": _scope_source_ref(scope_metadata),
         "provider": model.provider,
         "model_name": model.model_name,
         "key_mode_requested": run.key_mode,

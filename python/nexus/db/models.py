@@ -21,6 +21,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    PrimaryKeyConstraint,
     SmallInteger,
     Text,
     UniqueConstraint,
@@ -3742,17 +3743,6 @@ class Conversation(Base):
     )
     title: Mapped[str] = mapped_column(Text, nullable=False, server_default="Chat")
     sharing: Mapped[str] = mapped_column(Text, nullable=False, server_default="private")
-    scope_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="general")
-    scope_media_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id"),
-        nullable=True,
-    )
-    scope_library_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id"),
-        nullable=True,
-    )
     next_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -3771,30 +3761,6 @@ class Conversation(Base):
             name="ck_conversations_sharing",
         ),
         CheckConstraint(
-            "scope_type IN ('general', 'media', 'library')",
-            name="ck_conversations_scope_type",
-        ),
-        CheckConstraint(
-            """
-            (
-                scope_type = 'general'
-                AND scope_media_id IS NULL
-                AND scope_library_id IS NULL
-            )
-            OR (
-                scope_type = 'media'
-                AND scope_media_id IS NOT NULL
-                AND scope_library_id IS NULL
-            )
-            OR (
-                scope_type = 'library'
-                AND scope_media_id IS NULL
-                AND scope_library_id IS NOT NULL
-            )
-            """,
-            name="ck_conversations_scope_targets",
-        ),
-        CheckConstraint(
             "next_seq >= 1",
             name="ck_conversations_next_seq_positive",
         ),
@@ -3806,28 +3772,10 @@ class Conversation(Base):
             "char_length(title) <= 120",
             name="ck_conversations_title_max_length",
         ),
-        Index(
-            "uix_conversations_owner_scope_media",
-            "owner_user_id",
-            "scope_media_id",
-            unique=True,
-            postgresql_where=text("scope_type = 'media'"),
-        ),
-        Index(
-            "uix_conversations_owner_scope_library",
-            "owner_user_id",
-            "scope_library_id",
-            unique=True,
-            postgresql_where=text("scope_type = 'library'"),
-        ),
     )
 
     # Relationships
     owner: Mapped["User"] = relationship("User")
-    scope_media: Mapped["Media | None"] = relationship("Media", foreign_keys=[scope_media_id])
-    scope_library: Mapped["Library | None"] = relationship(
-        "Library", foreign_keys=[scope_library_id]
-    )
     messages: Mapped[list["Message"]] = relationship(
         "Message", back_populates="conversation", cascade="all, delete-orphan"
     )
@@ -3881,6 +3829,42 @@ class ConversationShare(Base):
     # Relationships
     conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="shares")
     library: Mapped["Library"] = relationship("Library")
+
+
+class ChatSingleton(Base):
+    """Maps a (user, kind, target) tuple to its singleton conversation."""
+
+    __tablename__ = "chat_singletons"
+
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        nullable=False,
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(["user_id"], ["users.id"]),
+        ForeignKeyConstraint(["conversation_id"], ["conversations.id"]),
+        PrimaryKeyConstraint("user_id", "kind", "target_id", name="pk_chat_singletons"),
+        UniqueConstraint("conversation_id", name="uq_chat_singletons_conversation_id"),
+        CheckConstraint(
+            "kind IN ('media', 'library')",
+            name="ck_chat_singletons_kind",
+        ),
+    )
 
 
 class Model(Base):
@@ -4602,7 +4586,6 @@ class SourceManifest(Base):
     )
     stale_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     unreadable_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    web_search_mode: Mapped[str | None] = mapped_column(Text, nullable=True)
     index_versions: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,
@@ -4657,10 +4640,6 @@ class SourceManifest(Base):
             "AND included_in_prompt_count >= 0 AND excluded_by_budget_count >= 0 "
             "AND excluded_by_scope_count >= 0 AND stale_count >= 0 AND unreadable_count >= 0",
             name="ck_source_manifests_counts_non_negative",
-        ),
-        CheckConstraint(
-            "web_search_mode IS NULL OR web_search_mode IN ('off', 'auto', 'required')",
-            name="ck_source_manifests_web_search_mode",
         ),
         CheckConstraint(
             "jsonb_typeof(index_versions) = 'array'",
@@ -4958,7 +4937,6 @@ class AssistantMessageEvidenceSummary(Base):
         ForeignKey("messages.id"),
         nullable=False,
     )
-    scope_type: Mapped[str] = mapped_column(Text, nullable=False)
     scope_ref: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     retrieval_status: Mapped[str] = mapped_column(Text, nullable=False)
     support_status: Mapped[str] = mapped_column(Text, nullable=False)
@@ -4989,10 +4967,6 @@ class AssistantMessageEvidenceSummary(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(
-            "scope_type IN ('general', 'media', 'library')",
-            name="ck_assistant_evidence_summaries_scope_type",
-        ),
         CheckConstraint(
             "scope_ref IS NULL OR scope_ref = 'null'::jsonb OR jsonb_typeof(scope_ref) = 'object'",
             name="ck_assistant_evidence_summaries_scope_ref_object",
@@ -5715,7 +5689,6 @@ class ChatRun(Base):
     )
     reasoning: Mapped[str] = mapped_column(Text, nullable=False)
     key_mode: Mapped[str] = mapped_column(Text, nullable=False)
-    web_search: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     next_event_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     cancel_requested_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True),

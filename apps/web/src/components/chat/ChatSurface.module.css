@@ -34,13 +34,6 @@
   background: color-mix(in srgb, var(--surface-canvas) 96%, transparent);
 }
 
-.scopeBanner {
-  width: 100%;
-  max-width: var(--content-max-width);
-  display: flex;
-  justify-content: flex-start;
-}
-
 .emptyState {
   flex: 1;
   width: 100%;

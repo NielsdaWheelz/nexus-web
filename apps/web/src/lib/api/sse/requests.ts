@@ -40,10 +40,15 @@ export interface ReaderSelectionContextItem {
 
 export type ContextItem = ObjectRefContextItem | ReaderSelectionContextItem;
 
-export type ConversationScopeInput =
-  | { type: "general" }
-  | { type: "media"; media_id: string }
-  | { type: "library"; library_id: string };
+export interface SingletonTargetInput {
+  kind: "media" | "library";
+  target_id: string;
+}
+
+export interface ReaderContextHintInput {
+  media_id: string | null;
+  library_id: string | null;
+}
 
 type ChatRunContext =
   | {
@@ -97,18 +102,13 @@ export function toWireContextItem(item: ContextItem): ChatRunContext {
 
 export interface ChatRunCreateRequest {
   conversation_id?: string;
+  singleton: SingletonTargetInput | null;
   content: string;
   model_id: string;
   reasoning: "default" | "none" | "minimal" | "low" | "medium" | "high" | "max";
   key_mode?: "auto" | "byok_only" | "platform_only";
   parent_message_id?: string;
   branch_anchor?: BranchAnchor;
-  conversation_scope?: ConversationScopeInput;
+  reader_context: ReaderContextHintInput | null;
   contexts?: ChatRunContext[];
-  web_search: {
-    mode: "off" | "auto" | "required";
-    freshness_days?: number | null;
-    allowed_domains?: string[];
-    blocked_domains?: string[];
-  };
 }

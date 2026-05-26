@@ -21,7 +21,6 @@ from pydantic import (
 
 from nexus.evidence_span_ids import trusted_evidence_span_ids
 from nexus.schemas.context_memory import ConversationMemoryInspectionOut, SourceRef
-from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 
 # Valid sharing modes - must match DB constraint
@@ -51,9 +50,6 @@ MESSAGE_CONTEXT_TYPES = Literal[
 MESSAGE_CONTEXT_KINDS = Literal["object_ref", "reader_selection"]
 
 
-# Valid conversation scopes - must match conversations.scope_type
-CONVERSATION_SCOPE_TYPES = Literal["general", "media", "library"]
-
 # Valid highlight colors surfaced on context snapshots
 HIGHLIGHT_COLORS = Literal["yellow", "green", "blue", "pink", "purple"]
 
@@ -77,7 +73,6 @@ APP_SEARCH_RESULT_TYPES = Literal[
 
 # Valid assistant tool-call statuses - must match message_tool_calls.status
 MESSAGE_TOOL_STATUSES = Literal["pending", "running", "complete", "error", "cancelled"]
-WEB_SEARCH_MODES = Literal["off", "auto", "required"]
 WEB_SEARCH_RESULT_TYPES = Literal["web", "news", "mixed"]
 CHAT_RUN_STATUSES = Literal["queued", "running", "complete", "error", "cancelled"]
 BRANCH_ANCHOR_KINDS = Literal[
@@ -119,53 +114,19 @@ EVIDENCE_VERIFIER_STATUSES = Literal["llm_verified", "parse_failed", "failed"]
 CANDIDATE_INCLUDED_IN_PROMPT_SOURCES = Literal["candidate_ledger", "linked_retrieval"]
 
 
-class ConversationScopeRequest(BaseModel):
-    """Client-selected durable conversation scope."""
-
-    type: CONVERSATION_SCOPE_TYPES
-    media_id: UUID | None = None
-    library_id: UUID | None = None
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
-
-    @model_validator(mode="after")
-    def validate_scope_targets(self) -> "ConversationScopeRequest":
-        if self.type == "general":
-            if self.media_id is not None or self.library_id is not None:
-                raise ValueError("general scope cannot include target ids")
-            return self
-        if self.type == "media":
-            if self.media_id is None or self.library_id is not None:
-                raise ValueError("media scope requires media_id only")
-            return self
-        if self.type == "library":
-            if self.library_id is None or self.media_id is not None:
-                raise ValueError("library scope requires library_id only")
-            return self
-        raise ValueError("invalid conversation scope")
-
-
-class ConversationScopeOut(BaseModel):
-    """Persisted scope metadata for a conversation."""
-
-    type: CONVERSATION_SCOPE_TYPES
-    media_id: UUID | None = None
-    library_id: UUID | None = None
-    title: str | None = None
-    media_kind: str | None = None
-    library_name: str | None = None
-    contributors: list[ContributorCreditOut] = Field(default_factory=list)
-    published_date: str | None = None
-    publisher: str | None = None
-    canonical_source_url: str | None = None
-    entry_count: int | None = None
-    media_kinds: list[str] = Field(default_factory=list)
-    source_policy: str | None = None
-
-
 # =============================================================================
 # Response Schemas
 # =============================================================================
+
+
+class ConversationSingletonOut(BaseModel):
+    """Pinned-target metadata for a singleton conversation."""
+
+    kind: Literal["media", "library"]
+    target_id: UUID
+    target_title: str
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ConversationOut(BaseModel):
@@ -181,13 +142,33 @@ class ConversationOut(BaseModel):
     owner_user_id: UUID
     is_owner: bool
     sharing: str  # "private" | "library" | "public"
-    scope: ConversationScopeOut
+    singleton: ConversationSingletonOut | None = None
     message_count: int
     memory: ConversationMemoryInspectionOut | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class ConversationReferenceOut(BaseModel):
+    """Reader-pane row for a non-singleton conversation referencing a media.
+
+    Used by GET /api/chat-references/media/{media_id} (§7.4). The `is_singleton`
+    field is always false: the underlying query excludes the viewer's singleton
+    for the requested media. The field is kept in the response shape so the
+    client renders this list with the same row component as other chat-tab
+    lists where singleton rows may appear.
+    """
+
+    id: UUID
+    title: str | None
+    first_user_message_excerpt: str
+    message_count: int
+    updated_at: datetime
+    is_singleton: bool
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class MessageDocumentTextBlock(BaseModel):
@@ -216,7 +197,6 @@ class MessageDocumentSourceManifestBlock(BaseModel):
     excluded_by_scope_count: int = Field(ge=0)
     stale_count: int = Field(ge=0)
     unreadable_count: int = Field(ge=0)
-    web_search_mode: WEB_SEARCH_MODES | None = None
     index_versions: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     latency_ms: int | None = Field(default=None, ge=0)
@@ -286,8 +266,6 @@ class MessageDocumentVerificationSummaryBlock(BaseModel):
     type: Literal["verification_summary"]
     id: UUID
     message_id: UUID
-    scope_type: CONVERSATION_SCOPE_TYPES
-    scope_ref: dict[str, Any] | None = None
     retrieval_status: EVIDENCE_RETRIEVAL_STATUSES
     support_status: CLAIM_SUPPORT_STATUSES
     verifier_status: EVIDENCE_VERIFIER_STATUSES
@@ -593,9 +571,6 @@ class ChatRunToolCallEventPayload(BaseModel):
     types: list[str]
     semantic: bool
     filters: dict[str, Any]
-    freshness_days: int | None = Field(default=None, ge=0)
-    allowed_domains: list[str] = Field(default_factory=list)
-    blocked_domains: list[str] = Field(default_factory=list)
     error_code: str | None = None
 
     model_config = ConfigDict(extra="forbid")
@@ -638,7 +613,6 @@ class ChatRunSourceManifestDeltaEventPayload(BaseModel):
     excluded_by_scope_count: int = Field(ge=0)
     stale_count: int = Field(ge=0)
     unreadable_count: int = Field(ge=0)
-    web_search_mode: WEB_SEARCH_MODES | None = None
     index_versions: list[str]
     metadata: dict[str, Any] = Field(default_factory=dict)
     latency_ms: int | None = Field(default=None, ge=0)
@@ -755,17 +729,6 @@ REASONING_MODES = Literal["default", "none", "minimal", "low", "medium", "high",
 # Max content length
 MAX_MESSAGE_CONTENT_LENGTH = 20000
 MAX_CONTEXTS = 10
-
-
-class WebSearchOptions(BaseModel):
-    """Explicit public-web search mode for chat runs."""
-
-    mode: WEB_SEARCH_MODES
-    freshness_days: int | None = Field(default=None, ge=1)
-    allowed_domains: list[str] = Field(default_factory=list)
-    blocked_domains: list[str] = Field(default_factory=list)
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
 
 class AssistantVerifierRunListResponse(BaseModel):
@@ -1082,11 +1045,29 @@ class MessageContextSnapshot(BaseModel):
 MessageContextSnapshotOut = MessageContextSnapshot
 
 
+class SingletonTarget(BaseModel):
+    """Pinned singleton conversation target supplied by the client."""
+
+    kind: Literal["media", "library"]
+    target_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReaderContextHint(BaseModel):
+    """Optional model-prompt hint identifying the doc/library the viewer is reading."""
+
+    media_id: UUID | None = None
+    library_id: UUID | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ChatRunCreateRequest(BaseModel):
     """Request schema for creating a durable chat run."""
 
     conversation_id: UUID | None = None
-    conversation_scope: ConversationScopeRequest | None = None
+    singleton: SingletonTarget | None = None
     parent_message_id: UUID | None = None
     branch_anchor: BranchAnchorRequest = Field(default_factory=NoBranchAnchorRequest)
     content: str
@@ -1094,9 +1075,15 @@ class ChatRunCreateRequest(BaseModel):
     reasoning: REASONING_MODES = "default"
     key_mode: KEY_MODES = "auto"
     contexts: list[ChatContextInput] = Field(default_factory=list)
-    web_search: WebSearchOptions
+    reader_context: ReaderContextHint | None = None
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_conversation_or_singleton(self) -> "ChatRunCreateRequest":
+        if (self.conversation_id is None) == (self.singleton is None):
+            raise ValueError("exactly one of conversation_id or singleton must be set")
+        return self
 
 
 class ChatRunOut(BaseModel):

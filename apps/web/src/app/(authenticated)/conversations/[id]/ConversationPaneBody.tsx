@@ -47,7 +47,6 @@ import type {
   ForkOption,
   MessageContextSnapshot,
 } from "@/lib/conversations/types";
-import { formatConversationScopeLabel } from "@/lib/conversations/display";
 import {
   activeBranchGraphForPath,
   activeForkOptionsForPath,
@@ -180,17 +179,8 @@ function ChatView({
   const [deleting, setDeleting] = useState(false);
   const retryingAssistantMessageIds = useStringIdSet();
   const [contextRailExpanded, setContextRailExpanded] = useState(true);
-  const conversationScope = conversation?.scope ?? { type: "general" as const };
   useSetPaneTitle(
-    loading
-      ? null
-      : conversation
-        ? `Chat: ${
-            conversationScope.type !== "general"
-              ? formatConversationScopeLabel(conversationScope)
-              : conversation.title
-          }`
-        : "Chat",
+    loading ? null : conversation ? `Chat: ${conversation.title}` : "Chat",
   );
 
   const scrollportRef = useRef<HTMLDivElement>(null);
@@ -795,7 +785,6 @@ function ChatView({
             {error ? <FeedbackNotice feedback={error} /> : null}
             <ChatSurface
               messages={messages}
-              scope={conversationScope}
               onReaderSourceActivate={handleReaderSourceActivate}
               onAskAboutSource={handleAskAboutSource}
               onSaveSourceQuote={handleSaveSourceQuote}
@@ -814,7 +803,6 @@ function ChatView({
               composer={
                 <ChatComposer
                   conversationId={id}
-                  conversationScope={conversationScope}
                   attachedContexts={attachedContexts}
                   draftKey={composerDraftKey}
                   branchDraft={branchDraft}
@@ -854,7 +842,7 @@ function ChatView({
           >
             <ConversationContextPane
               conversationId={id}
-              scope={conversationScope}
+              singleton={conversation.singleton}
               memory={conversation?.memory}
               messages={messages}
               contexts={attachedContexts}
@@ -882,7 +870,7 @@ function ChatView({
       {isMobileViewport ? (
         <ChatContextDrawer
           conversationId={id}
-          scope={conversationScope}
+          singleton={conversation.singleton}
           memory={conversation?.memory}
           messages={messages}
           contexts={attachedContexts}

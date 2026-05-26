@@ -13,10 +13,8 @@ import Button from "@/components/ui/Button";
 import type {
   BranchDraft,
   ConversationMessage,
-  ConversationScope,
   ForkOption,
 } from "@/lib/conversations/types";
-import ConversationScopeChip from "./ConversationScopeChip";
 import { MessageRow, type ReaderSourceTarget } from "./MessageRow";
 import styles from "./ChatSurface.module.css";
 
@@ -28,7 +26,6 @@ export default function ChatSurface({
   onLoadOlder,
   emptyState,
   composer,
-  scope,
   forkOptionsByParentId = {},
   switchableLeafIds,
   onSelectFork,
@@ -46,7 +43,6 @@ export default function ChatSurface({
   onLoadOlder?: () => void;
   emptyState?: ReactNode;
   composer: ReactNode;
-  scope?: ConversationScope;
   forkOptionsByParentId?: Record<string, ForkOption[]>;
   switchableLeafIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
@@ -128,12 +124,6 @@ export default function ChatSurface({
           role="log"
           aria-label="Chat messages"
         >
-          {scope && scope.type !== "general" ? (
-            <div className={styles.scopeBanner}>
-              <ConversationScopeChip scope={scope} />
-            </div>
-          ) : null}
-
           {olderCursor && onLoadOlder ? (
             <Button
               variant="ghost"

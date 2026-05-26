@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from uuid import UUID
 
 import httpx
 from llm_calling.router import LLMRouter
-from web_search_tool.brave import BraveSearchProvider
 
 from nexus.config import get_settings
 from nexus.db.session import get_session_factory
 from nexus.logging import get_logger
+from nexus.schemas.conversation import ReaderContextHint
 from nexus.services.chat_runs import execute_chat_run
 from nexus.services.rate_limit import RateLimiter, set_rate_limiter
 from nexus.services.real_media_fixture_llm import RealMediaFixtureLLMRouter
@@ -19,8 +20,13 @@ from nexus.services.real_media_fixture_llm import RealMediaFixtureLLMRouter
 logger = get_logger(__name__)
 
 
-def chat_run(run_id: str) -> dict:
+def chat_run(run_id: str, reader_context: Mapping[str, str] | None = None) -> dict:
     run_uuid = UUID(run_id)
+    reader_context_hint = (
+        ReaderContextHint.model_validate(reader_context)
+        if reader_context is not None
+        else None
+    )
     settings = get_settings()
     session_factory = get_session_factory()
     set_rate_limiter(
@@ -52,24 +58,11 @@ def chat_run(run_id: str) -> dict:
                     enable_gemini=settings.enable_gemini,
                     enable_deepseek=settings.enable_deepseek,
                 )
-            web_search_provider = (
-                BraveSearchProvider(
-                    client,
-                    api_key=settings.brave_search_api_key,
-                    base_url=settings.brave_search_base_url,
-                    timeout_seconds=settings.brave_search_timeout_seconds,
-                )
-                if settings.brave_search_api_key
-                else None
-            )
             return await execute_chat_run(
                 db,
                 run_id=run_uuid,
                 llm_router=router,
-                web_search_provider=web_search_provider,
-                web_search_country=settings.brave_search_country,
-                web_search_language=settings.brave_search_language,
-                web_search_safe_search=settings.brave_search_safe_search,
+                reader_context=reader_context_hint,
             )
 
     logger.info("chat_run_started", run_id=run_id)

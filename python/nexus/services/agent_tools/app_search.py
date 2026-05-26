@@ -26,7 +26,7 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
 )
 from nexus.coerce import parse_uuid
-from nexus.errors import ApiError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.conversation import MessageContextRef
 from nexus.schemas.retrieval import (
@@ -47,6 +47,25 @@ APP_SEARCH_TOOL_NAME = "app_search"
 APP_SEARCH_LIMIT = 8
 APP_SEARCH_SELECTED_LIMIT = 6
 APP_SEARCH_CONTEXT_CHARS = 16000
+
+APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
+    "name": APP_SEARCH_TOOL_NAME,
+    "description": (
+        "Search the viewer's in-app library. Optionally narrow retrieval to a "
+        "single media (`media_id`) or a single library (`library_id`); the two "
+        "are mutually exclusive. Omit both for an unscoped search."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "media_id": {"type": "string", "format": "uuid", "nullable": True},
+            "library_id": {"type": "string", "format": "uuid", "nullable": True},
+            "types": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["query"],
+    },
+}
 STRICT_LOCATOR_RESULT_TYPES = frozenset(
     {
         "content_chunk",
@@ -271,7 +290,8 @@ def execute_app_search(
     conversation_id: UUID,
     user_message_id: UUID,
     assistant_message_id: UUID,
-    scope: str,
+    media_id: UUID | None,
+    library_id: UUID | None,
     planned_query: str,
     planned_types: Sequence[str],
     planned_filters: Mapping[str, object],
@@ -285,6 +305,44 @@ def execute_app_search(
     status = "complete"
     error_code = None
     empty_status: str | None = None
+
+    # Translate the model's per-call scope args to the `parse_scope` string.
+    # The four combinations of (media_id, library_id) are exhaustive.
+    if media_id is None and library_id is None:
+        scope = "all"
+    elif media_id is not None and library_id is None:
+        scope = f"media:{media_id}"
+    elif media_id is None and library_id is not None:
+        scope = f"library:{library_id}"
+    else:
+        # Mutually exclusive: surface a tool-result-level error to the model.
+        error_code = ApiErrorCode.E_INVALID_REQUEST.value
+        context_text = (
+            '<app_search_results status="error" '
+            f'code="{xml_escape(error_code)}" '
+            'message="media_id and library_id are mutually exclusive" />'
+        )
+        latency_ms = int((time.monotonic() - start) * 1000)
+        run = AppSearchRun(
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            query_hash=hash_query(query),
+            scope="all",
+            requested_types=requested_types,
+            semantic=semantic,
+            citations=[],
+            selected_citations=[],
+            context_text=context_text,
+            context_chars=len(context_text),
+            latency_ms=latency_ms,
+            status="error",
+            error_code=error_code,
+            filters=filters,
+            empty_status=None,
+        )
+        persist_app_search_run(db, run)
+        return run
 
     try:
         response = search(

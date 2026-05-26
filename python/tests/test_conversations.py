@@ -92,84 +92,8 @@ class TestCreateConversation:
         assert "updated_at" in data
 
 
-class TestResolveConversationScope:
-    def test_resolve_media_scope_reuses_canonical_conversation(
-        self,
-        auth_client,
-        direct_db: DirectSessionManager,
-    ):
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-        with direct_db.session() as session:
-            library_id = create_test_library(session, user_id, "Scoped Chat Library")
-            media_id = create_test_media_in_library(
-                session,
-                user_id,
-                library_id,
-                title="Scoped Chat Document",
-            )
-
-        first = auth_client.post(
-            "/conversations/resolve",
-            headers=auth_headers(user_id),
-            json={"type": "media", "media_id": str(media_id)},
-        )
-        second = auth_client.post(
-            "/conversations/resolve",
-            headers=auth_headers(user_id),
-            json={"type": "media", "media_id": str(media_id)},
-        )
-
-        assert first.status_code == 200, first.text
-        assert second.status_code == 200, second.text
-        first_data = first.json()["data"]
-        second_data = second.json()["data"]
-        assert first_data["id"] == second_data["id"]
-        assert first_data["scope"]["type"] == "media"
-        assert first_data["scope"]["media_id"] == str(media_id)
-        assert first_data["scope"]["title"] == "Scoped Chat Document"
-
-        direct_db.register_cleanup("conversations", "id", UUID(first_data["id"]))
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("memberships", "library_id", library_id)
-        direct_db.register_cleanup("libraries", "id", library_id)
-        direct_db.register_cleanup("users", "id", user_id)
-
-    def test_resolve_library_scope_reuses_canonical_conversation(
-        self,
-        auth_client,
-        direct_db: DirectSessionManager,
-    ):
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-        with direct_db.session() as session:
-            library_id = create_test_library(session, user_id, "Scoped Research Library")
-
-        first = auth_client.post(
-            "/conversations/resolve",
-            headers=auth_headers(user_id),
-            json={"type": "library", "library_id": str(library_id)},
-        )
-        second = auth_client.post(
-            "/conversations/resolve",
-            headers=auth_headers(user_id),
-            json={"type": "library", "library_id": str(library_id)},
-        )
-
-        assert first.status_code == 200, first.text
-        assert second.status_code == 200, second.text
-        first_data = first.json()["data"]
-        second_data = second.json()["data"]
-        assert first_data["id"] == second_data["id"]
-        assert first_data["scope"]["type"] == "library"
-        assert first_data["scope"]["library_id"] == str(library_id)
-        assert first_data["scope"]["title"] == "Scoped Research Library"
-
-        direct_db.register_cleanup("conversations", "id", UUID(first_data["id"]))
-        direct_db.register_cleanup("memberships", "library_id", library_id)
-        direct_db.register_cleanup("libraries", "id", library_id)
-        direct_db.register_cleanup("users", "id", user_id)
+class TestCreateConversationVisibility:
+    """Tests for conversation create-time visibility/sharing defaults."""
 
     def test_create_conversation_is_private(self, auth_client, direct_db: DirectSessionManager):
         """New conversations are always private."""
@@ -579,12 +503,12 @@ class TestDeleteConversation:
             session.execute(
                 text("""
                     INSERT INTO assistant_message_evidence_summaries (
-                        message_id, scope_type, scope_ref, retrieval_status, support_status,
+                        message_id, scope_ref, retrieval_status, support_status,
                         verifier_status, claim_count, supported_claim_count,
                         unsupported_claim_count, not_enough_evidence_count
                     )
                     VALUES (
-                        :message_id, 'general', NULL, 'included_in_prompt', 'supported',
+                        :message_id, NULL, 'included_in_prompt', 'supported',
                         'llm_verified', 1, 1, 0, 0
                     )
                 """),
@@ -667,6 +591,130 @@ class TestDeleteConversation:
                 },
             ).one()
         assert counts == (0, 0, 0, 0, 0, 0, 0, 0)
+
+    def test_conversation_delete_refuses_singleton(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Per §7.5: DELETE /api/conversations/{id} returns 409
+        E_SINGLETON_UNDELETABLE when the target conversation is a singleton."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            library_id = create_test_library(session, user_id, "Singleton Library")
+            media_id = create_test_media_in_library(
+                session, user_id, library_id, title="Singleton Source"
+            )
+            conversation_id = create_test_conversation(session, user_id)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO chat_singletons (user_id, kind, target_id, conversation_id)
+                    VALUES (:user_id, 'media', :media_id, :conversation_id)
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "media_id": media_id,
+                    "conversation_id": conversation_id,
+                },
+            )
+            session.commit()
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+        direct_db.register_cleanup("chat_singletons", "conversation_id", conversation_id)
+
+        response = auth_client.delete(
+            f"/conversations/{conversation_id}", headers=auth_headers(user_id)
+        )
+
+        assert response.status_code == 409, (
+            f"Expected singleton delete to return 409, got {response.status_code}: "
+            f"{response.text}"
+        )
+        assert response.json()["error"]["code"] == "E_SINGLETON_UNDELETABLE"
+
+    def test_conversation_response_has_no_scope_field(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Per §7.6: ConversationOut response no longer includes any scope-shaped
+        field (scope, scope_type, scope_id, scope_media_id, scope_library_id)."""
+        user_id = create_test_user_id()
+        create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
+        assert create_resp.status_code == 201, create_resp.text
+        data = create_resp.json()["data"]
+
+        for legacy_field in (
+            "scope",
+            "scope_type",
+            "scope_id",
+            "scope_media_id",
+            "scope_library_id",
+        ):
+            assert legacy_field not in data, (
+                f"Conversation response should not include legacy '{legacy_field}'; "
+                f"got: {data}"
+            )
+
+        direct_db.register_cleanup("conversations", "id", UUID(data["id"]))
+
+    def test_conversation_response_has_singleton_field_for_singletons(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Per §7.6: ConversationOut includes a `singleton` object with `kind`,
+        `target_id`, and `target_title` for conversations pinned by chat_singletons.
+        Non-singletons have `singleton: null`."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        with direct_db.session() as session:
+            library_id = create_test_library(session, user_id, "Pinned Lib")
+            media_id = create_test_media_in_library(
+                session, user_id, library_id, title="Pinned Doc"
+            )
+            singleton_conv_id = create_test_conversation(session, user_id)
+            general_conv_id = create_test_conversation(session, user_id)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO chat_singletons (user_id, kind, target_id, conversation_id)
+                    VALUES (:user_id, 'media', :media_id, :conversation_id)
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "media_id": media_id,
+                    "conversation_id": singleton_conv_id,
+                },
+            )
+            session.commit()
+        direct_db.register_cleanup("conversations", "id", singleton_conv_id)
+        direct_db.register_cleanup("conversations", "id", general_conv_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+        direct_db.register_cleanup("chat_singletons", "conversation_id", singleton_conv_id)
+
+        singleton_resp = auth_client.get(
+            f"/conversations/{singleton_conv_id}", headers=auth_headers(user_id)
+        )
+        general_resp = auth_client.get(
+            f"/conversations/{general_conv_id}", headers=auth_headers(user_id)
+        )
+
+        assert singleton_resp.status_code == 200, singleton_resp.text
+        singleton_data = singleton_resp.json()["data"]
+        assert singleton_data["singleton"] == {
+            "kind": "media",
+            "target_id": str(media_id),
+            "target_title": "Pinned Doc",
+        }, singleton_data
+
+        assert general_resp.status_code == 200, general_resp.text
+        general_data = general_resp.json()["data"]
+        assert general_data["singleton"] is None, general_data
 
 
 # =============================================================================
@@ -829,8 +877,7 @@ class TestListMessages:
                         status,
                         model_id,
                         reasoning,
-                        key_mode,
-                        web_search
+                        key_mode
                     )
                     VALUES (
                         :run_id,
@@ -843,8 +890,7 @@ class TestListMessages:
                         'complete',
                         :model_id,
                         'none',
-                        'auto',
-                        '{"mode":"auto"}'::jsonb
+                        'auto'
                     )
                     """
                 ),
@@ -919,7 +965,6 @@ class TestListMessages:
                         excluded_by_scope_count,
                         stale_count,
                         unreadable_count,
-                        web_search_mode,
                         index_versions,
                         metadata,
                         latency_ms,
@@ -947,7 +992,6 @@ class TestListMessages:
                         0,
                         0,
                         0,
-                        'auto',
                         '["web:index:v1"]'::jsonb,
                         '{"provider":"test"}'::jsonb,
                         25,
@@ -1018,7 +1062,6 @@ class TestListMessages:
                 model_id=model_id,
                 reasoning="none",
                 key_mode="auto",
-                web_search={"mode": "off"},
             )
             tool_call = MessageToolCall(
                 id=uuid4(),
@@ -1593,7 +1636,6 @@ class TestListMessages:
                     INSERT INTO assistant_message_evidence_summaries (
                         id,
                         message_id,
-                        scope_type,
                         scope_ref,
                         retrieval_status,
                         support_status,
@@ -1606,7 +1648,6 @@ class TestListMessages:
                     VALUES (
                         :summary_id,
                         :message_id,
-                        'general',
                         NULL,
                         'included_in_prompt',
                         'supported',
@@ -1801,8 +1842,6 @@ class TestListMessages:
                                 "type": "verification_summary",
                                 "id": str(summary_id),
                                 "message_id": str(assistant_message_id),
-                                "scope_type": "general",
-                                "scope_ref": None,
                                 "retrieval_status": "included_in_prompt",
                                 "support_status": "supported",
                                 "verifier_status": "llm_verified",
@@ -2270,12 +2309,12 @@ class TestDeleteMessage:
             session.execute(
                 text("""
                     INSERT INTO assistant_message_evidence_summaries (
-                        message_id, scope_type, scope_ref, retrieval_status, support_status,
+                        message_id, scope_ref, retrieval_status, support_status,
                         verifier_status, claim_count, supported_claim_count,
                         unsupported_claim_count, not_enough_evidence_count
                     )
                     VALUES (
-                        :message_id, 'general', NULL, 'included_in_prompt', 'supported',
+                        :message_id, NULL, 'included_in_prompt', 'supported',
                         'llm_verified', 1, 1, 0, 0
                     )
                 """),
