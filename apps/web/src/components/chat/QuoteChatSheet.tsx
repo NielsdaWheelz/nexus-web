@@ -89,7 +89,7 @@ export default function QuoteChatSheet({
         className={styles.sheet}
         role="dialog"
         aria-modal="true"
-        aria-label="Ask in chat"
+        aria-label="Chat with attached context"
         data-composer-focused={composerFocused ? "true" : "false"}
         onClick={(event) => event.stopPropagation()}
         onFocusCapture={handleFocusCapture}

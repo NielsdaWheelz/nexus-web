@@ -28,7 +28,7 @@ function workspacePaneButton(page: Page, name: RegExp | string) {
     .getByRole("button", { name });
 }
 
-test("@real-media desktop selected quote opens reader secondary rail Ask", async ({
+test("@real-media desktop selected quote opens doc chat pending context", async ({
   page,
 }, testInfo) => {
   test.setTimeout(180_000);
@@ -63,26 +63,23 @@ test("@real-media desktop selected quote opens reader secondary rail Ask", async
     /^chat\b/i,
   ).count();
 
-  const actions = page.getByRole("dialog", { name: /highlight actions/i });
-  await expect(actions.getByRole("button", { name: "Ask" })).toBeVisible({
-    timeout: 5_000,
-  });
-  await actions.getByRole("button", { name: "Ask" }).click();
+  const actions = page.getByRole("dialog", { name: /selection actions/i });
+  await expect(
+    actions.getByRole("button", { name: "Add to document chat" }),
+  ).toBeVisible({ timeout: 5_000 });
+  await actions.getByRole("button", { name: "Add to document chat" }).click();
 
   const rail = page.getByTestId("reader-secondary-rail");
   await expect(rail).toHaveAttribute("data-expanded", "true", {
     timeout: 10_000,
   });
-  await expect(rail.getByRole("tab", { name: "Ask" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  const assistant = rail.getByRole("region", { name: "Reader assistant" });
-  await expect(assistant).toBeVisible({ timeout: 10_000 });
-  await expect(assistant.getByLabel("Attached context")).toContainText(
-    selectedText,
-  );
-  // justify-polling: the UI opens reader assistant state asynchronously after
+  await expect(
+    rail.getByRole("tab", { name: "Chat about this document" }),
+  ).toHaveAttribute("aria-selected", "true");
+  const contextRail = rail.getByLabel("Conversation context");
+  await expect(contextRail).toBeVisible({ timeout: 10_000 });
+  await expect(contextRail).toContainText(selectedText);
+  // justify-polling: the UI opens reader doc-chat state asynchronously after
   // command dispatch; Playwright has no event hook for that pane count. The
   // cadence is 250ms for up to 10s to catch accidental chat-pane creation.
   await expect
@@ -104,7 +101,7 @@ test("@real-media desktop selected quote opens reader secondary rail Ask", async
   });
 });
 
-test("@real-media mobile selected quote opens reader assistant sheet", async ({
+test("@real-media mobile selected quote opens document chat chooser", async ({
   page,
 }, testInfo) => {
   test.setTimeout(180_000);
@@ -137,15 +134,15 @@ test("@real-media mobile selected quote opens reader assistant sheet", async ({
     beforeExacts,
   );
 
-  const actions = page.getByRole("dialog", { name: /highlight actions/i });
-  await expect(actions.getByRole("button", { name: "Ask" })).toBeVisible({
-    timeout: 5_000,
-  });
-  await actions.getByRole("button", { name: "Ask" }).click();
+  const actions = page.getByRole("dialog", { name: /selection actions/i });
+  await expect(
+    actions.getByRole("button", { name: "Add to document chat" }),
+  ).toBeVisible({ timeout: 5_000 });
+  await actions.getByRole("button", { name: "Add to document chat" }).click();
 
-  const sheet = page.getByRole("dialog", { name: "Ask in chat" });
-  await expect(sheet).toBeVisible({ timeout: 10_000 });
-  await expect(sheet.getByLabel("Attached context")).toContainText(
+  const chooser = page.getByRole("dialog", { name: "Document chat" });
+  await expect(chooser).toBeVisible({ timeout: 10_000 });
+  await expect(chooser.getByLabel("Conversation context")).toContainText(
     selectedText,
   );
 

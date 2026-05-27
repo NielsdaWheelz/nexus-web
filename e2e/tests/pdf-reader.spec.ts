@@ -108,8 +108,12 @@ async function clickToolbarButtonByAriaLabel(page: Page, ariaLabel: string): Pro
   throw new Error(`Missing PDF controls action: ${ariaLabel}`);
 }
 
-function rowAskInChatButton(row: Locator): Locator {
-  return row.getByRole("button", { name: "Ask in chat" });
+function rowAddHighlightToDocumentChatButton(row: Locator): Locator {
+  return row.getByRole("button", { name: "Add highlight to document chat" });
+}
+
+function rowAddHighlightToLibraryChatButton(row: Locator): Locator {
+  return row.getByRole("button", { name: "Add highlight to library chat" });
 }
 
 function rowActionsButton(row: Locator): Locator {
@@ -118,20 +122,18 @@ function rowActionsButton(row: Locator): Locator {
 
 async function expectHighlightRowToBeExpanded(row: Locator): Promise<void> {
   await expect(row).toBeVisible();
-  await expect(rowAskInChatButton(row)).toHaveCount(1);
+  await expect(rowAddHighlightToDocumentChatButton(row)).toHaveCount(1);
+  await expect(rowAddHighlightToLibraryChatButton(row)).toHaveCount(1);
   await expect(rowActionsButton(row)).toHaveCount(1);
 }
 
-async function expectReaderAssistantContext(page: Page, exact: string): Promise<void> {
+async function expectDocChatPendingContext(page: Page, exact: string): Promise<void> {
   const rail = page.getByTestId("reader-secondary-rail");
   await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
-  await expect(rail.getByRole("tab", { name: "Ask" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  const assistant = rail.getByRole("region", { name: "Reader assistant" });
-  await expect(assistant).toBeVisible({ timeout: 10_000 });
-  await expect(assistant.getByLabel("Attached context")).toContainText(exact);
+  await expect(
+    rail.getByRole("tab", { name: "Chat about this document" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(rail.getByLabel("Conversation context")).toContainText(exact);
 }
 
 async function openHighlightsPane(page: Page): Promise<Locator> {
@@ -321,12 +323,12 @@ test.describe("pdf reader", () => {
       await expectHighlightRowToBeExpanded(linkedRow);
       await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
       await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
-      const chatButton = rowAskInChatButton(linkedRow);
+      const chatButton = rowAddHighlightToDocumentChatButton(linkedRow);
       const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
       await chatButton.scrollIntoViewIfNeeded();
       await expect(chatButton).toBeEnabled();
       await chatButton.click();
-      await expectReaderAssistantContext(page, exact);
+      await expectDocChatPendingContext(page, exact);
       await expect
         .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
         .toBe(chatPaneCountBefore);

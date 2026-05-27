@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Library } from "lucide-react";
+import ComposerContextRail from "@/components/chat/ComposerContextRail";
 import SingletonChatRow from "@/components/chat/SingletonChatRow";
+import type { ContextItem } from "@/lib/api/sse/requests";
 import {
   fetchMediaLibraryMemberships,
   type LibraryTargetPickerItem,
@@ -12,18 +14,25 @@ import styles from "./LibraryChatTab.module.css";
 
 interface LibraryChatTabProps {
   mediaId: string;
+  pendingContexts?: ContextItem[];
+  onRemovePendingContext?: (index: number) => void;
   onOpenChat: (
     conversationId: string | null,
     libraryId: string,
     libraryName: string,
+    attachedContexts?: ContextItem[],
   ) => void;
 }
 
 export default function LibraryChatTab({
   mediaId,
+  pendingContexts = [],
+  onRemovePendingContext,
   onOpenChat,
 }: LibraryChatTabProps) {
   const [libraries, setLibraries] = useState<LibraryTargetPickerItem[]>([]);
+  const attachedContexts =
+    pendingContexts.length > 0 ? pendingContexts : undefined;
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +53,15 @@ export default function LibraryChatTab({
   return (
     <div className={styles.tab}>
       <h3 className={styles.sectionHeader}>Libraries containing this document</h3>
+      {attachedContexts ? (
+        <div className={styles.pendingContextStrip}>
+          <span className={styles.pendingContextLabel}>Pending context</span>
+          <ComposerContextRail
+            attachedContexts={attachedContexts}
+            onRemoveContext={(index) => onRemovePendingContext?.(index)}
+          />
+        </div>
+      ) : null}
       {libraries.length === 0 ? (
         <p className={styles.empty}>
           This document isn&apos;t in any additional libraries yet.
@@ -52,7 +70,11 @@ export default function LibraryChatTab({
         <ul className={styles.list}>
           {libraries.map((library) => (
             <li key={library.id}>
-              <LibraryChatRow library={library} onOpenChat={onOpenChat} />
+              <LibraryChatRow
+                library={library}
+                attachedContexts={attachedContexts}
+                onOpenChat={onOpenChat}
+              />
             </li>
           ))}
         </ul>
@@ -63,13 +85,16 @@ export default function LibraryChatTab({
 
 function LibraryChatRow({
   library,
+  attachedContexts,
   onOpenChat,
 }: {
   library: LibraryTargetPickerItem;
+  attachedContexts?: ContextItem[];
   onOpenChat: (
     conversationId: string | null,
     libraryId: string,
     libraryName: string,
+    attachedContexts?: ContextItem[],
   ) => void;
 }) {
   const { conversationId, messageCount } = useLibraryChatSingleton(library.id);
@@ -82,7 +107,11 @@ function LibraryChatRow({
           ? `${messageCount} ${messageCount === 1 ? "message" : "messages"}`
           : "No messages yet"
       }
-      onTap={() => onOpenChat(conversationId, library.id, library.name)}
+      onTap={() =>
+        attachedContexts
+          ? onOpenChat(conversationId, library.id, library.name, attachedContexts)
+          : onOpenChat(conversationId, library.id, library.name)
+      }
     />
   );
 }

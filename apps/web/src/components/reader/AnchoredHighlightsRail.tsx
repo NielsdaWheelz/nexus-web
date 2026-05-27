@@ -10,7 +10,7 @@ import {
   type CSSProperties,
   type RefObject,
 } from "react";
-import { MessageSquare } from "lucide-react";
+import { FileText, Library, MessageSquare } from "lucide-react";
 import {
   FeedbackNotice,
   toFeedback,
@@ -47,7 +47,10 @@ interface AnchoredHighlightsRailProps {
   isMobile: boolean;
   isEditingBounds: boolean;
   canSendToChat: boolean;
-  onSendToChat: (highlightId: string) => void;
+  onSendToChat: (
+    highlightId: string,
+    destination: "doc-chat" | "library-chat",
+  ) => void;
   onColorChange: (highlightId: string, color: HighlightColor) => Promise<void>;
   onDelete: (highlightId: string) => Promise<void>;
   onStartEditBounds: () => void;
@@ -602,16 +605,28 @@ export default function AnchoredHighlightsRail({
 
             <div className={styles.rowActions}>
               {canSendToChat ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  iconOnly
-                  className={styles.chatButton}
-                  aria-label="Ask in chat"
-                  onClick={() => onSendToChat(highlight.id)}
-                >
-                  <MessageSquare size={14} aria-hidden="true" />
-                </Button>
+                <>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    iconOnly
+                    className={styles.chatButton}
+                    aria-label="Add highlight to document chat"
+                    onClick={() => onSendToChat(highlight.id, "doc-chat")}
+                  >
+                    <FileText size={14} aria-hidden="true" />
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    iconOnly
+                    className={styles.chatButton}
+                    aria-label="Add highlight to library chat"
+                    onClick={() => onSendToChat(highlight.id, "library-chat")}
+                  >
+                    <Library size={14} aria-hidden="true" />
+                  </Button>
+                </>
               ) : null}
               {canEditHighlight ? (
                 <HighlightActionsMenu

@@ -198,7 +198,7 @@ vi.mock("@/components/pdfReaderRuntime", () => {
   };
 });
 
-describe("PdfReader selection Ask", () => {
+describe("PdfReader selection chat destinations", () => {
   beforeEach(() => {
     vi.stubGlobal("innerWidth", 1280);
     vi.stubGlobal("innerHeight", 900);
@@ -209,8 +209,9 @@ describe("PdfReader selection Ask", () => {
   });
 
   it("emits a transient reader-selection quote without creating a saved PDF highlight", async () => {
-    const onAskSelection =
-      vi.fn<(selection: PdfReaderSelectionQuote) => void>();
+    const onAddSelectionToChat = vi.fn<
+      (destination: "doc-chat" | "library-chat", selection: PdfReaderSelectionQuote) => void
+    >();
     vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
       new DOMRect(110, 140, 160, 20),
     );
@@ -218,7 +219,12 @@ describe("PdfReader selection Ask", () => {
       rectList([new DOMRect(110, 140, 160, 20)]),
     );
 
-    render(<PdfReader mediaId="media-1" onAskSelection={onAskSelection} />);
+    render(
+      <PdfReader
+        mediaId="media-1"
+        onAddSelectionToChat={onAddSelectionToChat}
+      />,
+    );
 
     const textLayer = await screen.findByTestId("pdf-page-text-layer-1");
     await waitFor(() => {
@@ -235,10 +241,19 @@ describe("PdfReader selection Ask", () => {
     selection?.addRange(range);
     document.dispatchEvent(new Event("selectionchange"));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Ask" }));
+    const docChatButton = await screen.findByRole("button", {
+      name: "Add to document chat",
+    });
+    expect(
+      screen.getByRole("button", { name: "Add to library chat" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ask" })).not.toBeInTheDocument();
 
-    expect(onAskSelection).toHaveBeenCalledTimes(1);
-    expect(onAskSelection.mock.calls[0]![0]).toMatchObject({
+    fireEvent.click(docChatButton);
+
+    expect(onAddSelectionToChat).toHaveBeenCalledTimes(1);
+    expect(onAddSelectionToChat.mock.calls[0]![0]).toBe("doc-chat");
+    expect(onAddSelectionToChat.mock.calls[0]![1]).toMatchObject({
       kind: "reader_selection",
       media_id: "media-1",
       color: "yellow",
@@ -272,13 +287,13 @@ describe("PdfReader selection Ask", () => {
         ],
       },
     });
-    expect(onAskSelection.mock.calls[0]![0].locator).not.toHaveProperty(
+    expect(onAddSelectionToChat.mock.calls[0]![1].locator).not.toHaveProperty(
       "page_text_start_offset",
     );
-    expect(onAskSelection.mock.calls[0]![0].locator).not.toHaveProperty(
+    expect(onAddSelectionToChat.mock.calls[0]![1].locator).not.toHaveProperty(
       "page_text_end_offset",
     );
-    expect(onAskSelection.mock.calls[0]![0].client_context_id).toEqual(
+    expect(onAddSelectionToChat.mock.calls[0]![1].client_context_id).toEqual(
       expect.any(String),
     );
     expect(

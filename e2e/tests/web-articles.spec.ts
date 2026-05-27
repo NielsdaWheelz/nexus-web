@@ -123,10 +123,10 @@ test.describe("web articles", () => {
     expect(selectedText.trim().length).toBeGreaterThanOrEqual(2);
 
     await expect(
-      page.getByRole("dialog", { name: /highlight actions/i })
+      page.getByRole("dialog", { name: /selection actions/i })
     ).toBeVisible({ timeout: 5_000 });
 
-    const highlightActions = page.getByRole("dialog", { name: /highlight actions/i });
+    const highlightActions = page.getByRole("dialog", { name: /selection actions/i });
     const greenButton = highlightActions.getByRole("button", { name: /^Green/ }).first();
     await expect(greenButton).toBeEnabled();
     const createHighlightResponse = page.waitForResponse(

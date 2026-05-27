@@ -57,7 +57,12 @@
   --highlight-color-picker-button-size: var(--size-sm);
 }
 
-.askButton {
+.chatActions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.chatButton {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -71,17 +76,21 @@
   cursor: pointer;
 }
 
-.mobilePopover .askButton {
+.mobilePopover .chatActions {
+  gap: var(--space-1);
+}
+
+.mobilePopover .chatButton {
   width: 42px;
   height: var(--size-sm);
   flex: 0 0 auto;
 }
 
-.askButton:hover:not(:disabled) {
+.chatButton:hover:not(:disabled) {
   background: var(--surface-canvas);
 }
 
-.askButton:disabled {
+.chatButton:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }

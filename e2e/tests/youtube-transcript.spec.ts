@@ -151,7 +151,7 @@ test.describe("youtube transcript media", () => {
       existingExacts
     );
 
-    const highlightActions = page.getByRole("dialog", { name: /highlight actions/i });
+    const highlightActions = page.getByRole("dialog", { name: /selection actions/i });
     await expect(highlightActions).toBeVisible({ timeout: 5_000 });
 
     const createHighlightResponse = page.waitForResponse(

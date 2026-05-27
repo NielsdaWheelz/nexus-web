@@ -19,6 +19,7 @@ import type {
   ConversationMessage,
   ConversationMessagesResponse,
 } from "@/lib/conversations/types";
+import { mergeContextItems } from "@/lib/conversations/attachedContext";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import styles from "./ChatDetailSlideIn.module.css";
 
@@ -52,6 +53,14 @@ export default function ChatDetailSlideIn({
   const scrollportRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
   const locallyCreatedConversationIdsRef = useRef<Set<string>>(new Set());
+  const pendingContextDetailRef = useRef<string | null>(null);
+  const detailIdentity = [
+    conversationId ?? "",
+    singletonTarget?.kind ?? "",
+    singletonTarget?.target_id ?? "",
+    readerContext?.media_id ?? "",
+    readerContext?.library_id ?? "",
+  ].join(":");
 
   const [activeConversationId, setActiveConversationId] = useState(conversationId);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -64,8 +73,19 @@ export default function ChatDetailSlideIn({
   const retryingAssistantMessageIds = useStringIdSet();
 
   useEffect(() => {
-    setPendingContexts(attachedContexts ?? []);
-  }, [attachedContexts]);
+    const nextContexts = attachedContexts ?? [];
+    if (pendingContextDetailRef.current !== detailIdentity) {
+      pendingContextDetailRef.current = detailIdentity;
+      setPendingContexts(nextContexts);
+      return;
+    }
+    if (nextContexts.length === 0) {
+      return;
+    }
+    setPendingContexts((current) =>
+      mergeContextItems(current, nextContexts),
+    );
+  }, [attachedContexts, detailIdentity]);
 
   const { abortAll, tailChatRun } = useChatRunTail({
     setMessages,

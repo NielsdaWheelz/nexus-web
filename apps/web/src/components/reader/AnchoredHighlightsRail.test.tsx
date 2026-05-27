@@ -259,7 +259,14 @@ describe("AnchoredHighlightsRail", () => {
       within(row).queryByRole("button", { name: "Yellow (selected)" }),
     ).toBeNull();
     expect(
-      within(row).getByRole("button", { name: "Ask in chat" }),
+      within(row).getByRole("button", {
+        name: "Add highlight to document chat",
+      }),
+    ).toBeVisible();
+    expect(
+      within(row).getByRole("button", {
+        name: "Add highlight to library chat",
+      }),
     ).toBeVisible();
     expect(within(row).getByRole("button", { name: "Actions" })).toBeVisible();
     expect(

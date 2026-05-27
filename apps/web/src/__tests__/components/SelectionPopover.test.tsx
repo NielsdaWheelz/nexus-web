@@ -49,7 +49,7 @@ function mockPopoverRect(rect: DOMRect) {
   return vi
     .spyOn(HTMLElement.prototype, "getBoundingClientRect")
     .mockImplementation(function (this: HTMLElement) {
-      if (this.getAttribute("aria-label") === "Highlight actions") {
+      if (this.getAttribute("aria-label") === "Selection actions") {
         return rect;
       }
       return new DOMRect(0, 0, 0, 0);
@@ -133,77 +133,91 @@ describe("SelectionPopover", () => {
     document.body.innerHTML = "";
   });
 
-  it("shows an icon-only Ask action when onAsk is provided", () => {
+  it("shows icon-only chat destination actions when callbacks are provided", () => {
     const onCreateHighlight = vi.fn();
-    const onAsk = vi.fn();
+    const onAddToDocChat = vi.fn();
+    const onAddToLibraryChat = vi.fn();
 
     render(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
         onCreateHighlight={onCreateHighlight}
-        onAsk={onAsk}
+        onAddToDocChat={onAddToDocChat}
+        onAddToLibraryChat={onAddToLibraryChat}
         onDismiss={vi.fn()}
       />
     );
 
-    const button = screen.getByRole("button", { name: "Ask" });
-    expect(button).toBeInTheDocument();
-    expect(button).not.toHaveTextContent("Ask");
+    const docButton = screen.getByRole("button", { name: "Add to document chat" });
+    const libraryButton = screen.getByRole("button", { name: "Add to library chat" });
+    expect(docButton).not.toHaveTextContent("Add to document chat");
+    expect(libraryButton).not.toHaveTextContent("Add to library chat");
 
-    fireEvent.click(button);
+    fireEvent.click(docButton);
+    fireEvent.click(libraryButton);
 
-    expect(onAsk).toHaveBeenCalledTimes(1);
-    expect(onAsk).toHaveBeenCalledWith("yellow");
+    expect(onAddToDocChat).toHaveBeenCalledTimes(1);
+    expect(onAddToDocChat).toHaveBeenCalledWith();
+    expect(onAddToLibraryChat).toHaveBeenCalledTimes(1);
+    expect(onAddToLibraryChat).toHaveBeenCalledWith();
     expect(onCreateHighlight).not.toHaveBeenCalled();
   });
 
-  it("passes the currently selected color to the Ask icon button", () => {
+  it("keeps highlight color selection separate from chat destination actions", () => {
     const onCreateHighlight = vi.fn();
-    const onAsk = vi.fn();
+    const onAddToDocChat = vi.fn();
 
     render(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
         onCreateHighlight={onCreateHighlight}
-        onAsk={onAsk}
+        onAddToDocChat={onAddToDocChat}
         onDismiss={vi.fn()}
       />
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Blue" }));
-    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add to document chat" }));
 
     expect(onCreateHighlight).toHaveBeenCalledWith("blue");
-    expect(onAsk).toHaveBeenCalledWith("blue");
+    expect(onAddToDocChat).toHaveBeenCalledWith();
   });
 
-  it("hides Ask when no ask callback is provided", () => {
+  it("hides chat destination actions when callbacks are not provided", () => {
     render(
       <SelectionPopover
         selectionRect={new DOMRect(120, 120, 80, 24)}
         containerRef={createContainerRef()}
         onCreateHighlight={vi.fn()}
+        onDismiss={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Add to document chat" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add to library chat" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not expose the old generic Ask action", () => {
+    render(
+      <SelectionPopover
+        selectionRect={new DOMRect(120, 120, 80, 24)}
+        containerRef={createContainerRef()}
+        onCreateHighlight={vi.fn()}
+        onAddToDocChat={vi.fn()}
+        onAddToLibraryChat={vi.fn()}
         onDismiss={vi.fn()}
       />
     );
 
     expect(screen.queryByRole("button", { name: "Ask" })).not.toBeInTheDocument();
-  });
-
-  it("does not expose chat destination choices from the selection popover", () => {
-    render(
-      <SelectionPopover
-        selectionRect={new DOMRect(120, 120, 80, 24)}
-        containerRef={createContainerRef()}
-        onCreateHighlight={vi.fn()}
-        onAsk={vi.fn()}
-        onDismiss={vi.fn()}
-      />
-    );
-
-    expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add to document chat" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add to library chat" })).toBeInTheDocument();
     expect(screen.queryByText("Ask in new chat")).not.toBeInTheDocument();
     expect(screen.queryByText("Ask in this document")).not.toBeInTheDocument();
     expect(screen.queryByText("Ask in library...")).not.toBeInTheDocument();
@@ -263,7 +277,7 @@ describe("SelectionPopover", () => {
       />
     );
 
-    const dialog = screen.getByRole("dialog", { name: "Highlight actions" });
+    const dialog = screen.getByRole("dialog", { name: "Selection actions" });
     await waitFor(() => {
       expect(dialog.dataset.placement).toBe("below");
     });
@@ -290,7 +304,7 @@ describe("SelectionPopover", () => {
       />
     );
 
-    const dialog = screen.getByRole("dialog", { name: "Highlight actions" });
+    const dialog = screen.getByRole("dialog", { name: "Selection actions" });
     await waitFor(() => {
       expect(dialog.dataset.placement).toBe("above");
     });
@@ -317,7 +331,7 @@ describe("SelectionPopover", () => {
       />
     );
 
-    const dialog = screen.getByRole("dialog", { name: "Highlight actions" });
+    const dialog = screen.getByRole("dialog", { name: "Selection actions" });
     await waitFor(() => {
       expect(dialog.dataset.placement).toBe("right");
     });
@@ -344,7 +358,7 @@ describe("SelectionPopover", () => {
       />
     );
 
-    const dialog = screen.getByRole("dialog", { name: "Highlight actions" });
+    const dialog = screen.getByRole("dialog", { name: "Selection actions" });
     await waitFor(() => {
       expect(dialog.dataset.placement).toBe("below");
     });
@@ -374,7 +388,7 @@ describe("SelectionPopover", () => {
       />
     );
 
-    const dialog = screen.getByRole("dialog", { name: "Highlight actions" });
+    const dialog = screen.getByRole("dialog", { name: "Selection actions" });
     await waitFor(() => {
       expect(dialog.dataset.placement).toBe("edge");
     });

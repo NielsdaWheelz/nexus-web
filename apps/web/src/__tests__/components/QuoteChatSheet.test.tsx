@@ -103,7 +103,9 @@ describe("QuoteChatSheet", () => {
       />,
     );
 
-    expect(screen.getByRole("dialog", { name: "Ask in chat" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Chat with attached context" }),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("A quote worth asking about.").length).toBeGreaterThan(0);
     expect(screen.getByPlaceholderText("Ask anything...")).toBeInTheDocument();
 
@@ -151,7 +153,9 @@ describe("QuoteChatSheet", () => {
       />,
     );
 
-    expect(screen.getByRole("dialog", { name: "Ask in chat" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Chat with attached context" }),
+    ).toBeInTheDocument();
     expect(screen.queryByLabelText(/^scope$/i)).not.toBeInTheDocument();
     expect(
       screen.queryByRole("combobox", { name: /scope/i }),

@@ -48,8 +48,12 @@ function distanceOutsideViewport(top: number, viewportHeight: number): number {
   return 0;
 }
 
-function rowAskInChatButton(row: Locator): Locator {
-  return row.getByRole("button", { name: "Ask in chat" });
+function rowAddHighlightToDocumentChatButton(row: Locator): Locator {
+  return row.getByRole("button", { name: "Add highlight to document chat" });
+}
+
+function rowAddHighlightToLibraryChatButton(row: Locator): Locator {
+  return row.getByRole("button", { name: "Add highlight to library chat" });
 }
 
 function rowActionsButton(row: Locator): Locator {
@@ -93,7 +97,8 @@ async function expectHighlightRowVisible(
   await expect
     .poll(() => rowContainsVisibleTextOrFieldValue(row, noteText), { timeout: 10_000 })
     .toBe(true);
-  await expect(rowAskInChatButton(row)).toHaveCount(1);
+  await expect(rowAddHighlightToDocumentChatButton(row)).toHaveCount(1);
+  await expect(rowAddHighlightToLibraryChatButton(row)).toHaveCount(1);
   await expect(rowActionsButton(row)).toHaveCount(1);
 }
 
@@ -103,16 +108,13 @@ function workspacePaneButton(page: Page, name: RegExp | string) {
     .getByRole("button", { name });
 }
 
-async function expectReaderAssistantContext(page: Page, exact: string): Promise<void> {
+async function expectDocChatPendingContext(page: Page, exact: string): Promise<void> {
   const rail = page.getByTestId("reader-secondary-rail");
   await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
-  await expect(rail.getByRole("tab", { name: "Ask" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  const assistant = rail.getByRole("region", { name: "Reader assistant" });
-  await expect(assistant).toBeVisible({ timeout: 10_000 });
-  await expect(assistant.getByLabel("Attached context")).toContainText(exact);
+  await expect(
+    rail.getByRole("tab", { name: "Chat about this document" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(rail.getByLabel("Conversation context")).toContainText(exact);
 }
 
 async function openHighlightsPane(page: Page): Promise<Locator> {
@@ -166,12 +168,12 @@ test.describe("non-pdf linked-items", () => {
 
     await focusRow.click();
     await expectHighlightRowVisible(focusRow, focusNote);
-    const focusRowChatButton = rowAskInChatButton(focusRow);
+    const focusRowChatButton = rowAddHighlightToDocumentChatButton(focusRow);
     const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
     await focusRowChatButton.scrollIntoViewIfNeeded();
     await expect(focusRowChatButton).toBeEnabled();
     await focusRowChatButton.click();
-    await expectReaderAssistantContext(page, seeded.focus_exact);
+    await expectDocChatPendingContext(page, seeded.focus_exact);
     await expect
       .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
       .toBe(chatPaneCountBefore);
@@ -234,11 +236,11 @@ test.describe("non-pdf linked-items", () => {
     await quoteSegment.click();
     await expectHighlightRowVisible(quoteRow, quoteNote);
 
-    const quoteRowChatButton = rowAskInChatButton(quoteRow);
+    const quoteRowChatButton = rowAddHighlightToDocumentChatButton(quoteRow);
     await quoteRowChatButton.scrollIntoViewIfNeeded();
     await expect(quoteRowChatButton).toBeEnabled();
     await quoteRowChatButton.click();
-    await expectReaderAssistantContext(page, seeded.quote_exact);
+    await expectDocChatPendingContext(page, seeded.quote_exact);
     await expect
       .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
       .toBe(chatPaneCountBefore);

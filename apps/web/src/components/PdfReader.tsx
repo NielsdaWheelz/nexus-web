@@ -138,6 +138,8 @@ export interface PdfReaderSelectionQuote extends QuoteSelector {
   };
 }
 
+type PdfReaderChatDestination = "doc-chat" | "library-chat";
+
 export interface PdfReaderControlActions {
   goToPreviousPage: () => void;
   goToNextPage: () => void;
@@ -178,7 +180,10 @@ interface PdfReaderProps {
   onHighlightsMutated?: () => void;
   onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
   temporaryHighlight?: PdfTemporaryHighlight | null;
-  onAskSelection?: (selection: PdfReaderSelectionQuote) => void;
+  onAddSelectionToChat?: (
+    destination: PdfReaderChatDestination,
+    selection: PdfReaderSelectionQuote,
+  ) => void;
   /** Resume seed: page (1-based) to open when this media loads */
   startPageNumber?: number;
   /** Resume seed: intra-page scroll progression to apply after first render */
@@ -456,7 +461,7 @@ export default function PdfReader({
   onHighlightsMutated,
   onHighlightTap,
   temporaryHighlight = null,
-  onAskSelection,
+  onAddSelectionToChat,
   startPageNumber,
   startPageProgression,
   startZoom,
@@ -2171,19 +2176,19 @@ export default function PdfReader({
     setZoom((value) => clamp(value + ZOOM_STEP, MIN_ZOOM, MAX_ZOOM));
   }, []);
 
-  const handleAskSelection = useCallback(
-    (color: HighlightColor) => {
-      if (!onAskSelection) {
+  const handleAddSelectionToChat = useCallback(
+    (destination: PdfReaderChatDestination) => {
+      if (!onAddSelectionToChat) {
         return;
       }
       if (!textLayerUsable || !textGeometryReliable) {
-        setSelectionError("Ask requires a text-backed PDF selection.");
+        setSelectionError("Chat requires a text-backed PDF selection.");
         return;
       }
 
       const activeSelection = selection ?? selectionSnapshotRef.current;
       if (!activeSelection) {
-        setSelectionError("Select text in the PDF before asking.");
+        setSelectionError("Select text in the PDF before adding to chat.");
         return;
       }
 
@@ -2193,7 +2198,7 @@ export default function PdfReader({
         textLayerRoot,
       );
       if (quoteText.exact.length === 0) {
-        setSelectionError("Select text in the PDF before asking.");
+        setSelectionError("Select text in the PDF before adding to chat.");
         return;
       }
 
@@ -2210,11 +2215,11 @@ export default function PdfReader({
 
       const selector = buildQuoteSelector(quoteText);
 
-      onAskSelection({
+      onAddSelectionToChat(destination, {
         kind: "reader_selection",
         client_context_id: createRandomId("pdf-selection"),
         media_id: mediaId,
-        color,
+        color: "yellow",
         ...selector,
         preview: quoteText.exact.slice(0, 120),
         locator: {
@@ -2233,7 +2238,7 @@ export default function PdfReader({
       clearSelection,
       getTextLayerRootForPage,
       mediaId,
-      onAskSelection,
+      onAddSelectionToChat,
       selection,
       textGeometryReliable,
       textLayerUsable,
@@ -2362,9 +2367,14 @@ export default function PdfReader({
           selectionLineRects={selection.lineRects}
           containerRef={viewerContainerRef}
           onCreateHighlight={handleCreateHighlight}
-          onAsk={
-            onAskSelection && textGeometryReliable
-              ? handleAskSelection
+          onAddToDocChat={
+            onAddSelectionToChat && textGeometryReliable
+              ? () => handleAddSelectionToChat("doc-chat")
+              : undefined
+          }
+          onAddToLibraryChat={
+            onAddSelectionToChat && textGeometryReliable
+              ? () => handleAddSelectionToChat("library-chat")
               : undefined
           }
           onDismiss={clearSelection}

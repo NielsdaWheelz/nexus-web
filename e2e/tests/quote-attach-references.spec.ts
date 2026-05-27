@@ -67,10 +67,9 @@ test.describe("quote-attach references (post-cutover)", () => {
     const contentPane = page.locator('div[class*="fragments"]');
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
-    // Select fresh text in the article body (not over the seeded highlights);
-    // the popover opens on selection and exposes the "Ask" affordance that
-    // drives quote-to-chat. Avoiding existing exacts steers around the
-    // highlight-conflict branch in the production code path.
+    // Select fresh text in the article body (not over the seeded highlights).
+    // Avoiding existing exacts steers around the highlight-conflict branch in
+    // the production code path.
     const existingResponse = await page.request.get(
       `/api/fragments/${seed.fragment_id}/highlights`,
     );
@@ -87,12 +86,12 @@ test.describe("quote-attach references (post-cutover)", () => {
       blockedExacts,
     );
 
-    const popover = page.getByRole("dialog", { name: /highlight actions/i });
+    const popover = page.getByRole("dialog", { name: /selection actions/i });
     await expect(popover).toBeVisible({ timeout: 5_000 });
-    await popover.getByRole("button", { name: "Ask" }).click();
+    await popover.getByRole("button", { name: "Add to document chat" }).click();
 
-    // The reader secondary rail switches to Doc chat with the quote attached
-    // as a chip in the composer's context rail (§4.9).
+    // The reader secondary rail switches to Doc chat with the quote pending
+    // until the user selects the chat that should receive it.
     const rail = await openReaderSecondaryRail(page);
     const docChatTab = rail.getByRole("tab", {
       name: "Chat about this document",
@@ -103,6 +102,7 @@ test.describe("quote-attach references (post-cutover)", () => {
     const contextRail = rail.getByLabel("Conversation context");
     await expect(contextRail).toBeVisible({ timeout: 10_000 });
     await expect(contextRail).toContainText(selectedText);
+    await rail.getByRole("button", { name: "Start new chat" }).click();
 
     const composerInput = rail.getByRole("textbox", { name: /ask anything/i });
     const sendButton = rail.getByRole("button", { name: /send message/i });

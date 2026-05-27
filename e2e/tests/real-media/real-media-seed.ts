@@ -769,7 +769,7 @@ export async function createPdfHighlightThroughVisibleSelection(
   );
 
   const highlightActions = page.getByRole("dialog", {
-    name: /highlight actions/i,
+    name: /selection actions/i,
   });
   await expect(highlightActions).toBeVisible({ timeout: 5_000 });
   const [createdHighlightResponse] = await Promise.all([
@@ -820,7 +820,7 @@ export async function createPdfHighlightThroughVisibleSelection(
     selected_text: selectedText,
     container_selector: textLayerSelector,
     action_selector:
-      'dialog[aria-label="Highlight actions"] button[aria-label^="Yellow"]',
+      'dialog[aria-label="selection actions"] button[aria-label^="Yellow"]',
     request_url: createdHighlightResponse.url(),
   };
 }
@@ -866,7 +866,7 @@ export async function createFragmentHighlightThroughVisibleSelection(
     existingExacts,
   );
   const highlightActions = page.getByRole("dialog", {
-    name: /highlight actions/i,
+    name: /selection actions/i,
   });
   await expect(highlightActions).toBeVisible({ timeout: 5_000 });
   const [createdHighlightResponse] = await Promise.all([
@@ -974,7 +974,7 @@ export async function createFragmentHighlightThroughVisibleSelection(
     selected_text: selectedText,
     container_selector: containerSelector,
     action_selector:
-      'dialog[aria-label="Highlight actions"] button[aria-label^="Green"]',
+      'dialog[aria-label="selection actions"] button[aria-label^="Green"]',
     request_url: createdHighlightResponse.url(),
   };
 }

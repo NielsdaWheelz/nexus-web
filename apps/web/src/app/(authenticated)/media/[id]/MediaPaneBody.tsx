@@ -296,6 +296,8 @@ interface SelectionState {
   lineRects: DOMRect[];
 }
 
+type ReaderChatDestination = "doc-chat" | "library-chat";
+
 interface ActiveContent {
   fragmentId: string;
   htmlSanitized: string;
@@ -735,8 +737,13 @@ export default function MediaPaneBody() {
         libraryId: string;
         libraryName: string;
         conversationId: string | null;
+        attachedContexts: ContextItem[];
       }
   >(null);
+  const [pendingSelectionContext, setPendingSelectionContext] = useState<{
+    destination: ReaderChatDestination;
+    contexts: ContextItem[];
+  } | null>(null);
   const selectionSnapshotRef = useRef<SelectionState | null>(null);
   const selectionSnapshotKeyRef = useRef<string | null>(null);
   const selectionVisibleRef = useRef(false);
@@ -3178,29 +3185,62 @@ export default function MediaPaneBody() {
     [activeChatHighlights, media?.id, media?.kind, media?.title],
   );
 
-  const openReaderAssistant = useCallback((contexts: ContextItem[]) => {
-    // Quote-to-chat (contexts present) → new general conversation.
-    // Open-chat-from-menu (no contexts) → the doc singleton.
-    const isSingleton = contexts.length === 0;
+  const attachContextsToChatDestination = useCallback(
+    (destination: ReaderChatDestination, contexts: ContextItem[]) => {
+      if (contexts.length === 0) {
+        return;
+      }
+
+      if (destination === "doc-chat" && chatDetail?.kind === "doc") {
+        // The detail owns local draft/removal state; this prop is only the new
+        // incoming context event.
+        setChatDetail({
+          ...chatDetail,
+          attachedContexts: mergeContextItems([], contexts),
+        });
+        setPendingSelectionContext(null);
+        setSecondaryRailMode("doc-chat");
+        setHighlightsRailOpen(true);
+        setMobileHighlightsDrawerOpen(false);
+        return;
+      }
+
+      if (destination === "library-chat" && chatDetail?.kind === "library") {
+        setChatDetail({
+          ...chatDetail,
+          attachedContexts: mergeContextItems([], contexts),
+        });
+        setPendingSelectionContext(null);
+        setSecondaryRailMode("library-chat");
+        setHighlightsRailOpen(true);
+        setMobileHighlightsDrawerOpen(false);
+        return;
+      }
+
+      setChatDetail(null);
+      setPendingSelectionContext((current) => ({
+        destination,
+        contexts: current
+          ? mergeContextItems(current.contexts, contexts)
+          : mergeContextItems([], contexts),
+      }));
+      setSecondaryRailMode(destination);
+      setHighlightsRailOpen(true);
+      setMobileHighlightsDrawerOpen(false);
+    },
+    [chatDetail],
+  );
+
+  const openDocChat = useCallback(() => {
+    setPendingSelectionContext(null);
     setChatDetail((current) =>
-      current &&
-      current.kind === "doc" &&
-      current.conversationId === null &&
-      !current.isSingleton
-        ? {
-            kind: "doc",
-            isSingleton: false,
-            conversationId: null,
-            attachedContexts: mergeContextItems(
-              current.attachedContexts,
-              contexts,
-            ),
-          }
+      current && current.kind === "doc"
+        ? current
         : {
             kind: "doc",
-            isSingleton,
+            isSingleton: true,
             conversationId: null,
-            attachedContexts: mergeContextItems([], contexts),
+            attachedContexts: [],
           },
     );
     setSecondaryRailMode("doc-chat");
@@ -3686,109 +3726,74 @@ export default function MediaPaneBody() {
     [paneMobileChrome],
   );
 
-  const handleQuoteToChat = useCallback(
-    (color: HighlightColor) => {
-      if (!media || !activeContent) {
-        return;
-      }
-      const activeSelection = selection ?? selectionSnapshotRef.current;
+  const buildSelectionChatContexts = useCallback((): ContextItem[] | null => {
+    if (!media || !activeContent) {
+      return null;
+    }
+    const activeSelection = selection ?? selectionSnapshotRef.current;
+    if (
+      !activeSelection ||
+      activeSelection.fragmentId !== activeContent.fragmentId
+    ) {
+      feedback.show({
+        severity: "warning",
+        title: "Selection changed. Select text again.",
+      });
+      clearRetainedSelection(false);
+      return null;
+    }
+
+    const exact = activeSelection.selectedText.trim();
+    if (!exact) {
+      return null;
+    }
+
+    const chars = [...activeContent.canonicalText];
+    const prefix = chars
+      .slice(
+        Math.max(0, activeSelection.startOffset - READER_SELECTION_CONTEXT_CP),
+        activeSelection.startOffset,
+      )
+      .join("");
+    const suffix = chars
+      .slice(
+        activeSelection.endOffset,
+        Math.min(
+          chars.length,
+          activeSelection.endOffset + READER_SELECTION_CONTEXT_CP,
+        ),
+      )
+      .join("");
+
+    const selector = buildQuoteSelector({ exact, prefix, suffix });
+
+    if (isTranscriptMedia) {
+      const startMs = activeTranscriptFragment?.t_start_ms;
+      const endMs = activeTranscriptFragment?.t_end_ms;
+      const sourceVersion = activeTranscriptFragment?.source_version;
       if (
-        !activeSelection ||
-        activeSelection.fragmentId !== activeContent.fragmentId
+        typeof startMs !== "number" ||
+        typeof endMs !== "number" ||
+        endMs <= startMs
       ) {
         feedback.show({
           severity: "warning",
-          title: "Selection changed. Select text again.",
+          title:
+            "Transcript timing unavailable. Select another transcript segment.",
         });
         clearRetainedSelection(false);
-        return;
+        return null;
       }
-
-      const exact = activeSelection.selectedText.trim();
-      if (!exact) {
-        return;
-      }
-
-      const chars = [...activeContent.canonicalText];
-      const prefix = chars
-        .slice(
-          Math.max(
-            0,
-            activeSelection.startOffset - READER_SELECTION_CONTEXT_CP,
-          ),
-          activeSelection.startOffset,
-        )
-        .join("");
-      const suffix = chars
-        .slice(
-          activeSelection.endOffset,
-          Math.min(
-            chars.length,
-            activeSelection.endOffset + READER_SELECTION_CONTEXT_CP,
-          ),
-        )
-        .join("");
-
-      const selector = buildQuoteSelector({ exact, prefix, suffix });
-
-      if (isTranscriptMedia) {
-        const startMs = activeTranscriptFragment?.t_start_ms;
-        const endMs = activeTranscriptFragment?.t_end_ms;
-        const sourceVersion = activeTranscriptFragment?.source_version;
-        if (
-          typeof startMs !== "number" ||
-          typeof endMs !== "number" ||
-          endMs <= startMs
-        ) {
-          feedback.show({
-            severity: "warning",
-            title:
-              "Transcript timing unavailable. Select another transcript segment.",
-          });
-          clearRetainedSelection(false);
-          return;
-        }
-        if (!sourceVersion) {
-          feedback.show({
-            severity: "warning",
-            title: "Source version unavailable. Refresh this source before asking.",
-          });
-          clearRetainedSelection(false);
-          return;
-        }
-        openReaderAssistant([
-          {
-            kind: "reader_selection",
-            client_context_id: createRandomId(),
-            media_id: media.id,
-            media_kind: media.kind,
-            media_title: media.title,
-            ...selector,
-            preview: exact.slice(0, 120),
-            source_version: sourceVersion,
-            locator: {
-              type: "transcript_time_range",
-              media_id: media.id,
-              t_start_ms: startMs,
-              t_end_ms: endMs,
-              text_quote_selector: selector,
-            },
-            color,
-          },
-        ]);
-        clearRetainedSelection(true);
-        return;
-      }
-
-      if (!activeContent.sourceVersion) {
+      if (!sourceVersion) {
         feedback.show({
           severity: "warning",
-          title: "Source version unavailable. Refresh this source before asking.",
+          title:
+            "Source version unavailable. Refresh this source before adding to chat.",
         });
         clearRetainedSelection(false);
-        return;
+        return null;
       }
-      openReaderAssistant([
+      return [
         {
           kind: "reader_selection",
           client_context_id: createRandomId(),
@@ -3797,51 +3802,106 @@ export default function MediaPaneBody() {
           media_title: media.title,
           ...selector,
           preview: exact.slice(0, 120),
-          source_version: activeContent.sourceVersion,
+          source_version: sourceVersion,
           locator: {
-            type: isEpub ? "epub_fragment_offsets" : "web_text_offsets",
+            type: "transcript_time_range",
             media_id: media.id,
-            media_kind: media.kind,
-            ...(isEpub && activeEpubSection?.section_id
-              ? { section_id: activeEpubSection.section_id }
-              : {}),
-            fragment_id: activeSelection.fragmentId,
-            start_offset: activeSelection.startOffset,
-            end_offset: activeSelection.endOffset,
+            t_start_ms: startMs,
+            t_end_ms: endMs,
             text_quote_selector: selector,
           },
-          color,
+          color: "yellow",
         },
-      ]);
-      clearRetainedSelection(true);
-    },
-    [
+      ];
+    }
+
+    if (!activeContent.sourceVersion) {
+      feedback.show({
+        severity: "warning",
+        title:
+          "Source version unavailable. Refresh this source before adding to chat.",
+      });
+      clearRetainedSelection(false);
+      return null;
+    }
+    return [
+      {
+        kind: "reader_selection",
+        client_context_id: createRandomId(),
+        media_id: media.id,
+        media_kind: media.kind,
+        media_title: media.title,
+        ...selector,
+        preview: exact.slice(0, 120),
+        source_version: activeContent.sourceVersion,
+        locator: {
+          type: isEpub ? "epub_fragment_offsets" : "web_text_offsets",
+          media_id: media.id,
+          media_kind: media.kind,
+          ...(isEpub && activeEpubSection?.section_id
+            ? { section_id: activeEpubSection.section_id }
+            : {}),
+          fragment_id: activeSelection.fragmentId,
+          start_offset: activeSelection.startOffset,
+          end_offset: activeSelection.endOffset,
+          text_quote_selector: selector,
+        },
+        color: "yellow",
+      },
+    ];
+  }, [
       activeContent,
       clearRetainedSelection,
       feedback,
       media,
-      openReaderAssistant,
       selection,
       isEpub,
       isTranscriptMedia,
       activeTranscriptFragment,
       activeEpubSection?.section_id,
+    ]);
+
+  const handleAddSelectionToChat = useCallback(
+    (destination: ReaderChatDestination) => {
+      const contexts = buildSelectionChatContexts();
+      if (!contexts) {
+        return;
+      }
+      attachContextsToChatDestination(destination, contexts);
+      clearRetainedSelection(true);
+    },
+    [
+      attachContextsToChatDestination,
+      buildSelectionChatContexts,
+      clearRetainedSelection,
     ],
   );
 
-  const handlePdfAskSelection = useCallback(
-    (selectionQuote: PdfReaderSelectionQuote) => {
+  const handleAddSelectionToDocChat = useCallback(() => {
+    handleAddSelectionToChat("doc-chat");
+  }, [handleAddSelectionToChat]);
+
+  const handleAddSelectionToLibraryChat = useCallback(() => {
+    handleAddSelectionToChat("library-chat");
+  }, [handleAddSelectionToChat]);
+
+  const handlePdfAddSelectionToChat = useCallback(
+    (
+      destination: ReaderChatDestination,
+      selectionQuote: PdfReaderSelectionQuote,
+    ) => {
       if (!media) {
         return;
       }
       if (!media.source_version) {
         feedback.show({
           severity: "warning",
-          title: "Source version unavailable. Refresh this source before asking.",
+          title:
+            "Source version unavailable. Refresh this source before adding to chat.",
         });
         return;
       }
-      openReaderAssistant([
+      attachContextsToChatDestination(destination, [
         {
           ...selectionQuote,
           media_kind: media.kind,
@@ -3850,7 +3910,7 @@ export default function MediaPaneBody() {
         },
       ]);
     },
-    [feedback, media, openReaderAssistant],
+    [attachContextsToChatDestination, feedback, media],
   );
 
   const handleOpenFullChat = useCallback(
@@ -3867,14 +3927,16 @@ export default function MediaPaneBody() {
   );
 
   const handleExistingHighlightSendToChat = useCallback(
-    (highlightId: string) => {
-      openReaderAssistant([buildHighlightChatContext(highlightId)]);
+    (highlightId: string, destination: ReaderChatDestination) => {
+      attachContextsToChatDestination(destination, [
+        buildHighlightChatContext(highlightId),
+      ]);
     },
-    [buildHighlightChatContext, openReaderAssistant],
+    [attachContextsToChatDestination, buildHighlightChatContext],
   );
 
   useEffect(() => {
-    const handleAskShortcut = (event: KeyboardEvent) => {
+    const handleChatShortcut = (event: KeyboardEvent) => {
       if (
         event.defaultPrevented ||
         event.metaKey ||
@@ -3889,18 +3951,17 @@ export default function MediaPaneBody() {
       if (isEditableTarget(event.target)) {
         return;
       }
-
-      event.preventDefault();
-      if (event.shiftKey) {
-        openReaderAssistant([]);
+      if (!event.shiftKey) {
         return;
       }
-      handleQuoteToChat("yellow");
+
+      event.preventDefault();
+      openDocChat();
     };
 
-    document.addEventListener("keydown", handleAskShortcut);
-    return () => document.removeEventListener("keydown", handleAskShortcut);
-  }, [handleQuoteToChat, openReaderAssistant]);
+    document.addEventListener("keydown", handleChatShortcut);
+    return () => document.removeEventListener("keydown", handleChatShortcut);
+  }, [openDocChat]);
 
   const isReflowableReader = canRead && !isPdf;
   const mediaHeaderMeta = (
@@ -3987,7 +4048,7 @@ export default function MediaPaneBody() {
       : undefined,
     onOpenChat: media
       ? () => {
-          openReaderAssistant([]);
+          openDocChat();
         }
       : undefined,
     onManageLibraries: ({ triggerEl }) => {
@@ -4228,6 +4289,10 @@ export default function MediaPaneBody() {
     setHighlightsRailOpen(false);
   }, [chatDetail, showHighlightsPane]);
 
+  useEffect(() => {
+    setPendingSelectionContext(null);
+  }, [media?.id]);
+
   // Switching to a different tab closes any open chat detail so the user
   // returns to the list on next visit. Highlights tab has its own body.
   useEffect(() => {
@@ -4425,22 +4490,30 @@ export default function MediaPaneBody() {
         exact: trimmed,
         ...getLocatorQuoteParts(locator),
       });
-      openReaderAssistant([
-        {
-          kind: "reader_selection",
-          client_context_id: createRandomId(),
-          media_id: media.id,
-          media_kind: media.kind,
-          media_title: media.title,
-          ...selector,
-          preview: trimmed.slice(0, 120),
-          locator,
-          source_version: target.source_version,
-          color: "yellow",
-        },
-      ]);
+      attachContextsToChatDestination(
+        chatDetail?.kind === "library" ? "library-chat" : "doc-chat",
+        [
+          {
+            kind: "reader_selection",
+            client_context_id: createRandomId(),
+            media_id: media.id,
+            media_kind: media.kind,
+            media_title: media.title,
+            ...selector,
+            preview: trimmed.slice(0, 120),
+            locator,
+            source_version: target.source_version,
+            color: "yellow",
+          },
+        ],
+      );
     },
-    [handleReaderSourceActivate, media, openReaderAssistant],
+    [
+      attachContextsToChatDestination,
+      chatDetail?.kind,
+      handleReaderSourceActivate,
+      media,
+    ],
   );
 
   const handleSaveSourceQuote = useCallback(
@@ -4784,6 +4857,82 @@ export default function MediaPaneBody() {
     setHighlightsRailOpen(true);
   }, []);
 
+  const handleRemovePendingSelectionContext = useCallback((index: number) => {
+    setPendingSelectionContext((current) => {
+      if (!current) {
+        return null;
+      }
+      const contexts = current.contexts.filter(
+        (_, itemIndex) => itemIndex !== index,
+      );
+      return contexts.length > 0 ? { ...current, contexts } : null;
+    });
+  }, []);
+
+  const handleOpenDocChatFromTab = useCallback(
+    (
+      target:
+        | {
+            kind: "singleton";
+            conversationId: string | null;
+            attachedContexts?: ContextItem[];
+          }
+        | {
+            kind: "reference";
+            conversationId: string;
+            attachedContexts?: ContextItem[];
+          }
+        | { kind: "new"; attachedContexts?: ContextItem[] },
+    ) => {
+      const attachedContexts = target.attachedContexts ?? [];
+      setPendingSelectionContext(null);
+      if (target.kind === "singleton") {
+        setChatDetail({
+          kind: "doc",
+          isSingleton: true,
+          conversationId: target.conversationId,
+          attachedContexts,
+        });
+        return;
+      }
+      if (target.kind === "reference") {
+        setChatDetail({
+          kind: "doc",
+          isSingleton: false,
+          conversationId: target.conversationId,
+          attachedContexts,
+        });
+        return;
+      }
+      setChatDetail({
+        kind: "doc",
+        isSingleton: false,
+        conversationId: null,
+        attachedContexts,
+      });
+    },
+    [],
+  );
+
+  const handleOpenLibraryChatFromTab = useCallback(
+    (
+      conversationId: string | null,
+      libraryId: string,
+      libraryName: string,
+      attachedContexts: ContextItem[] = [],
+    ) => {
+      setPendingSelectionContext(null);
+      setChatDetail({
+        kind: "library",
+        libraryId,
+        libraryName,
+        conversationId,
+        attachedContexts,
+      });
+    },
+    [],
+  );
+
   const anchoredHighlightsMeasureKey = useMemo(
     () =>
       [
@@ -4902,6 +5051,20 @@ export default function MediaPaneBody() {
       onOpenConversation={handleOpenConversation}
     />
   ) : null;
+
+  const docChatPendingContexts =
+    pendingSelectionContext?.destination === "doc-chat"
+      ? pendingSelectionContext.contexts
+      : [];
+  const libraryChatPendingContexts =
+    pendingSelectionContext?.destination === "library-chat"
+      ? pendingSelectionContext.contexts
+      : [];
+  const showMobileChatListDrawer =
+    isMobileViewport &&
+    isHighlightsRailOpen &&
+    !chatDetail &&
+    (secondaryRailMode === "doc-chat" || secondaryRailMode === "library-chat");
 
   const transcriptPaneBody = !canRead ? (
     <TranscriptStatePanel
@@ -5083,9 +5246,9 @@ export default function MediaPaneBody() {
                   onHighlightsMutated={refreshMediaHighlights}
                   onHighlightTap={handlePdfHighlightTap}
                   temporaryHighlight={temporaryPdfHighlight}
-                  onAskSelection={
+                  onAddSelectionToChat={
                     media.capabilities?.can_quote
-                      ? handlePdfAskSelection
+                      ? handlePdfAddSelectionToChat
                       : undefined
                   }
                   onControlsStateChange={setPdfControlsState}
@@ -5210,6 +5373,7 @@ export default function MediaPaneBody() {
               if (!next) {
                 setHighlightsRailOpen(false);
                 setChatDetail(null);
+                setPendingSelectionContext(null);
               }
             }}
             bodyClassName={styles.readerSecondaryRailBody}
@@ -5259,32 +5423,9 @@ export default function MediaPaneBody() {
                   ) : (
                     <DocChatTab
                       mediaId={media.id}
-                      onOpenChat={(target) => {
-                        if (target.kind === "singleton") {
-                          setChatDetail({
-                            kind: "doc",
-                            isSingleton: true,
-                            conversationId: target.conversationId,
-                            attachedContexts: [],
-                          });
-                          return;
-                        }
-                        if (target.kind === "reference") {
-                          setChatDetail({
-                            kind: "doc",
-                            isSingleton: false,
-                            conversationId: target.conversationId,
-                            attachedContexts: [],
-                          });
-                          return;
-                        }
-                        setChatDetail({
-                          kind: "doc",
-                          isSingleton: false,
-                          conversationId: null,
-                          attachedContexts: [],
-                        });
-                      }}
+                      pendingContexts={docChatPendingContexts}
+                      onRemovePendingContext={handleRemovePendingSelectionContext}
+                      onOpenChat={handleOpenDocChatFromTab}
                     />
                   ),
               },
@@ -5309,6 +5450,7 @@ export default function MediaPaneBody() {
                         media_id: media.id,
                         library_id: chatDetail.libraryId,
                       }}
+                      attachedContexts={chatDetail.attachedContexts}
                       onBack={() => setChatDetail(null)}
                       onOpenFullChat={
                         chatDetail.conversationId
@@ -5322,14 +5464,9 @@ export default function MediaPaneBody() {
                   ) : (
                     <LibraryChatTab
                       mediaId={media.id}
-                      onOpenChat={(conversationId, libraryId, libraryName) =>
-                        setChatDetail({
-                          kind: "library",
-                          libraryId,
-                          libraryName,
-                          conversationId,
-                        })
-                      }
+                      pendingContexts={libraryChatPendingContexts}
+                      onRemovePendingContext={handleRemovePendingSelectionContext}
+                      onOpenChat={handleOpenLibraryChatFromTab}
                     />
                   ),
               },
@@ -5338,6 +5475,9 @@ export default function MediaPaneBody() {
             onActiveTabIdChange={(tabId) => {
               setSecondaryRailMode(tabId);
               if (tabId !== "highlights") {
+                setPendingSelectionContext((current) =>
+                  current ? { ...current, destination: tabId } : null,
+                );
                 setHighlightsRailOpen(true);
               }
             }}
@@ -5373,6 +5513,64 @@ export default function MediaPaneBody() {
         </div>
       ) : null}
 
+      {showMobileChatListDrawer ? (
+        <div
+          className={styles.highlightsBackdrop}
+          data-testid="mobile-reader-chat-list-backdrop"
+          onClick={() => {
+            setHighlightsRailOpen(false);
+            setPendingSelectionContext(null);
+          }}
+        >
+          <aside
+            className={styles.highlightsDrawer}
+            role="dialog"
+            aria-modal="true"
+            aria-label={
+              secondaryRailMode === "doc-chat"
+                ? "Document chat"
+                : "Library chat"
+            }
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className={styles.highlightsDrawerHeader}>
+              <h2>
+                {secondaryRailMode === "doc-chat"
+                  ? "Document chat"
+                  : "Library chat"}
+              </h2>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setHighlightsRailOpen(false);
+                  setPendingSelectionContext(null);
+                }}
+              >
+                Close
+              </Button>
+            </header>
+            <div className={styles.highlightsDrawerBody}>
+              {secondaryRailMode === "doc-chat" ? (
+                <DocChatTab
+                  mediaId={media.id}
+                  pendingContexts={docChatPendingContexts}
+                  onRemovePendingContext={handleRemovePendingSelectionContext}
+                  onOpenChat={handleOpenDocChatFromTab}
+                />
+              ) : (
+                <LibraryChatTab
+                  mediaId={media.id}
+                  pendingContexts={libraryChatPendingContexts}
+                  onRemovePendingContext={handleRemovePendingSelectionContext}
+                  onOpenChat={handleOpenLibraryChatFromTab}
+                />
+              )}
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
       {isMobileViewport && chatDetail && chatDetail.kind === "doc" ? (
         <QuoteChatSheet
           title={
@@ -5400,6 +5598,32 @@ export default function MediaPaneBody() {
         />
       ) : null}
 
+      {isMobileViewport && chatDetail && chatDetail.kind === "library" ? (
+        <QuoteChatSheet
+          title={`Chat about ${chatDetail.libraryName}`}
+          contexts={chatDetail.attachedContexts}
+          conversationId={chatDetail.conversationId}
+          singletonTarget={
+            chatDetail.conversationId === null
+              ? { kind: "library", target_id: chatDetail.libraryId }
+              : null
+          }
+          readerContext={{
+            media_id: media.id,
+            library_id: chatDetail.libraryId,
+          }}
+          onClose={() => setChatDetail(null)}
+          onOpenFullChat={
+            chatDetail.conversationId
+              ? () => handleOpenFullChat(chatDetail.conversationId!)
+              : undefined
+          }
+          onReaderSourceActivate={handleReaderSourceActivate}
+          onAskAboutSource={handleAskAboutSource}
+          onSaveSourceQuote={handleSaveSourceQuote}
+        />
+      ) : null}
+
       {!isPdf &&
         selection &&
         !focusState.editingBounds &&
@@ -5409,8 +5633,15 @@ export default function MediaPaneBody() {
             selectionLineRects={selection.lineRects}
             containerRef={contentRef}
             onCreateHighlight={handleCreateHighlight}
-            onAsk={
-              media.capabilities?.can_quote ? handleQuoteToChat : undefined
+            onAddToDocChat={
+              media.capabilities?.can_quote
+                ? handleAddSelectionToDocChat
+                : undefined
+            }
+            onAddToLibraryChat={
+              media.capabilities?.can_quote
+                ? handleAddSelectionToLibraryChat
+                : undefined
             }
             onDismiss={handleDismissPopover}
             isCreating={isCreating}

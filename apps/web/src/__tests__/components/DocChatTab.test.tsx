@@ -1,8 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import DocChatTab from "@/components/chat/DocChatTab";
+import type { ContextItem } from "@/lib/api/sse/requests";
 
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
+const PENDING_CONTEXTS: ContextItem[] = [
+  {
+    kind: "object_ref",
+    type: "highlight",
+    id: "22222222-2222-4222-8222-222222222222",
+    exact: "Pending quote text",
+    color: "yellow",
+  },
+];
 
 function pathOf(input: RequestInfo | URL): string {
   if (input instanceof Request) {
@@ -133,6 +143,57 @@ describe("DocChatTab", () => {
       kind: "singleton",
       conversationId: "conversation-1",
     });
+  });
+
+  it("passes pending context to the selected singleton row", async () => {
+    stubChatTabFetch({
+      singleton: { conversation_id: "conversation-1", message_count: 12 },
+    });
+    const onOpenChat = vi.fn();
+
+    render(
+      <DocChatTab
+        mediaId={MEDIA_ID}
+        pendingContexts={PENDING_CONTEXTS}
+        onRemovePendingContext={vi.fn()}
+        onOpenChat={onOpenChat}
+      />,
+    );
+
+    expect(await screen.findByText("Pending context")).toBeInTheDocument();
+    expect(screen.getByText("Pending quote text")).toBeInTheDocument();
+    const pinned = screen.getByRole("button", {
+      name: /chat about this document/i,
+    });
+    await waitFor(() => {
+      expect(pinned).toHaveAccessibleName(/12 messages/);
+    });
+    fireEvent.click(pinned);
+
+    expect(onOpenChat).toHaveBeenCalledWith({
+      kind: "singleton",
+      conversationId: "conversation-1",
+      attachedContexts: PENDING_CONTEXTS,
+    });
+  });
+
+  it("removes pending context from the strip", async () => {
+    stubChatTabFetch();
+    const onRemovePendingContext = vi.fn();
+
+    render(
+      <DocChatTab
+        mediaId={MEDIA_ID}
+        pendingContexts={PENDING_CONTEXTS}
+        onRemovePendingContext={onRemovePendingContext}
+        onOpenChat={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("Pending quote text");
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+
+    expect(onRemovePendingContext).toHaveBeenCalledWith(0);
   });
 
   it("invokes onOpenChat with a reference target when an Other chats row is tapped", async () => {

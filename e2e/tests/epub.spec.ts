@@ -397,8 +397,12 @@ async function openHighlightsPane(page: Page): Promise<Locator> {
 }
 
 
-function rowAskInChatButton(row: Locator): Locator {
-  return row.getByRole("button", { name: "Ask in chat" });
+function rowAddHighlightToDocumentChatButton(row: Locator): Locator {
+  return row.getByRole("button", { name: "Add highlight to document chat" });
+}
+
+function rowAddHighlightToLibraryChatButton(row: Locator): Locator {
+  return row.getByRole("button", { name: "Add highlight to library chat" });
 }
 
 function rowActionsButton(row: Locator): Locator {
@@ -442,7 +446,8 @@ async function expectHighlightRowVisible(
   await expect
     .poll(() => rowContainsVisibleTextOrFieldValue(row, noteText), { timeout: 10_000 })
     .toBe(true);
-  await expect(rowAskInChatButton(row)).toHaveCount(1);
+  await expect(rowAddHighlightToDocumentChatButton(row)).toHaveCount(1);
+  await expect(rowAddHighlightToLibraryChatButton(row)).toHaveCount(1);
   await expect(rowActionsButton(row)).toHaveCount(1);
 }
 
@@ -949,7 +954,7 @@ test.describe("epub", () => {
     );
 
     // Selection popover should appear
-    const highlightActions = page.getByRole("dialog", { name: /highlight actions/i });
+    const highlightActions = page.getByRole("dialog", { name: /selection actions/i });
     await expect(highlightActions).toBeVisible({ timeout: 5_000 });
 
     const createHighlightResponse = page.waitForResponse(

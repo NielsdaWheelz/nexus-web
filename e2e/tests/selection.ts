@@ -333,7 +333,7 @@ async function dragSelection(page: Page, candidate: SelectionCandidate): Promise
       Boolean(window.getSelection()?.toString().replace(/\s+/g, " ").trim()) ||
       Boolean(
         document.querySelector(
-          '[role="dialog"][aria-label="Highlight actions"], [role="dialog"][aria-label="Assistant answer selection"]',
+          '[role="dialog"][aria-label="selection actions"], [role="dialog"][aria-label="Assistant answer selection"]',
         ),
       ),
     null,
