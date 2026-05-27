@@ -119,9 +119,6 @@ export interface PdfReaderControlsState {
   canGoNext: boolean;
   canZoomIn: boolean;
   canZoomOut: boolean;
-  canCreateHighlight: boolean;
-  highlightLabel: string;
-  isCreating: boolean;
   pageRenderEpoch: number;
   isBusy: boolean;
 }
@@ -146,8 +143,6 @@ export interface PdfReaderControlActions {
   goToNextPage: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
-  captureSelectionSnapshot: () => void;
-  createHighlight: (color?: HighlightColor) => void;
 }
 
 interface PdfHighlightListResponse {
@@ -1440,25 +1435,6 @@ export default function PdfReader({
     [getTextLayerRootForPage],
   );
 
-  const captureSelectionSnapshotFromWindow = useCallback(() => {
-    const sel = getPdfSelection();
-    if (!sel || sel.rangeCount === 0 || sel.toString().trim().length === 0) {
-      return;
-    }
-    const range = sel.getRangeAt(0);
-    const selectionContext = resolveTextLayerRootFromRange(range);
-    if (!selectionContext) {
-      return;
-    }
-    const snapshot = toSelectionSnapshot(
-      range,
-      selectionContext.textLayerRoot,
-      selectionContext.pageNumber,
-    );
-    selectionSnapshotRef.current = snapshot;
-    selectionSnapshotKeyRef.current = buildSelectionSnapshotKey(snapshot);
-  }, [resolveTextLayerRootFromRange]);
-
   const buildSelectionQuads = useCallback(
     (range: Range, targetPage: number): PdfHighlightQuad[] => {
       const layerRect =
@@ -2182,9 +2158,6 @@ export default function PdfReader({
   const canZoomOut = zoom > MIN_ZOOM + 0.001;
   const canGoPrev = pageNumber > 1;
   const canGoNext = pageNumber < numPages;
-  const usingAreaHighlightFallback = !textGeometryReliable;
-  const canCreateHighlight =
-    textLayerUsable || usingAreaHighlightFallback || selection !== null;
   const goToPreviousPage = useCallback(() => {
     void goToPage(pageNumberRef.current - 1);
   }, [goToPage]);
@@ -2197,12 +2170,6 @@ export default function PdfReader({
   const zoomIn = useCallback(() => {
     setZoom((value) => clamp(value + ZOOM_STEP, MIN_ZOOM, MAX_ZOOM));
   }, []);
-  const createHighlight = useCallback(
-    (color: HighlightColor = "yellow") => {
-      void handleCreateHighlight(color);
-    },
-    [handleCreateHighlight],
-  );
 
   const handleAskSelection = useCallback(
     (color: HighlightColor) => {
@@ -2282,15 +2249,11 @@ export default function PdfReader({
       goToNextPage,
       zoomIn,
       zoomOut,
-      captureSelectionSnapshot: captureSelectionSnapshotFromWindow,
-      createHighlight,
     });
     return () => {
       onControlsReady(null);
     };
   }, [
-    captureSelectionSnapshotFromWindow,
-    createHighlight,
     goToNextPage,
     goToPreviousPage,
     onControlsReady,
@@ -2311,27 +2274,19 @@ export default function PdfReader({
       canGoNext: canGoNext && !showBusy,
       canZoomIn: canZoomIn && !showBusy,
       canZoomOut: canZoomOut && !showBusy,
-      canCreateHighlight: canCreateHighlight && !showBusy,
-      highlightLabel: usingAreaHighlightFallback
-        ? "Highlight area"
-        : "Highlight selection",
-      isCreating,
       pageRenderEpoch,
       isBusy: showBusy,
     });
   }, [
-    canCreateHighlight,
     canGoNext,
     canGoPrev,
     canZoomIn,
     canZoomOut,
-    isCreating,
     numPages,
     onControlsStateChange,
     pageRenderEpoch,
     pageNumber,
     showBusy,
-    usingAreaHighlightFallback,
     zoomPercent,
   ]);
 

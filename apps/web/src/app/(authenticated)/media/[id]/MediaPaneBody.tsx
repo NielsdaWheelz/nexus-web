@@ -3834,23 +3834,6 @@ export default function MediaPaneBody() {
           >
             <ChevronRight size={16} aria-hidden="true" />
           </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onMouseDown={(event) => {
-              event.preventDefault();
-              pdfControlsRef.current?.captureSelectionSnapshot();
-            }}
-            onClick={() => pdfControlsRef.current?.createHighlight("yellow")}
-            disabled={
-              !pdfControlsState.canCreateHighlight ||
-              pdfControlsState.isCreating
-            }
-            aria-label="Highlight selection"
-            data-selection-popover-ignore-outside="true"
-          >
-            Highlight
-          </Button>
           <ActionMenu
             label="More actions"
             options={[
@@ -3893,7 +3876,7 @@ export default function MediaPaneBody() {
           </Button>
           {activeSectionPosition >= 0 && epubSections ? (
             <span
-              className={styles.mediaToolbarStatus}
+              className={`${styles.mediaToolbarStatus} ${styles.mediaToolbarSectionStatus}`}
               aria-label={`Section ${activeSectionPosition + 1} of ${epubSections.length}`}
             >
               {activeSectionPosition + 1} / {epubSections.length}
@@ -3913,10 +3896,9 @@ export default function MediaPaneBody() {
           >
             <ChevronRight size={16} aria-hidden="true" />
           </Button>
-        </div>
-        {epubSections ? (
-          <div className={styles.mediaToolbarRow}>
+          {epubSections ? (
             <Select
+              className={styles.mediaToolbarSectionSelect}
               size="sm"
               value={activeSectionId ?? ""}
               onChange={(event) => {
@@ -3925,6 +3907,11 @@ export default function MediaPaneBody() {
                 }
               }}
               aria-label="Select section"
+              title={
+                epubSections.find(
+                  (section) => section.section_id === activeSectionId,
+                )?.label
+              }
             >
               {epubSections.map((section) => (
                 <option key={section.section_id} value={section.section_id}>
@@ -3932,8 +3919,8 @@ export default function MediaPaneBody() {
                 </option>
               ))}
             </Select>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </div>
     ) : null;
 

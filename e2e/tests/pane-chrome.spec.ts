@@ -325,16 +325,55 @@ test.describe("pane chrome", () => {
 
   test("keeps reader toolbar inside a narrow pane", async ({ page }) => {
     const pdfSeed = readSeed<SeededPdfMedia>("pdf-media.json");
+    const readerResumeSeed = readSeed<SeededReaderResumeMedia>(
+      "reader-resume-media.json",
+    );
 
     await page.goto(`/media/${pdfSeed.media_id}`);
-    const paneResizeHandle = page.getByRole("separator", { name: /^Resize pane / }).first();
+    const paneResizeHandle = page
+      .getByRole("separator", { name: /^Resize pane / })
+      .first();
     await paneResizeHandle.focus();
     await paneResizeHandle.press("End");
 
-    await expect(page.getByRole("button", { name: "Previous page" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Next page" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Highlight selection" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "More actions" })).toBeVisible();
+    const pdfToolbar = page.getByRole("toolbar", { name: "PDF controls" });
+    await expect(
+      pdfToolbar.getByRole("button", { name: "Previous page" }),
+    ).toBeVisible();
+    await expect(
+      pdfToolbar.getByRole("button", { name: "Next page" }),
+    ).toBeVisible();
+    await expect(
+      pdfToolbar.getByRole("button", { name: "Highlight selection" }),
+    ).toHaveCount(0);
+    await expect(
+      pdfToolbar.getByRole("button", { name: "More actions" }),
+    ).toBeVisible();
     await expectToolbarToFitPaneChrome(page, "PDF controls");
+
+    await page.goto(`/media/${readerResumeSeed.epub_media_id}`);
+    const epubToolbar = page.getByRole("toolbar", { name: "EPUB controls" });
+    await expect(
+      epubToolbar.getByRole("button", { name: "Previous section" }),
+    ).toBeVisible();
+    await expect(
+      epubToolbar.getByRole("button", { name: "Next section" }),
+    ).toBeVisible();
+    await expect(epubToolbar.getByLabel("Select section")).toBeVisible();
+    await expectToolbarToFitPaneChrome(page, "EPUB controls");
+    await expect
+      .poll(() =>
+        epubToolbar.evaluate((toolbar) => {
+          const controls = Array.from(
+            toolbar.querySelectorAll<HTMLElement>("button, select"),
+          ).filter((element) => element.getBoundingClientRect().width > 0);
+          return new Set(
+            controls.map((element) =>
+              Math.round(element.getBoundingClientRect().top),
+            ),
+          ).size;
+        }),
+      )
+      .toBe(1);
   });
 });
