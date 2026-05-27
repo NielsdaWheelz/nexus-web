@@ -20,7 +20,14 @@ function click(overrides: Partial<ReactMouseEvent> = {}) {
 
 function runtime() {
   return {
-    router: { push: vi.fn(), replace: vi.fn() },
+    router: {
+      canGoBack: false,
+      canGoForward: false,
+      push: vi.fn(),
+      replace: vi.fn(),
+      back: vi.fn(),
+      forward: vi.fn(),
+    },
     openInNewPane: vi.fn(),
   };
 }

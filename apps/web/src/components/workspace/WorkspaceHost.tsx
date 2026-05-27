@@ -2,7 +2,6 @@
 
 import { Component, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  getParentHref,
   type PaneBodyMode,
   type ResolvedPaneRoute,
 } from "@/lib/panes/paneRouteRegistry";
@@ -17,11 +16,14 @@ import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { loadKeybindings, matchesKeyEvent } from "@/lib/keybindings";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
-import type { SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
+import type {
+  SurfaceHeaderNavigation,
+  SurfaceHeaderOption,
+} from "@/components/ui/SurfaceHeader";
 import {
   MAX_STANDARD_PANE_WIDTH_PX,
   MIN_PANE_WIDTH_PX,
-  type WorkspacePaneStateV4,
+  type WorkspacePaneStateV5,
 } from "@/lib/workspace/schema";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
 import {
@@ -47,7 +49,7 @@ interface WorkspaceHostPane {
   toolbar?: React.ReactNode;
   actions?: React.ReactNode;
   options?: SurfaceHeaderOption[];
-  onBack?: () => void;
+  navigation: SurfaceHeaderNavigation;
   bodyMode: PaneBodyMode;
   widthPx: number;
   minWidthPx: number;
@@ -161,6 +163,10 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   resourceKey,
   navigatePane,
   openPane,
+  canGoBack,
+  canGoForward,
+  goBackPane,
+  goForwardPane,
   publishPaneTitle,
   publishPaneMinWidth,
   publishPaneExtraWidth,
@@ -181,6 +187,10 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
     activate?: boolean;
     titleHint?: string;
   }) => void;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  goBackPane: (paneId: string) => void;
+  goForwardPane: (paneId: string) => void;
   publishPaneTitle: (input: {
     paneId: string;
     resourceKey: string;
@@ -209,9 +219,13 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       resourceRef={route.resourceRef}
       resourceKey={resourceKey}
       pathParams={route.params}
+      canGoBack={canGoBack}
+      canGoForward={canGoForward}
       onNavigatePane={navigatePane}
       onReplacePane={handleReplacePane}
       onOpenInNewPane={handleOpenInNewPane}
+      onGoBackPane={goBackPane}
+      onGoForwardPane={goForwardPane}
       onSetPaneTitle={publishPaneTitle}
       onSetPaneMinWidth={publishPaneMinWidth}
       onSetPaneExtraWidth={publishPaneExtraWidth}
@@ -296,22 +310,15 @@ function pruneRuntimePaneWidthRecords(
 }
 
 function buildHostPane(input: {
-  pane: WorkspacePaneStateV4;
+  pane: WorkspacePaneStateV5;
   descriptor: WorkspacePaneTitleDescriptor;
-  onNavigatePane: (
-    paneId: string,
-    href: string,
-    options?: { replace?: boolean; activate?: boolean; titleHint?: string },
-  ) => void;
+  goBackPane: (paneId: string) => void;
+  goForwardPane: (paneId: string) => void;
   isActive: boolean;
   runtimeMinWidthPx: number | null;
   runtimeExtraWidthPx: number;
 }): WorkspaceHostPane {
   const { chrome, resourceKey, route, title, titleState } = input.descriptor;
-  const parentHref = getParentHref(route);
-  const onBack = parentHref
-    ? () => input.onNavigatePane(input.pane.id, parentHref)
-    : () => window.history.back();
 
   const maxWidthPx = route.definition?.maxWidthPx ?? MAX_STANDARD_PANE_WIDTH_PX;
   const routeMinWidthPx = route.definition?.minWidthPx ?? MIN_PANE_WIDTH_PX;
@@ -330,7 +337,12 @@ function buildHostPane(input: {
     subtitle: chrome?.subtitle,
     toolbar: chrome?.toolbar,
     actions: chrome?.actions,
-    onBack,
+    navigation: {
+      canGoBack: input.pane.history.back.length > 0,
+      canGoForward: input.pane.history.forward.length > 0,
+      onBack: () => input.goBackPane(input.pane.id),
+      onForward: () => input.goForwardPane(input.pane.id),
+    },
     bodyMode: route.definition?.bodyMode ?? "standard",
     widthPx: input.pane.widthPx,
     minWidthPx,
@@ -354,6 +366,8 @@ export default function WorkspaceHost() {
     activatePane,
     openPane,
     navigatePane,
+    goBackPane,
+    goForwardPane,
     closePane,
     resizePane,
     minimizePane,
@@ -449,7 +463,8 @@ export default function WorkspaceHost() {
         buildHostPane({
           pane,
           descriptor,
-          onNavigatePane: navigatePane,
+          goBackPane,
+          goForwardPane,
           isActive: pane.id === state.activePaneId,
           runtimeMinWidthPx: getRuntimePaneWidth(
             runtimeMinWidthByPaneId,
@@ -467,7 +482,8 @@ export default function WorkspaceHost() {
     [
       paneDescriptors,
       state.activePaneId,
-      navigatePane,
+      goBackPane,
+      goForwardPane,
       runtimeMinWidthByPaneId,
       runtimeExtraWidthByPaneId,
     ]
@@ -634,6 +650,10 @@ export default function WorkspaceHost() {
                 resourceKey={pane.resourceKey}
                 navigatePane={navigatePane}
                 openPane={openPane}
+                canGoBack={pane.navigation.canGoBack}
+                canGoForward={pane.navigation.canGoForward}
+                goBackPane={goBackPane}
+                goForwardPane={goForwardPane}
                 publishPaneTitle={publishPaneTitle}
                 publishPaneMinWidth={publishPaneMinWidth}
                 publishPaneExtraWidth={publishPaneExtraWidth}
@@ -647,7 +667,7 @@ export default function WorkspaceHost() {
                   toolbar={pane.toolbar}
                   actions={pane.actions}
                   options={pane.options}
-                  onBack={pane.onBack}
+                  navigation={pane.navigation}
                   widthPx={pane.widthPx}
                   minWidthPx={pane.minWidthPx}
                   maxWidthPx={pane.maxWidthPx}

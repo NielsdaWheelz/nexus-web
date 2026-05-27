@@ -64,7 +64,9 @@ document, computed from stored anchors plus document metadata
   (`documentSpan`), narrowed by the in-fragment scroll fraction
 - ruler activation routes through `MediaPaneBody`, which navigates to the
   highlight's fragment/section/page when it is not the active one, then
-  dispatches a reader pulse
+  dispatches a reader pulse. User-visible reader jumps that change the pane
+  href use `paneRuntime.router.push`, so pane Back returns to the previous
+  reader location.
 
 ### highlight read paths
 
@@ -178,6 +180,15 @@ pure black/white to reduce halation under long sessions.
 - epub restores in this order:
   `?loc` deep link -> saved exact target snapshot ->
   saved `total_progression`/`position` fallback -> first navigation section
+
+### pane history
+
+- reader section/TOC/source/highlight jumps that change `?loc`, `?fragment`,
+  `?page`, `?evidence`, or transcript time are pane-local push navigation
+- reader URL repair, invalid target cleanup, and canonical target normalization
+  use pane-local replace navigation and do not add Back entries
+- PDF page and zoom controls remain reader state only; they do not create pane
+  history entries unless they intentionally change the pane href
 - once the section is open, epub restores by
   `text_offset` -> quote match -> `progression` ->
   `total_progression` -> `position` -> anchor fallback -> section top

@@ -28,6 +28,10 @@ function withPaneRuntime(node: ReactNode) {
       routeId="conversations"
       resourceRef={null}
       resourceKey={resolvePaneRouteIdentity(href).resourceKey}
+      canGoBack={false}
+      canGoForward={false}
+      onGoBackPane={vi.fn()}
+      onGoForwardPane={vi.fn()}
       onNavigatePane={vi.fn()}
       onReplacePane={vi.fn()}
       onOpenInNewPane={vi.fn()}

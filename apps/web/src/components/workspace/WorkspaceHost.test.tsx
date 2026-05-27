@@ -12,12 +12,14 @@ const hostMocks = vi.hoisted(() => ({
   runtimeExtraWidthPx: null as number | null,
   store: {
     state: {
+      schemaVersion: 5,
       panes: [
         {
           id: "pane-1",
           href: "/media/media-1",
           widthPx: 640,
           visibility: "visible" as const,
+          history: { back: [], forward: [] } as { back: string[]; forward: string[] },
         },
       ],
       activePaneId: "pane-1",
@@ -26,6 +28,8 @@ const hostMocks = vi.hoisted(() => ({
     activatePane: vi.fn(),
     openPane: vi.fn(),
     navigatePane: vi.fn(),
+    goBackPane: vi.fn(),
+    goForwardPane: vi.fn(),
     closePane: vi.fn(),
     resizePane: vi.fn(),
     minimizePane: vi.fn(),
@@ -82,7 +86,6 @@ function TestPaneBody() {
 }
 
 vi.mock("@/lib/panes/paneRouteRegistry", () => ({
-  getParentHref: () => null,
   resolvePaneRoute: (href: string) => mediaRoute(href),
 }));
 
@@ -106,10 +109,17 @@ vi.mock("@/components/workspace/PaneShell", () => ({
     children,
     minWidthPx,
     extraWidthPx,
+    navigation,
   }: {
     children: ReactNode;
     minWidthPx: number;
     extraWidthPx: number;
+    navigation: {
+      canGoBack: boolean;
+      canGoForward: boolean;
+      onBack: () => void;
+      onForward: () => void;
+    };
   }) => (
     <section
       data-testid="pane-shell"
@@ -117,6 +127,20 @@ vi.mock("@/components/workspace/PaneShell", () => ({
       data-extra-width-px={extraWidthPx}
     >
       <nav aria-label="Mock pane chrome">
+        <button
+          type="button"
+          onClick={navigation.onBack}
+          disabled={!navigation.canGoBack}
+        >
+          Go back in this pane
+        </button>
+        <button
+          type="button"
+          onClick={navigation.onForward}
+          disabled={!navigation.canGoForward}
+        >
+          Go forward in this pane
+        </button>
         {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a href="/authors/author-1" data-pane-title-hint="Chrome Author">
           Chrome Author
@@ -157,14 +181,19 @@ vi.mock("@/lib/workspace/telemetry", () => ({
 
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 
-function setPaneHref(href: string) {
+function setPaneHref(
+  href: string,
+  history: { back: string[]; forward: string[] } = { back: [], forward: [] }
+) {
   hostMocks.store.state = {
+    schemaVersion: 5,
     panes: [
       {
         id: "pane-1",
         href,
         widthPx: 640,
         visibility: "visible",
+        history,
       },
     ],
     activePaneId: "pane-1",
@@ -181,6 +210,8 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.store.activatePane.mockReset();
     hostMocks.store.openPane.mockReset();
     hostMocks.store.navigatePane.mockReset();
+    hostMocks.store.goBackPane.mockReset();
+    hostMocks.store.goForwardPane.mockReset();
     hostMocks.store.resizePane.mockReset();
     setPaneHref("/media/media-1");
   });
@@ -268,6 +299,22 @@ describe("WorkspaceHost pane route lifecycle", () => {
       { titleHint: "Chrome Author" },
     );
     expect(hostMocks.store.openPane).not.toHaveBeenCalled();
+  });
+
+  it("routes header Back and Forward through the target pane only", () => {
+    setPaneHref("/media/media-2", {
+      back: ["/media/media-1"],
+      forward: ["/media/media-3"],
+    });
+
+    render(<WorkspaceHost />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Go back in this pane" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go forward in this pane" }));
+
+    expect(hostMocks.store.goBackPane).toHaveBeenCalledWith("pane-1");
+    expect(hostMocks.store.goForwardPane).toHaveBeenCalledWith("pane-1");
+    expect(hostMocks.store.navigatePane).not.toHaveBeenCalled();
   });
 
   it("routes route body internal links through the same pane boundary", () => {

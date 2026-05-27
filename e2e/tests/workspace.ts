@@ -2,52 +2,78 @@ import { expect, type Locator, type Page } from "@playwright/test";
 
 type WorkspacePaneVisibility = "visible" | "minimized";
 
-interface WorkspacePaneStateV4 {
+export interface WorkspacePaneHistoryV5 {
+  back: string[];
+  forward: string[];
+}
+
+export interface WorkspacePaneStateV5 {
   id: string;
   href: string;
   widthPx: number;
   visibility: WorkspacePaneVisibility;
+  history: WorkspacePaneHistoryV5;
 }
 
-interface WorkspaceStateV4 {
-  schemaVersion: 4;
+export interface WorkspaceStateV5 {
+  schemaVersion: 5;
   activePaneId: string;
-  panes: WorkspacePaneStateV4[];
+  panes: WorkspacePaneStateV5[];
 }
 
-export function encodeWorkspaceStateParam(value: WorkspaceStateV4): string {
+export const WORKSPACE_E2E_SCHEMA_VERSION = 5;
+
+export function makeWorkspacePane(
+  id: string,
+  href: string,
+  options?: {
+    widthPx?: number;
+    visibility?: WorkspacePaneVisibility;
+    history?: WorkspacePaneHistoryV5;
+  },
+): WorkspacePaneStateV5 {
+  return {
+    id,
+    href,
+    widthPx: options?.widthPx ?? 560,
+    visibility: options?.visibility ?? "visible",
+    history: options?.history ?? { back: [], forward: [] },
+  };
+}
+
+export function encodeWorkspaceStateParam(value: WorkspaceStateV5): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 }
 
 export function workspaceUrlForState(
   href: string,
-  state: WorkspaceStateV4,
+  state: WorkspaceStateV5,
 ): string {
   const url = new URL(href, "http://nexus-e2e.local");
-  url.searchParams.set("wsv", "4");
+  url.searchParams.set("wsv", String(WORKSPACE_E2E_SCHEMA_VERSION));
   url.searchParams.set("ws", encodeWorkspaceStateParam(state));
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
 export function singlePaneWorkspaceState(
   href: string,
-  options?: { paneId?: string; widthPx?: number },
-): WorkspaceStateV4 {
+  options?: { paneId?: string; widthPx?: number; history?: WorkspacePaneHistoryV5 },
+): WorkspaceStateV5 {
   const paneId = options?.paneId ?? "pane-e2e-primary";
   const widthPx =
     options?.widthPx ?? (new URL(href, "http://nexus-e2e.local").pathname.startsWith("/media/")
       ? 1280
       : 560);
   return {
-    schemaVersion: 4,
+    schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: paneId,
-    panes: [{ id: paneId, href, widthPx, visibility: "visible" }],
+    panes: [makeWorkspacePane(paneId, href, { widthPx, history: options?.history })],
   };
 }
 
 export function workspaceUrlForSinglePane(
   href: string,
-  options?: { paneId?: string; widthPx?: number },
+  options?: { paneId?: string; widthPx?: number; history?: WorkspacePaneHistoryV5 },
 ): string {
   return workspaceUrlForState(href, singlePaneWorkspaceState(href, options));
 }
@@ -65,7 +91,7 @@ export function workspacePaneButton(page: Page, name: RegExp | string): Locator 
 export async function gotoSinglePaneWorkspace(
   page: Page,
   href: string,
-  options?: { paneId?: string; widthPx?: number },
+  options?: { paneId?: string; widthPx?: number; history?: WorkspacePaneHistoryV5 },
 ): Promise<void> {
   await page.goto(workspaceUrlForSinglePane(href, options));
   await expect(activeWorkspacePane(page)).toBeVisible({ timeout: 15_000 });

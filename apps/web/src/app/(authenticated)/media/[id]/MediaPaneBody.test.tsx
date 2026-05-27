@@ -147,6 +147,10 @@ function renderMediaPane() {
         routeId={identity.routeId}
         resourceRef={identity.resourceRef}
         resourceKey={identity.resourceKey}
+      canGoBack={false}
+      canGoForward={false}
+      onGoBackPane={vi.fn()}
+      onGoForwardPane={vi.fn()}
         pathParams={{ id: "media-1" }}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}

@@ -74,7 +74,7 @@ same resource identity contract.
 
 ## 4. Terms
 
-- **Pane instance.** A workspace pane row identified by `WorkspacePaneStateV4.id`.
+- **Pane instance.** A workspace pane row identified by `WorkspacePaneStateV5.id`.
 - **Href.** The concrete route string stored on the pane. It may contain
   pathname, query string, and hash.
 - **Route id.** The matched route definition id from `paneRouteRegistry.tsx`.
@@ -309,7 +309,7 @@ Rules:
 - Opening an existing same-resource pane with no hint preserves existing title.
 - Runtime metadata supersedes the hint without leaving a stale hint-visible
   state.
-- Hints are never persisted into `WorkspaceStateV4`.
+- Hints are never persisted into `WorkspaceStateV5`.
 - Hints are not backend truth.
 
 ### 6.6 Body State Reset Contract
@@ -374,7 +374,7 @@ There is no compatibility layer that accepts both old and new title map shapes.
 
 Inputs:
 
-- Current `WorkspaceStateV4.panes`.
+- Current `WorkspaceStateV5.panes`.
 - Current pane href.
 - Route registry metadata.
 - Title records keyed by pane id.

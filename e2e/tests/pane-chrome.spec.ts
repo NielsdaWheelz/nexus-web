@@ -7,6 +7,11 @@ import {
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import {
+  WORKSPACE_E2E_SCHEMA_VERSION,
+  makeWorkspacePane,
+  type WorkspaceStateV5,
+} from "./workspace";
 
 const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
@@ -27,19 +32,6 @@ interface SeededReaderResumeMedia {
   epub_media_id: string;
 }
 
-interface WorkspacePaneStateV4 {
-  id: string;
-  href: string;
-  widthPx: number;
-  visibility: "visible" | "minimized";
-}
-
-interface WorkspaceStateV4 {
-  schemaVersion: 4;
-  activePaneId: string;
-  panes: WorkspacePaneStateV4[];
-}
-
 function readSeed<T>(seedFile: string): T {
   const seedPath = path.join(__dirname, "..", ".seed", seedFile);
   return JSON.parse(readFileSync(seedPath, "utf-8")) as T;
@@ -55,18 +47,11 @@ function paneChromeDeviceId(testInfo: TestInfo): string {
   return `e2e-pane-chrome-${testInfo.workerIndex}-${testInfo.repeatEachIndex}-${slug}`;
 }
 
-function trivialWorkspaceSession(): WorkspaceStateV4 {
+function trivialWorkspaceSession(): WorkspaceStateV5 {
   return {
-    schemaVersion: 4,
+    schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-chrome-default",
-    panes: [
-      {
-        id: "pane-chrome-default",
-        href: "/libraries",
-        widthPx: 480,
-        visibility: "visible",
-      },
-    ],
+    panes: [makeWorkspacePane("pane-chrome-default", "/libraries", { widthPx: 480 })],
   };
 }
 
@@ -86,7 +71,7 @@ async function pinDeviceId(page: Page, testInfo: TestInfo): Promise<void> {
 async function putWorkspaceSession(
   request: APIRequestContext,
   testInfo: TestInfo,
-  state: WorkspaceStateV4
+  state: WorkspaceStateV5
 ): Promise<void> {
   const response = await request.put(WORKSPACE_SESSION_PATH, {
     data: { device_id: paneChromeDeviceId(testInfo), state },

@@ -1,11 +1,9 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
-
-function encodeWorkspaceStateParam(value: unknown): string {
-  return btoa(JSON.stringify(value))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-}
+import {
+  WORKSPACE_E2E_SCHEMA_VERSION,
+  encodeWorkspaceStateParam,
+  makeWorkspacePane,
+} from "./workspace";
 
 function workspacePaneStrip(page: Page): Locator {
   return page.getByRole("toolbar", { name: "Workspace panes" });
@@ -28,18 +26,18 @@ async function paneBoxX(pane: Locator): Promise<number> {
 // Three same-width panes side by side overflow the 1280px desktop viewport,
 // so the canvas is genuinely scrollable.
 const OVERFLOWING_WORKSPACE = encodeWorkspaceStateParam({
-  schemaVersion: 4,
+  schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
   activePaneId: "pane-libraries",
   panes: [
-    { id: "pane-libraries", href: "/libraries", widthPx: 560, visibility: "visible" },
-    { id: "pane-search", href: "/search", widthPx: 560, visibility: "visible" },
-    { id: "pane-settings", href: "/settings", widthPx: 560, visibility: "visible" },
+    makeWorkspacePane("pane-libraries", "/libraries"),
+    makeWorkspacePane("pane-search", "/search"),
+    makeWorkspacePane("pane-settings", "/settings"),
   ],
 });
 
 test.describe("workspace canvas", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto(`/libraries?wsv=4&ws=${OVERFLOWING_WORKSPACE}`);
+    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${OVERFLOWING_WORKSPACE}`);
 
     // Wait for every pane wrap to mount before driving the canvas.
     await expect(paneWrap(page, "pane-libraries")).toBeVisible();

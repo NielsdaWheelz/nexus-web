@@ -8,7 +8,7 @@ import {
   MIN_PODCAST_DETAIL_PANE_WIDTH_PX,
   resolvePaneWidthContract,
 } from "@/lib/workspace/schema";
-import { getParentHref, resolvePaneRoute } from "./paneRouteRegistry";
+import { resolvePaneRoute } from "./paneRouteRegistry";
 
 describe("pane route registry", () => {
   it("uses broad search copy for evidence-backed search", () => {
@@ -29,7 +29,6 @@ describe("pane route registry", () => {
     expect(route.resourceRef).toBe("contributor:ursula-k-le-guin");
     expect(route.render).toEqual(expect.any(Function));
     expect(route.definition?.bodyMode).toBe("standard");
-    expect(getParentHref(route)).toBeNull();
   });
 
   it("resolves page routes as document panes", () => {
@@ -40,7 +39,6 @@ describe("pane route registry", () => {
     expect(route.resourceRef).toBe("page:page-1");
     expect(route.render).toEqual(expect.any(Function));
     expect(route.definition?.bodyMode).toBe("document");
-    expect(getParentHref(route)).toBeNull();
   });
 
   it("resolves notes and note block routes", () => {
@@ -57,7 +55,6 @@ describe("pane route registry", () => {
     expect(noteRoute.resourceRef).toBe("note_block:block-1");
     expect(noteRoute.render).toEqual(expect.any(Function));
     expect(noteRoute.definition?.bodyMode).toBe("document");
-    expect(getParentHref(noteRoute)).toBe("/notes");
   });
 
   it("resolves daily note routes as document panes", () => {
@@ -74,7 +71,6 @@ describe("pane route registry", () => {
     expect(datedRoute.resourceRef).toBe("daily:2026-05-06");
     expect(datedRoute.render).toEqual(expect.any(Function));
     expect(datedRoute.definition?.bodyMode).toBe("document");
-    expect(getParentHref(datedRoute)).toBe("/daily");
   });
 
   it("returns the unsupported placeholder for full-screen Oracle routes", () => {

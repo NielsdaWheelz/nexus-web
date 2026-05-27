@@ -1,4 +1,10 @@
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import {
+  WORKSPACE_E2E_SCHEMA_VERSION,
+  encodeWorkspaceStateParam,
+  makeWorkspacePane,
+  type WorkspaceStateV5,
+} from "./workspace";
 
 // A fixed installation id so the test fully controls the device identity.
 // The app stores this under `nexus.installationId.v1` in localStorage.
@@ -6,21 +12,8 @@ const DEVICE_ID = "e2e-workspace-session-restore-device";
 const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
 
-interface WorkspacePaneStateV4 {
-  id: string;
-  href: string;
-  widthPx: number;
-  visibility: "visible" | "minimized";
-}
-
-interface WorkspaceStateV4 {
-  schemaVersion: 4;
-  activePaneId: string;
-  panes: WorkspacePaneStateV4[];
-}
-
 interface WorkspaceSessionEntry {
-  state: WorkspaceStateV4;
+  state: WorkspaceStateV5;
   updated_at: string;
 }
 
@@ -33,23 +26,13 @@ interface WorkspaceSessionResponse {
 }
 
 // A non-trivial two-pane session: more than one pane makes it worth restoring.
-function twoPaneSession(): WorkspaceStateV4 {
+function twoPaneSession(): WorkspaceStateV5 {
   return {
-    schemaVersion: 4,
+    schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-session-libraries",
     panes: [
-      {
-        id: "pane-session-libraries",
-        href: "/libraries",
-        widthPx: 480,
-        visibility: "visible",
-      },
-      {
-        id: "pane-session-notes",
-        href: "/notes",
-        widthPx: 520,
-        visibility: "visible",
-      },
+      makeWorkspacePane("pane-session-libraries", "/libraries", { widthPx: 480 }),
+      makeWorkspacePane("pane-session-notes", "/notes", { widthPx: 520 }),
     ],
   };
 }
@@ -57,49 +40,27 @@ function twoPaneSession(): WorkspaceStateV4 {
 // A distinct two-pane session whose second pane differs from `twoPaneSession`.
 // Seeding this lets a test prove the deep-link URL — not the saved session —
 // drove what rendered.
-function conversationsPaneSession(): WorkspaceStateV4 {
+function conversationsPaneSession(): WorkspaceStateV5 {
   return {
-    schemaVersion: 4,
+    schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-session-libraries",
     panes: [
-      {
-        id: "pane-session-libraries",
-        href: "/libraries",
-        widthPx: 480,
-        visibility: "visible",
-      },
-      {
-        id: "pane-session-conversations",
-        href: "/conversations",
+      makeWorkspacePane("pane-session-libraries", "/libraries", { widthPx: 480 }),
+      makeWorkspacePane("pane-session-conversations", "/conversations", {
         widthPx: 520,
-        visibility: "visible",
-      },
+      }),
     ],
   };
 }
 
 // A trivial single default pane — `isNonTrivialSession` treats this as nothing
 // worth restoring, so it is the right value to reset to during cleanup.
-function trivialSession(): WorkspaceStateV4 {
+function trivialSession(): WorkspaceStateV5 {
   return {
-    schemaVersion: 4,
+    schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-session-default",
-    panes: [
-      {
-        id: "pane-session-default",
-        href: "/libraries",
-        widthPx: 480,
-        visibility: "visible",
-      },
-    ],
+    panes: [makeWorkspacePane("pane-session-default", "/libraries", { widthPx: 480 })],
   };
-}
-
-function encodeWorkspaceStateParam(value: WorkspaceStateV4): string {
-  return btoa(JSON.stringify(value))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
 }
 
 // Pin the device id before any navigation so capture + restore key off the
@@ -119,7 +80,7 @@ async function pinDeviceId(page: Page): Promise<void> {
 
 async function putWorkspaceSession(
   request: APIRequestContext,
-  state: WorkspaceStateV4
+  state: WorkspaceStateV5
 ): Promise<void> {
   const response = await request.put(WORKSPACE_SESSION_PATH, {
     data: { device_id: DEVICE_ID, state },
@@ -214,7 +175,7 @@ test.describe("workspace session restore", () => {
     try {
       // The deep link carries its own panes (Libraries + Conversations).
       const deepLinkState = encodeWorkspaceStateParam(conversationsPaneSession());
-      await page.goto(`/libraries?wsv=4&ws=${deepLinkState}`);
+      await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${deepLinkState}`);
 
       // The URL is authoritative: its panes render and silent restore stays
       // out of the way — the saved session's "Notes" pane never appears.

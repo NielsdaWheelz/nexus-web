@@ -76,6 +76,11 @@ library row opening a media pane. The hint is sanitized, attached to the pane
 resource key, and superseded by the first runtime title from the pane body.
 Hints are runtime chrome state, not persisted workspace state.
 
+`paneRuntime.router.push` records pane-local history for the target pane.
+`paneRuntime.router.replace` updates the current href without adding history.
+Title hints ride on those navigation calls but are not stored in the pane
+history stacks.
+
 ## Route Metadata
 
 `paneRouteRegistry.tsx` owns two separate route concerns:
@@ -99,7 +104,8 @@ descriptor. It threads the same `title` and `titleState` into:
 
 - `WorkspacePaneStrip`, where pending titles render as tab skeletons.
 - `PaneShell` and `SurfaceHeader`, where pending titles render as heading
-  skeletons.
+  skeletons and pane Back/Forward controls render from the pane history
+  descriptor.
 - title telemetry, where `titleState` makes panes stuck in pending observable.
 
 `runtimeTitleByPaneId` is the runtime title record cache. Each record stores the

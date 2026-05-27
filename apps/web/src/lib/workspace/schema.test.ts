@@ -6,7 +6,9 @@ import {
   DEFAULT_STANDARD_PANE_WIDTH_PX,
   MAX_MEDIA_PANE_WIDTH_PX,
   MAX_PANES,
+  MAX_PANE_HISTORY_STACK_LENGTH,
   MAX_STANDARD_PANE_WIDTH_PX,
+  MAX_TOTAL_PANE_HISTORY_ENTRIES,
   MIN_PANE_WIDTH_PX,
   WORKSPACE_SCHEMA_VERSION,
   createDefaultWorkspaceState,
@@ -23,6 +25,7 @@ describe("workspace schema", () => {
     expect(state.panes[0]?.href).toBe("/media/abc");
     expect(state.panes[0]?.widthPx).toBe(DEFAULT_MEDIA_PANE_WIDTH_PX);
     expect(state.panes[0]?.visibility).toBe("visible");
+    expect(state.panes[0]?.history).toEqual({ back: [], forward: [] });
     expect(state.activePaneId).toBe(state.panes[0]?.id);
   });
 
@@ -55,6 +58,66 @@ describe("workspace schema", () => {
     expect(state.panes[0]?.visibility).toBe("visible");
   });
 
+  it("rejects pane payloads without v5 history", () => {
+    const state = sanitizeWorkspaceState(
+      {
+        schemaVersion: WORKSPACE_SCHEMA_VERSION,
+        activePaneId: "pane-1",
+        panes: [
+          { id: "pane-1", href: "/media/1", widthPx: 480, visibility: "visible" },
+        ],
+      },
+      { fallbackHref: "/libraries" },
+    );
+    expect(state.panes[0]?.href).toBe("/libraries");
+  });
+
+  it("sanitizes pane history hrefs", () => {
+    const state = sanitizeWorkspaceState(
+      {
+        schemaVersion: WORKSPACE_SCHEMA_VERSION,
+        activePaneId: "pane-1",
+        panes: [
+          {
+            id: "pane-1",
+            href: "/media/1",
+            widthPx: 480,
+            visibility: "visible",
+            history: {
+              back: ["http://localhost/libraries?sort=recent"],
+              forward: ["/media/2#chapter"],
+            },
+          },
+        ],
+      },
+      { fallbackHref: "/libraries", baseOrigin: "http://localhost" },
+    );
+    expect(state.panes[0]?.history).toEqual({
+      back: ["/libraries?sort=recent"],
+      forward: ["/media/2#chapter"],
+    });
+  });
+
+  it("rejects malformed pane history hrefs", () => {
+    const state = sanitizeWorkspaceState(
+      {
+        schemaVersion: WORKSPACE_SCHEMA_VERSION,
+        activePaneId: "pane-1",
+        panes: [
+          {
+            id: "pane-1",
+            href: "/media/1",
+            widthPx: 480,
+            visibility: "visible",
+            history: { back: ["https://example.com/media/0"], forward: [] },
+          },
+        ],
+      },
+      { fallbackHref: "/libraries", baseOrigin: "http://localhost" },
+    );
+    expect(state.panes[0]?.href).toBe("/libraries");
+  });
+
   it("caps pane count during sanitization", () => {
     const oversized = {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
@@ -64,6 +127,7 @@ describe("workspace schema", () => {
         href: `/media/${i}`,
         widthPx: 480,
         visibility: "visible",
+        history: { back: [], forward: [] },
       })),
     };
     const state = sanitizeWorkspaceState(oversized, { fallbackHref: "/libraries" });
@@ -76,9 +140,9 @@ describe("workspace schema", () => {
         schemaVersion: WORKSPACE_SCHEMA_VERSION,
         activePaneId: "pane-1",
         panes: [
-          { id: "pane-1", href: "/libraries", widthPx: 10, visibility: "visible" },
-          { id: "pane-2", href: "/media/1", widthPx: 99999, visibility: "visible" },
-          { id: "pane-3", href: "/conversations", widthPx: 99999, visibility: "visible" },
+          { id: "pane-1", href: "/libraries", widthPx: 10, visibility: "visible", history: { back: [], forward: [] } },
+          { id: "pane-2", href: "/media/1", widthPx: 99999, visibility: "visible", history: { back: [], forward: [] } },
+          { id: "pane-3", href: "/conversations", widthPx: 99999, visibility: "visible", history: { back: [], forward: [] } },
         ],
       },
       { fallbackHref: "/libraries" }
@@ -94,10 +158,10 @@ describe("workspace schema", () => {
         schemaVersion: WORKSPACE_SCHEMA_VERSION,
         activePaneId: "pane-1",
         panes: [
-          { id: "pane-1", href: "/media/1", visibility: "visible" },
-          { id: "pane-2", href: "/libraries", visibility: "visible" },
-          { id: "pane-3", href: "/podcasts/p1", visibility: "visible" },
-          { id: "pane-4", href: "/settings", visibility: "visible" },
+          { id: "pane-1", href: "/media/1", visibility: "visible", history: { back: [], forward: [] } },
+          { id: "pane-2", href: "/libraries", visibility: "visible", history: { back: [], forward: [] } },
+          { id: "pane-3", href: "/podcasts/p1", visibility: "visible", history: { back: [], forward: [] } },
+          { id: "pane-4", href: "/settings", visibility: "visible", history: { back: [], forward: [] } },
         ],
       },
       { fallbackHref: "/libraries" }
@@ -136,8 +200,8 @@ describe("workspace schema", () => {
         schemaVersion: WORKSPACE_SCHEMA_VERSION,
         activePaneId: "pane-2",
         panes: [
-          { id: "pane-1", href: "/libraries", widthPx: 480, visibility: "minimized" },
-          { id: "pane-2", href: "/media/1", widthPx: 520, visibility: "visible" },
+          { id: "pane-1", href: "/libraries", widthPx: 480, visibility: "minimized", history: { back: [], forward: [] } },
+          { id: "pane-2", href: "/media/1", widthPx: 520, visibility: "visible", history: { back: [], forward: [] } },
         ],
       },
       { fallbackHref: "/libraries" }
@@ -152,8 +216,8 @@ describe("workspace schema", () => {
         schemaVersion: WORKSPACE_SCHEMA_VERSION,
         activePaneId: "pane-1",
         panes: [
-          { id: "pane-1", href: "/libraries", widthPx: 480, visibility: "minimized" },
-          { id: "pane-2", href: "/media/1", widthPx: 520, visibility: "visible" },
+          { id: "pane-1", href: "/libraries", widthPx: 480, visibility: "minimized", history: { back: [], forward: [] } },
+          { id: "pane-2", href: "/media/1", widthPx: 520, visibility: "visible", history: { back: [], forward: [] } },
         ],
       },
       { fallbackHref: "/conversations" }
@@ -161,5 +225,40 @@ describe("workspace schema", () => {
     expect(state.panes).toHaveLength(1);
     expect(state.panes[0]?.href).toBe("/conversations");
     expect(state.activePaneId).toBe(state.panes[0]?.id);
+  });
+
+  it("trims pane history deterministically", () => {
+    const history = Array.from({ length: 20 }, (_, index) => `/media/${index}`);
+    const state = sanitizeWorkspaceState(
+      {
+        schemaVersion: WORKSPACE_SCHEMA_VERSION,
+        activePaneId: "pane-0",
+        panes: Array.from({ length: 5 }, (_, index) => ({
+          id: `pane-${index}`,
+          href: `/media/current-${index}`,
+          widthPx: 480,
+          visibility: "visible",
+          history: { back: history, forward: history },
+        })),
+      },
+      { fallbackHref: "/libraries" },
+    );
+
+    for (const pane of state.panes) {
+      expect(pane.history.back.length).toBeLessThanOrEqual(
+        MAX_PANE_HISTORY_STACK_LENGTH,
+      );
+      expect(pane.history.forward.length).toBeLessThanOrEqual(
+        MAX_PANE_HISTORY_STACK_LENGTH,
+      );
+      if (pane.history.back.length > 0) {
+        expect(pane.history.back[pane.history.back.length - 1]).toBe("/media/19");
+      }
+    }
+    const total = state.panes.reduce(
+      (count, pane) => count + pane.history.back.length + pane.history.forward.length,
+      0,
+    );
+    expect(total).toBeLessThanOrEqual(MAX_TOTAL_PANE_HISTORY_ENTRIES);
   });
 });

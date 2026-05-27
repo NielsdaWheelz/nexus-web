@@ -168,6 +168,10 @@ function authorPane(handle: string) {
       routeId="author"
       resourceRef={handle}
       resourceKey={resolvePaneRouteIdentity(href).resourceKey}
+      canGoBack={false}
+      canGoForward={false}
+      onGoBackPane={vi.fn()}
+      onGoForwardPane={vi.fn()}
       pathParams={{ handle }}
       onNavigatePane={() => {}}
       onReplacePane={() => {}}

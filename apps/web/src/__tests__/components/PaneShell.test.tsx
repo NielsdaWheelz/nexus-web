@@ -7,6 +7,13 @@ import PaneShell, {
   usePaneMobileChromeController,
 } from "@/components/workspace/PaneShell";
 
+const disabledNavigation = {
+  canGoBack: false,
+  canGoForward: false,
+  onBack: vi.fn(),
+  onForward: vi.fn(),
+};
+
 describe("PaneShell", () => {
   it("delegates keyboard resize to the focused resize handle", () => {
     const onResizePane = vi.fn();
@@ -14,6 +21,7 @@ describe("PaneShell", () => {
       <PaneShell
         paneId="pane-a"
         title="Libraries"
+        navigation={disabledNavigation}
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
@@ -41,12 +49,43 @@ describe("PaneShell", () => {
     expect(onResizePane).toHaveBeenCalledWith("pane-a", 1400);
   });
 
+  it("forwards pane Back and Forward controls", () => {
+    const navigation = {
+      canGoBack: true,
+      canGoForward: true,
+      onBack: vi.fn(),
+      onForward: vi.fn(),
+    };
+    render(
+      <PaneShell
+        paneId="pane-a"
+        title="Libraries"
+        navigation={navigation}
+        widthPx={560}
+        minWidthPx={320}
+        maxWidthPx={1400}
+        extraWidthPx={0}
+        bodyMode="standard"
+        onResizePane={() => {}}
+      >
+        <div>Body content</div>
+      </PaneShell>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Go back in this pane" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go forward in this pane" }));
+
+    expect(navigation.onBack).toHaveBeenCalledTimes(1);
+    expect(navigation.onForward).toHaveBeenCalledTimes(1);
+  });
+
   it("keyboard resize clamps to a raised runtime minimum", () => {
     const onResizePane = vi.fn();
     render(
       <PaneShell
         paneId="pane-a"
         title="Reader"
+        navigation={disabledNavigation}
         widthPx={500}
         minWidthPx={684}
         maxWidthPx={2400}
@@ -75,6 +114,7 @@ describe("PaneShell", () => {
       <PaneShell
         paneId="pane-a"
         title="Libraries"
+        navigation={disabledNavigation}
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
@@ -102,6 +142,7 @@ describe("PaneShell", () => {
         paneId="pane-a"
         href="/media/media-1"
         title="Designing Data-Intensive Applications"
+        navigation={disabledNavigation}
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
@@ -146,6 +187,7 @@ describe("PaneShell", () => {
       <PaneShell
         paneId="pane-standard"
         title="Libraries"
+        navigation={disabledNavigation}
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
@@ -177,6 +219,7 @@ describe("PaneShell", () => {
       <PaneShell
         paneId="pane-contained"
         title="Chat"
+        navigation={disabledNavigation}
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
@@ -216,6 +259,7 @@ describe("PaneShell", () => {
       <PaneShell
         paneId="pane-doc"
         title="Reader"
+        navigation={disabledNavigation}
         widthPx={920}
         minWidthPx={420}
         maxWidthPx={1800}
@@ -274,6 +318,7 @@ describe("PaneShell", () => {
       <PaneShell
         paneId="pane-doc"
         title="Reader"
+        navigation={disabledNavigation}
         widthPx={920}
         minWidthPx={420}
         maxWidthPx={1800}
@@ -317,6 +362,7 @@ describe("PaneShell", () => {
       <PaneShell
         paneId="pane-doc"
         title="Reader"
+        navigation={disabledNavigation}
         widthPx={920}
         minWidthPx={420}
         maxWidthPx={1800}
@@ -379,6 +425,7 @@ describe("PaneShell", () => {
         <PaneShell
           paneId="pane-doc"
           title="Reader"
+          navigation={disabledNavigation}
           widthPx={920}
           minWidthPx={420}
           maxWidthPx={1800}
@@ -418,6 +465,7 @@ describe("PaneShell", () => {
       <PaneShell
         paneId="pane-a"
         title="Libraries"
+        navigation={disabledNavigation}
         toolbar={<div>Default toolbar</div>}
         actions={<button type="button">Default action</button>}
         widthPx={560}
@@ -440,6 +488,7 @@ describe("PaneShell", () => {
       <PaneShell
         paneId="pane-a"
         title="Libraries"
+        navigation={disabledNavigation}
         toolbar={<div>Default toolbar</div>}
         actions={<button type="button">Default action</button>}
         widthPx={560}
@@ -466,6 +515,7 @@ describe("PaneShell", () => {
       <PaneShell
         paneId="pane-a"
         title="Libraries"
+        navigation={disabledNavigation}
         toolbar={<div>Default toolbar</div>}
         actions={<button type="button">Default action</button>}
         widthPx={560}
@@ -488,6 +538,7 @@ describe("PaneShell", () => {
       <PaneShell
         paneId="pane-a"
         title="Libraries"
+        navigation={disabledNavigation}
         toolbar={<div>Default toolbar</div>}
         actions={<button type="button">Default action</button>}
         widthPx={560}
@@ -517,6 +568,7 @@ describe("PaneShell", () => {
       <PaneShell
         paneId="pane-a"
         title="Libraries"
+        navigation={disabledNavigation}
         widthPx={560}
         minWidthPx={320}
         maxWidthPx={1400}
@@ -550,6 +602,7 @@ describe("PaneShell", () => {
       maxWidthPx: 2400,
       bodyMode: "document" as const,
       onResizePane: () => {},
+      navigation: disabledNavigation,
     };
     const { rerender } = render(
       <PaneShell {...props} extraWidthPx={0}>

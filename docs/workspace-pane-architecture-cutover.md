@@ -54,7 +54,7 @@ layout model.
 
 ### Workspace Pane State
 
-`WorkspacePaneStateV4.widthPx` is the persisted primary content width. It does
+`WorkspacePaneStateV5.widthPx` is the persisted primary content width. It does
 not include contextual rails, rulers, drawers, sheets, mobile chrome, or
 workspace strip dimensions.
 
@@ -209,6 +209,7 @@ Does not own:
 Owns pane-local APIs:
 
 - same-pane navigation
+- pane-local Back/Forward history traversal
 - open in new pane
 - runtime title publication
 - runtime minimum width publication

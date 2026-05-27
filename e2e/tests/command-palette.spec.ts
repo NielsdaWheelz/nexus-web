@@ -1,4 +1,10 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import {
+  WORKSPACE_E2E_SCHEMA_VERSION,
+  encodeWorkspaceStateParam,
+  makeWorkspacePane,
+  type WorkspaceStateV5,
+} from "./workspace";
 
 function paletteDialog(page: Page): Locator {
   return page.getByRole("dialog", { name: "Command palette" });
@@ -16,18 +22,15 @@ function paletteListbox(root: Page | Locator): Locator {
 // the visited route, so the palette's open-tabs section contains a Search row.
 // Mirrors the encoding used by workspace-tabs.spec.ts.
 function workspaceWithSearchPane(): string {
-  const state = {
-    schemaVersion: 4,
+  const state: WorkspaceStateV5 = {
+    schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-libraries",
     panes: [
-      { id: "pane-libraries", href: "/libraries", widthPx: 560, visibility: "visible" },
-      { id: "pane-search", href: "/search", widthPx: 560, visibility: "visible" },
+      makeWorkspacePane("pane-libraries", "/libraries"),
+      makeWorkspacePane("pane-search", "/search"),
     ],
   };
-  return btoa(JSON.stringify(state))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
+  return encodeWorkspaceStateParam(state);
 }
 
 test.describe("command palette", () => {
@@ -76,7 +79,9 @@ test.describe("command palette", () => {
   }) => {
     // Seed two panes so the open-tabs section is populated; the palette opens
     // immediately via ?palette=1 alongside the workspace-state deep link.
-    await page.goto(`/libraries?wsv=4&ws=${workspaceWithSearchPane()}&palette=1`);
+    await page.goto(
+      `/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceWithSearchPane()}&palette=1`,
+    );
 
     const dialog = paletteDialog(page);
     await expect(dialog).toBeVisible();
@@ -132,7 +137,9 @@ test.describe("command palette mobile", () => {
   test("mobile: tapping the inline close button removes the open-tab row without dismissing the palette", async ({
     page,
   }) => {
-    await page.goto(`/libraries?wsv=4&ws=${workspaceWithSearchPane()}&palette=1`);
+    await page.goto(
+      `/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceWithSearchPane()}&palette=1`,
+    );
 
     const dialog = paletteDialog(page);
     await expect(dialog).toBeVisible();

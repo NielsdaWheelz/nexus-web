@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { render, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import {
@@ -33,6 +33,28 @@ function OpenInNewPaneOnMount() {
   return null;
 }
 
+function GoBackForwardOnMount() {
+  const router = usePaneRouter();
+  useEffect(() => {
+    router.back();
+    router.forward();
+  }, [router]);
+  return (
+    <div
+      data-testid="router-navigation-state"
+      data-can-go-back={router.canGoBack ? "true" : "false"}
+      data-can-go-forward={router.canGoForward ? "true" : "false"}
+    />
+  );
+}
+
+const defaultNavigationProps = {
+  canGoBack: false,
+  canGoForward: false,
+  onGoBackPane: vi.fn(),
+  onGoForwardPane: vi.fn(),
+};
+
 function runtime(
   href: string,
   onSetPaneTitle: (input: {
@@ -49,6 +71,7 @@ function runtime(
       routeId={identity.routeId}
       resourceRef={identity.resourceRef}
       resourceKey={identity.resourceKey}
+      {...defaultNavigationProps}
       onNavigatePane={vi.fn()}
       onReplacePane={vi.fn()}
       onOpenInNewPane={vi.fn()}
@@ -105,6 +128,7 @@ describe("PaneRuntimeProvider", () => {
         routeId={identity.routeId}
         resourceRef={identity.resourceRef}
         resourceKey={identity.resourceKey}
+        {...defaultNavigationProps}
         onNavigatePane={onNavigatePane}
         onReplacePane={onReplacePane}
         onOpenInNewPane={vi.fn()}
@@ -133,6 +157,7 @@ describe("PaneRuntimeProvider", () => {
         routeId={identity.routeId}
         resourceRef={identity.resourceRef}
         resourceKey={identity.resourceKey}
+        {...defaultNavigationProps}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
         onOpenInNewPane={onOpenInNewPane}
@@ -147,5 +172,38 @@ describe("PaneRuntimeProvider", () => {
         "Library Row Title",
       );
     });
+  });
+
+  it("exposes pane Back and Forward through the scoped router", async () => {
+    const onGoBackPane = vi.fn();
+    const onGoForwardPane = vi.fn();
+    const identity = resolvePaneRouteIdentity("/libraries/library-1");
+
+    render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href="/libraries/library-1"
+        routeId={identity.routeId}
+        resourceRef={identity.resourceRef}
+        resourceKey={identity.resourceKey}
+        canGoBack
+        canGoForward
+        onGoBackPane={onGoBackPane}
+        onGoForwardPane={onGoForwardPane}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+      >
+        <GoBackForwardOnMount />
+      </PaneRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(onGoBackPane).toHaveBeenCalledWith("pane-1");
+      expect(onGoForwardPane).toHaveBeenCalledWith("pane-1");
+    });
+    const state = screen.getByTestId("router-navigation-state");
+    expect(state).toHaveAttribute("data-can-go-back", "true");
+    expect(state).toHaveAttribute("data-can-go-forward", "true");
   });
 });

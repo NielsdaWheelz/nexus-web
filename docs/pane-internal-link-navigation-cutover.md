@@ -26,8 +26,9 @@ handling, and Shift-click behavior.
 
 ## Target Behavior
 
-- A primary click on a supported same-origin workspace link inside a pane replaces the
-  current pane href through `paneRuntime.router.push`.
+- A primary click on a supported same-origin workspace link inside a pane updates the
+  current pane href through `paneRuntime.router.push` and records pane-local
+  Back history.
 - A Shift-primary click on the same supported link opens a new sibling pane through
   `paneRuntime.openInNewPane`.
 - Meta-click, Ctrl-click, Alt-click, non-primary clicks, `_blank` targets, downloads,
@@ -93,7 +94,8 @@ activate panes from outside the pane runtime.
 - `apps/web/src/lib/panes/paneLinkNavigation.ts`
   - Owns the shared internal-link resolution and click dispatch rules.
 - `apps/web/src/lib/panes/paneRuntime.tsx`
-  - Exports the runtime context shape used by the shared navigation helper.
+  - Exports the runtime context shape used by the shared navigation helper,
+    including pane-local Back/Forward traversal.
 - `apps/web/src/components/workspace/WorkspaceHost.tsx`
   - Provides pane runtime above the full pane shell and delegates all in-pane anchor
     decisions to `paneLinkNavigation`.

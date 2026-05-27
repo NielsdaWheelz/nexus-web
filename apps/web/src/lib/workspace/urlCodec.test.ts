@@ -3,7 +3,8 @@ import {
   WORKSPACE_SCHEMA_VERSION,
   createDefaultWorkspaceState,
   createPaneId,
-  type WorkspacePaneStateV4,
+  type WorkspacePaneHistoryV5,
+  type WorkspacePaneStateV5,
 } from "@/lib/workspace/schema";
 import {
   buildWorkspaceUrl,
@@ -15,9 +16,10 @@ import {
 function makePane(
   id: string,
   href: string,
-  visibility: WorkspacePaneStateV4["visibility"] = "visible"
-): WorkspacePaneStateV4 {
-  return { id, href, widthPx: 480, visibility };
+  visibility: WorkspacePaneStateV5["visibility"] = "visible",
+  history: WorkspacePaneHistoryV5 = { back: [], forward: [] }
+): WorkspacePaneStateV5 {
+  return { id, href, widthPx: 480, visibility, history };
 }
 
 describe("workspace url codec", () => {
@@ -72,6 +74,18 @@ describe("workspace url codec", () => {
     expect(decoded.state.schemaVersion).toBe(WORKSPACE_SCHEMA_VERSION);
   });
 
+  it("rejects old v4 workspace URLs", () => {
+    const params = new URLSearchParams();
+    params.set("wsv", "4");
+    params.set("ws", "abc");
+    const decoded = decodeWorkspaceStateFromUrl("/libraries", params, {
+      baseOrigin: "http://localhost",
+    });
+    expect(decoded.source).toBe("fallback");
+    expect(decoded.errorCode).toBe("unsupported_version");
+    expect(decoded.state.panes[0]?.href).toBe("/libraries");
+  });
+
   it("keeps URL clean for trivial single-pane state", () => {
     const state = createDefaultWorkspaceState("/media/123?foo=bar");
     const result = buildWorkspaceUrl(state, { baseOrigin: "http://localhost" });
@@ -81,6 +95,33 @@ describe("workspace url codec", () => {
     expect(parsed.searchParams.get("foo")).toBe("bar");
     expect(parsed.searchParams.get("wsv")).toBeNull();
     expect(parsed.searchParams.get("ws")).toBeNull();
+  });
+
+  it("keeps workspace params for a single pane with history", () => {
+    const state = createDefaultWorkspaceState("/media/123?foo=bar");
+    state.panes[0]!.history.back.push("/libraries");
+
+    const result = buildWorkspaceUrl(state, { baseOrigin: "http://localhost" });
+    expect(result.errorCode).toBeNull();
+    const parsed = new URL(result.href, "http://localhost");
+    expect(parsed.searchParams.get("wsv")).toBe(String(WORKSPACE_SCHEMA_VERSION));
+    expect(parsed.searchParams.get("ws")).toBeTruthy();
+  });
+
+  it("round-trips pane history", () => {
+    const state = createDefaultWorkspaceState("/media/123");
+    state.panes[0]!.history = {
+      back: ["/libraries", "/media/122"],
+      forward: ["/media/124"],
+    };
+
+    const encoded = encodeWorkspaceStateParam(state);
+    expect(encoded.ok).toBe(true);
+    const decoded = decodeWorkspaceStateParam(encoded.value, {
+      fallbackHref: "/libraries",
+      baseOrigin: "http://localhost",
+    });
+    expect(decoded.state.panes[0]?.history).toEqual(state.panes[0]?.history);
   });
 
   it("infers workspace state when URL has no workspace params", () => {

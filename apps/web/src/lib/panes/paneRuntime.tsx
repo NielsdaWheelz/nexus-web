@@ -8,8 +8,12 @@ import {
 } from "@/lib/workspace/schema";
 
 export interface PaneScopedRouter {
+  canGoBack: boolean;
+  canGoForward: boolean;
   push: (href: string, options?: { titleHint?: string }) => void;
   replace: (href: string, options?: { titleHint?: string }) => void;
+  back: () => void;
+  forward: () => void;
 }
 
 export interface PaneRuntimeWidthPublication {
@@ -45,6 +49,8 @@ interface PaneRuntimeProviderProps {
   resourceRef: string | null;
   resourceKey: string;
   pathParams?: Record<string, string>;
+  canGoBack: boolean;
+  canGoForward: boolean;
   onNavigatePane: (
     paneId: string,
     href: string,
@@ -56,6 +62,8 @@ interface PaneRuntimeProviderProps {
     options?: { titleHint?: string },
   ) => void;
   onOpenInNewPane: (href: string, titleHint?: string) => void;
+  onGoBackPane: (paneId: string) => void;
+  onGoForwardPane: (paneId: string) => void;
   onSetPaneTitle?: (input: {
     paneId: string;
     resourceKey: string;
@@ -87,9 +95,13 @@ export function PaneRuntimeProvider({
   resourceRef,
   resourceKey,
   pathParams = {},
+  canGoBack,
+  canGoForward,
   onNavigatePane,
   onReplacePane,
   onOpenInNewPane,
+  onGoBackPane,
+  onGoForwardPane,
   onSetPaneTitle,
   onSetPaneMinWidth,
   onSetPaneExtraWidth,
@@ -107,6 +119,8 @@ export function PaneRuntimeProvider({
       pathParams,
       searchParams: parsed.searchParams,
       router: {
+        canGoBack,
+        canGoForward,
         push: (nextHref: string, options?: { titleHint?: string }) => {
           const normalized = normalizeWorkspaceHref(nextHref);
           if (!normalized) {
@@ -120,6 +134,12 @@ export function PaneRuntimeProvider({
             return;
           }
           onReplacePane(paneId, normalized, options);
+        },
+        back: () => {
+          onGoBackPane(paneId);
+        },
+        forward: () => {
+          onGoForwardPane(paneId);
         },
       },
       openInNewPane: (nextHref: string, titleHint?: string) => {
@@ -141,6 +161,10 @@ export function PaneRuntimeProvider({
     }),
     [
       href,
+      canGoBack,
+      canGoForward,
+      onGoBackPane,
+      onGoForwardPane,
       onNavigatePane,
       onOpenInNewPane,
       onReplacePane,

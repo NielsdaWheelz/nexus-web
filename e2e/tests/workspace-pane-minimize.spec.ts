@@ -1,11 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
-
-function encodeWorkspaceStateParam(value: unknown): string {
-  return btoa(JSON.stringify(value))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-}
+import {
+  WORKSPACE_E2E_SCHEMA_VERSION,
+  encodeWorkspaceStateParam,
+  makeWorkspacePane,
+} from "./workspace";
 
 function workspacePaneButton(page: Page, name: RegExp | string) {
   return page
@@ -16,25 +14,15 @@ function workspacePaneButton(page: Page, name: RegExp | string) {
 test.describe("workspace pane minimize", () => {
   test("minimizes, persists, restores, and closes a pane", async ({ page }) => {
     const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: 4,
+      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
       activePaneId: "pane-libraries",
       panes: [
-        {
-          id: "pane-libraries",
-          href: "/libraries",
-          widthPx: 480,
-          visibility: "visible",
-        },
-        {
-          id: "pane-search",
-          href: "/search",
-          widthPx: 480,
-          visibility: "visible",
-        },
+        makeWorkspacePane("pane-libraries", "/libraries", { widthPx: 480 }),
+        makeWorkspacePane("pane-search", "/search", { widthPx: 480 }),
       ],
     });
 
-    await page.goto(`/libraries?wsv=4&ws=${workspaceState}`);
+    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
 
     await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible();
     await expect(workspacePaneButton(page, /^Search\b/)).toBeVisible();

@@ -4,7 +4,9 @@ import {
   DEFAULT_MEDIA_PANE_WIDTH_PX,
   MAX_MEDIA_PANE_WIDTH_PX,
   MAX_STANDARD_PANE_WIDTH_PX,
-  type WorkspaceStateV4,
+  WORKSPACE_SCHEMA_VERSION,
+  type WorkspacePaneStateV5,
+  type WorkspaceStateV5,
 } from "@/lib/workspace/schema";
 import {
   mergeRestoredWorkspaceWithUrlIntent,
@@ -17,6 +19,20 @@ import {
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 
 type WorkspaceStore = ReturnType<typeof useWorkspaceStore>;
+
+function pane(
+  id: string,
+  href: string,
+  input: Partial<Pick<WorkspacePaneStateV5, "widthPx" | "visibility" | "history">> = {}
+): WorkspacePaneStateV5 {
+  return {
+    id,
+    href,
+    widthPx: input.widthPx ?? 560,
+    visibility: input.visibility ?? "visible",
+    history: input.history ?? { back: [], forward: [] },
+  };
+}
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -95,54 +111,30 @@ function titleRecord(
 }
 
 describe("mergeRestoredWorkspaceWithUrlIntent", () => {
-  const restored: WorkspaceStateV4 = {
-    schemaVersion: 4,
+  const restored: WorkspaceStateV5 = {
+    schemaVersion: WORKSPACE_SCHEMA_VERSION,
     activePaneId: "pane-saved-libraries",
     panes: [
-      {
-        id: "pane-saved-libraries",
-        href: "/libraries",
-        widthPx: 560,
-        visibility: "visible",
-      },
-      {
-        id: "pane-saved-notes",
-        href: "/notes",
-        widthPx: 480,
-        visibility: "visible",
-      },
+      pane("pane-saved-libraries", "/libraries"),
+      pane("pane-saved-notes", "/notes", { widthPx: 480 }),
     ],
   };
 
   it("keeps a neutral /libraries open as pure saved-session restore", () => {
-    const urlIntent: WorkspaceStateV4 = {
-      schemaVersion: 4,
+    const urlIntent: WorkspaceStateV5 = {
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-url-libraries",
-      panes: [
-        {
-          id: "pane-url-libraries",
-          href: "/libraries",
-          widthPx: 560,
-          visibility: "visible",
-        },
-      ],
+      panes: [pane("pane-url-libraries", "/libraries")],
     };
 
     expect(mergeRestoredWorkspaceWithUrlIntent(restored, urlIntent)).toBe(restored);
   });
 
   it("adds an explicit direct URL as the active pane instead of letting restore override it", () => {
-    const urlIntent: WorkspaceStateV4 = {
-      schemaVersion: 4,
+    const urlIntent: WorkspaceStateV5 = {
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-url-media",
-      panes: [
-        {
-          id: "pane-url-media",
-          href: "/media/media-123",
-          widthPx: 1280,
-          visibility: "visible",
-        },
-      ],
+      panes: [pane("pane-url-media", "/media/media-123", { widthPx: 1280 })],
     };
 
     const merged = mergeRestoredWorkspaceWithUrlIntent(restored, urlIntent);
@@ -156,29 +148,25 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
   });
 
   it("reuses and activates the saved pane for same-resource direct URLs", () => {
-    const savedWithMedia: WorkspaceStateV4 = {
-      schemaVersion: 4,
+    const savedWithMedia: WorkspaceStateV5 = {
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-saved-libraries",
       panes: [
         ...restored.panes,
-        {
-          id: "pane-saved-media",
-          href: "/media/media-123",
+        pane("pane-saved-media", "/media/media-123", {
           widthPx: 960,
           visibility: "minimized",
-        },
+          history: { back: ["/libraries"], forward: ["/media/media-999"] },
+        }),
       ],
     };
-    const urlIntent: WorkspaceStateV4 = {
-      schemaVersion: 4,
+    const urlIntent: WorkspaceStateV5 = {
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-url-media",
       panes: [
-        {
-          id: "pane-url-media",
-          href: "/media/media-123?loc=chapter-2",
+        pane("pane-url-media", "/media/media-123?loc=chapter-2", {
           widthPx: 1280,
-          visibility: "visible",
-        },
+        }),
       ],
     };
 
@@ -190,6 +178,7 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
       href: "/media/media-123?loc=chapter-2",
       visibility: "visible",
       widthPx: 960,
+      history: { back: ["/libraries"], forward: ["/media/media-999"] },
     });
   });
 });
@@ -252,6 +241,104 @@ describe("WorkspaceStoreProvider", () => {
       expect(workspace().state.panes).toHaveLength(2);
       expect(workspace().state.activePaneId).toBe(conversationPaneId);
       expect(activeHref(workspace())).toBe("/conversations/conversation-1?run=run-new");
+    });
+    flushWorkspaceSession();
+  });
+
+  it("records pane-local history for push navigation and traverses it", async () => {
+    const workspace = await mountWorkspaceStore("/media/media-1");
+    const paneId = workspace().state.activePaneId;
+
+    act(() => {
+      workspace().navigatePane(paneId, "/media/media-2");
+    });
+    await waitFor(() => {
+      expect(workspace().state.panes[0]?.href).toBe("/media/media-2");
+      expect(workspace().state.panes[0]?.history).toEqual({
+        back: ["/media/media-1"],
+        forward: [],
+      });
+    });
+
+    act(() => {
+      workspace().goBackPane(paneId);
+    });
+    await waitFor(() => {
+      expect(workspace().state.panes[0]?.href).toBe("/media/media-1");
+      expect(workspace().state.panes[0]?.history).toEqual({
+        back: [],
+        forward: ["/media/media-2"],
+      });
+    });
+
+    act(() => {
+      workspace().goForwardPane(paneId);
+    });
+    await waitFor(() => {
+      expect(workspace().state.panes[0]?.href).toBe("/media/media-2");
+      expect(workspace().state.panes[0]?.history).toEqual({
+        back: ["/media/media-1"],
+        forward: [],
+      });
+    });
+    flushWorkspaceSession();
+  });
+
+  it("replace navigation updates href without changing pane history", async () => {
+    const workspace = await mountWorkspaceStore("/media/media-1");
+    const paneId = workspace().state.activePaneId;
+
+    act(() => {
+      workspace().navigatePane(paneId, "/media/media-2");
+    });
+    await waitFor(() => {
+      expect(workspace().state.panes[0]?.history.back).toEqual(["/media/media-1"]);
+    });
+
+    act(() => {
+      workspace().navigatePane(paneId, "/media/media-3", { replace: true });
+    });
+    await waitFor(() => {
+      expect(workspace().state.panes[0]?.href).toBe("/media/media-3");
+      expect(workspace().state.panes[0]?.history).toEqual({
+        back: ["/media/media-1"],
+        forward: [],
+      });
+    });
+    flushWorkspaceSession();
+  });
+
+  it("records pane-local history when duplicate opens retarget an existing pane", async () => {
+    const workspace = await mountWorkspaceStore("/media/media-1");
+
+    act(() => {
+      workspace().openPane({ href: "/media/media-1?loc=chapter-2" });
+    });
+
+    await waitFor(() => {
+      expect(workspace().state.panes).toHaveLength(1);
+      expect(workspace().state.panes[0]?.href).toBe("/media/media-1?loc=chapter-2");
+      expect(workspace().state.panes[0]?.history).toEqual({
+        back: ["/media/media-1"],
+        forward: [],
+      });
+    });
+    flushWorkspaceSession();
+  });
+
+  it("does not record history for same-href navigation", async () => {
+    const workspace = await mountWorkspaceStore("/media/media-1");
+    const paneId = workspace().state.activePaneId;
+
+    act(() => {
+      workspace().navigatePane(paneId, "/media/media-1");
+    });
+
+    await waitFor(() => {
+      expect(workspace().state.panes[0]?.history).toEqual({
+        back: [],
+        forward: [],
+      });
     });
     flushWorkspaceSession();
   });

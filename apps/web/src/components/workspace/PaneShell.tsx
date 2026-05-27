@@ -13,7 +13,10 @@ import {
   type CSSProperties,
 } from "react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/commandPaletteEvents";
-import SurfaceHeader, { type SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
+import SurfaceHeader, {
+  type SurfaceHeaderNavigation,
+  type SurfaceHeaderOption,
+} from "@/components/ui/SurfaceHeader";
 import Button from "@/components/ui/Button";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
 import type { PaneBodyMode } from "@/lib/panes/paneRouteRegistry";
@@ -118,7 +121,7 @@ interface PaneShellProps {
   toolbar?: React.ReactNode;
   actions?: React.ReactNode;
   options?: SurfaceHeaderOption[];
-  onBack?: () => void;
+  navigation: SurfaceHeaderNavigation;
   widthPx: number;
   minWidthPx: number;
   maxWidthPx: number;
@@ -141,7 +144,7 @@ export default function PaneShell({
   toolbar,
   actions,
   options,
-  onBack,
+  navigation,
   widthPx,
   minWidthPx,
   maxWidthPx,
@@ -500,7 +503,7 @@ export default function PaneShell({
               effectiveActions
             )
           }
-          onBack={onBack}
+          navigation={navigation}
           onOptionsOpenChange={handleOptionsOpenChange}
         />
         {effectiveToolbar ? <div className={styles.toolbar}>{effectiveToolbar}</div> : null}

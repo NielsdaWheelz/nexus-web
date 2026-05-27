@@ -7,8 +7,9 @@ import {
   WORKSPACE_SCHEMA_VERSION,
   WORKSPACE_STATE_PARAM,
   createDefaultWorkspaceState,
+  hasPaneHistory,
   sanitizeWorkspaceState,
-  type WorkspaceStateV4,
+  type WorkspaceStateV5,
 } from "@/lib/workspace/schema";
 
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
@@ -30,7 +31,7 @@ export async function getWorkspaceSession(
 
 export async function putWorkspaceSession(
   deviceId: string,
-  state: WorkspaceStateV4,
+  state: WorkspaceStateV5,
   keepalive = false
 ): Promise<void> {
   const body = JSON.stringify({ device_id: deviceId, state });
@@ -53,7 +54,7 @@ export function isColdOpen(): boolean {
   return !new URL(window.location.href).searchParams.has(WORKSPACE_STATE_PARAM);
 }
 
-export function prepareRestoredState(raw: unknown): WorkspaceStateV4 {
+export function prepareRestoredState(raw: unknown): WorkspaceStateV5 {
   const sanitized = sanitizeWorkspaceState(raw, {
     fallbackHref: WORKSPACE_DEFAULT_FALLBACK_HREF,
   });
@@ -81,16 +82,17 @@ export function prepareRestoredState(raw: unknown): WorkspaceStateV4 {
   };
 }
 
-export function isNonTrivialSession(state: WorkspaceStateV4): boolean {
+export function isNonTrivialSession(state: WorkspaceStateV5): boolean {
   if (state.panes.length > 1) {
     return true;
   }
-  return state.panes[0].href !== WORKSPACE_DEFAULT_FALLBACK_HREF;
+  const pane = state.panes[0];
+  return pane.href !== WORKSPACE_DEFAULT_FALLBACK_HREF || hasPaneHistory(pane.history);
 }
 
 export function workspaceStatesEqual(
-  a: WorkspaceStateV4,
-  b: WorkspaceStateV4
+  a: WorkspaceStateV5,
+  b: WorkspaceStateV5
 ): boolean {
   if (a.schemaVersion !== b.schemaVersion) {
     return false;
@@ -107,7 +109,13 @@ export function workspaceStatesEqual(
       pane.id === other.id &&
       pane.href === other.href &&
       pane.widthPx === other.widthPx &&
-      pane.visibility === other.visibility
+      pane.visibility === other.visibility &&
+      pane.history.back.length === other.history.back.length &&
+      pane.history.forward.length === other.history.forward.length &&
+      pane.history.back.every((href, hrefIndex) => href === other.history.back[hrefIndex]) &&
+      pane.history.forward.every(
+        (href, hrefIndex) => href === other.history.forward[hrefIndex]
+      )
     );
   });
 }

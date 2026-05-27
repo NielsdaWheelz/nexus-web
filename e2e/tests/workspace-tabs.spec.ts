@@ -1,6 +1,10 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import {
+  WORKSPACE_E2E_SCHEMA_VERSION,
+  encodeWorkspaceStateParam,
+} from "./workspace";
 
 // ---------------------------------------------------------------------------
 // Seed helpers
@@ -26,17 +30,6 @@ interface LibraryListResponse {
 function readSeed<T>(seedFile: string): T {
   const seedPath = path.join(__dirname, "..", ".seed", seedFile);
   return JSON.parse(readFileSync(seedPath, "utf-8")) as T;
-}
-
-// ---------------------------------------------------------------------------
-// Workspace-state encoding (mirrors workspace-canvas.spec.ts)
-// ---------------------------------------------------------------------------
-
-function encodeWorkspaceStateParam(value: unknown): string {
-  return btoa(JSON.stringify(value))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -83,7 +76,7 @@ test.describe("workspace tabs", () => {
     page,
   }) => {
     const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: 4,
+      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
       activePaneId: "pane-libraries",
       panes: [
         {
@@ -91,17 +84,19 @@ test.describe("workspace tabs", () => {
           href: "/libraries",
           widthPx: 560,
           visibility: "visible",
+          history: { back: [], forward: [] },
         },
         {
           id: "pane-search",
           href: "/search",
           widthPx: 560,
           visibility: "visible",
+          history: { back: [], forward: [] },
         },
       ],
     });
 
-    await page.goto(`/libraries?wsv=4&ws=${workspaceState}`);
+    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
@@ -154,7 +149,7 @@ test.describe("workspace tabs", () => {
     page,
   }) => {
     const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: 4,
+      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
       activePaneId: "pane-libraries",
       panes: [
         {
@@ -162,17 +157,19 @@ test.describe("workspace tabs", () => {
           href: "/libraries",
           widthPx: 560,
           visibility: "visible",
+          history: { back: [], forward: [] },
         },
         {
           id: "pane-search",
           href: "/search",
           widthPx: 560,
           visibility: "visible",
+          history: { back: [], forward: [] },
         },
       ],
     });
 
-    await page.goto(`/libraries?wsv=4&ws=${workspaceState}`);
+    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
@@ -204,7 +201,7 @@ test.describe("workspace tabs", () => {
     page,
   }) => {
     const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: 4,
+      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
       activePaneId: "pane-libraries",
       panes: [
         {
@@ -212,17 +209,19 @@ test.describe("workspace tabs", () => {
           href: "/libraries",
           widthPx: 560,
           visibility: "visible",
+          history: { back: [], forward: [] },
         },
         {
           id: "pane-search",
           href: "/search",
           widthPx: 560,
           visibility: "visible",
+          history: { back: [], forward: [] },
         },
       ],
     });
 
-    await page.goto(`/libraries?wsv=4&ws=${workspaceState}`);
+    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
 
     await expect(workspacePaneButton(page, /^Search\b/)).toBeVisible();
 
@@ -281,7 +280,7 @@ test.describe("workspace tabs", () => {
     const epub = readSeed<SeededEpubMedia>("epub-media.json");
 
     const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: 4,
+      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
       activePaneId: "pane-media",
       panes: [
         {
@@ -289,11 +288,12 @@ test.describe("workspace tabs", () => {
           href: `/media/${epub.media_id}`,
           widthPx: 720,
           visibility: "visible",
+          history: { back: [], forward: [] },
         },
       ],
     });
 
-    await page.goto(`/libraries?wsv=4&ws=${workspaceState}`);
+    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
@@ -426,7 +426,7 @@ test.describe("workspace tabs", () => {
     page,
   }) => {
     const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: 4,
+      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
       activePaneId: "pane-libraries",
       panes: [
         {
@@ -434,17 +434,19 @@ test.describe("workspace tabs", () => {
           href: "/libraries",
           widthPx: 560,
           visibility: "visible",
+          history: { back: [], forward: [] },
         },
         {
           id: "pane-search",
           href: "/search",
           widthPx: 560,
           visibility: "visible",
+          history: { back: [], forward: [] },
         },
       ],
     });
 
-    await page.goto(`/libraries?wsv=4&ws=${workspaceState}`);
+    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
@@ -471,7 +473,7 @@ test.describe("workspace tabs", () => {
     page,
   }) => {
     const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: 4,
+      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
       activePaneId: "pane-libraries",
       panes: [
         {
@@ -479,17 +481,19 @@ test.describe("workspace tabs", () => {
           href: "/libraries",
           widthPx: 560,
           visibility: "visible",
+          history: { back: [], forward: [] },
         },
         {
           id: "pane-search",
           href: "/search",
           widthPx: 560,
           visibility: "visible",
+          history: { back: [], forward: [] },
         },
       ],
     });
 
-    await page.goto(`/libraries?wsv=4&ws=${workspaceState}`);
+    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
@@ -531,7 +535,7 @@ test.describe("workspace tabs", () => {
     const nonPdf = readSeed<SeededNonPdfMedia>("non-pdf-media.json");
 
     const workspaceState = encodeWorkspaceStateParam({
-      schemaVersion: 4,
+      schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
       activePaneId: "pane-media",
       panes: [
         {
@@ -539,11 +543,12 @@ test.describe("workspace tabs", () => {
           href: `/media/${nonPdf.media_id}`,
           widthPx: 720,
           visibility: "visible",
+          history: { back: [], forward: [] },
         },
       ],
     });
 
-    await page.goto(`/libraries?wsv=4&ws=${workspaceState}`);
+    await page.goto(`/libraries?wsv=${WORKSPACE_E2E_SCHEMA_VERSION}&ws=${workspaceState}`);
 
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();

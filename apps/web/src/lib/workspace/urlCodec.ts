@@ -6,8 +6,10 @@ import {
   WORKSPACE_STATE_PARAM,
   WORKSPACE_VERSION_PARAM,
   WORKSPACE_DEFAULT_FALLBACK_HREF,
-  type WorkspaceStateV4,
+  hasPaneHistory,
+  type WorkspaceStateV5,
   sanitizeWorkspaceState,
+  trimWorkspacePaneHistory,
 } from "@/lib/workspace/schema";
 
 export const MAX_WORKSPACE_STATE_PARAM_LENGTH = 1800;
@@ -15,7 +17,7 @@ export const MAX_WORKSPACE_STATE_PARAM_LENGTH = 1800;
 type DecodeSource = "query" | "inferred" | "fallback";
 
 export interface WorkspaceDecodeResult {
-  state: WorkspaceStateV4;
+  state: WorkspaceStateV5;
   source: DecodeSource;
   errorCode:
     | null
@@ -87,9 +89,9 @@ export function buildWorkspaceFallbackHref(
   return `${pathname}${qs ? `?${qs}` : ""}${hash}`;
 }
 
-export function encodeWorkspaceStateParam(state: WorkspaceStateV4): WorkspaceEncodeResult {
+export function encodeWorkspaceStateParam(state: WorkspaceStateV5): WorkspaceEncodeResult {
   try {
-    const payload = encodeUtf8(JSON.stringify(state));
+    const payload = encodeUtf8(JSON.stringify(trimWorkspacePaneHistory(state)));
     if (payload.length > MAX_WORKSPACE_STATE_PARAM_LENGTH) {
       return { ok: false, value: "", errorCode: "payload_too_large" };
     }
@@ -180,7 +182,7 @@ export function decodeWorkspaceStateFromUrl(
 }
 
 export function buildWorkspaceUrl(
-  state: WorkspaceStateV4,
+  state: WorkspaceStateV5,
   options?: { baseOrigin?: string }
 ): { href: string; errorCode: WorkspaceEncodeResult["errorCode"] } {
   const activePane = state.panes.find(
@@ -207,7 +209,8 @@ export function buildWorkspaceUrl(
   const params = stripWorkspaceParams(new URLSearchParams(parsed.search));
 
   // Single pane → omit workspace params from URL
-  const isTrivial = state.panes.length === 1;
+  const isTrivial =
+    state.panes.length === 1 && !hasPaneHistory(state.panes[0]!.history);
   if (isTrivial) {
     const qs = params.toString();
     return {

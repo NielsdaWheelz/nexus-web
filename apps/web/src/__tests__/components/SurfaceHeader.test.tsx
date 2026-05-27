@@ -1,7 +1,20 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
+import type { ComponentProps } from "react";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
+
+function navigation(
+  overrides: Partial<ComponentProps<typeof SurfaceHeader>["navigation"]> = {}
+) {
+  return {
+    canGoBack: false,
+    canGoForward: false,
+    onBack: vi.fn(),
+    onForward: vi.fn(),
+    ...overrides,
+  };
+}
 
 describe("SurfaceHeader", () => {
   it("renders title and options menu", async () => {
@@ -12,6 +25,7 @@ describe("SurfaceHeader", () => {
       <SurfaceHeader
         title="The Pragmatic Programmer"
         subtitle="pdf"
+        navigation={navigation()}
         options={[{ id: "delete", label: "Delete", onSelect: onDelete, tone: "danger" }]}
       />
     );
@@ -25,7 +39,7 @@ describe("SurfaceHeader", () => {
   });
 
   it("marks pending titles busy while keeping an accessible name", () => {
-    render(<SurfaceHeader title="Media" titlePending />);
+    render(<SurfaceHeader title="Media" titlePending navigation={navigation()} />);
 
     expect(screen.getByRole("heading", { name: "Media" })).toHaveAttribute(
       "aria-busy",
@@ -39,6 +53,7 @@ describe("SurfaceHeader", () => {
     render(
       <SurfaceHeader
         title="Reader"
+        navigation={navigation()}
         options={[
           { id: "open", label: "Open source", onSelect: vi.fn() },
           { id: "delete", label: "Delete", onSelect: vi.fn(), tone: "danger" },
@@ -74,6 +89,7 @@ describe("SurfaceHeader", () => {
     render(
       <SurfaceHeader
         title="Reader"
+        navigation={navigation()}
         options={[
           {
             id: "open-source",
@@ -103,7 +119,7 @@ describe("SurfaceHeader", () => {
       vi.stubGlobal("innerWidth", 390);
       window.dispatchEvent(new Event("resize"));
 
-      render(<SurfaceHeader title="Test" />);
+      render(<SurfaceHeader title="Test" navigation={navigation()} />);
 
       expect(screen.getByRole("banner")).toHaveAttribute("data-mobile", "true");
     });
@@ -112,9 +128,40 @@ describe("SurfaceHeader", () => {
       vi.stubGlobal("innerWidth", 1024);
       window.dispatchEvent(new Event("resize"));
 
-      render(<SurfaceHeader title="Test" />);
+      render(<SurfaceHeader title="Test" navigation={navigation()} />);
 
       expect(screen.getByRole("banner")).not.toHaveAttribute("data-mobile", "true");
     });
+  });
+
+  it("renders pane Back and Forward controls with disabled states", async () => {
+    const user = userEvent.setup();
+    const onBack = vi.fn();
+    const onForward = vi.fn();
+
+    render(
+      <SurfaceHeader
+        title="Reader"
+        navigation={navigation({
+          canGoBack: true,
+          canGoForward: false,
+          onBack,
+          onForward,
+        })}
+      />
+    );
+
+    const back = screen.getByRole("button", { name: "Go back in this pane" });
+    const forward = screen.getByRole("button", {
+      name: "Go forward in this pane",
+    });
+    expect(back).toBeEnabled();
+    expect(forward).toBeDisabled();
+
+    await user.click(back);
+    fireEvent.click(forward);
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(onForward).not.toHaveBeenCalled();
   });
 });

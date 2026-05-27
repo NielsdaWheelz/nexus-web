@@ -24,12 +24,17 @@ scroll behavior stay owned by `PaneShell`.
   pane titles and route chrome, tracks runtime pane width contributions, renders
   the strip plus canvas, centers the active pane, and owns the pane-step
   keybinding listener.
+- `WorkspaceStore` owns pane-local Back/Forward history. Pane history is
+  persisted per pane in workspace state and exposed through `goBackPane`,
+  `goForwardPane`, and `paneRuntime.router.back/forward`; pane chrome never
+  calls browser history.
 - `usePaneCanvas` owns canvas mechanics: the canvas ref, vertical-wheel
   translation, header drag-to-pan, edge metrics, in-view pane detection, and
   `scrollPaneIntoView`.
 - `PaneShell` owns pane chrome, body layout, resize handles, and mobile chrome.
   It exposes the chrome `onMouseDown` surface for canvas drag-to-pan, but does
-  not decide when a drag is valid.
+  not decide when a drag is valid. It always renders pane Back/Forward controls
+  from the navigation descriptor supplied by `WorkspaceHost`.
 - `WorkspacePaneStrip` is presentational. It receives `isInView`, `isActive`,
   title state, visibility, and action callbacks from `WorkspaceHost`; it does
   not observe or measure the canvas.
@@ -130,6 +135,8 @@ They do not pan the canvas.
   `usePaneCanvas`, reads scroll metrics, or observes pane wraps.
 - `PaneShell` exposes chrome input and owns pane shell layout. It does not
   duplicate drag filtering or canvas scroll behavior.
+- Pane Back/Forward controls are universal across pane types and affect only
+  their owning pane.
 - Pane bodies do not own horizontal workspace scrolling.
 - No canvas scroll snap is allowed.
 - `enabled: false` disables the hook's wheel handling, drag handling, scroll

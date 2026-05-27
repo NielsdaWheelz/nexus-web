@@ -137,6 +137,9 @@ The command palette is a single global surface mounted once
   - Selecting a command records one `POST /api/me/palette-selections`, performs
     the target, and closes the palette.
   - Pane-local commands live in pane Options menus, not in the command palette.
+  - Global commands that open a route use the workspace store. If they retarget
+    an existing pane to a different href, that pane receives a normal pane-local
+    Back entry; palette mobile browser-history markers remain separate.
   - On mobile the input is never focused programmatically; the soft keyboard
     appears only on user tap.
   - Android-shell-restricted routes (Local Vault) never appear and never execute.

@@ -10,14 +10,14 @@ import {
   putWorkspaceSession,
   workspaceStatesEqual,
 } from "@/lib/workspace/sessionSync";
-import type { WorkspaceStateV4 } from "@/lib/workspace/schema";
+import type { WorkspaceStateV5 } from "@/lib/workspace/schema";
 
 const WORKSPACE_SESSION_SYNC_DEBOUNCE_MS = 1000;
 
 export function useWorkspaceSession(
-  state: WorkspaceStateV4,
+  state: WorkspaceStateV5,
   mounted: boolean,
-  applyRestoredState: (restored: WorkspaceStateV4, urlIntent: WorkspaceStateV4) => void
+  applyRestoredState: (restored: WorkspaceStateV5, urlIntent: WorkspaceStateV5) => void
 ): void {
   const captureArmedRef = useRef(false);
   const stateRef = useRef(state);

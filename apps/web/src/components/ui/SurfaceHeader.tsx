@@ -1,12 +1,19 @@
 "use client";
 
 import { forwardRef, useId, type ReactNode } from "react";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import ActionMenu, { type ActionMenuOption } from "./ActionMenu";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./SurfaceHeader.module.css";
 
 export type SurfaceHeaderOption = ActionMenuOption;
+
+export interface SurfaceHeaderNavigation {
+  canGoBack: boolean;
+  canGoForward: boolean;
+  onBack: () => void;
+  onForward: () => void;
+}
 
 interface SurfaceHeaderProps {
   title: ReactNode;
@@ -15,9 +22,9 @@ interface SurfaceHeaderProps {
   meta?: ReactNode;
   actions?: ReactNode;
   options?: SurfaceHeaderOption[];
+  navigation: SurfaceHeaderNavigation;
   headingLevel?: 1 | 2;
   className?: string;
-  onBack?: () => void;
   onOptionsOpenChange?: (open: boolean) => void;
 }
 
@@ -29,9 +36,9 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
     meta,
     actions,
     options = [],
+    navigation,
     headingLevel = 2,
     className,
-    onBack,
     onOptionsOpenChange,
   }: SurfaceHeaderProps,
   ref
@@ -54,16 +61,26 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
       aria-describedby={hasSubtitle ? subtitleId : undefined}
     >
       <div className={styles.leading}>
-        {onBack && (
+        <div className={styles.navigationControls}>
           <button
             type="button"
-            className={styles.backButton}
-            onClick={onBack}
-            aria-label="Go back"
+            className={styles.navigationButton}
+            onClick={navigation.onBack}
+            disabled={!navigation.canGoBack}
+            aria-label="Go back in this pane"
           >
-            <ChevronLeft size={20} />
+            <ChevronLeft size={20} aria-hidden="true" />
           </button>
-        )}
+          <button
+            type="button"
+            className={styles.navigationButton}
+            onClick={navigation.onForward}
+            disabled={!navigation.canGoForward}
+            aria-label="Go forward in this pane"
+          >
+            <ChevronRight size={20} aria-hidden="true" />
+          </button>
+        </div>
         <div className={styles.titles}>
           <HeadingTag className={styles.title} aria-busy={titlePending || undefined}>
             {titlePending ? (
