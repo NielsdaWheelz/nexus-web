@@ -1,10 +1,3 @@
-/**
- * EPUB reader contracts.
- *
- * EPUB now uses one canonical linear model:
- * persisted sections plus TOC nodes that point at those sections.
- */
-
 export interface EpubSectionContent {
   section_id: string;
   label: string;
@@ -25,61 +18,71 @@ export interface EpubSectionContent {
   created_at: string;
 }
 
-export interface EpubNavigationSection {
+export interface ReaderNavigationSection {
   section_id: string;
   label: string;
-  fragment_id: string;
-  fragment_idx: number;
-  href_path: string | null;
-  anchor_id: string | null;
-  source_node_id: string | null;
-  source: "toc" | "spine";
   ordinal: number;
-  char_count: number;
+  fragment_id: string | null;
+  fragment_idx: number | null;
+  level: number | null;
+  depth: number | null;
+  start_offset: number | null;
+  end_offset: number | null;
+  href_path: string | null;
+  href_fragment: string | null;
+  anchor_id: string | null;
+  char_count: number | null;
   source_version?: string | null;
 }
 
-export interface EpubNavigationTocNode {
-  node_id: string;
-  parent_node_id: string | null;
+export interface ReaderNavigationTocNode {
+  id: string;
   label: string;
+  ordinal: number;
   href: string | null;
   fragment_idx: number | null;
-  depth: number;
-  order_key: string;
+  level: number | null;
+  depth: number | null;
   section_id: string | null;
-  children: EpubNavigationTocNode[];
+  source_version?: string | null;
+  children: ReaderNavigationTocNode[];
 }
 
-export interface EpubNavigationLocation {
+export interface ReaderNavigationLocation {
+  id: string;
   label: string;
+  ordinal: number;
   href: string | null;
   fragment_idx: number | null;
   section_id: string | null;
+  source_version?: string | null;
 }
 
-export interface EpubNavigationResponse {
+export interface MediaNavigationResponse {
   data: {
-    sections: EpubNavigationSection[];
-    toc_nodes: EpubNavigationTocNode[];
-    landmarks: EpubNavigationLocation[];
-    page_list: EpubNavigationLocation[];
+    media_id: string;
+    kind: "epub" | "web_article";
+    source_version?: string | null;
+    sections: ReaderNavigationSection[];
+    toc_nodes: ReaderNavigationTocNode[];
+    landmarks: ReaderNavigationLocation[];
+    page_list: ReaderNavigationLocation[];
   };
 }
 
-export interface NormalizedNavigationTocNode extends EpubNavigationTocNode {
+export interface NormalizedNavigationTocNode extends ReaderNavigationTocNode {
   navigable: boolean;
   children: NormalizedNavigationTocNode[];
 }
 
-export function normalizeEpubNavigationToc(
-  nodes: EpubNavigationTocNode[],
+export function normalizeReaderNavigationToc(
+  nodes: ReaderNavigationTocNode[],
   sectionIdSet: Set<string>
 ): NormalizedNavigationTocNode[] {
   return nodes.map((node) => ({
     ...node,
     navigable: node.section_id !== null && sectionIdSet.has(node.section_id),
-    children: normalizeEpubNavigationToc(node.children, sectionIdSet),
+    children: normalizeReaderNavigationToc(node.children, sectionIdSet),
   }));
 }
 

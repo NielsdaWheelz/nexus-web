@@ -1,8 +1,6 @@
 "use client";
 
-import type {
-  EpubNavigationSection,
-} from "@/lib/media/epubReader";
+import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
 
 export interface NavigationTocNodeLike {
   section_id: string | null;
@@ -150,7 +148,7 @@ function normalizeTocLinkPath(href: string | null): string | null {
 export function resolveEpubInternalLinkTarget(
   href: string | null,
   currentSectionId: string | null,
-  sections: EpubNavigationSection[] | null
+  sections: ReaderNavigationSection[] | null,
 ): EpubInternalLinkTarget | null {
   if (!href || !sections || sections.length === 0) {
     return null;

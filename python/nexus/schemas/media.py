@@ -473,52 +473,62 @@ class MediaEvidenceResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class EpubNavigationSectionOut(BaseModel):
-    """Canonical EPUB navigation section target."""
+class ReaderNavigationSectionOut(BaseModel):
+    """Canonical reader navigation section target."""
 
     section_id: str
     label: str
-    fragment_id: UUID
-    fragment_idx: int
-    href_path: str | None
-    anchor_id: str | None
-    source_node_id: str | None
-    source: Literal["toc", "spine"]
     ordinal: int
-    char_count: int
+    fragment_id: UUID | None = None
+    fragment_idx: int | None = None
+    level: int | None = None
+    depth: int | None = None
+    start_offset: int | None = None
+    end_offset: int | None = None
+    href_path: str | None = None
+    href_fragment: str | None = None
+    anchor_id: str | None = None
+    char_count: int | None = None
     source_version: str | None = None
 
 
-class EpubNavigationTocNodeOut(BaseModel):
+class ReaderNavigationTocNodeOut(BaseModel):
     """TOC node extended with canonical section target linkage."""
 
-    node_id: str
-    parent_node_id: str | None
+    id: str
     label: str
-    href: str | None
-    fragment_idx: int | None
-    depth: int
-    order_key: str
-    section_id: str | None
-    children: list["EpubNavigationTocNodeOut"]
+    ordinal: int
+    href: str | None = None
+    fragment_idx: int | None = None
+    level: int | None = None
+    depth: int | None = None
+    section_id: str | None = None
+    source_version: str | None = None
+    children: list["ReaderNavigationTocNodeOut"]
 
 
-class EpubNavigationLocationOut(BaseModel):
-    """Non-TOC EPUB navigation target."""
+class ReaderNavigationLocationOut(BaseModel):
+    """Non-TOC reader navigation target."""
 
+    id: str
     label: str
-    href: str | None
-    fragment_idx: int | None
-    section_id: str | None
+    ordinal: int
+    href: str | None = None
+    fragment_idx: int | None = None
+    section_id: str | None = None
+    source_version: str | None = None
 
 
-class EpubNavigationOut(BaseModel):
-    """Unified EPUB navigation payload for reader UI."""
+class MediaNavigationOut(BaseModel):
+    """Unified media navigation payload for reader UI."""
 
-    sections: list[EpubNavigationSectionOut]
-    toc_nodes: list[EpubNavigationTocNodeOut]
-    landmarks: list[EpubNavigationLocationOut]
-    page_list: list[EpubNavigationLocationOut]
+    media_id: UUID
+    kind: Literal["epub", "web_article"]
+    source_version: str | None = None
+    sections: list[ReaderNavigationSectionOut]
+    toc_nodes: list[ReaderNavigationTocNodeOut]
+    landmarks: list[ReaderNavigationLocationOut]
+    page_list: list[ReaderNavigationLocationOut]
 
 
 class EpubSectionOut(BaseModel):

@@ -29,7 +29,10 @@ from nexus.db.models import (
     MediaKind,
     ProcessingStatus,
 )
+from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.fragment_blocks import insert_fragment_blocks
+from nexus.services.web_article_structure import prepare_web_article_fragment
 from nexus.storage.paths import build_epub_asset_storage_path
 from tests.factories import (
     create_failed_epub_media,
@@ -3143,6 +3146,9 @@ class TestGetEpubNavigationReturnsCanonicalSectionsAndTocTargets:
         assert resp.status_code == 200
 
         body = resp.json()["data"]
+        assert body["media_id"] == str(media_id)
+        assert body["kind"] == "epub"
+        assert body["source_version"] is not None
         sections = body["sections"]
         assert [section["ordinal"] for section in sections] == [0, 1, 2]
         assert [section["fragment_idx"] for section in sections] == [0, 1, 2]
@@ -3156,12 +3162,11 @@ class TestGetEpubNavigationReturnsCanonicalSectionsAndTocTargets:
             "ch1.xhtml",
             "ch2.xhtml",
         ]
-        assert all(section["source"] == "toc" for section in sections)
         assert all("html_sanitized" not in section for section in sections)
         assert all("canonical_text" not in section for section in sections)
 
         toc_nodes = body["toc_nodes"]
-        assert [node["node_id"] for node in toc_nodes] == ["ch0", "ch1", "ch2"]
+        assert [node["id"] for node in toc_nodes] == ["ch0", "ch1", "ch2"]
         assert [node["section_id"] for node in toc_nodes] == [
             "ch0.xhtml",
             "ch1.xhtml",
@@ -3187,12 +3192,94 @@ class TestGetEpubNavigationReturnsCanonicalSectionsAndTocTargets:
 
         body = resp.json()["data"]
         assert body["toc_nodes"] == []
-        assert [section["source"] for section in body["sections"]] == ["spine", "spine"]
         assert [section["section_id"] for section in body["sections"]] == ["ch0.xhtml", "ch1.xhtml"]
         assert [section["fragment_id"] for section in body["sections"]] == [
             str(frag_ids[0]),
             str(frag_ids[1]),
         ]
+
+
+class TestGetWebArticleNavigation:
+    def test_navigation_response_reads_active_heading_index(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+        fragment_id = uuid4()
+
+        prepared = prepare_web_article_fragment(
+            html="""
+                <article>
+                  <h1>Article Title</h1>
+                  <p>Intro text.</p>
+                  <h2>First Section</h2>
+                  <p>First body.</p>
+                  <h3>Nested Section</h3>
+                  <p>Nested body.</p>
+                </article>
+            """,
+            base_url="https://example.com/article",
+            fragment_idx=0,
+            media_title="Article Title",
+        )
+
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.web_article.value,
+                    title="Article Title",
+                    processing_status=ProcessingStatus.ready_for_reading,
+                )
+            )
+            fragment = Fragment(
+                id=fragment_id,
+                media_id=media_id,
+                idx=0,
+                html_sanitized=prepared.html_sanitized,
+                canonical_text=prepared.canonical_text,
+            )
+            session.add(fragment)
+            session.flush()
+            insert_fragment_blocks(session, fragment.id, prepared.fragment_blocks)
+            rebuild_fragment_content_index(
+                session,
+                media_id=media_id,
+                source_kind="web_article",
+                artifact_ref=f"fragments:{fragment_id}",
+                fragments=[fragment],
+                reason="web_navigation_test",
+            )
+            session.commit()
+
+        direct_db.register_cleanup("fragment_blocks", "fragment_id", fragment_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(
+            f"/media/{media_id}/navigation",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 200
+
+        body = resp.json()["data"]
+        assert body["media_id"] == str(media_id)
+        assert body["kind"] == "web_article"
+        assert body["source_version"].startswith("web_article:fragments:")
+        assert [section["label"] for section in body["sections"]] == [
+            "First Section",
+            "Nested Section",
+        ]
+        assert body["sections"][0]["fragment_id"] == str(fragment_id)
+        assert body["sections"][0]["fragment_idx"] == 0
+        assert body["sections"][0]["level"] == 2
+        assert body["sections"][0]["depth"] == 1
+        assert body["sections"][0]["anchor_id"].startswith("nexus-web-heading-0-1-first-section")
+        assert body["toc_nodes"][0]["id"] == body["sections"][0]["section_id"]
+        assert body["toc_nodes"][0]["children"][0]["id"] == body["sections"][1]["section_id"]
 
 
 class TestGetEpubSectionReturnsPayloadAndNavigation:
@@ -3355,8 +3442,8 @@ class TestGetEpubNavigationTreeOrdering:
         assert resp.status_code == 200
 
         toc_nodes = resp.json()["data"]["toc_nodes"]
-        assert [node["node_id"] for node in toc_nodes] == ["root1", "root2"]
-        assert [child["node_id"] for child in toc_nodes[0]["children"]] == ["child1_1", "child1_2"]
+        assert [node["id"] for node in toc_nodes] == ["root1", "root2"]
+        assert [child["id"] for child in toc_nodes[0]["children"]] == ["child1_1", "child1_2"]
         assert toc_nodes[1]["children"] == []
         assert toc_nodes[0]["children"][0]["section_id"] == "Text/ch0.xhtml"
         assert toc_nodes[0]["children"][1]["section_id"] is None
@@ -3389,7 +3476,9 @@ class TestGetEpubReadEndpointsVisibilityMasking:
 class TestGetEpubReadEndpointsKindAndReadinessGuards:
     """test_get_epub_read_endpoints_kind_and_readiness_guards"""
 
-    def test_non_epub_returns_400(self, auth_client, direct_db: DirectSessionManager):
+    def test_non_epub_section_endpoint_returns_400(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
         user_id = create_test_user_id()
         media_id = uuid4()
 
@@ -3408,10 +3497,40 @@ class TestGetEpubReadEndpointsKindAndReadinessGuards:
 
         _add_media_to_user_library(auth_client, user_id, media_id)
 
-        for path in [f"/media/{media_id}/navigation", f"/media/{media_id}/sections/ch0.xhtml"]:
-            resp = auth_client.get(path, headers=auth_headers(user_id))
-            assert resp.status_code == 400, f"Expected 400 for {path}"
-            assert resp.json()["error"]["code"] == "E_INVALID_KIND"
+        resp = auth_client.get(
+            f"/media/{media_id}/sections/ch0.xhtml",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "E_INVALID_KIND"
+
+    def test_unsupported_navigation_kind_returns_409(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        with direct_db.session() as session:
+            media = Media(
+                id=media_id,
+                kind=MediaKind.pdf.value,
+                title="PDF",
+                processing_status=ProcessingStatus.ready_for_reading,
+            )
+            session.add(media)
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        _add_media_to_user_library(auth_client, user_id, media_id)
+
+        resp = auth_client.get(
+            f"/media/{media_id}/navigation",
+            headers=auth_headers(user_id),
+        )
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "E_INVALID_KIND"
 
     def test_non_ready_epub_returns_409(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()

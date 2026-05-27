@@ -312,6 +312,7 @@ class TestFragmentPersistence:
             <html><body>
                 <h1>Title</h1>
                 <p>First paragraph content.</p>
+                <h2>Section</h2>
                 <p>Second paragraph content.</p>
                 <p>Third paragraph content.</p>
             </body></html>
@@ -333,6 +334,8 @@ class TestFragmentPersistence:
             # Check fragment_blocks were created
             blocks = _get_fragment_blocks(db_session, fragment["id"])
             assert len(blocks) > 0, "Fragment blocks should be created during ingestion"
+            assert any(block["block_type"] == "heading" for block in blocks)
+            assert any(block["block_type"] == "paragraph" for block in blocks)
 
             # Verify block structure
             for i, block in enumerate(blocks):
@@ -454,7 +457,7 @@ def _get_fragment_blocks(db: Session, fragment_id: UUID) -> list[dict]:
     """Fetch all fragment_blocks for a fragment as list of dicts."""
     result = db.execute(
         text("""
-            SELECT id, fragment_id, block_idx, start_offset, end_offset, is_empty
+            SELECT id, fragment_id, block_idx, start_offset, end_offset, is_empty, block_type
             FROM fragment_blocks
             WHERE fragment_id = :fragment_id
             ORDER BY block_idx
@@ -470,6 +473,7 @@ def _get_fragment_blocks(db: Session, fragment_id: UUID) -> list[dict]:
             "start_offset": row[3],
             "end_offset": row[4],
             "is_empty": row[5],
+            "block_type": row[6],
         }
         for row in rows
     ]

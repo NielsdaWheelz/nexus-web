@@ -1,44 +1,44 @@
 import { describe, expect, it } from "vitest";
 import {
   isReadableStatus,
-  normalizeEpubNavigationToc,
-  type EpubNavigationResponse,
-  type EpubNavigationTocNode,
-} from "./epubReader";
+  normalizeReaderNavigationToc,
+  type MediaNavigationResponse,
+  type ReaderNavigationTocNode,
+} from "./readerNavigation";
 
-describe("normalizeEpubNavigationToc", () => {
+describe("normalizeReaderNavigationToc", () => {
   it("marks TOC nodes navigable only when section_id is valid", () => {
     const sectionIds = new Set(["OPS/nav/intro"]);
-    const nodes: EpubNavigationTocNode[] = [
+    const nodes: ReaderNavigationTocNode[] = [
       {
-        node_id: "root",
-        parent_node_id: null,
+        id: "root",
         label: "Part I",
+        ordinal: 0,
         href: null,
         fragment_idx: null,
+        level: null,
         depth: 0,
-        order_key: "0001",
         section_id: null,
         children: [
           {
-            node_id: "node-1",
-            parent_node_id: "root",
+            id: "node-1",
             label: "Introduction",
+            ordinal: 1,
             href: "Text/intro.xhtml",
             fragment_idx: 0,
+            level: null,
             depth: 1,
-            order_key: "0001.0001",
             section_id: "OPS/nav/intro",
             children: [],
           },
           {
-            node_id: "node-2",
-            parent_node_id: "root",
+            id: "node-2",
             label: "Chapter 2",
+            ordinal: 2,
             href: "Text/chapter-2.xhtml",
             fragment_idx: 1,
+            level: null,
             depth: 1,
-            order_key: "0001.0002",
             section_id: "OPS/nav/chapter-2",
             children: [],
           },
@@ -46,17 +46,20 @@ describe("normalizeEpubNavigationToc", () => {
       },
     ];
 
-    const out = normalizeEpubNavigationToc(nodes, sectionIds);
+    const out = normalizeReaderNavigationToc(nodes, sectionIds);
     expect(out[0].navigable).toBe(false);
     expect(out[0].children[0].navigable).toBe(true);
     expect(out[0].children[1].navigable).toBe(false);
   });
 });
 
-describe("EpubNavigationResponse", () => {
+describe("MediaNavigationResponse", () => {
   it("accepts the final navigation payload shape", () => {
-    const payload: EpubNavigationResponse = {
+    const payload: MediaNavigationResponse = {
       data: {
+        media_id: "media-1",
+        kind: "web_article",
+        source_version: "web_article:fragments:abc",
         sections: [],
         toc_nodes: [],
         landmarks: [],

@@ -1,5 +1,5 @@
 import type { Fragment } from "@/app/(authenticated)/media/[id]/transcriptView";
-import type { EpubNavigationSection } from "@/lib/media/epubReader";
+import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import type { AnchoredHighlightRow } from "./useAnchoredHighlightProjection";
 
@@ -14,14 +14,14 @@ export interface PositionedHighlight {
  * is sorted ascending by position.
  *
  * EPUB note: a stored EPUB highlight anchors by `fragment_id`, and each
- * `EpubNavigationSection` carries the `fragment_id` of its one fragment, so
+ * `ReaderNavigationSection` carries the `fragment_id` of its one EPUB fragment, so
  * highlights position directly against the section list.
  */
 export function positionHighlights(input: {
   mediaKind: "web" | "transcript" | "epub" | "pdf";
   highlights: AnchoredHighlightRow[];
   fragments: Fragment[];
-  epubSections: EpubNavigationSection[];
+  epubSections: ReaderNavigationSection[];
   numPages: number | null;
 }): PositionedHighlight[] {
   const positioned: PositionedHighlight[] = [];
@@ -46,9 +46,10 @@ export function positionHighlights(input: {
         ? input.epubSections
             .slice()
             .sort((left, right) => left.ordinal - right.ordinal)
+            .filter((section) => section.fragment_id !== null)
             .map((section) => ({
-              fragmentId: section.fragment_id,
-              length: section.char_count,
+              fragmentId: section.fragment_id!,
+              length: section.char_count ?? 0,
             }))
         : input.fragments
             .slice()

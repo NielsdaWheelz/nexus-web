@@ -40,6 +40,7 @@ class FragmentBlockSpec:
     start_offset: int
     end_offset: int
     is_empty: bool
+    block_type: str | None = None
 
 
 def parse_fragment_blocks(canonical_text: str) -> list[FragmentBlockSpec]:
@@ -150,6 +151,7 @@ def insert_fragment_blocks(
             block_idx=spec.block_idx,
             start_offset=spec.start_offset,
             end_offset=spec.end_offset,
+            block_type=spec.block_type,
             is_empty=spec.is_empty,
         )
         db.add(block)

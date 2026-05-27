@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Fragment } from "@/app/(authenticated)/media/[id]/transcriptView";
-import type { EpubNavigationSection } from "@/lib/media/epubReader";
+import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
 import { positionHighlights } from "./overviewPositions";
 import type { AnchoredHighlightRow } from "./useAnchoredHighlightProjection";
 
@@ -19,16 +19,19 @@ function epubSection(
   fragment_id: string,
   ordinal: number,
   char_count: number,
-): EpubNavigationSection {
+): ReaderNavigationSection {
   return {
     fragment_id,
     section_id: `sec-${fragment_id}`,
     label: `Section ${ordinal}`,
     fragment_idx: ordinal,
+    level: null,
+    depth: null,
+    start_offset: null,
+    end_offset: null,
     href_path: null,
+    href_fragment: null,
     anchor_id: null,
-    source_node_id: null,
-    source: "spine",
     ordinal,
     char_count,
   };

@@ -6,7 +6,7 @@
  * section, and the current section list.
  */
 
-import type { EpubNavigationSection } from "@/lib/media/epubReader";
+import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
 import type {
   EpubReaderResumeState,
   ReaderResumeLocations,
@@ -112,10 +112,10 @@ function buildResumeRequest(
 }
 
 function findSectionByHrefPath(
-  sections: EpubNavigationSection[],
+  sections: ReaderNavigationSection[],
   hrefPath: string,
   anchorId: string | null,
-): EpubNavigationSection | null {
+): ReaderNavigationSection | null {
   return (
     sections.find(
       (section) =>
@@ -129,11 +129,11 @@ function findSectionByHrefPath(
 }
 
 function resolveSectionIdByTotalProgression(
-  sections: EpubNavigationSection[],
+  sections: ReaderNavigationSection[],
   totalProgression: number,
 ): string | null {
   const totalCharCount = sections.reduce(
-    (sum, section) => sum + section.char_count,
+    (sum, section) => sum + (section.char_count ?? 0),
     0,
   );
   if (totalCharCount <= 0) {
@@ -148,7 +148,7 @@ function resolveSectionIdByTotalProgression(
 
   let sectionStart = 0;
   for (const section of sections) {
-    const sectionEnd = sectionStart + section.char_count;
+    const sectionEnd = sectionStart + (section.char_count ?? 0);
     if (targetOffset < sectionEnd) {
       return section.section_id;
     }
@@ -158,14 +158,14 @@ function resolveSectionIdByTotalProgression(
 }
 
 function resolveSectionIdByPosition(
-  sections: EpubNavigationSection[],
+  sections: ReaderNavigationSection[],
   position: number,
   readerPositionBucketCp: number,
 ): string | null {
   const targetOffset = (position - 1) * readerPositionBucketCp;
   let sectionStart = 0;
   for (const section of sections) {
-    const sectionEnd = sectionStart + section.char_count;
+    const sectionEnd = sectionStart + (section.char_count ?? 0);
     if (targetOffset < sectionEnd) {
       return section.section_id;
     }
@@ -182,7 +182,7 @@ export function resolveInitialEpubRestoreRequest({
 }: {
   requestedSectionId: string | null;
   resumeState: EpubReaderResumeState | null;
-  sections: EpubNavigationSection[];
+  sections: ReaderNavigationSection[];
   readerPositionBucketCp: number;
 }): EpubRestoreRequest | null {
   if (sections.length === 0) {

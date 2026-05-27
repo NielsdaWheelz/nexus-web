@@ -63,7 +63,6 @@ from nexus.schemas.media import (
     PodcastEpisodeChapterOut,
 )
 from nexus.services import libraries as libraries_service
-from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.capabilities import derive_capabilities
 from nexus.services.content_indexing import (
     delete_media_content_index,
@@ -75,15 +74,15 @@ from nexus.services.contributor_credits import (
     replace_media_contributor_credits,
 )
 from nexus.services.epub_lifecycle import delete_extraction_artifacts
-from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.fragment_blocks import FragmentBlockSpec, insert_fragment_blocks
 from nexus.services.pdf_ingest import (
     delete_pdf_text_artifacts,
     invalidate_pdf_quote_match_metadata,
 )
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
-from nexus.services.sanitize_html import sanitize_html
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
+from nexus.services.web_article_structure import prepare_web_article_fragment
 from nexus.services.x_api import (
     XAuthorThreadSnapshot,
     XPostSnapshot,
@@ -1236,14 +1235,19 @@ def create_captured_web_article(
         )
 
     try:
-        html_sanitized = sanitize_html(content_html, url)
-        canonical_text = generate_canonical_text(html_sanitized)
+        prepared = prepare_web_article_fragment(
+            html=content_html,
+            base_url=url,
+            fragment_idx=0,
+            media_title=title,
+        )
     except ValueError as exc:
         raise ApiError(
             ApiErrorCode.E_SANITIZATION_FAILED,
             "Captured article could not be sanitized",
         ) from exc
 
+    canonical_text = prepared.canonical_text
     if not canonical_text.strip():
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
@@ -1276,12 +1280,12 @@ def create_captured_web_article(
         fragment = Fragment(
             media_id=media.id,
             idx=0,
-            html_sanitized=html_sanitized,
+            html_sanitized=prepared.html_sanitized,
             canonical_text=canonical_text,
         )
         db.add(fragment)
         db.flush()
-        insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(canonical_text))
+        insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
 
         if byline and byline.strip():
             clean_byline = re.sub(r"^by\s+", "", byline.strip(), flags=re.IGNORECASE)
@@ -1750,7 +1754,7 @@ def create_or_reuse_x_author_thread_article(
             db.add(fragment)
         db.flush()
         for fragment in fragments:
-            insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(fragment.canonical_text))
+            insert_fragment_blocks(db, fragment.id, _prepared_fragment_blocks(fragment))
         replace_media_contributor_credits(
             db,
             media_id=media.id,
@@ -1952,7 +1956,7 @@ def _refresh_x_author_thread_media_for_viewer(
         db.add(fragment)
     db.flush()
     for fragment in fragments:
-        insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(fragment.canonical_text))
+        insert_fragment_blocks(db, fragment.id, _prepared_fragment_blocks(fragment))
     replace_media_contributor_credits(
         db,
         media_id=media.id,
@@ -2089,7 +2093,7 @@ def _create_or_reuse_x_snapshot_post_media(
     fragment.media_id = media.id
     db.add(fragment)
     db.flush()
-    insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(fragment.canonical_text))
+    insert_fragment_blocks(db, fragment.id, _prepared_fragment_blocks(fragment))
     author = snapshot.users.get(post.author_id)
     if author is not None:
         replace_media_contributor_credits(
@@ -2120,21 +2124,35 @@ def _build_x_fragment(
     if len(html.encode("utf-8")) > _CAPTURED_ARTICLE_HTML_MAX_BYTES:
         raise InvalidRequestError(ApiErrorCode.E_CAPTURE_TOO_LARGE, "X thread HTML is too large")
     try:
-        html_sanitized = sanitize_html(html, base_url)
-        canonical_text = generate_canonical_text(html_sanitized)
+        prepared = prepare_web_article_fragment(
+            html=html,
+            base_url=base_url,
+            fragment_idx=idx,
+            media_title=None,
+        )
     except ValueError as exc:
         raise ApiError(
             ApiErrorCode.E_SANITIZATION_FAILED, "X thread could not be sanitized"
         ) from exc
+    canonical_text = prepared.canonical_text
     if not canonical_text.strip():
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "X post has no readable text")
-    return Fragment(
+    fragment = Fragment(
         media_id=media_id,
         idx=idx,
-        html_sanitized=html_sanitized,
+        html_sanitized=prepared.html_sanitized,
         canonical_text=canonical_text,
         created_at=created_at,
     )
+    fragment._prepared_fragment_blocks = prepared.fragment_blocks  # type: ignore[attr-defined]
+    return fragment
+
+
+def _prepared_fragment_blocks(fragment: Fragment) -> list[FragmentBlockSpec]:
+    blocks = getattr(fragment, "_prepared_fragment_blocks", None)
+    if blocks is None:
+        raise AssertionError("web article fragment was not prepared through web_article_structure")
+    return blocks
 
 
 def _rebuild_web_article_index_or_mark_failed(
@@ -2247,17 +2265,24 @@ def create_or_reuse_x_oembed_article(
     if len(content_html.encode("utf-8")) > _CAPTURED_ARTICLE_HTML_MAX_BYTES:
         raise InvalidRequestError(ApiErrorCode.E_CAPTURE_TOO_LARGE, "X oEmbed HTML is too large")
 
+    author_name = data.get("author_name")
+    author_name = author_name.strip() if isinstance(author_name, str) else ""
     try:
-        html_sanitized = sanitize_html(content_html, identity.canonical_url)
-        canonical_text = generate_canonical_text(html_sanitized)
+        prepared = prepare_web_article_fragment(
+            html=content_html,
+            base_url=identity.canonical_url,
+            fragment_idx=0,
+            media_title=f"X post by {author_name}"
+            if author_name
+            else f"X post {identity.provider_id}",
+        )
     except ValueError as exc:
         raise ApiError(ApiErrorCode.E_SANITIZATION_FAILED, "X post could not be sanitized") from exc
 
+    canonical_text = prepared.canonical_text
     if not canonical_text.strip():
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "X post has no readable text")
 
-    author_name = data.get("author_name")
-    author_name = author_name.strip() if isinstance(author_name, str) else ""
     provider_name = data.get("provider_name")
     provider_name = provider_name.strip() if isinstance(provider_name, str) else "X"
     now = datetime.now(UTC)
@@ -2287,13 +2312,13 @@ def create_or_reuse_x_oembed_article(
         fragment = Fragment(
             media_id=media.id,
             idx=0,
-            html_sanitized=html_sanitized,
+            html_sanitized=prepared.html_sanitized,
             canonical_text=canonical_text,
             created_at=now,
         )
         db.add(fragment)
         db.flush()
-        insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(canonical_text))
+        insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
 
         if author_name:
             replace_media_contributor_credits(

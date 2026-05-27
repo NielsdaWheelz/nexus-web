@@ -20,6 +20,12 @@ from nexus.services.semantic_chunks import (
     to_pgvector_literal,
     transcript_embedding_dimensions,
 )
+from nexus.services.web_article_structure import (
+    WebArticleIndexBlockSpec,
+    add_heading_anchors,
+    build_web_article_index_blocks,
+    source_version_for_web_article,
+)
 
 CHUNKER_VERSION = "block_token_v2"
 CHUNK_MAX_TOKENS = 420
@@ -671,6 +677,13 @@ def rebuild_fragment_content_index(
     reason: str,
     language: str | None = None,
 ) -> ContentIndexResult:
+    media_title: str | None = None
+    if source_kind == "web_article":
+        media_title = db.execute(
+            text("SELECT title FROM media WHERE id = :media_id"),
+            {"media_id": media_id},
+        ).scalar_one_or_none()
+
     nav_by_fragment_idx: dict[int, dict[str, object]] = {}
     if source_kind == "epub":
         for row in db.execute(
@@ -698,11 +711,86 @@ def rebuild_fragment_content_index(
 
     blocks: list[IndexableBlock] = []
     joined_text_parts: list[str] = []
+    web_specs: list[WebArticleIndexBlockSpec] = []
     source_offset = 0
     for fragment in sorted(fragments, key=lambda item: int(item.idx)):
         fragment_text = str(fragment.canonical_text or "")
         joined_text_parts.append(fragment_text)
         source_base = source_offset
+        if source_kind == "web_article":
+            html_sanitized = add_heading_anchors(
+                str(fragment.html_sanitized or ""),
+                fragment_idx=int(fragment.idx),
+            )
+            if html_sanitized != str(fragment.html_sanitized or ""):
+                db.execute(
+                    text(
+                        """
+                        UPDATE fragments
+                        SET html_sanitized = :html_sanitized
+                        WHERE id = :fragment_id
+                        """
+                    ),
+                    {
+                        "fragment_id": fragment.id,
+                        "html_sanitized": html_sanitized,
+                    },
+                )
+            for spec in build_web_article_index_blocks(
+                html_sanitized=html_sanitized,
+                canonical_text=fragment_text,
+                fragment_idx=int(fragment.idx),
+                media_title=media_title,
+            ):
+                block_text = fragment_text[spec.start_offset : spec.end_offset]
+                locator: dict[str, object] = {
+                    "type": "web_text_offsets",
+                    "kind": "web_text",
+                    "version": 2,
+                    "fragment_id": str(fragment.id),
+                    "fragment_idx": int(fragment.idx),
+                    "start_offset": spec.start_offset,
+                    "end_offset": spec.end_offset,
+                    "text_quote": _text_quote(
+                        fragment_text,
+                        spec.start_offset,
+                        spec.end_offset,
+                    ),
+                }
+                metadata: dict[str, object] = {}
+                if spec.section_id is not None:
+                    locator["section_id"] = spec.section_id
+                    metadata["section_id"] = spec.section_id
+                if spec.anchor_id is not None:
+                    locator["anchor_id"] = spec.anchor_id
+                    metadata["anchor_id"] = spec.anchor_id
+                if spec.heading_level is not None:
+                    locator["heading_level"] = spec.heading_level
+                    metadata["heading_level"] = spec.heading_level
+                if spec.depth is not None:
+                    metadata["depth"] = spec.depth
+                if spec.ordinal is not None:
+                    metadata["ordinal"] = spec.ordinal
+                blocks.append(
+                    IndexableBlock(
+                        media_id=media_id,
+                        source_kind=source_kind,
+                        block_idx=len(blocks),
+                        block_kind=spec.block_kind,
+                        canonical_text=block_text,
+                        extraction_confidence=None,
+                        source_start_offset=source_base + spec.start_offset,
+                        source_end_offset=source_base + spec.end_offset,
+                        locator=locator,
+                        selector=locator,
+                        heading_path=spec.heading_path,
+                        metadata=metadata,
+                    )
+                )
+                web_specs.append(spec)
+            source_offset += len(fragment_text) + 2
+            continue
+
         block_rows = db.execute(
             text(
                 """
@@ -753,6 +841,14 @@ def rebuild_fragment_content_index(
         source_offset += len(fragment_text) + 2
 
     joined_text = "\n\n".join(joined_text_parts)
+    source_version = (
+        source_version_for_web_article(joined_text_parts, web_specs)
+        if source_kind == "web_article"
+        else "fragments_v1"
+    )
+    extractor_version = (
+        "web_article_structure_v1" if source_kind == "web_article" else "fragment_blocks_v1"
+    )
     return rebuild_media_content_index(
         db,
         media_id=media_id,
@@ -760,11 +856,11 @@ def rebuild_fragment_content_index(
         source_snapshot=SourceSnapshotSpec(
             artifact_kind="html" if source_kind == "web_article" else "xhtml",
             artifact_ref=artifact_ref,
-            content_type="text/html" if source_kind == "web_article" else "application/xhtml+xml",
+            content_type=("text/html" if source_kind == "web_article" else "application/xhtml+xml"),
             byte_length=len(joined_text.encode("utf-8")),
             content_sha256=_sha256(joined_text),
-            source_version="fragments_v1",
-            extractor_version="fragment_blocks_v1",
+            source_version=source_version,
+            extractor_version=extractor_version,
             source_fingerprint=f"sha256:{_sha256(joined_text)}",
             parent_snapshot_id=None,
             language=language,
@@ -882,7 +978,7 @@ def repair_ready_media_content_index_now(
         fragments = db.execute(
             text(
                 """
-                SELECT id, idx, canonical_text
+                SELECT id, idx, canonical_text, html_sanitized
                 FROM fragments
                 WHERE media_id = :media_id
                 ORDER BY idx ASC

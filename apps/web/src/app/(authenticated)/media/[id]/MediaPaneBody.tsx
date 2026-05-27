@@ -124,17 +124,18 @@ import { useReaderResumeState } from "@/lib/reader/useReaderResumeState";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { mergeContextItems } from "@/lib/conversations/attachedContext";
 import {
-  normalizeEpubNavigationToc,
   isReadableStatus,
-  type EpubNavigationResponse,
-  type EpubNavigationSection,
   type EpubSectionContent,
+  type MediaNavigationResponse,
   type NormalizedNavigationTocNode,
-} from "@/lib/media/epubReader";
+  normalizeReaderNavigationToc,
+  type ReaderNavigationSection,
+} from "@/lib/media/readerNavigation";
 import { useDocumentActions } from "@/lib/media/useDocumentActions";
 import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
 import { useFocusModeTracking } from "@/lib/reader/useFocusModeTracking";
 import EpubContentPane from "./EpubContentPane";
+import ReaderContentsNav from "./ReaderContentsNav";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
 import TranscriptContentPanel from "./TranscriptContentPanel";
 import TranscriptStatePanel from "./TranscriptStatePanel";
@@ -177,6 +178,7 @@ import {
   FileText,
   Highlighter,
   Library,
+  ListTree,
   RefreshCw,
 } from "lucide-react";
 import {
@@ -430,7 +432,7 @@ export default function MediaPaneBody() {
   const requestedFragmentId = searchParams.get("fragment");
   const requestedHighlightId = searchParams.get("highlight");
   const requestedEvidenceId = searchParams.get("evidence");
-  const requestedEpubLoc = searchParams.get("loc");
+  const requestedReaderLoc = searchParams.get("loc");
   const requestedPdfPageNumber = parsePositivePageNumber(
     searchParams.get("page"),
   );
@@ -527,7 +529,7 @@ export default function MediaPaneBody() {
 
   // ---- EPUB state ----
   const [epubSections, setEpubSections] = useState<
-    EpubNavigationSection[] | null
+    ReaderNavigationSection[] | null
   >(null);
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [epubRestoreRequest, setEpubRestoreRequest] =
@@ -542,6 +544,18 @@ export default function MediaPaneBody() {
   const [epubSectionLoading, setEpubSectionLoading] = useState(false);
   const [epubError, setEpubError] = useState<string | null>(null);
   const [epubTocExpanded, setEpubTocExpanded] = useState(false);
+
+  // ---- Web article navigation state ----
+  const [webSections, setWebSections] = useState<
+    ReaderNavigationSection[] | null
+  >(null);
+  const [webToc, setWebToc] = useState<NormalizedNavigationTocNode[] | null>(
+    null,
+  );
+  const [activeWebSectionId, setActiveWebSectionId] = useState<string | null>(
+    null,
+  );
+  const [webTocExpanded, setWebTocExpanded] = useState(false);
   const [pdfControlsState, setPdfControlsState] =
     useState<PdfReaderControlsState | null>(null);
   const pdfControlsRef = useRef<PdfReaderControlActions | null>(null);
@@ -614,7 +628,7 @@ export default function MediaPaneBody() {
     typeof resolvedEvidenceParams?.fragment === "string"
       ? resolvedEvidenceParams.fragment
       : null;
-  const resolvedEvidenceEpubLoc =
+  const resolvedEvidenceReaderLoc =
     typeof resolvedEvidenceParams?.loc === "string"
       ? resolvedEvidenceParams.loc
       : null;
@@ -644,7 +658,8 @@ export default function MediaPaneBody() {
   const activeRequestedFragmentId = suppressingCurrentTranscriptUrlRequest
     ? null
     : (requestedFragmentId ?? resolvedEvidenceFragmentId);
-  const activeRequestedEpubLoc = requestedEpubLoc ?? resolvedEvidenceEpubLoc;
+  const activeRequestedReaderLoc =
+    requestedReaderLoc ?? resolvedEvidenceReaderLoc;
   const activeRequestedStartMs = suppressingCurrentTranscriptUrlRequest
     ? null
     : (requestedStartMs ?? resolvedEvidenceStartMs);
@@ -666,6 +681,7 @@ export default function MediaPaneBody() {
   const railFocusScrollAppliedRef = useRef<string | null>(null);
   const mismatchToastFragmentRef = useRef<string | null>(null);
   const mismatchLoggedFragmentRef = useRef<string | null>(null);
+  const webSectionScrollKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (
@@ -864,39 +880,39 @@ export default function MediaPaneBody() {
 
   focusedHighlightIdRef.current = focusState.focusedId;
 
-  const applyEpubNavigationResponse = useCallback(
-    (navResp: EpubNavigationResponse): EpubNavigationSection[] => {
+  const readNavigationPayload = useCallback(
+    (navResp: MediaNavigationResponse) => {
       const tocNodes = navResp.data
         .toc_nodes as unknown as NavigationTocNodeLike[];
       const sections = navResp.data.sections.map((section) => ({
         ...section,
-        anchor_id: resolveSectionAnchorId(
-          section.section_id,
-          section.anchor_id,
-          tocNodes,
-        ),
+        anchor_id:
+          navResp.data.kind === "epub"
+            ? resolveSectionAnchorId(
+                section.section_id,
+                section.anchor_id,
+                tocNodes,
+              )
+            : section.anchor_id,
       }));
       const sectionIdSet = new Set(
         sections.map((section) => section.section_id),
       );
-      setEpubSections(sections);
-      setEpubToc(
-        normalizeEpubNavigationToc(navResp.data.toc_nodes, sectionIdSet),
-      );
-      setTocWarning(false);
-      return sections;
+      return {
+        kind: navResp.data.kind,
+        sections,
+        toc: normalizeReaderNavigationToc(navResp.data.toc_nodes, sectionIdSet),
+      };
     },
     [],
   );
 
-  const loadEpubNavigation = useCallback(async (): Promise<
-    EpubNavigationSection[]
-  > => {
-    const navResp = await apiFetch<EpubNavigationResponse>(
+  const loadReaderNavigation = useCallback(async () => {
+    const navResp = await apiFetch<MediaNavigationResponse>(
       `/api/media/${id}/navigation`,
     );
-    return applyEpubNavigationResponse(navResp);
-  }, [applyEpubNavigationResponse, id]);
+    return readNavigationPayload(navResp);
+  }, [id, readNavigationPayload]);
 
   // Active content
   const activeContent: ActiveContent | null = useMemo(() => {
@@ -970,7 +986,7 @@ export default function MediaPaneBody() {
         if (section.section_id === activeEpubSection.section_id) {
           break;
         }
-        offset += section.char_count;
+        offset += section.char_count ?? 0;
       }
       return offset;
     }
@@ -1005,7 +1021,10 @@ export default function MediaPaneBody() {
           ? canonicalCpLength(activeEpubSection.canonical_text)
           : 0;
       }
-      return epubSections.reduce((sum, section) => sum + section.char_count, 0);
+      return epubSections.reduce(
+        (sum, section) => sum + (section.char_count ?? 0),
+        0,
+      );
     }
     if (fragments.length > 0) {
       return fragments.reduce(
@@ -1269,11 +1288,20 @@ export default function MediaPaneBody() {
 
     const loadEpub = async () => {
       try {
-        const sections = await loadEpubNavigation();
+        const navigation = await loadReaderNavigation();
         if (cancelled || sessionId !== restoreSessionIdRef.current) return;
+        if (navigation.kind !== "epub") {
+          setEpubError("Failed to load EPUB navigation.");
+          void settleRestoreSession(sessionId);
+          return;
+        }
+        const sections = navigation.sections;
+        setEpubSections(sections);
+        setEpubToc(navigation.toc);
+        setTocWarning(false);
 
         const restoreRequest = resolveInitialEpubRestoreRequest({
-          requestedSectionId: activeRequestedEpubLoc,
+          requestedSectionId: activeRequestedReaderLoc,
           resumeState: initialEpubResumeState,
           sections,
           readerPositionBucketCp: READER_POSITION_BUCKET_CP,
@@ -1294,7 +1322,7 @@ export default function MediaPaneBody() {
           return;
         }
 
-        if (activeRequestedEpubLoc !== restoreRequest.sectionId) {
+        if (activeRequestedReaderLoc !== restoreRequest.sectionId) {
           router.replace(
             buildEpubLocationHref(id, restoreRequest.sectionId, {
               fragmentId: activeRequestedFragmentId,
@@ -1338,12 +1366,12 @@ export default function MediaPaneBody() {
     };
   }, [
     beginRestoreSession,
-    activeRequestedEpubLoc,
+    activeRequestedReaderLoc,
     activeRequestedFragmentId,
     id,
     initialEpubResumeState,
     initialReaderResumeStateLoading,
-    loadEpubNavigation,
+    loadReaderNavigation,
     media,
     requestedHighlightId,
     router,
@@ -1435,7 +1463,7 @@ export default function MediaPaneBody() {
   // EPUB URL/state sync for browser back/forward on ?loc=
   useEffect(() => {
     if (!isEpub || !epubSections || epubSections.length === 0) return;
-    const locParam = activeRequestedEpubLoc;
+    const locParam = activeRequestedReaderLoc;
     if (!locParam || locParam === activeSectionId) return;
     const section = epubSections.find((item) => item.section_id === locParam);
     if (!section) return;
@@ -1448,7 +1476,7 @@ export default function MediaPaneBody() {
       ),
     );
   }, [
-    activeRequestedEpubLoc,
+    activeRequestedReaderLoc,
     activeRequestedFragmentId,
     activeSectionId,
     beginRestoreSession,
@@ -1461,10 +1489,104 @@ export default function MediaPaneBody() {
     initialEpubRestoreResolvedRef.current = false;
     setRestorePhase("idle");
     setEpubRestoreRequest(null);
+    setWebSections(null);
+    setWebToc(null);
+    setActiveWebSectionId(null);
+    setWebTocExpanded(false);
+    webSectionScrollKeyRef.current = null;
     scrollRestoreAppliedRef.current = false;
     lastSavedTextAnchorOffsetRef.current = null;
     setTextRestoreSettled(false);
   }, [id]);
+
+  useEffect(() => {
+    if (
+      media?.kind !== "web_article" ||
+      !isReadableStatus(media?.processing_status ?? "")
+    ) {
+      setWebSections(null);
+      setWebToc(null);
+      setActiveWebSectionId(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadWebNavigation = async () => {
+      try {
+        const navigation = await loadReaderNavigation();
+        if (cancelled || navigation.kind !== "web_article") {
+          return;
+        }
+        setWebSections(navigation.sections);
+        setWebToc(navigation.toc);
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+        setWebSections([]);
+        setWebToc([]);
+        if (
+          !isApiError(err) ||
+          (err.code !== "E_MEDIA_NOT_READY" && err.code !== "E_INVALID_KIND")
+        ) {
+          feedback.show({
+            severity: "error",
+            title: "Failed to load article contents.",
+          });
+        }
+      }
+    };
+
+    void loadWebNavigation();
+    return () => {
+      cancelled = true;
+    };
+  }, [feedback, loadReaderNavigation, media?.kind, media?.processing_status]);
+
+  useEffect(() => {
+    if (media?.kind !== "web_article" || webSections === null) {
+      return;
+    }
+    if (!activeRequestedReaderLoc) {
+      setActiveWebSectionId(null);
+      return;
+    }
+
+    const section = webSections.find(
+      (item) => item.section_id === activeRequestedReaderLoc,
+    );
+    if (!section) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("loc");
+      const query = params.toString();
+      router.replace(query ? `/media/${id}?${query}` : `/media/${id}`);
+      setActiveWebSectionId(null);
+      feedback.show({
+        severity: "warning",
+        title: "Section unavailable.",
+      });
+      return;
+    }
+
+    setActiveWebSectionId(section.section_id);
+    if (section.fragment_id && section.fragment_id !== activeRequestedFragmentId) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("loc", section.section_id);
+      params.set("fragment", section.fragment_id);
+      params.delete("highlight");
+      params.delete("evidence");
+      router.replace(`/media/${id}?${params.toString()}`);
+    }
+  }, [
+    activeRequestedFragmentId,
+    activeRequestedReaderLoc,
+    feedback,
+    id,
+    media?.kind,
+    router,
+    searchParams,
+    webSections,
+  ]);
 
   useEffect(() => {
     scrollRestoreAppliedRef.current = false;
@@ -2300,6 +2422,106 @@ export default function MediaPaneBody() {
     [activeContent, highlights, temporaryTextHighlight],
   );
 
+  useEffect(() => {
+    if (
+      media?.kind !== "web_article" ||
+      !activeWebSectionId ||
+      !contentRef.current ||
+      !activeContent ||
+      readerProfileLoading ||
+      !readerLayoutReady
+    ) {
+      return;
+    }
+    const section = webSections?.find(
+      (item) => item.section_id === activeWebSectionId,
+    );
+    if (!section || section.fragment_id !== activeContent.fragmentId) {
+      return;
+    }
+
+    const key = `${section.section_id}:${activeContent.fragmentId}:${renderedHtml.length}`;
+    if (webSectionScrollKeyRef.current === key) {
+      return;
+    }
+    webSectionScrollKeyRef.current = key;
+
+    const container = getPaneScrollContainer(contentRef.current);
+    if (!container) {
+      return;
+    }
+
+    let releaseChromeLock =
+      isMobileViewport && paneMobileChrome
+        ? paneMobileChrome.acquireVisibleLock("reader-restore")
+        : null;
+    const releaseChrome = () => {
+      releaseChromeLock?.();
+      releaseChromeLock = null;
+    };
+
+    let rafId = 0;
+    let attempts = 0;
+    const maxAttempts = 48;
+
+    const findTarget = (): HTMLElement | null => {
+      const root = contentRef.current;
+      if (!root || !section.anchor_id) {
+        return null;
+      }
+      return (
+        Array.from(root.querySelectorAll<HTMLElement>("[id]")).find(
+          (el) => el.getAttribute("id") === section.anchor_id,
+        ) ?? null
+      );
+    };
+
+    const attemptScroll = () => {
+      attempts += 1;
+      const target = findTarget();
+      if (target) {
+        target.scrollIntoView({ block: "start", behavior: "auto" });
+        releaseChrome();
+        return;
+      }
+      if (
+        section.start_offset !== null &&
+        cursorRef.current &&
+        scrollToCanonicalTextAnchor(
+          container,
+          cursorRef.current,
+          section.start_offset,
+        )
+      ) {
+        releaseChrome();
+        return;
+      }
+      if (attempts < maxAttempts) {
+        rafId = window.requestAnimationFrame(attemptScroll);
+        return;
+      }
+      releaseChrome();
+    };
+
+    rafId = window.requestAnimationFrame(attemptScroll);
+    return () => {
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+      }
+      releaseChrome();
+    };
+  }, [
+    activeContent,
+    activeWebSectionId,
+    isMobileViewport,
+    media?.kind,
+    paneMobileChrome,
+    readerLayoutReady,
+    readerProfileLoading,
+    renderedHtml.length,
+    webSections,
+  ]);
+
   // ==========================================================================
   // Canonical Cursor Building
   // ==========================================================================
@@ -3020,6 +3242,39 @@ export default function MediaPaneBody() {
     [activeSectionId, beginRestoreSession, epubSections, id, router],
   );
 
+  const navigateToWebSection = useCallback(
+    (sectionId: string) => {
+      const section = webSections?.find(
+        (item) => item.section_id === sectionId,
+      );
+      if (!section) {
+        return;
+      }
+      cancelRestoreSession();
+      clearFocus();
+      clearRetainedSelection(false);
+      setHighlights([]);
+      setActiveWebSectionId(section.section_id);
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("loc", section.section_id);
+      if (section.fragment_id) {
+        params.set("fragment", section.fragment_id);
+      }
+      params.delete("highlight");
+      params.delete("evidence");
+      router.push(`/media/${id}?${params.toString()}`);
+    },
+    [
+      cancelRestoreSession,
+      clearFocus,
+      clearRetainedSelection,
+      id,
+      router,
+      searchParams,
+      webSections,
+    ],
+  );
+
   const activeSectionPosition = useMemo(() => {
     if (!epubSections || !activeSectionId) {
       return -1;
@@ -3039,6 +3294,8 @@ export default function MediaPaneBody() {
       ? epubSections[activeSectionPosition + 1]
       : null;
   const hasEpubToc = epubToc !== null && epubToc.length > 0;
+  const hasWebToc =
+    webToc !== null && webToc.length > 0 && (webSections?.length ?? 0) >= 2;
 
   const handlePdfPageHighlightsChange = useCallback(
     (nextPage: number, nextHighlights: PdfHighlightOut[]) => {
@@ -3338,6 +3595,10 @@ export default function MediaPaneBody() {
       setEpubSections(null);
       setEpubToc(null);
       setActiveSectionId(null);
+      setWebSections(null);
+      setWebToc(null);
+      setActiveWebSectionId(null);
+      setWebTocExpanded(false);
       setEpubError("processing");
       if (!media) return;
       const targetId = media.id;
@@ -3754,16 +4015,6 @@ export default function MediaPaneBody() {
     },
   });
 
-  if (isEpub && canRead && (hasEpubToc || tocWarning)) {
-    mediaReaderOptions.push({
-      id: "toggle-epub-toc",
-      label: epubTocExpanded
-        ? "Hide table of contents"
-        : "Show table of contents",
-      onSelect: () => setEpubTocExpanded((value) => !value),
-    });
-  }
-
   if (isMobileViewport && showHighlightsPane) {
     mediaReaderOptions.push({
       id: "show-highlights",
@@ -3860,6 +4111,17 @@ export default function MediaPaneBody() {
         aria-label="EPUB controls"
       >
         <div className={styles.mediaToolbarRow}>
+          {(hasEpubToc || tocWarning) ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              leadingIcon={<ListTree size={16} aria-hidden="true" />}
+              onClick={() => setEpubTocExpanded((value) => !value)}
+              aria-pressed={epubTocExpanded}
+            >
+              Contents
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="sm"
@@ -3920,6 +4182,24 @@ export default function MediaPaneBody() {
               ))}
             </Select>
           ) : null}
+        </div>
+      </div>
+    ) : media?.kind === "web_article" && canRead && hasWebToc ? (
+      <div
+        className={styles.mediaToolbar}
+        role="toolbar"
+        aria-label="Article controls"
+      >
+        <div className={styles.mediaToolbarRow}>
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={<ListTree size={16} aria-hidden="true" />}
+            onClick={() => setWebTocExpanded((value) => !value)}
+            aria-pressed={webTocExpanded}
+          >
+            Contents
+          </Button>
         </div>
       </div>
     ) : null;
@@ -4052,11 +4332,16 @@ export default function MediaPaneBody() {
       }
 
       if (type === "epub_fragment_offsets" || type === "web_text_offsets") {
-        const sectionId =
-          type === "epub_fragment_offsets" &&
-          typeof locator.section_id === "string"
+        const locatorSectionId =
+          "section_id" in locator && typeof locator.section_id === "string"
             ? locator.section_id
-            : (activeEpubSection?.section_id ?? null);
+            : null;
+        const sectionId =
+          locatorSectionId
+            ? locatorSectionId
+            : type === "epub_fragment_offsets"
+              ? (activeEpubSection?.section_id ?? null)
+              : null;
         const fragmentId =
           typeof locator.fragment_id === "string" ? locator.fragment_id : null;
         if (sectionId && isEpub) {
@@ -4066,6 +4351,9 @@ export default function MediaPaneBody() {
             }),
           );
           return;
+        }
+        if (sectionId && !isEpub) {
+          params.set("loc", sectionId);
         }
         if (fragmentId) {
           params.set("fragment", fragmentId);
@@ -4875,6 +5163,15 @@ export default function MediaPaneBody() {
                   data-hyphenation={hyphenationForRoot}
                 >
                   <div className={styles.readerContentInner}>
+                    {hasWebToc && (
+                      <ReaderContentsNav
+                        nodes={webToc ?? []}
+                        activeSectionId={activeWebSectionId}
+                        expanded={webTocExpanded}
+                        warning={false}
+                        onNavigate={navigateToWebSection}
+                      />
+                    )}
                     <div
                       ref={contentRef}
                       className={styles.fragments}

@@ -38,7 +38,13 @@ from nexus.schemas.media import (
     UploadInitRequest,
 )
 from nexus.schemas.reader import ReaderResumeState
-from nexus.services import epub_lifecycle, epub_read, image_proxy, locator_resolver
+from nexus.services import (
+    epub_lifecycle,
+    epub_read,
+    image_proxy,
+    locator_resolver,
+    reader_navigation,
+)
 from nexus.services import libraries as libraries_service
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
@@ -492,9 +498,9 @@ def add_media_libraries(
         db, viewer.user_id, media_id, body.library_ids
     )
     return success_response(
-        MediaLibrariesResponse(
-            media_id=media_id, library_ids_added=inserted
-        ).model_dump(mode="json")
+        MediaLibrariesResponse(media_id=media_id, library_ids_added=inserted).model_dump(
+            mode="json"
+        )
     )
 
 
@@ -618,13 +624,13 @@ def get_epub_section(
 
 
 @router.get("/media/{media_id}/navigation")
-def get_epub_navigation(
+def get_media_navigation(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get canonical EPUB navigation payload (persisted sections + TOC links)."""
-    result = epub_read.get_epub_navigation_for_viewer(db, viewer.user_id, media_id)
+    """Get canonical reader navigation payload."""
+    result = reader_navigation.get_media_navigation_for_viewer(db, viewer.user_id, media_id)
     return success_response(result.model_dump(mode="json"))
 
 

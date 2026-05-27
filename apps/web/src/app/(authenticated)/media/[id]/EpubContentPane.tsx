@@ -1,14 +1,14 @@
 import type { MouseEvent } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import {
-  type EpubNavigationSection,
   type EpubSectionContent,
   type NormalizedNavigationTocNode,
-} from "@/lib/media/epubReader";
+  type ReaderNavigationSection,
+} from "@/lib/media/readerNavigation";
 import {
-  parseAnchorIdFromHref,
   resolveEpubInternalLinkTarget,
 } from "./epubHelpers";
+import ReaderContentsNav from "./ReaderContentsNav";
 import styles from "./page.module.css";
 
 export default function EpubContentPane({
@@ -27,7 +27,7 @@ export default function EpubContentPane({
   onNavigate,
 }: {
   mediaId: string;
-  sections: EpubNavigationSection[] | null;
+  sections: ReaderNavigationSection[] | null;
   activeChapter: EpubSectionContent | null;
   activeSectionId: string | null;
   chapterLoading: boolean;
@@ -87,22 +87,13 @@ export default function EpubContentPane({
   return (
     <div className={styles.epubContainer}>
       {(hasToc || tocWarning) && (
-        <div className={styles.tocSection}>
-          <div className={styles.tocToggle}>
-            Table of Contents
-            {tocWarning && !hasToc && <span className={styles.tocWarning}> (unavailable)</span>}
-          </div>
-
-          {tocExpanded && hasToc && (
-            <div className={styles.tocTree}>
-              <TocNodeList
-                nodes={toc!}
-                activeSectionId={activeSectionId}
-                onNavigate={onNavigate}
-              />
-            </div>
-          )}
-        </div>
+        <ReaderContentsNav
+          nodes={toc ?? []}
+          activeSectionId={activeSectionId}
+          expanded={tocExpanded}
+          warning={tocWarning}
+          onNavigate={onNavigate}
+        />
       )}
 
       {chapterLoading ? (
@@ -121,46 +112,5 @@ export default function EpubContentPane({
         </div>
       ) : null}
     </div>
-  );
-}
-
-function TocNodeList({
-  nodes,
-  activeSectionId,
-  onNavigate,
-}: {
-  nodes: NormalizedNavigationTocNode[];
-  activeSectionId: string | null;
-  onNavigate: (sectionId: string, anchorId?: string | null) => void;
-}) {
-  return (
-    <ul className={styles.tocList}>
-      {nodes.map((node) => (
-        <li key={node.node_id} className={styles.tocItem}>
-          {node.navigable ? (
-            <button
-              className={`${styles.tocLink} ${
-                node.section_id === activeSectionId ? styles.tocActive : ""
-              }`}
-              onClick={() =>
-                node.section_id &&
-                onNavigate(node.section_id, parseAnchorIdFromHref(node.href))
-              }
-            >
-              {node.label}
-            </button>
-          ) : (
-            <span className={styles.tocLabel}>{node.label}</span>
-          )}
-          {node.children.length > 0 && (
-            <TocNodeList
-              nodes={node.children}
-              activeSectionId={activeSectionId}
-              onNavigate={onNavigate}
-            />
-          )}
-        </li>
-      ))}
-    </ul>
   );
 }

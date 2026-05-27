@@ -10,11 +10,11 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media as _can_read_media
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.media import (
-    EpubNavigationLocationOut,
-    EpubNavigationOut,
-    EpubNavigationSectionOut,
-    EpubNavigationTocNodeOut,
     EpubSectionOut,
+    MediaNavigationOut,
+    ReaderNavigationLocationOut,
+    ReaderNavigationSectionOut,
+    ReaderNavigationTocNodeOut,
 )
 
 _READABLE_STATUSES = frozenset({"ready_for_reading", "embedding", "ready"})
@@ -92,7 +92,7 @@ def get_epub_navigation_for_viewer(
     db: Session,
     viewer_id: UUID,
     media_id: UUID,
-) -> EpubNavigationOut:
+) -> MediaNavigationOut:
     """Return canonical persisted EPUB navigation."""
     _enforce_epub_read_guards(db, viewer_id, media_id)
 
@@ -154,16 +154,15 @@ def get_epub_navigation_for_viewer(
     page_rows = _load_navigation_locations(db, media_id, "page_list")
 
     sections = [
-        EpubNavigationSectionOut(
+        ReaderNavigationSectionOut(
             section_id=row[0],
             label=row[1],
+            ordinal=row[8],
             fragment_id=row[2],
             fragment_idx=row[3],
             href_path=row[4],
+            href_fragment=row[5],
             anchor_id=row[5],
-            source_node_id=row[6],
-            source=row[7],
-            ordinal=row[8],
             char_count=row[9],
             source_version=row[10],
         )
@@ -171,23 +170,20 @@ def get_epub_navigation_for_viewer(
     ]
 
     section_by_source_node = {
-        section.source_node_id: section.section_id
-        for section in sections
-        if section.source_node_id is not None
+        str(row[6]): str(row[0]) for row in section_rows if row[6] is not None
     }
 
-    nodes_by_id: dict[str, EpubNavigationTocNodeOut] = {}
-    roots: list[EpubNavigationTocNodeOut] = []
+    nodes_by_id: dict[str, ReaderNavigationTocNodeOut] = {}
+    roots: list[ReaderNavigationTocNodeOut] = []
 
-    for row in toc_rows:
-        node = EpubNavigationTocNodeOut(
-            node_id=row[0],
-            parent_node_id=row[1],
+    for ordinal, row in enumerate(toc_rows):
+        node = ReaderNavigationTocNodeOut(
+            id=row[0],
             label=row[2],
+            ordinal=ordinal,
             href=row[3],
             fragment_idx=row[4],
             depth=row[5],
-            order_key=row[6],
             section_id=section_by_source_node.get(row[0]),
             children=[],
         )
@@ -201,26 +197,36 @@ def get_epub_navigation_for_viewer(
         else:
             nodes_by_id[parent_id].children.append(node)
 
-    return EpubNavigationOut(
+    source_version = next(
+        (section.source_version for section in sections if section.source_version), None
+    )
+    return MediaNavigationOut(
+        media_id=media_id,
+        kind="epub",
+        source_version=source_version,
         sections=sections,
         toc_nodes=roots,
         landmarks=[
-            EpubNavigationLocationOut(
+            ReaderNavigationLocationOut(
+                id=f"landmark:{idx}",
                 label=row[0],
+                ordinal=idx,
                 href=row[1],
                 fragment_idx=row[2],
                 section_id=row[3],
             )
-            for row in landmark_rows
+            for idx, row in enumerate(landmark_rows)
         ],
         page_list=[
-            EpubNavigationLocationOut(
+            ReaderNavigationLocationOut(
+                id=f"page:{idx}",
                 label=row[0],
+                ordinal=idx,
                 href=row[1],
                 fragment_idx=row[2],
                 section_id=row[3],
             )
-            for row in page_rows
+            for idx, row in enumerate(page_rows)
         ],
     )
 

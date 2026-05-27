@@ -27,16 +27,15 @@ from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
-from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.content_indexing import (
     mark_content_index_failed,
     rebuild_fragment_content_index,
 )
 from nexus.services.contributor_credits import replace_media_contributor_credits
-from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.fragment_blocks import insert_fragment_blocks
 from nexus.services.node_ingest import IngestError, IngestResult, run_node_ingest
-from nexus.services.sanitize_html import sanitize_html
 from nexus.services.url_normalize import normalize_url_for_display
+from nexus.services.web_article_structure import prepare_web_article_fragment
 
 logger = get_logger(__name__)
 
@@ -239,21 +238,19 @@ def _do_ingest(
     if dedup_result == "media_gone":
         return {"status": "skipped", "reason": "media_deleted"}
 
-    # Step 6: Sanitize HTML
+    # Step 6: Prepare readable article content
     try:
-        html_sanitized = sanitize_html(ingest_result.content_html, ingest_result.base_url)
+        prepared = prepare_web_article_fragment(
+            html=ingest_result.content_html,
+            base_url=ingest_result.base_url,
+            fragment_idx=0,
+            media_title=ingest_result.title,
+        )
     except Exception as e:
-        _mark_failed(db, media_id, ApiErrorCode.E_SANITIZATION_FAILED, f"Sanitization failed: {e}")
+        _mark_failed(db, media_id, ApiErrorCode.E_SANITIZATION_FAILED, f"Article prep failed: {e}")
         return {"status": "failed", "reason": "sanitization_failed"}
 
-    # Step 7: Generate canonical text
-    try:
-        canonical_text = generate_canonical_text(html_sanitized)
-    except Exception as e:
-        _mark_failed(
-            db, media_id, ApiErrorCode.E_SANITIZATION_FAILED, f"Canonicalization failed: {e}"
-        )
-        return {"status": "failed", "reason": "canonicalization_failed"}
+    canonical_text = prepared.canonical_text
 
     # Step 8: Persist fragment and update media
     now = datetime.now(UTC)
@@ -292,17 +289,14 @@ def _do_ingest(
     fragment = Fragment(
         media_id=media_id,
         idx=0,
-        html_sanitized=html_sanitized,
+        html_sanitized=prepared.html_sanitized,
         canonical_text=canonical_text,
         created_at=now,
     )
     db.add(fragment)
     db.flush()  # Flush to get fragment.id for block insertion
 
-    # Step 8b: Create fragment blocks for context window computation
-    # Parse canonical_text into blocks based on \n\n separators
-    block_specs = parse_fragment_blocks(canonical_text)
-    insert_fragment_blocks(db, fragment.id, block_specs)
+    insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
     # Update media
     media = db.get(Media, media_id)
     if not media:
