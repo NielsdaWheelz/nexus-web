@@ -3,11 +3,10 @@
 import { Component, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getParentHref,
-  resolvePaneRoute,
   type PaneBodyMode,
   type ResolvedPaneRoute,
 } from "@/lib/panes/paneRouteRegistry";
-import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
+import { handlePaneInternalAnchorClick } from "@/lib/panes/paneLinkNavigation";
 import { PaneRuntimeProvider, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import PaneShell from "@/components/workspace/PaneShell";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
@@ -18,7 +17,6 @@ import type { SurfaceHeaderOption } from "@/components/ui/SurfaceHeader";
 import {
   MAX_STANDARD_PANE_WIDTH_PX,
   MIN_PANE_WIDTH_PX,
-  normalizeWorkspaceHref,
   type WorkspacePaneStateV4,
 } from "@/lib/workspace/schema";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
@@ -37,6 +35,8 @@ import styles from "./WorkspaceHost.module.css";
 interface WorkspaceHostPane {
   paneId: string;
   href: string;
+  route: ResolvedPaneRoute;
+  resourceKey: string;
   title: string;
   titleState: "resolved" | "pending";
   subtitle?: React.ReactNode;
@@ -95,8 +95,8 @@ class PaneRouteErrorBoundary extends Component<
 }
 
 // ---------------------------------------------------------------------------
-// PaneRouteBoundary — intercepts link clicks inside pane content and routes
-// them through the pane runtime router.
+// PaneRouteBoundary - intercepts supported internal links anywhere in the pane
+// shell and routes them through the pane runtime router.
 // ---------------------------------------------------------------------------
 
 function PaneRouteBoundary({ children }: { children: React.ReactNode }) {
@@ -104,17 +104,6 @@ function PaneRouteBoundary({ children }: { children: React.ReactNode }) {
 
   const handleClickCapture = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
-      if (
-        !paneRuntime ||
-        event.defaultPrevented ||
-        event.button !== 0 ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey
-      ) {
-        return;
-      }
-
       const target = event.target;
       if (!(target instanceof Element)) {
         return;
@@ -123,33 +112,8 @@ function PaneRouteBoundary({ children }: { children: React.ReactNode }) {
       if (!(anchor instanceof HTMLAnchorElement)) {
         return;
       }
-      if (anchor.target && anchor.target !== "_self") {
-        return;
-      }
-      if (anchor.hasAttribute("download")) {
-        return;
-      }
 
-      const hrefAttr = anchor.getAttribute("href");
-      if (!hrefAttr || hrefAttr.startsWith("#")) {
-        return;
-      }
-
-      const normalizedHref = normalizeWorkspaceHref(hrefAttr);
-      if (!normalizedHref) {
-        return;
-      }
-      if (resolvePaneRoute(normalizedHref).id === "unsupported") {
-        return;
-      }
-
-      event.preventDefault();
-      const titleHint = anchor.dataset.paneTitleHint || undefined;
-      if (event.shiftKey) {
-        paneRuntime.openInNewPane(normalizedHref, titleHint);
-      } else {
-        paneRuntime.router.push(normalizedHref, { titleHint });
-      }
+      handlePaneInternalAnchorClick(event, paneRuntime, anchor);
     },
     [paneRuntime]
   );
@@ -177,21 +141,26 @@ function ResolvedPaneRouteView({ route }: { route: ResolvedPaneRoute }) {
 }
 
 // ---------------------------------------------------------------------------
-// PaneContent — renders the pane runtime provider, route boundary, error
-// boundary, and resolved route view for a single pane.
+// PaneRuntimeFrame - owns pane-scoped runtime capabilities for the whole pane
+// shell, including chrome and routed body content.
 // ---------------------------------------------------------------------------
 
-const PaneContent = memo(function PaneContent({
+const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   paneId,
   href,
+  route,
+  resourceKey,
   navigatePane,
   openPane,
   publishPaneTitle,
   publishPaneMinWidth,
   publishPaneExtraWidth,
+  children,
 }: {
   paneId: string;
   href: string;
+  route: ResolvedPaneRoute;
+  resourceKey: string;
   navigatePane: (
     paneId: string,
     href: string,
@@ -210,6 +179,7 @@ const PaneContent = memo(function PaneContent({
   }) => void;
   publishPaneMinWidth: (paneId: string, widthPx: number | null) => void;
   publishPaneExtraWidth: (paneId: string, widthPx: number) => void;
+  children: React.ReactNode;
 }) {
   const handleReplacePane = useCallback(
     (pid: string, h: string, options?: { titleHint?: string }) =>
@@ -221,39 +191,43 @@ const PaneContent = memo(function PaneContent({
       openPane({ href: h, openerPaneId: paneId, activate: true, titleHint }),
     [openPane, paneId]
   );
-  const handleSetPaneTitle = useCallback(
-    (input: { paneId: string; resourceKey: string; title: string | null }) => {
-      publishPaneTitle(input);
-    },
-    [publishPaneTitle]
-  );
-
-  const route = useMemo(() => resolvePaneRoute(href), [href]);
-  const routeIdentity = useMemo(() => resolvePaneRouteIdentity(href), [href]);
-  const pathParams = useMemo<Record<string, string>>(() => ({ ...route.params }), [route.params]);
 
   return (
+    <PaneRuntimeProvider
+      paneId={paneId}
+      href={href}
+      routeId={route.id}
+      resourceRef={route.resourceRef}
+      resourceKey={resourceKey}
+      pathParams={route.params}
+      onNavigatePane={navigatePane}
+      onReplacePane={handleReplacePane}
+      onOpenInNewPane={handleOpenInNewPane}
+      onSetPaneTitle={publishPaneTitle}
+      onSetPaneMinWidth={publishPaneMinWidth}
+      onSetPaneExtraWidth={publishPaneExtraWidth}
+    >
+      <PaneRouteBoundary>{children}</PaneRouteBoundary>
+    </PaneRuntimeProvider>
+  );
+});
+
+// ---------------------------------------------------------------------------
+// PaneContent - renders the routed body content for a single pane.
+// ---------------------------------------------------------------------------
+
+const PaneContent = memo(function PaneContent({
+  route,
+  resourceKey,
+}: {
+  route: ResolvedPaneRoute;
+  resourceKey: string;
+}) {
+  return (
     <div className={styles.routeShell}>
-      <PaneRuntimeProvider
-        paneId={paneId}
-        href={href}
-        routeId={route.id}
-        resourceRef={route.resourceRef}
-        resourceKey={routeIdentity.resourceKey}
-        pathParams={pathParams}
-        onNavigatePane={navigatePane}
-        onReplacePane={handleReplacePane}
-        onOpenInNewPane={handleOpenInNewPane}
-        onSetPaneTitle={handleSetPaneTitle}
-        onSetPaneMinWidth={publishPaneMinWidth}
-        onSetPaneExtraWidth={publishPaneExtraWidth}
-      >
-        <PaneRouteBoundary>
-          <PaneRouteErrorBoundary resetKey={routeIdentity.resourceKey}>
-            <ResolvedPaneRouteView key={routeIdentity.resourceKey} route={route} />
-          </PaneRouteErrorBoundary>
-        </PaneRouteBoundary>
-      </PaneRuntimeProvider>
+      <PaneRouteErrorBoundary resetKey={resourceKey}>
+        <ResolvedPaneRouteView key={resourceKey} route={route} />
+      </PaneRouteErrorBoundary>
     </div>
   );
 });
@@ -292,24 +266,11 @@ function buildHostPane(input: {
     href: string,
     options?: { replace?: boolean; activate?: boolean; titleHint?: string },
   ) => void;
-  onOpenPane: (input: {
-    href: string;
-    openerPaneId?: string | null;
-    activate?: boolean;
-    titleHint?: string;
-  }) => void;
-  onPublishPaneTitle: (input: {
-    paneId: string;
-    resourceKey: string;
-    title: string | null;
-  }) => void;
-  onPublishPaneMinWidth: (paneId: string, widthPx: number | null) => void;
-  onPublishPaneExtraWidth: (paneId: string, widthPx: number) => void;
   isActive: boolean;
   runtimeMinWidthPx: number | null;
   runtimeExtraWidthPx: number;
 }): WorkspaceHostPane {
-  const { chrome, route, title, titleState } = input.descriptor;
+  const { chrome, resourceKey, route, title, titleState } = input.descriptor;
   const parentHref = getParentHref(route);
   const onBack = parentHref
     ? () => input.onNavigatePane(input.pane.id, parentHref)
@@ -325,6 +286,8 @@ function buildHostPane(input: {
   return {
     paneId: input.pane.id,
     href: input.pane.href,
+    route,
+    resourceKey,
     title,
     titleState,
     subtitle: chrome?.subtitle,
@@ -338,17 +301,7 @@ function buildHostPane(input: {
     extraWidthPx: input.runtimeExtraWidthPx,
     isActive: input.isActive,
     visibility: input.pane.visibility,
-    content: (
-      <PaneContent
-        paneId={input.pane.id}
-        href={input.pane.href}
-        navigatePane={input.onNavigatePane}
-        openPane={input.onOpenPane}
-        publishPaneTitle={input.onPublishPaneTitle}
-        publishPaneMinWidth={input.onPublishPaneMinWidth}
-        publishPaneExtraWidth={input.onPublishPaneExtraWidth}
-      />
-    ),
+    content: <PaneContent route={route} resourceKey={resourceKey} />,
   };
 }
 
@@ -441,10 +394,6 @@ export default function WorkspaceHost() {
           pane,
           descriptor,
           onNavigatePane: navigatePane,
-          onOpenPane: openPane,
-          onPublishPaneTitle: publishPaneTitle,
-          onPublishPaneMinWidth: publishPaneMinWidth,
-          onPublishPaneExtraWidth: publishPaneExtraWidth,
           isActive: pane.id === state.activePaneId,
           runtimeMinWidthPx: runtimeMinWidthByPaneId.get(pane.id) ?? null,
           runtimeExtraWidthPx: runtimeExtraWidthByPaneId.get(pane.id) ?? 0,
@@ -454,10 +403,6 @@ export default function WorkspaceHost() {
       paneDescriptors,
       state.activePaneId,
       navigatePane,
-      openPane,
-      publishPaneTitle,
-      publishPaneMinWidth,
-      publishPaneExtraWidth,
       runtimeMinWidthByPaneId,
       runtimeExtraWidthByPaneId,
     ]
@@ -617,29 +562,41 @@ export default function WorkspaceHost() {
               }}
               onMouseDown={() => handleActivatePane(pane.paneId, { focusPaneChrome: false })}
             >
-              <PaneShell
+              <PaneRuntimeFrame
                 paneId={pane.paneId}
                 href={pane.href}
-                title={pane.title}
-                titlePending={pane.titleState === "pending"}
-                subtitle={pane.subtitle}
-                toolbar={pane.toolbar}
-                actions={pane.actions}
-                options={pane.options}
-                onBack={pane.onBack}
-                widthPx={pane.widthPx}
-                minWidthPx={pane.minWidthPx}
-                maxWidthPx={pane.maxWidthPx}
-                extraWidthPx={pane.extraWidthPx}
-                bodyMode={pane.bodyMode}
-                onResizePane={resizePane}
-                onChromeMouseDown={handleChromeMouseDown}
-                isActive={pane.isActive}
-                isMobile={isMobile}
-                mobileCommandPalettePaneCount={state.panes.length}
+                route={pane.route}
+                resourceKey={pane.resourceKey}
+                navigatePane={navigatePane}
+                openPane={openPane}
+                publishPaneTitle={publishPaneTitle}
+                publishPaneMinWidth={publishPaneMinWidth}
+                publishPaneExtraWidth={publishPaneExtraWidth}
               >
-                {pane.content}
-              </PaneShell>
+                <PaneShell
+                  paneId={pane.paneId}
+                  href={pane.href}
+                  title={pane.title}
+                  titlePending={pane.titleState === "pending"}
+                  subtitle={pane.subtitle}
+                  toolbar={pane.toolbar}
+                  actions={pane.actions}
+                  options={pane.options}
+                  onBack={pane.onBack}
+                  widthPx={pane.widthPx}
+                  minWidthPx={pane.minWidthPx}
+                  maxWidthPx={pane.maxWidthPx}
+                  extraWidthPx={pane.extraWidthPx}
+                  bodyMode={pane.bodyMode}
+                  onResizePane={resizePane}
+                  onChromeMouseDown={handleChromeMouseDown}
+                  isActive={pane.isActive}
+                  isMobile={isMobile}
+                  mobileCommandPalettePaneCount={state.panes.length}
+                >
+                  {pane.content}
+                </PaneShell>
+              </PaneRuntimeFrame>
             </div>
           ))}
         </div>

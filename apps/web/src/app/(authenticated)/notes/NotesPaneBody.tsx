@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -57,25 +57,6 @@ export default function NotesPaneBody() {
     }
   }, [router, title]);
 
-  const openPage = useCallback(
-    (event: MouseEvent<HTMLAnchorElement>, href: string) => {
-      if (
-        event.defaultPrevented ||
-        event.button !== 0 ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.shiftKey ||
-        event.altKey
-      ) {
-        return;
-      }
-
-      event.preventDefault();
-      router.push(href);
-    },
-    [router]
-  );
-
   return (
     <div className={styles.shell}>
       <form
@@ -106,7 +87,7 @@ export default function NotesPaneBody() {
             key={page.id}
             className={styles.pageLink}
             href={`/pages/${page.id}`}
-            onClick={(event) => openPage(event, `/pages/${page.id}`)}
+            data-pane-title-hint={page.title}
           >
             <span className={styles.pageTitle}>{page.title}</span>
             {page.description ? <span className={styles.pageDescription}>{page.description}</span> : null}

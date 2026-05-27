@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties, KeyboardEvent, MouseEvent, ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { cx } from "@/lib/ui/cx";
 import styles from "./ContextRow.module.css";
 
@@ -27,14 +27,8 @@ interface ContextRowProps {
   paneTitleHint?: string;
   target?: string;
   rel?: string;
-  onMainClick?: (event: MouseEvent<HTMLElement>) => void;
-  onMainKeyDown?: (event: KeyboardEvent<HTMLElement>) => void;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
-  mainRole?: string;
-  mainTabIndex?: number;
-  ariaPressed?: boolean;
-  ariaExpanded?: boolean;
 }
 
 export default function ContextRow({
@@ -60,14 +54,8 @@ export default function ContextRow({
   paneTitleHint,
   target,
   rel,
-  onMainClick,
-  onMainKeyDown,
   onMouseEnter,
   onMouseLeave,
-  mainRole,
-  mainTabIndex,
-  ariaPressed,
-  ariaExpanded,
 }: ContextRowProps) {
   const mainContent = (
     <>
@@ -84,15 +72,6 @@ export default function ContextRow({
   );
 
   const rowMainClassName = cx(styles.main, mainClassName);
-  const sharedMainProps = {
-    className: rowMainClassName,
-    onClick: onMainClick as ((event: MouseEvent<HTMLDivElement>) => void) | undefined,
-    onKeyDown: onMainKeyDown as ((event: KeyboardEvent<HTMLDivElement>) => void) | undefined,
-    role: mainRole,
-    tabIndex: mainTabIndex,
-    "aria-pressed": ariaPressed,
-    "aria-expanded": ariaExpanded,
-  };
 
   return (
     <div
@@ -108,17 +87,11 @@ export default function ContextRow({
           target={target}
           rel={rel}
           className={rowMainClassName}
-          onClick={onMainClick as ((event: MouseEvent<HTMLAnchorElement>) => void) | undefined}
-          onKeyDown={onMainKeyDown as ((event: KeyboardEvent<HTMLAnchorElement>) => void) | undefined}
-          role={mainRole}
-          tabIndex={mainTabIndex}
-          aria-pressed={ariaPressed}
-          aria-expanded={ariaExpanded}
         >
           {mainContent}
         </a>
       ) : (
-        <div {...sharedMainProps}>{mainContent}</div>
+        <div className={rowMainClassName}>{mainContent}</div>
       )}
 
       {actions && <div className={cx(styles.actions, actionsClassName)}>{actions}</div>}

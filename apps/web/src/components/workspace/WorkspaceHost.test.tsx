@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 
@@ -67,7 +67,14 @@ function TestPaneBody() {
       paneRuntime?.setPaneMinWidth(hostMocks.runtimeMinWidthPx);
     }
   }, [paneRuntime]);
-  return <div data-testid="route-body" data-instance-id={instanceId.current} />;
+  return (
+    <div data-testid="route-body" data-instance-id={instanceId.current}>
+      {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+      <a href="/authors/body-author" data-pane-title-hint="Body Author">
+        Body Author
+      </a>
+    </div>
+  );
 }
 
 vi.mock("@/lib/panes/paneRouteRegistry", () => ({
@@ -92,7 +99,15 @@ vi.mock("@/lib/workspace/store", () => ({
 
 vi.mock("@/components/workspace/PaneShell", () => ({
   default: ({ children }: { children: ReactNode }) => (
-    <section data-testid="pane-shell">{children}</section>
+    <section data-testid="pane-shell">
+      <nav aria-label="Mock pane chrome">
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+        <a href="/authors/author-1" data-pane-title-hint="Chrome Author">
+          Chrome Author
+        </a>
+      </nav>
+      {children}
+    </section>
   ),
 }));
 
@@ -146,6 +161,9 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.mountedBodyIds = [];
     hostMocks.unmountedBodyIds = [];
     hostMocks.runtimeMinWidthPx = null;
+    hostMocks.store.activatePane.mockReset();
+    hostMocks.store.openPane.mockReset();
+    hostMocks.store.navigatePane.mockReset();
     hostMocks.store.resizePane.mockReset();
     setPaneHref("/media/media-1");
   });
@@ -188,5 +206,47 @@ describe("WorkspaceHost pane route lifecycle", () => {
     await waitFor(() => {
       expect(hostMocks.store.resizePane).toHaveBeenCalledWith("pane-1", 900);
     });
+  });
+
+  it("routes pane chrome internal links through the current pane", () => {
+    render(<WorkspaceHost />);
+
+    fireEvent.click(screen.getByRole("link", { name: "Chrome Author" }));
+
+    expect(hostMocks.store.navigatePane).toHaveBeenCalledWith(
+      "pane-1",
+      "/authors/author-1",
+      { titleHint: "Chrome Author" },
+    );
+    expect(hostMocks.store.openPane).not.toHaveBeenCalled();
+  });
+
+  it("routes route body internal links through the same pane boundary", () => {
+    render(<WorkspaceHost />);
+
+    fireEvent.click(screen.getByRole("link", { name: "Body Author" }));
+
+    expect(hostMocks.store.navigatePane).toHaveBeenCalledWith(
+      "pane-1",
+      "/authors/body-author",
+      { titleHint: "Body Author" },
+    );
+    expect(hostMocks.store.openPane).not.toHaveBeenCalled();
+  });
+
+  it("opens pane chrome internal links in a sibling pane on Shift-click", () => {
+    render(<WorkspaceHost />);
+
+    fireEvent.click(screen.getByRole("link", { name: "Chrome Author" }), {
+      shiftKey: true,
+    });
+
+    expect(hostMocks.store.openPane).toHaveBeenCalledWith({
+      href: "/authors/author-1",
+      openerPaneId: "pane-1",
+      activate: true,
+      titleHint: "Chrome Author",
+    });
+    expect(hostMocks.store.navigatePane).not.toHaveBeenCalled();
   });
 });

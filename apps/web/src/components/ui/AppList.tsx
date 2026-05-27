@@ -1,7 +1,6 @@
 "use client";
 
-import type { MouseEvent, ReactNode } from "react";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import type { ReactNode } from "react";
 import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import ContextRow from "@/components/ui/ContextRow";
 import styles from "./AppList.module.css";
@@ -46,25 +45,6 @@ export function AppListItem({
   const resolvedPaneTitleHint =
     paneTitleHint ?? (typeof title === "string" ? title : undefined);
 
-  const handlePrimaryClick = (event: MouseEvent<HTMLElement>) => {
-    if (
-      !href ||
-      event.defaultPrevented ||
-      event.button !== 0 ||
-      !event.shiftKey ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.altKey
-    ) {
-      return;
-    }
-
-    event.preventDefault();
-    if (!requestOpenInAppPane(href, { titleHint: resolvedPaneTitleHint })) {
-      window.location.assign(href);
-    }
-  };
-
   const hasMenu = options && options.length > 0;
   const resolvedActions =
     (actions || hasMenu) ? (
@@ -81,7 +61,6 @@ export function AppListItem({
       paneTitleHint={resolvedPaneTitleHint}
       target={target}
       rel={rel}
-      onMainClick={href ? handlePrimaryClick : undefined}
       mainClassName={styles.primary}
       leadingClassName={styles.icon}
       contentClassName={styles.content}

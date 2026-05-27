@@ -19,6 +19,7 @@ describe("ContributorChip", () => {
 
     const link = screen.getByRole("link", { name: /U. K. Le Guin/ });
     expect(link).toHaveAttribute("href", "/authors/ursula-le-guin");
+    expect(link).toHaveAttribute("data-pane-title-hint", "U. K. Le Guin");
     expect(link).toHaveTextContent("author");
     expect(link).toHaveAttribute("title", "U. K. Le Guin (Ursula K. Le Guin)");
   });
@@ -33,9 +34,11 @@ describe("ContributorChip", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: "Octavia E. Butler" })).toHaveAttribute(
+    const link = screen.getByRole("link", { name: "Octavia E. Butler" });
+    expect(link).toHaveAttribute(
       "href",
       "/authors/octavia-butler",
     );
+    expect(link).toHaveAttribute("data-pane-title-hint", "Octavia E. Butler");
   });
 });

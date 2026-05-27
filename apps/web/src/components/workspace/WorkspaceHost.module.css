@@ -57,12 +57,17 @@
 /* ── Pane route boundary ── */
 
 .paneRouteBoundaryShell {
-  width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
   display: flex;
-  flex-direction: column;
+  flex: 0 0 auto;
+}
+
+.paneWrap[data-mobile="true"] > .paneRouteBoundaryShell {
+  width: 100%;
+  min-width: 100%;
+  max-width: 100%;
 }
 
 .unsupported {

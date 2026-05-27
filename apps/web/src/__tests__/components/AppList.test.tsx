@@ -19,6 +19,7 @@ describe("AppListItem", () => {
     const contributorLink = screen.getByRole("link", { name: "Author Name" });
 
     expect(rowLink).toHaveAttribute("href", "/media/media-1");
+    expect(rowLink).toHaveAttribute("data-pane-title-hint", "Episode title");
     expect(contributorLink).toHaveAttribute("href", "/authors/author-1");
     expect(rowLink).not.toContainElement(contributorLink);
   });

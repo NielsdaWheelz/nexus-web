@@ -1,9 +1,8 @@
 "use client";
 
-import type { CSSProperties, MouseEvent } from "react";
+import type { CSSProperties } from "react";
 import type { ContributorCredit, ContributorSummary } from "@/lib/contributors/types";
 import { formatContributorRole } from "@/lib/contributors/formatting";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { cx } from "@/lib/ui/cx";
 
 interface ContributorChipProps {
@@ -95,24 +94,6 @@ export default function ContributorChip({
   }
   const href = suppliedHref || contributorHref(handle);
 
-  function handleClick(event: MouseEvent<HTMLAnchorElement>) {
-    if (
-      event.defaultPrevented ||
-      event.button !== 0 ||
-      !event.shiftKey ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.altKey
-    ) {
-      return;
-    }
-
-    event.preventDefault();
-    if (!requestOpenInAppPane(href, { titleHint: label })) {
-      window.location.assign(href);
-    }
-  }
-
   return (
     <a
       href={href}
@@ -120,7 +101,6 @@ export default function ContributorChip({
       style={chipStyle}
       title={title}
       data-pane-title-hint={label}
-      onClick={handleClick}
     >
       <span>{label}</span>
       {roleLabel ? <span style={roleStyle}>{roleLabel}</span> : null}

@@ -11,6 +11,8 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { handlePaneInternalHrefClick } from "@/lib/panes/paneLinkNavigation";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import styles from "./ActionMenu.module.css";
 
@@ -45,6 +47,7 @@ export default function ActionMenu({
   const toggleRef = useRef<HTMLButtonElement>(null);
   const menuContainerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
+  const paneRuntime = usePaneRuntime();
   const triggerId = useId();
   const menuId = useId();
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
@@ -219,61 +222,70 @@ export default function ActionMenu({
         aria-labelledby={triggerId}
         onKeyDown={handleMenuKeyDown}
       >
-        {options.map((option, index) => (
-          <Fragment key={option.id}>
-            {option.separatorBefore && index > 0 ? (
-              <li role="separator" className={styles.separator} />
-            ) : null}
-            <li role="none">
-              {option.href ? (
-                <a
-                  href={option.href}
-                  role="menuitem"
-                  className={`${styles.menuItem} ${
-                    option.tone === "danger" ? styles.menuItemDanger : ""
-                  }`}
-                  aria-disabled={option.disabled || undefined}
-                  tabIndex={option.disabled ? -1 : undefined}
-                  onKeyDown={(event: ReactKeyboardEvent<HTMLAnchorElement>) => {
-                    if (
-                      option.disabled &&
-                      (event.key === "Enter" || event.key === " ")
-                    ) {
-                      event.preventDefault();
-                    }
-                  }}
-                  onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
-                    event.stopPropagation();
-                    if (option.disabled) {
-                      event.preventDefault();
-                      return;
-                    }
-                    option.onSelect?.({ triggerEl: toggleRef.current });
-                    closeMenu(option.restoreFocusOnClose !== false);
-                  }}
-                >
-                  {option.label}
-                </a>
-              ) : (
-                <button
-                  type="button"
-                  role="menuitem"
-                  className={`${styles.menuItem} ${
-                    option.tone === "danger" ? styles.menuItemDanger : ""
-                  }`}
-                  disabled={option.disabled}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    option.onSelect?.({ triggerEl: toggleRef.current });
-                    closeMenu(option.restoreFocusOnClose !== false);
-                  }}
-                >
-                  {option.label}
-                </button>
-              )}
-            </li>
-          </Fragment>
-        ))}
+        {options.map((option, index) => {
+          const optionHref = option.href;
+          return (
+            <Fragment key={option.id}>
+              {option.separatorBefore && index > 0 ? (
+                <li role="separator" className={styles.separator} />
+              ) : null}
+              <li role="none">
+                {optionHref ? (
+                  <a
+                    href={optionHref}
+                    role="menuitem"
+                    className={`${styles.menuItem} ${
+                      option.tone === "danger" ? styles.menuItemDanger : ""
+                    }`}
+                    aria-disabled={option.disabled || undefined}
+                    tabIndex={option.disabled ? -1 : undefined}
+                    onKeyDown={(event: ReactKeyboardEvent<HTMLAnchorElement>) => {
+                      if (
+                        option.disabled &&
+                        (event.key === "Enter" || event.key === " ")
+                      ) {
+                        event.preventDefault();
+                      }
+                    }}
+                    onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
+                      event.stopPropagation();
+                      if (option.disabled) {
+                        event.preventDefault();
+                        return;
+                      }
+                      handlePaneInternalHrefClick(
+                        event,
+                        paneRuntime,
+                        optionHref,
+                        option.label
+                      );
+                      option.onSelect?.({ triggerEl: toggleRef.current });
+                      closeMenu(option.restoreFocusOnClose !== false);
+                    }}
+                  >
+                    {option.label}
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={`${styles.menuItem} ${
+                      option.tone === "danger" ? styles.menuItemDanger : ""
+                    }`}
+                    disabled={option.disabled}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      option.onSelect?.({ triggerEl: toggleRef.current });
+                      closeMenu(option.restoreFocusOnClose !== false);
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                )}
+              </li>
+            </Fragment>
+          );
+        })}
       </ul>
     ) : null;
 

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import ActionMenu from "@/components/ui/ActionMenu";
+import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 
 describe("ActionMenu", () => {
   it("stays open when the page scrolls", async () => {
@@ -76,4 +77,115 @@ describe("ActionMenu", () => {
     expect(handleSelect).toHaveBeenCalledWith({ triggerEl: trigger });
     expect(trigger).not.toHaveFocus();
   });
+
+  it("routes portaled internal menu links through the pane runtime", async () => {
+    const user = userEvent.setup();
+    const navigatePane = vi.fn();
+
+    render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href="/settings"
+        routeId="settings"
+        resourceRef="settings"
+        resourceKey="settings"
+        onNavigatePane={navigatePane}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+      >
+        <ActionMenu
+          options={[
+            {
+              id: "reader-settings",
+              label: "Reader settings",
+              href: "/settings/reader",
+            },
+          ]}
+        />
+      </PaneRuntimeProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Reader settings" }));
+
+    expect(navigatePane).toHaveBeenCalledWith(
+      "pane-1",
+      "/settings/reader",
+      { titleHint: "Reader settings" },
+    );
+  });
+
+  it("opens portaled internal menu links in a sibling pane on Shift-click", async () => {
+    const user = userEvent.setup();
+    const navigatePane = vi.fn();
+    const openInNewPane = vi.fn();
+
+    render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href="/settings"
+        routeId="settings"
+        resourceRef="settings"
+        resourceKey="settings"
+        onNavigatePane={navigatePane}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={openInNewPane}
+      >
+        <ActionMenu
+          options={[
+            {
+              id: "reader-settings",
+              label: "Reader settings",
+              href: "/settings/reader",
+            },
+          ]}
+        />
+      </PaneRuntimeProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reader settings" }), {
+      shiftKey: true,
+    });
+
+    expect(openInNewPane).toHaveBeenCalledWith("/settings/reader", "Reader settings");
+    expect(navigatePane).not.toHaveBeenCalled();
+  });
+
+  it("does not route disabled portaled menu links", async () => {
+    const user = userEvent.setup();
+    const navigatePane = vi.fn();
+    const openInNewPane = vi.fn();
+
+    render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href="/settings"
+        routeId="settings"
+        resourceRef="settings"
+        resourceKey="settings"
+        onNavigatePane={navigatePane}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={openInNewPane}
+      >
+        <ActionMenu
+          options={[
+            {
+              id: "reader-settings",
+              label: "Reader settings",
+              href: "/settings/reader",
+              disabled: true,
+            },
+          ]}
+        />
+      </PaneRuntimeProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reader settings" }));
+
+    expect(navigatePane).not.toHaveBeenCalled();
+    expect(openInNewPane).not.toHaveBeenCalled();
+  });
+
 });
