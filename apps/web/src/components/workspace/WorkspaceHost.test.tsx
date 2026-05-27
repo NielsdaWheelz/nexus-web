@@ -12,7 +12,7 @@ const hostMocks = vi.hoisted(() => ({
   runtimeExtraWidthPx: null as number | null,
   store: {
     state: {
-      schemaVersion: 5,
+      schemaVersion: 6,
       panes: [
         {
           id: "pane-1",
@@ -51,8 +51,10 @@ function mediaRoute(href: string) {
     render: () => <TestPaneBody />,
     definition: {
       bodyMode: "document",
+      defaultWidthPx: 1280,
       minWidthPx: 320,
       maxWidthPx: 2400,
+      layoutKind: "media-reader",
     },
   };
 }
@@ -186,7 +188,7 @@ function setPaneHref(
   history: { back: string[]; forward: string[] } = { back: [], forward: [] }
 ) {
   hostMocks.store.state = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     panes: [
       {
         id: "pane-1",

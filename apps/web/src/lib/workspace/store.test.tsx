@@ -1,12 +1,13 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
   DEFAULT_MEDIA_PANE_WIDTH_PX,
   MAX_MEDIA_PANE_WIDTH_PX,
   MAX_STANDARD_PANE_WIDTH_PX,
   WORKSPACE_SCHEMA_VERSION,
-  type WorkspacePaneStateV5,
-  type WorkspaceStateV5,
+  type WorkspacePaneState,
+  type WorkspaceState,
 } from "@/lib/workspace/schema";
 import {
   mergeRestoredWorkspaceWithUrlIntent,
@@ -23,8 +24,8 @@ type WorkspaceStore = ReturnType<typeof useWorkspaceStore>;
 function pane(
   id: string,
   href: string,
-  input: Partial<Pick<WorkspacePaneStateV5, "widthPx" | "visibility" | "history">> = {}
-): WorkspacePaneStateV5 {
+  input: Partial<Pick<WorkspacePaneState, "widthPx" | "visibility" | "history">> = {}
+): WorkspacePaneState {
   return {
     id,
     href,
@@ -111,7 +112,7 @@ function titleRecord(
 }
 
 describe("mergeRestoredWorkspaceWithUrlIntent", () => {
-  const restored: WorkspaceStateV5 = {
+  const restored: WorkspaceState = {
     schemaVersion: WORKSPACE_SCHEMA_VERSION,
     activePaneId: "pane-saved-libraries",
     panes: [
@@ -121,7 +122,7 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
   };
 
   it("keeps a neutral /libraries open as pure saved-session restore", () => {
-    const urlIntent: WorkspaceStateV5 = {
+    const urlIntent: WorkspaceState = {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-url-libraries",
       panes: [pane("pane-url-libraries", "/libraries")],
@@ -131,7 +132,7 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
   });
 
   it("adds an explicit direct URL as the active pane instead of letting restore override it", () => {
-    const urlIntent: WorkspaceStateV5 = {
+    const urlIntent: WorkspaceState = {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-url-media",
       panes: [pane("pane-url-media", "/media/media-123", { widthPx: 1280 })],
@@ -148,7 +149,7 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
   });
 
   it("reuses and activates the saved pane for same-resource direct URLs", () => {
-    const savedWithMedia: WorkspaceStateV5 = {
+    const savedWithMedia: WorkspaceState = {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-saved-libraries",
       panes: [
@@ -160,7 +161,7 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
         }),
       ],
     };
-    const urlIntent: WorkspaceStateV5 = {
+    const urlIntent: WorkspaceState = {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       activePaneId: "pane-url-media",
       panes: [
@@ -368,7 +369,25 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
-  it("navigates and clamps pane width through the public store action", async () => {
+  it("preserves resized width across same-layout navigation", async () => {
+    const workspace = await mountWorkspaceStore("/libraries");
+    const paneId = workspace().state.activePaneId;
+
+    act(() => {
+      workspace().resizePane(paneId, 900);
+      workspace().navigatePane(paneId, "/conversations");
+    });
+
+    await waitFor(() => {
+      expect(workspace().state.panes[0]).toMatchObject({
+        href: "/conversations",
+        widthPx: 900,
+      });
+    });
+    flushWorkspaceSession();
+  });
+
+  it("resets pane width across route layout changes", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
     const paneId = workspace().state.activePaneId;
 
@@ -384,8 +403,50 @@ describe("WorkspaceStoreProvider", () => {
     });
     await waitFor(() => {
       expect(workspace().state.panes[0]?.href).toBe("/libraries");
-      expect(workspace().state.panes[0]?.widthPx).toBe(MAX_STANDARD_PANE_WIDTH_PX);
+      expect(workspace().state.panes[0]?.widthPx).toBe(
+        DEFAULT_DENSE_LIST_PANE_WIDTH_PX
+      );
       expect(workspace().state.activePaneId).toBe(paneId);
+    });
+    flushWorkspaceSession();
+  });
+
+  it("uses target route defaults while traversing history across layout kinds", async () => {
+    const workspace = await mountWorkspaceStore("/media/media-1");
+    const paneId = workspace().state.activePaneId;
+
+    act(() => {
+      workspace().resizePane(paneId, 2200);
+      workspace().navigatePane(paneId, "/libraries");
+    });
+    await waitFor(() => {
+      expect(workspace().state.panes[0]).toMatchObject({
+        href: "/libraries",
+        widthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+        history: { back: ["/media/media-1"], forward: [] },
+      });
+    });
+
+    act(() => {
+      workspace().goBackPane(paneId);
+    });
+    await waitFor(() => {
+      expect(workspace().state.panes[0]).toMatchObject({
+        href: "/media/media-1",
+        widthPx: DEFAULT_MEDIA_PANE_WIDTH_PX,
+        history: { back: [], forward: ["/libraries"] },
+      });
+    });
+
+    act(() => {
+      workspace().goForwardPane(paneId);
+    });
+    await waitFor(() => {
+      expect(workspace().state.panes[0]).toMatchObject({
+        href: "/libraries",
+        widthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+        history: { back: ["/media/media-1"], forward: [] },
+      });
     });
     flushWorkspaceSession();
   });

@@ -3,7 +3,7 @@ import {
   WORKSPACE_E2E_SCHEMA_VERSION,
   encodeWorkspaceStateParam,
   makeWorkspacePane,
-  type WorkspaceStateV5,
+  type WorkspaceState,
 } from "./workspace";
 
 function paletteDialog(page: Page): Locator {
@@ -22,7 +22,7 @@ function paletteListbox(root: Page | Locator): Locator {
 // the visited route, so the palette's open-tabs section contains a Search row.
 // Mirrors the encoding used by workspace-tabs.spec.ts.
 function workspaceWithSearchPane(): string {
-  const state: WorkspaceStateV5 = {
+  const state: WorkspaceState = {
     schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-libraries",
     panes: [

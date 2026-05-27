@@ -3,8 +3,8 @@ import {
   WORKSPACE_SCHEMA_VERSION,
   createDefaultWorkspaceState,
   createPaneId,
-  type WorkspacePaneHistoryV5,
-  type WorkspacePaneStateV5,
+  type WorkspacePaneHistory,
+  type WorkspacePaneState,
 } from "@/lib/workspace/schema";
 import {
   buildWorkspaceUrl,
@@ -16,9 +16,9 @@ import {
 function makePane(
   id: string,
   href: string,
-  visibility: WorkspacePaneStateV5["visibility"] = "visible",
-  history: WorkspacePaneHistoryV5 = { back: [], forward: [] }
-): WorkspacePaneStateV5 {
+  visibility: WorkspacePaneState["visibility"] = "visible",
+  history: WorkspacePaneHistory = { back: [], forward: [] }
+): WorkspacePaneState {
   return { id, href, widthPx: 480, visibility, history };
 }
 
@@ -74,9 +74,9 @@ describe("workspace url codec", () => {
     expect(decoded.state.schemaVersion).toBe(WORKSPACE_SCHEMA_VERSION);
   });
 
-  it("rejects old v4 workspace URLs", () => {
+  it("rejects stale workspace URLs", () => {
     const params = new URLSearchParams();
-    params.set("wsv", "4");
+    params.set("wsv", String(WORKSPACE_SCHEMA_VERSION - 1));
     params.set("ws", "abc");
     const decoded = decodeWorkspaceStateFromUrl("/libraries", params, {
       baseOrigin: "http://localhost",

@@ -10,7 +10,7 @@ import path from "node:path";
 import {
   WORKSPACE_E2E_SCHEMA_VERSION,
   makeWorkspacePane,
-  type WorkspaceStateV5,
+  type WorkspaceState,
 } from "./workspace";
 
 const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
@@ -47,7 +47,7 @@ function paneChromeDeviceId(testInfo: TestInfo): string {
   return `e2e-pane-chrome-${testInfo.workerIndex}-${testInfo.repeatEachIndex}-${slug}`;
 }
 
-function trivialWorkspaceSession(): WorkspaceStateV5 {
+function trivialWorkspaceSession(): WorkspaceState {
   return {
     schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-chrome-default",
@@ -71,7 +71,7 @@ async function pinDeviceId(page: Page, testInfo: TestInfo): Promise<void> {
 async function putWorkspaceSession(
   request: APIRequestContext,
   testInfo: TestInfo,
-  state: WorkspaceStateV5
+  state: WorkspaceState
 ): Promise<void> {
   const response = await request.put(WORKSPACE_SESSION_PATH, {
     data: { device_id: paneChromeDeviceId(testInfo), state },

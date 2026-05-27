@@ -23,7 +23,7 @@ import type {
 import {
   MAX_STANDARD_PANE_WIDTH_PX,
   MIN_PANE_WIDTH_PX,
-  type WorkspacePaneStateV5,
+  type WorkspacePaneState,
 } from "@/lib/workspace/schema";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
 import {
@@ -310,7 +310,7 @@ function pruneRuntimePaneWidthRecords(
 }
 
 function buildHostPane(input: {
-  pane: WorkspacePaneStateV5;
+  pane: WorkspacePaneState;
   descriptor: WorkspacePaneTitleDescriptor;
   goBackPane: (paneId: string) => void;
   goForwardPane: (paneId: string) => void;

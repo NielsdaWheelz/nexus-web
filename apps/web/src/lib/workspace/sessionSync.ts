@@ -9,7 +9,7 @@ import {
   createDefaultWorkspaceState,
   hasPaneHistory,
   sanitizeWorkspaceState,
-  type WorkspaceStateV5,
+  type WorkspaceState,
 } from "@/lib/workspace/schema";
 
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
@@ -31,7 +31,7 @@ export async function getWorkspaceSession(
 
 export async function putWorkspaceSession(
   deviceId: string,
-  state: WorkspaceStateV5,
+  state: WorkspaceState,
   keepalive = false
 ): Promise<void> {
   const body = JSON.stringify({ device_id: deviceId, state });
@@ -54,7 +54,7 @@ export function isColdOpen(): boolean {
   return !new URL(window.location.href).searchParams.has(WORKSPACE_STATE_PARAM);
 }
 
-export function prepareRestoredState(raw: unknown): WorkspaceStateV5 {
+export function prepareRestoredState(raw: unknown): WorkspaceState {
   const sanitized = sanitizeWorkspaceState(raw, {
     fallbackHref: WORKSPACE_DEFAULT_FALLBACK_HREF,
   });
@@ -82,7 +82,7 @@ export function prepareRestoredState(raw: unknown): WorkspaceStateV5 {
   };
 }
 
-export function isNonTrivialSession(state: WorkspaceStateV5): boolean {
+export function isNonTrivialSession(state: WorkspaceState): boolean {
   if (state.panes.length > 1) {
     return true;
   }
@@ -91,8 +91,8 @@ export function isNonTrivialSession(state: WorkspaceStateV5): boolean {
 }
 
 export function workspaceStatesEqual(
-  a: WorkspaceStateV5,
-  b: WorkspaceStateV5
+  a: WorkspaceState,
+  b: WorkspaceState
 ): boolean {
   if (a.schemaVersion !== b.schemaVersion) {
     return false;

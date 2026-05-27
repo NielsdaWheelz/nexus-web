@@ -38,7 +38,9 @@
 
 .routeShell {
   display: flex;
-  flex: 1;
+  flex: 1 1 auto;
+  flex-direction: column;
+  width: 100%;
   min-width: 0;
 }
 

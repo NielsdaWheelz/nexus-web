@@ -7,7 +7,7 @@ import {
   WORKSPACE_VERSION_PARAM,
   WORKSPACE_DEFAULT_FALLBACK_HREF,
   hasPaneHistory,
-  type WorkspaceStateV5,
+  type WorkspaceState,
   sanitizeWorkspaceState,
   trimWorkspacePaneHistory,
 } from "@/lib/workspace/schema";
@@ -17,7 +17,7 @@ export const MAX_WORKSPACE_STATE_PARAM_LENGTH = 1800;
 type DecodeSource = "query" | "inferred" | "fallback";
 
 export interface WorkspaceDecodeResult {
-  state: WorkspaceStateV5;
+  state: WorkspaceState;
   source: DecodeSource;
   errorCode:
     | null
@@ -89,7 +89,7 @@ export function buildWorkspaceFallbackHref(
   return `${pathname}${qs ? `?${qs}` : ""}${hash}`;
 }
 
-export function encodeWorkspaceStateParam(state: WorkspaceStateV5): WorkspaceEncodeResult {
+export function encodeWorkspaceStateParam(state: WorkspaceState): WorkspaceEncodeResult {
   try {
     const payload = encodeUtf8(JSON.stringify(trimWorkspacePaneHistory(state)));
     if (payload.length > MAX_WORKSPACE_STATE_PARAM_LENGTH) {
@@ -182,7 +182,7 @@ export function decodeWorkspaceStateFromUrl(
 }
 
 export function buildWorkspaceUrl(
-  state: WorkspaceStateV5,
+  state: WorkspaceState,
   options?: { baseOrigin?: string }
 ): { href: string; errorCode: WorkspaceEncodeResult["errorCode"] } {
   const activePane = state.panes.find(

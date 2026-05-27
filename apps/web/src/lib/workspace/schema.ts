@@ -4,7 +4,7 @@ import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { createRandomId } from "@/lib/createRandomId";
 import { isRecord } from "@/lib/validation";
 
-export const WORKSPACE_SCHEMA_VERSION = 5;
+export const WORKSPACE_SCHEMA_VERSION = 6;
 export const WORKSPACE_VERSION_PARAM = "wsv";
 export const WORKSPACE_STATE_PARAM = "ws";
 export const WORKSPACE_DEFAULT_FALLBACK_HREF = "/libraries";
@@ -23,42 +23,50 @@ export const MAX_PANE_HISTORY_STACK_LENGTH = 12;
 export const MAX_TOTAL_PANE_HISTORY_ENTRIES = 48;
 const MAX_PANE_TITLE_LENGTH = 120;
 
+export type PaneLayoutKind =
+  | "standard"
+  | "dense-list"
+  | "document"
+  | "podcast-detail"
+  | "media-reader";
+
 export interface PaneWidthContract {
   defaultWidthPx: number;
   minWidthPx: number;
   maxWidthPx: number;
+  layoutKind: PaneLayoutKind;
 }
 
 type WorkspacePaneVisibility = "visible" | "minimized";
 
-export interface WorkspacePaneHistoryV5 {
+export interface WorkspacePaneHistory {
   back: string[];
   forward: string[];
 }
 
-export interface WorkspacePaneStateV5 {
+export interface WorkspacePaneState {
   id: string;
   href: string;
   widthPx: number;
   visibility: WorkspacePaneVisibility;
-  history: WorkspacePaneHistoryV5;
+  history: WorkspacePaneHistory;
 }
 
-export interface WorkspaceStateV5 {
+export interface WorkspaceState {
   schemaVersion: typeof WORKSPACE_SCHEMA_VERSION;
   activePaneId: string;
-  panes: WorkspacePaneStateV5[];
+  panes: WorkspacePaneState[];
 }
 
 export function createPaneId(): string {
   return createRandomId("pane");
 }
 
-export function createEmptyPaneHistory(): WorkspacePaneHistoryV5 {
+export function createEmptyPaneHistory(): WorkspacePaneHistory {
   return { back: [], forward: [] };
 }
 
-export function hasPaneHistory(history: WorkspacePaneHistoryV5): boolean {
+export function hasPaneHistory(history: WorkspacePaneHistory): boolean {
   return history.back.length > 0 || history.forward.length > 0;
 }
 
@@ -66,7 +74,7 @@ function trimStack(stack: string[]): string[] {
   return stack.slice(-MAX_PANE_HISTORY_STACK_LENGTH);
 }
 
-export function trimWorkspacePaneHistory(state: WorkspaceStateV5): WorkspaceStateV5 {
+export function trimWorkspacePaneHistory(state: WorkspaceState): WorkspaceState {
   const panes = state.panes.map((pane) => ({
     ...pane,
     history: {
@@ -170,6 +178,7 @@ export function resolvePaneWidthContract(href: string): PaneWidthContract {
       defaultWidthPx: DEFAULT_MEDIA_PANE_WIDTH_PX,
       minWidthPx: MIN_PANE_WIDTH_PX,
       maxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
+      layoutKind: "media-reader",
     };
   }
 
@@ -178,6 +187,7 @@ export function resolvePaneWidthContract(href: string): PaneWidthContract {
       defaultWidthPx: DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
       minWidthPx: MIN_PODCAST_DETAIL_PANE_WIDTH_PX,
       maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+      layoutKind: "podcast-detail",
     };
   }
 
@@ -190,6 +200,7 @@ export function resolvePaneWidthContract(href: string): PaneWidthContract {
       defaultWidthPx: DEFAULT_DOCUMENT_PANE_WIDTH_PX,
       minWidthPx: MIN_PANE_WIDTH_PX,
       maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+      layoutKind: "document",
     };
   }
 
@@ -204,6 +215,7 @@ export function resolvePaneWidthContract(href: string): PaneWidthContract {
       defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
       minWidthPx: MIN_PANE_WIDTH_PX,
       maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+      layoutKind: "dense-list",
     };
   }
 
@@ -211,6 +223,7 @@ export function resolvePaneWidthContract(href: string): PaneWidthContract {
     defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
     minWidthPx: MIN_PANE_WIDTH_PX,
     maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    layoutKind: "standard",
   };
 }
 
@@ -230,10 +243,24 @@ export function clampPaneWidth(value: number, href?: string): number {
   );
 }
 
+export function resolvePaneTransitionWidth(
+  previousHref: string,
+  nextHref: string,
+  previousWidthPx: number,
+  preserveWidth: boolean
+): number {
+  const previousContract = resolvePaneWidthContract(previousHref);
+  const nextContract = resolvePaneWidthContract(nextHref);
+  if (preserveWidth || previousContract.layoutKind === nextContract.layoutKind) {
+    return clampPaneWidth(previousWidthPx, nextHref);
+  }
+  return getDefaultPaneWidthPx(nextHref);
+}
+
 export function createDefaultWorkspaceState(
   primaryHref: string,
   widthPx?: number
-): WorkspaceStateV5 {
+): WorkspaceState {
   const href = normalizeWorkspaceHref(primaryHref) ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
   const id = createPaneId();
   return {
@@ -255,7 +282,7 @@ export function createDefaultWorkspaceState(
 function sanitizePaneHistory(
   value: unknown,
   options?: { baseOrigin?: string }
-): WorkspacePaneHistoryV5 | null {
+): WorkspacePaneHistory | null {
   if (!isRecord(value) || !Array.isArray(value.back) || !Array.isArray(value.forward)) {
     return null;
   }
@@ -288,7 +315,7 @@ function sanitizePane(
   fallbackHref: string,
   seenIds: Set<string>,
   options?: { baseOrigin?: string }
-): WorkspacePaneStateV5 | null {
+): WorkspacePaneState | null {
   if (!isRecord(value)) {
     return null;
   }
@@ -320,7 +347,7 @@ function sanitizePane(
 export function sanitizeWorkspaceState(
   value: unknown,
   options: { fallbackHref: string; baseOrigin?: string }
-): WorkspaceStateV5 {
+): WorkspaceState {
   const fallbackHref =
     normalizeWorkspaceHref(options.fallbackHref, options) ??
     WORKSPACE_DEFAULT_FALLBACK_HREF;
@@ -331,7 +358,7 @@ export function sanitizeWorkspaceState(
 
   const rawPanes = Array.isArray(value.panes) ? value.panes : [];
   const seenIds = new Set<string>();
-  const panes: WorkspacePaneStateV5[] = [];
+  const panes: WorkspacePaneState[] = [];
 
   for (const rawPane of rawPanes) {
     if (panes.length >= MAX_PANES) {

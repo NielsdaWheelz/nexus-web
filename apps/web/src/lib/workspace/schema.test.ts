@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+  DEFAULT_DOCUMENT_PANE_WIDTH_PX,
   DEFAULT_MEDIA_PANE_WIDTH_PX,
   DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
   DEFAULT_STANDARD_PANE_WIDTH_PX,
@@ -13,6 +14,7 @@ import {
   WORKSPACE_SCHEMA_VERSION,
   createDefaultWorkspaceState,
   normalizeWorkspaceHref,
+  resolvePaneTransitionWidth,
   resolvePaneWidthContract,
   sanitizeWorkspaceState,
 } from "@/lib/workspace/schema";
@@ -58,7 +60,7 @@ describe("workspace schema", () => {
     expect(state.panes[0]?.visibility).toBe("visible");
   });
 
-  it("rejects pane payloads without v5 history", () => {
+  it("rejects pane payloads without pane history", () => {
     const state = sanitizeWorkspaceState(
       {
         schemaVersion: WORKSPACE_SCHEMA_VERSION,
@@ -190,8 +192,47 @@ describe("workspace schema", () => {
         defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
         minWidthPx: MIN_PANE_WIDTH_PX,
         maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+        layoutKind: "standard",
       });
     }
+  });
+
+  it("declares semantic layout kinds in route width contracts", () => {
+    expect(resolvePaneWidthContract("/media/1")).toMatchObject({
+      defaultWidthPx: DEFAULT_MEDIA_PANE_WIDTH_PX,
+      layoutKind: "media-reader",
+    });
+    expect(resolvePaneWidthContract("/podcasts/p1")).toMatchObject({
+      defaultWidthPx: DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
+      layoutKind: "podcast-detail",
+    });
+    expect(resolvePaneWidthContract("/pages/page-1")).toMatchObject({
+      defaultWidthPx: DEFAULT_DOCUMENT_PANE_WIDTH_PX,
+      layoutKind: "document",
+    });
+    expect(resolvePaneWidthContract("/libraries")).toMatchObject({
+      defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+      layoutKind: "dense-list",
+    });
+    expect(resolvePaneWidthContract("/settings")).toMatchObject({
+      defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+      layoutKind: "standard",
+    });
+  });
+
+  it("resolves transition widths by route layout kind", () => {
+    expect(resolvePaneTransitionWidth("/libraries", "/conversations", 900, false)).toBe(
+      900
+    );
+    expect(resolvePaneTransitionWidth("/media/1", "/media/2", 99999, false)).toBe(
+      MAX_MEDIA_PANE_WIDTH_PX
+    );
+    expect(resolvePaneTransitionWidth("/media/1", "/libraries", 2200, false)).toBe(
+      DEFAULT_DENSE_LIST_PANE_WIDTH_PX
+    );
+    expect(resolvePaneTransitionWidth("/media/1", "/media/1?loc=chapter-2", 2200, true)).toBe(
+      2200
+    );
   });
 
   it("keeps minimized panes when the active pane is visible", () => {

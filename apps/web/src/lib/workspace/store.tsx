@@ -21,9 +21,10 @@ import {
   getDefaultPaneWidthPx,
   normalizePaneTitle,
   normalizeWorkspaceHref,
+  resolvePaneTransitionWidth,
   trimWorkspacePaneHistory,
-  type WorkspacePaneStateV5,
-  type WorkspaceStateV5,
+  type WorkspacePaneState,
+  type WorkspaceState,
 } from "@/lib/workspace/schema";
 import {
   buildWorkspaceUrl,
@@ -54,11 +55,11 @@ type HistoryMode = "replace" | "push";
 type PaneNavigationMode = "replace" | "push";
 
 type WorkspaceAction =
-  | { type: "hydrate"; state: WorkspaceStateV5 }
+  | { type: "hydrate"; state: WorkspaceState }
   | { type: "activate_pane"; paneId: string }
   | {
       type: "open_pane";
-      panes: WorkspacePaneStateV5[];
+      panes: WorkspacePaneState[];
       afterPaneId: string | null;
       activate: boolean;
       mode: PaneNavigationMode;
@@ -77,7 +78,7 @@ type WorkspaceAction =
   | { type: "minimize_pane"; paneId: string }
   | { type: "restore_pane"; paneId: string };
 
-function ensureActivePaneId(state: WorkspaceStateV5): WorkspaceStateV5 {
+function ensureActivePaneId(state: WorkspaceState): WorkspaceState {
   if (!state.panes.length) {
     return createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF);
   }
@@ -93,22 +94,27 @@ function ensureActivePaneId(state: WorkspaceStateV5): WorkspaceStateV5 {
   return createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF);
 }
 
-function trimAndEnsureActivePaneId(state: WorkspaceStateV5): WorkspaceStateV5 {
+function trimAndEnsureActivePaneId(state: WorkspaceState): WorkspaceState {
   return ensureActivePaneId(trimWorkspacePaneHistory(state));
 }
 
 function applyPaneHrefTransition(
-  pane: WorkspacePaneStateV5,
+  pane: WorkspacePaneState,
   href: string,
   mode: PaneNavigationMode
-): WorkspacePaneStateV5 {
+): WorkspacePaneState {
   if (pane.href === href) {
     return pane;
   }
   return {
     ...pane,
     href,
-    widthPx: clampPaneWidth(pane.widthPx, href),
+    widthPx: resolvePaneTransitionWidth(
+      pane.href,
+      href,
+      pane.widthPx,
+      hasSamePaneResource(pane.href, href)
+    ),
     history:
       mode === "push"
         ? { back: [...pane.history.back, pane.href], forward: [] }
@@ -116,7 +122,7 @@ function applyPaneHrefTransition(
   };
 }
 
-function isNeutralWorkspaceRestoreIntent(state: WorkspaceStateV5): boolean {
+function isNeutralWorkspaceRestoreIntent(state: WorkspaceState): boolean {
   if (state.panes.length !== 1) {
     return false;
   }
@@ -129,9 +135,9 @@ function isNeutralWorkspaceRestoreIntent(state: WorkspaceStateV5): boolean {
 }
 
 export function mergeRestoredWorkspaceWithUrlIntent(
-  restored: WorkspaceStateV5,
-  urlIntent: WorkspaceStateV5
-): WorkspaceStateV5 {
+  restored: WorkspaceState,
+  urlIntent: WorkspaceState
+): WorkspaceState {
   if (isNeutralWorkspaceRestoreIntent(urlIntent)) {
     return restored;
   }
@@ -164,7 +170,7 @@ export function mergeRestoredWorkspaceWithUrlIntent(
   const requestedPaneId = restored.panes.some((pane) => pane.id === requestedPane.id)
     ? createPaneId()
     : requestedPane.id;
-  const paneToAppend: WorkspacePaneStateV5 = {
+  const paneToAppend: WorkspacePaneState = {
     ...requestedPane,
     id: requestedPaneId,
     visibility: "visible",
@@ -182,7 +188,7 @@ export function mergeRestoredWorkspaceWithUrlIntent(
   });
 }
 
-function workspaceReducer(state: WorkspaceStateV5, action: WorkspaceAction): WorkspaceStateV5 {
+function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
   switch (action.type) {
     case "hydrate":
       return trimAndEnsureActivePaneId(action.state);
@@ -274,7 +280,12 @@ function workspaceReducer(state: WorkspaceStateV5, action: WorkspaceAction): Wor
           ? {
               ...p,
               href,
-              widthPx: clampPaneWidth(p.widthPx, href),
+              widthPx: resolvePaneTransitionWidth(
+                p.href,
+                href,
+                p.widthPx,
+                hasSamePaneResource(p.href, href)
+              ),
               visibility: "visible" as const,
               history: {
                 back: p.history.back.slice(0, -1),
@@ -301,7 +312,12 @@ function workspaceReducer(state: WorkspaceStateV5, action: WorkspaceAction): Wor
           ? {
               ...p,
               href,
-              widthPx: clampPaneWidth(p.widthPx, href),
+              widthPx: resolvePaneTransitionWidth(
+                p.href,
+                href,
+                p.widthPx,
+                hasSamePaneResource(p.href, href)
+              ),
               visibility: "visible" as const,
               history: {
                 back: [...p.history.back, p.href],
@@ -418,7 +434,7 @@ function workspaceReducer(state: WorkspaceStateV5, action: WorkspaceAction): Wor
 // Build pane for an open action
 // ---------------------------------------------------------------------------
 
-function buildPanesForOpen(href: string): WorkspacePaneStateV5[] {
+function buildPanesForOpen(href: string): WorkspacePaneState[] {
   const mainId = createPaneId();
   return [
     {
@@ -432,8 +448,8 @@ function buildPanesForOpen(href: string): WorkspacePaneStateV5[] {
 }
 
 function findPaneIdForOpen(
-  panes: WorkspacePaneStateV5[],
-  paneToOpen: WorkspacePaneStateV5
+  panes: WorkspacePaneState[],
+  paneToOpen: WorkspacePaneState
 ): string {
   return (
     panes.find((item) => hasSamePaneResource(item.href, paneToOpen.href))?.id ??
@@ -520,7 +536,7 @@ export function resolveWorkspacePaneTitle(
 // ---------------------------------------------------------------------------
 
 interface WorkspaceStoreValue {
-  state: WorkspaceStateV5;
+  state: WorkspaceState;
   runtimeTitleByPaneId: ReadonlyMap<string, WorkspacePaneTitleRecord>;
   activatePane: (paneId: string) => void;
   openPane: (input: {
@@ -594,7 +610,7 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
   stateRef.current = state;
 
   const applyRestoredState = useCallback(
-    (restored: WorkspaceStateV5, urlIntent: WorkspaceStateV5) =>
+    (restored: WorkspaceState, urlIntent: WorkspaceState) =>
       dispatch({
         type: "hydrate",
         state: mergeRestoredWorkspaceWithUrlIntent(restored, urlIntent),

@@ -3,7 +3,7 @@ import {
   WORKSPACE_E2E_SCHEMA_VERSION,
   encodeWorkspaceStateParam,
   makeWorkspacePane,
-  type WorkspaceStateV5,
+  type WorkspaceState,
 } from "./workspace";
 
 // A fixed installation id so the test fully controls the device identity.
@@ -13,7 +13,7 @@ const INSTALLATION_ID_STORAGE_KEY = "nexus.installationId.v1";
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
 
 interface WorkspaceSessionEntry {
-  state: WorkspaceStateV5;
+  state: WorkspaceState;
   updated_at: string;
 }
 
@@ -26,7 +26,7 @@ interface WorkspaceSessionResponse {
 }
 
 // A non-trivial two-pane session: more than one pane makes it worth restoring.
-function twoPaneSession(): WorkspaceStateV5 {
+function twoPaneSession(): WorkspaceState {
   return {
     schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-session-libraries",
@@ -40,7 +40,7 @@ function twoPaneSession(): WorkspaceStateV5 {
 // A distinct two-pane session whose second pane differs from `twoPaneSession`.
 // Seeding this lets a test prove the deep-link URL — not the saved session —
 // drove what rendered.
-function conversationsPaneSession(): WorkspaceStateV5 {
+function conversationsPaneSession(): WorkspaceState {
   return {
     schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-session-libraries",
@@ -55,7 +55,7 @@ function conversationsPaneSession(): WorkspaceStateV5 {
 
 // A trivial single default pane — `isNonTrivialSession` treats this as nothing
 // worth restoring, so it is the right value to reset to during cleanup.
-function trivialSession(): WorkspaceStateV5 {
+function trivialSession(): WorkspaceState {
   return {
     schemaVersion: WORKSPACE_E2E_SCHEMA_VERSION,
     activePaneId: "pane-session-default",
@@ -80,7 +80,7 @@ async function pinDeviceId(page: Page): Promise<void> {
 
 async function putWorkspaceSession(
   request: APIRequestContext,
-  state: WorkspaceStateV5
+  state: WorkspaceState
 ): Promise<void> {
   const response = await request.put(WORKSPACE_SESSION_PATH, {
     data: { device_id: DEVICE_ID, state },

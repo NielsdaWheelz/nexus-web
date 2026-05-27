@@ -81,20 +81,25 @@ describe("pane route registry", () => {
   it("declares width contracts on representative routes", () => {
     expect(resolvePaneRoute("/libraries").definition).toMatchObject({
       defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+      layoutKind: "dense-list",
     });
     expect(resolvePaneRoute("/media/media-1").definition).toMatchObject({
       defaultWidthPx: DEFAULT_MEDIA_PANE_WIDTH_PX,
       maxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
+      layoutKind: "media-reader",
     });
     expect(resolvePaneRoute("/podcasts/podcast-1").definition).toMatchObject({
       defaultWidthPx: DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
       minWidthPx: MIN_PODCAST_DETAIL_PANE_WIDTH_PX,
+      layoutKind: "podcast-detail",
     });
     expect(resolvePaneRoute("/settings").definition).toMatchObject({
       defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+      layoutKind: "standard",
     });
     expect(resolvePaneWidthContract("/oracle")).toMatchObject({
       defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+      layoutKind: "standard",
     });
   });
 

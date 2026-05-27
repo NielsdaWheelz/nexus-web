@@ -11,7 +11,7 @@ pytestmark = pytest.mark.integration
 def _sample_state(active_pane_id: str = "pane-1", href: str = "/libraries") -> dict:
     """Build a representative opaque workspace state blob."""
     return {
-        "schemaVersion": 4,
+        "schemaVersion": 6,
         "activePaneId": active_pane_id,
         "panes": [
             {
@@ -19,6 +19,7 @@ def _sample_state(active_pane_id: str = "pane-1", href: str = "/libraries") -> d
                 "href": href,
                 "widthPx": 480,
                 "visibility": "visible",
+                "history": {"back": [], "forward": []},
             }
         ],
     }
