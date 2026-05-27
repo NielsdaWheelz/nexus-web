@@ -260,7 +260,6 @@ def _run_enrich_metadata(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | N
     return enrich_metadata(
         media_id=str(payload["media_id"]),
         request_id=_optional_str(payload.get("request_id")),
-        force=bool(payload.get("force", False)),
     )
 
 

@@ -208,12 +208,12 @@ class TestIngestYoutubeVideo:
         assert result["status"] == "success"
 
         with direct_db.session() as session:
-            job_ids = [
-                row[0]
+            job_rows = [
+                row
                 for row in session.execute(
                     text(
                         """
-                        SELECT id
+                        SELECT id, payload
                         FROM background_jobs
                         WHERE kind = 'enrich_metadata'
                           AND payload->>'media_id' = :media_id
@@ -222,10 +222,15 @@ class TestIngestYoutubeVideo:
                     {"media_id": str(media_id)},
                 ).fetchall()
             ]
-        for job_id in job_ids:
+        for job_id, _payload in job_rows:
             direct_db.register_cleanup("background_jobs", "id", job_id)
 
-        assert job_ids, "expected YouTube ingest to enqueue metadata enrichment"
+        assert job_rows, "expected YouTube ingest to enqueue metadata enrichment"
+        for _job_id, payload in job_rows:
+            assert "force" not in payload, (
+                "automatic YouTube metadata enrichment must use the structured-overwrite "
+                f"job payload, got {payload!r}"
+            )
 
         media_response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
         assert media_response.status_code == 200

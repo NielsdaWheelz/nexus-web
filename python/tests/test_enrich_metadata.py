@@ -1,7 +1,6 @@
 """Integration tests for metadata enrichment task behavior."""
 
 import importlib
-import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
@@ -10,6 +9,7 @@ import pytest
 from llm_calling.errors import LLMError, LLMErrorCode
 from sqlalchemy import text
 
+from nexus.services.contributor_credits import replace_media_contributor_credits
 from tests.helpers import create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -124,21 +124,22 @@ class TestEnrichMetadata:
         )
 
         prompt_holder: dict[str, str] = {}
+        structured_output_seen: dict[str, bool] = {}
 
         async def _fake_generate(self, provider, req, api_key, timeout_s):
             _ = self, provider, api_key, timeout_s
             prompt_holder["prompt"] = req.messages[0].content
+            structured_output_seen["present"] = getattr(req, "structured_output", None) is not None
             return SimpleNamespace(
                 status="completed",
-                text=json.dumps(
-                    {
-                        "authors": ["Episode Host"],
-                        "publisher": "Systems Show",
-                        "language": "en",
-                        "description": "A short summary of the episode.",
-                        "published_date": "2026-03-02",
-                    }
-                ),
+                structured_output={
+                    "title": None,
+                    "authors": ["Episode Host"],
+                    "publisher": "Systems Show",
+                    "language": "en",
+                    "description": "A short summary of the episode.",
+                    "published_date": "2026-03-02",
+                },
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
@@ -146,6 +147,7 @@ class TestEnrichMetadata:
         result = enrich_module.enrich_metadata(str(media_id))
 
         assert result["status"] == "success"
+        assert structured_output_seen == {"present": True}
         assert "Systems Show" in prompt_holder["prompt"]
         assert "feedback loops" in prompt_holder["prompt"]
 
@@ -180,7 +182,7 @@ class TestEnrichMetadata:
         )
         assert [row[0] for row in author_rows] == ["Episode Host"]
 
-    def test_existing_metadata_enriched_timestamp_does_not_block_rerun_when_gaps_remain(
+    def test_automatic_enrichment_overwrites_populated_metadata_by_default(
         self, direct_db: DirectSessionManager, monkeypatch
     ):
         user_id = create_test_user_id()
@@ -207,7 +209,7 @@ class TestEnrichMetadata:
                     VALUES (
                         :id,
                         'web_article',
-                        'notes.html',
+                        'John-Keats.com - Poems',
                         'https://example.com/notes',
                         'ready_for_reading',
                         :created_by_user_id,
@@ -255,13 +257,14 @@ class TestEnrichMetadata:
             _ = self, provider, req, api_key, timeout_s
             return SimpleNamespace(
                 status="completed",
-                text=json.dumps(
-                    {
-                        "title": "Analytical Engine Notes",
-                        "authors": ["Ada Lovelace"],
-                        "publisher": "Nexus Archive",
-                    }
-                ),
+                structured_output={
+                    "title": "Analytical Engine Notes",
+                    "authors": ["Ada Lovelace"],
+                    "publisher": "Nexus Archive",
+                    "description": "Ada Lovelace's notes on the analytical engine.",
+                    "published_date": "1843",
+                    "language": "en",
+                },
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
@@ -274,7 +277,7 @@ class TestEnrichMetadata:
             media_row = session.execute(
                 text(
                     """
-                    SELECT title, publisher
+                    SELECT title, publisher, description, published_date, language
                     FROM media
                     WHERE id = :media_id
                     """
@@ -293,10 +296,18 @@ class TestEnrichMetadata:
                 {"media_id": media_id},
             ).fetchall()
 
-        assert media_row == ("Analytical Engine Notes", "Nexus Archive")
+        assert media_row == (
+            "Analytical Engine Notes",
+            "Nexus Archive",
+            "Ada Lovelace's notes on the analytical engine.",
+            "1843",
+            "en",
+        )
         assert [row[0] for row in author_rows] == ["Ada Lovelace"]
 
-    def test_force_bypasses_no_gaps(self, direct_db: DirectSessionManager, monkeypatch):
+    def test_automatic_enrichment_never_skips_no_gaps(
+        self, direct_db: DirectSessionManager, monkeypatch
+    ):
         user_id = create_test_user_id()
         media_id = uuid4()
 
@@ -324,9 +335,6 @@ class TestEnrichMetadata:
             session.commit()
 
         enrich_module = _enrich_metadata_module()
-        # Force the no-gaps short-circuit to fire without force=True so the
-        # test isolates the force=True bypass.
-        monkeypatch.setattr(enrich_module, "has_any_gaps", lambda _g: False)
         monkeypatch.setattr(
             enrich_module,
             "select_enrichment_providers",
@@ -337,23 +345,27 @@ class TestEnrichMetadata:
             _ = self, provider, req, api_key, timeout_s
             return SimpleNamespace(
                 status="completed",
-                text=json.dumps({"language": "en"}),
+                structured_output={
+                    "title": "Better Article Title",
+                    "authors": None,
+                    "publisher": None,
+                    "description": None,
+                    "published_date": None,
+                    "language": "en",
+                },
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
 
-        # Sanity check: without force, the no_gaps short-circuit should fire.
-        no_force = enrich_module.enrich_metadata(str(media_id))
-        assert no_force == {"status": "skipped", "reason": "no_gaps"}, (
-            f"Expected no_gaps skip without force, got {no_force}"
-        )
-
-        result = enrich_module.enrich_metadata(str(media_id), force=True)
+        result = enrich_module.enrich_metadata(str(media_id))
         assert result["status"] == "success", (
-            f"Expected force=True to bypass no_gaps short-circuit, got {result}"
+            f"Expected automatic enrichment to run even when all fields are populated, got {result}"
         )
+        assert "no_gaps" not in str(result)
 
-    def test_force_overwrites_populated_fields(self, direct_db: DirectSessionManager, monkeypatch):
+    def test_overwrites_populated_fields_by_default(
+        self, direct_db: DirectSessionManager, monkeypatch
+    ):
         user_id = create_test_user_id()
         media_id = uuid4()
 
@@ -389,18 +401,19 @@ class TestEnrichMetadata:
             _ = self, provider, req, api_key, timeout_s
             return SimpleNamespace(
                 status="completed",
-                text=json.dumps(
-                    {
-                        "title": "New Title",
-                        "publisher": "New Publisher",
-                        "description": "New description.",
-                    }
-                ),
+                structured_output={
+                    "title": "New Title",
+                    "authors": None,
+                    "publisher": "New Publisher",
+                    "description": "New description.",
+                    "published_date": None,
+                    "language": None,
+                },
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
 
-        result = enrich_module.enrich_metadata(str(media_id), force=True)
+        result = enrich_module.enrich_metadata(str(media_id))
         assert result["status"] == "success", f"Expected success, got {result}"
 
         with direct_db.session() as session:
@@ -410,8 +423,123 @@ class TestEnrichMetadata:
             ).fetchone()
 
         assert row == ("New Title", "New Publisher", "New description."), (
-            f"Expected force=True to overwrite populated fields, got {row}"
+            f"Expected default enrichment to overwrite populated fields, got {row}"
         )
+
+    def test_repeated_structured_enrichment_replaces_machine_authors_without_duplicates(
+        self, direct_db: DirectSessionManager, monkeypatch
+    ):
+        user_id = create_test_user_id()
+        media_id = uuid4()
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("users", "id", user_id)
+
+        with direct_db.session() as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO media (
+                        id, kind, title, canonical_source_url, processing_status,
+                        created_by_user_id
+                    ) VALUES (
+                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
+                        'ready_for_reading', :user_id
+                    )
+                    """
+                ),
+                {"id": media_id, "user_id": user_id},
+            )
+            replace_media_contributor_credits(
+                session,
+                media_id=media_id,
+                source="web_article_byline",
+                credits=[
+                    {
+                        "name": "Ada Lovelace",
+                        "role": "author",
+                        "ordinal": 0,
+                        "source": "web_article_byline",
+                    }
+                ],
+            )
+            replace_media_contributor_credits(
+                session,
+                media_id=media_id,
+                source="epub_opf",
+                credits=[
+                    {
+                        "name": "Ada Lovelace",
+                        "role": "author",
+                        "ordinal": 0,
+                        "source": "epub_opf",
+                    }
+                ],
+            )
+            replace_media_contributor_credits(
+                session,
+                media_id=media_id,
+                source="manual",
+                credits=[
+                    {
+                        "name": "Curated Author",
+                        "role": "author",
+                        "ordinal": 0,
+                        "source": "manual",
+                    }
+                ],
+            )
+            session.commit()
+
+        enrich_module = _enrich_metadata_module()
+        monkeypatch.setattr(
+            enrich_module,
+            "select_enrichment_providers",
+            lambda _s: [("openai", "gpt-test", "sk-test")],
+        )
+
+        async def _fake_generate(self, provider, req, api_key, timeout_s):
+            _ = self, provider, req, api_key, timeout_s
+            return SimpleNamespace(
+                status="completed",
+                structured_output={
+                    "title": "Analytical Engine Notes",
+                    "authors": ["Ada Lovelace", "Ada  Lovelace", "Charles Babbage"],
+                    "publisher": None,
+                    "description": None,
+                    "published_date": None,
+                    "language": None,
+                },
+            )
+
+        monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
+
+        first = enrich_module.enrich_metadata(str(media_id))
+        second = enrich_module.enrich_metadata(str(media_id))
+
+        assert first["status"] == "success", first
+        assert second["status"] == "success", second
+
+        with direct_db.session() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT credited_name, source
+                    FROM contributor_credits
+                    WHERE media_id = :media_id
+                      AND role = 'author'
+                    ORDER BY source ASC, ordinal ASC, credited_name ASC
+                    """
+                ),
+                {"media_id": media_id},
+            ).fetchall()
+
+        assert [(row[0], row[1]) for row in rows] == [
+            ("Curated Author", "manual"),
+            ("Ada Lovelace", "metadata_enrichment"),
+            ("Charles Babbage", "metadata_enrichment"),
+        ]
 
     def test_llm_failure_records_metadata_failure(
         self, direct_db: DirectSessionManager, monkeypatch
@@ -529,7 +657,11 @@ class TestEnrichMetadata:
 
         async def _fake_generate(self, provider, req, api_key, timeout_s):
             _ = self, provider, req, api_key, timeout_s
-            return SimpleNamespace(status="completed", text="this is not json")
+            return SimpleNamespace(
+                status="completed",
+                text='{"title":"Legacy text payload must be ignored"}',
+                structured_output=None,
+            )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
 
@@ -538,7 +670,7 @@ class TestEnrichMetadata:
         assert result["status"] == "failed"
         assert result["reason"] == "parse_failed"
         assert result["error_code"] == "E_METADATA_PARSE_FAILED", (
-            f"Expected parse_failed result, got {result}"
+            f"Expected missing structured_output to fail closed, got {result}"
         )
 
         with direct_db.session() as session:
@@ -556,7 +688,7 @@ class TestEnrichMetadata:
             f"Expected metadata failure recorded with parse-failed code, got {row}"
         )
 
-    def test_parse_failure_falls_back_to_next_provider(
+    def test_structured_validation_failure_falls_back_to_next_provider(
         self, direct_db: DirectSessionManager, monkeypatch
     ):
         user_id = create_test_user_id()
@@ -601,21 +733,32 @@ class TestEnrichMetadata:
             _ = self, req, api_key, timeout_s
             observed_providers.append(provider)
             if provider == "gemini":
-                return SimpleNamespace(status="completed", text='{"title":"Truncated",')
+                return SimpleNamespace(
+                    status="completed",
+                    structured_output={
+                        "title": "Bad Date",
+                        "authors": None,
+                        "publisher": None,
+                        "description": None,
+                        "published_date": "March 1843",
+                        "language": "en",
+                    },
+                )
             return SimpleNamespace(
                 status="completed",
-                text=json.dumps(
-                    {
-                        "title": "Recovered Title",
-                        "publisher": "Recovered Publisher",
-                        "language": "en",
-                    }
-                ),
+                structured_output={
+                    "title": "Recovered Title",
+                    "authors": None,
+                    "publisher": "Recovered Publisher",
+                    "description": None,
+                    "published_date": None,
+                    "language": "en",
+                },
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
 
-        result = enrich_module.enrich_metadata(str(media_id), force=True)
+        result = enrich_module.enrich_metadata(str(media_id))
 
         assert result["status"] == "success"
         assert result["provider"] == "openai"
@@ -677,12 +820,19 @@ class TestEnrichMetadata:
             _ = self, provider, req, api_key, timeout_s
             return SimpleNamespace(
                 status="completed",
-                text=json.dumps({"publisher": "Recovered Publisher"}),
+                structured_output={
+                    "title": None,
+                    "authors": None,
+                    "publisher": "Recovered Publisher",
+                    "description": None,
+                    "published_date": None,
+                    "language": None,
+                },
             )
 
         monkeypatch.setattr(enrich_module.LLMRouter, "generate", _fake_generate)
 
-        result = enrich_module.enrich_metadata(str(media_id), force=True)
+        result = enrich_module.enrich_metadata(str(media_id))
         assert result["status"] == "success", f"Expected success, got {result}"
 
         with direct_db.session() as session:
@@ -817,7 +967,7 @@ class TestEnrichMetadata:
         enrich_module = _enrich_metadata_module()
         monkeypatch.setattr(enrich_module, "select_enrichment_providers", lambda _s: [])
 
-        result = enrich_module.enrich_metadata(str(media_id), force=True)
+        result = enrich_module.enrich_metadata(str(media_id))
         assert result == {"status": "skipped", "reason": "not_ready"}
 
         with direct_db.session() as session:

@@ -4393,12 +4393,12 @@ class TestPodcastEpisodeMetadataPersistence:
                 ),
                 {"podcast_id": podcast_id},
             ).scalar_one()
-            job_ids = [
-                row[0]
+            job_rows = [
+                row
                 for row in session.execute(
                     text(
                         """
-                        SELECT id
+                        SELECT id, payload
                         FROM background_jobs
                         WHERE kind = 'enrich_metadata'
                           AND payload->>'media_id' = :media_id
@@ -4408,10 +4408,15 @@ class TestPodcastEpisodeMetadataPersistence:
                 ).fetchall()
             ]
 
-        for job_id in job_ids:
+        for job_id, _payload in job_rows:
             direct_db.register_cleanup("background_jobs", "id", job_id)
 
-        assert job_ids, "expected podcast sync to enqueue metadata enrichment for new episodes"
+        assert job_rows, "expected podcast sync to enqueue metadata enrichment for new episodes"
+        for _job_id, payload in job_rows:
+            assert "force" not in payload, (
+                "automatic podcast metadata enrichment must use the structured-overwrite "
+                f"job payload, got {payload!r}"
+            )
 
         media_response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
         assert media_response.status_code == 200, (
@@ -7112,9 +7117,7 @@ class TestPodcastOpmlImportExport:
         summaries = []
         summary_lock = threading.Lock()
 
-        opml_xml = (
-            opml_payload.decode("utf-8") if isinstance(opml_payload, bytes) else opml_payload
-        )
+        opml_xml = opml_payload.decode("utf-8") if isinstance(opml_payload, bytes) else opml_payload
 
         def import_once(_index: int) -> None:
             with direct_db.session() as session:
@@ -9232,22 +9235,6 @@ class TestSubscribeWithLibraryIds:
             )
             session.commit()
 
-        with direct_db.session() as session:
-            first_sync_episode_ids = {
-                UUID(str(row[0]))
-                for row in session.execute(
-                    text(
-                        """
-                        SELECT m.id
-                        FROM media m
-                        JOIN podcast_episodes pe ON pe.media_id = m.id
-                        WHERE pe.podcast_id = :podcast_id
-                        """
-                    ),
-                    {"podcast_id": podcast_id},
-                ).fetchall()
-            }
-
         # Add a NEW episode to the mocked feed for the next sync run.
         new_episode = {
             "provider_episode_id": "inherit-ep-2",
@@ -9403,6 +9390,5 @@ class TestSubscribeWithLibraryIds:
             f"got {feed_one_libs}"
         )
         assert feed_two_libs == {lib_a}, (
-            "feed_two falls back to default_library_ids → lib_a; "
-            f"got {feed_two_libs}"
+            f"feed_two falls back to default_library_ids → lib_a; got {feed_two_libs}"
         )

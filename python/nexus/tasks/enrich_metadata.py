@@ -21,14 +21,12 @@ from nexus.db.session import get_session_factory
 from nexus.errors import LLM_ERROR_CODE_TO_API_ERROR_CODE, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.metadata_enrichment import (
-    MetadataGaps,
     build_enrichment_prompt,
-    detect_metadata_gaps,
     get_content_sample,
-    has_any_gaps,
     merge_enrichment,
-    parse_enrichment_response,
+    metadata_structured_output_spec,
     select_enrichment_providers,
+    validate_structured_enrichment,
 )
 from nexus.services.redact import safe_kv
 
@@ -89,14 +87,11 @@ def _llm_error_code(exc: Exception) -> str:
 def enrich_metadata(
     media_id: str,
     request_id: str | None = None,
-    *,
-    force: bool = False,
 ) -> dict:
     """Enrich media metadata using a cheap LLM call.
 
     Skips silently if:
     - Media is still actively extracting
-    - No metadata gaps detected (unless force=True)
     - No LLM provider configured
 
     On LLM/parse failure records failure_stage=metadata + last_error_* on
@@ -110,7 +105,6 @@ def enrich_metadata(
         "enrich_metadata_started",
         media_id=media_id,
         request_id=request_id,
-        force=force,
     )
 
     session_factory = get_session_factory()
@@ -125,20 +119,6 @@ def enrich_metadata(
         if media.processing_status not in _READY_STATES:
             return {"status": "skipped", "reason": "not_ready"}
 
-        if force:
-            gaps = MetadataGaps(
-                title_looks_like_filename=True,
-                authors_missing=True,
-                publisher_missing=True,
-                description_missing=True,
-                published_date_missing=True,
-                language_missing=True,
-            )
-        else:
-            gaps = detect_metadata_gaps(media)
-            if not has_any_gaps(gaps):
-                return {"status": "skipped", "reason": "no_gaps"}
-
         providers = select_enrichment_providers(settings)
         if not providers:
             error_code = ApiErrorCode.E_METADATA_NO_PROVIDER.value
@@ -151,7 +131,8 @@ def enrich_metadata(
             return _failed_result(reason="no_provider", error_code=error_code)
 
         content_sample = get_content_sample(db, media)
-        prompt = build_enrichment_prompt(db, media, content_sample, gaps)
+        prompt = build_enrichment_prompt(db, media, content_sample)
+        structured_output = metadata_structured_output_spec()
         attempted_providers: list[dict[str, str]] = []
         last_failure = {
             "reason": "llm_failed",
@@ -168,6 +149,7 @@ def enrich_metadata(
                 messages=[Turn(role="user", content=prompt)],
                 max_tokens=settings.metadata_enrichment_max_output_tokens,
                 temperature=0.0,
+                structured_output=structured_output,
             )
 
             llm_start = time.monotonic()
@@ -273,20 +255,19 @@ def enrich_metadata(
                 ),
             )
 
-            response_text = str(getattr(response, "text", ""))
-            enrichment = parse_enrichment_response(response_text)
+            structured_payload = getattr(response, "structured_output", None)
+            enrichment = validate_structured_enrichment(structured_payload)
             if enrichment is None:
                 logger.warning(
                     "enrich_metadata_parse_failed",
                     media_id=media_id,
                     provider=provider,
                     model=model,
-                    raw_text=response_text[:200],
                 )
                 last_failure = {
                     "reason": "parse_failed",
                     "error_code": ApiErrorCode.E_METADATA_PARSE_FAILED.value,
-                    "error_message": f"failed to parse LLM response as JSON: {response_text[:200]}",
+                    "error_message": "provider did not return valid structured metadata",
                     "provider": provider,
                     "model": model,
                 }
@@ -302,7 +283,7 @@ def enrich_metadata(
                 }
                 continue
 
-            merge_result = merge_enrichment(db, media, enrichment, gaps, force_overwrite=force)
+            merge_result = merge_enrichment(db, media, enrichment)
             if not merge_result.accepted_fields:
                 last_failure = {
                     "reason": "no_applicable_fields",

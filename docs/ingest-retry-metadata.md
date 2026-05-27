@@ -4,6 +4,11 @@ Status: implemented; reliability hardened
 Owner: ingestion pipeline
 Hard cutover. No legacy retry API fallback and no backward compatibility for body-less retry calls.
 
+Metadata retry/API behavior remains here. The enrichment policy itself is now
+defined by `docs/metadata-enrichment-structured-overwrite-cutover.md`:
+structured output, all-fields requests, overwrite by default, and no `force`
+job payload.
+
 ---
 
 ## 1. Problem statement
@@ -99,7 +104,7 @@ Request body **required**:
 
 `from_stage="metadata"`:
 - Preconditions: viewer is creator; `processing_status ∈ {ready_for_reading, embedding, ready}`; capability `can_retry_metadata` is true.
-- Behavior: enqueues `enrich_metadata` job with payload `{media_id, request_id, force: true}`.
+- Behavior: enqueues `enrich_metadata` job with payload `{media_id, request_id}`. The job's only policy is structured-output overwrite by default.
 - Errors:
   - 422 if body missing or `from_stage` invalid.
   - 409 `E_RETRY_INVALID_STATE` if status not in the allowed set.
@@ -127,16 +132,16 @@ Body still empty. Eligibility broadens:
 ### 4.5. `enrich_metadata` behavior (final)
 
 ```python
-def enrich_metadata(media_id: str, request_id: str | None = None, *, force: bool = False) -> dict
+def enrich_metadata(media_id: str, request_id: str | None = None) -> dict
 ```
 
 Flow:
 
 1. Load `Media`. Skip if missing (`{status:"skipped", reason:"media_not_found"}`).
 2. Skip if `processing_status == 'extracting'` (`reason: "not_ready"`).
-3. **Detect gaps.** If `force=False AND not has_any_gaps(gaps)` → `reason: "no_gaps"`. If `force=True`, treat every field as a gap (use `all_gaps()`).
-4. Select configured providers in reliability-first fallback order. If none are configured, record `E_METADATA_NO_PROVIDER`.
-5. Call LLM providers with bounded fallback. Parse model output through the strict metadata JSON contract before merging.
+3. Select configured structured-output providers in reliability-first fallback order. If none are configured, record `E_METADATA_NO_PROVIDER`.
+4. Build all-fields metadata context. Current metadata is an untrusted hint, not a gate.
+5. Call LLM providers with bounded fallback. Read `response.structured_output` and validate it with the strict local Pydantic contract before merging.
 6. On **any** terminal failure path (`llm_failed`, `llm_incomplete`, `parse_failed`, `no_fields`, `unexpected_error`):
    - Set `media.failure_stage = FailureStage.metadata`.
    - Set `media.last_error_code` (LLM error class or fixed code like `E_METADATA_PARSE_FAILED`).
@@ -146,7 +151,7 @@ Flow:
    - Commit.
    - Return `{status: "failed", reason: ..., error_code: ..., attempted_providers: [...]}`. The worker records that result on the background job failure/dead row.
 7. On success:
-   - `merge_enrichment(db, media, enrichment, gaps, force_overwrite=force)`. When `force_overwrite=True`, drop the "only fill if missing" guards and let the new values replace existing ones (subject to existing length caps).
+   - Apply every valid non-empty field returned by the model. Existing populated metadata does not block replacement.
    - If at least one field is accepted, set `media.metadata_enriched_at = now()` and `media.updated_at = now()`.
    - Clear `media.failure_stage / last_error_code / last_error_message` if they were `metadata`-related.
    - Commit.
@@ -169,10 +174,10 @@ Flow:
        ┌────────────────────────────┐  ┌────────────────────────────┐
        │ retry_for_viewer_unified() │  │ retry_metadata_for_viewer()│
        │ services/pdf_lifecycle.py  │  │ services/metadata_         │
-       │  → kind dispatch           │  │   lifecycle.py (NEW)       │
+       │  → kind dispatch           │  │   lifecycle.py             │
        │  → enqueue ingest_{kind}   │  │  → enqueue enrich_metadata │
-       │     (deterministic         │  │     payload {force: true}  │
-       │      pipeline)             │  │                            │
+       │     (deterministic         │  │     payload {media_id,     │
+       │      pipeline)             │  │      request_id}           │
        └────────────────────────────┘  └────────────────────────────┘
 
                       ┌─────────────────────────────────┐
@@ -192,7 +197,7 @@ Flow:
 ## 6. Composition with other systems
 
 - **Job queue (`background_jobs`):** all retries go through `enqueue_job()`. No dedupe key on the new metadata enqueue — repeated clicks may produce repeated jobs (frontend gate is the only mitigation; per-click cost is one LLM call, which is acceptable).
-- **`enrich_metadata` JobDefinition** (`python/nexus/jobs/registry.py:101-107`): no change. `max_attempts=1`, `retry_delays_seconds=(0,)`, `lease_seconds=120`. Handler signature accepts `force` from payload.
+- **`enrich_metadata` JobDefinition** (`python/nexus/jobs/registry.py:101-107`): no change. `max_attempts=1`, `retry_delays_seconds=(0,)`, `lease_seconds=120`. Handler payload is `{media_id, request_id?}`.
 - **`ContentIndexRun` versioning** (`python/nexus/db/models.py:2627`): unchanged. Source refresh follows the existing path; old runs are superseded via `superseded_by_run_id`. No deletion of historical chunks/embeddings.
 - **`Media.failure_stage`**: gains a new value `metadata`. Semantic shift — when set to `metadata`, `processing_status` stays `ready`. All other values continue to imply `processing_status='failed'`. Audit responsibility in §11.
 - **`derive_capabilities` callers**: every consumer of `CapabilitiesOut` automatically receives `can_retry_metadata=false` (Pydantic default) until the backend computes it.
@@ -211,19 +216,23 @@ Flow:
 
 - **CHANGE** `python/nexus/db/models.py:85-95` — add `metadata = "metadata"` to `FailureStage`.
 - **CHANGE** `python/nexus/services/metadata_enrichment.py`:
-  - Add helper `all_gaps() -> MetadataGaps` returning every field True.
-  - Add `force_overwrite: bool = False` to `merge_enrichment(...)`. When True, drop the "only fill if missing" guards (each branch becomes "if `force_overwrite or gaps.<field>: write"`).
+  - Remove gap-gated application from metadata enrichment.
+  - Request all metadata fields through provider-native structured output.
+  - Validate structured provider output locally.
+  - Apply every valid non-empty returned field, overwriting populated metadata.
 - **CHANGE** `python/nexus/tasks/enrich_metadata.py`:
-  - Add `force: bool = False` parameter.
-  - When `force=True`: skip `has_any_gaps` early return; use `all_gaps()` for prompt/merge.
+  - No `force` parameter.
+  - No `no_gaps` early return.
+  - Build structured `LLMRequest`.
+  - Read `response.structured_output`; do not parse text/markdown/prose.
   - Replace `return {"status":"skipped", "reason":"llm_failed"}` (and the three sibling branches) with a helper `_record_metadata_failure(db, media, error_code, error_message)` that writes `failure_stage=metadata`, `last_error_*`, commits, and returns `{"status":"failed", "reason":...}`.
   - On success: if previous `failure_stage` was `metadata`, clear it (and `last_error_*`) inside the same commit as the metadata write.
-- **CHANGE** `python/nexus/jobs/registry.py:_run_enrich_metadata` (line 255-261) — forward `force = bool(payload.get("force", False))`.
+- **CHANGE** `python/nexus/jobs/registry.py:_run_enrich_metadata` (line 255-261) — pass only `media_id` and optional `request_id`.
 - **NEW** `python/nexus/services/metadata_lifecycle.py`:
   - `retry_metadata_for_viewer(db, viewer_id, media_id, *, request_id) -> dict`
   - Mirrors style of `pdf_lifecycle.retry_for_viewer_unified` (permission check, state check, enqueue).
   - Validates: creator, `processing_status ∈ {ready_for_reading, embedding, ready}`.
-  - Calls `enqueue_job(db, kind="enrich_metadata", payload={"media_id": str(media.id), "request_id": request_id, "force": True})`.
+  - Calls `enqueue_job(db, kind="enrich_metadata", payload={"media_id": str(media.id), "request_id": request_id})`.
   - Returns `{"media_id": str(media.id), "processing_status": media.processing_status.value, "metadata_enrichment_enqueued": True}`.
 - **CHANGE** `python/nexus/api/routes/media.py:425-453`:
   - Add `RetryRequest` Pydantic model in `schemas/media.py` with `from_stage: Literal["source", "metadata"]`, `extra="forbid"`.
@@ -267,17 +276,17 @@ Flow:
 - **CHANGE** `python/tests/api/routes/test_media_retry.py` (or equivalent) — every test now sends `{from_stage: "source"}`. Add a test asserting a body-less call returns 422.
 - **CHANGE** `python/tests/services/test_capabilities.py` — cover `can_retry_metadata` true/false matrix; cover broadened `can_refresh_source` for pdf/epub.
 - **CHANGE** `python/tests/tasks/test_enrich_metadata.py`:
-  - Force path bypasses `no_gaps`.
-  - Force path overwrites populated fields (regression: assert title changes when previously populated).
+  - Automatic path never skips `no_gaps`.
+  - Automatic path overwrites populated fields (regression: assert title changes when previously populated).
   - LLM failure path writes `failure_stage='metadata'` and `last_error_*` while leaving `processing_status='ready'`.
-  - Successful force path clears `failure_stage` if previously `metadata`.
+  - Successful path clears `failure_stage` if previously `metadata`.
 - **CHANGE** `python/tests/services/test_media.py:test_refresh_source_for_viewer*` — add pdf/epub eligibility cases; add file-missing → 409 case for pdf/epub.
 - **CHANGE/NEW** `apps/web/e2e/...` — Playwright test for the "Re-enrich metadata" action and the soft-warning chip's appearance/disappearance.
 
 ## 8. Key decisions
 
 1. **`from_stage` vocabulary** = `"source" | "metadata"`. `source` (not `extract` or `fetch`) reads naturally for both URL-backed and file-backed media; the deterministic pipeline as a whole IS the source-reprocessing path. `metadata` (not `llm_metadata` or `enrich`) is shorter and aligns with the column name.
-2. **Force semantics overwrite, not just bypass.** The user's pain is "metadata is messy" — those messy fields were already populated. Force must allow overwrite or it doesn't solve the problem. The unforced (post-ingest) path retains "never overwrite good data."
+2. **Metadata enrichment overwrites by default.** The user's pain is "metadata is messy" — those messy fields are often already populated. Manual and automatic enrichment use the same structured-output overwrite policy.
 3. **Soft warning over hard failure** for metadata: `failure_stage='metadata'` while `processing_status='ready'`. Per user direction. Decouples the historically-coupled enum semantics.
 4. **One `/retry` endpoint with body** instead of two endpoints. Avoids endpoint proliferation and makes the stage selection explicit at every call site.
 5. **Hard cutover: body required.** No `from_stage` default. Forces explicitness; any client that called the old endpoint silently is broken loudly, which is the desired behavior.
@@ -291,8 +300,8 @@ Flow:
 
 - **I1.** `Media.processing_status` is never written by `enrich_metadata`.
 - **I2.** `Media.failure_stage='metadata'` implies `processing_status ∈ {pending, ready_for_reading, embedding, ready}` (never `failed`).
-- **I3.** A successful (forced or unforced) `enrich_metadata` run clears `failure_stage`/`last_error_*` iff the previous value of `failure_stage` was `metadata`. It does not touch other failure_stage values.
-- **I4.** `force=True` is the only path that may overwrite already-populated metadata fields.
+- **I3.** A successful `enrich_metadata` run clears `failure_stage`/`last_error_*` iff the previous value of `failure_stage` was `metadata`. It does not touch other failure_stage values.
+- **I4.** Every valid non-empty structured field may overwrite already-populated metadata.
 - **I5.** `POST /retry` with empty/invalid body returns 422; `{from_stage: "source"}` preserves today's behavior; `{from_stage: "metadata"}` enqueues enrichment.
 - **I6.** `can_retry_metadata` and `can_retry` are never both true (mutual exclusion via `processing_status`).
 - **I7.** `POST /refresh` accepts pdf/epub iff `media_file_exists AND processing_status ∈ {ready_for_reading, embedding, ready, failed}`.
@@ -314,7 +323,7 @@ Flow:
 
 - **R1. `failure_stage` semantic shift.** Today every reader of `failure_stage` may implicitly assume `processing_status='failed'`. Mitigation: grep `failure_stage` across backend and frontend; the only backend reader is `retry_pdf_ingest_for_viewer` (which already gates on `processing_status=='failed'` before reading `failure_stage`, so it's safe). Frontend reader is the response surface (`MediaOut.failure_stage`) — update consumers to interpret `metadata + ready` as soft warning, anything else with status≠failed as defect-shaped. Document the new semantics in the model docstring.
 - **R2. Postgres enum add.** `ALTER TYPE failure_stage_enum ADD VALUE 'metadata'` requires Postgres ≥ 12 for in-transaction execution. Project is on a modern Postgres — confirm in CI before the migration ships.
-- **R3. Force-overwrite trust.** `force=True` lets the LLM clobber good fields. User-triggered and accepted as part of the design.
+- **R3. Overwrite trust.** Metadata enrichment can clobber good fields. Accepted for this one-user prototype; manual re-enrich and source refresh are the recovery paths.
 - **R4. Cost / abuse.** One LLM call per click; no rate limit. Mitigated by frontend gate + per-user trust model. If abuse appears, add a 1-per-minute server-side throttle keyed on `(user_id, media_id)`.
 - **R5. EPUB refresh parity.** EPUB upload/confirm path may have setup beyond just enqueueing `ingest_epub`. Implementation step 1: inspect `confirm_epub_ingest` and `retry_epub_ingest_for_viewer` and verify that the refresh path calls the right entry point. If extra setup is needed (e.g., re-validating archive safety), bring it into the refresh path.
 - **R6. Stage taxonomy drift.** `FailureStage` and `ContentIndexRun.state` already diverged (the survey caught this). Adding `metadata` to `FailureStage` without adding a parallel `metadata` state to `ContentIndexRun.state` is intentional: enrichment isn't an index run. Document this in the `FailureStage` docstring.
@@ -323,7 +332,7 @@ Flow:
 
 - O1. Soft-warning chip placement in `MediaPaneBody.tsx` — header chip vs. banner above doc body. Choose during implementation; header chip is the default per pane conventions.
 - O2. Translating the FastAPI 422 from a body-less `/retry` into a friendlier `E_INVALID_REQUEST` envelope. Default: leave as 422.
-- O3. Whether `metadata_enriched_at` bumps when force-retry produces no accepted fields. Current behavior: no. Empty or non-applicable output is a visible metadata failure (`E_METADATA_NO_FIELDS`) rather than a silent successful no-op.
+- O3. Whether `metadata_enriched_at` bumps when a run produces no accepted fields. Current behavior: no. Empty or non-applicable output is a visible metadata failure (`E_METADATA_NO_FIELDS`) rather than a silent successful no-op.
 - O4. Whether the "Re-enrich metadata" item is always visible when capability is true, or hidden by default and surfaced only when `failure_stage='metadata'` plus a "More" expansion. Default: always visible.
 
 ## 13. Out-of-scope follow-ups (won't be done in this change)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Sequence
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -51,6 +52,22 @@ CONTRIBUTOR_EXTERNAL_ID_AUTHORITIES = {
     "gutenberg",
 }
 CONFIRMED_ALIAS_SOURCES = {"manual", "curated", "user"}
+PRESERVED_MEDIA_AUTHOR_CREDIT_SOURCES = frozenset({"manual", "curated", "user"})
+MACHINE_DERIVED_MEDIA_AUTHOR_CREDIT_SOURCES = frozenset(
+    {
+        "epub_opf",
+        "metadata_enrichment",
+        "podcast_index",
+        "pdf_metadata",
+        "rss",
+        "web_article_byline",
+        "web_article_capture",
+        "x_api_author_thread",
+        "x_api_quoted_post",
+        "x_oembed_article",
+        "youtube_metadata",
+    }
+)
 
 
 def normalize_contributor_role(value: str | None) -> str:
@@ -74,6 +91,97 @@ def replace_media_contributor_credits(
     source: str | None = None,
 ) -> None:
     _replace_credits(db, "media_id", media_id, credits, source=source)
+
+
+def replace_machine_derived_media_author_credits(
+    db: Session,
+    *,
+    media_id: UUID,
+    names: list[str],
+    source: str,
+    source_ref: dict[str, Any] | None = None,
+) -> None:
+    """Replace machine-derived media author credits while preserving curated edits.
+
+    This is for extractor/provider/LLM author lanes. It deletes existing
+    machine-derived author credits for the media item, never manual/user/curated
+    author credits, then inserts the normalized unique input names under
+    ``source``.
+    """
+    normalized_source = _normalize_credit_source(source)
+    if normalized_source in PRESERVED_MEDIA_AUTHOR_CREDIT_SOURCES:
+        raise ValueError("machine-derived media author credit source cannot be manual/user/curated")
+
+    credits: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+    for raw_name in names:
+        credited_name = display_contributor_name(raw_name)[:255]
+        if not credited_name:
+            continue
+        normalized_name = normalize_contributor_name(credited_name)
+        if normalized_name in seen_names:
+            continue
+        seen_names.add(normalized_name)
+        credit: dict[str, Any] = {
+            "name": credited_name,
+            "role": "author",
+            "ordinal": len(credits),
+            "source": normalized_source,
+        }
+        if source_ref is not None:
+            credit["source_ref"] = source_ref
+        credits.append(credit)
+
+    existing_rows = db.execute(
+        text(
+            """
+            SELECT
+                cc.id,
+                cc.source,
+                cc.normalized_credited_name,
+                cc.contributor_id,
+                cc.resolution_status,
+                c.status
+            FROM contributor_credits cc
+            LEFT JOIN contributors c ON c.id = cc.contributor_id
+            WHERE cc.media_id = :media_id
+              AND cc.role = 'author'
+              AND cc.source = ANY(:machine_sources)
+              AND cc.source != ALL(:preserved_sources)
+            """
+        ),
+        {
+            "media_id": media_id,
+            "machine_sources": sorted(MACHINE_DERIVED_MEDIA_AUTHOR_CREDIT_SOURCES),
+            "preserved_sources": sorted(PRESERVED_MEDIA_AUTHOR_CREDIT_SOURCES),
+        },
+    ).fetchall()
+    previous_contributors = _previous_contributors_by_source_name(existing_rows)
+    db.execute(
+        text(
+            """
+            DELETE FROM contributor_credits
+            WHERE media_id = :media_id
+              AND role = 'author'
+              AND source = ANY(:machine_sources)
+              AND source != ALL(:preserved_sources)
+            """
+        ),
+        {
+            "media_id": media_id,
+            "machine_sources": sorted(MACHINE_DERIVED_MEDIA_AUTHOR_CREDIT_SOURCES),
+            "preserved_sources": sorted(PRESERVED_MEDIA_AUTHOR_CREDIT_SOURCES),
+        },
+    )
+    if credits:
+        _insert_credits(
+            db,
+            "media_id",
+            media_id,
+            credits,
+            source_filter=normalized_source,
+            previous_contributors=previous_contributors,
+        )
 
 
 def replace_podcast_contributor_credits(
@@ -279,21 +387,7 @@ def _replace_credits(
         {"target_id": target_id, "replacement_sources": replacement_sources},
     ).fetchall()
     existing_ids = [row[0] for row in existing_rows]
-    previous_contributors: dict[tuple[str, str], tuple[UUID, str] | None] = {}
-    for row in existing_rows:
-        if row[5] not in ("unverified", "verified"):
-            continue
-        key = (row[1], row[2])
-        value = (
-            row[3],
-            _normalize_resolution_status(row[4], default="unverified"),
-        )
-        if key in previous_contributors:
-            existing_value = previous_contributors[key]
-            if existing_value is not None and existing_value[0] != row[3]:
-                previous_contributors[key] = None
-            continue
-        previous_contributors[key] = value
+    previous_contributors = _previous_contributors_by_source_name(existing_rows)
     if existing_ids:
         db.execute(
             text(
@@ -317,6 +411,46 @@ def _replace_credits(
         if remaining != 0:
             raise RuntimeError("Unexpected contributor credit delete count")
 
+    _insert_credits(
+        db,
+        target_column,
+        target_id,
+        credits,
+        source_filter=source_filter,
+        previous_contributors=previous_contributors,
+    )
+
+
+def _previous_contributors_by_source_name(
+    existing_rows: Sequence[Any],
+) -> dict[tuple[str, str], tuple[UUID, str] | None]:
+    previous_contributors: dict[tuple[str, str], tuple[UUID, str] | None] = {}
+    for row in existing_rows:
+        if row[5] not in ("unverified", "verified"):
+            continue
+        key = (row[1], row[2])
+        value = (
+            row[3],
+            _normalize_resolution_status(row[4], default="unverified"),
+        )
+        if key in previous_contributors:
+            existing_value = previous_contributors[key]
+            if existing_value is not None and existing_value[0] != row[3]:
+                previous_contributors[key] = None
+            continue
+        previous_contributors[key] = value
+    return previous_contributors
+
+
+def _insert_credits(
+    db: Session,
+    target_column: str,
+    target_id: UUID | int,
+    credits: list[dict[str, Any]],
+    *,
+    source_filter: str | None,
+    previous_contributors: dict[tuple[str, str], tuple[UUID, str] | None],
+) -> None:
     for fallback_ordinal, credit in enumerate(credits):
         credited_name = display_contributor_name(
             str(credit.get("credited_name") or credit.get("name") or "")

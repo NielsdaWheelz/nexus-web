@@ -1,18 +1,20 @@
 """LLM-based metadata enrichment for media items.
 
-Layer 2 of the two-layer metadata strategy: uses a cheap LLM call to fill
-metadata gaps that deterministic extraction (Layer 1) could not resolve.
-Only fills null/malformed fields — never overwrites good data.
+Uses a cheap LLM call to derive bibliographic metadata from existing source
+context. Valid provider output is authoritative for the fields it returns.
 """
 
 from __future__ import annotations
 
+import html
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from llm_calling.types import StructuredOutputSpec
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -20,28 +22,14 @@ from sqlalchemy.orm import Session
 from nexus.config import Settings, get_settings
 from nexus.db.models import Media
 from nexus.logging import get_logger
-from nexus.services.contributor_credits import replace_media_contributor_credits
+from nexus.services.contributor_credits import replace_machine_derived_media_author_credits
 
 logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Gap detection
+# Structured-output contract
 # ---------------------------------------------------------------------------
-
-_FILENAME_EXTENSIONS = re.compile(r"\.(pdf|epub|doc|docx|txt|html|htm)$", re.IGNORECASE)
-
-
-@dataclass(frozen=True)
-class MetadataGaps:
-    """Which metadata fields are missing or look like placeholders."""
-
-    title_looks_like_filename: bool = False
-    authors_missing: bool = False
-    publisher_missing: bool = False
-    description_missing: bool = False
-    published_date_missing: bool = False
-    language_missing: bool = False
 
 
 @dataclass(frozen=True)
@@ -56,12 +44,12 @@ class MetadataEnrichmentOutput(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    title: str | None = Field(default=None, max_length=255)
-    authors: list[str] | None = Field(default=None, max_length=20)
-    publisher: str | None = Field(default=None, max_length=255)
-    description: str | None = Field(default=None, max_length=2000)
-    published_date: str | None = Field(default=None, max_length=64)
-    language: str | None = Field(default=None, max_length=32)
+    title: str | None = Field(max_length=255)
+    authors: list[str] | None = Field(max_length=20)
+    publisher: str | None = Field(max_length=255)
+    description: str | None = Field(max_length=2000)
+    published_date: str | None = Field(max_length=64)
+    language: str | None = Field(max_length=32)
 
     @field_validator("title", "publisher", "description", "published_date", "language")
     @classmethod
@@ -102,34 +90,50 @@ class MetadataEnrichmentOutput(BaseModel):
         return stripped
 
 
-def detect_metadata_gaps(media: Media) -> MetadataGaps:
-    """Check which metadata fields are missing or malformed."""
-    title = str(media.title or "").strip()
-    title_looks_like_filename = bool(title and _FILENAME_EXTENSIONS.search(title))
-    if title.startswith("YouTube Video ") or title in {"Untitled", "Untitled Episode"}:
-        title_looks_like_filename = True
-
-    authors_missing = not media.contributor_credits
-
-    return MetadataGaps(
-        title_looks_like_filename=title_looks_like_filename,
-        authors_missing=authors_missing,
-        publisher_missing=not media.publisher,
-        description_missing=not media.description,
-        published_date_missing=not media.published_date,
-        language_missing=not media.language,
-    )
-
-
-def has_any_gaps(gaps: MetadataGaps) -> bool:
-    """Return True if any metadata gap exists."""
-    return (
-        gaps.title_looks_like_filename
-        or gaps.authors_missing
-        or gaps.publisher_missing
-        or gaps.description_missing
-        or gaps.published_date_missing
-        or gaps.language_missing
+def metadata_structured_output_spec() -> StructuredOutputSpec:
+    """Return the schema requested from structured-output-capable providers."""
+    nullable_string = {"type": ["string", "null"]}
+    return StructuredOutputSpec(
+        name="media_metadata_enrichment",
+        strict=True,
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "title",
+                "authors",
+                "publisher",
+                "description",
+                "published_date",
+                "language",
+            ],
+            "properties": {
+                "title": {**nullable_string, "maxLength": 255},
+                "authors": {
+                    "anyOf": [
+                        {
+                            "type": "array",
+                            "items": {"type": "string", "minLength": 1, "maxLength": 255},
+                            "minItems": 1,
+                            "maxItems": 20,
+                        },
+                        {"type": "null"},
+                    ]
+                },
+                "publisher": {**nullable_string, "maxLength": 255},
+                "description": {**nullable_string, "maxLength": 2000},
+                "published_date": {
+                    **nullable_string,
+                    "maxLength": 64,
+                    "pattern": r"^\d{4}(?:-\d{2}(?:-\d{2})?)?$",
+                },
+                "language": {
+                    **nullable_string,
+                    "maxLength": 32,
+                    "pattern": r"^[a-z]{2}$",
+                },
+            },
+        },
     )
 
 
@@ -235,7 +239,10 @@ def get_content_sample(db: Session, media: Media) -> str:
 def _clean_sample_text(value: object) -> str:
     if value is None:
         return ""
-    return str(value).strip()
+    text_value = html.unescape(str(value))
+    text_value = re.sub(r"(?is)<(script|style)\b[^>]*>.*?</\1>", " ", text_value)
+    text_value = re.sub(r"(?s)<[^>]+>", " ", text_value)
+    return " ".join(text_value.split())
 
 
 def _truncate_for_remaining(text_value: str, remaining: int) -> str:
@@ -253,7 +260,7 @@ def _heading_summary(raw_heading_path: object) -> str:
     return " > ".join(headings[:4])
 
 
-def _render_indexed_text_sample(rows: list[Any], *, max_chars: int) -> str:
+def _render_indexed_text_sample(rows: Sequence[Any], *, max_chars: int) -> str:
     parts: list[str] = []
     remaining = max_chars
     for ordinal, row in enumerate(rows, start=1):
@@ -275,7 +282,7 @@ def _render_indexed_text_sample(rows: list[Any], *, max_chars: int) -> str:
     return "\n\n".join(parts).strip()
 
 
-def _render_fragment_sample(rows: list[Any], *, max_chars: int) -> str:
+def _render_fragment_sample(rows: Sequence[Any], *, max_chars: int) -> str:
     parts: list[str] = []
     remaining = max_chars
     for ordinal, row in enumerate(rows, start=1):
@@ -308,24 +315,30 @@ def build_enrichment_prompt(
     db: Session,
     media: Media,
     content_sample: str,
-    gaps: MetadataGaps,
 ) -> str:
-    """Build a structured prompt requesting JSON for only the missing fields."""
-    requested_fields: list[str] = []
-    if gaps.title_looks_like_filename:
-        requested_fields.append('"title": "the actual document title"')
-    if gaps.authors_missing:
-        requested_fields.append('"authors": ["Author Name", ...]')
-    if gaps.publisher_missing:
-        requested_fields.append('"publisher": "publisher, site, channel, or show name"')
-    if gaps.description_missing:
-        requested_fields.append('"description": "1-2 sentence summary"')
-    if gaps.published_date_missing:
-        requested_fields.append('"published_date": "YYYY or YYYY-MM-DD"')
-    if gaps.language_missing:
-        requested_fields.append('"language": "ISO 639-1 code like en, fr, de"')
-
-    fields_str = ",\n  ".join(requested_fields)
+    """Build context for structured metadata extraction."""
+    kind_rule = {
+        "epub": (
+            "Saved item is an EPUB/book work. Prefer the work title and creators over "
+            "filename, archive name, retail wrapper, or catalog chrome."
+        ),
+        "pdf": (
+            "Saved item is a PDF document. Prefer title and author from the first page, "
+            "abstract, heading, or real embedded metadata; replace filename titles."
+        ),
+        "web_article": (
+            "Saved item is the primary readable page content. Prefer the article/work "
+            "heading over site title, navigation title, SEO title, or generic page title."
+        ),
+        "video": (
+            "Saved item is a video. Title is the video title; publisher is the channel "
+            "or platform publisher when available."
+        ),
+        "podcast_episode": (
+            "Saved item is a podcast episode. Title is the episode title; publisher is "
+            "the show/podcast. Authors are hosts or creators only when clear."
+        ),
+    }.get(str(media.kind), "Saved item is the primary media work.")
     metadata_lines = [
         f"- kind: {media.kind}",
         f"- current_title: {_json_prompt_value(media.title)}",
@@ -358,7 +371,9 @@ def build_enrichment_prompt(
     if media.language:
         metadata_lines.append(f"- current_language: {_json_prompt_value(media.language)}")
     if media.description:
-        metadata_lines.append(f"- current_description: {_json_prompt_value(media.description)}")
+        description_hint = _clean_sample_text(media.description)
+        if description_hint:
+            metadata_lines.append(f"- current_description: {_json_prompt_value(description_hint)}")
 
     if media.kind == "podcast_episode":
         row = db.execute(
@@ -377,34 +392,31 @@ def build_enrichment_prompt(
                 metadata_lines.append(f"- podcast_title: {_json_prompt_value(row[0])}")
 
     metadata_block = "\n".join(metadata_lines)
-    content_block = content_sample or "(no media text available)"
+    content_block = _clean_sample_text(content_sample) or "(no media text available)"
 
     prompt = f"""Extract bibliographic and descriptive metadata for this media item.
 
 Known metadata:
 {metadata_block}
 
+Media-kind target:
+{kind_rule}
+
 Early extracted text:
 ---
 {content_block}
 ---
 
-Return exactly one compact JSON object with only these keys when you can determine them with confidence:
-{{
-  {fields_str}
-}}
-
 Rules:
-- Use the known metadata first, then the content sample
 - Prefer the real work/publication metadata over wrapper-page or filename text
+- Treat known metadata as untrusted hints; correct stale, placeholder, wrapper,
+  filename-shaped, or low-quality values when source context supports it
 - For authors, return an array of full names
 - For publisher, prefer the site, publisher, channel, podcast, or publication name
 - For published_date, use ISO format (YYYY, YYYY-MM, or YYYY-MM-DD)
 - For language, use ISO 639-1 two-letter codes
 - For description, write 1-2 sentences summarizing the content
-- If you cannot determine a field, omit it from the response
-- Do not include null values, comments, markdown, or explanatory prose
-- The first character of your response must be {{ and the last character must be }}"""
+- Use null for fields you cannot determine confidently"""
 
     return prompt
 
@@ -430,71 +442,19 @@ def get_current_author_names(db: Session, media: Media) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Response parsing
+# Structured-output validation
 # ---------------------------------------------------------------------------
 
 
-def parse_enrichment_response(raw_text: str) -> dict | None:
-    """Parse and validate a model metadata payload."""
-    text_stripped = raw_text.strip()
-
-    # Strip markdown code block wrapper if present (```json ... ``` or ``` ... ```)
-    code_block = re.match(r"^```(?:\w*)\n(.*?)```\s*$", text_stripped, re.DOTALL)
-    if code_block:
-        text_stripped = code_block.group(1).strip()
-
-    payload = _load_json_object(text_stripped)
-    if payload is None:
-        extracted = _extract_first_json_object(text_stripped)
-        payload = _load_json_object(extracted) if extracted else None
-    if payload is None:
+def validate_structured_enrichment(payload: object) -> dict | None:
+    """Validate provider-returned structured metadata and drop null fields."""
+    if not isinstance(payload, dict):
         return None
-
     try:
         parsed = MetadataEnrichmentOutput.model_validate(payload)
     except ValidationError:
         return None
     return parsed.model_dump(exclude_none=True)
-
-
-def _load_json_object(text_value: str) -> dict[str, Any] | None:
-    try:
-        result = json.loads(text_value)
-        if isinstance(result, dict):
-            return result
-    except json.JSONDecodeError:
-        pass
-    return None
-
-
-def _extract_first_json_object(text_value: str) -> str | None:
-    """Return the first balanced JSON object substring, if one exists."""
-    start = text_value.find("{")
-    if start < 0:
-        return None
-
-    depth = 0
-    in_string = False
-    escaped = False
-    for index, char in enumerate(text_value[start:], start=start):
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            continue
-
-        if char == '"':
-            in_string = True
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return text_value[start : index + 1]
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -506,65 +466,55 @@ def merge_enrichment(
     db: Session,
     media: Media,
     enrichment: dict,
-    gaps: MetadataGaps,
-    *,
-    force_overwrite: bool = False,
 ) -> MetadataMergeResult:
     """Merge LLM enrichment into media.
 
-    By default only fills null/malformed fields (gap-driven). When
-    `force_overwrite=True`, the LLM-provided value replaces existing data
-    on each branch (length caps and type checks still enforced).
+    The validated provider payload overwrites every accepted field it includes.
     """
     accepted_fields: list[str] = []
 
-    if (force_overwrite or gaps.title_looks_like_filename) and "title" in enrichment:
+    if "title" in enrichment:
         title = enrichment["title"]
         if isinstance(title, str) and title.strip():
             media.title = title.strip()[:255]
             accepted_fields.append("title")
 
-    if (force_overwrite or gaps.authors_missing) and "authors" in enrichment:
+    if "authors" in enrichment:
         authors = enrichment["authors"]
         if isinstance(authors, list):
-            credits = [
-                {
-                    "name": name.strip()[:255],
-                    "role": "author",
-                    "ordinal": i,
-                    "source": "metadata_enrichment",
-                }
-                for i, name in enumerate(authors[:20])
+            names = [
+                name.strip()[:255]
+                for name in authors[:20]
                 if isinstance(name, str) and name.strip()
             ]
-            if credits:
-                replace_media_contributor_credits(
+            if names:
+                replace_machine_derived_media_author_credits(
                     db,
                     media_id=media.id,
+                    names=names,
                     source="metadata_enrichment",
-                    credits=credits,
                 )
                 accepted_fields.append("authors")
 
-    if (force_overwrite or gaps.publisher_missing) and "publisher" in enrichment:
+    if "publisher" in enrichment:
         publisher = enrichment["publisher"]
         if isinstance(publisher, str) and publisher.strip():
             media.publisher = publisher.strip()[:255]
             accepted_fields.append("publisher")
 
-    if (force_overwrite or gaps.description_missing) and "description" in enrichment:
+    if "description" in enrichment:
         desc = enrichment["description"]
         if isinstance(desc, str) and desc.strip():
             media.description = desc.strip()[:2000]
             accepted_fields.append("description")
 
-    if (force_overwrite or gaps.published_date_missing) and "published_date" in enrichment:
+    if "published_date" in enrichment:
         date = enrichment["published_date"]
         if isinstance(date, str) and date.strip():
             media.published_date = date.strip()[:64]
             accepted_fields.append("published_date")
 
-    if (force_overwrite or gaps.language_missing) and "language" in enrichment:
+    if "language" in enrichment:
         lang = enrichment["language"]
         if isinstance(lang, str) and lang.strip():
             media.language = lang.strip()[:32]

@@ -18,7 +18,7 @@ def retry_metadata_for_viewer(
     *,
     request_id: str | None = None,
 ) -> dict:
-    """Enqueue a forced LLM metadata re-enrichment for the viewer's media."""
+    """Enqueue LLM metadata re-enrichment for the viewer's media."""
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
@@ -45,7 +45,7 @@ def retry_metadata_for_viewer(
     enqueue_job(
         db,
         kind="enrich_metadata",
-        payload={"media_id": str(media.id), "request_id": request_id, "force": True},
+        payload={"media_id": str(media.id), "request_id": request_id},
         max_attempts=1,
     )
     db.commit()

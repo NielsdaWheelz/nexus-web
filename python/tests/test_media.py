@@ -2681,9 +2681,9 @@ class TestRetryBodyValidation:
 
 
 class TestRetryMetadataEndpoint:
-    """POST /media/{id}/retry {from_stage: "metadata"} enqueues forced enrichment."""
+    """POST /media/{id}/retry {from_stage: "metadata"} enqueues enrichment."""
 
-    def test_retry_metadata_enqueues_force_job(
+    def test_retry_metadata_enqueues_structured_overwrite_job(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -2743,8 +2743,9 @@ class TestRetryMetadataEndpoint:
             )
             payload = row["payload"]
             assert payload["media_id"] == str(media_id), payload
-            assert payload["force"] is True, (
-                f"enrich_metadata job payload must include force=true, got {payload!r}"
+            assert "force" not in payload, (
+                "metadata retry must use the same overwrite-by-default job shape as "
+                f"automatic ingest; got payload {payload!r}"
             )
             assert row["max_attempts"] == 1, (
                 "manual metadata retry must keep the user as the retry boundary; "

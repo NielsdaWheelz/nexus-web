@@ -14,6 +14,7 @@ from nexus.schemas.contributors import (
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.contributor_credits import (
     replace_gutenberg_contributor_credits,
+    replace_machine_derived_media_author_credits,
     replace_media_contributor_credits,
     replace_podcast_contributor_credits,
     upstream_contributor_credit_previews_for_names,
@@ -520,6 +521,94 @@ def test_replace_credits_can_delete_empty_source_reingest(db_session):
     ).fetchall()
 
     assert rows == [("manual", "Curated Author")]
+
+
+@pytest.mark.integration
+def test_replace_machine_derived_media_author_credits_preserves_curated_sources(db_session):
+    media_id = create_test_media(db_session, title=f"Machine Author Replacement {uuid4()}")
+
+    replace_media_contributor_credits(
+        db_session,
+        media_id=media_id,
+        credits=[
+            {"name": "Manual Author", "role": "author", "source": "manual"},
+            {"name": "User Author", "role": "author", "source": "user"},
+            {"name": "Curated Author", "role": "author", "source": "curated"},
+        ],
+    )
+    replace_media_contributor_credits(
+        db_session,
+        media_id=media_id,
+        credits=[{"name": "PDF Author", "role": "author", "source": "pdf_metadata"}],
+        source="pdf_metadata",
+    )
+    replace_media_contributor_credits(
+        db_session,
+        media_id=media_id,
+        credits=[{"name": "EPUB Author", "role": "author", "source": "epub_opf"}],
+        source="epub_opf",
+    )
+    replace_media_contributor_credits(
+        db_session,
+        media_id=media_id,
+        credits=[{"name": "Podcast Index Author", "role": "author", "source": "podcast_index"}],
+        source="podcast_index",
+    )
+    replace_media_contributor_credits(
+        db_session,
+        media_id=media_id,
+        credits=[
+            {
+                "name": "Machine Editor",
+                "role": "editor",
+                "source": "metadata_enrichment",
+            }
+        ],
+        source="metadata_enrichment",
+    )
+
+    replace_machine_derived_media_author_credits(
+        db_session,
+        media_id=media_id,
+        names=[" Replacement Author ", "replacement   author", "Second Author"],
+        source="metadata_enrichment",
+    )
+
+    rows = db_session.execute(
+        text(
+            """
+            SELECT source, role, credited_name, ordinal
+            FROM contributor_credits
+            WHERE media_id = :media_id
+            ORDER BY source, role, ordinal, credited_name
+            """
+        ),
+        {"media_id": media_id},
+    ).fetchall()
+
+    assert ("manual", "author", "Manual Author", 0) in rows
+    assert ("user", "author", "User Author", 1) in rows
+    assert ("curated", "author", "Curated Author", 2) in rows
+    assert ("metadata_enrichment", "editor", "Machine Editor", 0) in rows
+    assert ("metadata_enrichment", "author", "Replacement Author", 0) in rows
+    assert ("metadata_enrichment", "author", "Second Author", 1) in rows
+    assert ("pdf_metadata", "author", "PDF Author", 0) not in rows
+    assert ("epub_opf", "author", "EPUB Author", 0) not in rows
+    assert ("podcast_index", "author", "Podcast Index Author", 0) not in rows
+    assert rows.count(("metadata_enrichment", "author", "Replacement Author", 0)) == 1
+
+
+@pytest.mark.integration
+def test_replace_machine_derived_media_author_credits_rejects_curated_source(db_session):
+    media_id = create_test_media(db_session, title=f"Machine Author Source Guard {uuid4()}")
+
+    with pytest.raises(ValueError):
+        replace_machine_derived_media_author_credits(
+            db_session,
+            media_id=media_id,
+            names=["Curated Author"],
+            source="manual",
+        )
 
 
 @pytest.mark.integration
