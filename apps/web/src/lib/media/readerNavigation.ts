@@ -1,23 +1,3 @@
-export interface EpubSectionContent {
-  section_id: string;
-  label: string;
-  fragment_id: string;
-  fragment_idx: number;
-  href_path: string | null;
-  anchor_id: string | null;
-  source_node_id: string | null;
-  source: "toc" | "spine";
-  ordinal: number;
-  prev_section_id: string | null;
-  next_section_id: string | null;
-  html_sanitized: string;
-  canonical_text: string;
-  char_count: number;
-  word_count: number;
-  source_version?: string | null;
-  created_at: string;
-}
-
 export interface ReaderNavigationSection {
   section_id: string;
   label: string;
@@ -84,6 +64,26 @@ export function normalizeReaderNavigationToc(
     navigable: node.section_id !== null && sectionIdSet.has(node.section_id),
     children: normalizeReaderNavigationToc(node.children, sectionIdSet),
   }));
+}
+
+export function parseReaderNavigationHrefAnchorId(
+  href: string | null,
+): string | null {
+  if (!href || !href.includes("#")) {
+    return null;
+  }
+  const fragment = href.split("#", 2)[1];
+  if (!fragment) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(fragment);
+  } catch (error) {
+    if (error instanceof URIError) {
+      return fragment;
+    }
+    throw error;
+  }
 }
 
 const READABLE_STATUSES = new Set(["ready_for_reading", "embedding", "ready"]);

@@ -300,19 +300,20 @@ function retryRun(): ChatRunResponse["data"] {
 
 function renderPane(onSetPaneExtraWidth = vi.fn()) {
   const href = "/conversations/conversation-1";
+  const resourceKey = resolvePaneRouteIdentity(href).resourceKey;
   return render(
     <PaneRuntimeProvider
       paneId="pane-1"
       href={href}
       routeId="conversation"
       resourceRef="conversation-1"
-      resourceKey={resolvePaneRouteIdentity(href).resourceKey}
+      resourceKey={resourceKey}
       pathParams={{ id: "conversation-1" }}
       onNavigatePane={vi.fn()}
       onReplacePane={vi.fn()}
       onOpenInNewPane={vi.fn()}
       onSetPaneTitle={vi.fn()}
-      onSetPaneExtraWidth={(_paneId, widthPx) => onSetPaneExtraWidth(widthPx)}
+      onSetPaneExtraWidth={onSetPaneExtraWidth}
     >
       <ConversationPaneBody />
     </PaneRuntimeProvider>,
@@ -438,6 +439,8 @@ describe("ConversationPaneBody", () => {
     });
     const user = userEvent.setup();
     const onSetPaneExtraWidth = vi.fn();
+    const resourceKey = resolvePaneRouteIdentity("/conversations/conversation-1")
+      .resourceKey;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -459,16 +462,28 @@ describe("ConversationPaneBody", () => {
 
     expect(await screen.findByText("Answer A")).toBeVisible();
     await waitFor(() => {
-      expect(onSetPaneExtraWidth).toHaveBeenCalledWith(320);
+      expect(onSetPaneExtraWidth).toHaveBeenCalledWith({
+        paneId: "pane-1",
+        resourceKey,
+        widthPx: 320,
+      });
     });
 
     await user.click(screen.getByRole("button", { name: "Collapse secondary rail" }));
     await waitFor(() => {
-      expect(onSetPaneExtraWidth).toHaveBeenCalledWith(36);
+      expect(onSetPaneExtraWidth).toHaveBeenCalledWith({
+        paneId: "pane-1",
+        resourceKey,
+        widthPx: 36,
+      });
     });
 
     unmount();
-    expect(onSetPaneExtraWidth).toHaveBeenLastCalledWith(0);
+    expect(onSetPaneExtraWidth).toHaveBeenLastCalledWith({
+      paneId: "pane-1",
+      resourceKey,
+      widthPx: 0,
+    });
   });
 
   it("preserves the chat viewport while switching cached paths and rolling back a failed active path", async () => {

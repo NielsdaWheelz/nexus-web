@@ -9,6 +9,7 @@ const hostMocks = vi.hoisted(() => ({
   mountedBodyIds: [] as number[],
   unmountedBodyIds: [] as number[],
   runtimeMinWidthPx: null as number | null,
+  runtimeExtraWidthPx: null as number | null,
   store: {
     state: {
       panes: [
@@ -66,6 +67,9 @@ function TestPaneBody() {
     if (hostMocks.runtimeMinWidthPx !== null) {
       paneRuntime?.setPaneMinWidth(hostMocks.runtimeMinWidthPx);
     }
+    if (hostMocks.runtimeExtraWidthPx !== null) {
+      paneRuntime?.setPaneExtraWidth(hostMocks.runtimeExtraWidthPx);
+    }
   }, [paneRuntime]);
   return (
     <div data-testid="route-body" data-instance-id={instanceId.current}>
@@ -98,8 +102,20 @@ vi.mock("@/lib/workspace/store", () => ({
 }));
 
 vi.mock("@/components/workspace/PaneShell", () => ({
-  default: ({ children }: { children: ReactNode }) => (
-    <section data-testid="pane-shell">
+  default: ({
+    children,
+    minWidthPx,
+    extraWidthPx,
+  }: {
+    children: ReactNode;
+    minWidthPx: number;
+    extraWidthPx: number;
+  }) => (
+    <section
+      data-testid="pane-shell"
+      data-min-width-px={minWidthPx}
+      data-extra-width-px={extraWidthPx}
+    >
       <nav aria-label="Mock pane chrome">
         {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a href="/authors/author-1" data-pane-title-hint="Chrome Author">
@@ -161,6 +177,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.mountedBodyIds = [];
     hostMocks.unmountedBodyIds = [];
     hostMocks.runtimeMinWidthPx = null;
+    hostMocks.runtimeExtraWidthPx = null;
     hostMocks.store.activatePane.mockReset();
     hostMocks.store.openPane.mockReset();
     hostMocks.store.navigatePane.mockReset();
@@ -206,6 +223,38 @@ describe("WorkspaceHost pane route lifecycle", () => {
     await waitFor(() => {
       expect(hostMocks.store.resizePane).toHaveBeenCalledWith("pane-1", 900);
     });
+  });
+
+  it("ignores stale runtime width records after the pane resource changes", async () => {
+    hostMocks.runtimeMinWidthPx = 900;
+    hostMocks.runtimeExtraWidthPx = 360;
+    const { rerender } = render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+        "data-extra-width-px",
+        "360",
+      );
+    });
+    await waitFor(() => {
+      expect(hostMocks.store.resizePane).toHaveBeenCalledWith("pane-1", 900);
+    });
+
+    hostMocks.store.resizePane.mockClear();
+    hostMocks.runtimeMinWidthPx = null;
+    hostMocks.runtimeExtraWidthPx = null;
+    setPaneHref("/media/media-2");
+    rerender(<WorkspaceHost />);
+
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-min-width-px",
+      "320",
+    );
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-extra-width-px",
+      "0",
+    );
+    expect(hostMocks.store.resizePane).not.toHaveBeenCalled();
   });
 
   it("routes pane chrome internal links through the current pane", () => {

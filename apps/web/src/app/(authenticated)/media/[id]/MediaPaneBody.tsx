@@ -21,7 +21,6 @@ import DocChatTab from "@/components/chat/DocChatTab";
 import LibraryChatTab from "@/components/chat/LibraryChatTab";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import QuoteChatSheet from "@/components/chat/QuoteChatSheet";
-import HtmlRenderer from "@/components/HtmlRenderer";
 import AnchoredHighlightsRail from "@/components/reader/AnchoredHighlightsRail";
 import ReaderOverviewRuler, {
   OVERVIEW_RULER_WIDTH_PX,
@@ -124,7 +123,6 @@ import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { mergeContextItems } from "@/lib/conversations/attachedContext";
 import {
   isReadableStatus,
-  type EpubSectionContent,
   type MediaNavigationResponse,
   type NormalizedNavigationTocNode,
   normalizeReaderNavigationToc,
@@ -133,8 +131,8 @@ import {
 import { useDocumentActions } from "@/lib/media/useDocumentActions";
 import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
 import { useFocusModeTracking } from "@/lib/reader/useFocusModeTracking";
-import EpubContentPane from "./EpubContentPane";
 import ReaderContentsNav from "./ReaderContentsNav";
+import TextDocumentReader from "./TextDocumentReader";
 import TranscriptPlaybackPanel from "./TranscriptPlaybackPanel";
 import TranscriptContentPanel from "./TranscriptContentPanel";
 import TranscriptStatePanel from "./TranscriptStatePanel";
@@ -169,6 +167,7 @@ import { buildCompactMediaPaneTitle } from "./mediaFormatting";
 import {
   type NavigationTocNodeLike,
   buildEpubLocationHref,
+  resolveEpubInternalLinkTarget,
   resolveSectionAnchorId,
 } from "./epubHelpers";
 import {
@@ -302,6 +301,26 @@ interface ActiveContent {
   htmlSanitized: string;
   canonicalText: string;
   sourceVersion: string | null;
+}
+
+interface EpubSectionContent {
+  section_id: string;
+  label: string;
+  fragment_id: string;
+  fragment_idx: number;
+  href_path: string | null;
+  anchor_id: string | null;
+  source_node_id: string | null;
+  source: "toc" | "spine";
+  ordinal: number;
+  prev_section_id: string | null;
+  next_section_id: string | null;
+  html_sanitized: string;
+  canonical_text: string;
+  char_count: number;
+  word_count: number;
+  source_version?: string | null;
+  created_at: string;
 }
 
 interface PdfHighlightsPaneState {
@@ -3334,6 +3353,32 @@ export default function MediaPaneBody() {
   const hasWebToc =
     webToc !== null && webToc.length > 0 && (webSections?.length ?? 0) >= 2;
 
+  const epubTextDocumentContentState = (() => {
+    if (epubError && epubError !== "processing") {
+      return { status: "error" as const, message: epubError };
+    }
+    if (!epubSections) {
+      return { status: "loading" as const, message: "Loading EPUB navigation..." };
+    }
+    if (epubSections.length === 0) {
+      return { status: "empty" as const, message: "No sections available for this EPUB." };
+    }
+    if (epubSectionLoading || !activeEpubSection) {
+      return { status: "loading" as const, message: "Loading section..." };
+    }
+    return { status: "ready" as const, renderedHtml };
+  })();
+
+  const webTextDocumentContentState = (() => {
+    if (fragments.length === 0) {
+      return {
+        status: "empty" as const,
+        message: "No content available for this media.",
+      };
+    }
+    return { status: "ready" as const, renderedHtml };
+  })();
+
   const handlePdfPageHighlightsChange = useCallback(
     (nextPage: number, nextHighlights: PdfHighlightOut[]) => {
       setPdfHighlightsPaneState((current) => ({
@@ -3366,12 +3411,6 @@ export default function MediaPaneBody() {
     },
     [clearFocus, pdfDocumentHighlights],
   );
-
-  const pdfReaderResumeState = initialPdfResumeState;
-  const readerResumeStateLoading = initialReaderResumeStateLoading;
-  const activeChapter = activeEpubSection;
-  const chapterLoading = epubSectionLoading;
-  const handleMediaContentClick = handleReaderContentClick;
 
   const { seekToMs, play } = useGlobalPlayer();
   const readerFontFamily =
@@ -3694,12 +3733,12 @@ export default function MediaPaneBody() {
 
   const handleContentClick = useCallback(
     (e: React.MouseEvent) => {
-      const highlightId = handleMediaContentClick(e);
+      const highlightId = handleReaderContentClick(e);
       if (highlightId && isMobileViewport && showHighlightsPane) {
         setMobileHighlightsDrawerOpen(true);
       }
     },
-    [handleMediaContentClick, isMobileViewport, showHighlightsPane],
+    [handleReaderContentClick, isMobileViewport, showHighlightsPane],
   );
 
   const handlePdfHighlightTap = useCallback(
@@ -5216,7 +5255,7 @@ export default function MediaPaneBody() {
               )}
             </div>
           ) : isPdf ? (
-            readerResumeStateLoading ? (
+            initialReaderResumeStateLoading ? (
               <div className={styles.notReady}>
                 <p>Loading reader state...</p>
               </div>
@@ -5247,98 +5286,81 @@ export default function MediaPaneBody() {
                   startPageNumber={
                     activeRequestedPdfPageNumber ??
                     resolvedPdfPageNumber ??
-                    pdfReaderResumeState?.page ??
+                    initialPdfResumeState?.page ??
                     undefined
                   }
                   startPageProgression={
                     activeRequestedPdfPageNumber || resolvedPdfPageNumber
                       ? undefined
-                      : (pdfReaderResumeState?.page_progression ?? undefined)
+                      : (initialPdfResumeState?.page_progression ?? undefined)
                   }
-                  startZoom={pdfReaderResumeState?.zoom ?? undefined}
+                  startZoom={initialPdfResumeState?.zoom ?? undefined}
                   onResumeStateChange={saveReaderResumeState}
                 />
               </div>
             )
           ) : isEpub ? (
-            <div className={styles.readerFrame}>
-              <div
-                className={styles.documentViewport}
-                data-testid="document-viewport"
-                data-pane-content="true"
-                onScroll={handleDocumentScroll}
-              >
-                <div
-                  ref={readerRootRef}
-                  className={readerSurfaceClassName}
-                  style={readerSurfaceStyle}
-                  data-focus-mode={focusModeForRoot}
-                  data-hyphenation={hyphenationForRoot}
-                >
-                  <div className={styles.readerContentInner}>
-                    <EpubContentPane
-                      mediaId={id}
-                      sections={epubSections}
-                      activeChapter={activeChapter}
-                      activeSectionId={activeSectionId}
-                      chapterLoading={chapterLoading}
-                      epubError={epubError}
-                      toc={epubToc}
-                      tocWarning={tocWarning}
-                      tocExpanded={epubTocExpanded}
-                      contentRef={contentRef}
-                      renderedHtml={renderedHtml}
-                      onContentClick={handleContentClick}
-                      onNavigate={navigateToSection}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : fragments.length === 0 ? (
-            <div className={styles.empty}>
-              <p>No content available for this media.</p>
-            </div>
+            <TextDocumentReader
+              mediaId={id}
+              readerRootRef={readerRootRef}
+              contentRef={contentRef}
+              readerSurfaceClassName={readerSurfaceClassName}
+              readerSurfaceStyle={readerSurfaceStyle}
+              focusMode={focusModeForRoot}
+              hyphenation={hyphenationForRoot}
+              contentState={epubTextDocumentContentState}
+              contentsNav={
+                hasEpubToc || tocWarning ? (
+                  <ReaderContentsNav
+                    nodes={epubToc ?? []}
+                    activeSectionId={activeSectionId}
+                    expanded={epubTocExpanded}
+                    warning={tocWarning}
+                    onNavigate={({ sectionId, anchorId }) =>
+                      navigateToSection(sectionId, anchorId)
+                    }
+                  />
+                ) : null
+              }
+              onDocumentScroll={handleDocumentScroll}
+              onContentClick={handleContentClick}
+              onInternalLinkClick={(href) => {
+                const target = resolveEpubInternalLinkTarget(
+                  href,
+                  activeSectionId,
+                  epubSections,
+                );
+                if (!target) {
+                  return false;
+                }
+                navigateToSection(target.sectionId, target.anchorId);
+                return true;
+              }}
+            />
           ) : (
-            <div className={styles.readerFrame}>
-              <div
-                className={styles.documentViewport}
-                data-testid="document-viewport"
-                data-pane-content="true"
-                onScroll={handleDocumentScroll}
-              >
-                <div
-                  ref={readerRootRef}
-                  className={readerSurfaceClassName}
-                  style={readerSurfaceStyle}
-                  data-focus-mode={focusModeForRoot}
-                  data-hyphenation={hyphenationForRoot}
-                >
-                  <div className={styles.readerContentInner}>
-                    {hasWebToc && (
-                      <ReaderContentsNav
-                        nodes={webToc ?? []}
-                        activeSectionId={activeWebSectionId}
-                        expanded={webTocExpanded}
-                        warning={false}
-                        onNavigate={navigateToWebSection}
-                      />
-                    )}
-                    <div
-                      ref={contentRef}
-                      className={styles.fragments}
-                      onClick={handleContentClick}
-                    >
-                      <HtmlRenderer
-                        htmlSanitized={renderedHtml}
-                        className={styles.fragment}
-                        mediaId={id}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <TextDocumentReader
+              mediaId={id}
+              readerRootRef={readerRootRef}
+              contentRef={contentRef}
+              readerSurfaceClassName={readerSurfaceClassName}
+              readerSurfaceStyle={readerSurfaceStyle}
+              focusMode={focusModeForRoot}
+              hyphenation={hyphenationForRoot}
+              contentState={webTextDocumentContentState}
+              contentsNav={
+                hasWebToc ? (
+                  <ReaderContentsNav
+                    nodes={webToc ?? []}
+                    activeSectionId={activeWebSectionId}
+                    expanded={webTocExpanded}
+                    warning={false}
+                    onNavigate={({ sectionId }) => navigateToWebSection(sectionId)}
+                  />
+                ) : null
+              }
+              onDocumentScroll={handleDocumentScroll}
+              onContentClick={handleContentClick}
+            />
           )}
         </div>
 

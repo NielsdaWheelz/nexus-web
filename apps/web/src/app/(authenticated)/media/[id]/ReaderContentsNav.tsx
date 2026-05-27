@@ -1,21 +1,9 @@
 import { useId } from "react";
-import type { NormalizedNavigationTocNode } from "@/lib/media/readerNavigation";
+import {
+  parseReaderNavigationHrefAnchorId,
+  type NormalizedNavigationTocNode,
+} from "@/lib/media/readerNavigation";
 import styles from "./page.module.css";
-
-function parseAnchorIdFromHref(href: string | null): string | null {
-  if (!href || !href.includes("#")) {
-    return null;
-  }
-  const fragment = href.split("#", 2)[1];
-  if (!fragment) {
-    return null;
-  }
-  try {
-    return decodeURIComponent(fragment);
-  } catch {
-    return fragment;
-  }
-}
 
 export default function ReaderContentsNav({
   nodes,
@@ -28,14 +16,14 @@ export default function ReaderContentsNav({
   activeSectionId: string | null;
   expanded: boolean;
   warning: boolean;
-  onNavigate: (sectionId: string, anchorId?: string | null) => void;
+  onNavigate: (target: { sectionId: string; anchorId: string | null }) => void;
 }) {
   const labelId = useId();
   const hasNodes = nodes.length > 0;
 
   return (
     <nav className={styles.tocSection} aria-labelledby={labelId}>
-      <div id={labelId} className={styles.tocToggle}>
+      <div id={labelId} className={styles.tocHeading}>
         Contents
         {warning && !hasNodes ? (
           <span className={styles.tocWarning}> (unavailable)</span>
@@ -62,7 +50,7 @@ function TocNodeList({
 }: {
   nodes: NormalizedNavigationTocNode[];
   activeSectionId: string | null;
-  onNavigate: (sectionId: string, anchorId?: string | null) => void;
+  onNavigate: (target: { sectionId: string; anchorId: string | null }) => void;
 }) {
   return (
     <ul className={styles.tocList}>
@@ -78,7 +66,10 @@ function TocNodeList({
               }
               onClick={() => {
                 if (node.section_id) {
-                  onNavigate(node.section_id, parseAnchorIdFromHref(node.href));
+                  onNavigate({
+                    sectionId: node.section_id,
+                    anchorId: parseReaderNavigationHrefAnchorId(node.href),
+                  });
                 }
               }}
             >

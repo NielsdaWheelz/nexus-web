@@ -6,6 +6,7 @@ const subscribeToPodcastMock = vi.fn();
 
 vi.mock("@/lib/panes/paneRuntime", () => ({
   usePaneParam: (paramName: string) => mockUsePaneParam(paramName),
+  usePaneRuntime: () => ({ openInNewPane: vi.fn() }),
   usePaneRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   usePaneSearchParams: () => new URLSearchParams(),
   useSetPaneTitle: () => {},
@@ -13,6 +14,7 @@ vi.mock("@/lib/panes/paneRuntime", () => ({
 
 vi.mock("@/components/workspace/PaneShell", () => ({
   usePaneChromeOverride: () => {},
+  usePaneMobileChromeController: () => null,
 }));
 
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({

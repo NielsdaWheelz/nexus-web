@@ -254,18 +254,19 @@ describe("ConversationNewPaneBody", () => {
     );
 
     const href = "/conversations/new";
+    const resourceKey = resolvePaneRouteIdentity(href).resourceKey;
     const { unmount } = render(
       <PaneRuntimeProvider
         paneId="pane-1"
         href={href}
         routeId="conversation-new"
         resourceRef={null}
-        resourceKey={resolvePaneRouteIdentity(href).resourceKey}
+        resourceKey={resourceKey}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
         onOpenInNewPane={vi.fn()}
         onSetPaneTitle={vi.fn()}
-        onSetPaneExtraWidth={(_paneId, widthPx) => onSetPaneExtraWidth(widthPx)}
+        onSetPaneExtraWidth={onSetPaneExtraWidth}
       >
         <ConversationNewPaneBody />
       </PaneRuntimeProvider>,
@@ -275,15 +276,27 @@ describe("ConversationNewPaneBody", () => {
       await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
     ).toBeInTheDocument();
     await waitFor(() => {
-      expect(onSetPaneExtraWidth).toHaveBeenCalledWith(320);
+      expect(onSetPaneExtraWidth).toHaveBeenCalledWith({
+        paneId: "pane-1",
+        resourceKey,
+        widthPx: 320,
+      });
     });
 
     await user.click(screen.getByRole("button", { name: "Collapse secondary rail" }));
     await waitFor(() => {
-      expect(onSetPaneExtraWidth).toHaveBeenCalledWith(36);
+      expect(onSetPaneExtraWidth).toHaveBeenCalledWith({
+        paneId: "pane-1",
+        resourceKey,
+        widthPx: 36,
+      });
     });
 
     unmount();
-    expect(onSetPaneExtraWidth).toHaveBeenLastCalledWith(0);
+    expect(onSetPaneExtraWidth).toHaveBeenLastCalledWith({
+      paneId: "pane-1",
+      resourceKey,
+      widthPx: 0,
+    });
   });
 });

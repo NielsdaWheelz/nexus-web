@@ -299,7 +299,7 @@ describe("GlobalPlayer audio effects", () => {
 
       const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
       vi.spyOn(audio, "play").mockResolvedValue(undefined);
-      fireEvent.mouseDown(screen.getByRole("button", { name: "Play global player" }));
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Play global player" }));
       fireEvent.click(screen.getByRole("button", { name: "Play global player" }));
 
       await waitFor(() => {
@@ -349,7 +349,7 @@ describe("GlobalPlayer audio effects", () => {
       });
       fireEvent.click(screen.getByRole("button", { name: "Audio effects" }));
       fireEvent.click(screen.getByRole("checkbox", { name: "Silence trimming" }));
-      fireEvent.mouseDown(screen.getByRole("button", { name: "Play global player" }));
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Play global player" }));
       fireEvent.click(screen.getByRole("button", { name: "Play global player" }));
       fireEvent(audio, new Event("play"));
 
@@ -412,7 +412,7 @@ describe("GlobalPlayer audio effects", () => {
       const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
       const playSpy = vi.spyOn(audio, "play").mockResolvedValue(undefined);
       const pauseSpy = vi.spyOn(audio, "pause").mockImplementation(() => {});
-      fireEvent.mouseDown(screen.getByRole("button", { name: "Play global player" }));
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Play global player" }));
       fireEvent.click(screen.getByRole("button", { name: "Play global player" }));
 
       await waitFor(() => {
@@ -445,7 +445,7 @@ describe("GlobalPlayer audio effects", () => {
 
       const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
       const playSpy = vi.spyOn(audio, "play").mockResolvedValue(undefined);
-      fireEvent.mouseDown(screen.getByRole("button", { name: "Play global player" }));
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Play global player" }));
       fireEvent.click(screen.getByRole("button", { name: "Play global player" }));
 
       await waitFor(() => {

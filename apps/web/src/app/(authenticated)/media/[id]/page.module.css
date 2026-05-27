@@ -1,7 +1,7 @@
 /**
  * Media View Page styles.
  *
- * Styling for the media content pane, EPUB navigation, and highlights pane.
+ * Styling for the media content pane, text reader navigation, and highlights pane.
  *
  * Reader scope: the `.readerThemeLight` and `.readerThemeDark` blocks below
  * define `--reader-*` overrides with literal hex values. They are independent
@@ -627,17 +627,17 @@
 }
 
 /* =============================================================================
-   EPUB Chapter Navigation
+   Text Document Reader
    ============================================================================= */
 
-.epubContainer {
+.textDocumentContainer {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
 }
 
 /* =============================================================================
-   EPUB Table of Contents
+   Reader Table of Contents
    ============================================================================= */
 
 .tocSection {
@@ -645,21 +645,14 @@
   padding-bottom: var(--space-3);
 }
 
-.tocToggle {
+.tocHeading {
   display: flex;
   align-items: center;
   gap: var(--space-1);
   padding: var(--space-1) 0;
-  border: none;
-  background: none;
   color: var(--reader-text-secondary, var(--ink-muted));
   font-size: var(--text-sm);
-  cursor: pointer;
-  transition: color var(--duration-fast) var(--ease-glide);
-}
-
-.tocToggle:hover {
-  color: var(--reader-text, var(--ink));
+  font-weight: var(--weight-semibold);
 }
 
 .tocWarning {
@@ -746,6 +739,9 @@
   position: relative;
   display: flex;
   flex-direction: row;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
   height: 100%;
   gap: 0;
@@ -754,6 +750,7 @@
 .readerColumn {
   flex: 1 1 0%;
   min-width: var(--reader-protected-width-px, 0);
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -763,6 +760,8 @@
 
 .readerFrame {
   flex: 1 1 0%;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
   position: relative;
 }

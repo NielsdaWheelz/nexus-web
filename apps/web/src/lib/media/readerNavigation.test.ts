@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isReadableStatus,
   normalizeReaderNavigationToc,
+  parseReaderNavigationHrefAnchorId,
   type MediaNavigationResponse,
   type ReaderNavigationTocNode,
 } from "./readerNavigation";
@@ -50,6 +51,29 @@ describe("normalizeReaderNavigationToc", () => {
     expect(out[0].navigable).toBe(false);
     expect(out[0].children[0].navigable).toBe(true);
     expect(out[0].children[1].navigable).toBe(false);
+  });
+});
+
+describe("parseReaderNavigationHrefAnchorId", () => {
+  it("extracts decoded anchors from reader navigation hrefs", () => {
+    expect(parseReaderNavigationHrefAnchorId("Text/intro.xhtml#deep-anchor")).toBe(
+      "deep-anchor",
+    );
+    expect(parseReaderNavigationHrefAnchorId("#space%20anchor")).toBe(
+      "space anchor",
+    );
+  });
+
+  it("returns null for hrefs without usable anchors", () => {
+    expect(parseReaderNavigationHrefAnchorId("Text/intro.xhtml")).toBeNull();
+    expect(parseReaderNavigationHrefAnchorId("#")).toBeNull();
+    expect(parseReaderNavigationHrefAnchorId(null)).toBeNull();
+  });
+
+  it("keeps malformed URI anchors readable", () => {
+    expect(parseReaderNavigationHrefAnchorId("Text/intro.xhtml#bad%ZZ")).toBe(
+      "bad%ZZ",
+    );
   });
 });
 

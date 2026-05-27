@@ -1,6 +1,7 @@
 # Spec: Web Article Reader Navigation Hard Cutover
 
-Status: Proposed
+Status: Accepted source/navigation contract. Frontend text-reader layout is
+owned by `docs/text-document-reader-layout-cutover.md`.
 Owner: reader + ingestion/content index
 Date: 2026-05-27
 Hard cutover. No legacy code, no fallback DOM heading scan, no backward
@@ -147,7 +148,7 @@ Reuse and generalize:
 - `python/nexus/api/routes/media.py::get_epub_navigation`
 - `python/nexus/services/epub_read.py::get_epub_navigation_for_viewer`
 - `python/nexus/schemas/media.py::EpubNavigationOut` and related classes
-- `apps/web/src/lib/media/epubReader.ts`
+- `apps/web/src/lib/media/readerNavigation.ts`
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx` navigation
   loading, EPUB section selection, `?loc`, and content rendering orchestration
 - `apps/web/src/app/api/media/[id]/navigation/route.ts` BFF proxy
@@ -597,8 +598,8 @@ Route handler rule:
 
 ### 6.7 Frontend contract
 
-Replace `apps/web/src/lib/media/epubReader.ts` with
-`apps/web/src/lib/media/readerNavigation.ts`.
+Use `apps/web/src/lib/media/readerNavigation.ts` as the single frontend reader
+navigation type/helper module.
 
 Final frontend types mirror `MediaNavigationOut`.
 
@@ -607,9 +608,8 @@ Frontend rules:
 - `MediaPaneBody` loads navigation for every readable `epub` and `web_article`.
 - `MediaPaneBody` never derives canonical navigation by parsing rendered DOM.
 - `HtmlRenderer` remains render-only and does not emit heading lists.
-- The existing `EpubContentPane` responsibilities are split or renamed into a
-  generic navigation surface and EPUB content renderer. Do not add a second TOC
-  component with equivalent logic.
+- `TextDocumentReader` renders the shared web article and EPUB text-reader
+  surface. Do not add a second TOC component with equivalent logic.
 - Navigation jumps use `?loc` and the loaded navigation payload.
 - Web heading jumps use existing text-reader scroll/canonical cursor utilities
   where possible.
@@ -695,9 +695,8 @@ and versioned as generated.
 | File | Change |
 |---|---|
 | `apps/web/src/lib/media/readerNavigation.ts` | New generic reader navigation types and TOC normalization helpers. |
-| `apps/web/src/lib/media/epubReader.ts` | Delete or reduce to EPUB section-content-only helpers; no duplicate navigation types. |
 | `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx` | Load reader navigation for EPUB and web articles; resolve `?loc`; wire contents UI; remove EPUB-only navigation state names. |
-| `apps/web/src/app/(authenticated)/media/[id]/EpubContentPane.tsx` | Split generic TOC rendering from EPUB section content, or rename if it becomes generic. |
+| `apps/web/src/app/(authenticated)/media/[id]/TextDocumentReader.tsx` | Shared web article and EPUB text-reader surface. |
 | `apps/web/src/components/HtmlRenderer.tsx` | No navigation extraction. It may render generated heading ids already present in sanitized HTML. |
 | `apps/web/src/app/(authenticated)/media/[id]/page.module.css` | Reuse existing TOC styles; add responsive reader contents styles only where needed. |
 | `apps/web/src/app/api/media/[id]/navigation/route.ts` | Remains a thin proxy; no business logic. |

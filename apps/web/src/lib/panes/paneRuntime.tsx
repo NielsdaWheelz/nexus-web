@@ -12,6 +12,12 @@ export interface PaneScopedRouter {
   replace: (href: string, options?: { titleHint?: string }) => void;
 }
 
+export interface PaneRuntimeWidthPublication {
+  paneId: string;
+  resourceKey: string;
+  widthPx: number | null;
+}
+
 interface PaneRuntimeContextValue {
   paneId: string;
   href: string;
@@ -55,8 +61,8 @@ interface PaneRuntimeProviderProps {
     resourceKey: string;
     title: string | null;
   }) => void;
-  onSetPaneMinWidth?: (paneId: string, widthPx: number | null) => void;
-  onSetPaneExtraWidth?: (paneId: string, widthPx: number) => void;
+  onSetPaneMinWidth?: (input: PaneRuntimeWidthPublication) => void;
+  onSetPaneExtraWidth?: (input: PaneRuntimeWidthPublication) => void;
   children: React.ReactNode;
 }
 
@@ -127,10 +133,10 @@ export function PaneRuntimeProvider({
         onSetPaneTitle?.({ paneId, resourceKey, title });
       },
       setPaneMinWidth: (widthPx: number | null) => {
-        onSetPaneMinWidth?.(paneId, widthPx);
+        onSetPaneMinWidth?.({ paneId, resourceKey, widthPx });
       },
       setPaneExtraWidth: (widthPx: number) => {
-        onSetPaneExtraWidth?.(paneId, widthPx);
+        onSetPaneExtraWidth?.({ paneId, resourceKey, widthPx });
       },
     }),
     [

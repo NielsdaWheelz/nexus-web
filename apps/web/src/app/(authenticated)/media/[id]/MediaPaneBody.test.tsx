@@ -8,7 +8,7 @@ import MediaPaneBody from "./MediaPaneBody";
 
 const testState = vi.hoisted(() => ({
   apiFetch: vi.fn(),
-  mediaKind: "pdf" as "pdf" | "web_article",
+  mediaKind: "pdf" as "pdf" | "web_article" | "epub",
 }));
 
 vi.mock("@/lib/api/client", () => ({
@@ -159,7 +159,11 @@ function renderMediaPane() {
     </FeedbackProvider>,
   );
 
-  return { onSetPaneMinWidth, onSetPaneExtraWidth };
+  return {
+    onSetPaneMinWidth,
+    onSetPaneExtraWidth,
+    resourceKey: identity.resourceKey,
+  };
 }
 
 describe("MediaPaneBody pane sizing", () => {
@@ -172,6 +176,55 @@ describe("MediaPaneBody pane sizing", () => {
       }
       if (path === "/api/media/media-1/fragments") {
         return jsonResponse(fragmentResponse());
+      }
+      if (path === "/api/media/media-1/navigation") {
+        return jsonResponse({
+          media_id: "media-1",
+          kind: testState.mediaKind,
+          source_version: "source:v1",
+          sections: [
+            {
+              section_id: "section-1",
+              label: "Section 1",
+              ordinal: 0,
+              fragment_id: "fragment-1",
+              fragment_idx: 0,
+              level: 1,
+              depth: 0,
+              start_offset: 0,
+              end_offset: 0,
+              href_path: "chapter-1.xhtml",
+              href_fragment: null,
+              anchor_id: null,
+              char_count: 0,
+              source_version: "source:v1",
+            },
+          ],
+          toc_nodes: [],
+          landmarks: [],
+          page_list: [],
+        });
+      }
+      if (path === "/api/media/media-1/sections/section-1") {
+        return jsonResponse({
+          section_id: "section-1",
+          label: "Section 1",
+          fragment_id: "fragment-1",
+          fragment_idx: 0,
+          href_path: "chapter-1.xhtml",
+          anchor_id: null,
+          source_node_id: null,
+          source: "spine",
+          ordinal: 0,
+          prev_section_id: null,
+          next_section_id: null,
+          html_sanitized: "<p>Readable text.</p>",
+          canonical_text: "",
+          char_count: 0,
+          word_count: 2,
+          source_version: "source:v1",
+          created_at: "2026-01-01T00:00:00Z",
+        });
       }
       if (path === "/api/media/media-1/highlights") {
         return jsonResponse({ highlights: [] });
@@ -197,27 +250,63 @@ describe("MediaPaneBody pane sizing", () => {
     );
   });
 
-  it.each(["pdf", "web_article"] as const)(
+  it.each(["pdf", "web_article", "epub"] as const)(
     "publishes protected primary width and appended rail width for %s",
     async (kind) => {
       testState.mediaKind = kind;
-      const { onSetPaneMinWidth, onSetPaneExtraWidth } = renderMediaPane();
+      const { onSetPaneMinWidth, onSetPaneExtraWidth, resourceKey } =
+        renderMediaPane();
       const expectedMinWidthPx = PROTECTED_READER_WIDTH_PX + OVERVIEW_RULER_WIDTH_PX;
 
       await waitFor(() => {
-        expect(onSetPaneMinWidth).toHaveBeenCalledWith("pane-1", expectedMinWidthPx);
+        expect(onSetPaneMinWidth).toHaveBeenCalledWith({
+          paneId: "pane-1",
+          resourceKey,
+          widthPx: expectedMinWidthPx,
+        });
       });
-      expect(onSetPaneExtraWidth).toHaveBeenCalledWith("pane-1", 0);
+      expect(onSetPaneExtraWidth).toHaveBeenCalledWith({
+        paneId: "pane-1",
+        resourceKey,
+        widthPx: 0,
+      });
 
       fireEvent.click(await screen.findByRole("button", { name: "Open highlights" }));
 
       await waitFor(() => {
-        expect(onSetPaneExtraWidth).toHaveBeenCalledWith(
-          "pane-1",
-          SECONDARY_RAIL_EXPANDED_WIDTH_PX,
-        );
+        expect(onSetPaneExtraWidth).toHaveBeenCalledWith({
+          paneId: "pane-1",
+          resourceKey,
+          widthPx: SECONDARY_RAIL_EXPANDED_WIDTH_PX,
+        });
       });
-      expect(onSetPaneMinWidth).toHaveBeenCalledWith("pane-1", expectedMinWidthPx);
+      expect(onSetPaneMinWidth).toHaveBeenCalledWith({
+        paneId: "pane-1",
+        resourceKey,
+        widthPx: expectedMinWidthPx,
+      });
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Collapse secondary rail" }),
+      );
+
+      await waitFor(() => {
+        expect(onSetPaneExtraWidth).toHaveBeenCalledWith({
+          paneId: "pane-1",
+          resourceKey,
+          widthPx: 0,
+        });
+      });
+    },
+  );
+
+  it.each(["epub", "web_article"] as const)(
+    "renders readable %s text content",
+    async (kind) => {
+      testState.mediaKind = kind;
+      renderMediaPane();
+
+      expect(await screen.findByTestId("html-renderer")).toBeInTheDocument();
     },
   );
 });

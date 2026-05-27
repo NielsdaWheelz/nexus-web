@@ -69,6 +69,12 @@ rendered max   = resolved maxWidthPx + runtime extraWidthPx
 `extraWidthPx` is runtime-only. It is published by pane bodies when they mount a
 desktop contextual rail and cleared on unmount, mobile, or close.
 
+Runtime min-width and extra-width publications are scoped to the publishing pane
+id and active resource key. The host applies a runtime width only while the
+record's resource key matches the pane's current resource key, so cleanup from a
+previous resource cannot clear or apply sizing for the next resource rendered in
+the same pane.
+
 ### Route Width Policy
 
 Every route resolves to one width contract:
@@ -209,6 +215,8 @@ Owns pane-local APIs:
 - runtime extra width publication
 
 Pane bodies use this API. They do not mutate workspace pane state directly.
+The provider attaches the current resource key to runtime width publications;
+pane bodies publish widths only, not resource-scoping metadata.
 
 ### Compound Pane Layout Contract
 
@@ -319,6 +327,8 @@ Secondary rail tab strips use accessible tab semantics through
 - Reopening an already-open resource activates it without resetting user width.
 - Resizing and navigation clamp through the route width resolver.
 - Text reader, EPUB, transcript, and PDF publish protected primary widths.
+- Runtime min-width and extra-width records never apply across resource-key
+  changes in the same pane.
 - Reader secondary rail opens by adding `SECONDARY_RAIL_EXPANDED_WIDTH_PX` to
   the rendered pane width and closes by removing it.
 - Chat context rail opens and closes through the same runtime extra-width path.

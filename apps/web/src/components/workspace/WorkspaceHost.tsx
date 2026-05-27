@@ -7,7 +7,11 @@ import {
   type ResolvedPaneRoute,
 } from "@/lib/panes/paneRouteRegistry";
 import { handlePaneInternalAnchorClick } from "@/lib/panes/paneLinkNavigation";
-import { PaneRuntimeProvider, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import {
+  PaneRuntimeProvider,
+  usePaneRuntime,
+  type PaneRuntimeWidthPublication,
+} from "@/lib/panes/paneRuntime";
 import PaneShell from "@/components/workspace/PaneShell";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -52,6 +56,11 @@ interface WorkspaceHostPane {
   isActive: boolean;
   visibility: "visible" | "minimized";
   content: React.ReactNode;
+}
+
+interface RuntimePaneWidthRecord {
+  resourceKey: string;
+  widthPx: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,8 +186,8 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
     resourceKey: string;
     title: string | null;
   }) => void;
-  publishPaneMinWidth: (paneId: string, widthPx: number | null) => void;
-  publishPaneExtraWidth: (paneId: string, widthPx: number) => void;
+  publishPaneMinWidth: (input: PaneRuntimeWidthPublication) => void;
+  publishPaneExtraWidth: (input: PaneRuntimeWidthPublication) => void;
   children: React.ReactNode;
 }) {
   const handleReplacePane = useCallback(
@@ -236,26 +245,54 @@ const PaneContent = memo(function PaneContent({
 // buildHostPane - builds the pane record consumed by the host layout.
 // ---------------------------------------------------------------------------
 
-/**
- * Identity-preserving upsert for a paneId → width map. When `value` is null
- * the entry is deleted; otherwise it's set. Returns the same Map reference
- * when nothing changes so the React setter can short-circuit re-renders.
- */
-function upsertOrDeletePaneWidth(
-  current: Map<string, number>,
-  paneId: string,
-  value: number | null,
-): Map<string, number> {
+function upsertOrDeletePaneWidthRecord(
+  current: Map<string, RuntimePaneWidthRecord>,
+  input: PaneRuntimeWidthPublication,
+): Map<string, RuntimePaneWidthRecord> {
+  const value =
+    input.widthPx !== null && Number.isFinite(input.widthPx) && input.widthPx > 0
+      ? Math.ceil(input.widthPx)
+      : null;
+  const existing = current.get(input.paneId);
   if (value === null) {
-    if (!current.has(paneId)) return current;
+    if (!existing || existing.resourceKey !== input.resourceKey) return current;
     const next = new Map(current);
-    next.delete(paneId);
+    next.delete(input.paneId);
     return next;
   }
-  if (current.get(paneId) === value) return current;
+  if (
+    existing?.resourceKey === input.resourceKey &&
+    existing.widthPx === value
+  ) {
+    return current;
+  }
   const next = new Map(current);
-  next.set(paneId, value);
+  next.set(input.paneId, { resourceKey: input.resourceKey, widthPx: value });
   return next;
+}
+
+function getRuntimePaneWidth(
+  records: Map<string, RuntimePaneWidthRecord>,
+  paneId: string,
+  resourceKey: string,
+): number | null {
+  const record = records.get(paneId);
+  return record?.resourceKey === resourceKey ? record.widthPx : null;
+}
+
+function pruneRuntimePaneWidthRecords(
+  current: Map<string, RuntimePaneWidthRecord>,
+  currentResourceKeyByPaneId: Map<string, string>,
+): Map<string, RuntimePaneWidthRecord> {
+  let next: Map<string, RuntimePaneWidthRecord> | null = null;
+  for (const [paneId, record] of current) {
+    if (currentResourceKeyByPaneId.get(paneId) === record.resourceKey) {
+      continue;
+    }
+    next ??= new Map(current);
+    next.delete(paneId);
+  }
+  return next ?? current;
 }
 
 function buildHostPane(input: {
@@ -324,11 +361,11 @@ export default function WorkspaceHost() {
     publishPaneTitle,
   } = useWorkspaceStore();
   const titleTelemetryByPaneIdRef = useRef<Map<string, string>>(new Map());
-  const [runtimeMinWidthByPaneId, setRuntimeMinWidthByPaneId] = useState<Map<string, number>>(
-    () => new Map()
-  );
+  const [runtimeMinWidthByPaneId, setRuntimeMinWidthByPaneId] = useState<
+    Map<string, RuntimePaneWidthRecord>
+  >(() => new Map());
   const [runtimeExtraWidthByPaneId, setRuntimeExtraWidthByPaneId] = useState<
-    Map<string, number>
+    Map<string, RuntimePaneWidthRecord>
   >(() => new Map());
 
   // --- Mobile viewport and pane chrome focus state ---
@@ -343,24 +380,43 @@ export default function WorkspaceHost() {
       })),
     [runtimeTitleByPaneId, state.panes]
   );
-
-  const publishPaneMinWidth = useCallback((paneId: string, widthPx: number | null) => {
-    setRuntimeMinWidthByPaneId((current) =>
-      upsertOrDeletePaneWidth(
-        current,
-        paneId,
-        widthPx !== null && Number.isFinite(widthPx) && widthPx > 0
-          ? Math.ceil(widthPx)
-          : null,
+  const currentResourceKeyByPaneId = useMemo(
+    () =>
+      new Map(
+        paneDescriptors.map(({ pane, descriptor }) => [
+          pane.id,
+          descriptor.resourceKey,
+        ]),
       ),
-    );
-  }, []);
+    [paneDescriptors],
+  );
 
-  const publishPaneExtraWidth = useCallback((paneId: string, widthPx: number) => {
-    setRuntimeExtraWidthByPaneId((current) =>
-      upsertOrDeletePaneWidth(current, paneId, widthPx > 0 ? widthPx : null),
+  const publishPaneMinWidth = useCallback((input: PaneRuntimeWidthPublication) => {
+    if (currentResourceKeyByPaneId.get(input.paneId) !== input.resourceKey) {
+      return;
+    }
+    setRuntimeMinWidthByPaneId((current) =>
+      upsertOrDeletePaneWidthRecord(current, input),
     );
-  }, []);
+  }, [currentResourceKeyByPaneId]);
+
+  const publishPaneExtraWidth = useCallback((input: PaneRuntimeWidthPublication) => {
+    if (currentResourceKeyByPaneId.get(input.paneId) !== input.resourceKey) {
+      return;
+    }
+    setRuntimeExtraWidthByPaneId((current) =>
+      upsertOrDeletePaneWidthRecord(current, input),
+    );
+  }, [currentResourceKeyByPaneId]);
+
+  useEffect(() => {
+    setRuntimeMinWidthByPaneId((current) =>
+      pruneRuntimePaneWidthRecords(current, currentResourceKeyByPaneId),
+    );
+    setRuntimeExtraWidthByPaneId((current) =>
+      pruneRuntimePaneWidthRecords(current, currentResourceKeyByPaneId),
+    );
+  }, [currentResourceKeyByPaneId]);
 
   useEffect(() => {
     const nextTelemetryByPaneId = new Map<string, string>();
@@ -395,8 +451,17 @@ export default function WorkspaceHost() {
           descriptor,
           onNavigatePane: navigatePane,
           isActive: pane.id === state.activePaneId,
-          runtimeMinWidthPx: runtimeMinWidthByPaneId.get(pane.id) ?? null,
-          runtimeExtraWidthPx: runtimeExtraWidthByPaneId.get(pane.id) ?? 0,
+          runtimeMinWidthPx: getRuntimePaneWidth(
+            runtimeMinWidthByPaneId,
+            pane.id,
+            descriptor.resourceKey,
+          ),
+          runtimeExtraWidthPx:
+            getRuntimePaneWidth(
+              runtimeExtraWidthByPaneId,
+              pane.id,
+              descriptor.resourceKey,
+            ) ?? 0,
         })
       ),
     [

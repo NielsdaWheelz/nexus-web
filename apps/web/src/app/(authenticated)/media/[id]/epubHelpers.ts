@@ -1,6 +1,9 @@
 "use client";
 
-import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
+import {
+  parseReaderNavigationHrefAnchorId,
+  type ReaderNavigationSection,
+} from "@/lib/media/readerNavigation";
 
 export interface NavigationTocNodeLike {
   section_id: string | null;
@@ -11,21 +14,6 @@ export interface NavigationTocNodeLike {
 export interface EpubInternalLinkTarget {
   sectionId: string;
   anchorId: string | null;
-}
-
-export function parseAnchorIdFromHref(href: string | null): string | null {
-  if (!href || !href.includes("#")) {
-    return null;
-  }
-  const fragment = href.split("#", 2)[1];
-  if (!fragment) {
-    return null;
-  }
-  try {
-    return decodeURIComponent(fragment);
-  } catch {
-    return fragment;
-  }
 }
 
 export function resolveSectionAnchorId(
@@ -47,7 +35,7 @@ export function resolveSectionAnchorId(
       continue;
     }
     if (node.section_id === sectionId) {
-      const anchor = parseAnchorIdFromHref(node.href);
+      const anchor = parseReaderNavigationHrefAnchorId(node.href);
       if (anchor) {
         return anchor;
       }
@@ -154,7 +142,12 @@ export function resolveEpubInternalLinkTarget(
     return null;
   }
 
-  const normalizedHref = normalizeEpubHref(href, currentSectionId);
+  const currentSection =
+    sections.find((section) => section.section_id === currentSectionId) ?? null;
+  const normalizedHref = normalizeEpubHref(
+    href,
+    currentSection?.href_path ?? null,
+  );
   if (!normalizedHref) {
     return null;
   }
@@ -163,7 +156,7 @@ export function resolveEpubInternalLinkTarget(
   if (!targetPath) {
     if (normalizedHref.anchorId) {
       return {
-        sectionId: currentSectionId ?? sections[0].section_id,
+        sectionId: currentSection?.section_id ?? sections[0].section_id,
         anchorId: normalizedHref.anchorId,
       };
     }
