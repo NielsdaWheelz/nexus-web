@@ -13,6 +13,7 @@ import {
 import {
   MAX_PANES,
   WORKSPACE_DEFAULT_FALLBACK_HREF,
+  WORKSPACE_SCHEMA_VERSION,
   clampPaneWidth,
   createDefaultWorkspaceState,
   createPaneId,
@@ -77,6 +78,74 @@ function ensureActivePaneId(state: WorkspaceStateV4): WorkspaceStateV4 {
     return { ...state, activePaneId: firstVisiblePane.id };
   }
   return createDefaultWorkspaceState(WORKSPACE_DEFAULT_FALLBACK_HREF);
+}
+
+function isNeutralWorkspaceRestoreIntent(state: WorkspaceStateV4): boolean {
+  if (state.panes.length !== 1) {
+    return false;
+  }
+  const pane = state.panes[0];
+  return (
+    pane?.visibility === "visible" &&
+    state.activePaneId === pane.id &&
+    pane.href === WORKSPACE_DEFAULT_FALLBACK_HREF
+  );
+}
+
+export function mergeRestoredWorkspaceWithUrlIntent(
+  restored: WorkspaceStateV4,
+  urlIntent: WorkspaceStateV4
+): WorkspaceStateV4 {
+  if (isNeutralWorkspaceRestoreIntent(urlIntent)) {
+    return restored;
+  }
+
+  const requestedPane = urlIntent.panes.find(
+    (pane) => pane.id === urlIntent.activePaneId && pane.visibility === "visible"
+  );
+  if (!requestedPane) {
+    return restored;
+  }
+
+  const existingPane = restored.panes.find((pane) =>
+    hasSamePaneResource(pane.href, requestedPane.href)
+  );
+  if (existingPane) {
+    return ensureActivePaneId({
+      ...restored,
+      activePaneId: existingPane.id,
+      panes: restored.panes.map((pane) =>
+        pane.id === existingPane.id
+          ? {
+              ...pane,
+              href: requestedPane.href,
+              widthPx: requestedPane.widthPx,
+              visibility: "visible" as const,
+            }
+          : pane
+      ),
+    });
+  }
+
+  const requestedPaneId = restored.panes.some((pane) => pane.id === requestedPane.id)
+    ? createPaneId()
+    : requestedPane.id;
+  const paneToAppend: WorkspacePaneStateV4 = {
+    ...requestedPane,
+    id: requestedPaneId,
+    visibility: "visible",
+  };
+  const retainedPaneCount = Math.max(0, MAX_PANES - 1);
+  const panes =
+    restored.panes.length >= MAX_PANES
+      ? restored.panes.slice(Math.max(0, restored.panes.length - retainedPaneCount))
+      : restored.panes;
+
+  return ensureActivePaneId({
+    schemaVersion: WORKSPACE_SCHEMA_VERSION,
+    activePaneId: requestedPaneId,
+    panes: [...panes, paneToAppend],
+  });
 }
 
 function workspaceReducer(state: WorkspaceStateV4, action: WorkspaceAction): WorkspaceStateV4 {
@@ -438,7 +507,11 @@ export function WorkspaceStoreProvider({ children }: { children: React.ReactNode
   stateRef.current = state;
 
   const applyRestoredState = useCallback(
-    (restored: WorkspaceStateV4) => dispatch({ type: "hydrate", state: restored }),
+    (restored: WorkspaceStateV4, urlIntent: WorkspaceStateV4) =>
+      dispatch({
+        type: "hydrate",
+        state: mergeRestoredWorkspaceWithUrlIntent(restored, urlIntent),
+      }),
     []
   );
   useWorkspaceSession(state, mounted, applyRestoredState);

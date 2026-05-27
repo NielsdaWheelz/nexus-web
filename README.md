@@ -88,8 +88,9 @@ make seed-real-media-e2e
 - `.env.example` is the source of truth for environment variables and defaults.
 - `make setup` generates local `.env` and `apps/web/.env.local`.
 - `make dev` writes the live Supabase Auth URL and keys to `.dev-ports`.
-- Test wrappers choose free Postgres/MinIO ports unless `TEST_POSTGRES_PORT` or
-  `TEST_MINIO_PORT` is set.
+- Test wrappers choose and hold free Postgres, MinIO, API, and web ports for
+  each run. `TEST_POSTGRES_PORT`, `TEST_MINIO_PORT`, `TEST_API_PORT`, and
+  `TEST_WEB_PORT` force an exact port and fail if it cannot bind.
 - Android builds require `NEXUS_GOOGLE_WEB_CLIENT_ID`; `.env.example` owns the
   contract, and local/CI environment owns the value.
 

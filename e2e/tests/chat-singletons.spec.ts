@@ -1,6 +1,8 @@
-import { test, expect, type Page, type Locator } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { requireRunnableChatComposer } from "./chatReadiness";
+import { openMediaInSinglePaneWorkspace, openReaderSecondaryRail } from "./reader";
 
 interface NonPdfSeed {
   media_id: string;
@@ -34,21 +36,6 @@ async function readSingletonState(
   return (JSON.parse(body) as ChatSingletonStateResponse).data;
 }
 
-function readerSecondaryRail(page: Page): Locator {
-  return page.getByTestId("reader-secondary-rail");
-}
-
-async function openReaderSecondaryRail(page: Page): Promise<Locator> {
-  const rail = readerSecondaryRail(page);
-  if ((await rail.getAttribute("data-expanded")) !== "true") {
-    await page.getByRole("button", { name: "Open highlights pane" }).click();
-  }
-  await expect(rail).toHaveAttribute("data-expanded", "true", {
-    timeout: 10_000,
-  });
-  return rail;
-}
-
 async function ensureDocChatSingletonExists(
   page: Page,
   mediaId: string,
@@ -61,7 +48,7 @@ async function ensureDocChatSingletonExists(
   // Open the reader pane and send a first message to materialize the
   // singleton. Mirror the production path: no direct DB writes, only
   // user-visible affordances.
-  await page.goto(`/media/${mediaId}`);
+  await openMediaInSinglePaneWorkspace(page, mediaId);
   const rail = await openReaderSecondaryRail(page);
   await rail.getByRole("tab", { name: "Chat about this document" }).click();
   await rail
@@ -74,36 +61,14 @@ async function ensureDocChatSingletonExists(
   const modelSettings = rail.getByRole("button", {
     name: /model settings/i,
   });
-  const missingKeyError = page.getByText("No API key available for openai");
 
   await expect(composerInput).toBeVisible({ timeout: 15_000 });
-  await expect(modelSettings).toBeVisible();
-
-  await expect
-    .poll(
-      async () => {
-        if (await missingKeyError.isVisible().catch(() => false)) {
-          return "ready";
-        }
-        const modelLabel = await modelSettings
-          .getAttribute("aria-label")
-          .catch(() => "");
-        if (modelLabel && modelLabel !== "Model settings: Model") {
-          return "ready";
-        }
-        return "pending";
-      },
-      { timeout: 15_000 },
-    )
-    .not.toBe("pending");
-
-  if (await missingKeyError.isVisible().catch(() => false)) {
-    await expect(sendButton).toBeDisabled();
-    test.skip(
-      true,
-      "No usable provider key in the e2e environment; singleton materialization requires a model.",
-    );
-  }
+  await requireRunnableChatComposer({
+    page,
+    modelSettings,
+    skipReason:
+      "No runnable chat model in the e2e environment; singleton materialization requires a model.",
+  });
 
   const messageText = `singleton-bootstrap-${Date.now() % 1_000_000}`;
   await composerInput.fill(messageText);

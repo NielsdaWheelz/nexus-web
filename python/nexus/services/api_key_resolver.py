@@ -25,7 +25,7 @@ from nexus.db.models import Model, UserApiKey
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.services.billing_entitlements import get_effective_entitlements
-from nexus.services.crypto import CryptoError, decrypt_api_key
+from nexus.services.user_keys import decrypt_user_api_key_material
 
 logger = get_logger(__name__)
 
@@ -111,22 +111,10 @@ def resolve_api_key(
         .first()
     )
 
-    if user_key_row and user_key_row.encrypted_key and user_key_row.key_nonce:
-        try:
-            user_key = decrypt_api_key(
-                user_key_row.encrypted_key,
-                user_key_row.key_nonce,
-                user_key_row.master_key_version or 1,
-            )
+    if user_key_row:
+        user_key = decrypt_user_api_key_material(user_key_row)
+        if user_key:
             user_key_id = str(user_key_row.id)
-        except (CryptoError, UnicodeDecodeError) as e:
-            logger.warning(
-                "user_key_decrypt_failed",
-                user_id=str(user_id),
-                provider=provider,
-                error=str(e),
-            )
-            user_key = None
 
     can_use_platform_key = get_effective_entitlements(db, user_id).can_use_platform_llm
 

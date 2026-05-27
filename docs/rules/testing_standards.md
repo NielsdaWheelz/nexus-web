@@ -343,6 +343,7 @@ Rule:
 - Prefer deterministic seed inputs and idempotent setup behavior
 - Prefer Playwright `globalSetup` for centralized seeding/bootstrap so all invocation paths (`make test-e2e`, direct `bun run test:e2e`, CI) share identical setup guarantees
 - `globalSetup` may load repo `.env`/runtime port files to mirror Makefile behavior when tests are run outside Make
+- Do not seed fake or undecryptable BYOK rows just to expose chat models. Chat-run E2E flows require a real runnable model through platform or BYOK configuration; otherwise they must skip through the shared chat-readiness helper before attempting to send.
 
 ### E2E Determinism and Pane-Aware Assertions
 
@@ -487,6 +488,19 @@ Command semantics:
 - `make verify-android-release`: signed APK verification; requires release signing env vars/secrets
 - `make test-e2e-ui`: interactive Playwright UI mode
 - `bun run test:csp` in `e2e/`: strict CSP profile for runtime policy assertions against production Next runtime
+
+Port ownership:
+
+- `make test-e2e`, `make test-e2e-ui`, and real-media Playwright targets
+  allocate Postgres, MinIO, API, and web ports through `scripts/test_env.sh`.
+  A port is available only if the harness can bind loopback immediately; process
+  listings are diagnostic only.
+- `TEST_POSTGRES_PORT`, `TEST_MINIO_PORT`, `TEST_API_PORT`, and `TEST_WEB_PORT`
+  are exact overrides. If one is set and cannot bind, the command fails instead
+  of silently switching ports.
+- Playwright specs that need a specific pane should navigate with an encoded
+  `ws=` workspace URL or a shared helper. Bare direct URLs are product behavior;
+  pane-sensitive tests should not rely on restored workspace state being empty.
 
 Target CI shape:
 

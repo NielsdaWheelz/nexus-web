@@ -108,6 +108,16 @@ routes return to pending unless the opener supplied a current-resource hint.
 Same-resource location changes, such as `/media/:id` to
 `/media/:id?loc=section`, preserve title records.
 
+## Session Restore And Direct URLs
+
+Saved workspace sessions restore silently on a neutral `/libraries` open when the
+URL does not carry `ws=` state. Explicit direct URLs remain authoritative even
+without `ws=`: if the browser opens `/media/:id`, `/conversations`, or another
+non-neutral route, the restored session is merged with that requested pane and
+the requested pane becomes active. Same-resource identity uses
+`lib/panes/paneIdentity.ts`, so a direct URL such as `/media/:id?loc=section`
+updates and activates an existing saved media pane instead of duplicating it.
+
 ## Visual Invariants
 
 The tab is content-hugging and truncates only the title.

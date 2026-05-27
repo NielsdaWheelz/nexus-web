@@ -1125,48 +1125,6 @@ def _seed_youtube_transcript_media(session_factory, user_id: UUID) -> None:
     print(f"Seeded YouTube playback-only media for E2E: {playback_only_media_id}")
 
 
-def _seed_api_key(session_factory, user_id: UUID) -> None:
-    """Seed a test API key so the models endpoint returns data.
-
-    Inserts directly into the DB to avoid requiring NEXUS_KEY_ENCRYPTION_KEY.
-    The key is fake and never used for real API calls — we just need a row
-    with status='untested' so get_usable_key_providers() returns {'openai'}
-    and the models endpoint returns model data.
-    """
-    from nexus.db.models import UserApiKey
-
-    with session_factory() as db:
-        existing = db.scalars(
-            select(UserApiKey).where(
-                UserApiKey.user_id == user_id,
-                UserApiKey.provider == "openai",
-            )
-        ).first()
-
-        if existing:
-            if existing.status == "revoked":
-                existing.status = "untested"
-                existing.revoked_at = None
-                db.commit()
-                print("Reactivated existing E2E test API key (provider=openai)")
-            else:
-                print("E2E test API key already exists (provider=openai)")
-            return
-
-        key = UserApiKey(
-            user_id=user_id,
-            provider="openai",
-            encrypted_key=b"fake-e2e-ciphertext-pad!",
-            key_nonce=b"fake-e2e-nonce-24bytesXX",
-            master_key_version=1,
-            key_fingerprint="0000",
-            status="untested",
-        )
-        db.add(key)
-        db.commit()
-        print("Seeded E2E test API key (provider=openai)")
-
-
 def _seed_epub_media(session_factory, user_id: UUID) -> None:
     """Seed an EPUB with 3 chapters for EPUB reader E2E tests."""
     epub_bytes = _build_epub_bytes()
@@ -1696,7 +1654,6 @@ def main() -> None:
 
     _seed_non_pdf_linked_items_media(session_factory, user_id)
     _seed_youtube_transcript_media(session_factory, user_id)
-    _seed_api_key(session_factory, user_id)
     _seed_epub_media(session_factory, user_id)
     _seed_reader_resume_media(session_factory, user_id)
     _seed_reader_overview_ruler_media(session_factory, user_id)

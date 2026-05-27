@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { requireRunnableChatComposer } from "./chatReadiness";
 
 async function ensureAppContext(page: Page) {
   if (page.url() === "about:blank") {
@@ -99,42 +100,17 @@ test.describe("chat composer (post-cutover)", () => {
       await page.goto(`/conversations/${conversationId}`);
 
       const input = page.getByRole("textbox", { name: /ask anything/i });
-      const sendButton = page.getByRole("button", { name: /send message/i });
       const modelSettings = page.getByRole("button", {
         name: /model settings/i,
       });
-      const missingKeyError = page.getByText(
-        "No API key available for openai",
-      );
 
       await expect(input).toBeVisible({ timeout: 30_000 });
-      await expect(modelSettings).toBeVisible();
-
-      // Wait for model availability OR the deterministic missing-key signal
-      // before deciding how to assert: with a model present, sending should
-      // succeed; without one, the send button must be disabled.
-      await expect
-        .poll(
-          async () => {
-            if (await missingKeyError.isVisible().catch(() => false)) {
-              return "ready";
-            }
-            const modelLabel = await modelSettings
-              .getAttribute("aria-label")
-              .catch(() => "");
-            if (modelLabel && modelLabel !== "Model settings: Model") {
-              return "ready";
-            }
-            return "pending";
-          },
-          { timeout: 15_000 },
-        )
-        .not.toBe("pending");
-
-      if (await missingKeyError.isVisible().catch(() => false)) {
-        await expect(sendButton).toBeDisabled();
-        return;
-      }
+      await requireRunnableChatComposer({
+        page,
+        modelSettings,
+        skipReason:
+          "No runnable chat model in the e2e environment; cannot drive a composer send.",
+      });
 
       const messageText = `composer-cutover-${Date.now() % 1_000_000}`;
       await input.fill(messageText);

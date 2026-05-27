@@ -1,6 +1,11 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import {
+  openHighlightsPane,
+  readerSecondaryRailForActivePane,
+} from "./reader";
+import { gotoSinglePaneWorkspace, workspacePaneButton } from "./workspace";
 
 interface SeededNonPdfMedia {
   media_id: string;
@@ -102,30 +107,13 @@ async function expectHighlightRowVisible(
   await expect(rowActionsButton(row)).toHaveCount(1);
 }
 
-function workspacePaneButton(page: Page, name: RegExp | string) {
-  return page
-    .getByRole("toolbar", { name: "Workspace panes" })
-    .getByRole("button", { name });
-}
-
 async function expectDocChatPendingContext(page: Page, exact: string): Promise<void> {
-  const rail = page.getByTestId("reader-secondary-rail");
+  const rail = readerSecondaryRailForActivePane(page);
   await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
   await expect(
     rail.getByRole("tab", { name: "Chat about this document" }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(rail.getByLabel("Conversation context")).toContainText(exact);
-}
-
-async function openHighlightsPane(page: Page): Promise<Locator> {
-  await page.getByRole("button", { name: "Open highlights pane" }).click();
-  const rail = page.getByTestId("reader-secondary-rail");
-  await expect(rail).toHaveAttribute("data-expanded", "true", { timeout: 10_000 });
-  await expect(rail.getByRole("tab", { name: "Highlights" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  return page.getByTestId("anchored-highlights-container").first();
 }
 
 async function scrollHighlightIntoView(contentPane: Locator, highlightId: string): Promise<Locator> {
@@ -148,7 +136,7 @@ test.describe("non-pdf linked-items", () => {
     const quoteNote = "Seeded note for non-PDF linked-items e2e.";
     const focusNote = "Seeded focus note for non-PDF linked-items e2e.";
 
-    await page.goto(mediaUrl);
+    await gotoSinglePaneWorkspace(page, mediaUrl);
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
     const highlightsPane = await openHighlightsPane(page);
 

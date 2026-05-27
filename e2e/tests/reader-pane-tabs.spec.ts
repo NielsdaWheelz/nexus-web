@@ -1,7 +1,9 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { stateChangingApiHeaders } from "./api";
+import { requireRunnableChatComposer } from "./chatReadiness";
+import { openMediaInSinglePaneWorkspace, openReaderSecondaryRail } from "./reader";
 
 interface NonPdfSeed {
   media_id: string;
@@ -14,21 +16,6 @@ interface ChatSingletonStateResponse {
 function readNonPdfSeed(): NonPdfSeed {
   const seedPath = path.join(__dirname, "..", ".seed", "non-pdf-media.json");
   return JSON.parse(readFileSync(seedPath, "utf-8")) as NonPdfSeed;
-}
-
-function readerSecondaryRail(page: Page): Locator {
-  return page.getByTestId("reader-secondary-rail");
-}
-
-async function openReaderSecondaryRail(page: Page): Promise<Locator> {
-  const rail = readerSecondaryRail(page);
-  if ((await rail.getAttribute("data-expanded")) !== "true") {
-    await page.getByRole("button", { name: "Open highlights pane" }).click();
-  }
-  await expect(rail).toHaveAttribute("data-expanded", "true", {
-    timeout: 10_000,
-  });
-  return rail;
 }
 
 async function readSingletonState(
@@ -107,7 +94,7 @@ test.describe("reader pane tabs (post-cutover)", () => {
     page,
   }) => {
     const seed = readNonPdfSeed();
-    await page.goto(`/media/${seed.media_id}`);
+    await openMediaInSinglePaneWorkspace(page, seed.media_id);
 
     const rail = await openReaderSecondaryRail(page);
     const tablist = rail.getByRole("tablist", { name: "Reader tools" });
@@ -140,7 +127,7 @@ test.describe("reader pane tabs (post-cutover)", () => {
     page,
   }) => {
     const seed = readNonPdfSeed();
-    await page.goto(`/media/${seed.media_id}`);
+    await openMediaInSinglePaneWorkspace(page, seed.media_id);
 
     const rail = await openReaderSecondaryRail(page);
     const docChatTab = rail.getByRole("tab", {
@@ -172,7 +159,7 @@ test.describe("reader pane tabs (post-cutover)", () => {
 
     const before = await readSingletonState(page, seed.media_id);
 
-    await page.goto(`/media/${seed.media_id}`);
+    await openMediaInSinglePaneWorkspace(page, seed.media_id);
     const rail = await openReaderSecondaryRail(page);
     await rail.getByRole("tab", { name: "Chat about this document" }).click();
 
@@ -187,53 +174,38 @@ test.describe("reader pane tabs (post-cutover)", () => {
     const modelSettings = rail.getByRole("button", {
       name: /model settings/i,
     });
-    const missingKeyError = page.getByText("No API key available for openai");
 
     await expect(composerInput).toBeVisible({ timeout: 15_000 });
-    await expect(modelSettings).toBeVisible();
-
-    await expect
-      .poll(
-        async () => {
-          if (await missingKeyError.isVisible().catch(() => false)) {
-            return "ready";
-          }
-          const modelLabel = await modelSettings
-            .getAttribute("aria-label")
-            .catch(() => "");
-          if (modelLabel && modelLabel !== "Model settings: Model") {
-            return "ready";
-          }
-          return "pending";
-        },
-        { timeout: 15_000 },
-      )
-      .not.toBe("pending");
-
-    if (await missingKeyError.isVisible().catch(() => false)) {
-      await expect(sendButton).toBeDisabled();
-      test.skip(
-        true,
-        "No usable provider key in the e2e environment; singleton-first-send requires a model.",
-      );
-    }
+    await requireRunnableChatComposer({
+      page,
+      modelSettings,
+      skipReason:
+        "No runnable chat model in the e2e environment; singleton-first-send requires a model.",
+    });
 
     const messageText = `doc-singleton-persist-${Date.now() % 1_000_000}`;
     await composerInput.fill(messageText);
-    await composerInput.press("Enter");
+    await sendButton.click();
 
     // The optimistic user message appears in the chat detail.
-    await expect(rail.getByText(messageText).first()).toBeVisible({
+    const chatLog = rail.getByRole("log", { name: "Chat messages" });
+    await expect(chatLog.getByText(messageText).first()).toBeVisible({
       timeout: 15_000,
     });
 
     // Poll the read-only singleton endpoint until materialization commits.
     await expect
       .poll(
-        async () => (await readSingletonState(page, seed.media_id)).conversation_id,
-        { timeout: 15_000 },
+        async () => {
+          const state = await readSingletonState(page, seed.media_id);
+          return (
+            state.conversation_id !== null &&
+            state.message_count > before.message_count
+          );
+        },
+        { timeout: 20_000 },
       )
-      .not.toBeNull();
+      .toBe(true);
 
     const afterSend = await readSingletonState(page, seed.media_id);
     expect(afterSend.conversation_id).not.toBeNull();
@@ -269,7 +241,7 @@ test.describe("reader pane tabs (post-cutover)", () => {
       await addMediaToLibrary(page, seed.media_id, libraryAlpha.id);
       await addMediaToLibrary(page, seed.media_id, libraryBeta.id);
 
-      await page.goto(`/media/${seed.media_id}`);
+      await openMediaInSinglePaneWorkspace(page, seed.media_id);
       const rail = await openReaderSecondaryRail(page);
       await rail
         .getByRole("tab", { name: "Chat about this library" })

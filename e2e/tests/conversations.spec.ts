@@ -3,6 +3,7 @@ import {
   seedBranchingConversation,
   seedScrollConversation,
 } from "./conversation-tree-seed";
+import { requireRunnableChatComposer } from "./chatReadiness";
 import { selectExactVisibleText } from "./selection";
 
 async function ensureAppContext(page: Page) {
@@ -148,39 +149,17 @@ test.describe("conversations", () => {
       const modelSettingsButton = page.getByRole("button", {
         name: /model settings:/i,
       });
-      const missingKeyError = page.getByText("No API key available for openai");
       const input = page.getByRole("textbox", {
         name: /ask anything|type a message/i,
       });
-      const sendButton = page.getByRole("button", { name: /send message/i });
 
       await expect(input).toBeVisible({ timeout: 30_000 });
-      await expect(modelSettingsButton).toBeVisible();
-
-      await expect
-        .poll(
-          async () => {
-            if (await missingKeyError.isVisible().catch(() => false)) {
-              return "ready";
-            }
-
-            const modelLabel = await modelSettingsButton
-              .getAttribute("aria-label")
-              .catch(() => "");
-            if (modelLabel && modelLabel !== "Model settings: Model") {
-              return "ready";
-            }
-
-            return "pending";
-          },
-          { timeout: 15_000 },
-        )
-        .not.toBe("pending");
-
-      if (await missingKeyError.isVisible().catch(() => false)) {
-        await expect(sendButton).toBeDisabled();
-        return;
-      }
+      await requireRunnableChatComposer({
+        page,
+        modelSettings: modelSettingsButton,
+        skipReason:
+          "No runnable chat model in the e2e environment; cannot send a conversation message.",
+      });
 
       await expect(input).toBeVisible();
       await input.fill("Hello, this is a test message");
@@ -197,21 +176,13 @@ test.describe("conversations", () => {
               return "done";
             }
 
-            if (await missingKeyError.isVisible().catch(() => false)) {
-              return "done";
-            }
-
             return "pending";
           },
           { timeout: 10_000 },
         )
         .not.toBe("pending");
 
-      if (await missingKeyError.isVisible().catch(() => false)) {
-        await expect(sendButton).toBeDisabled();
-      } else {
-        await expect(optimisticUserMessage).toBeVisible();
-      }
+      await expect(optimisticUserMessage).toBeVisible();
     } finally {
       await deleteConversationViaApi(page, conversationId);
     }

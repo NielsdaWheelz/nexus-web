@@ -5,15 +5,15 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/test_env.sh"
+
 preferred_port=${1:-5432}
 service_name=${2:-service}
 
-# Check if a port is available
-is_port_available() {
-    ! lsof -i ":$1" >/dev/null 2>&1
-}
+test_env_validate_port "$preferred_port" "$service_name port"
 
-if is_port_available "$preferred_port"; then
+if ! test_env_port_is_busy "$preferred_port"; then
     echo "$preferred_port"
     exit 0
 fi
@@ -23,7 +23,7 @@ port=$((preferred_port + 1))
 max_port=$((preferred_port + 100))
 
 while [ $port -lt $max_port ]; do
-    if is_port_available "$port"; then
+    if ! test_env_port_is_busy "$port"; then
         echo "$port"
         echo "Note: $service_name port $preferred_port in use, using $port instead" >&2
         exit 0

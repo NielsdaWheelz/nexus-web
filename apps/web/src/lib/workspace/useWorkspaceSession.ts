@@ -17,7 +17,7 @@ const WORKSPACE_SESSION_SYNC_DEBOUNCE_MS = 1000;
 export function useWorkspaceSession(
   state: WorkspaceStateV4,
   mounted: boolean,
-  applyRestoredState: (state: WorkspaceStateV4) => void
+  applyRestoredState: (restored: WorkspaceStateV4, urlIntent: WorkspaceStateV4) => void
 ): void {
   const captureArmedRef = useRef(false);
   const stateRef = useRef(state);
@@ -62,7 +62,7 @@ export function useWorkspaceSession(
         // Skip the restore if the user already changed the workspace while
         // the fetch was in flight.
         if (restored && workspaceStatesEqual(stateRef.current, baseline)) {
-          applyRestoredState(restored);
+          applyRestoredState(restored, baseline);
         }
       } catch {
         // Network or parse failure — proceed without restoring.

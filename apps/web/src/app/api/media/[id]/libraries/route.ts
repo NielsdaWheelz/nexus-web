@@ -8,3 +8,8 @@ export async function GET(req: Request, { params }: { params: Params }) {
   const { id } = await params;
   return proxyToFastAPI(req, `/media/${id}/libraries`);
 }
+
+export async function POST(req: Request, { params }: { params: Params }) {
+  const { id } = await params;
+  return proxyToFastAPI(req, `/media/${id}/libraries`);
+}

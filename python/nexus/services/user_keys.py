@@ -427,6 +427,7 @@ def get_usable_key_providers(db: Session, user_id: UUID) -> set[str]:
 
     A key is "usable" iff:
     - status ∈ {'untested', 'valid'} (not 'invalid' or 'revoked')
+    - key material is present and decryptable with the active master key
 
     Args:
         db: Database session.
@@ -435,11 +436,36 @@ def get_usable_key_providers(db: Session, user_id: UUID) -> set[str]:
     Returns:
         Set of provider names with usable keys.
     """
-    stmt = select(UserApiKey.provider).where(
+    stmt = select(UserApiKey).where(
         UserApiKey.user_id == user_id,
         UserApiKey.status.in_(["untested", "valid"]),
         UserApiKey.encrypted_key.is_not(None),
         UserApiKey.key_nonce.is_not(None),
     )
-    providers = db.scalars(stmt).all()
-    return set(providers)
+    keys = db.scalars(stmt).all()
+    providers: set[str] = set()
+    for key in keys:
+        if decrypt_user_api_key_material(key) is not None:
+            providers.add(key.provider)
+    return providers
+
+
+def decrypt_user_api_key_material(key: UserApiKey) -> str | None:
+    """Return plaintext key material when a stored user key can be used."""
+    if not key.encrypted_key or not key.key_nonce:
+        return None
+    try:
+        return decrypt_api_key(
+            key.encrypted_key,
+            key.key_nonce,
+            key.master_key_version or 1,
+        )
+    except (CryptoError, UnicodeDecodeError) as exc:
+        logger.warning(
+            "user_key_decrypt_failed",
+            user_id=str(key.user_id),
+            key_id=str(key.id),
+            provider=key.provider,
+            error=str(exc),
+        )
+        return None

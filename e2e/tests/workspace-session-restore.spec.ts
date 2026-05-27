@@ -225,4 +225,31 @@ test.describe("workspace session restore", () => {
       await putWorkspaceSession(page.request, trivialSession());
     }
   });
+
+  test("a direct URL without ws is active and preserves the saved workspace", async ({
+    page,
+  }) => {
+    await pinDeviceId(page);
+    // A direct app URL is still user intent, even without an encoded workspace
+    // state. Restore may preserve saved panes, but it must not replace the
+    // requested route with the saved active pane.
+    await putWorkspaceSession(page.request, twoPaneSession());
+
+    try {
+      await page.goto("/conversations");
+
+      await expect(workspacePaneButton(page, /^Chats\b/)).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(workspacePaneButton(page, /^Notes\b/)).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(workspacePaneButton(page, /^Chats\b/)).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    } finally {
+      await putWorkspaceSession(page.request, trivialSession());
+    }
+  });
 });

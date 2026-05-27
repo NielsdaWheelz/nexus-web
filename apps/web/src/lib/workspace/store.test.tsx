@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_MEDIA_PANE_WIDTH_PX,
   MAX_STANDARD_PANE_WIDTH_PX,
+  type WorkspaceStateV4,
 } from "@/lib/workspace/schema";
 import {
+  mergeRestoredWorkspaceWithUrlIntent,
   resolveWorkspacePaneTitle,
   useWorkspaceStore,
   WorkspaceStoreProvider,
@@ -90,6 +92,106 @@ function titleRecord(
     resourceKey: resolvePaneRouteIdentity(href).resourceKey,
   };
 }
+
+describe("mergeRestoredWorkspaceWithUrlIntent", () => {
+  const restored: WorkspaceStateV4 = {
+    schemaVersion: 4,
+    activePaneId: "pane-saved-libraries",
+    panes: [
+      {
+        id: "pane-saved-libraries",
+        href: "/libraries",
+        widthPx: 560,
+        visibility: "visible",
+      },
+      {
+        id: "pane-saved-notes",
+        href: "/notes",
+        widthPx: 480,
+        visibility: "visible",
+      },
+    ],
+  };
+
+  it("keeps a neutral /libraries open as pure saved-session restore", () => {
+    const urlIntent: WorkspaceStateV4 = {
+      schemaVersion: 4,
+      activePaneId: "pane-url-libraries",
+      panes: [
+        {
+          id: "pane-url-libraries",
+          href: "/libraries",
+          widthPx: 560,
+          visibility: "visible",
+        },
+      ],
+    };
+
+    expect(mergeRestoredWorkspaceWithUrlIntent(restored, urlIntent)).toBe(restored);
+  });
+
+  it("adds an explicit direct URL as the active pane instead of letting restore override it", () => {
+    const urlIntent: WorkspaceStateV4 = {
+      schemaVersion: 4,
+      activePaneId: "pane-url-media",
+      panes: [
+        {
+          id: "pane-url-media",
+          href: "/media/media-123",
+          widthPx: 1280,
+          visibility: "visible",
+        },
+      ],
+    };
+
+    const merged = mergeRestoredWorkspaceWithUrlIntent(restored, urlIntent);
+
+    expect(merged.panes.map((pane) => pane.href)).toEqual([
+      "/libraries",
+      "/notes",
+      "/media/media-123",
+    ]);
+    expect(merged.activePaneId).toBe("pane-url-media");
+  });
+
+  it("reuses and activates the saved pane for same-resource direct URLs", () => {
+    const savedWithMedia: WorkspaceStateV4 = {
+      schemaVersion: 4,
+      activePaneId: "pane-saved-libraries",
+      panes: [
+        ...restored.panes,
+        {
+          id: "pane-saved-media",
+          href: "/media/media-123",
+          widthPx: 960,
+          visibility: "minimized",
+        },
+      ],
+    };
+    const urlIntent: WorkspaceStateV4 = {
+      schemaVersion: 4,
+      activePaneId: "pane-url-media",
+      panes: [
+        {
+          id: "pane-url-media",
+          href: "/media/media-123?loc=chapter-2",
+          widthPx: 1280,
+          visibility: "visible",
+        },
+      ],
+    };
+
+    const merged = mergeRestoredWorkspaceWithUrlIntent(savedWithMedia, urlIntent);
+
+    expect(merged.panes).toHaveLength(3);
+    expect(merged.activePaneId).toBe("pane-saved-media");
+    expect(merged.panes.find((pane) => pane.id === "pane-saved-media")).toMatchObject({
+      href: "/media/media-123?loc=chapter-2",
+      visibility: "visible",
+      widthPx: 1280,
+    });
+  });
+});
 
 describe("WorkspaceStoreProvider", () => {
   beforeEach(() => {

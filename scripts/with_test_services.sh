@@ -14,6 +14,7 @@ fi
 if [ "${TEST_RUNTIME_ACTIVE:-}" = "1" ]; then
     test_env_export_db_urls
     test_env_export_r2_env
+    test_env_export_app_urls
     test_env_export_makeflags
 
     status=0
@@ -23,19 +24,31 @@ fi
 
 test_env_resolve_ports
 test_env_resolve_minio_port
+test_env_resolve_app_ports
+test_env_export_app_urls
 
 COMPOSE_PROJECT_NAME="nexus-test-$(date +%s)-$$"
-export COMPOSE_PROJECT_NAME POSTGRES_PORT MINIO_PORT TEST_RUNTIME_ACTIVE=1
+export COMPOSE_PROJECT_NAME POSTGRES_PORT MINIO_PORT API_PORT WEB_PORT TEST_RUNTIME_ACTIVE=1
 
 # shellcheck disable=SC2329
 cleanup() {
     set +e
     docker compose -f "$COMPOSE_FILE" down -v >/dev/null
+    test_env_wait_for_port_close "$POSTGRES_PORT" "postgres"
+    test_env_wait_for_port_close "$MINIO_PORT" "MinIO"
+    test_env_cleanup_owned_app_port "$API_PORT" "api"
+    test_env_cleanup_owned_app_port "$WEB_PORT" "web"
     if [ -n "${TEST_POSTGRES_PORT_LOCK_DIR:-}" ]; then
         rm -rf "$TEST_POSTGRES_PORT_LOCK_DIR"
     fi
     if [ -n "${TEST_MINIO_PORT_LOCK_DIR:-}" ]; then
         rm -rf "$TEST_MINIO_PORT_LOCK_DIR"
+    fi
+    if [ -n "${TEST_API_PORT_LOCK_DIR:-}" ]; then
+        rm -rf "$TEST_API_PORT_LOCK_DIR"
+    fi
+    if [ -n "${TEST_WEB_PORT_LOCK_DIR:-}" ]; then
+        rm -rf "$TEST_WEB_PORT_LOCK_DIR"
     fi
 }
 trap cleanup EXIT
@@ -73,6 +86,7 @@ docker exec "$postgres_container" createdb -U postgres nexus_test_migrations >/d
 
 test_env_export_db_urls
 test_env_export_r2_env
+test_env_export_app_urls
 test_env_export_makeflags
 
 (

@@ -1,6 +1,8 @@
-import { test, expect, type Page, type Locator } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { requireRunnableChatComposer } from "./chatReadiness";
+import { openMediaInSinglePaneWorkspace, openReaderSecondaryRail } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
 
 interface NonPdfSeed {
@@ -25,21 +27,6 @@ function readNonPdfSeed(): NonPdfSeed {
   return JSON.parse(readFileSync(seedPath, "utf-8")) as NonPdfSeed;
 }
 
-function readerSecondaryRail(page: Page): Locator {
-  return page.getByTestId("reader-secondary-rail");
-}
-
-async function openReaderSecondaryRail(page: Page): Promise<Locator> {
-  const rail = readerSecondaryRail(page);
-  if ((await rail.getAttribute("data-expanded")) !== "true") {
-    await page.getByRole("button", { name: "Open highlights pane" }).click();
-  }
-  await expect(rail).toHaveAttribute("data-expanded", "true", {
-    timeout: 10_000,
-  });
-  return rail;
-}
-
 async function readReferences(
   page: Page,
   mediaId: string,
@@ -62,7 +49,7 @@ test.describe("quote-attach references (post-cutover)", () => {
     page,
   }) => {
     const seed = readNonPdfSeed();
-    await page.goto(`/media/${seed.media_id}`);
+    await openMediaInSinglePaneWorkspace(page, seed.media_id);
 
     const contentPane = page.locator('div[class*="fragments"]');
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
@@ -84,6 +71,7 @@ test.describe("quote-attach references (post-cutover)", () => {
       page,
       'div[class*="fragments"]',
       blockedExacts,
+      { method: "range" },
     );
 
     const popover = page.getByRole("dialog", { name: /selection actions/i });
@@ -109,41 +97,20 @@ test.describe("quote-attach references (post-cutover)", () => {
     const modelSettings = rail.getByRole("button", {
       name: /model settings/i,
     });
-    const missingKeyError = page.getByText("No API key available for openai");
 
     await expect(composerInput).toBeVisible({ timeout: 15_000 });
-    await expect(modelSettings).toBeVisible();
-
-    await expect
-      .poll(
-        async () => {
-          if (await missingKeyError.isVisible().catch(() => false)) {
-            return "ready";
-          }
-          const modelLabel = await modelSettings
-            .getAttribute("aria-label")
-            .catch(() => "");
-          if (modelLabel && modelLabel !== "Model settings: Model") {
-            return "ready";
-          }
-          return "pending";
-        },
-        { timeout: 15_000 },
-      )
-      .not.toBe("pending");
-
-    if (await missingKeyError.isVisible().catch(() => false)) {
-      await expect(sendButton).toBeDisabled();
-      test.skip(
-        true,
-        "No usable provider key in the e2e environment; quote-to-chat needs to create a conversation.",
-      );
-    }
+    await requireRunnableChatComposer({
+      page,
+      modelSettings,
+      skipReason:
+        "No runnable chat model in the e2e environment; quote-to-chat needs to create a conversation.",
+    });
 
     const messageText = `quote-attach-${Date.now() % 1_000_000}`;
     await composerInput.fill(messageText);
-    await composerInput.press("Enter");
-    await expect(rail.getByText(messageText).first()).toBeVisible({
+    await sendButton.click();
+    const chatLog = rail.getByRole("log", { name: "Chat messages" });
+    await expect(chatLog.getByText(messageText).first()).toBeVisible({
       timeout: 15_000,
     });
 
@@ -176,7 +143,7 @@ test.describe("quote-attach references (post-cutover)", () => {
 
     // Revisit the doc's reader pane and confirm the new chat appears in the
     // "Other chats" section of the Doc chat tab.
-    await page.goto(`/media/${seed.media_id}`);
+    await openMediaInSinglePaneWorkspace(page, seed.media_id);
     const reloadedRail = await openReaderSecondaryRail(page);
     await reloadedRail
       .getByRole("tab", { name: "Chat about this document" })

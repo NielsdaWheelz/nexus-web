@@ -7,9 +7,9 @@ Tests cover model availability behavior:
 A model is available to a user iff:
 - model.is_available = true
 - model.provider is enabled by feature flag
-- AND (user has AI-tier access to a platform key for model.provider OR user has BYOK with status ∈ {untested, valid})
+- AND (user has AI-tier access to a platform key for model.provider OR user has decryptable BYOK with status ∈ {untested, valid})
 
-Keys with status='invalid' or status='revoked' do NOT enable models.
+Keys with invalid status, revoked status, or undecryptable key material do NOT enable models.
 """
 
 import base64
@@ -295,6 +295,46 @@ class TestModelFiltering:
                     "WHERE user_id = :user_id AND provider = 'openai'"
                 ),
                 {"user_id": user_id},
+            )
+            session.commit()
+
+        response = auth_client.get("/models", headers=auth_headers(user_id))
+
+        assert response.status_code == 200
+        assert response.json()["data"] == []
+
+    def test_undecryptable_byok_does_not_enable_models(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        """BYOK rows with corrupt key material do NOT appear as runnable models."""
+        user_id = create_test_user_id()
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        clear_settings_cache()
+
+        with direct_db.session() as session:
+            seed_test_models(session)
+
+        auth_client.post(
+            "/keys",
+            json={"provider": "openai", "api_key": "sk-test-key-1234567890abcdefghij"},
+            headers=auth_headers(user_id),
+        )
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    "UPDATE user_api_keys "
+                    "SET encrypted_key = :encrypted_key, key_nonce = :key_nonce, status = 'valid' "
+                    "WHERE user_id = :user_id AND provider = 'openai'"
+                ),
+                {
+                    "encrypted_key": b"x" * 32,
+                    "key_nonce": b"0" * 24,
+                    "user_id": user_id,
+                },
             )
             session.commit()
 
