@@ -24,7 +24,6 @@ import type {
 import Button from "@/components/ui/Button";
 import {
   isMediaRetrievalLocator,
-  isRetrievalLocator,
 } from "@/lib/api/sse/locators";
 import { apiFetch } from "@/lib/api/client";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";

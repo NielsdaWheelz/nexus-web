@@ -8,8 +8,8 @@ import {
 } from "@/lib/workspace/schema";
 
 export interface PaneScopedRouter {
-  push: (href: string) => void;
-  replace: (href: string) => void;
+  push: (href: string, options?: { titleHint?: string }) => void;
+  replace: (href: string, options?: { titleHint?: string }) => void;
 }
 
 interface PaneRuntimeContextValue {
@@ -18,10 +18,11 @@ interface PaneRuntimeContextValue {
   pathname: string;
   routeId: string;
   resourceRef: string | null;
+  resourceKey: string;
   pathParams: Record<string, string>;
   searchParams: URLSearchParams;
   router: PaneScopedRouter;
-  openInNewPane: (href: string) => void;
+  openInNewPane: (href: string, titleHint?: string) => void;
   setPaneTitle: (title: string | null) => void;
   setPaneMinWidth: (widthPx: number | null) => void;
   // Width reserved outward of the resizable pane width (e.g. the reader
@@ -36,11 +37,24 @@ interface PaneRuntimeProviderProps {
   href: string;
   routeId: string;
   resourceRef: string | null;
+  resourceKey: string;
   pathParams?: Record<string, string>;
-  onNavigatePane: (paneId: string, href: string) => void;
-  onReplacePane: (paneId: string, href: string) => void;
-  onOpenInNewPane: (href: string) => void;
-  onSetPaneTitle?: (paneId: string, title: string | null) => void;
+  onNavigatePane: (
+    paneId: string,
+    href: string,
+    options?: { titleHint?: string },
+  ) => void;
+  onReplacePane: (
+    paneId: string,
+    href: string,
+    options?: { titleHint?: string },
+  ) => void;
+  onOpenInNewPane: (href: string, titleHint?: string) => void;
+  onSetPaneTitle?: (input: {
+    paneId: string;
+    resourceKey: string;
+    title: string | null;
+  }) => void;
   onSetPaneMinWidth?: (paneId: string, widthPx: number | null) => void;
   onSetPaneExtraWidth?: (paneId: string, widthPx: number) => void;
   children: React.ReactNode;
@@ -65,6 +79,7 @@ export function PaneRuntimeProvider({
   href,
   routeId,
   resourceRef,
+  resourceKey,
   pathParams = {},
   onNavigatePane,
   onReplacePane,
@@ -82,33 +97,34 @@ export function PaneRuntimeProvider({
       pathname: parsed.pathname,
       routeId,
       resourceRef,
+      resourceKey,
       pathParams,
       searchParams: parsed.searchParams,
       router: {
-        push: (nextHref: string) => {
+        push: (nextHref: string, options?: { titleHint?: string }) => {
           const normalized = normalizeWorkspaceHref(nextHref);
           if (!normalized) {
             return;
           }
-          onNavigatePane(paneId, normalized);
+          onNavigatePane(paneId, normalized, options);
         },
-        replace: (nextHref: string) => {
+        replace: (nextHref: string, options?: { titleHint?: string }) => {
           const normalized = normalizeWorkspaceHref(nextHref);
           if (!normalized) {
             return;
           }
-          onReplacePane(paneId, normalized);
+          onReplacePane(paneId, normalized, options);
         },
       },
-      openInNewPane: (nextHref: string) => {
+      openInNewPane: (nextHref: string, titleHint?: string) => {
         const normalized = normalizeWorkspaceHref(nextHref);
         if (!normalized) {
           return;
         }
-        onOpenInNewPane(normalized);
+        onOpenInNewPane(normalized, titleHint);
       },
       setPaneTitle: (title: string | null) => {
-        onSetPaneTitle?.(paneId, title);
+        onSetPaneTitle?.({ paneId, resourceKey, title });
       },
       setPaneMinWidth: (widthPx: number | null) => {
         onSetPaneMinWidth?.(paneId, widthPx);
@@ -130,6 +146,7 @@ export function PaneRuntimeProvider({
       parsed.searchParams,
       pathParams,
       resourceRef,
+      resourceKey,
       routeId,
     ]
   );
@@ -171,19 +188,29 @@ export function usePaneParam(paramName: string): string | null {
 export function useSetPaneTitle(title: string | null | undefined): void {
   const paneRuntime = usePaneRuntime();
   const normalizedTitle = normalizePaneTitle(title);
-  const lastPublishedTitleRef = useRef<{ paneId: string; title: string | null } | null>(null);
+  const lastPublishedTitleRef = useRef<{
+    paneId: string;
+    resourceKey: string;
+    title: string | null;
+  } | null>(null);
   const paneId = paneRuntime?.paneId ?? null;
+  const resourceKey = paneRuntime?.resourceKey ?? null;
   const setPaneTitle = paneRuntime?.setPaneTitle;
 
   useEffect(() => {
-    if (!paneId || !setPaneTitle) {
+    if (!paneId || !resourceKey || !setPaneTitle) {
       return;
     }
     const lastPublished = lastPublishedTitleRef.current;
-    if (lastPublished && lastPublished.paneId === paneId && lastPublished.title === normalizedTitle) {
+    if (
+      lastPublished &&
+      lastPublished.paneId === paneId &&
+      lastPublished.resourceKey === resourceKey &&
+      lastPublished.title === normalizedTitle
+    ) {
       return;
     }
     setPaneTitle(normalizedTitle);
-    lastPublishedTitleRef.current = { paneId, title: normalizedTitle };
-  }, [normalizedTitle, paneId, setPaneTitle]);
+    lastPublishedTitleRef.current = { paneId, resourceKey, title: normalizedTitle };
+  }, [normalizedTitle, paneId, resourceKey, setPaneTitle]);
 }

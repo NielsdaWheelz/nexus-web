@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import ConversationsPaneBody from "@/app/(authenticated)/conversations/ConversationsPaneBody";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 
 function pathOf(input: RequestInfo | URL): string {
@@ -19,12 +20,14 @@ function jsonResponse(body: unknown): Response {
 }
 
 function withPaneRuntime(node: ReactNode) {
+  const href = "/conversations";
   return (
     <PaneRuntimeProvider
       paneId="pane-1"
-      href="/conversations"
+      href={href}
       routeId="conversations"
       resourceRef={null}
+      resourceKey={resolvePaneRouteIdentity(href).resourceKey}
       onNavigatePane={vi.fn()}
       onReplacePane={vi.fn()}
       onOpenInNewPane={vi.fn()}

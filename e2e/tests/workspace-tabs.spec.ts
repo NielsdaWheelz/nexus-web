@@ -15,6 +15,14 @@ interface SeededNonPdfMedia {
   media_id: string;
 }
 
+interface LibraryListResponse {
+  data: Array<{
+    id: string;
+    name: string;
+    is_default: boolean;
+  }>;
+}
+
 function readSeed<T>(seedFile: string): T {
   const seedPath = path.join(__dirname, "..", ".seed", seedFile);
   return JSON.parse(readFileSync(seedPath, "utf-8")) as T;
@@ -44,6 +52,22 @@ function workspacePaneStrip(page: Page): Locator {
 // use workspacePaneButton.
 function workspacePaneButton(page: Page, name: RegExp | string): Locator {
   return workspacePaneStrip(page).getByRole("button", { name });
+}
+
+function activeWorkspacePaneButton(page: Page): Locator {
+  return workspacePaneStrip(page).locator('button[aria-current="page"]').first();
+}
+
+async function paneButtonLabel(button: Locator): Promise<string> {
+  return (
+    (await button.getAttribute("aria-label").catch(() => null)) ??
+    (await button.textContent().catch(() => null)) ??
+    ""
+  ).trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // ---------------------------------------------------------------------------
@@ -232,10 +256,7 @@ test.describe("workspace tabs", () => {
 
     // Wait until the tab no longer carries aria-busy, meaning titleState has
     // transitioned from "pending" to "resolved".
-    const activator = strip
-      .getByRole("button")
-      .filter({ has: page.locator('[aria-current="page"]') })
-      .first();
+    const activator = activeWorkspacePaneButton(page);
 
     await expect(activator).toBeVisible({ timeout: 15_000 });
 
@@ -297,6 +318,104 @@ test.describe("workspace tabs", () => {
         { timeout: 20_000, intervals: [500, 500, 1_000] },
       )
       .not.toBe("");
+  });
+
+  test("desktop: epub title stays resolved after canonical loc navigation and content load", async ({
+    page,
+  }) => {
+    const epub = readSeed<SeededEpubMedia>("epub-media.json");
+
+    await page.goto(`/media/${epub.media_id}`);
+
+    const activator = activeWorkspacePaneButton(page);
+    await expect(activator).toBeVisible({ timeout: 15_000 });
+    await expect(activator).not.toHaveAttribute("aria-busy", { timeout: 20_000 });
+
+    await expect
+      .poll(
+        async () => {
+          const label = await paneButtonLabel(activator);
+          return label && !/^\s*Media\s*$/i.test(label) ? label : "";
+        },
+        { timeout: 20_000, intervals: [500, 500, 1_000] },
+      )
+      .not.toBe("");
+    const resolvedTitle = await paneButtonLabel(activator);
+    const resolvedHeadingTitle = resolvedTitle.replace(/\s+Active pane\.$/, "");
+
+    await expect
+      .poll(
+        () => new URL(page.url()).searchParams.get("loc") ?? "",
+        { timeout: 20_000, intervals: [500, 500, 1_000] },
+      )
+      .not.toBe("");
+
+    await expect(
+      page.getByRole("heading", { name: epub.chapter_titles[0] }),
+    ).toBeVisible({ timeout: 20_000 });
+
+    await expect(activator).not.toHaveAttribute("aria-busy");
+    await expect
+      .poll(() => paneButtonLabel(activator), {
+        timeout: 10_000,
+        intervals: [500, 1_000],
+      })
+      .toBe(resolvedTitle);
+    await expect(
+      page.getByRole("heading", {
+        name: new RegExp(`^${escapeRegExp(resolvedHeadingTitle)}$`),
+      }),
+    ).toBeVisible();
+  });
+
+  test("desktop: library epub title hint appears before media load", async ({
+    page,
+  }) => {
+    const epub = readSeed<SeededEpubMedia>("epub-media.json");
+    const librariesResponse = await page.request.get("/api/libraries");
+    expect(librariesResponse.ok()).toBeTruthy();
+    const libraries = (await librariesResponse.json()) as LibraryListResponse;
+    const defaultLibrary = libraries.data.find((library) => library.is_default);
+    if (!defaultLibrary) {
+      throw new Error("Default library missing from E2E seed.");
+    }
+
+    await page.goto(`/libraries/${defaultLibrary.id}`);
+    const row = page.getByRole("link", { name: /E2E Test EPUB/ }).first();
+    await expect(row).toBeVisible({ timeout: 20_000 });
+
+    let releaseMediaLoad: (() => void) | null = null;
+    const mediaLoadBlocked = new Promise<void>((resolve) => {
+      releaseMediaLoad = resolve;
+    });
+    const mediaRoute = `**/api/media/${epub.media_id}`;
+    await page.route(
+      mediaRoute,
+      async (route) => {
+        await mediaLoadBlocked;
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "media load intentionally blocked" }),
+        });
+      },
+      { times: 1 },
+    );
+
+    try {
+      await row.click();
+      const activator = activeWorkspacePaneButton(page);
+
+      await expect
+        .poll(() => paneButtonLabel(activator), {
+          timeout: 2_000,
+          intervals: [100, 250],
+        })
+        .toContain("E2E Test EPUB");
+      await expect(activator).not.toHaveAttribute("aria-busy");
+    } finally {
+      releaseMediaLoad?.();
+    }
   });
 
   // -------------------------------------------------------------------------

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ConversationPaneBody from "@/app/(authenticated)/conversations/[id]/ConversationPaneBody";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import type {
@@ -298,12 +299,14 @@ function retryRun(): ChatRunResponse["data"] {
 }
 
 function renderPane() {
+  const href = "/conversations/conversation-1";
   render(
     <PaneRuntimeProvider
       paneId="pane-1"
-      href="/conversations/conversation-1"
+      href={href}
       routeId="conversation"
       resourceRef="conversation-1"
+      resourceKey={resolvePaneRouteIdentity(href).resourceKey}
       pathParams={{ id: "conversation-1" }}
       onNavigatePane={vi.fn()}
       onReplacePane={vi.fn()}

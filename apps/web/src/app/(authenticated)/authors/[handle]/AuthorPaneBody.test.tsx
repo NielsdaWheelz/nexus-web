@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import AuthorPaneBody from "./AuthorPaneBody";
 
@@ -159,12 +160,14 @@ describe("AuthorPaneBody", () => {
 });
 
 function authorPane(handle: string) {
+  const href = `/authors/${handle}`;
   return (
     <PaneRuntimeProvider
       paneId="pane-1"
-      href={`/authors/${handle}`}
+      href={href}
       routeId="author"
       resourceRef={handle}
+      resourceKey={resolvePaneRouteIdentity(href).resourceKey}
       pathParams={{ handle }}
       onNavigatePane={() => {}}
       onReplacePane={() => {}}

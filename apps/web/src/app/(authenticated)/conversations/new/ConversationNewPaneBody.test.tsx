@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import ConversationNewPaneBody from "./ConversationNewPaneBody";
@@ -109,12 +110,14 @@ describe("ConversationNewPaneBody", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
+    const href = "/conversations/new";
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
-        href="/conversations/new"
+        href={href}
         routeId="conversation-new"
         resourceRef={null}
+        resourceKey={resolvePaneRouteIdentity(href).resourceKey}
         onNavigatePane={vi.fn()}
         onReplacePane={onReplacePane}
         onOpenInNewPane={vi.fn()}
@@ -175,12 +178,14 @@ describe("ConversationNewPaneBody", () => {
     const attachContextParam = encodeURIComponent(
       `content_chunk:${MEDIA_ID}:${SPAN_ID}`,
     );
+    const href = `/conversations/new?attach_context=${attachContextParam}`;
     render(
       <PaneRuntimeProvider
         paneId="pane-1"
-        href={`/conversations/new?attach_context=${attachContextParam}`}
+        href={href}
         routeId="conversation-new"
         resourceRef={null}
+        resourceKey={resolvePaneRouteIdentity(href).resourceKey}
         onNavigatePane={vi.fn()}
         onReplacePane={onReplacePane}
         onOpenInNewPane={vi.fn()}

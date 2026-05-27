@@ -697,12 +697,13 @@ export default function PodcastDetailPaneBody() {
           body: JSON.stringify({ type: "media", media_id: episode.id }),
         });
         const route = `/conversations/${response.data.id}`;
+        const titleHint = response.data.title || episode.title;
         if (
           !requestOpenInAppPane(route, {
-            titleHint: response.data.title || episode.title,
+            titleHint,
           })
         ) {
-          paneRouter.push(route);
+          paneRouter.push(route, { titleHint });
         }
       } catch (chatError) {
         setError(

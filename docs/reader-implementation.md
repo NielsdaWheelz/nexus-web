@@ -185,6 +185,9 @@ pure black/white to reduce halation under long sessions.
   user scroll intent
 - epub keeps `?loc` synchronized after resolution so browser back/forward
   describes the active section without starting a second restore loop
+- epub `?loc` is reader location state inside the `media:{id}` pane resource.
+  synchronizing it must not reset pane chrome, clear tab/header title records,
+  or remount the media pane body.
 - web article/transcript restore uses explicit target params first
   (`fragment_id`, `start`) and falls back to the saved
   `target.fragment_id`
@@ -207,6 +210,9 @@ pure black/white to reduce halation under long sessions.
 - `section_id` is treated as a path-encoded identifier and may contain `/`
 - the frontend canonical deep-link is `?loc={section_id}`
 - legacy `chapters` and `toc` reader routes are removed from the client surface
+- pane titles are driven by media metadata, not by navigation section title or
+  active section content. navigation and section loading are content-level
+  states and do not own workspace tab/header title state.
 
 ### reader theme quick-switch
 

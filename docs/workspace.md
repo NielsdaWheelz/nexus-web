@@ -4,6 +4,8 @@ Status: Current implementation reference.
 Scope owner: desktop workspace canvas in `apps/web`.
 Related: `docs/workspace-tabs.md` owns pane tab anatomy, title states,
 accessibility, and the visual rules for the strip marker.
+`docs/workspace-pane-title-identity-cutover.md` records the resource-key
+title/body-lifecycle cutover.
 
 ## Scope
 

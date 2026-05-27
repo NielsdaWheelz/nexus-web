@@ -2990,7 +2990,7 @@ export default function MediaPaneBody() {
     (conversationId: string, title: string) => {
       const route = `/conversations/${conversationId}`;
       if (!requestOpenInAppPane(route, { titleHint: title })) {
-        router.push(route);
+        router.push(route, { titleHint: title });
       }
     },
     [router],
@@ -3599,7 +3599,7 @@ export default function MediaPaneBody() {
       }
       const route = `/conversations/${conversationId}`;
       if (!requestOpenInAppPane(route, { titleHint: "Chat" })) {
-        router.push(route);
+        router.push(route, { titleHint: "Chat" });
       }
     },
     [isMobileViewport, router],
@@ -3749,7 +3749,7 @@ export default function MediaPaneBody() {
     onSelect: () => {
       const route = "/settings/reader";
       if (!requestOpenInAppPane(route, { titleHint: "Reader settings" })) {
-        router.push(route);
+        router.push(route, { titleHint: "Reader settings" });
       }
     },
   });
@@ -4001,10 +4001,11 @@ export default function MediaPaneBody() {
     (target: ReaderSourceTarget) => {
       if (target.media_id !== id) {
         const route = target.href || `/media/${target.media_id}`;
+        const titleHint = target.label ?? "Source";
         if (
-          !requestOpenInAppPane(route, { titleHint: target.label ?? "Source" })
+          !requestOpenInAppPane(route, { titleHint })
         ) {
-          router.push(route);
+          router.push(route, { titleHint });
         }
         return;
       }

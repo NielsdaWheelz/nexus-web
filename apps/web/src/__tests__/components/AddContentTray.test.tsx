@@ -218,12 +218,11 @@ describe("AddContentTray", () => {
 
     async function openBatchPicker() {
       const dialog = await screen.findByRole("dialog", { name: "Add content" });
-      const libraryField = dialog.querySelector("label");
       // The first picker in the dialog body is the batch picker (under the "Also add to" label).
       const batchTrigger = within(dialog).getAllByRole("button", {
         name: /My Library only|\+ /,
       })[0];
-      expect(libraryField).not.toBeNull();
+      expect(within(dialog).getByText("Also add to")).toBeInTheDocument();
       expect(batchTrigger).toBeInTheDocument();
       fireEvent.click(batchTrigger);
       return screen.getByRole("dialog", { name: "Select libraries" });
@@ -349,14 +348,11 @@ describe("AddContentTray", () => {
       const removeButton = screen.getByRole("button", {
         name: "Remove https://example.com/third.pdf",
       });
-      const queueItem = removeButton.closest(
-        "div"
-      )?.parentElement as HTMLElement | null;
-      expect(queueItem).not.toBeNull();
-      const rowPickerTrigger = within(queueItem as HTMLElement).getByRole(
-        "button",
-        { name: /My Library only/ }
-      );
+      const queue = screen.getByLabelText("Ingestion queue");
+      expect(removeButton).toBeInTheDocument();
+      const rowPickerTrigger = within(queue).getByRole("button", {
+        name: /My Library only/,
+      });
       fireEvent.click(rowPickerTrigger);
 
       const rowPanel = await screen.findByRole("dialog", {
@@ -367,7 +363,7 @@ describe("AddContentTray", () => {
       // The row's chip should now reflect the override.
       await waitFor(() => {
         expect(
-          within(queueItem as HTMLElement).getByRole("button", {
+          within(queue).getByRole("button", {
             name: /\+ Books/,
           })
         ).toBeInTheDocument();

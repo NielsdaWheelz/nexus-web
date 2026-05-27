@@ -1,0 +1,151 @@
+import { useEffect } from "react";
+import { render, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
+import {
+  PaneRuntimeProvider,
+  usePaneRuntime,
+  usePaneRouter,
+  useSetPaneTitle,
+} from "@/lib/panes/paneRuntime";
+
+function Publisher({ title }: { title: string }) {
+  useSetPaneTitle(title);
+  return null;
+}
+
+function NavigateOnMount({ action }: { action: "push" | "replace" }) {
+  const router = usePaneRouter();
+  useEffect(() => {
+    router[action]("/media/media-1", { titleHint: "Library Row Title" });
+  }, [action, router]);
+  return null;
+}
+
+function OpenInNewPaneOnMount() {
+  const runtime = usePaneRuntime();
+  useEffect(() => {
+    if (!runtime) {
+      throw new Error("Pane runtime missing");
+    }
+    runtime.openInNewPane("/media/media-1", "Library Row Title");
+  }, [runtime]);
+  return null;
+}
+
+function runtime(
+  href: string,
+  onSetPaneTitle: (input: {
+    paneId: string;
+    resourceKey: string;
+    title: string | null;
+  }) => void,
+) {
+  const identity = resolvePaneRouteIdentity(href);
+  return (
+    <PaneRuntimeProvider
+      paneId="pane-1"
+      href={href}
+      routeId={identity.routeId}
+      resourceRef={identity.resourceRef}
+      resourceKey={identity.resourceKey}
+      onNavigatePane={vi.fn()}
+      onReplacePane={vi.fn()}
+      onOpenInNewPane={vi.fn()}
+      onSetPaneTitle={onSetPaneTitle}
+    >
+      <Publisher title="Same title" />
+    </PaneRuntimeProvider>
+  );
+}
+
+describe("useSetPaneTitle", () => {
+  it("does not republish the same title for the same resource", async () => {
+    const onSetPaneTitle = vi.fn();
+    const { rerender } = render(runtime("/media/media-1", onSetPaneTitle));
+
+    await waitFor(() => expect(onSetPaneTitle).toHaveBeenCalledTimes(1));
+
+    rerender(runtime("/media/media-1?loc=chapter-2", onSetPaneTitle));
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(onSetPaneTitle).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes again when the resource changes even if the title string matches", async () => {
+    const onSetPaneTitle = vi.fn();
+    const { rerender } = render(runtime("/media/media-1", onSetPaneTitle));
+
+    await waitFor(() => expect(onSetPaneTitle).toHaveBeenCalledTimes(1));
+
+    rerender(runtime("/media/media-2", onSetPaneTitle));
+
+    await waitFor(() => expect(onSetPaneTitle).toHaveBeenCalledTimes(2));
+    expect(onSetPaneTitle).toHaveBeenLastCalledWith({
+      paneId: "pane-1",
+      resourceKey: resolvePaneRouteIdentity("/media/media-2").resourceKey,
+      title: "Same title",
+    });
+  });
+});
+
+describe("PaneRuntimeProvider", () => {
+  it.each([
+    ["push", "onNavigatePane"],
+    ["replace", "onReplacePane"],
+  ] as const)("passes title hints through router.%s", async (action, callbackName) => {
+    const onNavigatePane = vi.fn();
+    const onReplacePane = vi.fn();
+    const identity = resolvePaneRouteIdentity("/libraries/library-1");
+
+    render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href="/libraries/library-1"
+        routeId={identity.routeId}
+        resourceRef={identity.resourceRef}
+        resourceKey={identity.resourceKey}
+        onNavigatePane={onNavigatePane}
+        onReplacePane={onReplacePane}
+        onOpenInNewPane={vi.fn()}
+      >
+        <NavigateOnMount action={action} />
+      </PaneRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect({ onNavigatePane, onReplacePane }[callbackName]).toHaveBeenCalledWith(
+        "pane-1",
+        "/media/media-1",
+        { titleHint: "Library Row Title" },
+      );
+    });
+  });
+
+  it("passes title hints through openInNewPane", async () => {
+    const onOpenInNewPane = vi.fn();
+    const identity = resolvePaneRouteIdentity("/libraries/library-1");
+
+    render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href="/libraries/library-1"
+        routeId={identity.routeId}
+        resourceRef={identity.resourceRef}
+        resourceKey={identity.resourceKey}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={onOpenInNewPane}
+      >
+        <OpenInNewPaneOnMount />
+      </PaneRuntimeProvider>,
+    );
+
+    await waitFor(() => {
+      expect(onOpenInNewPane).toHaveBeenCalledWith(
+        "/media/media-1",
+        "Library Row Title",
+      );
+    });
+  });
+});

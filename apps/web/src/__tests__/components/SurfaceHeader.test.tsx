@@ -24,6 +24,15 @@ describe("SurfaceHeader", () => {
     expect(onDelete).toHaveBeenCalledTimes(1);
   });
 
+  it("marks pending titles busy while keeping an accessible name", () => {
+    render(<SurfaceHeader title="Media" titlePending />);
+
+    expect(screen.getByRole("heading", { name: "Media" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+  });
+
   it("loops tab focus inside the options menu", async () => {
     const user = userEvent.setup();
 

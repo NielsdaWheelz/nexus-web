@@ -440,10 +440,6 @@ function isOptionalRetrievalResultRef(value: unknown): boolean {
   return value === undefined || value === null || isCitationEventData(value);
 }
 
-function isOptionalSourceRef(value: unknown): boolean {
-  return value === undefined || value === null || isSourceRef(value);
-}
-
 function isSourceRefLocation(value: unknown): boolean {
   return (
     isRecord(value) &&

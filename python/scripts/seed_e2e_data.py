@@ -1181,6 +1181,7 @@ def _seed_epub_media(session_factory, user_id: UUID) -> None:
             filename=filename,
             content_type="application/epub+zip",
             size_bytes=len(epub_bytes),
+            library_ids=[],
         )
 
     epub_media_id_str = init_data["media_id"]
@@ -1309,6 +1310,7 @@ def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
             filename=epub_filename,
             content_type="application/epub+zip",
             size_bytes=len(epub_bytes),
+            library_ids=[],
         )
 
     epub_media_id_str = epub_init["media_id"]
@@ -1363,6 +1365,7 @@ def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
             filename=resume_pdf_filename,
             content_type="application/pdf",
             size_bytes=len(resume_pdf_bytes),
+            library_ids=[],
         )
 
     pdf_media_id_str = pdf_init["media_id"]
@@ -1607,6 +1610,7 @@ def main() -> None:
             filename=filename,
             content_type="application/pdf",
             size_bytes=len(pdf_bytes),
+            library_ids=[],
         )
 
     uploaded_media_id_str = init_data["media_id"]
@@ -1656,6 +1660,7 @@ def main() -> None:
             filename=password_filename,
             content_type="application/pdf",
             size_bytes=1024,
+            library_ids=[],
         )
         password_media_id = UUID(password_init["media_id"])
         password_media = db.execute(

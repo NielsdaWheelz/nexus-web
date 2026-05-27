@@ -155,8 +155,10 @@ export default function BrowsePaneBody() {
   async function ensureAndOpenPodcast(
     result: BrowsePodcastResult | BrowseEpisodeResult,
   ) {
+    const titleHint =
+      result.type === "podcasts" ? result.title : result.podcast_title;
     if (result.podcast_id) {
-      requestOpenInAppPane(`/podcasts/${result.podcast_id}`);
+      requestOpenInAppPane(`/podcasts/${result.podcast_id}`, { titleHint });
       return;
     }
 
@@ -206,7 +208,7 @@ export default function BrowsePaneBody() {
             ),
         ),
       );
-      requestOpenInAppPane(`/podcasts/${podcastId}`);
+      requestOpenInAppPane(`/podcasts/${podcastId}`, { titleHint });
     } catch (openError) {
       setError(toFeedback(openError, { fallback: "Failed to open podcast" }));
     } finally {
@@ -255,7 +257,9 @@ export default function BrowsePaneBody() {
     libraryIds: string[] = [],
   ) {
     if (result.media_id) {
-      requestOpenInAppPane(`/media/${result.media_id}`);
+      requestOpenInAppPane(`/media/${result.media_id}`, {
+        titleHint: result.title,
+      });
       return;
     }
 
@@ -286,7 +290,9 @@ export default function BrowsePaneBody() {
           );
         }),
       );
-      requestOpenInAppPane(`/media/${added.mediaId}`);
+      requestOpenInAppPane(`/media/${added.mediaId}`, {
+        titleHint: result.title,
+      });
     } catch (addError) {
       setError(toFeedback(addError, { fallback: "Failed to add result" }));
     } finally {

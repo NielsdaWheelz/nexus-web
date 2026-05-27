@@ -8,7 +8,10 @@ import {
   resolveWorkspacePaneTitle,
   useWorkspaceStore,
   WorkspaceStoreProvider,
+  type WorkspacePaneTitleRecord,
+  type WorkspacePaneTitleSource,
 } from "@/lib/workspace/store";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 
 type WorkspaceStore = ReturnType<typeof useWorkspaceStore>;
 
@@ -74,6 +77,18 @@ function flushWorkspaceSession() {
   act(() => {
     window.dispatchEvent(new Event("pagehide"));
   });
+}
+
+function titleRecord(
+  href: string,
+  title: string,
+  source: WorkspacePaneTitleSource = "runtime",
+): WorkspacePaneTitleRecord {
+  return {
+    title,
+    source,
+    resourceKey: resolvePaneRouteIdentity(href).resourceKey,
+  };
 }
 
 describe("WorkspaceStoreProvider", () => {
@@ -307,15 +322,38 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
-  it("publishes runtime titles and clears them when the pane navigates", async () => {
+  it("publishes runtime titles and keeps them across same-resource location changes", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
     const paneId = workspace().state.activePaneId;
+    const resourceKey = resolvePaneRouteIdentity("/media/media-1").resourceKey;
 
     act(() => {
-      workspace().publishPaneTitle(paneId, "My Book");
+      workspace().publishPaneTitle({ paneId, resourceKey, title: "My Book" });
     });
     await waitFor(() => {
-      expect(workspace().runtimeTitleByPaneId.get(paneId)).toBe("My Book");
+      expect(workspace().runtimeTitleByPaneId.get(paneId)?.title).toBe("My Book");
+    });
+
+    act(() => {
+      workspace().navigatePane(paneId, "/media/media-1?loc=chapter-2");
+    });
+    await waitFor(() => {
+      expect(workspace().state.panes[0]?.href).toBe("/media/media-1?loc=chapter-2");
+      expect(workspace().runtimeTitleByPaneId.get(paneId)?.title).toBe("My Book");
+    });
+    flushWorkspaceSession();
+  });
+
+  it("clears runtime titles when the pane navigates to a different resource", async () => {
+    const workspace = await mountWorkspaceStore("/media/media-1");
+    const paneId = workspace().state.activePaneId;
+    const resourceKey = resolvePaneRouteIdentity("/media/media-1").resourceKey;
+
+    act(() => {
+      workspace().publishPaneTitle({ paneId, resourceKey, title: "My Book" });
+    });
+    await waitFor(() => {
+      expect(workspace().runtimeTitleByPaneId.get(paneId)?.title).toBe("My Book");
     });
 
     act(() => {
@@ -326,10 +364,122 @@ describe("WorkspaceStoreProvider", () => {
     });
     flushWorkspaceSession();
   });
+
+  it("ignores stale runtime title publishes from a previous resource", async () => {
+    const workspace = await mountWorkspaceStore("/media/media-1");
+    const paneId = workspace().state.activePaneId;
+    const oldResourceKey = resolvePaneRouteIdentity("/media/media-1").resourceKey;
+
+    act(() => {
+      workspace().navigatePane(paneId, "/media/media-2");
+      workspace().publishPaneTitle({
+        paneId,
+        resourceKey: oldResourceKey,
+        title: "Old Book",
+      });
+    });
+
+    await waitFor(() => {
+      const activePane = workspace().state.panes.find(
+        (pane) => pane.id === workspace().state.activePaneId,
+      );
+      expect(activePane?.href).toBe("/media/media-2");
+      expect(workspace().runtimeTitleByPaneId.has(paneId)).toBe(false);
+      expect(resolveWorkspacePaneTitle(activePane!, workspace().runtimeTitleByPaneId)).toMatchObject({
+        title: "Media",
+        titleState: "pending",
+        titleSource: "fallback",
+      });
+    });
+    flushWorkspaceSession();
+  });
+
+  it("uses title hints for dynamic panes until runtime titles supersede them", async () => {
+    const workspace = await mountWorkspaceStore("/libraries");
+
+    act(() => {
+      workspace().openPane({ href: "/media/media-1", titleHint: "Library Row Title" });
+    });
+
+    await waitFor(() => {
+      const paneId = workspace().state.activePaneId;
+      expect(resolveWorkspacePaneTitle(workspace().state.panes[1]!, workspace().runtimeTitleByPaneId)).toMatchObject({
+        title: "Library Row Title",
+        titleState: "resolved",
+        titleSource: "hint",
+      });
+      expect(workspace().runtimeTitleByPaneId.get(paneId)?.source).toBe("hint");
+    });
+
+    const paneId = workspace().state.activePaneId;
+    const resourceKey = resolvePaneRouteIdentity("/media/media-1").resourceKey;
+    act(() => {
+      workspace().publishPaneTitle({ paneId, resourceKey, title: "Runtime Title" });
+    });
+
+    await waitFor(() => {
+      expect(resolveWorkspacePaneTitle(workspace().state.panes[1]!, workspace().runtimeTitleByPaneId)).toMatchObject({
+        title: "Runtime Title",
+        titleState: "resolved",
+        titleSource: "runtime",
+      });
+    });
+    flushWorkspaceSession();
+  });
+
+  it("uses title hints for same-pane navigation", async () => {
+    const workspace = await mountWorkspaceStore("/libraries/library-1");
+    const paneId = workspace().state.activePaneId;
+
+    act(() => {
+      workspace().navigatePane(paneId, "/media/media-1", {
+        titleHint: "Library Row Title",
+      });
+    });
+
+    await waitFor(() => {
+      const activePane = workspace().state.panes.find(
+        (pane) => pane.id === workspace().state.activePaneId,
+      );
+      expect(activePane?.href).toBe("/media/media-1");
+      expect(resolveWorkspacePaneTitle(activePane!, workspace().runtimeTitleByPaneId)).toMatchObject({
+        title: "Library Row Title",
+        titleState: "resolved",
+        titleSource: "hint",
+      });
+    });
+    flushWorkspaceSession();
+  });
+
+  it("applies the latest title hint when duplicate opens reuse one resource pane", async () => {
+    const workspace = await mountWorkspaceStore("/libraries");
+
+    act(() => {
+      workspace().openPane({ href: "/media/media-1", titleHint: "First title" });
+      workspace().openPane({
+        href: "/media/media-1?loc=chapter-2",
+        titleHint: "Second title",
+      });
+    });
+
+    await waitFor(() => {
+      expect(workspace().state.panes).toHaveLength(2);
+      const activePane = workspace().state.panes.find(
+        (pane) => pane.id === workspace().state.activePaneId,
+      );
+      expect(activePane?.href).toBe("/media/media-1?loc=chapter-2");
+      expect(resolveWorkspacePaneTitle(activePane!, workspace().runtimeTitleByPaneId)).toMatchObject({
+        title: "Second title",
+        titleState: "resolved",
+        titleSource: "hint",
+      });
+    });
+    flushWorkspaceSession();
+  });
 });
 
 describe("resolveWorkspacePaneTitle", () => {
-  const empty = new Map<string, string>();
+  const empty = new Map<string, WorkspacePaneTitleRecord>();
 
   it("returns pending for a dynamic route with no runtime title", () => {
     const pane = { id: "p1", href: "/media/m1" };
@@ -340,9 +490,22 @@ describe("resolveWorkspacePaneTitle", () => {
 
   it("returns resolved with the runtime title when one is published", () => {
     const pane = { id: "p1", href: "/media/m1" };
-    const result = resolveWorkspacePaneTitle(pane, new Map([["p1", "My Book"]]));
+    const result = resolveWorkspacePaneTitle(
+      pane,
+      new Map([["p1", titleRecord("/media/m1", "My Book")]]),
+    );
     expect(result.titleState).toBe("resolved");
     expect(result.title).toBe("My Book");
+  });
+
+  it("ignores stale title records from a different resource", () => {
+    const pane = { id: "p1", href: "/media/m2" };
+    const result = resolveWorkspacePaneTitle(
+      pane,
+      new Map([["p1", titleRecord("/media/m1", "My Book")]]),
+    );
+    expect(result.titleState).toBe("pending");
+    expect(result.title).toBe("Media");
   });
 
   it("returns resolved for a static route with the route label", () => {

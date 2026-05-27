@@ -5,6 +5,7 @@ Scope owner: desktop workspace pane strip and pane title display in `apps/web`.
 Related: `docs/workspace.md` owns the spatial canvas, scroll behavior, and
 in-view detection. This document owns the tab anatomy, title states, and visual
 rules for the strip's marker.
+Related cutover record: `docs/workspace-pane-title-identity-cutover.md`.
 
 ## Scope
 
@@ -42,15 +43,20 @@ pane title resolution. It returns:
 
 - `title`: always a non-empty string.
 - `titleState`: `"resolved"` or `"pending"`.
+- `titleSource`: `"runtime"`, `"hint"`, `"static"`, or `"fallback"`.
+- `resourceKey`: the route resource identity used to validate title records.
 - `route` and `chrome`: the resolved route metadata used by host surfaces.
 
 Resolution rules:
 
-- A runtime title published by the pane body is always `"resolved"`.
+- A runtime title published by the pane body for the current resource is always
+  `"resolved"`.
+- A title hint supplied by the opener for the current resource is `"resolved"`
+  until a runtime title supersedes it.
 - A static route without a runtime title uses its route label and is
   `"resolved"`.
-- A dynamic route without a runtime title uses its route label as accessible
-  stand-in text and is `"pending"`.
+- A dynamic route without a current-resource runtime title or title hint uses
+  its route label as accessible stand-in text and is `"pending"`.
 
 Persistent chrome surfaces that can show structure, such as the pane tab and
 `SurfaceHeader`, render `"pending"` as a skeleton while preserving an accessible
@@ -61,6 +67,13 @@ Dynamic pane bodies use `useSetPaneTitle` to publish `null` while the resource
 title is genuinely unknown, then publish a non-empty title for success, not
 found, and error terminal states. Category labels must not be published as
 resource titles during loading.
+
+`titleHint` from `requestOpenInAppPane(href, { titleHint })` or
+`paneRuntime.router.push(href, { titleHint })` is an optimistic title for the
+target resource. It is useful when the opener already has metadata, such as a
+library row opening a media pane. The hint is sanitized, attached to the pane
+resource key, and superseded by the first runtime title from the pane body.
+Hints are runtime chrome state, not persisted workspace state.
 
 ## Route Metadata
 
@@ -73,6 +86,11 @@ Every route definition declares `titleMode` explicitly. `ResolvedPaneRoute`
 carries it through to the workspace store, and the synthetic unsupported route
 is static.
 
+`lib/panes/paneIdentity.ts` derives the shared `resourceKey` from the resolved
+route. Routes with `resourceRef` use that resource reference; routes without one
+fall back to normalized href identity. Workspace title caches, pane body
+lifecycles, and open-pane de-duplication all use this helper.
+
 ## Host Composition
 
 `WorkspaceHost` builds host-owned pane records from workspace state and the title
@@ -83,9 +101,12 @@ descriptor. It threads the same `title` and `titleState` into:
   skeletons.
 - title telemetry, where `titleState` makes panes stuck in pending observable.
 
-`runtimeTitleByPaneId` remains the runtime title cache. When a pane's href
-changes, the store prunes the stale title for that pane, so dynamic routes return
-to pending until the new body publishes a title.
+`runtimeTitleByPaneId` is the runtime title record cache. Each record stores the
+title, source (`"hint"` or `"runtime"`), and `resourceKey`. When a pane's
+resource key changes, the store prunes stale records for that pane, so dynamic
+routes return to pending unless the opener supplied a current-resource hint.
+Same-resource location changes, such as `/media/:id` to
+`/media/:id?loc=section`, preserve title records.
 
 ## Visual Invariants
 
@@ -139,6 +160,8 @@ The in-view marker's meaning and `IntersectionObserver` ownership live in
   layout, truncation, visual state, marker appearance, and pending skeleton.
 - `apps/web/src/lib/workspace/store.tsx` owns title resolution and runtime title
   cache behavior.
+- `apps/web/src/lib/panes/paneIdentity.ts` owns route resource keys used by
+  title caches and pane body lifecycle.
 - `apps/web/src/lib/panes/paneRouteRegistry.tsx` owns route icons and
   `titleMode`.
 - `apps/web/src/components/workspace/WorkspaceHost.tsx` owns threading title

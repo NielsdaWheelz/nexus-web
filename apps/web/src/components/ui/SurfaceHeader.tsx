@@ -65,7 +65,7 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(function Surfa
           </button>
         )}
         <div className={styles.titles}>
-          <HeadingTag className={styles.title}>
+          <HeadingTag className={styles.title} aria-busy={titlePending || undefined}>
             {titlePending ? (
               <>
                 <span className={styles.titleSkeleton} aria-hidden />

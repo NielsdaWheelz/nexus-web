@@ -24,7 +24,7 @@ export default function DailyNotePaneBody() {
         yesterday.setDate(yesterday.getDate() - 1);
         const href = `/daily/${formatLocalDate(yesterday)}`;
         if (!requestOpenInAppPane(href, { titleHint: "Yesterday" })) {
-          router.push(href);
+          router.push(href, { titleHint: "Yesterday" });
         }
       },
     },

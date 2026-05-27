@@ -7,6 +7,7 @@ import {
   type PaneBodyMode,
   type ResolvedPaneRoute,
 } from "@/lib/panes/paneRouteRegistry";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import PaneShell from "@/components/workspace/PaneShell";
 import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
@@ -193,29 +194,41 @@ const PaneContent = memo(function PaneContent({
   navigatePane: (
     paneId: string,
     href: string,
-    options?: { replace?: boolean; activate?: boolean },
+    options?: { replace?: boolean; activate?: boolean; titleHint?: string },
   ) => void;
-  openPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
-  publishPaneTitle: (paneId: string, title: string | null) => void;
+  openPane: (input: {
+    href: string;
+    openerPaneId?: string | null;
+    activate?: boolean;
+    titleHint?: string;
+  }) => void;
+  publishPaneTitle: (input: {
+    paneId: string;
+    resourceKey: string;
+    title: string | null;
+  }) => void;
   publishPaneMinWidth: (paneId: string, widthPx: number | null) => void;
   publishPaneExtraWidth: (paneId: string, widthPx: number) => void;
 }) {
   const handleReplacePane = useCallback(
-    (pid: string, h: string) => navigatePane(pid, h, { replace: true }),
+    (pid: string, h: string, options?: { titleHint?: string }) =>
+      navigatePane(pid, h, { replace: true, titleHint: options?.titleHint }),
     [navigatePane]
   );
   const handleOpenInNewPane = useCallback(
-    (h: string) => openPane({ href: h, openerPaneId: paneId, activate: true }),
+    (h: string, titleHint?: string) =>
+      openPane({ href: h, openerPaneId: paneId, activate: true, titleHint }),
     [openPane, paneId]
   );
   const handleSetPaneTitle = useCallback(
-    (pid: string, title: string | null) => {
-      publishPaneTitle(pid, title);
+    (input: { paneId: string; resourceKey: string; title: string | null }) => {
+      publishPaneTitle(input);
     },
     [publishPaneTitle]
   );
 
   const route = useMemo(() => resolvePaneRoute(href), [href]);
+  const routeIdentity = useMemo(() => resolvePaneRouteIdentity(href), [href]);
   const pathParams = useMemo<Record<string, string>>(() => ({ ...route.params }), [route.params]);
 
   return (
@@ -225,6 +238,7 @@ const PaneContent = memo(function PaneContent({
         href={href}
         routeId={route.id}
         resourceRef={route.resourceRef}
+        resourceKey={routeIdentity.resourceKey}
         pathParams={pathParams}
         onNavigatePane={navigatePane}
         onReplacePane={handleReplacePane}
@@ -234,8 +248,8 @@ const PaneContent = memo(function PaneContent({
         onSetPaneExtraWidth={publishPaneExtraWidth}
       >
         <PaneRouteBoundary>
-          <PaneRouteErrorBoundary resetKey={href}>
-            <ResolvedPaneRouteView route={route} />
+          <PaneRouteErrorBoundary resetKey={routeIdentity.resourceKey}>
+            <ResolvedPaneRouteView key={routeIdentity.resourceKey} route={route} />
           </PaneRouteErrorBoundary>
         </PaneRouteBoundary>
       </PaneRuntimeProvider>
@@ -275,10 +289,19 @@ function buildHostPane(input: {
   onNavigatePane: (
     paneId: string,
     href: string,
-    options?: { replace?: boolean; activate?: boolean },
+    options?: { replace?: boolean; activate?: boolean; titleHint?: string },
   ) => void;
-  onOpenPane: (input: { href: string; openerPaneId?: string | null; activate?: boolean }) => void;
-  onPublishPaneTitle: (paneId: string, title: string | null) => void;
+  onOpenPane: (input: {
+    href: string;
+    openerPaneId?: string | null;
+    activate?: boolean;
+    titleHint?: string;
+  }) => void;
+  onPublishPaneTitle: (input: {
+    paneId: string;
+    resourceKey: string;
+    title: string | null;
+  }) => void;
   onPublishPaneMinWidth: (paneId: string, widthPx: number | null) => void;
   onPublishPaneExtraWidth: (paneId: string, widthPx: number) => void;
   isActive: boolean;

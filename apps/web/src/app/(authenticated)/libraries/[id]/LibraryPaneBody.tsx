@@ -261,7 +261,7 @@ export default function LibraryPaneBody() {
         }
         return;
       }
-      router.push(href);
+      router.push(href, { titleHint: title });
     },
     [router],
   );
@@ -734,12 +734,13 @@ export default function LibraryPaneBody() {
         },
       );
       const route = `/conversations/${response.data.id}`;
+      const titleHint = response.data.title || library.name;
       if (
         !requestOpenInAppPane(route, {
-          titleHint: response.data.title || library.name,
+          titleHint,
         })
       ) {
-        router.push(route);
+        router.push(route, { titleHint });
       }
     } catch (err) {
       setError(
@@ -760,12 +761,13 @@ export default function LibraryPaneBody() {
           body: JSON.stringify({ type: "media", media_id: media.id }),
         });
         const route = `/conversations/${response.data.id}`;
+        const titleHint = response.data.title || media.title;
         if (
           !requestOpenInAppPane(route, {
-            titleHint: response.data.title || media.title,
+            titleHint,
           })
         ) {
-          router.push(route);
+          router.push(route, { titleHint });
         }
       } catch (err) {
         setError(
