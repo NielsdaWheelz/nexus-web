@@ -78,6 +78,7 @@ export function AppListItem({
     <ContextRow
       className={styles.row}
       href={href}
+      paneTitleHint={resolvedPaneTitleHint}
       target={target}
       rel={rel}
       onMainClick={href ? handlePrimaryClick : undefined}

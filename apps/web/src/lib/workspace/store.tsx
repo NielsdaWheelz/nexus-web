@@ -17,6 +17,7 @@ import {
   clampPaneWidth,
   createDefaultWorkspaceState,
   createPaneId,
+  getDefaultPaneWidthPx,
   normalizePaneTitle,
   normalizeWorkspaceHref,
   type WorkspacePaneStateV4,
@@ -119,7 +120,7 @@ export function mergeRestoredWorkspaceWithUrlIntent(
           ? {
               ...pane,
               href: requestedPane.href,
-              widthPx: requestedPane.widthPx,
+              widthPx: clampPaneWidth(pane.widthPx, requestedPane.href),
               visibility: "visible" as const,
             }
           : pane
@@ -182,7 +183,7 @@ function workspaceReducer(state: WorkspaceStateV4, action: WorkspaceAction): Wor
               ? {
                   ...item,
                   href: paneToOpen.href,
-                  widthPx: paneToOpen.widthPx,
+                  widthPx: clampPaneWidth(item.widthPx, paneToOpen.href),
                   visibility: "visible",
                 }
               : item
@@ -335,13 +336,12 @@ function workspaceReducer(state: WorkspaceStateV4, action: WorkspaceAction): Wor
 // ---------------------------------------------------------------------------
 
 function buildPanesForOpen(href: string): WorkspacePaneStateV4[] {
-  const route = resolvePaneRoute(href);
   const mainId = createPaneId();
   return [
     {
       id: mainId,
       href,
-      widthPx: route.definition?.defaultWidthPx ?? 480,
+      widthPx: getDefaultPaneWidthPx(href),
       visibility: "visible",
     },
   ];

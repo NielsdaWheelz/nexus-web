@@ -10,7 +10,14 @@
 
 "use client";
 
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { PanelRightOpen } from "lucide-react";
 import { useAttachedContextsFromUrl } from "@/lib/conversations/useAttachedContextsFromUrl";
 import { mergeContextItems } from "@/lib/conversations/attachedContext";
@@ -25,7 +32,9 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
+import SecondaryRail, {
+  SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
+} from "@/components/secondaryRail/SecondaryRail";
 import Button from "@/components/ui/Button";
 import { apiFetch } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
@@ -36,6 +45,7 @@ import {
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
   usePaneRouter,
+  usePaneRuntime,
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
@@ -45,12 +55,15 @@ import type {
 } from "@/lib/conversations/types";
 import styles from "../page.module.css";
 
+const CHAT_CONTEXT_RAIL_WIDTH_PX = 320;
+
 // ============================================================================
 // Component
 // ============================================================================
 
 export default function ConversationNewPaneBody() {
   const router = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   const searchParams = usePaneSearchParams();
   const draft = searchParams.get("draft") ?? "";
   const scrollportRef = useRef<HTMLDivElement>(null);
@@ -215,6 +228,22 @@ export default function ConversationNewPaneBody() {
     [],
   );
 
+  useEffect(() => {
+    if (!paneRuntime) return;
+    if (isMobileViewport) {
+      paneRuntime.setPaneExtraWidth(0);
+      return;
+    }
+    paneRuntime.setPaneExtraWidth(
+      contextRailExpanded
+        ? CHAT_CONTEXT_RAIL_WIDTH_PX
+        : SECONDARY_RAIL_COLLAPSED_WIDTH_PX
+    );
+    return () => {
+      paneRuntime.setPaneExtraWidth(0);
+    };
+  }, [contextRailExpanded, isMobileViewport, paneRuntime]);
+
   return (
     <>
       <div className={styles.chatSplitLayout}>
@@ -254,7 +283,7 @@ export default function ConversationNewPaneBody() {
             ariaLabel="Chat context"
             expanded={contextRailExpanded}
             onExpandedChange={setContextRailExpanded}
-            expandedWidthPx={320}
+            expandedWidthPx={CHAT_CONTEXT_RAIL_WIDTH_PX}
             bodyClassName={styles.chatSecondaryRailBody}
             collapsed={
               <Button

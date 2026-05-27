@@ -1,16 +1,23 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { formatLocalDate, isLocalDate, todayLocalDate } from "@/lib/localDate";
 import { fetchDailyNotePage, type NotePage } from "@/lib/notes/api";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
-import { usePaneParam, usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
+import {
+  usePaneParam,
+  usePaneRuntime,
+  useSetPaneTitle,
+} from "@/lib/panes/paneRuntime";
 import PagePaneBody from "../pages/[pageId]/PagePaneBody";
 
 export default function DailyNotePaneBody() {
-  const router = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   const routeLocalDate = usePaneParam("localDate");
   const localDate = routeLocalDate ?? todayLocalDate();
   const [page, setPage] = useState<NotePage | null>(null);
@@ -23,9 +30,7 @@ export default function DailyNotePaneBody() {
         const yesterday = new Date();
         yesterday.setDate(yesterday.getDate() - 1);
         const href = `/daily/${formatLocalDate(yesterday)}`;
-        if (!requestOpenInAppPane(href, { titleHint: "Yesterday" })) {
-          router.push(href, { titleHint: "Yesterday" });
-        }
+        paneRuntime?.openInNewPane(href, "Yesterday");
       },
     },
   ];

@@ -1,12 +1,14 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 
 const hostMocks = vi.hoisted(() => ({
   bodyInstanceId: 0,
   mountedBodyIds: [] as number[],
   unmountedBodyIds: [] as number[],
+  runtimeMinWidthPx: null as number | null,
   store: {
     state: {
       panes: [
@@ -52,6 +54,7 @@ function mediaRoute(href: string) {
 
 function TestPaneBody() {
   const instanceId = useRef(++hostMocks.bodyInstanceId);
+  const paneRuntime = usePaneRuntime();
   useEffect(() => {
     const id = instanceId.current;
     hostMocks.mountedBodyIds.push(id);
@@ -59,6 +62,11 @@ function TestPaneBody() {
       hostMocks.unmountedBodyIds.push(id);
     };
   }, []);
+  useEffect(() => {
+    if (hostMocks.runtimeMinWidthPx !== null) {
+      paneRuntime?.setPaneMinWidth(hostMocks.runtimeMinWidthPx);
+    }
+  }, [paneRuntime]);
   return <div data-testid="route-body" data-instance-id={instanceId.current} />;
 }
 
@@ -137,6 +145,8 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.bodyInstanceId = 0;
     hostMocks.mountedBodyIds = [];
     hostMocks.unmountedBodyIds = [];
+    hostMocks.runtimeMinWidthPx = null;
+    hostMocks.store.resizePane.mockReset();
     setPaneHref("/media/media-1");
   });
 
@@ -168,5 +178,15 @@ describe("WorkspaceHost pane route lifecycle", () => {
     );
     expect(hostMocks.mountedBodyIds).toHaveLength(2);
     expect(hostMocks.unmountedBodyIds).toEqual([Number(firstInstance)]);
+  });
+
+  it("auto-resizes a visible pane when runtime content raises the minimum width", async () => {
+    hostMocks.runtimeMinWidthPx = 900;
+
+    render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(hostMocks.store.resizePane).toHaveBeenCalledWith("pane-1", 900);
+    });
   });
 });

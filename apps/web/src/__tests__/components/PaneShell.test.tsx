@@ -26,6 +26,10 @@ describe("PaneShell", () => {
     );
 
     const handle = screen.getByRole("separator", { name: "Resize pane Libraries" });
+    expect(handle).toHaveAttribute("aria-valuemin", "320");
+    expect(handle).toHaveAttribute("aria-valuemax", "1400");
+    expect(handle).toHaveAttribute("aria-valuenow", "560");
+    expect(handle).toHaveAttribute("aria-controls", "pane-a-body");
     fireEvent.keyDown(handle, { key: "ArrowRight" });
     fireEvent.keyDown(handle, { key: "ArrowLeft" });
     fireEvent.keyDown(handle, { key: "Home" });
@@ -35,6 +39,34 @@ describe("PaneShell", () => {
     expect(onResizePane).toHaveBeenCalledWith("pane-a", 544);
     expect(onResizePane).toHaveBeenCalledWith("pane-a", 320);
     expect(onResizePane).toHaveBeenCalledWith("pane-a", 1400);
+  });
+
+  it("keyboard resize clamps to a raised runtime minimum", () => {
+    const onResizePane = vi.fn();
+    render(
+      <PaneShell
+        paneId="pane-a"
+        title="Reader"
+        widthPx={500}
+        minWidthPx={684}
+        maxWidthPx={2400}
+        extraWidthPx={0}
+        bodyMode="document"
+        onResizePane={onResizePane}
+      >
+        <div>Body content</div>
+      </PaneShell>
+    );
+
+    const handle = screen.getByRole("separator", { name: "Resize pane Reader" });
+    expect(handle).toHaveAttribute("aria-valuemin", "684");
+    expect(handle).toHaveAttribute("aria-valuenow", "684");
+
+    fireEvent.keyDown(handle, {
+      key: "ArrowRight",
+    });
+
+    expect(onResizePane).toHaveBeenCalledWith("pane-a", 684);
   });
 
   it("supports pointer drag resize on desktop", () => {
@@ -526,6 +558,9 @@ describe("PaneShell", () => {
     );
     const shell = screen.getByTestId("pane-shell-root");
     expect(shell).toHaveStyle({ width: "700px" });
+    expect(shell).toHaveStyle({ minWidth: "684px" });
+    expect(shell).toHaveStyle({ maxWidth: "2400px" });
+    expect(screen.getByRole("separator")).toHaveAttribute("aria-valuenow", "700");
 
     rerender(
       <PaneShell {...props} extraWidthPx={360}>
@@ -533,6 +568,9 @@ describe("PaneShell", () => {
       </PaneShell>
     );
     expect(shell).toHaveStyle({ width: "1060px" });
+    expect(shell).toHaveStyle({ minWidth: "1044px" });
+    expect(shell).toHaveStyle({ maxWidth: "2760px" });
+    expect(screen.getByRole("separator")).toHaveAttribute("aria-valuenow", "1060");
 
     rerender(
       <PaneShell {...props} extraWidthPx={0}>

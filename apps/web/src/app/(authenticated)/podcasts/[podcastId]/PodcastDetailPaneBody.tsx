@@ -11,11 +11,11 @@ import {
 } from "@/lib/actions/resourceActions";
 import {
   usePaneParam,
+  usePaneRuntime,
   usePaneRouter,
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { useBodyOverflowLock } from "@/lib/ui/useBodyOverflowLock";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
@@ -94,6 +94,7 @@ const EPISODE_SEARCH_DEBOUNCE_MS = 300;
 export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
   const paneRouter = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   const paneSearchParams = usePaneSearchParams();
   const isMobileViewport = useIsMobileViewport();
   const { account: billingAccount } = useBillingAccount();
@@ -698,20 +699,14 @@ export default function PodcastDetailPaneBody() {
         });
         const route = `/conversations/${response.data.id}`;
         const titleHint = response.data.title || episode.title;
-        if (
-          !requestOpenInAppPane(route, {
-            titleHint,
-          })
-        ) {
-          paneRouter.push(route, { titleHint });
-        }
+        paneRuntime?.openInNewPane(route, titleHint);
       } catch (chatError) {
         setError(
           toFeedback(chatError, { fallback: "Failed to open episode chat" }),
         );
       }
     },
-    [paneRouter],
+    [paneRuntime],
   );
 
   const handleRetryEpisodeProcessing = useCallback(

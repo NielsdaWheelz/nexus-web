@@ -144,10 +144,11 @@ function PaneRouteBoundary({ children }: { children: React.ReactNode }) {
       }
 
       event.preventDefault();
+      const titleHint = anchor.dataset.paneTitleHint || undefined;
       if (event.shiftKey) {
-        paneRuntime.openInNewPane(normalizedHref);
+        paneRuntime.openInNewPane(normalizedHref, titleHint);
       } else {
-        paneRuntime.router.push(normalizedHref);
+        paneRuntime.router.push(normalizedHref, { titleHint });
       }
     },
     [paneRuntime]

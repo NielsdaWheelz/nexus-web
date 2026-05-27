@@ -8,7 +8,7 @@ import {
 } from "@/lib/player/subscriptionPlaybackSpeed";
 import { apiFetch } from "@/lib/api/client";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ActionMenu from "@/components/ui/ActionMenu";
@@ -70,6 +70,7 @@ function formatLatestEpisodeLabel(value: string | null): string {
 }
 
 export default function PodcastsPaneBody() {
+  const paneRuntime = usePaneRuntime();
   const [rows, setRows] = useState<PodcastSubscriptionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -438,7 +439,7 @@ export default function PodcastsPaneBody() {
               <Button
                 variant="primary"
                 size="md"
-                onClick={() => requestOpenInAppPane("/browse?types=podcasts")}
+                onClick={() => paneRuntime?.openInNewPane("/browse?types=podcasts")}
               >
                 Browse
               </Button>
@@ -507,7 +508,7 @@ export default function PodcastsPaneBody() {
                     variant="ghost"
                     size="sm"
                     className={styles.inlineButton}
-                    onClick={() => requestOpenInAppPane("/browse?types=podcasts")}
+                    onClick={() => paneRuntime?.openInNewPane("/browse?types=podcasts")}
                   >
                     Browse podcasts
                   </Button>

@@ -24,6 +24,7 @@ interface ContextRowProps {
   actions?: ReactNode;
   expandedContent?: ReactNode;
   href?: string;
+  paneTitleHint?: string;
   target?: string;
   rel?: string;
   onMainClick?: (event: MouseEvent<HTMLElement>) => void;
@@ -56,6 +57,7 @@ export default function ContextRow({
   actions,
   expandedContent,
   href,
+  paneTitleHint,
   target,
   rel,
   onMainClick,
@@ -102,6 +104,7 @@ export default function ContextRow({
       {href ? (
         <a
           href={href}
+          data-pane-title-hint={paneTitleHint}
           target={target}
           rel={rel}
           className={rowMainClassName}

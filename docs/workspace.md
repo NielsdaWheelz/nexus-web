@@ -174,7 +174,6 @@ Current coverage for this surface:
 - Pane drag-to-reorder.
 - Persisting canvas scroll position across reloads.
 - Touch gestures for the desktop canvas.
-- Changing the pane width model.
 - Changing command palette internals.
 - Moving tab anatomy, title state rules, or marker styling out of
   `docs/workspace-tabs.md`.

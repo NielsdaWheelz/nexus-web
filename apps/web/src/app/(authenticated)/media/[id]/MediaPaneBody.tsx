@@ -79,7 +79,6 @@ import {
   applyFocusClass,
   reconcileFocusAfterRefetch,
 } from "@/lib/highlights/useHighlightInteraction";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Pill from "@/components/ui/Pill";
@@ -851,7 +850,7 @@ export default function MediaPaneBody() {
   const readerLayoutKey = `${readerProfile.font_family}:${readerProfile.font_size_px}:${readerProfile.line_height}:${readerProfile.column_width_ch}`;
   const focusModeEnabled = readerProfile.focus_mode !== "off";
   const showHighlightsPane = canRead && !focusModeEnabled;
-  const hasProtectedReaderTextWidth = canRead && !isPdf;
+  const hasProtectedReaderTextWidth = canRead;
   const playbackSource = media?.playback_source ?? null;
   const activeTranscriptFragment = useMemo(() => {
     if (!isTranscriptMedia) {
@@ -3251,11 +3250,9 @@ export default function MediaPaneBody() {
   const handleOpenConversation = useCallback(
     (conversationId: string, title: string) => {
       const route = `/conversations/${conversationId}`;
-      if (!requestOpenInAppPane(route, { titleHint: title })) {
-        router.push(route, { titleHint: title });
-      }
+      paneRuntime?.openInNewPane(route, title);
     },
-    [router],
+    [paneRuntime],
   );
 
   // ==========================================================================
@@ -3919,11 +3916,9 @@ export default function MediaPaneBody() {
         setChatDetail(null);
       }
       const route = `/conversations/${conversationId}`;
-      if (!requestOpenInAppPane(route, { titleHint: "Chat" })) {
-        router.push(route, { titleHint: "Chat" });
-      }
+      paneRuntime?.openInNewPane(route, "Chat");
     },
-    [isMobileViewport, router],
+    [isMobileViewport, paneRuntime],
   );
 
   const handleExistingHighlightSendToChat = useCallback(
@@ -4069,10 +4064,7 @@ export default function MediaPaneBody() {
     label: "Reader settings",
     restoreFocusOnClose: false,
     onSelect: () => {
-      const route = "/settings/reader";
-      if (!requestOpenInAppPane(route, { titleHint: "Reader settings" })) {
-        router.push(route, { titleHint: "Reader settings" });
-      }
+      paneRuntime?.openInNewPane("/settings/reader", "Reader settings");
     },
   });
 
@@ -4334,11 +4326,7 @@ export default function MediaPaneBody() {
       if (target.media_id !== id) {
         const route = target.href || `/media/${target.media_id}`;
         const titleHint = target.label ?? "Source";
-        if (
-          !requestOpenInAppPane(route, { titleHint })
-        ) {
-          router.push(route, { titleHint });
-        }
+        paneRuntime?.openInNewPane(route, titleHint);
         return;
       }
 
@@ -4463,6 +4451,7 @@ export default function MediaPaneBody() {
       id,
       isEpub,
       isMobileViewport,
+      paneRuntime,
       router,
       searchParams,
     ],

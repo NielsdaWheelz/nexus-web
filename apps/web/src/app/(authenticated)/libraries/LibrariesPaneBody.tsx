@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Library as LibraryIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { libraryResourceOptions } from "@/lib/actions/resourceActions";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
   FeedbackNotice,
   toFeedback,
@@ -35,6 +35,7 @@ interface Library {
 }
 
 export default function LibrariesPaneBody() {
+  const paneRuntime = usePaneRuntime();
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
@@ -116,9 +117,7 @@ export default function LibrariesPaneBody() {
         }
       );
       const route = `/conversations/${response.data.id}`;
-      if (!requestOpenInAppPane(route, { titleHint: response.data.title || library.name })) {
-        window.location.assign(route);
-      }
+      paneRuntime?.openInNewPane(route, response.data.title || library.name);
     } catch (err) {
       setError(
         toFeedback(err, {
@@ -126,7 +125,7 @@ export default function LibrariesPaneBody() {
         })
       );
     }
-  }, []);
+  }, [paneRuntime]);
 
   /* ---- Edit dialog handlers ---- */
 
@@ -325,9 +324,7 @@ export default function LibrariesPaneBody() {
                     onOpenChat: () => void handleOpenLibraryChat(library),
                     onViewIntelligence: () => {
                       const route = `/libraries/${library.id}?view=intelligence`;
-                      if (!requestOpenInAppPane(route, { titleHint: library.name })) {
-                        window.location.assign(route);
-                      }
+                      paneRuntime?.openInNewPane(route, library.name);
                     },
                     onEdit: () => void openEditDialog(library),
                     onDelete: () => void handleDeleteLibrary(library),

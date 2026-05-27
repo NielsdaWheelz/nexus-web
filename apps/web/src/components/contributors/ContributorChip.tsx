@@ -119,6 +119,7 @@ export default function ContributorChip({
       className={cx(className)}
       style={chipStyle}
       title={title}
+      data-pane-title-hint={label}
       onClick={handleClick}
     >
       <span>{label}</span>

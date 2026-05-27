@@ -13,7 +13,19 @@ export const MAX_PANES = 12;
 export const MIN_PANE_WIDTH_PX = 320;
 export const MAX_STANDARD_PANE_WIDTH_PX = 1400;
 export const MAX_MEDIA_PANE_WIDTH_PX = 2400;
+export const DEFAULT_STANDARD_PANE_WIDTH_PX = 480;
+export const DEFAULT_DENSE_LIST_PANE_WIDTH_PX = 560;
+export const DEFAULT_DOCUMENT_PANE_WIDTH_PX = 760;
+export const DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX = 960;
+export const MIN_PODCAST_DETAIL_PANE_WIDTH_PX = 760;
+export const DEFAULT_MEDIA_PANE_WIDTH_PX = 1280;
 const MAX_PANE_TITLE_LENGTH = 120;
+
+export interface PaneWidthContract {
+  defaultWidthPx: number;
+  minWidthPx: number;
+  maxWidthPx: number;
+}
 
 type WorkspacePaneVisibility = "visible" | "minimized";
 
@@ -92,15 +104,78 @@ export function normalizePaneTitle(raw: string | null | undefined): string | nul
   return normalized.slice(0, MAX_PANE_TITLE_LENGTH).trim();
 }
 
-export function clampPaneWidth(value: number, href?: string): number {
-  if (!Number.isFinite(value)) {
-    return MIN_PANE_WIDTH_PX;
+export function resolvePaneWidthContract(href: string): PaneWidthContract {
+  const pathname = parseWorkspaceHref(href)?.pathname ?? "";
+  const segments = pathname
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const section = segments[0] ?? "";
+  const segmentCount = segments.length;
+
+  if (section === "media" && segmentCount === 2) {
+    return {
+      defaultWidthPx: DEFAULT_MEDIA_PANE_WIDTH_PX,
+      minWidthPx: MIN_PANE_WIDTH_PX,
+      maxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
+    };
   }
-  const parsedHref = href ? parseWorkspaceHref(href) : null;
-  const maxWidthPx = parsedHref?.pathname.startsWith("/media/")
-    ? MAX_MEDIA_PANE_WIDTH_PX
-    : MAX_STANDARD_PANE_WIDTH_PX;
-  return Math.min(maxWidthPx, Math.max(MIN_PANE_WIDTH_PX, Math.round(value)));
+
+  if (section === "podcasts" && segmentCount === 2) {
+    return {
+      defaultWidthPx: DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
+      minWidthPx: MIN_PODCAST_DETAIL_PANE_WIDTH_PX,
+      maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    };
+  }
+
+  if (
+    (section === "pages" && segmentCount === 2) ||
+    (section === "daily" && (segmentCount === 1 || segmentCount === 2)) ||
+    (section === "notes" && segmentCount === 2)
+  ) {
+    return {
+      defaultWidthPx: DEFAULT_DOCUMENT_PANE_WIDTH_PX,
+      minWidthPx: MIN_PANE_WIDTH_PX,
+      maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    };
+  }
+
+  if (
+    (section === "libraries" && (segmentCount === 1 || segmentCount === 2)) ||
+    (section === "conversations" && (segmentCount === 1 || segmentCount === 2)) ||
+    (section === "podcasts" && segmentCount === 1) ||
+    (section === "authors" && segmentCount === 2) ||
+    (section === "notes" && segmentCount === 1)
+  ) {
+    return {
+      defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+      minWidthPx: MIN_PANE_WIDTH_PX,
+      maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+    };
+  }
+
+  return {
+    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+    minWidthPx: MIN_PANE_WIDTH_PX,
+    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+  };
+}
+
+export function getDefaultPaneWidthPx(href: string): number {
+  const width = resolvePaneWidthContract(href).defaultWidthPx;
+  return clampPaneWidth(width, href);
+}
+
+export function clampPaneWidth(value: number, href?: string): number {
+  const contract = resolvePaneWidthContract(href ?? WORKSPACE_DEFAULT_FALLBACK_HREF);
+  if (!Number.isFinite(value)) {
+    return contract.defaultWidthPx;
+  }
+  return Math.min(
+    contract.maxWidthPx,
+    Math.max(contract.minWidthPx, Math.round(value))
+  );
 }
 
 export function createDefaultWorkspaceState(
@@ -116,7 +191,8 @@ export function createDefaultWorkspaceState(
       {
         id,
         href,
-        widthPx: widthPx != null ? clampPaneWidth(widthPx, href) : 480,
+        widthPx:
+          widthPx != null ? clampPaneWidth(widthPx, href) : getDefaultPaneWidthPx(href),
         visibility: "visible",
       },
     ],
@@ -146,7 +222,9 @@ function sanitizePane(
   seenIds.add(id);
 
   const widthPx =
-    typeof value.widthPx === "number" ? clampPaneWidth(value.widthPx, href) : 480;
+    typeof value.widthPx === "number"
+      ? clampPaneWidth(value.widthPx, href)
+      : getDefaultPaneWidthPx(href);
 
   return { id, href, widthPx, visibility };
 }

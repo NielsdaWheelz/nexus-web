@@ -1,6 +1,7 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  DEFAULT_MEDIA_PANE_WIDTH_PX,
   MAX_MEDIA_PANE_WIDTH_PX,
   MAX_STANDARD_PANE_WIDTH_PX,
   type WorkspaceStateV4,
@@ -188,7 +189,7 @@ describe("mergeRestoredWorkspaceWithUrlIntent", () => {
     expect(merged.panes.find((pane) => pane.id === "pane-saved-media")).toMatchObject({
       href: "/media/media-123?loc=chapter-2",
       visibility: "visible",
-      widthPx: 1280,
+      widthPx: 960,
     });
   });
 });
@@ -218,6 +219,20 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
+  it("opens new panes at the route default width", async () => {
+    const workspace = await mountWorkspaceStore();
+
+    act(() => {
+      workspace().openPane({ href: "/media/media-1" });
+    });
+
+    await waitFor(() => {
+      expect(activeHref(workspace())).toBe("/media/media-1");
+      expect(workspace().state.panes[1]?.widthPx).toBe(DEFAULT_MEDIA_PANE_WIDTH_PX);
+    });
+    flushWorkspaceSession();
+  });
+
   it("reuses an existing resource pane instead of duplicating it", async () => {
     const workspace = await mountWorkspaceStore("/media/media-1");
 
@@ -237,6 +252,31 @@ describe("WorkspaceStoreProvider", () => {
       expect(workspace().state.panes).toHaveLength(2);
       expect(workspace().state.activePaneId).toBe(conversationPaneId);
       expect(activeHref(workspace())).toBe("/conversations/conversation-1?run=run-new");
+    });
+    flushWorkspaceSession();
+  });
+
+  it("preserves resized width when duplicate opens reuse a resource pane", async () => {
+    const workspace = await mountWorkspaceStore("/media/media-1");
+    const paneId = workspace().state.activePaneId;
+
+    act(() => {
+      workspace().resizePane(paneId, 900);
+    });
+    await waitFor(() => {
+      expect(workspace().state.panes[0]?.widthPx).toBe(900);
+    });
+
+    act(() => {
+      workspace().openPane({ href: "/media/media-1?loc=chapter-2" });
+    });
+
+    await waitFor(() => {
+      expect(workspace().state.panes).toHaveLength(1);
+      expect(workspace().state.panes[0]).toMatchObject({
+        href: "/media/media-1?loc=chapter-2",
+        widthPx: 900,
+      });
     });
     flushWorkspaceSession();
   });

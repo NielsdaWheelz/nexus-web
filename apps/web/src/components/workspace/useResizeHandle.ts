@@ -23,6 +23,10 @@ export function useResizeHandle({
   onResizePane,
 }: UseResizeHandleInput): UseResizeHandleReturn {
   const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const clamp = useCallback(
+    (value: number) => Math.min(maxWidthPx, Math.max(minWidthPx, value)),
+    [maxWidthPx, minWidthPx]
+  );
 
   useEffect(
     () => () => {
@@ -51,8 +55,7 @@ export function useResizeHandle({
       };
       const handleMouseMove = (moveEvent: MouseEvent) => {
         const delta = moveEvent.clientX - startX;
-        const nextWidth = Math.min(maxWidthPx, Math.max(minWidthPx, startWidth + delta));
-        onResizePane(paneId, nextWidth);
+        onResizePane(paneId, clamp(startWidth + delta));
       };
       const handleMouseUp = () => {
         cleanup();
@@ -64,17 +67,17 @@ export function useResizeHandle({
       doc.addEventListener("mouseup", handleMouseUp);
       resizeCleanupRef.current = cleanup;
     },
-    [maxWidthPx, minWidthPx, onResizePane, paneId, widthPx]
+    [clamp, onResizePane, paneId, widthPx]
   );
 
   const handleResizeKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (event.key === "ArrowLeft") {
         event.preventDefault();
-        onResizePane(paneId, Math.max(minWidthPx, widthPx - 16));
+        onResizePane(paneId, clamp(widthPx - 16));
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
-        onResizePane(paneId, Math.min(maxWidthPx, widthPx + 16));
+        onResizePane(paneId, clamp(widthPx + 16));
       } else if (event.key === "Home") {
         event.preventDefault();
         onResizePane(paneId, minWidthPx);
@@ -83,7 +86,7 @@ export function useResizeHandle({
         onResizePane(paneId, maxWidthPx);
       }
     },
-    [maxWidthPx, minWidthPx, onResizePane, paneId, widthPx]
+    [clamp, maxWidthPx, minWidthPx, onResizePane, paneId, widthPx]
   );
 
   return { handleResizeMouseDown, handleResizeKeyDown };

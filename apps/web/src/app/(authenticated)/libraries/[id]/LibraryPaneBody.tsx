@@ -57,10 +57,10 @@ import type {
   UserSearchResult,
 } from "@/components/LibraryEditDialog";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import {
   usePaneParam,
   usePaneRouter,
+  usePaneRuntime,
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
@@ -173,6 +173,7 @@ export default function LibraryPaneBody() {
     throw new Error("library route requires an id");
   }
   const router = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   const paneSearchParams = usePaneSearchParams();
   const feedback = useFeedback();
   const [library, setLibrary] = useState<Library | null>(null);
@@ -256,14 +257,12 @@ export default function LibraryPaneBody() {
   const openLibraryEntry = useCallback(
     (href: string, title: string, openInNewPane: boolean) => {
       if (openInNewPane) {
-        if (!requestOpenInAppPane(href, { titleHint: title })) {
-          window.location.assign(href);
-        }
+        paneRuntime?.openInNewPane(href, title);
         return;
       }
       router.push(href, { titleHint: title });
     },
-    [router],
+    [paneRuntime, router],
   );
 
   const handleLibraryEntryRowClick = useCallback(
@@ -735,13 +734,7 @@ export default function LibraryPaneBody() {
       );
       const route = `/conversations/${response.data.id}`;
       const titleHint = response.data.title || library.name;
-      if (
-        !requestOpenInAppPane(route, {
-          titleHint,
-        })
-      ) {
-        router.push(route, { titleHint });
-      }
+      paneRuntime?.openInNewPane(route, titleHint);
     } catch (err) {
       setError(
         toFeedback(err, {
@@ -749,7 +742,7 @@ export default function LibraryPaneBody() {
         }),
       );
     }
-  }, [library, router]);
+  }, [library, paneRuntime]);
 
   const handleOpenMediaChat = useCallback(
     async (media: LibraryMediaEntry) => {
@@ -762,13 +755,7 @@ export default function LibraryPaneBody() {
         });
         const route = `/conversations/${response.data.id}`;
         const titleHint = response.data.title || media.title;
-        if (
-          !requestOpenInAppPane(route, {
-            titleHint,
-          })
-        ) {
-          router.push(route, { titleHint });
-        }
+        paneRuntime?.openInNewPane(route, titleHint);
       } catch (err) {
         setError(
           toFeedback(err, {
@@ -777,7 +764,7 @@ export default function LibraryPaneBody() {
         );
       }
     },
-    [router],
+    [paneRuntime],
   );
 
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {

@@ -68,8 +68,9 @@ title is genuinely unknown, then publish a non-empty title for success, not
 found, and error terminal states. Category labels must not be published as
 resource titles during loading.
 
-`titleHint` from `requestOpenInAppPane(href, { titleHint })` or
-`paneRuntime.router.push(href, { titleHint })` is an optimistic title for the
+`titleHint` from `requestOpenInAppPane(href, { titleHint })`,
+`paneRuntime.router.push(href, { titleHint })`, or
+`paneRuntime.openInNewPane(href, titleHint)` is an optimistic title for the
 target resource. It is useful when the opener already has metadata, such as a
 library row opening a media pane. The hint is sanitized, attached to the pane
 resource key, and superseded by the first runtime title from the pane body.

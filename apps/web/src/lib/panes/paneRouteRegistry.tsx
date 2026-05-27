@@ -21,7 +21,11 @@ import {
   UserRound,
   type LucideIcon,
 } from "lucide-react";
-import { MAX_MEDIA_PANE_WIDTH_PX, parseWorkspaceHref } from "@/lib/workspace/schema";
+import {
+  parseWorkspaceHref,
+  resolvePaneWidthContract,
+  type PaneWidthContract,
+} from "@/lib/workspace/schema";
 import LibrariesPaneBody from "@/app/(authenticated)/libraries/LibrariesPaneBody";
 import LibraryPaneBody from "@/app/(authenticated)/libraries/[id]/LibraryPaneBody";
 import MediaPaneBody from "@/app/(authenticated)/media/[id]/MediaPaneBody";
@@ -98,12 +102,11 @@ interface PaneRouteDefinition {
   icon: LucideIcon;
   resourceRef?: (params: RouteParams) => string | null;
   render: () => ReactNode;
-  bodyMode?: PaneBodyMode;
-  defaultWidthPx?: number;
-  minWidthPx?: number;
-  maxWidthPx?: number;
+  bodyMode: PaneBodyMode;
   getChrome?: (ctx: PaneRouteContext) => PaneChromeDescriptor;
 }
+
+type ResolvedPaneRouteDefinition = PaneRouteDefinition & PaneWidthContract;
 
 export interface ResolvedPaneRoute {
   id: PaneRouteId | "unsupported";
@@ -113,13 +116,9 @@ export interface ResolvedPaneRoute {
   titleMode: "static" | "dynamic";
   resourceRef: string | null;
   render: (() => ReactNode) | null;
-  definition: PaneRouteDefinition | null;
+  definition: ResolvedPaneRouteDefinition | null;
 }
 
-const MIN_STANDARD_PANE_WIDTH_PX = 320;
-const MAX_STANDARD_PANE_WIDTH_PX = 1400;
-const DEFAULT_STANDARD_PANE_WIDTH_PX = 480;
-const DEFAULT_DENSE_LIST_PANE_WIDTH_PX = 560;
 const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
   {
     id: "libraries",
@@ -129,9 +128,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: Library,
     render: () => <LibrariesPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Libraries",
       subtitle: "Mixed collections for podcasts and media.",
@@ -149,9 +145,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     },
     render: () => <LibraryPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Library" }),
   },
   {
@@ -166,9 +159,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     },
     render: () => <MediaPaneBody />,
     bodyMode: "document",
-    defaultWidthPx: 1280,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Media" }),
   },
   {
@@ -179,9 +169,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: MessageSquare,
     render: () => <ConversationsPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Chats",
       subtitle: "Recent conversations with quick-open and delete actions.",
@@ -195,9 +182,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: MessageSquare,
     render: () => <ConversationNewPaneBody />,
     bodyMode: "contained",
-    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({ title: "New chat" }),
   },
   {
@@ -212,9 +196,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     },
     render: () => <ConversationPaneBody />,
     bodyMode: "contained",
-    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Chat",
       subtitle: "Conversation transcript and composer.",
@@ -228,9 +209,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: Compass,
     render: () => <BrowsePaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Browse",
       subtitle: "Search globally for podcasts, episodes, videos, and documents.",
@@ -244,9 +222,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: Mic,
     render: () => <PodcastsPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Podcasts",
       subtitle: "Followed shows, library membership, and subscription controls.",
@@ -264,9 +239,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     },
     render: () => <PodcastDetailPaneBody />,
     bodyMode: "document",
-    defaultWidthPx: 960,
-    minWidthPx: 760,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Podcast" }),
   },
   {
@@ -277,9 +249,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: Search,
     render: () => <SearchPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Search",
       subtitle: "Search across authors, media, podcasts, evidence, notes, and chat.",
@@ -297,9 +266,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     },
     render: () => <AuthorPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Author" }),
   },
   {
@@ -310,9 +276,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: FileText,
     render: () => <NotesPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Notes" }),
   },
   {
@@ -324,9 +287,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     resourceRef: (params) => (params.pageId ? `page:${params.pageId}` : null),
     render: () => <PagePaneBody />,
     bodyMode: "document",
-    defaultWidthPx: 760,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Page" }),
   },
   {
@@ -338,9 +298,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     resourceRef: (params) => (params.blockId ? `note_block:${params.blockId}` : null),
     render: () => <NotePaneBody />,
     bodyMode: "document",
-    defaultWidthPx: 760,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Note" }),
   },
   {
@@ -351,9 +308,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: CalendarDays,
     render: () => <DailyNotePaneBody />,
     bodyMode: "document",
-    defaultWidthPx: 760,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Today" }),
   },
   {
@@ -365,9 +319,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     resourceRef: (params) => (params.localDate ? `daily:${params.localDate}` : null),
     render: () => <DailyNotePaneBody />,
     bodyMode: "document",
-    defaultWidthPx: 760,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({ title: "Daily note" }),
   },
   {
@@ -378,9 +329,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: Settings,
     render: () => <SettingsPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Settings",
       subtitle: "Account-level controls and integration configuration.",
@@ -394,9 +342,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: CreditCard,
     render: () => <SettingsBillingPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Billing",
       subtitle: "Plan, usage, and Stripe subscription management.",
@@ -410,9 +355,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: BookOpen,
     render: () => <SettingsReaderPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Reader",
       subtitle: "Typography, layout, and display preferences for reading.",
@@ -426,9 +368,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: Palette,
     render: () => <SettingsAppearancePaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Appearance",
       subtitle: "Light, dark, or follow your operating system.",
@@ -442,9 +381,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: KeyRound,
     render: () => <SettingsKeysPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "API Keys",
       subtitle: "Connect provider keys without storing plaintext in the browser.",
@@ -458,9 +394,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: FolderOpen,
     render: () => <SettingsLocalVaultPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () =>
       isAndroidShell()
         ? {
@@ -481,9 +414,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: Link2,
     render: () => <SettingsIdentitiesPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Linked Identities",
       subtitle: "Manage Google and GitHub identities linked to this account.",
@@ -497,9 +427,6 @@ const ROUTE_DEFINITIONS: PaneRouteDefinition[] = [
     icon: Keyboard,
     render: () => <KeybindingsPaneBody />,
     bodyMode: "standard",
-    defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
-    minWidthPx: MIN_STANDARD_PANE_WIDTH_PX,
-    maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
     getChrome: () => ({
       title: "Keyboard Shortcuts",
       subtitle: "Customize key bindings for palette actions.",
@@ -583,7 +510,7 @@ export function resolvePaneRoute(href: string): ResolvedPaneRoute {
       titleMode: definition.titleMode,
       resourceRef: definition.resourceRef?.(params) ?? null,
       render: definition.render,
-      definition,
+      definition: { ...definition, ...resolvePaneWidthContract(href) },
     };
   }
   return {

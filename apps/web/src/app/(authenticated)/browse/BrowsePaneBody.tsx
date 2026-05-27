@@ -15,8 +15,11 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { apiFetch } from "@/lib/api/client";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
-import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
-import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import {
+  usePaneRouter,
+  usePaneRuntime,
+  usePaneSearchParams,
+} from "@/lib/panes/paneRuntime";
 import {
   subscribeToPodcast,
   toPodcastContributorInputs,
@@ -54,6 +57,7 @@ import styles from "./page.module.css";
 
 export default function BrowsePaneBody() {
   const paneRouter = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   const paneSearchParams = usePaneSearchParams();
   const appliedQuery = normalizeBrowseQuery(paneSearchParams.get("q"));
   const visibleTypes = parseVisibleTypes(paneSearchParams);
@@ -158,7 +162,7 @@ export default function BrowsePaneBody() {
     const titleHint =
       result.type === "podcasts" ? result.title : result.podcast_title;
     if (result.podcast_id) {
-      requestOpenInAppPane(`/podcasts/${result.podcast_id}`, { titleHint });
+      paneRuntime?.openInNewPane(`/podcasts/${result.podcast_id}`, titleHint);
       return;
     }
 
@@ -208,7 +212,7 @@ export default function BrowsePaneBody() {
             ),
         ),
       );
-      requestOpenInAppPane(`/podcasts/${podcastId}`, { titleHint });
+      paneRuntime?.openInNewPane(`/podcasts/${podcastId}`, titleHint);
     } catch (openError) {
       setError(toFeedback(openError, { fallback: "Failed to open podcast" }));
     } finally {
@@ -257,9 +261,7 @@ export default function BrowsePaneBody() {
     libraryIds: string[] = [],
   ) {
     if (result.media_id) {
-      requestOpenInAppPane(`/media/${result.media_id}`, {
-        titleHint: result.title,
-      });
+      paneRuntime?.openInNewPane(`/media/${result.media_id}`, result.title);
       return;
     }
 
@@ -290,9 +292,7 @@ export default function BrowsePaneBody() {
           );
         }),
       );
-      requestOpenInAppPane(`/media/${added.mediaId}`, {
-        titleHint: result.title,
-      });
+      paneRuntime?.openInNewPane(`/media/${added.mediaId}`, result.title);
     } catch (addError) {
       setError(toFeedback(addError, { fallback: "Failed to add result" }));
     } finally {

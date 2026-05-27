@@ -1,4 +1,13 @@
 import { describe, expect, it } from "vitest";
+import {
+  DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+  DEFAULT_MEDIA_PANE_WIDTH_PX,
+  DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
+  DEFAULT_STANDARD_PANE_WIDTH_PX,
+  MAX_MEDIA_PANE_WIDTH_PX,
+  MIN_PODCAST_DETAIL_PANE_WIDTH_PX,
+  resolvePaneWidthContract,
+} from "@/lib/workspace/schema";
 import { getParentHref, resolvePaneRoute } from "./paneRouteRegistry";
 
 describe("pane route registry", () => {
@@ -71,5 +80,57 @@ describe("pane route registry", () => {
   it("returns the unsupported placeholder for full-screen Oracle routes", () => {
     expect(resolvePaneRoute("/oracle").id).toBe("unsupported");
     expect(resolvePaneRoute("/oracle/reading-1").id).toBe("unsupported");
+  });
+
+  it("declares width contracts on representative routes", () => {
+    expect(resolvePaneRoute("/libraries").definition).toMatchObject({
+      defaultWidthPx: DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+    });
+    expect(resolvePaneRoute("/media/media-1").definition).toMatchObject({
+      defaultWidthPx: DEFAULT_MEDIA_PANE_WIDTH_PX,
+      maxWidthPx: MAX_MEDIA_PANE_WIDTH_PX,
+    });
+    expect(resolvePaneRoute("/podcasts/podcast-1").definition).toMatchObject({
+      defaultWidthPx: DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
+      minWidthPx: MIN_PODCAST_DETAIL_PANE_WIDTH_PX,
+    });
+    expect(resolvePaneRoute("/settings").definition).toMatchObject({
+      defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+    });
+    expect(resolvePaneWidthContract("/oracle")).toMatchObject({
+      defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+    });
+  });
+
+  it("keeps route metadata aligned with workspace width policy", () => {
+    for (const href of [
+      "/libraries",
+      "/libraries/lib-1",
+      "/media/media-1",
+      "/conversations",
+      "/conversations/new",
+      "/conversations/conversation-1",
+      "/browse",
+      "/podcasts",
+      "/podcasts/podcast-1",
+      "/search",
+      "/authors/ursula-k-le-guin",
+      "/notes",
+      "/notes/block-1",
+      "/pages/page-1",
+      "/daily",
+      "/daily/2026-05-06",
+      "/settings",
+      "/settings/reader",
+      "/settings/billing",
+      "/settings/appearance",
+      "/settings/keys",
+      "/settings/local-vault",
+      "/settings/identities",
+      "/settings/keybindings",
+    ]) {
+      const route = resolvePaneRoute(href);
+      expect(route.definition).toMatchObject(resolvePaneWidthContract(href));
+    }
   });
 });

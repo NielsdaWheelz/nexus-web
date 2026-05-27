@@ -34,7 +34,9 @@ import ChatSurface from "@/components/chat/ChatSurface";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
-import SecondaryRail from "@/components/secondaryRail/SecondaryRail";
+import SecondaryRail, {
+  SECONDARY_RAIL_COLLAPSED_WIDTH_PX,
+} from "@/components/secondaryRail/SecondaryRail";
 import Button from "@/components/ui/Button";
 import type {
   BranchDraft,
@@ -57,6 +59,7 @@ import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
   usePaneParam,
   usePaneRouter,
+  usePaneRuntime,
   usePaneSearchParams,
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
@@ -78,6 +81,7 @@ type Conversation = ConversationSummary;
 
 type ChatRunData = ChatRunResponse["data"];
 
+const CHAT_CONTEXT_RAIL_WIDTH_PX = 320;
 
 // ============================================================================
 // ConversationPaneBody — chat view with inline linked-context surface
@@ -155,6 +159,7 @@ function ChatView({
 }) {
   const isMobileViewport = useIsMobileViewport();
   const router = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [forkOptionsByParentId, setForkOptionsByParentId] = useState<
@@ -759,6 +764,22 @@ function ChatView({
     }),
   });
 
+  useEffect(() => {
+    if (!paneRuntime) return;
+    if (isMobileViewport) {
+      paneRuntime.setPaneExtraWidth(0);
+      return;
+    }
+    paneRuntime.setPaneExtraWidth(
+      contextRailExpanded
+        ? CHAT_CONTEXT_RAIL_WIDTH_PX
+        : SECONDARY_RAIL_COLLAPSED_WIDTH_PX
+    );
+    return () => {
+      paneRuntime.setPaneExtraWidth(0);
+    };
+  }, [contextRailExpanded, isMobileViewport, paneRuntime]);
+
   // --------------------------------------------------------------------------
   // Render
   // --------------------------------------------------------------------------
@@ -825,7 +846,7 @@ function ChatView({
             ariaLabel="Chat context"
             expanded={contextRailExpanded}
             onExpandedChange={setContextRailExpanded}
-            expandedWidthPx={320}
+            expandedWidthPx={CHAT_CONTEXT_RAIL_WIDTH_PX}
             bodyClassName={styles.chatSecondaryRailBody}
             collapsed={
               <Button

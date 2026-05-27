@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+  DEFAULT_MEDIA_PANE_WIDTH_PX,
+  DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
+  DEFAULT_STANDARD_PANE_WIDTH_PX,
   MAX_MEDIA_PANE_WIDTH_PX,
   MAX_PANES,
   MAX_STANDARD_PANE_WIDTH_PX,
@@ -7,6 +11,7 @@ import {
   WORKSPACE_SCHEMA_VERSION,
   createDefaultWorkspaceState,
   normalizeWorkspaceHref,
+  resolvePaneWidthContract,
   sanitizeWorkspaceState,
 } from "@/lib/workspace/schema";
 
@@ -16,7 +21,7 @@ describe("workspace schema", () => {
     expect(state.schemaVersion).toBe(WORKSPACE_SCHEMA_VERSION);
     expect(state.panes).toHaveLength(1);
     expect(state.panes[0]?.href).toBe("/media/abc");
-    expect(state.panes[0]?.widthPx).toBe(480);
+    expect(state.panes[0]?.widthPx).toBe(DEFAULT_MEDIA_PANE_WIDTH_PX);
     expect(state.panes[0]?.visibility).toBe("visible");
     expect(state.activePaneId).toBe(state.panes[0]?.id);
   });
@@ -81,6 +86,48 @@ describe("workspace schema", () => {
     expect(state.panes[0]?.widthPx).toBe(MIN_PANE_WIDTH_PX);
     expect(state.panes[1]?.widthPx).toBe(MAX_MEDIA_PANE_WIDTH_PX);
     expect(state.panes[2]?.widthPx).toBe(MAX_STANDARD_PANE_WIDTH_PX);
+  });
+
+  it("uses route defaults when a persisted pane omits widthPx", () => {
+    const state = sanitizeWorkspaceState(
+      {
+        schemaVersion: WORKSPACE_SCHEMA_VERSION,
+        activePaneId: "pane-1",
+        panes: [
+          { id: "pane-1", href: "/media/1", visibility: "visible" },
+          { id: "pane-2", href: "/libraries", visibility: "visible" },
+          { id: "pane-3", href: "/podcasts/p1", visibility: "visible" },
+          { id: "pane-4", href: "/settings", visibility: "visible" },
+        ],
+      },
+      { fallbackHref: "/libraries" }
+    );
+    expect(state.panes.map((pane) => pane.widthPx)).toEqual([
+      DEFAULT_MEDIA_PANE_WIDTH_PX,
+      DEFAULT_DENSE_LIST_PANE_WIDTH_PX,
+      DEFAULT_PODCAST_DETAIL_PANE_WIDTH_PX,
+      DEFAULT_STANDARD_PANE_WIDTH_PX,
+    ]);
+  });
+
+  it("uses the standard width contract for unsupported route shapes", () => {
+    for (const href of [
+      "/media",
+      "/pages",
+      "/pages/a/b",
+      "/daily/a/b",
+      "/notes/a/b",
+      "/podcasts/a/b",
+      "/libraries/one/two",
+      "/authors",
+      "/authors/a/b",
+    ]) {
+      expect(resolvePaneWidthContract(href)).toMatchObject({
+        defaultWidthPx: DEFAULT_STANDARD_PANE_WIDTH_PX,
+        minWidthPx: MIN_PANE_WIDTH_PX,
+        maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
+      });
+    }
   });
 
   it("keeps minimized panes when the active pane is visible", () => {

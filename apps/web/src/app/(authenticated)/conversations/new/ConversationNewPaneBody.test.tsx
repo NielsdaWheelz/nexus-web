@@ -156,6 +156,7 @@ describe("ConversationNewPaneBody", () => {
     expect(onReplacePane).toHaveBeenCalledWith(
       "pane-1",
       "/conversations/conversation-1?run=run-1",
+      undefined,
     );
   });
 
@@ -229,6 +230,60 @@ describe("ConversationNewPaneBody", () => {
     expect(onReplacePane).toHaveBeenCalledWith(
       "pane-1",
       "/conversations/conversation-1?run=run-1",
+      undefined,
     );
+  });
+
+  it("publishes chat context rail width as pane extra width", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 1200,
+      writable: true,
+    });
+    const user = userEvent.setup();
+    const onSetPaneExtraWidth = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = pathOf(input);
+        if (path === "/api/models") {
+          return jsonResponse(MODELS_RESPONSE);
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      }),
+    );
+
+    const href = "/conversations/new";
+    const { unmount } = render(
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        href={href}
+        routeId="conversation-new"
+        resourceRef={null}
+        resourceKey={resolvePaneRouteIdentity(href).resourceKey}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+        onSetPaneTitle={vi.fn()}
+        onSetPaneExtraWidth={(_paneId, widthPx) => onSetPaneExtraWidth(widthPx)}
+      >
+        <ConversationNewPaneBody />
+      </PaneRuntimeProvider>,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(onSetPaneExtraWidth).toHaveBeenCalledWith(320);
+    });
+
+    await user.click(screen.getByRole("button", { name: "Collapse secondary rail" }));
+    await waitFor(() => {
+      expect(onSetPaneExtraWidth).toHaveBeenCalledWith(36);
+    });
+
+    unmount();
+    expect(onSetPaneExtraWidth).toHaveBeenLastCalledWith(0);
   });
 });
