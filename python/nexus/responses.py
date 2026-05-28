@@ -58,6 +58,14 @@ async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle ApiError exceptions and return proper JSON response."""
     if not isinstance(exc, ApiError):
         raise exc
+    logger.warning(
+        "api_error",
+        code=exc.code.value,
+        status=exc.status_code,
+        message=exc.message,
+        path=request.url.path,
+        method=request.method,
+    )
     return JSONResponse(
         status_code=exc.status_code,
         content=error_response(exc.code, exc.message),
