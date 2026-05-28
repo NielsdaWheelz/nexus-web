@@ -26,7 +26,6 @@ import re
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
-from urllib.parse import urlencode
 from uuid import UUID
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -3679,26 +3678,30 @@ def _result_deep_link(result: InternalSearchResult) -> str:
     if isinstance(result, _RankedPageResult):
         return f"/pages/{result.id}"
     if isinstance(result, _RankedContentChunkResult):
-        params = result.resolver.get("params")
-        if not isinstance(params, dict):
-            raise AssertionError("Content chunk resolver params must be an object")
+        # Resolver always seeds params["evidence"] with the span id (see
+        # locator_resolver.resolve_evidence_span); route is /media/<media_id>.
         route = result.resolver.get("route")
+        params = result.resolver.get("params")
         if not isinstance(route, str) or not route:
             raise AssertionError("Content chunk resolver route is required")
-        query = urlencode(params)
-        return f"{route}?{query}" if query else route
+        if not isinstance(params, dict):
+            raise AssertionError("Content chunk resolver params must be an object")
+        evidence_id = params.get("evidence")
+        if not isinstance(evidence_id, str) or not evidence_id:
+            raise AssertionError("Content chunk resolver params must include evidence id")
+        return f"{route}#evidence-{evidence_id}"
     if isinstance(result, _RankedFragmentResult):
-        return f"/media/{result.source.media_id}?fragment={result.id}"
+        return f"/media/{result.source.media_id}#fragment-{result.id}"
     if isinstance(result, _RankedNoteBlockResult):
         return f"/notes/{result.id}"
     if isinstance(result, _RankedHighlightResult):
-        return f"/media/{result.source.media_id}?highlight={result.id}"
+        return f"/media/{result.source.media_id}#highlight-{result.id}"
     if isinstance(result, _RankedMessageResult):
         return f"/conversations/{result.conversation_id}"
     if isinstance(result, _RankedConversationResult):
         return f"/conversations/{result.id}"
     if isinstance(result, _RankedEvidenceSpanResult):
-        return f"/media/{result.source.media_id}?evidence={result.id}"
+        return f"/media/{result.source.media_id}#evidence-{result.id}"
     if isinstance(result, _RankedWebResult):
         return result.url
     raise AssertionError(f"Unknown search result type: {type(result).__name__}")

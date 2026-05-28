@@ -72,7 +72,7 @@ describe("SearchResultRow", () => {
   it("renders emphasized snippet segments for non-highlight rows", () => {
     const row: SearchResultRowViewModel = {
       key: "content_chunk-chunk-1",
-      href: "/media/media-1?evidence=span-1&page=12",
+      href: "/media/media-1#evidence-span-1",
       type: "content_chunk",
       mediaId: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
       contextRef: {

@@ -662,7 +662,7 @@ describe("ConversationPaneBody", () => {
               title: "Moby-Dick",
               source_label: "Chapter 1",
               snippet: "Call me Ishmael",
-              deep_link: `/media/${EPUB_MEDIA_ID}?fragment=fragment-1`,
+              deep_link: `/media/${EPUB_MEDIA_ID}#fragment-fragment-1`,
               citation_label: "Chapter 1",
               context_ref: {
                 type: "content_chunk",
@@ -678,7 +678,7 @@ describe("ConversationPaneBody", () => {
               selected: true,
               source_kind: "epub",
             },
-            deep_link: `/media/${EPUB_MEDIA_ID}?fragment=fragment-1`,
+            deep_link: `/media/${EPUB_MEDIA_ID}#fragment-fragment-1`,
             locator,
             score: 0.92,
             selected: true,

@@ -21,10 +21,6 @@
   transition: outline-color var(--duration-fast) var(--ease-glide);
 }
 
-.citationButton {
-  appearance: none;
-}
-
 .citation:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;

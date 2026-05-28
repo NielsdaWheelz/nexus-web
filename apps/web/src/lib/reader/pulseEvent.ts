@@ -8,6 +8,7 @@ export const READER_PULSE_HIGHLIGHT = "nexus:reader-pulse-highlight";
 export interface ReaderPulseTarget {
   mediaId: string;
   highlightId?: string;
+  evidenceSpanId?: string;
   locator: RetrievalLocator;
   snippet: string | null;
   sourceVersion: string;

@@ -1,6 +1,11 @@
 import type { ReaderCitationData } from "@/components/ui/MarkdownMessage";
 import type { ReaderCitationColor } from "@/components/ui/ReaderCitation";
-import { hrefFromPinned, readerTargetFromPinned, readerTargetFromRetrieval } from "./readerTarget";
+import {
+  hrefForReaderTarget,
+  hrefFromPinned,
+  readerTargetFromPinned,
+  readerTargetFromRetrieval,
+} from "./readerTarget";
 import type {
   CitationIndexEntry,
   ConversationMessage,
@@ -85,6 +90,15 @@ export function buildCitations(
     const retrieval = byKey.get(`${entry.tool_call_id}:${entry.ordinal}`);
     if (!retrieval) continue;
     const target = readerTargetFromRetrieval(retrieval);
+    const href =
+      retrieval.deep_link ??
+      (retrieval.media_id
+        ? hrefForReaderTarget({
+            media_id: retrieval.media_id,
+            evidence_span_id: retrieval.evidence_span_id,
+            locator: retrieval.locator,
+          })
+        : null);
     citations.push({
       index: entry.n,
       color: citationColor(entry.n),
@@ -95,7 +109,7 @@ export function buildCitations(
           .filter((v): v is string => Boolean(v)),
       },
       target,
-      href: retrieval.deep_link ?? null,
+      href,
     });
   }
   return citations;

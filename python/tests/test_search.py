@@ -1353,7 +1353,7 @@ class TestSearchResultFormat:
             assert result["source"]["media_kind"] == "web_article"
             assert result["media_id"] == str(media_id)
             assert result["media_kind"] == "web_article"
-            assert result["deep_link"].startswith(f"/media/{media_id}?")
+            assert result["deep_link"].startswith(f"/media/{media_id}#evidence-")
             assert result["citation_label"] == "Source"
             assert result["locator"]["type"] == "web_text_offsets"
             assert result["locator"]["media_id"] == str(media_id)

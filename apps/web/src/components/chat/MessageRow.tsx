@@ -43,7 +43,10 @@ interface MessageRowProps {
   retryAssistantMessageId?: string;
   retryingAssistantMessageIds?: Set<string>;
   onRetryAssistantResponse?: (assistantMessageId: string) => void;
-  onReaderSourceActivate?: (target: ReaderSourceTarget) => void;
+  onReaderSourceActivate?: (
+    target: ReaderSourceTarget,
+    event?: React.MouseEvent,
+  ) => void;
 }
 
 function formatTime(iso: string): string {
@@ -76,16 +79,17 @@ export function MessageRow({
   onReaderSourceActivate,
 }: MessageRowProps) {
   const activateTarget = useCallback(
-    (target: ReaderSourceTarget) => {
+    (target: ReaderSourceTarget, event?: React.MouseEvent) => {
       dispatchReaderPulse({
         mediaId: target.media_id,
+        evidenceSpanId: target.evidence_span_id ?? undefined,
         locator: target.locator,
         snippet: target.snippet,
         sourceVersion: target.source_version,
         highlightBehavior: target.highlight_behavior,
         focusBehavior: target.focus_behavior,
       });
-      onReaderSourceActivate?.(target);
+      onReaderSourceActivate?.(target, event);
     },
     [onReaderSourceActivate],
   );

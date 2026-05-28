@@ -44,7 +44,7 @@ export default function ReaderCitation({
   preview: ReaderCitationPreview;
   target: ReaderSourceTarget | null;
   href?: string | null;
-  onActivate: (target: ReaderSourceTarget) => void;
+  onActivate: (target: ReaderSourceTarget, event?: React.MouseEvent) => void;
   ariaLabel?: string;
 }) {
   const [showPreview, setShowPreview] = useState(false);
@@ -108,7 +108,7 @@ export default function ReaderCitation({
                 className={styles.previewAction}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onActivate(activationTarget);
+                  onActivate(activationTarget, event);
                   closePreview();
                 }}
               >
@@ -179,22 +179,27 @@ export default function ReaderCitation({
   }
 
   if (activationTarget) {
+    const canonicalHashHref = activationTarget.href ?? href ?? `/media/${activationTarget.media_id}`;
     return (
       <>
-        <button
+        <a
           ref={(element) => {
             citationRef.current = element;
           }}
-          type="button"
-          className={`${className} ${styles.citationButton}`}
+          className={className}
+          href={canonicalHashHref}
           aria-label={label}
           onPointerEnter={openWithDelay}
           onPointerLeave={cancelHoverTimer}
           onFocus={openWithDelay}
-          onClick={() => onActivate(activationTarget)}
+          onClick={(event) => {
+            if (event.metaKey || event.ctrlKey || event.altKey || event.button !== 0) return;
+            event.preventDefault();
+            onActivate(activationTarget, event);
+          }}
         >
           {index}
-        </button>
+        </a>
         {previewNode}
       </>
     );

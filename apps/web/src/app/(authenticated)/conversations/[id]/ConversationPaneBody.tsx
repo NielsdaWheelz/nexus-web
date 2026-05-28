@@ -26,6 +26,7 @@ import ChatContextDrawer from "@/components/chat/ChatContextDrawer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import PinnedSourcesTray from "@/components/chat/PinnedSourcesTray";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
+import { hrefForReaderTarget } from "@/lib/conversations/readerTarget";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import ConversationContextPane from "@/components/ConversationContextPane";
 import SecondaryRail, {
@@ -654,10 +655,22 @@ function ChatView({
   );
 
   const handleReaderSourceActivate = useCallback(
-    (target: ReaderSourceTarget) => {
-      router.push(target.href || `/media/${target.media_id}`);
+    (target: ReaderSourceTarget, event?: React.MouseEvent) => {
+      const href =
+        target.href ??
+        hrefForReaderTarget({
+          media_id: target.media_id,
+          evidence_span_id: target.evidence_span_id,
+          locator: target.locator,
+        });
+      if (event?.shiftKey) {
+        paneRuntime?.openInNewPane(href);
+        return;
+      }
+      if (paneRuntime?.resourceRef === `media:${target.media_id}`) return;
+      router.push(href);
     },
-    [router],
+    [paneRuntime, router],
   );
 
   usePaneChromeOverride({

@@ -176,7 +176,7 @@ describe("fetchSearchResultPage", () => {
               contributors: [],
               published_date: null,
             },
-            deep_link: "/media/media-pdf-1?evidence=span-1&page=12",
+            deep_link: "/media/media-pdf-1#evidence-span-1",
             source_version: "pdf-source:v1",
             citation_label: "p. 12",
             context_ref: {
@@ -208,7 +208,7 @@ describe("fetchSearchResultPage", () => {
 
     expect(page.rows).toHaveLength(1);
     expect(page.rows[0]).toMatchObject({
-      href: "/media/media-pdf-1?evidence=span-1&page=12",
+      href: "/media/media-pdf-1#evidence-span-1",
       type: "content_chunk",
       typeLabel: "p. 12",
       primaryText: "section text",
@@ -273,7 +273,7 @@ describe("fetchSearchResultPage", () => {
         contributors: [],
         published_date: null,
       },
-      deep_link: "/media/media-pdf-1?evidence=span-1&page=12",
+      deep_link: "/media/media-pdf-1#evidence-span-1",
       source_version: "pdf-source:v1",
       citation_label: "p. 12",
       context_ref: {
@@ -373,7 +373,7 @@ describe("fetchSearchResultPage", () => {
             source_label: "Reader Source - web article",
             media_id: "media-1",
             media_kind: "web_article",
-            deep_link: "/media/media-1?highlight=highlight-1",
+            deep_link: "/media/media-1#highlight-highlight-1",
             context_ref: { type: "highlight", id: "highlight-1" },
             color: "yellow",
             exact: "important saved quote",
@@ -410,7 +410,7 @@ describe("fetchSearchResultPage", () => {
     expect(page.rows).toHaveLength(1);
     expect(page.rows[0]).toMatchObject({
       key: "highlight-highlight-1",
-      href: "/media/media-1?highlight=highlight-1",
+      href: "/media/media-1#highlight-highlight-1",
       type: "highlight",
       contextRef: {
         type: "highlight",
@@ -435,7 +435,7 @@ describe("fetchSearchResultPage", () => {
             source_label: "Reader Source - section 2",
             media_id: "media-1",
             media_kind: "web_article",
-            deep_link: "/media/media-1?fragment=fragment-1",
+            deep_link: "/media/media-1#fragment-fragment-1",
             context_ref: { type: "fragment", id: "fragment-1" },
             source_version: "fragment:fragment-1",
             citation_label: "fragment 1",
@@ -471,7 +471,7 @@ describe("fetchSearchResultPage", () => {
     expect(page.rows).toHaveLength(1);
     expect(page.rows[0]).toMatchObject({
       key: "fragment-fragment-1",
-      href: "/media/media-1?fragment=fragment-1",
+      href: "/media/media-1#fragment-fragment-1",
       type: "fragment",
       contextRef: {
         type: "fragment",

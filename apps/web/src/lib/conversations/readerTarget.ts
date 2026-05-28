@@ -1,10 +1,35 @@
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
-import { isRetrievalLocator } from "@/lib/api/sse/locators";
+import { isRetrievalLocator, type RetrievalLocator } from "@/lib/api/sse/locators";
 import type {
   ConversationPinnedSource,
   MessageContextSnapshot,
   MessageRetrieval,
 } from "./types";
+
+export function hrefForReaderTarget(input: {
+  media_id: string;
+  evidence_span_id?: string | null;
+  locator?: RetrievalLocator | null;
+  highlight_id?: string | null;
+}): string {
+  const base = `/media/${input.media_id}`;
+  if (input.evidence_span_id) return `${base}#evidence-${input.evidence_span_id}`;
+  if (input.highlight_id) return `${base}#highlight-${input.highlight_id}`;
+  const locator = input.locator;
+  if (
+    locator &&
+    (locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets")
+  ) {
+    return `${base}#fragment-${locator.fragment_id}`;
+  }
+  if (locator && locator.type === "pdf_page_geometry") {
+    return `${base}#page-${locator.page_number}`;
+  }
+  if (locator && locator.type === "transcript_time_range") {
+    return `${base}#t-${locator.t_start_ms}`;
+  }
+  return base;
+}
 
 export function readerTargetFromContext(
   context: MessageContextSnapshot,
@@ -51,7 +76,10 @@ export function readerTargetFromPinned(
     focus_behavior: "scroll_into_view",
     status: "attached_context",
     label: pin.title,
-    href: null,
+    href: hrefForReaderTarget({
+      media_id: pin.target_id,
+      locator: pin.locator,
+    }),
     context_id: null,
   };
 }
@@ -59,6 +87,16 @@ export function readerTargetFromPinned(
 export function hrefFromPinned(pin: ConversationPinnedSource): string | null {
   if (pin.kind === "media" && pin.target_id) return `/media/${pin.target_id}`;
   if (pin.kind === "library" && pin.target_id) return `/libraries/${pin.target_id}`;
+  if (
+    pin.kind === "reader_selection" &&
+    pin.target_id &&
+    isRetrievalLocator(pin.locator)
+  ) {
+    return hrefForReaderTarget({
+      media_id: pin.target_id,
+      locator: pin.locator,
+    });
+  }
   return null;
 }
 
@@ -82,7 +120,13 @@ export function readerTargetFromRetrieval(
     focus_behavior: "scroll_into_view",
     status: retrieval.retrieval_status ?? "retrieved",
     label: retrieval.source_title ?? undefined,
-    href: retrieval.deep_link ?? null,
+    href:
+      retrieval.deep_link ??
+      hrefForReaderTarget({
+        media_id: retrieval.media_id,
+        evidence_span_id: retrieval.evidence_span_id,
+        locator: retrieval.locator,
+      }),
     evidence_span_id: retrieval.evidence_span_id ?? null,
     evidence_id: retrieval.id,
   };

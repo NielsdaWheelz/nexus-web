@@ -85,7 +85,7 @@ describe("retrieval citation contract", () => {
         title: "Article",
         source_label: "Fragment",
         snippet: "match",
-        deep_link: "/media/media-1?fragment=fragment-1",
+        deep_link: "/media/media-1#fragment-fragment-1",
         context_ref: {
           type: "fragment",
           id: "fragment-1",

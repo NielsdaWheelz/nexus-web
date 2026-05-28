@@ -597,7 +597,7 @@ def test_hydrate_fragment_object_ref_returns_media_fragment_route(db_session, bo
     assert ref.object_type == "fragment"
     assert ref.object_id == fragment_id
     assert ref.label == "Fragment 1"
-    assert ref.route == f"/media/{media_id}?fragment={fragment_id}"
+    assert ref.route == f"/media/{media_id}#fragment-{fragment_id}"
     assert "Fragment route passage" in (ref.snippet or "")
     assert ref.icon == "text"
 

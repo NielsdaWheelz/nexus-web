@@ -87,8 +87,6 @@ import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import {
   usePaneParam,
-  usePaneRouter,
-  usePaneSearchParams,
   useSetPaneTitle,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
@@ -168,7 +166,6 @@ import type { ContributorCredit } from "@/lib/contributors/types";
 import { buildCompactMediaPaneTitle } from "./mediaFormatting";
 import {
   type NavigationTocNodeLike,
-  buildEpubLocationHref,
   resolveEpubInternalLinkTarget,
   resolveSectionAnchorId,
 } from "./epubHelpers";
@@ -185,6 +182,8 @@ import {
   dispatchReaderPulse,
   type ReaderPulseTarget,
 } from "@/lib/reader/pulseEvent";
+import { useReaderTarget } from "@/lib/reader/useReaderTarget";
+import ReaderTargetDismissChip from "@/components/reader/ReaderTargetDismissChip";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import styles from "./page.module.css";
@@ -419,18 +418,25 @@ export default function MediaPaneBody({
     throw new Error("media route requires an id");
   }
 
-  const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
-  const searchParams = usePaneSearchParams();
   const paneMobileChrome = usePaneMobileChromeController();
-  const requestedFragmentId = searchParams.get("fragment");
-  const requestedHighlightId = searchParams.get("highlight");
-  const requestedEvidenceId = searchParams.get("evidence");
-  const requestedReaderLoc = searchParams.get("loc");
-  const requestedPdfPageNumber = parsePositivePageNumber(
-    searchParams.get("page"),
-  );
-  const requestedStartMs = parseNonnegativeMs(searchParams.get("t_start_ms"));
+  const {
+    target,
+    status: targetStatus,
+    setTarget,
+    markActive,
+    clearTarget,
+  } = useReaderTarget(id);
+  const requestedFragmentId =
+    target?.kind === "fragment" ? target.value : null;
+  const requestedHighlightId =
+    target?.kind === "highlight" ? target.value : null;
+  const requestedEvidenceId =
+    target?.kind === "evidence" ? target.value : null;
+  const requestedReaderLoc = target?.kind === "loc" ? target.value : null;
+  const requestedPdfPageNumber =
+    target?.kind === "page" ? Number(target.value) : null;
+  const requestedStartMs = target?.kind === "t" ? Number(target.value) : null;
   const feedback = useFeedback();
   const isMobileViewport = useIsMobileViewport();
   const {
@@ -572,7 +578,6 @@ export default function MediaPaneBody({
   const [readerSourceTarget, setReaderSourceTarget] =
     useState<ReaderSourceTarget | null>(null);
   const [pdfRefreshToken, setPdfRefreshToken] = useState(0);
-  const suppressTranscriptUrlRequestRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!requestedEvidenceId) {
@@ -634,21 +639,11 @@ export default function MediaPaneBody({
     resolvedEvidenceHighlight.t_end_ms >= 0
       ? resolvedEvidenceHighlight.t_end_ms
       : null);
-  const transcriptUrlRequestSignature = [
-    requestedEvidenceId ?? "",
-    requestedFragmentId ?? resolvedEvidenceFragmentId ?? "",
-    requestedStartMs ?? resolvedEvidenceStartMs ?? "",
-  ].join("\u001f");
-  const suppressingCurrentTranscriptUrlRequest =
-    suppressTranscriptUrlRequestRef.current === transcriptUrlRequestSignature;
-  const activeRequestedFragmentId = suppressingCurrentTranscriptUrlRequest
-    ? null
-    : (requestedFragmentId ?? resolvedEvidenceFragmentId);
+  const activeRequestedFragmentId =
+    requestedFragmentId ?? resolvedEvidenceFragmentId;
   const activeRequestedReaderLoc =
     requestedReaderLoc ?? resolvedEvidenceReaderLoc;
-  const activeRequestedStartMs = suppressingCurrentTranscriptUrlRequest
-    ? null
-    : (requestedStartMs ?? resolvedEvidenceStartMs);
+  const activeRequestedStartMs = requestedStartMs ?? resolvedEvidenceStartMs;
   const activeRequestedPdfPageNumber =
     requestedPdfPageNumber ??
     parsePositivePageNumber(resolvedEvidenceParams?.page);
@@ -668,32 +663,6 @@ export default function MediaPaneBody({
   const mismatchToastFragmentRef = useRef<string | null>(null);
   const mismatchLoggedFragmentRef = useRef<string | null>(null);
   const webSectionScrollKeyRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (
-      suppressTranscriptUrlRequestRef.current &&
-      suppressTranscriptUrlRequestRef.current !== transcriptUrlRequestSignature
-    ) {
-      suppressTranscriptUrlRequestRef.current = null;
-      return;
-    }
-    if (
-      !requestedFragmentId &&
-      requestedStartMs === null &&
-      !requestedEvidenceId &&
-      !resolvedEvidenceFragmentId &&
-      resolvedEvidenceStartMs === null
-    ) {
-      suppressTranscriptUrlRequestRef.current = null;
-    }
-  }, [
-    requestedEvidenceId,
-    requestedFragmentId,
-    requestedStartMs,
-    resolvedEvidenceFragmentId,
-    resolvedEvidenceStartMs,
-    transcriptUrlRequestSignature,
-  ]);
 
   // Retained canonical selection for highlight actions
   const [selection, setSelection] = useState<SelectionState | null>(null);
@@ -1358,15 +1327,6 @@ export default function MediaPaneBody({
       return;
     }
 
-    if (activeRequestedReaderLoc !== restoreRequest.sectionId) {
-      router.replace(
-        buildEpubLocationHref(id, restoreRequest.sectionId, {
-          fragmentId: activeRequestedFragmentId,
-          highlightId: requestedHighlightId,
-        }),
-      );
-    }
-
     if (!updateRestorePhase(sessionId, "opening_target")) return;
 
     setActiveSectionId(restoreRequest.sectionId);
@@ -1375,14 +1335,10 @@ export default function MediaPaneBody({
     epubSections,
     initialReaderResumeStateLoading,
     activeRequestedReaderLoc,
-    activeRequestedFragmentId,
     initialEpubResumeState,
-    requestedHighlightId,
     beginRestoreSession,
     settleRestoreSession,
     updateRestorePhase,
-    id,
-    router,
   ]);
 
   // Pane-level 404 from EPUB navigation fetch (media gone or no access).
@@ -1528,10 +1484,6 @@ export default function MediaPaneBody({
       (item) => item.section_id === activeRequestedReaderLoc,
     );
     if (!section) {
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete("loc");
-      const query = params.toString();
-      router.replace(query ? `/media/${id}?${query}` : `/media/${id}`);
       setActiveWebSectionId(null);
       feedback.show({
         severity: "warning",
@@ -1541,22 +1493,10 @@ export default function MediaPaneBody({
     }
 
     setActiveWebSectionId(section.section_id);
-    if (section.fragment_id && section.fragment_id !== activeRequestedFragmentId) {
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("loc", section.section_id);
-      params.set("fragment", section.fragment_id);
-      params.delete("highlight");
-      params.delete("evidence");
-      router.replace(`/media/${id}?${params.toString()}`);
-    }
   }, [
-    activeRequestedFragmentId,
     activeRequestedReaderLoc,
     feedback,
-    id,
     media?.kind,
-    router,
-    searchParams,
     webSections,
   ]);
 
@@ -1637,6 +1577,10 @@ export default function MediaPaneBody({
   useEffect(() => {
     if (isPdf || !activeContent) {
       setTextRestoreSettled(false);
+      return;
+    }
+    if (targetStatus === "pending" || targetStatus === "active") {
+      // Hash/pulse target drives the scroll; resume is suppressed for this load.
       return;
     }
     if (
@@ -1839,6 +1783,7 @@ export default function MediaPaneBody({
     isMobileViewport,
     paneMobileChrome,
     settleRestoreSession,
+    targetStatus,
     totalTextLength,
     updateRestorePhase,
   ]);
@@ -2582,6 +2527,7 @@ export default function MediaPaneBody({
     }
     focusHighlight(requestedHighlightId);
     urlHighlightAppliedRef.current = requestedHighlightId;
+    markActive();
     return () => {
       if (unlockChromeFrame) {
         window.cancelAnimationFrame(unlockChromeFrame);
@@ -2597,6 +2543,7 @@ export default function MediaPaneBody({
     focusHighlight,
     isMobileViewport,
     paneMobileChrome,
+    markActive,
   ]);
 
   useEffect(() => {
@@ -2630,6 +2577,7 @@ export default function MediaPaneBody({
       anchor.scrollIntoView({ behavior: "auto", block: "center" });
     }
     urlEvidenceAppliedRef.current = temporaryTextHighlight.id;
+    markActive();
     return () => {
       if (unlockChromeFrame) {
         window.cancelAnimationFrame(unlockChromeFrame);
@@ -2644,6 +2592,7 @@ export default function MediaPaneBody({
     paneMobileChrome,
     renderedHtml,
     temporaryTextHighlight,
+    markActive,
   ]);
 
   // ==========================================================================
@@ -2897,27 +2846,17 @@ export default function MediaPaneBody({
   const handleTranscriptSegmentSelect = useCallback(
     (fragment: TranscriptFragment) => {
       cancelRestoreSession();
-      suppressTranscriptUrlRequestRef.current = transcriptUrlRequestSignature;
+      clearTarget();
       setActiveTranscriptFragmentId(fragment.id);
       clearFocus();
       setHighlights([]);
       clearRetainedSelection(false);
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete("fragment");
-      params.delete("t_start_ms");
-      params.delete("t_end_ms");
-      params.delete("evidence");
-      const query = params.toString();
-      router.replace(query ? `/media/${id}?${query}` : `/media/${id}`);
     },
     [
       cancelRestoreSession,
       clearFocus,
       clearRetainedSelection,
-      id,
-      router,
-      searchParams,
-      transcriptUrlRequestSignature,
+      clearTarget,
     ],
   );
 
@@ -2927,8 +2866,8 @@ export default function MediaPaneBody({
 
   const handleReaderContentClick = useCallback(
     (e: React.MouseEvent): string | null => {
-      const target = e.target as Element;
-      const highlightEl = findHighlightElement(target);
+      const clickTarget = e.target as Element;
+      const highlightEl = findHighlightElement(clickTarget);
 
       if (highlightEl) {
         const clickData = parseHighlightElement(highlightEl);
@@ -2941,10 +2880,11 @@ export default function MediaPaneBody({
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed) {
         clearFocus();
+        clearTarget();
       }
       return null;
     },
-    [clearFocus, handleHighlightClick],
+    [clearFocus, clearTarget, handleHighlightClick],
   );
 
   // ==========================================================================
@@ -3238,11 +3178,10 @@ export default function MediaPaneBody({
       if (sectionId === activeSectionId) {
         return;
       }
-      router.push(buildEpubLocationHref(id, sectionId));
       setActiveSectionId(sectionId);
       setActiveEpubSection(null);
     },
-    [activeSectionId, beginRestoreSession, epubSections, id, router],
+    [activeSectionId, beginRestoreSession, epubSections],
   );
 
   const navigateToWebSection = useCallback(
@@ -3258,22 +3197,11 @@ export default function MediaPaneBody({
       clearRetainedSelection(false);
       setHighlights([]);
       setActiveWebSectionId(section.section_id);
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("loc", section.section_id);
-      if (section.fragment_id) {
-        params.set("fragment", section.fragment_id);
-      }
-      params.delete("highlight");
-      params.delete("evidence");
-      router.push(`/media/${id}?${params.toString()}`);
     },
     [
       cancelRestoreSession,
       clearFocus,
       clearRetainedSelection,
-      id,
-      router,
-      searchParams,
       webSections,
     ],
   );
@@ -3458,12 +3386,12 @@ export default function MediaPaneBody({
   const readerRootRef = useRef<HTMLDivElement | null>(null);
   const protectedReaderWidthRef = useRef<HTMLDivElement | null>(null);
   const [protectedReaderWidthPx, setProtectedReaderWidthPx] = useState(0);
-  const readerColumnStyle =
-    protectedReaderWidthPx > 0 && !isMobileViewport
-      ? ({
-          "--reader-protected-width-px": `${protectedReaderWidthPx}px`,
-        } as CSSProperties)
-      : undefined;
+  const readerColumnStyle: CSSProperties = {
+    position: "relative",
+    ...(protectedReaderWidthPx > 0 && !isMobileViewport
+      ? { "--reader-protected-width-px": `${protectedReaderWidthPx}px` }
+      : {}),
+  };
   const focusModeForRoot = readerProfile.focus_mode;
   const hyphenationForRoot = readerProfile.hyphenation;
   const { chromeRevealed } = useFocusModeTracking(
@@ -3541,7 +3469,8 @@ export default function MediaPaneBody({
     protectedReaderWidthPx,
   ]);
 
-  // Cmd/Ctrl+Shift+F cycles focus mode; Esc returns to off.
+  // Cmd/Ctrl+Shift+F cycles focus mode; Esc dismisses an active target;
+  // Shift+Esc returns focus mode to off.
   // Suppress when typing in form fields or contenteditable surfaces.
   useEffect(() => {
     function handleKeydown(event: KeyboardEvent) {
@@ -3566,7 +3495,19 @@ export default function MediaPaneBody({
         saveReaderProfile({ focus_mode: next });
         return;
       }
-      if (event.key === "Escape" && readerProfile.focus_mode !== "off") {
+      if (event.key === "Escape" && !event.shiftKey) {
+        if (targetStatus === "active") {
+          event.preventDefault();
+          clearTarget();
+          return;
+        }
+      }
+      if (
+        event.key === "Escape" &&
+        event.shiftKey &&
+        readerProfile.focus_mode !== "off"
+      ) {
+        event.preventDefault();
         saveReaderProfile({ focus_mode: "off" });
       }
     }
@@ -3574,7 +3515,12 @@ export default function MediaPaneBody({
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [readerProfile.focus_mode, saveReaderProfile]);
+  }, [
+    clearTarget,
+    readerProfile.focus_mode,
+    saveReaderProfile,
+    targetStatus,
+  ]);
 
   // Selection-active mirror on the reader root so focus mode dimming auto-suspends.
   useEffect(() => {
@@ -4330,127 +4276,19 @@ export default function MediaPaneBody({
       if (isMobileViewport) {
         setChatDetail(null);
       }
-      suppressTranscriptUrlRequestRef.current = null;
 
-      if (
-        target.href === `/media/${id}` ||
-        target.href?.startsWith(`/media/${id}?`)
-      ) {
-        router.push(target.href);
-        return;
-      }
-
-      const locator = target.locator;
-      if (
-        typeof locator !== "object" ||
-        locator === null ||
-        Array.isArray(locator)
-      ) {
-        feedback.show({
-          severity: "warning",
-          title: "Source location unavailable.",
-        });
-        return;
-      }
-
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete("highlight");
-      if (target.evidence_span_id) {
-        params.set("evidence", target.evidence_span_id);
-      } else {
-        params.delete("evidence");
-      }
-
-      const type = locator.type;
-      if (type === "pdf_page_geometry") {
-        const pageNumber = locator.page_number;
+      if (target.locator?.type === "transcript_time_range") {
+        const timestampMs = target.locator.t_start_ms;
         if (
-          typeof pageNumber !== "number" ||
-          !Number.isInteger(pageNumber) ||
-          pageNumber < 1
+          typeof timestampMs === "number" &&
+          Number.isInteger(timestampMs) &&
+          timestampMs >= 0
         ) {
-          feedback.show({
-            severity: "warning",
-            title: "Source location unavailable.",
-          });
-          return;
+          handleTranscriptSeek(timestampMs);
         }
-        params.set("page", String(pageNumber));
-        router.push(`/media/${id}?${params.toString()}`);
-        return;
       }
-
-      if (type === "epub_fragment_offsets" || type === "web_text_offsets") {
-        const locatorSectionId =
-          "section_id" in locator && typeof locator.section_id === "string"
-            ? locator.section_id
-            : null;
-        const sectionId =
-          locatorSectionId
-            ? locatorSectionId
-            : type === "epub_fragment_offsets"
-              ? (activeEpubSection?.section_id ?? null)
-              : null;
-        const fragmentId =
-          typeof locator.fragment_id === "string" ? locator.fragment_id : null;
-        if (sectionId && isEpub) {
-          router.push(
-            buildEpubLocationHref(id, sectionId, {
-              fragmentId: fragmentId ?? undefined,
-            }),
-          );
-          return;
-        }
-        if (sectionId && !isEpub) {
-          params.set("loc", sectionId);
-        }
-        if (fragmentId) {
-          params.set("fragment", fragmentId);
-          router.push(`/media/${id}?${params.toString()}`);
-          return;
-        }
-        feedback.show({
-          severity: "warning",
-          title: "Source location unavailable.",
-        });
-        return;
-      }
-
-      if (type === "transcript_time_range") {
-        const timestampMs = locator.t_start_ms;
-        if (
-          typeof timestampMs !== "number" ||
-          !Number.isInteger(timestampMs) ||
-          timestampMs < 0
-        ) {
-          feedback.show({
-            severity: "warning",
-            title: "Source location unavailable.",
-          });
-          return;
-        }
-        params.set("t_start_ms", String(timestampMs));
-        router.push(`/media/${id}?${params.toString()}`);
-        handleTranscriptSeek(timestampMs);
-        return;
-      }
-
-      feedback.show({
-        severity: "warning",
-        title: "Source location unavailable.",
-      });
     },
-    [
-      activeEpubSection?.section_id,
-      feedback,
-      handleTranscriptSeek,
-      id,
-      isEpub,
-      isMobileViewport,
-      paneRuntime,
-      router,
-      searchParams,
-    ],
+    [handleTranscriptSeek, id, isMobileViewport, paneRuntime],
   );
 
   useEffect(() => {
@@ -4698,9 +4536,7 @@ export default function MediaPaneBody({
       }
 
       pendingRulerPulseRef.current = { fragmentId, target };
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("fragment", fragmentId);
-      router.push(`/media/${id}?${params.toString()}`);
+      setTarget({ kind: "fragment", value: fragmentId, origin: "manual" });
     },
     [
       activeContent?.fragmentId,
@@ -4713,8 +4549,7 @@ export default function MediaPaneBody({
       isTranscriptMedia,
       mediaHighlights,
       navigateToSection,
-      router,
-      searchParams,
+      setTarget,
     ],
   );
 
@@ -5012,6 +4847,9 @@ export default function MediaPaneBody({
           />
         ) : null}
         <div className={styles.readerColumn} style={readerColumnStyle}>
+          {targetStatus === "active" ? (
+            <ReaderTargetDismissChip onDismiss={clearTarget} />
+          ) : null}
           {!isPdf && isMismatchDisabled && (
             <div className={styles.mismatchBanner}>
               Highlights disabled due to content mismatch. Try reloading.

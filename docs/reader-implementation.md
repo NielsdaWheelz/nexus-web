@@ -2,6 +2,8 @@
 
 this records the current reader model and the constraints we actively ship.
 
+URL contract for deep-link targeting: see `reader-target-link-cutover.md`.
+
 ## constraints we enforce
 
 - line length target: 50-75 chars on desktop, 60ch on mobile
@@ -178,15 +180,20 @@ pure black/white to reduce halation under long sessions.
 ### layered restore order
 
 - epub restores in this order:
-  `?loc` deep link -> saved exact target snapshot ->
+  hash `#loc-<section_id>` or `#fragment-<id>` (one-shot, consumed by
+  `useReaderTarget`) -> saved exact target snapshot ->
   saved `total_progression`/`position` fallback -> first navigation section
 
 ### pane history
 
-- reader section/TOC/source/highlight jumps that change `?loc`, `?fragment`,
-  `?page`, `?evidence`, or transcript time are pane-local push navigation
+- reader section/TOC jumps that change the active section/page are pane-local
+  push navigation. Highlight, evidence, and transcript-time targets are
+  dismissible focus state owned by `useReaderTarget`; they do not push pane
+  history. See `reader-target-link-cutover.md`.
 - reader URL repair, invalid target cleanup, and canonical target normalization
-  use pane-local replace navigation and do not add Back entries
+  use pane-local replace navigation and do not add Back entries; any `replace`
+  navigation must strip the URL hash via the pane router
+  (`router.replace(pathname + search)`)
 - PDF page and zoom controls remain reader state only; they do not create pane
   history entries unless they intentionally change the pane href
 - once the section is open, epub restores by
@@ -194,21 +201,24 @@ pure black/white to reduce halation under long sessions.
   `total_progression` -> `position` -> anchor fallback -> section top
 - epub restore runs once per open/navigation session and is cancelled on
   user scroll intent
-- epub keeps `?loc` synchronized after resolution so browser back/forward
-  describes the active section without starting a second restore loop
-- epub `?loc` is reader location state inside the `media:{id}` pane resource.
+- epub keeps the active section tracked via the in-memory `useReaderTarget`
+  target after resolution so intra-pane back/forward describes the active
+  section without starting a second restore loop
+- the epub active-section target is reader location state inside the
+  `media:{id}` pane resource, held in `useReaderTarget` (not the URL).
   synchronizing it must not reset pane chrome, clear tab/header title records,
   or remount the media pane body.
-- web article/transcript restore uses explicit target params first
-  (`fragment_id`, `start`) and falls back to the saved
-  `target.fragment_id`
-  when no explicit target is present
+- web article/transcript restore uses the one-shot hash target first
+  (`#fragment-<id>`, `#evidence-<id>`, `#highlight-<id>`, or `#t-<ms>` for
+  transcript), consumed by `useReaderTarget`, and falls back to the saved
+  `target.fragment_id` when no hash target is present
 - web article/transcript visual restore uses
   `text_offset` -> quote match -> `progression` ->
   `total_progression` -> `position`
   after layout settles
-- pdf applies saved `page`, `page_progression`, and `zoom` on open,
-  then persists later page, intra-page scroll, and zoom changes in place
+- pdf restores in this order: hash `#page-<n>` (one-shot, consumed by
+  `useReaderTarget`) -> saved `page`, `page_progression`, and `zoom`. After
+  open, later page, intra-page scroll, and zoom changes persist in place
   without reopening the file
 
 ### epub reader surface
@@ -219,7 +229,8 @@ pure black/white to reduce halation under long sessions.
 - active epub content loads from
   `GET /api/media/{id}/sections/{section_id}`
 - `section_id` is treated as a path-encoded identifier and may contain `/`
-- the frontend canonical deep-link is `?loc={section_id}`
+- the frontend canonical deep-link is `#loc-{section_id}` (one-shot hash
+  consumed by `useReaderTarget`); see `reader-target-link-cutover.md`
 - legacy `chapters` and `toc` reader routes are removed from the client surface
 - pane titles are driven by media metadata, not by navigation section title or
   active section content. navigation and section loading are content-level
@@ -265,7 +276,7 @@ required e2e coverage includes:
 
 - reader settings persistence
 - web canonical locator resume after reflow from profile typography changes
-- epub `?loc` deep link precedence over saved resume
+- epub `#loc-` hash deep link precedence over saved resume
 - epub delayed hydration cancellation after manual scroll
 - epub intra-section locator resume after reload
 - pdf page + zoom + intra-page locator resume after reload

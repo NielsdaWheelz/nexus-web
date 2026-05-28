@@ -164,16 +164,15 @@ function contextHref(context: MessageContextSnapshot): string | null {
   switch (type) {
     case "highlight":
       return context.media_id
-        ? `/media/${context.media_id}?highlight=${context.id}`
+        ? `/media/${context.media_id}#highlight-${context.id}`
         : null;
     case "content_chunk": {
       const mediaId = context.media_id ?? context.source_media_id;
       if (!mediaId) return null;
-      const params = new URLSearchParams();
       const evidenceSpanId = context.evidence_span_ids?.[0];
-      if (evidenceSpanId) params.set("evidence", evidenceSpanId);
-      const query = params.toString();
-      return query ? `/media/${mediaId}?${query}` : `/media/${mediaId}`;
+      return evidenceSpanId
+        ? `/media/${mediaId}#evidence-${evidenceSpanId}`
+        : `/media/${mediaId}`;
     }
     case "media":
       return `/media/${context.id}`;
@@ -181,11 +180,11 @@ function contextHref(context: MessageContextSnapshot): string | null {
       return `/podcasts/${context.id}`;
     case "fragment":
       return context.media_id || context.source_media_id
-        ? `/media/${context.media_id ?? context.source_media_id}?fragment=${context.id}`
+        ? `/media/${context.media_id ?? context.source_media_id}#fragment-${context.id}`
         : null;
     case "evidence_span":
       return context.media_id || context.source_media_id
-        ? `/media/${context.media_id ?? context.source_media_id}?evidence=${context.id}`
+        ? `/media/${context.media_id ?? context.source_media_id}#evidence-${context.id}`
         : null;
     case "conversation":
       return `/conversations/${context.id}`;

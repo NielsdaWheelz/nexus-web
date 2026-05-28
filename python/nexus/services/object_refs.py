@@ -94,7 +94,7 @@ def hydrate_object_ref(db: Session, viewer_id: UUID, ref: ObjectRef) -> Hydrated
             object_id=highlight.id,
             label=highlight.exact[:120] or "Highlight",
             snippet=highlight.exact,
-            route=f"/media/{highlight.anchor_media_id}?highlight={highlight.id}",
+            route=f"/media/{highlight.anchor_media_id}#highlight-{highlight.id}",
             icon="highlighter",
         )
 
@@ -199,7 +199,7 @@ def hydrate_object_ref(db: Session, viewer_id: UUID, ref: ObjectRef) -> Hydrated
             object_id=fragment.id,
             label=f"Fragment {fragment.idx + 1}",
             snippet=fragment.canonical_text[:300],
-            route=f"/media/{fragment.media_id}?fragment={fragment.id}",
+            route=f"/media/{fragment.media_id}#fragment-{fragment.id}",
             icon="text",
         )
 
@@ -222,7 +222,7 @@ def hydrate_object_ref(db: Session, viewer_id: UUID, ref: ObjectRef) -> Hydrated
             object_id=row[0],
             label=f"{row[4]} - {row[3]}",
             snippet=str(row[2] or "")[:300],
-            route=f"/media/{row[1]}?evidence={row[0]}",
+            route=f"/media/{row[1]}#evidence-{row[0]}",
             icon="quote",
         )
 
