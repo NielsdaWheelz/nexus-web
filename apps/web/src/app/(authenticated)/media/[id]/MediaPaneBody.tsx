@@ -4736,7 +4736,7 @@ export default function MediaPaneBody({
   }, []);
 
   const handleOpenDocChatFromTab = useCallback(
-    (
+    async (
       target:
         | {
             kind: "singleton";
@@ -4770,14 +4770,30 @@ export default function MediaPaneBody({
         });
         return;
       }
+      if (!media) return;
+      const created = await apiFetch<{ data: { id: string } }>(
+        "/api/conversations",
+        { method: "POST" },
+      );
+      await apiFetch(
+        `/api/conversations/${created.data.id}/pinned-sources`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            kind: "media",
+            target_id: media.id,
+            title: media.title,
+          }),
+        },
+      );
       setChatDetail({
         kind: "doc",
         isSingleton: false,
-        conversationId: null,
+        conversationId: created.data.id,
         attachedContexts,
       });
     },
-    [],
+    [media],
   );
 
   const handleOpenLibraryChatFromTab = useCallback(
