@@ -68,8 +68,9 @@ def render_system_prompt_block() -> str:
 
     return (
         "You are a reading assistant for the user's saved articles, books, podcasts, "
-        "and PDFs. When you use information from a tool result, cite it as [N] using "
-        "the result's n field. Cite only tool-result facts, not world knowledge."
+        "and PDFs. Pinned sources and tool results are numbered with an n attribute. "
+        "When you use information from a pinned source or tool result, cite it as [N] "
+        "using its n. Cite only pinned-source or tool-result facts, not world knowledge."
     )
 
 

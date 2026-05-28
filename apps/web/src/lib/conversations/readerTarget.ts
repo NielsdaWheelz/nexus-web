@@ -1,6 +1,7 @@
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import { isRetrievalLocator } from "@/lib/api/sse/locators";
 import type {
+  ConversationPinnedSource,
   MessageContextSnapshot,
   MessageRetrieval,
 } from "./types";
@@ -27,6 +28,38 @@ export function readerTargetFromContext(
     href,
     context_id: context.client_context_id ?? null,
   };
+}
+
+export function readerTargetFromPinned(
+  pin: ConversationPinnedSource,
+): ReaderSourceTarget | null {
+  if (
+    pin.kind !== "reader_selection" ||
+    !pin.target_id ||
+    !pin.source_version ||
+    !isRetrievalLocator(pin.locator)
+  ) {
+    return null;
+  }
+  return {
+    source: "message_context",
+    media_id: pin.target_id,
+    locator: pin.locator,
+    snippet: pin.exact ?? null,
+    source_version: pin.source_version,
+    highlight_behavior: "pulse",
+    focus_behavior: "scroll_into_view",
+    status: "attached_context",
+    label: pin.title,
+    href: null,
+    context_id: null,
+  };
+}
+
+export function hrefFromPinned(pin: ConversationPinnedSource): string | null {
+  if (pin.kind === "media" && pin.target_id) return `/media/${pin.target_id}`;
+  if (pin.kind === "library" && pin.target_id) return `/libraries/${pin.target_id}`;
+  return null;
 }
 
 export function readerTargetFromRetrieval(

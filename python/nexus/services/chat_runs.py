@@ -17,7 +17,7 @@ from uuid import UUID
 
 from llm_calling.errors import LLMError
 from llm_calling.types import LLMChunk, LLMRequest, LLMUsage, ToolResult, ToolSpec, Turn
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from web_search_tool.types import WebSearchProvider
@@ -925,7 +925,12 @@ async def _execute_chat_run(
         incomplete_reason: str | None = None
         terminal_seen = False
         locally_truncated = False
-        citation_n_next = 1
+        pin_count = db.scalar(
+            select(func.count())
+            .select_from(ConversationPinnedSource)
+            .where(ConversationPinnedSource.conversation_id == run.conversation_id)
+        )
+        citation_n_next = (pin_count or 0) + 1
         tool_call_index_next = 0
         llm_start = time.monotonic()
         llm_log_fields = safe_kv(

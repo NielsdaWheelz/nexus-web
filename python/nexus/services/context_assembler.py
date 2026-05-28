@@ -840,7 +840,7 @@ def load_message_context_refs(db: Session, user_message_id: UUID) -> list[Contex
 def _render_pinned_sources_block(pinned: Sequence[ConversationPinnedSource]) -> str:
     lines = ["<pinned_sources>"]
     for pin in pinned:
-        attrs = f'kind="{pin.kind}" title="{xml_escape(pin.title)}"'
+        attrs = f'n="{pin.ordinal}" kind="{pin.kind}" title="{xml_escape(pin.title)}"'
         if pin.target_id is not None:
             attrs += f' target_id="{pin.target_id}"'
         if pin.kind == "reader_selection":

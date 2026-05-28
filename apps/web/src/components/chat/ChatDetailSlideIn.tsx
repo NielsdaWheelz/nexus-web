@@ -6,6 +6,7 @@ import ChatComposer from "@/components/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
 import type { ReaderSourceTarget } from "@/components/chat/MessageRow";
 import PinnedSourcesTray from "@/components/chat/PinnedSourcesTray";
+import { usePinnedSources } from "@/lib/conversations/usePinnedSources";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
@@ -68,6 +69,7 @@ export default function ChatDetailSlideIn({
     () => attachedContexts ?? [],
   );
   const retryingAssistantMessageIds = useStringIdSet();
+  const { pinned: pinnedSources } = usePinnedSources(activeConversationId);
   const activeReplyParentMessageId = useMemo(() => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
@@ -235,6 +237,7 @@ export default function ChatDetailSlideIn({
 
       <ChatSurface
         messages={messages}
+        pinnedSources={pinnedSources}
         scrollportRef={scrollportRef}
         olderCursor={olderCursor}
         onLoadOlder={loadOlder}

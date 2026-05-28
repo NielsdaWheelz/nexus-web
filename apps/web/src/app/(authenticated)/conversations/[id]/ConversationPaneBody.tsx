@@ -49,6 +49,7 @@ import {
 } from "@/lib/conversations/branching";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useStringIdSet } from "@/lib/useStringIdSet";
+import { usePinnedSources } from "@/lib/conversations/usePinnedSources";
 import {
   usePaneParam,
   usePaneRouter,
@@ -172,6 +173,7 @@ function ChatView({
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const retryingAssistantMessageIds = useStringIdSet();
+  const { pinned: pinnedSources } = usePinnedSources(id);
   const [contextRailExpanded, setContextRailExpanded] = useState(true);
   useSetPaneTitle(
     loading ? null : conversation ? `Chat: ${conversation.title}` : "Chat",
@@ -708,6 +710,7 @@ function ChatView({
             {error ? <FeedbackNotice feedback={error} /> : null}
             <ChatSurface
               messages={messages}
+              pinnedSources={pinnedSources}
               onReaderSourceActivate={handleReaderSourceActivate}
               forkOptionsByParentId={forkOptionsByParentId}
               switchableLeafIds={switchableLeafIds}

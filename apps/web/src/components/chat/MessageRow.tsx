@@ -5,6 +5,7 @@ import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 import type {
   BranchDraft,
   ConversationMessage,
+  ConversationPinnedSource,
   ForkOption,
   MessageEvidenceLocator,
 } from "@/lib/conversations/types";
@@ -34,6 +35,7 @@ export interface ReaderSourceTarget {
 
 interface MessageRowProps {
   message: ConversationMessage;
+  pinnedSources?: ConversationPinnedSource[];
   forkOptions?: ForkOption[];
   switchableLeafIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
@@ -63,6 +65,7 @@ function errorLabel(message: ConversationMessage): string {
 
 export function MessageRow({
   message,
+  pinnedSources,
   forkOptions = [],
   switchableLeafIds,
   onSelectFork,
@@ -112,6 +115,7 @@ export function MessageRow({
       return (
         <AssistantMessage
           message={message}
+          pinnedSources={pinnedSources}
           errorLabel={messageErrorLabel}
           timestampLabel={timestampLabel}
           forkOptions={forkOptions}

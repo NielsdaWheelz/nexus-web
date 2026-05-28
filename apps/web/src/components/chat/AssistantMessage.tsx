@@ -13,6 +13,7 @@ import { createRandomId } from "@/lib/createRandomId";
 import type {
   BranchDraft,
   ConversationMessage,
+  ConversationPinnedSource,
   ForkOption,
   MessageToolCall,
 } from "@/lib/conversations/types";
@@ -27,6 +28,7 @@ import styles from "./MessageRow.module.css";
 
 export default function AssistantMessage({
   message,
+  pinnedSources,
   forkOptions,
   switchableLeafIds,
   onSelectFork,
@@ -36,6 +38,7 @@ export default function AssistantMessage({
   timestampLabel,
 }: {
   message: ConversationMessage;
+  pinnedSources?: ConversationPinnedSource[];
   forkOptions: ForkOption[];
   switchableLeafIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
@@ -176,6 +179,7 @@ export default function AssistantMessage({
       {renderAssistantBody ? (
         <AssistantEvidenceDisclosure
           message={message}
+          pinnedSources={pinnedSources}
           answerRef={answerRef}
           onCitationActivate={onCitationActivate}
         />
